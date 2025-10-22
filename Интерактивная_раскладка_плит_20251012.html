@@ -1,0 +1,586 @@
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Интерактивная раскладка плит - 12.10.2025 17:17</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2c3e50, #34495e);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .header p {
+            margin: 10px 0 0 0;
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .controls {
+            background: #f8f9fa;
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .info-panel {
+            background: #e9ecef;
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            display: none;
+        }
+        
+        .info-panel.show {
+            display: block;
+            animation: slideDown 0.3s ease;
+        }
+        
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .track {
+            margin: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .track-header {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 15px;
+            font-weight: bold;
+            font-size: 1.3em;
+        }
+        
+        .track-content {
+            padding: 20px;
+        }
+        
+        .track-layout {
+            position: relative;
+            height: 60px;
+            background: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 5px;
+            margin: 10px 0;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+        
+        .plate {
+            position: absolute;
+            height: 56px;
+            border: 2px solid #333;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 10px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
+        }
+        
+        .plate:hover {
+            transform: scale(1.1);
+            z-index: 10;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        
+        .plate.selected {
+            transform: scale(1.2);
+            z-index: 20;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.5);
+            border: 3px solid #ffc107;
+        }
+        
+        .track-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .info-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .info-card h4 {
+            margin: 0 0 10px 0;
+            color: #495057;
+        }
+        
+        .info-card p {
+            margin: 5px 0;
+            color: #6c757d;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 20px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .stat-label {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .legend {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+        }
+        
+        .legend-item {
+            display: inline-block;
+            margin: 5px 10px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            color: white;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.3s ease;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .search-box {
+            padding: 10px;
+            border: 2px solid #dee2e6;
+            border-radius: 5px;
+            font-size: 1em;
+            width: 200px;
+        }
+        
+        .search-box:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 10px rgba(102, 126, 234, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏗️ Интерактивная раскладка плит</h1>
+            <p>Кликайте по плитам для получения детальной информации • 12.10.2025 17:17</p>
+        </div>
+        
+        <div class="controls">
+            <div>
+                <input type="text" class="search-box" id="searchBox" placeholder="🔍 Поиск по маркировке...">
+                <button class="btn" onclick="clearSearch()">Очистить</button>
+            </div>
+            <div>
+                <button class="btn" onclick="showAllPlates()">Показать все плиты</button>
+                <button class="btn" onclick="hideAllPlates()">Скрыть плиты</button>
+            </div>
+        </div>
+        
+        <div class="info-panel" id="infoPanel">
+            <h3>📋 Информация о плите</h3>
+            <div id="plateInfo"></div>
+        </div>
+        
+        <div class="stats-grid" id="statsGrid">
+            <!-- Статистика будет добавлена через JavaScript -->
+        </div>
+
+        <div class="track">
+            <div class="track-header">
+                🛤️ Дорожка #1 • Армирование: 8.0
+            </div>
+            <div class="track-content">
+                <div class="track-layout" id="track1">
+                    <!-- Плиты будут добавлены через JavaScript -->
+                </div>
+                
+                <div class="track-info">
+                    <div class="info-card">
+                        <h4>📊 Основные параметры</h4>
+                        <p><strong>Всего плит:</strong> 69 шт</p>
+                        <p><strong>Длина дорожки:</strong> 96.92 м</p>
+                        <p><strong>Эффективность:</strong> 96.0%</p>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h4>⚖️ Вес и объём</h4>
+                        <p><strong>Общий вес:</strong> 184226 кг</p>
+                        <p><strong>Площадь:</strong> 348.9 м²</p>
+                        <p><strong>Типов плит:</strong> 23</p>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h4>📅 По неделям</h4>
+                        <p><strong>Неделя 4.0:</strong> 2 плит</p>
+                        <p><strong>Неделя 28.0:</strong> 6 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя nan:</strong> 1 плит</p>
+                        <p><strong>Неделя 27.0:</strong> 1 плит</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="track">
+            <div class="track-header">
+                🛤️ Дорожка #2 • Армирование: 6.0
+            </div>
+            <div class="track-content">
+                <div class="track-layout" id="track2">
+                    <!-- Плиты будут добавлены через JavaScript -->
+                </div>
+                
+                <div class="track-info">
+                    <div class="info-card">
+                        <h4>📊 Основные параметры</h4>
+                        <p><strong>Всего плит:</strong> 78 шт</p>
+                        <p><strong>Длина дорожки:</strong> 97.41 м</p>
+                        <p><strong>Эффективность:</strong> 96.4%</p>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h4>⚖️ Вес и объём</h4>
+                        <p><strong>Общий вес:</strong> 185155 кг</p>
+                        <p><strong>Площадь:</strong> 350.7 м²</p>
+                        <p><strong>Типов плит:</strong> 26</p>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h4>📅 По неделям</h4>
+                        <p><strong>Неделя 5.0:</strong> 1 плит</p>
+                        <p><strong>Неделя 27.0:</strong> 5 плит</p>
+                        <p><strong>Неделя 28.0:</strong> 5 плит</p>
+                        <p><strong>Неделя 29.0:</strong> 12 плит</p>
+                        <p><strong>Неделя 37.0:</strong> 3 плит</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="track">
+            <div class="track-header">
+                🛤️ Дорожка #3 • Армирование: 4.0
+            </div>
+            <div class="track-content">
+                <div class="track-layout" id="track3">
+                    <!-- Плиты будут добавлены через JavaScript -->
+                </div>
+                
+                <div class="track-info">
+                    <div class="info-card">
+                        <h4>📊 Основные параметры</h4>
+                        <p><strong>Всего плит:</strong> 147 шт</p>
+                        <p><strong>Длина дорожки:</strong> 99.78 м</p>
+                        <p><strong>Эффективность:</strong> 98.8%</p>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h4>⚖️ Вес и объём</h4>
+                        <p><strong>Общий вес:</strong> 189664 кг</p>
+                        <p><strong>Площадь:</strong> 359.2 м²</p>
+                        <p><strong>Типов плит:</strong> 49</p>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h4>📅 По неделям</h4>
+                        <p><strong>Неделя 6.0:</strong> 12 плит</p>
+                        <p><strong>Неделя 8.0:</strong> 30 плит</p>
+                        <p><strong>Неделя 9.0:</strong> 2 плит</p>
+                        <p><strong>Неделя 10.0:</strong> 2 плит</p>
+                        <p><strong>Неделя 13.0:</strong> 1 плит</p>
+                        <p><strong>Неделя 15.0:</strong> 1 плит</p>
+                        <p><strong>Неделя 26.0:</strong> 1 плит</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+    
+    <script>
+        // Данные плит
+        const tracksData = [{"track_num": 1, "plates": [{"marking": "Плиты ПБ 42,5-12-8п кос", "length": 4.25, "width": 1.2, "customer": "МД-СТРОЙ", "week": 4.0, "weight": 2692.8, "load_capacity": 800}, {"marking": "Плиты ПБ 42,5-12-8п кос", "length": 4.25, "width": 1.2, "customer": "МД-СТРОЙ", "week": 4.0, "weight": 2692.8, "load_capacity": 800}, {"marking": "Плиты ПБ 43,0-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43,0-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43,0-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43,0-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43,0-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 33,1-12-16п", "length": 3.31, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2097.2, "load_capacity": 1600}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 43-12-8п", "length": 4.3, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2724.5, "load_capacity": 800}, {"marking": "Плиты ПБ 33,1-12-16п", "length": 3.31, "width": 1.2, "customer": "ЮПИТЕР", "week": NaN, "weight": 2097.2, "load_capacity": 1600}, {"marking": "Плиты ПБ 44-12-8п", "length": 4.4, "width": 1.2, "customer": "ТКМ", "week": 27.0, "weight": 2787.8, "load_capacity": 800}], "color": "#FF6B6B", "reinforcement": 8.0, "total_length": 96.91999999999997}, {"track_num": 2, "plates": [{"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 2эт", "week": 5.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 36,6-12-8п", "length": 3.66, "width": 1.2, "customer": "ЮПИТЕР", "week": 27.0, "weight": 2319.0, "load_capacity": 800}, {"marking": "Плиты ПБ 36,6-12-8п", "length": 3.66, "width": 1.2, "customer": "ЮПИТЕР", "week": 27.0, "weight": 2319.0, "load_capacity": 800}, {"marking": "Плиты ПБ 36,6-12-8п", "length": 3.66, "width": 1.2, "customer": "ЮПИТЕР", "week": 27.0, "weight": 2319.0, "load_capacity": 800}, {"marking": "Плиты ПБ 36,6-12-8п", "length": 3.66, "width": 1.2, "customer": "ЮПИТЕР", "week": 27.0, "weight": 2319.0, "load_capacity": 800}, {"marking": "Плиты ПБ 36,6-12-8п", "length": 3.66, "width": 1.2, "customer": "ЮПИТЕР", "week": 27.0, "weight": 2319.0, "load_capacity": 800}, {"marking": "Плиты ПБ 37,9-12-8п", "length": 3.79, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2401.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,9-12-8п", "length": 3.79, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2401.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,9-12-8п", "length": 3.79, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2401.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,9-12-8п", "length": 3.79, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2401.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,9-12-8п", "length": 3.79, "width": 1.2, "customer": "ЮПИТЕР", "week": 28.0, "weight": 2401.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 7эт", "week": 29.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 9 эт", "week": 37.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 9 эт", "week": 37.0, "weight": 2382.3, "load_capacity": 800}, {"marking": "Плиты ПБ 37,6-12-8п", "length": 3.7600000000000002, "width": 1.2, "customer": "ТКМ 9 эт", "week": 37.0, "weight": 2382.3, "load_capacity": 800}], "color": "#4ECDC4", "reinforcement": 6.0, "total_length": 97.41000000000003}, {"track_num": 3, "plates": [{"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 6.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 20,8-12-8п", "length": 2.08, "width": 1.2, "customer": "Ан-СТРОЙ", "week": 8.0, "weight": 1317.9, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 9.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 9.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 10.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 18-12-8п", "length": 1.8, "width": 1.2, "customer": "ТКМ", "week": 10.0, "weight": 1140.5, "load_capacity": 800}, {"marking": "Плиты ПБ 28-12-8п", "length": 2.8, "width": 1.2, "customer": "ЮПИТЕР", "week": 13.0, "weight": 1774.1, "load_capacity": 800}, {"marking": "Плиты ПБ 28-12-8п", "length": 2.8, "width": 1.2, "customer": "ТКМ 4 этаж", "week": 15.0, "weight": 1774.1, "load_capacity": 800}, {"marking": "Плиты ПБ 29,8-12-8п", "length": 2.98, "width": 1.2, "customer": "ЮПИТЕР", "week": 26.0, "weight": 1888.1, "load_capacity": 800}], "color": "#95E1D3", "reinforcement": 4.0, "total_length": 99.77999999999994}];
+        
+        let selectedPlate = null;
+        let searchTerm = '';
+        
+        // Инициализация
+        document.addEventListener('DOMContentLoaded', function() {
+            renderTracks();
+            updateStats();
+        });
+        
+        // Отрисовка дорожек
+        function renderTracks() {
+            tracksData.forEach(track => {
+                const trackElement = document.getElementById(`track$ {track.track_num}`);
+                trackElement.innerHTML = '';
+                
+                let currentX = 5; // Отступ от края
+                let plateNumber = 1;
+                
+                track.plates.forEach(plate => {
+                    // Создаём 3 плиты поперёк
+                    for (let i = 0; i < 3; i++) {
+                        const plateElement = document.createElement('div');
+                        plateElement.className = 'plate';
+                        plateElement.style.left = currentX + 'px';
+                        plateElement.style.top = (i * 20) + 'px';
+                        plateElement.style.width = (plate.length * 10) + 'px'; // Масштаб 1м = 10px
+                        plateElement.style.backgroundColor = track.color;
+                        plateElement.style.opacity = '0.8';
+                        
+                        // Подпись на плите
+                        const label = plate.length >= 1.5 ? 
+                            `${plate.marking.split(' ')[1] || plateNumber}\n${plate.week ? 'Нед.' + plate.week : 'Срочно'}` :
+                            `${plate.length}м`;
+                        
+                        plateElement.innerHTML = label.replace(/\n/g, '<br>');
+                        plateElement.title = `Плита #${plateNumber}\nМаркировка: ${plate.marking}\nДлина: ${plate.length}м\nЗаказчик: ${plate.customer || 'Не указан'}\nНеделя: ${plate.week || 'Срочно'}\nВес: ${plate.weight}кг`;
+                        
+                        // Данные для поиска
+                        plateElement.setAttribute('data-marking', plate.marking);
+                        plateElement.setAttribute('data-customer', plate.customer || '');
+                        plateElement.setAttribute('data-week', plate.week || '');
+                        
+                        // Обработчик клика
+                        plateElement.addEventListener('click', () => {
+                            selectPlate(plateElement, plate, track);
+                        });
+                        
+                        trackElement.appendChild(plateElement);
+                        plateNumber++;
+                    }
+                    
+                    currentX += plate.length * 10; // Переходим к следующей позиции
+                });
+            });
+        }
+        
+        // Выбор плиты
+        function selectPlate(element, plateData, trackData) {
+            // Убираем выделение с предыдущей плиты
+            document.querySelectorAll('.plate').forEach(p => p.classList.remove('selected'));
+            
+            // Выделяем новую плиту
+            element.classList.add('selected');
+            selectedPlate = { element, plateData, trackData };
+            
+            // Показываем информацию
+            showPlateInfo(plateData, trackData);
+        }
+        
+        // Показать информацию о плите
+        function showPlateInfo(plateData, trackData) {
+            const infoPanel = document.getElementById('infoPanel');
+            const plateInfo = document.getElementById('plateInfo');
+            
+            const weekText = plateData.week ? `Неделя ${plateData.week}` : 'Срочно';
+            const customerText = plateData.customer || 'Не указан';
+            
+            plateInfo.innerHTML = `
+                <div class="info-card">
+                    <h4>📋 Основная информация</h4>
+                    <p><strong>Маркировка:</strong> ${plateData.marking}</p>
+                    <p><strong>Размеры:</strong> ${plateData.length}м × ${plateData.width}м</p>
+                    <p><strong>Заказчик:</strong> ${customerText}</p>
+                    <p><strong>Срок:</strong> ${weekText}</p>
+                </div>
+                <div class="info-card">
+                    <h4>⚖️ Технические характеристики</h4>
+                    <p><strong>Вес плиты:</strong> ${plateData.weight} кг</p>
+                    <p><strong>Нагрузка:</strong> ${plateData.load_capacity} кг/м²</p>
+                    <p><strong>Армирование:</strong> ${trackData.reinforcement}</p>
+                    <p><strong>Дорожка:</strong> #${trackData.track_num}</p>
+                </div>
+                <div class="info-card">
+                    <h4>📊 Расчёты</h4>
+                    <p><strong>Площадь плиты:</strong> ${(plateData.length * plateData.width).toFixed(2)} м²</p>
+                    <p><strong>Объём бетона:</strong> ${(plateData.length * plateData.width * 0.22).toFixed(3)} м³</p>
+                    <p><strong>Вес всех 3 плит:</strong> ${(plateData.weight * 3).toFixed(1)} кг</p>
+                </div>
+            `;
+            
+            infoPanel.classList.add('show');
+            
+            // Прокручиваем к информации
+            infoPanel.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        // Обновление статистики
+        function updateStats() {
+            const statsGrid = document.getElementById('statsGrid');
+            
+            let totalPlates = 0;
+            let totalLength = 0;
+            let totalWeight = 0;
+            let totalTracks = tracksData.length;
+            
+            tracksData.forEach(track => {
+                totalPlates += track.plates.length * 3;
+                totalLength += track.total_length;
+                totalWeight += track.plates.reduce((sum, plate) => sum + plate.weight * 3, 0);
+            });
+            
+            const avgEfficiency = tracksData.reduce((sum, track) => 
+                sum + (track.total_length / 101.0) * 100, 0) / totalTracks;
+            
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-number">${totalPlates}</div>
+                    <div class="stat-label">Всего плит</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${totalLength.toFixed(1)}</div>
+                    <div class="stat-label">Общая длина (м)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${totalWeight.toFixed(0)}</div>
+                    <div class="stat-label">Общий вес (кг)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${totalTracks}</div>
+                    <div class="stat-label">Дорожек</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${avgEfficiency.toFixed(1)}%</div>
+                    <div class="stat-label">Средняя эффективность</div>
+                </div>
+            `;
+        }
+        
+        // Поиск
+        document.getElementById('searchBox').addEventListener('input', function(e) {
+            searchTerm = e.target.value.toLowerCase();
+            filterPlates();
+        });
+        
+        function filterPlates() {
+            document.querySelectorAll('.plate').forEach(plate => {
+                const marking = plate.getAttribute('data-marking').toLowerCase();
+                const customer = plate.getAttribute('data-customer').toLowerCase();
+                const week = plate.getAttribute('data-week').toString();
+                
+                if (searchTerm === '' || 
+                    marking.includes(searchTerm) || 
+                    customer.includes(searchTerm) || 
+                    week.includes(searchTerm)) {
+                    plate.style.display = 'flex';
+                    plate.style.opacity = '0.8';
+                } else {
+                    plate.style.display = 'none';
+                }
+            });
+        }
+        
+        function clearSearch() {
+            document.getElementById('searchBox').value = '';
+            searchTerm = '';
+            filterPlates();
+        }
+        
+        function showAllPlates() {
+            document.querySelectorAll('.plate').forEach(plate => {
+                plate.style.display = 'flex';
+                plate.style.opacity = '0.8';
+            });
+        }
+        
+        function hideAllPlates() {
+            document.querySelectorAll('.plate').forEach(plate => {
+                plate.style.display = 'none';
+            });
+        }
+        
+        // Горячие клавиши
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.plate').forEach(p => p.classList.remove('selected'));
+                document.getElementById('infoPanel').classList.remove('show');
+            }
+        });
+    </script>
+</body>
+</html>
