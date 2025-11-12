@@ -15,6 +15,8 @@ import os
 from datetime import datetime
 import re
 import math
+import matplotlib
+matplotlib.use('Agg')  # headless backend to avoid GUI/thread issues
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import sqlite3
@@ -64,6 +66,12 @@ PLATES_0_32 = [6.63]*4 + [7.83]*3
 PLATES_0_72 = [5.63]*5
 PLATES_0_70 = [4.65]*5
 PLATES_0_86 = [6.75]*2 + [4.65]*5
+# Заказы на вторую половину (если пользователь прислал такие ширины)
+PLATES_0_74 = []
+PLATES_0_88 = []
+PLATES_0_48 = []
+PLATES_0_50 = []
+PLATES_0_34 = []
 # 2) Плиты 1.5 м — используем как 1.2 м (лента 0.3 образуется)
 PLATES_1_5_TO_1_2 = []
 # 3) Плиты 1.0 м — получаем из 1.2 (остаток 0.2 уходит в обрезки)
@@ -91,6 +99,409 @@ WASTE_AREA_M2 = round(0.12 * SCRAP_STRIPS_0_12_M_TOTAL, 2)
 
 
 # ---------- Утилиты для прайса ----------
+
+# ---------- Парсинг и настройка списков плит из текста пользователя ----------
+
+def _clear_all_plate_lists():
+    global PLATES_1_2, PLATES_1_5_TO_1_2, PLATES_1_0, PLATES_1_08
+    global PLATES_0_46, PLATES_0_32, PLATES_0_72, PLATES_0_70, PLATES_0_86
+    global PLATES_0_74, PLATES_0_88, PLATES_0_48, PLATES_0_50, PLATES_0_34
+    PLATES_1_2 = []
+    PLATES_1_5_TO_1_2 = []
+    PLATES_1_0 = []
+    PLATES_1_08 = []
+    PLATES_0_46 = []
+    PLATES_0_32 = []
+    PLATES_0_72 = []
+    PLATES_0_70 = []
+    PLATES_0_86 = []
+    PLATES_0_74 = []
+    PLATES_0_88 = []
+    PLATES_0_48 = []
+    PLATES_0_50 = []
+    PLATES_0_34 = []
+
+
+def _recompute_totals_from_lists():
+    global LONGITUDINAL_CUTS, LENGTH_TRIMS
+    global UNUSED_STRIPS_0_3_M_TOTAL, SCRAP_STRIPS_0_2_M_TOTAL
+    global USABLE_STRIPS_0_74_M_TOTAL, USABLE_STRIPS_0_88_M_TOTAL
+    global USABLE_STRIPS_0_48_M_TOTAL, USABLE_STRIPS_0_50_M_TOTAL
+    global USABLE_STRIPS_0_34_M_TOTAL, SCRAP_STRIPS_0_12_M_TOTAL
+    global WASTE_AREA_M2
+
+    LONGITUDINAL_CUTS = (
+        len(PLATES_1_5_TO_1_2) + len(PLATES_1_0) +
+        len(PLATES_1_08) + len(PLATES_0_46) +
+        len(PLATES_0_32) + len(PLATES_0_72) + len(PLATES_0_70) + len(PLATES_0_86)
+    )
+    LENGTH_TRIMS = 0
+
+    UNUSED_STRIPS_0_3_M_TOTAL = 0.0
+    SCRAP_STRIPS_0_2_M_TOTAL = 0.0
+    USABLE_STRIPS_0_74_M_TOTAL = round(sum(PLATES_0_46), 1)
+    USABLE_STRIPS_0_88_M_TOTAL = round(sum(PLATES_0_32), 1)
+    USABLE_STRIPS_0_48_M_TOTAL = round(sum(PLATES_0_72), 1)
+    USABLE_STRIPS_0_50_M_TOTAL = round(sum(PLATES_0_70), 1)
+    USABLE_STRIPS_0_34_M_TOTAL = round(sum(PLATES_0_86), 1)
+    SCRAP_STRIPS_0_12_M_TOTAL = round(sum(PLATES_1_08), 1)
+    WASTE_AREA_M2 = round(0.12 * SCRAP_STRIPS_0_12_M_TOTAL, 2)
+
+
+def set_plate_lists_from_text(user_text: str) -> None:
+    """Парсит свободный текст пользователя и заполняет списки PLATES_*.
+
+    Поддерживаем форматы:
+      - "1.2×3.39 — 2 шт" / "0,32x6,63 - 4"
+      - "Плиты ПБ 78-12-8п 3" (длина в дм, ширина 12 => 1.2м, количество 3)
+    Неизвестные ширины игнорируем.
+    """
+    _clear_all_plate_lists()
+
+    text = (user_text or '').replace('\u00d7', 'x').replace('×', 'x')
+    lines = [l.strip() for l in re.split(r'[\n;]+', text) if l.strip()]
+
+    def add_items(width_m: float, length_m: float, qty: int):
+        # Специальная обработка плит 1.5 м → заменяем на 1.2 м + 0.3 м
+        if 1.45 <= width_m <= 1.55:  # 1.5 м (диапазон ±50 мм)
+            # Добавляем плиту 1.2 м
+            for _ in range(max(0, qty)):
+                PLATES_1_2.append(round(float(length_m), 2))
+            # Добавляем плиту 0.3 м (записываем в PLATES_0_32)
+            for _ in range(max(0, qty)):
+                PLATES_0_32.append(round(float(length_m), 2))
+            return
+        
+        target = None
+        if 1.15 <= width_m <= 1.25:
+            target = PLATES_1_2
+        elif 0.98 <= width_m <= 1.02:
+            target = PLATES_1_0
+        elif 1.06 <= width_m <= 1.12:
+            target = PLATES_1_08
+        elif 0.30 <= width_m <= 0.33:
+            target = PLATES_0_32
+        elif 0.44 <= width_m <= 0.47:
+            target = PLATES_0_46
+        elif 0.69 <= width_m <= 0.71:
+            target = PLATES_0_70
+        elif 0.71 < width_m <= 0.73:
+            target = PLATES_0_72
+        elif 0.85 <= width_m <= 0.865:
+            target = PLATES_0_86
+        # также позволяем напрямую заказывать вторые половины
+        elif 0.33 < width_m <= 0.35:
+            target = PLATES_0_34
+        elif 0.47 < width_m <= 0.49:
+            target = PLATES_0_48
+        elif 0.49 < width_m <= 0.51:
+            target = PLATES_0_50
+        elif 0.73 < width_m <= 0.75:
+            target = PLATES_0_74
+        elif 0.865 < width_m <= 0.895:
+            target = PLATES_0_88
+        else:
+            return
+        for _ in range(max(0, qty)):
+            target.append(round(float(length_m), 2))
+
+    for raw in lines:
+        s = raw.lower()
+        # 1) формат WxL x qty (поддерживает запятую и точку)
+        s_norm = s.replace(',', '.')
+        m = re.search(r'(\d+(?:\.\d+)?)\s*[xх]\s*(\d+(?:\.\d+)?)\D*(\d+)?', s)
+        if m:
+            w = float(m.group(1).replace(',', '.'))
+            L = float(m.group(2).replace(',', '.'))
+            q = int((m.group(3) or '1').replace(',', '.'))
+            add_items(w, L, q)
+            continue
+        # 2) формат "Плиты ПБ 78,3-3,2-8п 3" или "ПБ 78-12-8п 10"
+        m2 = re.search(r'плиты?\s*пб\s*([\d\.,]+)\s*-\s*([\d\.,]+)', s)
+        if not m2:
+            m2 = re.search(r'\bпб\s*([\d\.,]+)\s*-\s*([\d\.,]+)', s)
+        if m2:
+            Ldm_str = m2.group(1).replace(' ', '').replace(',', '.')
+            Wdm_str = m2.group(2).replace(' ', '').replace(',', '.')
+            try:
+                # В нотации ПБ длина указывается в дм. Всегда делим на 10 → метры
+                L = float(Ldm_str) / 10.0
+            except Exception:
+                continue
+            try:
+                # Ширина также в дм (12 → 1.2; 3.2 → 0.32; 8.6 → 0.86)
+                W = float(Wdm_str) / 10.0
+            except Exception:
+                continue
+            q = 1
+            # Количество — последнее число в строке
+            mq = re.search(r'(\d+)\s*(шт)?\s*$', s)
+            if mq:
+                try:
+                    q = int(mq.group(1))
+                except Exception:
+                    q = 1
+            add_items(W, L, q)
+            continue
+
+    _recompute_totals_from_lists()
+
+
+# ---------- Использование оптимизатора для порядка ширин ----------
+
+OPT_WIDTH_PRIORITY: list[str] = []  # например: ['0_32','0_46','0_70','0_72','0_86']
+OPT_PLAN: dict = {}  # результат полной оптимизации: как закрывать спрос
+
+def optimize_full_plan_with_narrowing() -> dict:
+    """Полная ILP-оптимизация с учётом источников: split 1.2, narrowing (сужение), trans cut.
+    Минимизирует стоимость = цена плит + резы + отходы + штраф за неиспользованные остатки.
+    Возвращает plan: {'actions': [(source_type, W_main, W_pair/src, L, qty, long_cuts, trans_cuts), ...]}
+    """
+    try:
+        from pulp import LpProblem, LpMinimize, LpVariable, LpInteger, lpSum, value
+    except Exception:
+        print('[OPT_FULL] PuLP не установлен, пропускаем.')
+        return {}
+    
+    # 1) Спрос: {(W_mm, L_m): qty}
+    demand = {}
+    def add_demand(w_mm: int, lengths: list[float]):
+        for L in lengths:
+            key = (w_mm, round(L, 2))
+            demand[key] = demand.get(key, 0) + 1
+    add_demand(1200, PLATES_1_2)
+    add_demand(320, PLATES_0_32); add_demand(460, PLATES_0_46)
+    add_demand(720, PLATES_0_72); add_demand(700, PLATES_0_70); add_demand(860, PLATES_0_86)
+    add_demand(880, PLATES_0_88); add_demand(740, PLATES_0_74)
+    add_demand(480, PLATES_0_48); add_demand(500, PLATES_0_50); add_demand(340, PLATES_0_34)
+    
+    if not demand:
+        return {}
+    
+    # 2) Источники
+    split_pairs = [(320,880),(460,740),(720,480),(700,500),(860,340)]
+    narrowing_options = [(340,320,20),(500,480,20),(740,720,20),(880,860,20),(480,460,20)]
+    lengths_set = sorted(set(L for (W,L) in demand.keys()))
+    
+    prob = LpProblem('full_narrow', LpMinimize)
+    x_split = {}; x_narrow = {}; x_solid = {}
+    
+    for (Wm, Wp) in split_pairs:
+        for L in lengths_set:
+            x_split[(Wm, Wp, L)] = LpVariable(f"sp_{Wm}_{Wp}_{L}", lowBound=0, cat=LpInteger)
+    for (Wsrc, Wtgt, delta) in narrowing_options:
+        for L in lengths_set:
+            x_narrow[(Wsrc, Wtgt, L)] = LpVariable(f"nr_{Wsrc}_{Wtgt}_{L}", lowBound=0, cat=LpInteger)
+    for L in lengths_set:
+        x_solid[L] = LpVariable(f"sol_1200_{L}", lowBound=0, cat=LpInteger)
+    
+    # Спрос покрыт
+    for (W, L), qty in demand.items():
+        sources = []
+        # split даёт основную ширину W
+        for (Wm, Wp) in split_pairs:
+            if Wm == W:
+                sources.append(x_split.get((Wm, Wp, L), 0))
+        # narrowing даёт целевую W
+        for (Wsrc, Wtgt, delta) in narrowing_options:
+            if Wtgt == W:
+                sources.append(x_narrow.get((Wsrc, W, L), 0))
+        # solid для 1.2
+        if W == 1200:
+            sources.append(x_solid.get(L, 0))
+        # Также: если W — это парная ширина Wp от split, она тоже может покрыть спрос
+        for (Wm, Wp) in split_pairs:
+            if Wp == W:
+                sources.append(x_split.get((Wm, Wp, L), 0))
+        if sources:
+            prob += lpSum(sources) >= qty, f"d_{W}_{L}"
+    
+    # Баланс: для narrowing нужен источник Wsrc
+    # Источник Wsrc×L = остаток от split (Wp=Wsrc) минус прямое использование Wsrc
+    for (Wsrc, Wtgt, delta) in narrowing_options:
+        for L in lengths_set:
+            needed = x_narrow.get((Wsrc, Wtgt, L), 0)
+            # Источники Wsrc×L:
+            produced = []
+            # split даёт Wsrc как парный (Wp)
+            for (Wm, Wp) in split_pairs:
+                if Wp == Wsrc:
+                    produced.append(x_split.get((Wm, Wp, L), 0))
+            # Wsrc может покрывать прямой спрос (если он есть)
+            direct_use = 0
+            if (Wsrc, L) in demand:
+                # Спрос на Wsrc покрывается split-pair (Wm,Wsrc)
+                for (Wm, Wp) in split_pairs:
+                    if Wp == Wsrc:
+                        direct_use = demand[(Wsrc, L)]
+                        break
+            # Остаток = produced - direct_use
+            # Баланс: produced - direct_use >= needed
+            if produced:
+                prob += lpSum(produced) >= needed + direct_use, f"src_{Wsrc}_{Wtgt}_{L}"
+    
+    # Стоимость
+    cost = 0
+    for (Wm, Wp) in split_pairs:
+        for L in lengths_set:
+            xvar = x_split.get((Wm, Wp, L), 0)
+            plate_price = get_price(L, 8, PRICE_DB_PATH) or 10000
+            cut_cost = LONG_CUT_PRICE_PER_M * L
+            cost += xvar * (plate_price + cut_cost)
+    for (Wsrc, Wtgt, delta) in narrowing_options:
+        for L in lengths_set:
+            xvar = x_narrow.get((Wsrc, Wtgt, L), 0)
+            cut_cost = LONG_CUT_PRICE_PER_M * L
+            waste_cost = (delta / 1200.0) * (get_price(L, 6, PRICE_DB_PATH) or 5000)
+            cost += xvar * (cut_cost + waste_cost)
+    for L in lengths_set:
+        xvar = x_solid.get(L, 0)
+        plate_price = get_price(L, 8, PRICE_DB_PATH) or 10000
+        cost += xvar * plate_price
+    
+    # Штраф за неприспособленные остатки: считаем остатки Wp, которые не пошли дальше
+    for (Wm, Wp) in split_pairs:
+        for L in lengths_set:
+            produced = x_split.get((Wm, Wp, L), 0)
+            used = 0
+            # Wp использован в split
+            for (Wm2, Wp2) in split_pairs:
+                if Wm2 == Wp:
+                    used += x_split.get((Wm2, Wp2, L), 0)
+            # Wp использован в narrowing
+            for (Wsrc, Wtgt, delta) in narrowing_options:
+                if Wsrc == Wp:
+                    used += x_narrow.get((Wsrc, Wtgt, L), 0)
+            # Wp покрыл прямой спрос (если есть)
+            if (Wp, L) in demand:
+                used += 0  # уже учтено в спросе
+            # Остаток: produced - used
+            unused_var = LpVariable(f"unused_{Wp}_{L}", lowBound=0, cat=LpInteger)
+            prob += unused_var >= produced - used, f"unused_bal_{Wp}_{L}"
+            cost += 3000 * unused_var
+    
+    prob += cost
+    prob.solve()
+    
+    actions = []
+    for (Wm, Wp) in split_pairs:
+        for L in lengths_set:
+            try:
+                qty = int(round(value(x_split.get((Wm, Wp, L), 0))))
+                if qty > 0:
+                    actions.append(('split', Wm, Wp, L, qty, 1, 0))
+            except: pass
+    for (Wsrc, Wtgt, delta) in narrowing_options:
+        for L in lengths_set:
+            try:
+                qty = int(round(value(x_narrow.get((Wsrc, Wtgt, L), 0))))
+                if qty > 0:
+                    actions.append(('narrow', Wtgt, Wsrc, L, qty, 1, 0))
+            except: pass
+    for L in lengths_set:
+        try:
+            qty = int(round(value(x_solid.get(L, 0))))
+            if qty > 0:
+                actions.append(('solid', 1200, 0, L, qty, 0, 0))
+        except: pass
+    
+    try:
+        total_cost = value(cost)
+    except:
+        total_cost = 0
+    return {'actions': actions, 'summary': {'total_cost': total_cost}}
+
+
+def apply_width_optimization() -> None:
+    """Формирует приоритет ширин на основе mini-optimizer по спросу.
+    Мы агрегируем только по ширине (<1.2) и используем результат, чтобы
+    упорядочить вывод в визуализации. Длины сохраняем исходные.
+    """
+    global OPT_WIDTH_PRIORITY, OPT_PLAN
+    
+    # Сначала полная оптимизация с narrowing
+    OPT_PLAN = optimize_full_plan_with_narrowing()
+    if OPT_PLAN and OPT_PLAN.get('actions'):
+        print(f"[OPT_FULL] Найдено {len(OPT_PLAN['actions'])} действий, стоимость: {OPT_PLAN['summary']['total_cost']:.2f}")
+        # Логируем примеры
+        for act in OPT_PLAN['actions'][:5]:
+            src_type, W1, W2, L, qty, lc, tc = act
+            print(f"  {src_type}: W={W1}mm (парный={W2}mm), L={L}м, qty={qty}, резы: long={lc}, trans={tc}")
+    else:
+        print("[OPT_FULL] Оптимизация не дала результата, продолжаем базовым путём.")
+    orders = {}
+    def add(mm: int, n: int):
+        if n > 0:
+            orders[mm] = orders.get(mm, 0) + n
+    add(300, len(PLATES_0_32))
+    add(500, len(PLATES_0_46))
+    # 700 группа покрывает 0.70 и 0.72, но также учитываем спрос на их пары
+    add(700, len(PLATES_0_70) + len(PLATES_0_72) + len(PLATES_0_50) + len(PLATES_0_48))
+    add(900, len(PLATES_0_86) + len(PLATES_0_34))
+    pulp_result = optimize_cuts_pulp(orders)
+    # Базовый приоритет от оптимизатора по ширине
+    base = []
+    for r in pulp_result:
+        if (r.get('qty') or 0) <= 0:
+            continue
+        cid = r.get('cut_id')
+        if cid == 'cut300':
+            base.append('0_32')
+        elif cid == 'cut500':
+            base.append('0_46')
+        elif cid == 'cut700':
+            base.extend(['0_70', '0_72'])
+        elif cid == 'cut900':
+            base.append('0_86')
+    for k in ['0_32','0_46','0_70','0_72','0_86']:
+        if k not in base:
+            base.append(k)
+
+    # Усиливаем приоритет с учётом совпадений длин (меньше поперечных резов лучше)
+    def match_ratio(a: list[float], b: list[float]) -> float:
+        if not a or not b:
+            return 0.0
+        asorted = sorted(round(x, 2) for x in a)
+        bsorted = sorted(round(x, 2) for x in b)
+        i = j = matches = 0
+        while i < len(asorted) and j < len(bsorted):
+            if abs(asorted[i] - bsorted[j]) <= 0.05:
+                matches += 1; i += 1; j += 1
+            elif asorted[i] < bsorted[j]:
+                i += 1
+            else:
+                j += 1
+        return matches / min(len(a), len(b)) if min(len(a), len(b)) else 0.0
+
+    # ILP по длинам: собираем вход
+    width_demand = {
+        320: list(PLATES_0_32),
+        460: list(PLATES_0_46),
+        700: list(PLATES_0_70),
+        720: list(PLATES_0_72),
+        860: list(PLATES_0_86),
+        880: list(PLATES_0_88),
+        740: list(PLATES_0_74),
+        480: list(PLATES_0_48),
+        500: list(PLATES_0_50),
+        340: list(PLATES_0_34),
+    }
+    pair_map = {320:880, 460:740, 700:500, 720:480, 860:340}
+    len_result = optimize_with_lengths(width_demand, pair_map, trans_cut_penalty=0.6)
+    # Преобразуем результат в score: выше — лучше (меньше поперечных)
+    def score_from_len(w_key: str) -> float:
+        mm = {'0_32':320,'0_46':460,'0_70':700,'0_72':720,'0_86':860}[w_key]
+        r = len_result.get(mm, {})
+        matched = float(r.get('matched', 0))
+        trans = float(r.get('trans_cuts', 0))
+        total = float(len(width_demand.get(mm, []))) or 1.0
+        return matched/total - 0.5*(trans/total)
+    score = {k: score_from_len(k) for k in ['0_32','0_46','0_70','0_72','0_86']}
+
+    # Сортируем по score (desc), затем по базовому порядку
+    base_index = {k: i for i, k in enumerate(base)}
+    priority = sorted(base, key=lambda k: (-score.get(k, 0.0), base_index[k]))
+    OPT_WIDTH_PRIORITY = priority
 
 def make_plate_name(length_m: float, width_m: float, reinforcement: str = '8п') -> str:
     """Формирует строку наименования в стиле прайса: 'Плиты ПБ 63-12-8п'.
@@ -492,6 +903,88 @@ def optimize_cuts_pulp(orders: dict) -> list[dict]:
 
     return result
 
+
+def optimize_with_lengths(width_demand: dict[int, list[float]], pair_map: dict[int, int], trans_cut_penalty: float = 0.5) -> dict:
+    """ILP оптимизация по длинам: для каждой группы ширины w
+    распределяем длины из основного списка по длинам из парного списка.
+
+    - width_demand: {w_mm: [L1, L2, ...]} списки длин для основной ширины
+    - pair_map: сопоставление основной ширины w_mm -> парная ширина p_mm (например 320->880)
+    - trans_cut_penalty: штраф за несовпадение длины (0..1) в "штучных" единицах, чтобы предпочитать совпадения
+
+    Возвращает словарь с оценкой:
+      {w_mm: { 'matched': k, 'trans_cuts': t, 'plan': [(L_main, L_pair, match:0/1), ...] }}
+    """
+    try:
+        from pulp import LpProblem, LpMaximize, LpVariable, LpBinary, lpSum, value
+    except Exception:
+        # fallback: простое жадное сопоставление
+        result = {}
+        for w, main_ls in width_demand.items():
+            pair_ls = width_demand.get(pair_map.get(w, -1), [])
+            a = sorted(round(x, 2) for x in main_ls)
+            b = sorted(round(x, 2) for x in pair_ls)
+            i = j = matches = 0
+            plan = []
+            while i < len(a) and j < len(b):
+                if abs(a[i] - b[j]) <= 0.05:
+                    matches += 1; plan.append((a[i], b[j], 1)); i += 1; j += 1
+                elif a[i] < b[j]:
+                    plan.append((a[i], None, 0)); i += 1
+                else:
+                    j += 1
+            while i < len(a):
+                plan.append((a[i], None, 0)); i += 1
+            result[w] = {'matched': matches, 'trans_cuts': max(0, len(a) - matches), 'plan': plan}
+        return result
+
+    result = {}
+    for w_mm, main_ls in width_demand.items():
+        p_mm = pair_map.get(w_mm)
+        if p_mm is None:
+            continue
+        pair_ls = width_demand.get(p_mm, [])
+        A = [round(x, 2) for x in main_ls]
+        B = [round(x, 2) for x in pair_ls]
+        n = len(A); m = len(B)
+        prob = LpProblem(f"len_match_{w_mm}", LpMaximize)
+        x = [[LpVariable(f"x_{i}_{j}", lowBound=0, upBound=1, cat=LpBinary) for j in range(m)] for i in range(n)]
+        y = [LpVariable(f"y_{i}", lowBound=0, upBound=1, cat=LpBinary) for i in range(n)]  # 1 если есть парный
+        # Связи: каждому i максимум один j
+        for i in range(n):
+            prob += lpSum(x[i][j] for j in range(m)) == y[i]
+        # Каждый j максимум к одному i
+        for j in range(m):
+            prob += lpSum(x[i][j] for i in range(n)) <= 1
+        # Цель: максимизировать совпадения по длине, штрафуя несовпадения как trans cut
+        # score = sum_i sum_j x_ij * match(i,j) - trans_cut_penalty * sum_i (y_i - best_match)
+        # Реализуем: match(i,j)=1 если |A[i]-B[j]|<=0.05 else 1 - penalty
+        from math import fabs
+        match = [[1.0 if fabs(A[i]-B[j]) <= 0.05 else 1.0 - trans_cut_penalty for j in range(m)] for i in range(n)]
+        prob += lpSum(match[i][j] * x[i][j] for i in range(n) for j in range(m))
+        prob.solve()
+        plan = []
+        matched = 0
+        used_j = set()
+        for i in range(n):
+            paired = False
+            for j in range(m):
+                try:
+                    if value(x[i][j]) >= 0.5:
+                        paired = True
+                        used_j.add(j)
+                        good = 1 if abs(A[i]-B[j]) <= 0.05 else 0
+                        matched += good
+                        plan.append((A[i], B[j], good))
+                        break
+                except Exception:
+                    continue
+            if not paired:
+                plan.append((A[i], None, 0))
+        trans = sum(1 for a, b, good in plan if b is not None and good == 0)
+        result[w_mm] = {'matched': matched, 'trans_cuts': trans, 'plan': plan}
+    return result
+
 def load_cut_price_from_docx(path: str) -> float:
     """Пытается извлечь цену продольного реза из DOCX. Возвращает 0, если не удалось."""
     if Document is None or not os.path.exists(path):
@@ -528,9 +1021,60 @@ def load_cut_price_from_docx(path: str) -> float:
 
 def build_procurement_items():
     """Формирует реальные позиции закупки с учётом назначения реза.
-    Возвращает список dict: {length, width, qty, cuts_per_plate, purpose}.
+    Если есть OPT_PLAN — используем его, иначе fallback на PLATES_*.
+    Возвращает список dict: {length, width, qty, long_cuts, trans_cuts}.
     """
+    global OPT_PLAN
     items = []
+    
+    # Если оптимизатор дал план — используем его
+    if OPT_PLAN and OPT_PLAN.get('actions'):
+        for act in OPT_PLAN['actions']:
+            src_type, W1, W2, L, qty, lc, tc = act
+            W1_m = W1 / 1000.0; W2_m = W2 / 1000.0 if W2 else 0
+            if src_type == 'split':
+                # split: закупаем исходную плиту 1.2×L с продольным резом
+                # Она даст две полосы: W1 и W2, но в смете — одна позиция 1.2м
+                items.append({'length': round(L, 2), 'width': 1.2, 'qty': qty, 'long_cuts': lc, 'trans_cuts': tc, 'purpose': 'split_source'})
+            elif src_type == 'narrow':
+                # narrowing: закупаем плиту шириной W2 (исходная) и режем до W1
+                # В смете показываем W2 (исходную ширину)
+                items.append({'length': round(L, 2), 'width': W2_m, 'qty': qty, 'long_cuts': lc, 'trans_cuts': tc, 'purpose': 'narrow_source'})
+            elif src_type == 'solid':
+                items.append({'length': round(L, 2), 'width': W1_m, 'qty': qty, 'long_cuts': lc, 'trans_cuts': tc, 'purpose': 'solid'})
+        # агрегируем
+        agg = {}
+        for it in items:
+            key = (it['length'], it['width'], it['long_cuts'], it['trans_cuts'])
+            agg[key] = agg.get(key, 0) + it['qty']
+        result = []
+        for (L, W, long_cuts, trans_cuts), qty in sorted(agg.items(), key=lambda x: (x[0][1], x[0][0])):
+            result.append({'length': L, 'width': W, 'qty': qty, 'long_cuts': long_cuts, 'trans_cuts': trans_cuts})
+        return result
+    
+    # Fallback: старая логика с PLATES_*
+    def mismatch_count(main_list: list[float], pair_demand: list[float]) -> int:
+        if not main_list or not pair_demand:
+            return 0
+        a = sorted(round(x, 2) for x in main_list)
+        b = sorted(round(x, 2) for x in pair_demand)
+        i = j = matches = 0
+        while i < len(a) and j < len(b):
+            if abs(a[i] - b[j]) <= 0.05:
+                matches += 1; i += 1; j += 1
+            elif a[i] < b[j]:
+                i += 1
+            else:
+                j += 1
+        return max(0, min(len(main_list), len(pair_demand)) - matches)
+
+    pair_plan = {
+        '0.32': mismatch_count(PLATES_0_32, PLATES_0_88),
+        '0.46': mismatch_count(PLATES_0_46, PLATES_0_74),
+        '0.72': mismatch_count(PLATES_0_72, PLATES_0_48),
+        '0.70': mismatch_count(PLATES_0_70, PLATES_0_50),
+        '0.86': mismatch_count(PLATES_0_86, PLATES_0_34),
+    }
     # 1.2 без реза
     for L in PLATES_1_2:
         items.append({'length': round(L, 1), 'width': 1.2, 'qty': 1, 'long_cuts': 0, 'trans_cuts': 0, 'purpose': 'as_is'})
@@ -546,6 +1090,46 @@ def build_procurement_items():
     for L in PLATES_1_0:
         items.append({'length': round(L, 1), 'width': 1.0, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_1_0_main'})
         items.append({'length': round(L, 1), 'width': 0.2, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_1_0_strip'})
+    
+    # Плиты с меньшей шириной (получаются резом из 1.2м)
+    # 1.2 -> 1.08 + 0.12
+    for L in PLATES_1_08:
+        items.append({'length': round(L, 1), 'width': 1.08, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_1_08_main'})
+        items.append({'length': round(L, 1), 'width': 0.12, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_1_08_strip'})
+    
+    # 1.2 -> 0.46 + 0.74
+    for L in PLATES_0_46:
+        items.append({'length': round(L, 1), 'width': 0.46, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_0_46_main'})
+        items.append({'length': round(L, 1), 'width': 0.74, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_0_46_strip'})
+    
+    # 1.2 -> 0.32 + 0.88
+    # 1.2 -> 0.32 + 0.88 (часть 0.88 может требовать поперечного реза если длина отличается)
+    mismatch = pair_plan['0.32']
+    for idx, L in enumerate(PLATES_0_32):
+        items.append({'length': round(L, 1), 'width': 0.32, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_0_32_main'})
+        trans = 1 if idx < mismatch else 0
+        items.append({'length': round(L, 1), 'width': 0.88, 'qty': 1, 'long_cuts': 1, 'trans_cuts': trans, 'purpose': 'to_0_32_strip'})
+    
+    # 1.2 -> 0.72 + 0.48
+    mismatch = pair_plan['0.72']
+    for idx, L in enumerate(PLATES_0_72):
+        items.append({'length': round(L, 1), 'width': 0.72, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_0_72_main'})
+        trans = 1 if idx < mismatch else 0
+        items.append({'length': round(L, 1), 'width': 0.48, 'qty': 1, 'long_cuts': 1, 'trans_cuts': trans, 'purpose': 'to_0_72_strip'})
+    
+    # 1.2 -> 0.70 + 0.50
+    mismatch = pair_plan['0.70']
+    for idx, L in enumerate(PLATES_0_70):
+        items.append({'length': round(L, 1), 'width': 0.70, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_0_70_main'})
+        trans = 1 if idx < mismatch else 0
+        items.append({'length': round(L, 1), 'width': 0.50, 'qty': 1, 'long_cuts': 1, 'trans_cuts': trans, 'purpose': 'to_0_70_strip'})
+    
+    # 1.2 -> 0.86 + 0.34
+    mismatch = pair_plan['0.86']
+    for idx, L in enumerate(PLATES_0_86):
+        items.append({'length': round(L, 1), 'width': 0.86, 'qty': 1, 'long_cuts': 1, 'trans_cuts': 0, 'purpose': 'to_0_86_main'})
+        trans = 1 if idx < mismatch else 0
+        items.append({'length': round(L, 1), 'width': 0.34, 'qty': 1, 'long_cuts': 1, 'trans_cuts': trans, 'purpose': 'to_0_86_strip'})
     # агрегируем по (L,W,cuts)
     agg = {}
     for it in items:
@@ -571,9 +1155,20 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         name = make_plate_name(L, W)
         # 1) пытаемся взять из БД, если есть прайс-таблица
         # Используем БД (цены полностью перенесены)
-        db_price = get_price(L, reinforcement_code, PRICE_DB_PATH)
+        # Для плит с меньшей шириной используем нагрузку 6, для стандартных - 8
+        load_code = 6 if W < 1.0 else reinforcement_code
+        db_price = get_price(L, load_code, PRICE_DB_PATH)
         # 2) fallback — из XLSX-таблицы, если БД пустая
-        base_price = db_price if db_price is not None else (find_price_for_plate(price_table, L, reinforcement_code) or 0.0)
+        base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, L, load_code) or 0.0)
+        
+        # 3) Корректируем цену пропорционально ширине плиты
+        # Цены в БД даны для плит шириной 1.2м, корректируем для других ширин
+        if base_price_1_2m > 0:
+            # Рассчитываем цену пропорционально ширине
+            width_factor = W / 1.2  # коэффициент пропорциональности
+            base_price = base_price_1_2m * width_factor
+        else:
+            base_price = 0.0
         cuts_cost = long_cuts * (LONG_CUT_PRICE_PER_M * L) + trans_cuts * TRANSVERSE_CUT_PRICE
         unit_price = base_price + cuts_cost
         weight = approximate_weight_kg(L, W)
@@ -600,66 +1195,98 @@ def _draw_segment(ax, x0: float, length: float, color: str, label: str, y: float
     ax.text(x0 + length/2, y + height/2, label, ha='center', va='center', fontsize=8, color='white', weight='bold')
 
 
-def _draw_strip(ax, x0: float, length: float, width: float, color: str, label: str, y: float, hatch: str = None):
-    rect = patches.Rectangle((x0, y), length, width, linewidth=0.8, edgecolor='black', facecolor=color, alpha=0.9, hatch=hatch)
+def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float, label_main: str, label_rest: str | None = None):
+    # Основа плиты 1.2
+    rect = patches.Rectangle((x0, 0.0), length, TRACK_WIDTH_M, linewidth=1.2, edgecolor='black', facecolor='#ecf0f1', alpha=1.0)
     ax.add_patch(rect)
-    ax.text(x0 + length/2, y + width/2, label, ha='center', va='center', fontsize=7, color='white', weight='bold')
+    # Полоса основной ширины (снизу вверх)
+    main_rect = patches.Rectangle((x0, 0.0), length, main_w, linewidth=0.8, edgecolor='black', facecolor='#2ecc71', alpha=0.9)
+    ax.add_patch(main_rect)
+    # Разделительная линия реза
+    ax.plot([x0, x0 + length], [main_w, main_w], color='black', linestyle='--', linewidth=1)
+    # Метки
+    ax.text(x0 + length/2, main_w/2, label_main, ha='center', va='center', fontsize=8, color='white', weight='bold')
+    if label_rest and rest_w > 0.02:
+        ax.text(x0 + length/2, main_w + rest_w/2, label_rest, ha='center', va='center', fontsize=7, color='#2c3e50')
 
 
 def build_layout_sequence():
-    """Формирует последовательность сегментов вдоль дорожки."""
+    """Формирует последовательность сегментов вдоль дорожки.
+    Если есть OPT_PLAN — используем его, иначе fallback на PLATES_*.
+    """
+    global OPT_PLAN
     sequence = []
 
+    def plate_label(L: float, W: float) -> str:
+        Ldm = int(round(L * 10))
+        Wdm_val = round(W * 10, 1)
+        if abs(Wdm_val - int(Wdm_val)) < 1e-6:
+            Wdm = str(int(Wdm_val))
+        else:
+            Wdm = str(Wdm_val).replace('.', ',')
+        return f'ПБ {Ldm}-{Wdm}-8п'
+    
+    # Если есть OPT_PLAN — визуализируем по нему
+    if OPT_PLAN and OPT_PLAN.get('actions'):
+        for act in OPT_PLAN['actions']:
+            src_type, W1, W2, L, qty, lc, tc = act
+            W1_m = W1 / 1000.0; W2_m = W2 / 1000.0 if W2 else 0
+            for _ in range(qty):
+                if src_type == 'solid':
+                    sequence.append({'length': L, 'mode': 'solid', 'label': plate_label(L, W1_m)})
+                elif src_type == 'split':
+                    rest_w = W2_m if W2_m < W1_m else (1.2 - W1_m)
+                    rest_label = f'+{rest_w:.2f}'.replace('.', ',')
+                    sequence.append({'length': L, 'mode': 'split', 'main_w': W1_m, 'rest_w': rest_w,
+                                     'label_main': plate_label(L, W1_m), 'label_rest': rest_label})
+                elif src_type == 'narrow':
+                    # narrowing: показываем целевую W1 и отход (W2-W1)
+                    delta = abs(W2_m - W1_m) if W2_m else 0
+                    rest_label = f'-{delta:.2f}'.replace('.', ',') if delta > 0.001 else ''
+                    sequence.append({'length': L, 'mode': 'split', 'main_w': W1_m, 'rest_w': delta,
+                                     'label_main': plate_label(L, W1_m), 'label_rest': rest_label})
+        return sequence
+    
+    # Fallback: старая логика с PLATES_*
     for L in PLATES_1_2:
-        sequence.append({
-            'type': '1.2', 'length': L, 'strip': None, 'label': f'1.2×{L:.1f}'
-        })
+        sequence.append({'length': L, 'mode': 'solid', 'label': plate_label(L, 1.2)})
 
     for L in PLATES_1_5_TO_1_2:
-        sequence.append({
-            'type': '1.5->1.2', 'length': L, 'strip': {'width': 0.3, 'label': '0.3'}, 'label': f'1.5→1.2 {L:.1f}'
-        })
+        sequence.append({'length': L, 'mode': 'solid', 'label': plate_label(L, 1.2)})
 
     for L in PLATES_1_0:
-        sequence.append({
-            'type': '1.2->1.0', 'length': L, 'strip': {'width': 0.2, 'label': '0.2'}, 'label': f'1.2→1.0 {L:.1f}'
-        })
+        sequence.append({'length': L, 'mode': 'split', 'main_w': 1.0, 'rest_w': 0.2,
+                         'label_main': plate_label(L, 1.0), 'label_rest': '+0,2'})
 
-    # Новые: 1.2 → 1.08 (остаток 0.12 в обрезки)
     for L in globals().get('PLATES_1_08', []):
-        sequence.append({
-            'type': '1.2->1.08', 'length': L, 'strip': {'width': 0.12, 'label': '0.12'}, 'label': f'1.2→1.08 {L:.1f}'
-        })
+        sequence.append({'length': L, 'mode': 'split', 'main_w': 1.08, 'rest_w': 0.12,
+                         'label_main': plate_label(L, 1.08), 'label_rest': '+0,12'})
 
-    # Новые: 1.2 → 0.46 (остаток 0.74 — используемая лента)
-    for L in globals().get('PLATES_0_46', []):
-        sequence.append({
-            'type': '1.2->0.46', 'length': L, 'strip': {'width': 0.74, 'label': '0.74'}, 'label': f'1.2→0.46 {L:.1f}'
-        })
-
-    # Новые: 1.2 → 0.32 (остаток 0.88 — используемая лента)
-    for L in globals().get('PLATES_0_32', []):
-        sequence.append({
-            'type': '1.2->0.32', 'length': L, 'strip': {'width': 0.88, 'label': '0.88'}, 'label': f'1.2→0.32 {L:.1f}'
-        })
-
-    # Новые: 1.2 → 0.72 (остаток 0.48 — используемая лента)
-    for L in globals().get('PLATES_0_72', []):
-        sequence.append({
-            'type': '1.2->0.72', 'length': L, 'strip': {'width': 0.48, 'label': '0.48'}, 'label': f'1.2→0.72 {L:.1f}'
-        })
-
-    # Новые: 1.2 → 0.70 (остаток ≈0.50 — используемая лента)
-    for L in globals().get('PLATES_0_70', []):
-        sequence.append({
-            'type': '1.2->0.70', 'length': L, 'strip': {'width': 0.50, 'label': '0.50'}, 'label': f'1.2→0.70 {L:.1f}'
-        })
-
-    # Новые: 1.2 → 0.86 (остаток 0.34 — используемая лента)
-    for L in globals().get('PLATES_0_86', []):
-        sequence.append({
-            'type': '1.2->0.86', 'length': L, 'strip': {'width': 0.34, 'label': '0.34'}, 'label': f'1.2→0.86 {L:.1f}'
-        })
+    # Группы < 1.2 м будем добавлять в порядке приоритета OPT_WIDTH_PRIORITY
+    groups_map = {
+        '0_32': (globals().get('PLATES_0_32', []), 0.32, 0.88, '+0,88'),
+        '0_46': (globals().get('PLATES_0_46', []), 0.46, 0.74, '+0,74'),
+        '0_70': (globals().get('PLATES_0_70', []), 0.70, 0.50, '+0,50'),
+        '0_72': (globals().get('PLATES_0_72', []), 0.72, 0.48, '+0,48'),
+        '0_86': (globals().get('PLATES_0_86', []), 0.86, 0.34, '+0,34'),
+    }
+    # Если пользователь заказал пары (0.74/0.88/0.48/0.50/0.34), добавим их как отдельные “main”
+    if len(globals().get('PLATES_0_74', [])):
+        groups_map['0_74'] = (globals().get('PLATES_0_74', []), 0.74, 0.46, '+0,46')
+    if len(globals().get('PLATES_0_88', [])):
+        groups_map['0_88'] = (globals().get('PLATES_0_88', []), 0.88, 0.32, '+0,32')
+    if len(globals().get('PLATES_0_48', [])):
+        groups_map['0_48'] = (globals().get('PLATES_0_48', []), 0.48, 0.72, '+0,72')
+    if len(globals().get('PLATES_0_50', [])):
+        groups_map['0_50'] = (globals().get('PLATES_0_50', []), 0.50, 0.70, '+0,70')
+    if len(globals().get('PLATES_0_34', [])):
+        groups_map['0_34'] = (globals().get('PLATES_0_34', []), 0.34, 0.86, '+0,86')
+    order = OPT_WIDTH_PRIORITY or list(groups_map.keys())
+    for key in order:
+        items, main_w, rest_w, rest_label = groups_map[key]
+        for L in items:
+            sequence.append({'length': L, 'mode': 'split', 'main_w': main_w, 'rest_w': rest_w,
+                             'label_main': plate_label(L, main_w), 'label_rest': rest_label})
 
     return sequence
 
@@ -720,56 +1347,25 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     ax_track.add_patch(track_rect)
 
     # Цвета типов
-    colors = {
-        '1.2': '#2ecc71',        # зелёный
-        '1.5->1.2': '#e67e22',   # оранжевый
-        '1.2->1.0': '#f1c40f',   # жёлтый
-        '1.2->1.08': '#8e44ad',  # фиолетовый
-        '1.2->0.46': '#1abc9c',  # бирюзовый
-        '1.2->0.32': '#e84393',  # розовый
-        '1.2->0.72': '#2d3436',  # тёмно-серый
-        '1.2->0.70': '#00b894',  # зелёный оттенок
-        '1.2->0.86': '#0984e3',  # синий оттенок
-        'strip_0.3': '#e74c3c',  # красный
-        'strip_0.2': '#3498db',  # синий
-    }
+    # Цвета больше не нужны для разных типов, так как мы рисуем рез внутри 1.2
 
     # Рисуем последовательность
     x = 0.0
     for item in seq:
-        base_color = colors[item['type']]
-        _draw_segment(ax_track, x, item['length'], base_color, item['label'])
-        if item['strip']:
-            strip_w = item['strip']['width']
-            # Подбираем цвет/штриховку для новых лент
-            if abs(strip_w - 0.3) < 1e-6:
-                strip_color = colors['strip_0.3']; hatch = '//'
-            elif abs(strip_w - 0.2) < 1e-6:
-                strip_color = colors['strip_0.2']; hatch = 'xx'
-            elif abs(strip_w - 0.12) < 1e-6:
-                strip_color = '#9b59b6'; hatch = '...'
-            elif abs(strip_w - 0.74) < 1e-6:
-                strip_color = '#16a085'; hatch = '++'
-            elif abs(strip_w - 0.88) < 1e-6:
-                strip_color = '#e84393'; hatch = 'oo'
-            elif abs(strip_w - 0.48) < 1e-6:
-                strip_color = '#2d3436'; hatch = '__'
-            elif abs(strip_w - 0.50) < 1e-6:
-                strip_color = '#00b894'; hatch = '+++'
-            elif abs(strip_w - 0.34) < 1e-6:
-                strip_color = '#0984e3'; hatch = '//.'
-            else:
-                strip_color = '#7f8c8d'; hatch = '..'
-            _draw_strip(ax_track, x, item['length'], strip_w, strip_color, item['strip']['label'], y=TRACK_WIDTH_M + 0.05, hatch=hatch)
+        if item.get('mode') == 'solid':
+            _draw_segment(ax_track, x, item['length'], '#2ecc71', item['label'])
+        else:
+            _draw_split_plate(
+                ax_track, x, item['length'],
+                main_w=item['main_w'], rest_w=item['rest_w'],
+                label_main=item['label_main'], label_rest=item.get('label_rest')
+            )
         x += item['length']
 
     # Легенда
     legend_patches = [
-        patches.Patch(facecolor=colors['1.2'], edgecolor='black', label='1.2 м (без реза)'),
-        patches.Patch(facecolor=colors['1.5->1.2'], edgecolor='black', label='1.5 → 1.2 (лента 0.3)'),
-        patches.Patch(facecolor=colors['1.2->1.0'], edgecolor='black', label='1.2 → 1.0 (лента 0.2 в обрезки)'),
-        patches.Patch(facecolor=colors['strip_0.3'], edgecolor='black', label='Лента 0.3'),
-        patches.Patch(facecolor=colors['strip_0.2'], edgecolor='black', label='Лента 0.2 (обрезки)'),
+        patches.Patch(facecolor='#2ecc71', edgecolor='black', label='Плита 1.2 м'),
+        patches.Patch(facecolor='#ecf0f1', edgecolor='black', label='Зона реза (контур)'),
     ]
     ax_track.legend(handles=legend_patches, loc='upper right')
 
