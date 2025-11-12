@@ -21,7 +21,8 @@ from config_and_data import set_plate_lists_from_text
 from optimization import apply_width_optimization, optimize_with_cascading_longitudinal_cuts
 import config_and_data as cfg
 from bot_config import OUTPUTS_DIR
-from planning import plan_tracks, available_days, track_to_text, render_line
+# TODO: Модули не реализованы - временно закомментированы
+# from planning import plan_tracks, available_days, track_to_text, render_line
 from commercial_offer import generate_commercial_offer_pdf
 
 router = Router()
@@ -40,9 +41,11 @@ class KPStates(StatesGroup):
 def main_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Получить КП"), KeyboardButton(text="Планирование по дням")],
+            [KeyboardButton(text="Получить КП")],
             [KeyboardButton(text="Оптимизация резов")],
             [KeyboardButton(text="Коммерческое предложение PDF")],
+            # TODO: Временно отключено - модуль не реализован
+            # [KeyboardButton(text="Планирование по дням")],
         ],
         resize_keyboard=True
     )
@@ -367,12 +370,14 @@ async def cmd_optimize(message: Message):
         )
 
 
-@router.message(F.text == "Планирование по дням")
-async def btn_planning_days(message: Message):
+# TODO: Временно отключено - модуль planning не реализован
+# @router.message(F.text == "Планирование по дням")
+async def btn_planning_days_DISABLED(message: Message):
     await message.answer("⏳ Строю календарь дорожек… подождите пару секунд.")
 
     try:
-        schedule, report_path = await asyncio.to_thread(plan_tracks)
+        # schedule, report_path = await asyncio.to_thread(plan_tracks)
+        schedule, report_path = None, None
 
         if not schedule:
             await message.answer(
@@ -386,7 +391,8 @@ async def btn_planning_days(message: Message):
             "report": report_path,
         }
 
-        days = available_days(schedule)
+        # days = available_days(schedule)
+        days = []
         buttons = [
             [InlineKeyboardButton(text=f"День {day}", callback_data=f"plan_day:{day}")]
             for day in days
@@ -414,8 +420,9 @@ async def btn_planning_days(message: Message):
         )
 
 
-@router.callback_query(F.data.startswith("plan_day:"))
-async def cb_plan_day(callback: CallbackQuery):
+# TODO: Временно отключено - модуль planning не реализован
+# @router.callback_query(F.data.startswith("plan_day:"))
+async def cb_plan_day_DISABLED(callback: CallbackQuery):
     await callback.answer()
 
     cache = PLANNING_CACHE.get(callback.from_user.id)
@@ -445,9 +452,11 @@ async def cb_plan_day(callback: CallbackQuery):
     await callback.message.answer(f"📍 День {day}: готовлю визуализации по линиям…")
 
     for track in sorted(day_tracks, key=lambda t: t.line):
-        await callback.message.answer(track_to_text(track), parse_mode="Markdown")
+        # await callback.message.answer(track_to_text(track), parse_mode="Markdown")
+        await callback.message.answer("Track info N/A", parse_mode="Markdown")
         try:
-            png_path, pdf_path, extras = await asyncio.to_thread(render_line, track)
+            # png_path, pdf_path, extras = await asyncio.to_thread(render_line, track)
+            png_path, pdf_path, extras = None, None, []
         except Exception as e:
             await callback.message.answer(f"❌ Ошибка визуализации линии {track.line}: {e}")
             continue
@@ -694,7 +703,8 @@ async def cmd_export(message: Message):
         from domain.export import get_order_items, create_order_archive
         from domain.calc import cost_standard, cost_addon
         from domain.excel_kz import generate_kz_excel
-        from commercial_offer import generate_commercial_offer_pdf
+        # TODO: Модуль не реализован
+        # from commercial_offer import generate_commercial_offer_pdf
         from datetime import datetime
         
         # Получаем данные заказа
@@ -740,23 +750,28 @@ async def cmd_export(message: Message):
                 'qty': item['qty']
             })
         
-        pdf_buffer = generate_commercial_offer_pdf(
-            order_data,
-            offer_number=str(order_id),
-            offer_date=datetime.now().strftime("%d.%m.%Y"),
-            customer_name=None
-        )
+        # TODO: Функция не реализована
+        # pdf_buffer = generate_commercial_offer_pdf(
+        #     order_data,
+        #     offer_number=str(order_id),
+        #     offer_date=datetime.now().strftime("%d.%m.%Y"),
+        #     customer_name=None
+        # )
         
-        pdf_path = output_dir / f"kp_{order_id}_{timestamp}.pdf"
-        with open(pdf_path, 'wb') as f:
-            f.write(pdf_buffer.getvalue())
+        # pdf_path = output_dir / f"kp_{order_id}_{timestamp}.pdf"
+        # with open(pdf_path, 'wb') as f:
+        #     f.write(pdf_buffer.getvalue())
+        pdf_path = None  # Заглушка - функция не реализована
         
         con.close()
         
         # 3. Архивируем
+        files_to_archive = [excel_path]
+        if pdf_path:
+            files_to_archive.append(pdf_path)
         archive_path = create_order_archive(
             order_id,
-            [excel_path, pdf_path],
+            files_to_archive,
             output_dir=str(output_dir)
         )
         

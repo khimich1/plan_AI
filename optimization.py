@@ -22,10 +22,10 @@ OPT_CASCADING_PLAN = {}  # результат каскадной оптимиз�
 
 
 # ==================== ИМПОРТ LEGACY ФУНКЦИЙ ====================
-# Старые функции перенесены в optimization_legacy.py для удобства чтения кода.
+# Старые функции находятся в visualize_kz_plan.py.
 # Реэкспортируем их для обратной совместимости.
 
-from optimization_legacy import (
+from visualize_kz_plan import (
     optimize_full_plan_with_narrowing,
     optimize_cuts_pulp,
     optimize_with_lengths,
