@@ -6,6 +6,7 @@
 """
 
 import io
+import os
 import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -36,6 +37,57 @@ BANK_CORR_ACCOUNT = "30101810500000000653"
 
 # Путь к базе данных с ценами
 DB_PATH = "pb.db"
+
+
+# ==================== РЕГИСТРАЦИЯ ШРИФТОВ ====================
+
+def register_fonts():
+    """
+    Регистрирует русские шрифты для ReportLab
+    Ищет доступные шрифты Windows с поддержкой кириллицы
+    """
+    # Пути к стандартным шрифтам Windows
+    windows_fonts = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts')
+    
+    # Список шрифтов для регистрации (имя в ReportLab, файл TTF)
+    fonts_to_register = [
+        ('DejaVuSans', 'DejaVuSans.ttf'),
+        ('DejaVuSans-Bold', 'DejaVuSans-Bold.ttf'),
+        ('Arial', 'arial.ttf'),
+        ('Arial-Bold', 'arialbd.ttf'),
+        ('TimesNewRoman', 'times.ttf'),
+        ('TimesNewRoman-Bold', 'timesbd.ttf'),
+    ]
+    
+    registered = False
+    
+    for font_name, font_file in fonts_to_register:
+        font_path = os.path.join(windows_fonts, font_file)
+        
+        if os.path.exists(font_path):
+            try:
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
+                if not registered:
+                    # Используем первый найденный шрифт как основной
+                    globals()['FONT_NORMAL'] = font_name
+                    globals()['FONT_BOLD'] = font_name + '-Bold' if font_name != 'DejaVuSans' else font_name
+                    registered = True
+            except Exception as e:
+                continue
+    
+    if not registered:
+        # Если не нашли ни одного TTF шрифта, используем встроенные
+        # (но они не поддерживают кириллицу)
+        globals()['FONT_NORMAL'] = 'Helvetica'
+        globals()['FONT_BOLD'] = 'Helvetica-Bold'
+    
+    return registered
+
+
+# Регистрируем шрифты при импорте модуля
+HAS_CYRILLIC_FONTS = register_fonts()
+FONT_NORMAL = globals().get('FONT_NORMAL', 'Helvetica')
+FONT_BOLD = globals().get('FONT_BOLD', 'Helvetica-Bold')
 
 
 # ==================== ФУНКЦИИ ====================
@@ -165,10 +217,11 @@ def generate_commercial_offer_pdf(
     # Стили
     styles = getSampleStyleSheet()
     
-    # Кастомные стили
+    # Кастомные стили с русскими шрифтами
     style_title = ParagraphStyle(
         'CustomTitle',
         parent=styles['Heading1'],
+        fontName=FONT_BOLD,
         fontSize=16,
         textColor=colors.HexColor('#1f4788'),
         spaceAfter=6*mm,
@@ -178,6 +231,7 @@ def generate_commercial_offer_pdf(
     style_normal = ParagraphStyle(
         'CustomNormal',
         parent=styles['Normal'],
+        fontName=FONT_NORMAL,
         fontSize=10,
         leading=14
     )
@@ -185,6 +239,7 @@ def generate_commercial_offer_pdf(
     style_small = ParagraphStyle(
         'CustomSmall',
         parent=styles['Normal'],
+        fontName=FONT_NORMAL,
         fontSize=9,
         leading=12
     )
@@ -309,7 +364,7 @@ def generate_commercial_offer_pdf(
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4788')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 0), (-1, 0), FONT_BOLD),
         ('FONTSIZE', (0, 0), (-1, 0), 9),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
         ('TOPPADDING', (0, 0), (-1, 0), 8),
@@ -320,13 +375,13 @@ def generate_commercial_offer_pdf(
         ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # № по центру
         ('ALIGN', (3, 1), (3, -1), 'CENTER'),  # Кол-во по центру
         ('ALIGN', (4, 1), (-1, -1), 'RIGHT'),  # Цены справа
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTNAME', (0, 1), (-1, -1), FONT_NORMAL),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
         ('GRID', (0, 0), (-1, -4), 0.5, colors.grey),
         
         # Итоги
         ('BACKGROUND', (0, -3), (-1, -1), colors.HexColor('#f0f0f0')),
-        ('FONTNAME', (0, -3), (-1, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (0, -3), (-1, -1), FONT_BOLD),
         ('FONTSIZE', (0, -3), (-1, -1), 10),
         ('LINEABOVE', (0, -3), (-1, -3), 1.5, colors.black),
         ('LINEABOVE', (0, -1), (-1, -1), 1.5, colors.black),
