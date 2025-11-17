@@ -442,6 +442,266 @@ def build_procurement_items():
     return result
 
 
+# ==================== РАСЧЁТ СТОИМОСТИ ОСТАТКОВ ====================
+
+def calculate_unused_rest_cost(length_m: float, width_mm: int, base_price_1_2m: float) -> float:
+    """
+    Рассчитывает стоимость неиспользованного остатка для плиты.
+
+    Логика:
+    1. Находит первичный рез, из которого получилась плита.
+    2. Определяет ширину остатка (rest_mm) для этого первичного реза.
+    3. Считает, сколько этих остатков было произведено и сколько из них использованы вторичными резами.
+    4. Вычисляет количество неиспользованных остатков.
+    5. Определяет, сколько конечных плит (первичных + вторичных) было произведено из одной 1.2-метровой плиты:
+       - учитываются плиты из primary-cut;
+       - учитываются плиты из secondary-cut, породившихся от этого же остатка.
+    6. Стоимость остатка = цена полной 1.2-м плиты × (rest_mm / 1200).
+    7. Если остаток не использован — стоимость распределяется пропорционально количеству всех плит-потомков.
+    """
+
+    try:
+        from optimization import OPT_CASCADING_PLAN
+
+        if not OPT_CASCADING_PLAN or not OPT_CASCADING_PLAN.get('primary_cuts'):
+            return 0.0
+
+        primary_cuts = OPT_CASCADING_PLAN['primary_cuts']
+        secondary_cuts = OPT_CASCADING_PLAN.get('secondary_cuts', [])
+        assignments = OPT_CASCADING_PLAN.get('plate_assignments', [])
+
+        # === ШАГ 1: Находим первичный рез для этой плиты ===
+        matching_cut = None
+        for cut in primary_cuts:
+            if cut['width'] == width_mm:
+                lengths = cut.get('lengths', [])
+                if length_m in lengths or any(abs(l - length_m) < 0.1 for l in lengths):
+                    matching_cut = cut
+                    break
+
+        if not matching_cut:
+            return 0.0
+
+        rest_mm = matching_cut.get('rest', 0)
+        if rest_mm <= 0:
+            return 0.0
+
+        total_rest_qty = matching_cut['qty']
+
+        # === ШАГ 2: Считаем использованные остатки ===
+        used_rest_qty = 0
+        for sec in secondary_cuts:
+            if abs(sec.get('source', 0) - rest_mm) < 5:
+                if any(abs(l - length_m) < 0.1 for l in sec.get('source_lengths', [])):
+                    used_rest_qty += sec.get('qty', 0)
+
+        unused_rest_qty = max(0, total_rest_qty - used_rest_qty)
+        if unused_rest_qty == 0:
+            return 0.0
+
+        # === ШАГ 3: Считаем все плиты, произведённые из одного primary-cut ===
+        plates_from_this_cut = 0
+
+        # Первичные плиты
+        for a in assignments:
+            if (a.get('source') == 'primary' and
+                abs(a.get('length', 0) - length_m) < 0.1 and
+                a.get('width') == width_mm and
+                abs(a.get('rest_width', 0) - rest_mm) < 5):
+                plates_from_this_cut += 1
+
+        # Вторичные плиты, порождённые этим же остатком
+        for a in assignments:
+            if (a.get('source') == 'secondary' and
+                abs(a.get('length', 0) - length_m) < 0.1 and
+                a.get('width') == width_mm and
+                abs(a.get('source_rest', 0) - rest_mm) < 5):
+                plates_from_this_cut += 1
+
+        # Если assignments пустой или не нашёлся → fallback
+        if plates_from_this_cut == 0:
+            plates_from_this_cut = matching_cut['qty']
+            for sec in secondary_cuts:
+                if abs(sec.get('source', 0) - rest_mm) < 5:
+                    if any(abs(l - length_m) < 0.1 for l in sec.get('source_lengths', [])):
+                        pieces = sec.get('pieces', 1)
+                        plates_from_this_cut += sec.get('qty', 0) * pieces
+
+        # === ШАГ 4: Стоимость остатка ===
+        rest_price_per_unit = base_price_1_2m * (rest_mm / 1200.0)
+
+        # === ШАГ 5: Распределение стоимости остатка ===
+        if plates_from_this_cut > 0:
+            rest_cost_per_plate = (rest_price_per_unit * unused_rest_qty) / plates_from_this_cut
+        else:
+            rest_cost_per_plate = 0.0
+
+        return rest_cost_per_plate
+
+    except Exception as e:
+        print(f"[REST_COST][ERROR] {e}")
+        return 0.0
+
+
+def calculate_waste_cost(length_m: float, width_mm: int, base_price_1_2m: float) -> float:
+    """
+    Рассчитывает стоимость отходов для плиты.
+
+    Логика:
+    1. Находит вторичные резы, которые создали отходы.
+    2. Определяет отходы (waste по ширине и length_waste по длине) для этих резов.
+    3. Считает стоимость отходов по площади.
+    4. Находит первичный рез, из которого получились эти вторичные резы.
+    5. Распределяет стоимость отходов на ВСЕ плиты из одной исходной плиты (первичные + вторичные).
+    """
+
+    try:
+        from optimization import OPT_CASCADING_PLAN
+
+        if not OPT_CASCADING_PLAN or not OPT_CASCADING_PLAN.get('secondary_cuts'):
+            return 0.0
+
+        primary_cuts = OPT_CASCADING_PLAN.get('primary_cuts', [])
+        secondary_cuts = OPT_CASCADING_PLAN.get('secondary_cuts', [])
+        assignments = OPT_CASCADING_PLAN.get('plate_assignments', [])
+
+        total_waste_cost = 0.0
+
+        # === ШАГ 1: Находим первичный рез, из которого получилась эта плита ===
+        matching_primary_cut = None
+        
+        # Вариант 1: Плита из первичного реза
+        for cut in primary_cuts:
+            if cut['width'] == width_mm:
+                lengths = cut.get('lengths', [])
+                if length_m in lengths or any(abs(l - length_m) < 0.1 for l in lengths):
+                    matching_primary_cut = cut
+                    break
+        
+        # Вариант 2: Плита из вторичного реза - находим первичный рез через остаток
+        if not matching_primary_cut:
+            for sec_cut in secondary_cuts:
+                output_width = sec_cut.get('cuts', [0])[0] if sec_cut.get('cuts') else 0
+                output_lengths = sec_cut.get('lengths', [])
+                
+                # Проверяем, создаёт ли этот вторичный рез плиты нужного размера
+                if (abs(output_width - width_mm) < 5 and
+                    any(abs(l - length_m) < 0.1 for l in output_lengths)):
+                    # Находим первичный рез, который создал остаток для этого вторичного реза
+                    source_rest = sec_cut.get('source', 0)
+                    for cut in primary_cuts:
+                        if abs(cut.get('rest', 0) - source_rest) < 5:
+                            source_lengths = sec_cut.get('source_lengths', [])
+                            if source_lengths:
+                                # Проверяем, что длина остатка соответствует длине первичного реза
+                                primary_lengths = cut.get('lengths', [])
+                                if any(abs(sl - pl) < 0.1 for sl in source_lengths for pl in primary_lengths):
+                                    matching_primary_cut = cut
+                                    break
+                    if matching_primary_cut:
+                        break
+        
+        if not matching_primary_cut:
+            return 0.0
+        
+        # === ШАГ 2: Находим все вторичные резы с отходами из остатка этого первичного реза ===
+        rest_mm = matching_primary_cut.get('rest', 0)
+        matching_secondary_cuts = []
+        
+        for sec_cut in secondary_cuts:
+            if abs(sec_cut.get('source', 0) - rest_mm) < 5:
+                source_lengths = sec_cut.get('source_lengths', [])
+                primary_lengths = matching_primary_cut.get('lengths', [])
+                # Проверяем, что длина остатка соответствует длине первичного реза
+                if (not source_lengths or not primary_lengths or
+                    any(abs(sl - pl) < 0.1 for sl in source_lengths for pl in primary_lengths)):
+                    matching_secondary_cuts.append(sec_cut)
+        
+        if not matching_secondary_cuts:
+            return 0.0
+        
+        # === ШАГ 3: Считаем все плиты из одной исходной плиты ===
+        plates_from_source = 0
+        primary_lengths = matching_primary_cut.get('lengths', [])
+        
+        # Считаем первичные плиты (все плиты из этого первичного реза)
+        for a in assignments:
+            if (a.get('source') == 'primary' and
+                a.get('width') == width_mm and
+                abs(a.get('rest_width', 0) - rest_mm) < 5):
+                # Проверяем, что длина соответствует длинам первичного реза
+                if (not primary_lengths or 
+                    any(abs(a.get('length', 0) - pl) < 0.1 for pl in primary_lengths)):
+                    plates_from_source += 1
+        
+        # Считаем вторичные плиты из того же остатка (все вторичные плиты, независимо от размера)
+        for a in assignments:
+            if (a.get('source') == 'secondary' and
+                abs(a.get('source_rest', 0) - rest_mm) < 5):
+                plates_from_source += 1
+        
+        # Fallback: если assignments пустой
+        if plates_from_source == 0:
+            plates_from_source = matching_primary_cut['qty']
+            for sec in secondary_cuts:
+                if abs(sec.get('source', 0) - rest_mm) < 5:
+                    pieces = sec.get('pieces', 1)
+                    plates_from_source += sec.get('qty', 0) * pieces
+
+        # === ШАГ 4: Считаем отходы и их стоимость ===
+        for sec_cut in matching_secondary_cuts:
+            waste_width_mm = sec_cut.get('waste', 0)
+            waste_length_mm = sec_cut.get('length_waste', 0)
+            qty = sec_cut.get('qty', 0)
+            source_lengths = sec_cut.get('source_lengths', [])
+            source_rest = sec_cut.get('source', 0)
+
+            if qty == 0:
+                continue
+
+            # Отходы по ШИРИНЕ
+            if waste_width_mm > 0:
+                # Берём первую длину из source_lengths (обычно все одинаковые)
+                source_length = source_lengths[0] if source_lengths else length_m
+                
+                # Площадь отхода в м²
+                waste_area_m2 = (waste_width_mm / 1000.0) * source_length
+                
+                # Цена за м² = базовая цена / площадь исходной плиты (1.2м × длина)
+                waste_price_per_m2 = base_price_1_2m / (1.2 * source_length)
+                
+                # Стоимость отхода для всех qty резов
+                waste_cost_total = waste_area_m2 * waste_price_per_m2 * qty
+                
+                # ВАЖНО: Распределяем стоимость отходов на ВСЕ плиты из одной исходной плиты
+                if plates_from_source > 0:
+                    total_waste_cost += waste_cost_total / plates_from_source
+
+            # Отходы по ДЛИНЕ
+            if waste_length_mm > 0:
+                # Площадь отхода в м²
+                waste_area_m2 = (waste_length_mm / 1000.0) * (source_rest / 1000.0)
+                
+                # Цена за м²
+                source_length = source_lengths[0] if source_lengths else length_m
+                waste_price_per_m2 = base_price_1_2m / (1.2 * source_length)
+                
+                # Стоимость отхода для всех qty резов
+                waste_cost_total = waste_area_m2 * waste_price_per_m2 * qty
+                
+                # ВАЖНО: Распределяем стоимость отходов на ВСЕ плиты из одной исходной плиты
+                if plates_from_source > 0:
+                    total_waste_cost += waste_cost_total / plates_from_source
+
+        return total_waste_cost
+
+    except Exception as e:
+        print(f"[WASTE_COST][ERROR] {e}")
+        import traceback
+        traceback.print_exc()
+        return 0.0
+
+
 def build_price_rows(price_table: dict, reinforcement_code: int = 8):
     """Формирует строки сметы."""
     items = build_procurement_items()
@@ -453,7 +713,15 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         long_cuts, trans_cuts = it['long_cuts'], it['trans_cuts']
         name = cfg.make_plate_name(L, W)
         
-        load_code = 6 if W < 1.0 else reinforcement_code
+        # Парсим нагрузку из названия плиты (например, "ПБ 36-0,3-8п" → load_code=8)
+        load_code = reinforcement_code  # По умолчанию
+        # Ищем паттерн "8п", "10п", "12п" в названии
+        match = re.search(r'(\d+)п', name)
+        if match:
+            parsed_load = int(match.group(1))
+            if parsed_load in [6, 8, 10, 12]:
+                load_code = parsed_load
+        
         db_price = get_price(L, load_code, cfg.PRICE_DB_PATH)
         base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, L, load_code) or 0.0)
         
@@ -464,7 +732,14 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
             base_price = 0.0
         
         cuts_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L) + trans_cuts * cfg.TRANSVERSE_CUT_PRICE
-        unit_price = base_price + cuts_cost
+        
+        # Добавляем стоимость неиспользованных остатков
+        rest_cost = calculate_unused_rest_cost(L, int(round(W * 1000)), base_price_1_2m)
+        
+        # Добавляем стоимость отходов (из вторичных резов)
+        waste_cost = calculate_waste_cost(L, int(round(W * 1000)), base_price_1_2m)
+        
+        unit_price = base_price + cuts_cost + rest_cost + waste_cost
         weight = cfg.approximate_weight_kg(L, W)
         row_sum = unit_price * qty
         total += row_sum
