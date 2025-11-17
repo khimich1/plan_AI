@@ -32,6 +32,33 @@ except Exception:
     Document = None
 
 
+def _get_orders_from_opt_plan():
+    """
+    Возвращает исходный заказ (length/width/qty), сохранённый оптимизатором.
+    Если заказа нет (например, визуализацию запустили без бота), возвращает None.
+    """
+    try:
+        from optimization import OPT_CASCADING_PLAN
+    except ImportError:
+        return None
+
+    plan = OPT_CASCADING_PLAN
+    if plan and plan.get('orders_requested'):
+        # Заказ хранится в формате [{'length': float, 'width': мм, 'qty': int}, ...]
+        orders_copy = []
+        for order in plan['orders_requested']:
+            try:
+                orders_copy.append({
+                    'length': float(order.get('length', 0)),
+                    'width': order.get('width', 0),
+                    'qty': int(order.get('qty', 1))
+                })
+            except Exception:
+                continue
+        return orders_copy
+    return None
+
+
 # ==================== РАБОТА С ЦЕНАМИ ====================
 
 def load_price_table_from_xlsx(path: str):
@@ -258,10 +285,31 @@ def load_cut_price_from_docx(path: str) -> float:
 def build_procurement_items():
     """Формирует реальные позиции закупки из заказа пользователя."""
     items = []
+
+    plan_orders = _get_orders_from_opt_plan()
+    if plan_orders:
+        from collections import Counter
+        order_counter = Counter()
+        for order in plan_orders:
+            length = round(float(order['length']), 3)
+            width_val = order['width']
+            # В заказе ширина приходит в мм (например, 320). Преобразуем в метры.
+            width_m = width_val / 1000.0 if width_val > 5 else float(width_val)
+            order_counter[(length, width_m)] += order['qty']
+        for (length, width_m), qty in sorted(order_counter.items(), key=lambda x: (x[0][1], x[0][0])):
+            items.append({
+                'length': length,
+                'width': width_m,
+                'qty': qty,
+                'long_cuts': 1 if width_m < 1.15 else 0,
+                'trans_cuts': 0
+            })
+        return items
+
     from collections import Counter
     
-    # Приоритет 1: Используем реальный заказ из cfg.PLATES_*
-    # Это то, что пользователь заказал - честная цена!
+    # Приоритет 2: Используем реальный заказ из cfg.PLATES_* (legacy режим)
+    # Это то, что пользователь заказал вручную, если бот не запускался.
     all_plates = []
     for width_mm, plates_list in [
         (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
@@ -301,7 +349,7 @@ def build_procurement_items():
         
         return items
     
-    # Приоритет 2: Используем старый OPT_PLAN (если нет заказа)
+    # Приоритет 3: Используем старый OPT_PLAN (если нет заказа)
     if OPT_PLAN and OPT_PLAN.get('actions'):
         for act in OPT_PLAN['actions']:
             src_type, W1, W2, L, qty, lc, tc = act
@@ -505,7 +553,7 @@ def build_layout_sequence():
             print(f"[VISUAL] Найдено {len(transverse_cut_map)} типов поперечных резов: {list(transverse_cut_map.keys())}")
         
         # СТАРАЯ ЛОГИКА (если нет plate_assignments_with_transverse)
-        # Создаём карту вторичных резов: {(source_length, остаток_мм): {'pattern': [...], 'qty': N}}
+        # Создаём карту вторичных резов: {(source_length, остаток_мм): [ {pattern, qty, used}, ... ]}
         secondary_cuts_info = {}
         if OPT_CASCADING_PLAN.get('secondary_cuts'):
             for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
@@ -536,22 +584,23 @@ def build_layout_sequence():
                 
                 # ИСПРАВЛЕНИЕ: Создаём запись для КАЖДОЙ ИСХОДНОЙ длины отдельно
                 for i in range(qty):
-                    # Используем ИСХОДНУЮ длину остатка (ДО поперечного реза!)
                     source_length = source_lengths_list[i] if i < len(source_lengths_list) else 6.0
-                    key = (source_length, source_mm)  # Ключ теперь (ИСХОДНАЯ длина, ширина)!
-                    
+                    key = (source_length, source_mm)
+
                     if key not in secondary_cuts_info:
-                        secondary_cuts_info[key] = {
-                            'pattern': pattern,
-                            'qty': 0,
-                            'used': 0
-                        }
-                    secondary_cuts_info[key]['qty'] += 1
+                        secondary_cuts_info[key] = []
+
+                    secondary_cuts_info[key].append({
+                        'pattern': [segment.copy() for segment in pattern],
+                        'qty': 1,
+                        'used': 0
+                    })
         
         print(f"[VISUAL] Создано {len(secondary_cuts_info)} вариантов вторичных резов:")
-        for (src_len, src_w), info in secondary_cuts_info.items():
-            pattern_desc = ", ".join([f"{c['width_mm']}мм" for c in info['pattern']])
-            print(f"  Остаток {src_len}м x {src_w}мм: {info['qty']} шт -> [{pattern_desc}]")
+        for (src_len, src_w), variants in secondary_cuts_info.items():
+            for idx, info in enumerate(variants, start=1):
+                pattern_desc = ", ".join([f"{c['width_mm']}мм" for c in info['pattern']])
+                print(f"  Остаток {src_len}м x {src_w}мм: вариант #{idx} -> [{pattern_desc}]")
         
         # 1. Первичные резы с вторичными резами внутри остатков
         for cut in OPT_CASCADING_PLAN.get('primary_cuts', []):
@@ -577,11 +626,12 @@ def build_layout_sequence():
                 length = lengths_for_cut[i] if i < len(lengths_for_cut) else 6.0
                 
                 # ИСПРАВЛЕНИЕ: Проверяем вторичные резы для КОНКРЕТНОГО остатка (длина + ширина)
-                sec_info = secondary_cuts_info.get((length, rest_mm))
+                sec_variants = secondary_cuts_info.get((length, rest_mm)) or []
                 
                 # ОТЛАДКА: Выводим информацию о поиске вторичных резов
                 if rest_mm > 0:
-                    print(f"[VISUAL] Ищем вторичные резы для остатка {length}м x {rest_mm}мм: {'НАЙДЕНО' if sec_info else 'НЕ НАЙДЕНО'}")
+                    found_variant = any(variant['used'] < variant['qty'] for variant in sec_variants)
+                    print(f"[VISUAL] Ищем вторичные резы для остатка {length}м x {rest_mm}мм: {'НАЙДЕНО' if found_variant else 'НЕ НАЙДЕНО'}")
                 
                 # Проверяем, есть ли поперечный рез для этой плиты
                 transverse_cut_info = transverse_cut_map.get((length, width_mm))
@@ -606,6 +656,15 @@ def build_layout_sequence():
                     # Обычная плита без поперечного реза
                     main_w = width_mm / 1000.0
                     rest_w = rest_mm / 1000.0
+                    fake_rest_override = False
+                    
+                    # ВАЖНО: Плиты 1.08 м возникают ТОЛЬКО продольным резом из 1.2 м.
+                    # Даже если оптимизатор пометил их как "solid" (rest=0),
+                    # для человека нужно показать линию реза и остаток 0.12 м.
+                    if width_mm == 1080 and rest_mm == 0:
+                        rest_mm = 120
+                        rest_w = 0.12
+                        fake_rest_override = True
                     
                     # Специальная обработка для плит БЕЗ реза (rest = 0)
                     if rest_mm == 0:
@@ -618,11 +677,15 @@ def build_layout_sequence():
                         # Плиты С резом
                         # Проверяем, нужны ли вторичные резы для ЭТОЙ плиты
                         secondary_cuts_for_plate = None
-                        if sec_info and sec_info['used'] < sec_info['qty']:
-                            # Эта плита получает вторичные резы
-                            # Создаём копию шаблона с правильными метками (с реальной длиной плиты)
+                        chosen_variant = None
+                        for variant in sec_variants:
+                            if variant['used'] < variant['qty']:
+                                chosen_variant = variant
+                                break
+
+                        if chosen_variant:
                             secondary_cuts_for_plate = []
-                            for sec_cut_template in sec_info['pattern']:
+                            for sec_cut_template in chosen_variant['pattern']:
                                 sec_width = sec_cut_template['width']
                                 sec_width_mm = sec_cut_template['width_mm']
                                 
@@ -654,14 +717,17 @@ def build_layout_sequence():
                                             'target_length': target_length  # Длина результата (для правильной отрисовки)
                                         })
                                     else:
-                                        # Обычный вторичный рез (только продольный)
-                                        # Используем ширину ОСТАТКА для подписи, а не результата
-                                        source_width = sec_cut_template.get('source_width_mm', sec_width_mm * 1000) / 1000.0
+                                        # Обычный вторичный рез (включая narrowing)
+                                        result_width = sec_cut_template['width']
+                                        source_width = sec_cut_template.get('source_width_mm', result_width * 1000) / 1000.0
+                                        label_text = plate_label(length, result_width)
+                                        if abs(result_width - source_width) > 1e-6:
+                                            label_text = f'О {label_text}'  # помечаем, что получено из остатка
                                         secondary_cuts_for_plate.append({
-                                            'width': sec_width,
-                                            'label': f'О {plate_label(length, source_width)}'  # О = Остаток
+                                            'width': result_width,
+                                            'label': label_text
                                         })
-                            sec_info['used'] += 1
+                            chosen_variant['used'] += 1
                         
                         sequence.append({
                             'length': length,
@@ -669,7 +735,10 @@ def build_layout_sequence():
                             'main_w': main_w,
                             'rest_w': rest_w,
                             'label_main': plate_label(length, main_w),
-                            'label_rest': f'+{rest_w:.2f}'.replace('.', ',') if not secondary_cuts_for_plate else None,
+                            'label_rest': (
+                                '+0,12' if fake_rest_override else
+                                (f'+{rest_w:.2f}'.replace('.', ',') if not secondary_cuts_for_plate else None)
+                            ),
                             'secondary_cuts': secondary_cuts_for_plate
                         })
         
@@ -1054,30 +1123,36 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     order_list = []
     from collections import Counter
     
-    # Собираем все плиты из заказа
-    all_orders = []
-    for width_mm, plates_list in [
-        (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
-        (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
-        (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
-        (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08)
-    ]:
-        if plates_list:
-            length_counts = Counter(plates_list)
-            for length, qty in sorted(length_counts.items(), key=lambda x: (-x[0], -x[1])):
-                all_orders.append({
-                    'length': length,
-                    'width': width_mm,
-                    'qty': qty
-                })
-    
-    # Формируем строки заказа
-    if all_orders:
-        # Группируем по длинам для компактности
-        for order in all_orders:
-            order_list.append(f"Заказ {order['length']:.1f}мx{order['width']}мм: {order['qty']} шт")
+    plan_orders = _get_orders_from_opt_plan()
+    if plan_orders:
+        plan_counter = Counter()
+        for order in plan_orders:
+            key = (round(float(order['length']), 3), int(order['width']))
+            plan_counter[key] += order['qty']
+        for (length, width_mm), qty in sorted(plan_counter.items(), key=lambda x: (x[0][0], x[0][1])):
+            order_list.append(f"Заказ {length:.2f}м×{width_mm}мм: {qty} шт")
     else:
-        order_list.append('Заказ не найден')
+        # Собираем все плиты из заказа (legacy путь через cfg)
+        all_orders = []
+        for width_mm, plates_list in [
+            (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
+            (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
+            (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
+            (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08)
+        ]:
+            if plates_list:
+                length_counts = Counter(plates_list)
+                for length, qty in sorted(length_counts.items(), key=lambda x: (-x[0], -x[1])):
+                    all_orders.append({
+                        'length': length,
+                        'width': width_mm,
+                        'qty': qty
+                    })
+        if all_orders:
+            for order in all_orders:
+                order_list.append(f"Заказ {order['length']:.1f}м×{order['width']}мм: {order['qty']} шт")
+        else:
+            order_list.append('Заказ не найден')
     
     # Формируем список использования из оптимизации
     used_list = []

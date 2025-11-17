@@ -13,6 +13,39 @@
 """
 import config_and_data as cfg
 from price_db import get_price
+from dataclasses import dataclass
+
+
+# ==================== КОНФИГУРАЦИЯ ОПТИМИЗАЦИИ ====================
+
+@dataclass
+class OptimizationConfig:
+    """
+    Конфигурация параметров оптимизации.
+    Позволяет экспериментировать с разными коэффициентами штрафов и бонусов.
+    """
+    # Коэффициент штрафа за неиспользованные остатки
+    # OLD: 0.5 (50% стоимости остатка)
+    # NEW: 0.15 (15% стоимости остатка)
+    unused_rest_penalty_coeff: float = 0.15
+    
+    # Бонус за использование вторичных резов (отрицательное значение = бонус)
+    # OLD: -500 (экономический стимул использовать остатки)
+    # NEW: 0 (нет бонуса, остатки используются только если это выгодно)
+    secondary_reuse_bonus: float = 0.0
+
+
+# Дефолтная конфигурация (NEW поведение)
+DEFAULT_CONFIG = OptimizationConfig(
+    unused_rest_penalty_coeff=0.15,
+    secondary_reuse_bonus=0.0
+)
+
+# Старая конфигурация (OLD поведение, для экспериментов)
+OLD_CONFIG = OptimizationConfig(
+    unused_rest_penalty_coeff=0.5,
+    secondary_reuse_bonus=-500.0
+)
 
 # ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ОПТИМИЗАЦИИ ====================
 
@@ -21,22 +54,117 @@ OPT_PLAN = {}  # результат полной оптимизации: как 
 OPT_CASCADING_PLAN = {}  # результат каскадной оптимизации с вторичными резами
 
 
-# ==================== ИМПОРТ LEGACY ФУНКЦИЙ ====================
-# Старые функции находятся в visualize_kz_plan.py.
-# Реэкспортируем их для обратной совместимости.
+# ==================== ЛЕГАСИ-АДАПТЕРЫ ====================
+from collections import Counter
 
-from visualize_kz_plan import (
-    optimize_full_plan_with_narrowing,
-    optimize_cuts_pulp,
-    optimize_with_lengths,
-    apply_width_optimization
-)
+
+def _group_plate_lengths(plates: list[float]) -> dict[float, int]:
+    """Группируем длины (в метрах) -> количество."""
+    return Counter(round(float(length), 2) for length in (plates or []))
+
+
+def _append_actions(actions: list, width_mm: int, lengths: dict, long_cuts: int, src_type: str):
+    """Добавляем aggregated записи в OPT_PLAN['actions']."""
+    rest_mm = max(0, 1200 - width_mm)
+    for length_m, qty in lengths.items():
+        actions.append((
+            src_type,
+            width_mm,
+            rest_mm if src_type != 'solid' else 0,
+            length_m,
+            qty,
+            long_cuts,
+            0  # поперечные резы в legacy-плане не моделируем
+        ))
+
+
+def apply_width_optimization() -> dict:
+    """
+    Упрощённый наследуемый оптимизатор ширин.
+    Наполняет OPT_WIDTH_PRIORITY и OPT_PLAN['actions'] данными из cfg.PLATES_*.
+    """
+    priority = []
+    actions = []
+
+    priority_groups = [
+        ('0_32', 320, cfg.PLATES_0_32),
+        ('0_46', 460, cfg.PLATES_0_46),
+        ('0_70', 700, cfg.PLATES_0_70),
+        ('0_72', 720, cfg.PLATES_0_72),
+        ('0_86', 860, cfg.PLATES_0_86),
+        ('0_74', 740, cfg.PLATES_0_74),
+        ('0_88', 880, cfg.PLATES_0_88),
+        ('0_48', 480, cfg.PLATES_0_48),
+        ('0_50', 500, cfg.PLATES_0_50),
+        ('0_34', 340, cfg.PLATES_0_34),
+    ]
+
+    for code, width_mm, plate_list in priority_groups:
+        if not plate_list:
+            continue
+        priority.append(code)
+        lengths = _group_plate_lengths(plate_list)
+        _append_actions(actions, width_mm, lengths, long_cuts=1, src_type='split')
+
+    solid_groups = [
+        (1200, cfg.PLATES_1_2),
+    ]
+    split_groups = [
+        (1080, cfg.PLATES_1_08),
+        (1000, cfg.PLATES_1_0),
+    ]
+
+    for width_mm, plate_list in solid_groups:
+        if not plate_list:
+            continue
+        lengths = _group_plate_lengths(plate_list)
+        _append_actions(actions, width_mm, lengths, long_cuts=0, src_type='solid')
+
+    for width_mm, plate_list in split_groups:
+        if not plate_list:
+            continue
+        lengths = _group_plate_lengths(plate_list)
+        _append_actions(actions, width_mm, lengths, long_cuts=1, src_type='split')
+
+    OPT_WIDTH_PRIORITY.clear()
+    OPT_WIDTH_PRIORITY.extend(priority)
+
+    OPT_PLAN.clear()
+    OPT_PLAN.update({
+        'orders': {width: len(lst) for (_, width, lst) in priority_groups if lst},
+        'actions': actions
+    })
+
+    return OPT_PLAN
+
+
+def optimize_cuts_pulp(orders: dict | None = None) -> dict:
+    """
+    Legacy-обёртка над новой каскадной оптимизацией (для совместимости с визуализатором).
+    """
+    if orders is None:
+        orders = {}
+        for width_mm, plates in [
+            (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
+            (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
+            (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
+            (340, cfg.PLATES_0_34)
+        ]:
+            if plates:
+                orders[width_mm] = len(plates)
+
+    result = optimize_with_cascading_longitudinal_cuts(orders=orders) if orders else {}
+    if result:
+        OPT_PLAN.clear()
+        OPT_PLAN.update(result)
+    return result
 
 
 # ==================== СОВРЕМЕННЫЕ ФУНКЦИИ ОПТИМИЗАЦИИ ====================
 
 def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
-                               min_useful_width: int = 200) -> dict:
+                               min_useful_width: int = 200,
+                               opt_config: OptimizationConfig = None) -> dict:
     """
     ПРИВАТНАЯ функция: Полная 2D оптимизация с длинами в ILP модели.
     Минимизирует СТОИМОСТЬ (не просто количество плит!) с учётом ОБЕИХ размерностей (длина + ширина).
@@ -45,13 +173,13 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     ✅ Учёт реальных цен плит из базы данных (get_price)
     ✅ Учёт стоимости продольных и поперечных резов
     ✅ Фильтрация бесполезных вариантов (скорость ↑ в 2-3 раза)
-    ✅ Усиленный штраф за неиспользованные остатки (50% их стоимости)
-    ✅ Бонус за вторичное использование остатков (-500 руб за каждое)
+    ✅ Настраиваемые штрафы и бонусы через OptimizationConfig
     
     Args:
         orders_2d: [{'length': 5.6, 'width': 320, 'qty': 11}, ...] — спрос по (длина, ширина)
         plate_width: ширина исходной плиты в мм (1200)
         min_useful_width: минимальная полезная ширина остатка
+        opt_config: конфигурация параметров оптимизации (штрафы, бонусы)
     
     Returns:
         {
@@ -61,6 +189,9 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             'plate_assignments': [{'length', 'width', 'source', ...}, ...]
         }
     """
+    # Используем дефолтную конфигурацию, если не передана
+    if opt_config is None:
+        opt_config = DEFAULT_CONFIG
     try:
         from pulp import LpProblem, LpMinimize, LpVariable, LpInteger, lpSum, value, PULP_CBC_CMD, LpStatus
     except ImportError:
@@ -114,10 +245,12 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     for target_w, sources in target_to_sources.items():
         print(f"  {target_w}мм можно получить через: {sources}")
     
+    solid_widths = sorted(set([plate_width, 1080]))
+
     for (length, width), qty in demand_2d.items():
-        # Вариант 1: Плита БЕЗ реза (ТОЛЬКО 1200мм целиком!)
-        # Эта ширина НЕ РЕЖЕТСЯ и используется как есть
-        if width == plate_width:
+        # Вариант 1: Плита БЕЗ реза (ширины из списка solid_widths)
+        # Эти ширины НЕ РЕЖУТСЯ и используются как есть
+        if width in solid_widths:
             primary_options.append({
                 'id': option_id,
                 'length': length,
@@ -126,8 +259,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'type': 'solid'  # Без резов
             })
             option_id += 1
-        
-        # Вариант 2: Плита С ПРЯМЫМ резом (ширина < 1200мм)
+
+        # Вариант 2: Плита С ПРЯМЫМ резом (ширина < исходной плиты)
         elif width < plate_width:
             rest = plate_width - width
             if rest >= min_useful_width:
@@ -207,7 +340,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             # Вариант A: Множественная резка по ширине (одинаковая длина)
             if abs(target_length - source_length) <= tolerance_length:
                 pieces = source_width // target_width
-                if pieces >= 2:
+                if pieces >= 1:
                     waste = source_width - (pieces * target_width)
                     if waste < source_width * 0.5:
                         secondary_options.append({
@@ -227,7 +360,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             # Это позволяет резать остаток 5.6м × 880мм → 2× 3.31м × 320мм
             if target_length < source_length - 0.1:  # Целевая длина КОРОЧЕ остатка
                 pieces = source_width // target_width
-                if pieces >= 2:
+                if pieces >= 1:
                     # Проверяем, что целевая длина влезает хотя бы раз
                     waste_width = source_width - (pieces * target_width)
                     waste_length = (source_length - target_length) * 1000  # в мм
@@ -310,7 +443,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         source_area = opt['source_length'] * opt['source_rest']
         waste_area = (waste_width * opt['source_length']) + (waste_length * opt['source_rest'] / 1000.0)
         
-        if waste_area > source_area * 0.3:
+        if opt['type'] != 'multiple_transverse' and waste_area > source_area * 0.3:
             continue
         
         # Правило 5: Пропускаем transverse с отходами > 50% длины
@@ -334,6 +467,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
              for opt in secondary_options}
     
     # 5. ОГРАНИЧЕНИЯ: Покрытие спроса по (length, width)
+    BIG_M = 1e6
+    surplus_vars = []
     for (target_length, target_width), qty in demand_2d.items():
         sources = []
         
@@ -361,20 +496,21 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 sources.append(x_sec[opt['id']] * opt['pieces'])
         
         if sources:
-            prob += lpSum(sources) >= qty, f"demand_{target_length}m_{target_width}mm"
+            length_label = str(target_length).replace('.', '_')
+            surplus = LpVariable(f"surplus_{length_label}_{target_width}", lowBound=0, cat=LpInteger)
+            surplus_vars.append(surplus)
+            prob += lpSum(sources) == qty + surplus, f"demand_{target_length}m_{target_width}mm"
     
-    # 5.5 ПРИОРИТЕТНОЕ ОГРАНИЧЕНИЕ: Solid плиты ОБЯЗАТЕЛЬНЫ для полной ширины (1200мм)!
-    # Плиты 1200мм ОБЯЗАТЕЛЬНО должны удовлетворяться solid-вариантами (без резов)
-    # Плиты 1080мм получаются РЕЗОМ из 1200мм, поэтому НЕ защищены
-    print(f"[OPT_2D] Проверяем приоритетные ограничения для solid-плит (1200мм)...")
+    # 5.5 ПРИОРИТЕТНОЕ ОГРАНИЧЕНИЕ: Solid плиты ОБЯЗАТЕЛЬНЫ для полных ширин (1200/1080мм)!
+    print(f"[OPT_2D] Проверяем приоритетные ограничения для solid-плит: {solid_widths}")
     for (target_length, target_width), qty in demand_2d.items():
-        # ТОЛЬКО для полной ширины плиты (1200мм)
-        if target_width == 1200:
+        if target_width in solid_widths:
             solid_sources = []
             for opt in primary_options:
                 if (abs(opt['length'] - target_length) <= tolerance_length and 
                     opt['main'] == target_width and
-                    opt.get('type') == 'solid'):
+                    opt.get('type') == 'solid' and
+                    opt['main'] == target_width):
                     solid_sources.append(x_prim[opt['id']])
             
             if solid_sources:
@@ -407,6 +543,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     
     # 7. ЦЕЛЕВАЯ ФУНКЦИЯ (УЛУЧШЕННАЯ: учёт реальных цен + приоритет остатков)
     total_cost = 0
+    for surplus in surplus_vars:
+        total_cost += BIG_M * surplus
     
     # 7.1 Стоимость ПЕРВИЧНЫХ РЕЗОВ (плиты + продольные резы)
     print(f"[OPT_2D] Расчёт стоимости первичных резов...")
@@ -447,7 +585,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             # TRANSVERSE_CUT_PRICE = 1200 руб/шт (из конфига)
             total_cost += qty_var * cfg.TRANSVERSE_CUT_PRICE
     
-    # 7.3 ШТРАФ ЗА НЕИСПОЛЬЗОВАННЫЕ ОСТАТКИ (УСИЛЕННЫЙ!)
+    # 7.3 ШТРАФ ЗА НЕИСПОЛЬЗОВАННЫЕ ОСТАТКИ (настраиваемый через конфиг)
     unused_penalty = 0
     for (source_length, source_width), source_ids in possible_rests.items():
         produced = [x_prim[opt_id] for opt_id in source_ids]
@@ -460,14 +598,15 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         if produced and consumed:
             unused = lpSum(produced) - lpSum(consumed)
             
-            # НОВАЯ ФОРМУЛА: Стоимость остатка = цена плиты × (ширина_остатка / 1200)
+            # НОВАЯ ФОРМУЛА: Стоимость остатка = цена плиты × (ширина_остатка / ширина исходной плиты)
             base_price = get_price(source_length, 6, cfg.PRICE_DB_PATH)
             if base_price is None:
                 base_price = 5000  # Дефолтная цена для остатков
-            rest_price = base_price * (source_width / 1200.0)
+            rest_price = base_price * (source_width / float(plate_width))
             
-            # Штраф = 50% стоимости остатка (неиспользованный остаток = потеря денег)
-            unused_penalty += unused * rest_price * 0.5
+            # Штраф = N% стоимости остатка (коэффициент берём из конфига)
+            # OLD: 0.5 (50% стоимости), NEW: 0.15 (15% стоимости)
+            unused_penalty += unused * rest_price * opt_config.unused_rest_penalty_coeff
     
     # 7.4 ШТРАФ ЗА ОТХОДЫ (в рублях, усиленный)
     waste_penalty = 0
@@ -486,14 +625,17 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             waste_price = waste_area_m2 * 1000
             waste_penalty += x_sec[opt['id']] * waste_price
     
-    # 7.5 БОНУС ЗА ИСПОЛЬЗОВАНИЕ ОСТАТКОВ (стимулируем вторичное использование)
+    # 7.5 БОНУС ЗА ИСПОЛЬЗОВАНИЕ ОСТАТКОВ (настраиваемый через конфиг)
     reuse_bonus = 0
     for opt in secondary_options:
-        # За каждый вторичный рез - бонус (уменьшает стоимость)
-        reuse_bonus -= x_sec[opt['id']] * 500  # -500 руб за использование остатка
+        # За каждый вторичный рез - бонус (отрицательное значение уменьшает стоимость)
+        # OLD: -500 руб за каждый вторичный рез
+        # NEW: 0 (нет экономического бонуса)
+        reuse_bonus += x_sec[opt['id']] * opt_config.secondary_reuse_bonus
     
     # 7.6 ИТОГОВАЯ ЦЕЛЕВАЯ ФУНКЦИЯ
-    print(f"[OPT_2D] Минимизируем: стоимость плит + резов + штрафы - бонусы")
+    print(f"[OPT_2D] Минимизируем: стоимость плит + резов + штрафы + бонусы")
+    print(f"[OPT_2D] Конфиг: unused_penalty={opt_config.unused_rest_penalty_coeff}, reuse_bonus={opt_config.secondary_reuse_bonus}")
     prob += total_cost + unused_penalty + waste_penalty + reuse_bonus
     
     # 8. РЕШЕНИЕ
@@ -509,7 +651,9 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         'primary_cuts': [],
         'secondary_cuts': [],
         'total_plates': 0,
-        'plate_assignments': []
+        'plate_assignments': [],
+        # Сохраняем исходный заказ, чтобы визуализация и отчёты точно знали, что просил пользователь
+        'orders_requested': [order.copy() for order in orders_2d]
     }
     
     # Первичные резы
@@ -598,10 +742,19 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
     # Допустимый диапазон для каждой ширины (±20 мм)
     tolerance = 20
     
-    # Генерируем все возможные варианты первичных резов (из плиты 1200 мм)
+    # Генерируем все возможные варианты первичных резов (из плиты заданной ширины)
     # Для каждой целевой ширины создаём варианты: target_width + остаток
     primary_cut_options = []
+    solid_widths = sorted(set([plate_width, 1080]))
     for target_w in target_widths:
+        if target_w in solid_widths:
+            primary_cut_options.append({
+                'id': f'prim_{target_w}',
+                'main': target_w,
+                'rest': 0,
+            })
+            continue
+
         rest_w = plate_width - target_w
         if rest_w >= min_useful_width:  # Остаток достаточно большой
             primary_cut_options.append({
@@ -613,7 +766,7 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
     # Генерируем варианты вторичных резов (из остатков)
     # Для каждого возможного остатка смотрим, на какие ширины его можно разрезать
     secondary_cut_options = []
-    possible_rests = set(opt['rest'] for opt in primary_cut_options)
+    possible_rests = set(opt['rest'] for opt in primary_cut_options if opt['rest'] > 0)
     
     for rest_w in possible_rests:
         # Пробуем разрезать остаток на 2 части
@@ -823,7 +976,8 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
 def optimize_with_cascading_longitudinal_cuts(orders: dict = None, 
                                                orders_2d: list = None,
                                                plate_width: int = 1200, 
-                                               min_useful_width: int = 200) -> dict:
+                                               min_useful_width: int = 200,
+                                               opt_config: OptimizationConfig = None) -> dict:
     """
     Универсальная оптимизация с каскадными резами (PUBLIC API).
     
@@ -849,6 +1003,7 @@ def optimize_with_cascading_longitudinal_cuts(orders: dict = None,
         orders_2d: [{'length', 'width', 'qty'}] — спрос 2D (для режима 2D)
         plate_width: ширина исходной плиты (1200 мм)
         min_useful_width: минимальная полезная ширина остатка
+        opt_config: конфигурация параметров оптимизации (штрафы, бонусы)
     
     Returns:
         dict с результатами оптимизации:
@@ -865,7 +1020,7 @@ def optimize_with_cascading_longitudinal_cuts(orders: dict = None,
     if orders_2d is not None and len(orders_2d) > 0:
         # ===== РЕЖИМ 2D (НОВЫЙ) =====
         print("[OPT] Режим: ПОЛНАЯ 2D оптимизация (длина + ширина)")
-        return _optimize_2d_with_lengths(orders_2d, plate_width, min_useful_width)
+        return _optimize_2d_with_lengths(orders_2d, plate_width, min_useful_width, opt_config)
     
     elif orders is not None and len(orders) > 0:
         # ===== РЕЖИМ 1D (СТАРЫЙ) =====

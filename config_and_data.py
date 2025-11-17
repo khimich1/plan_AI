@@ -29,10 +29,11 @@ TRANSVERSE_CUT_PRICE = 1200.0  # Поперечный (или скошенный
 
 # Данные из согласованного КЗ-плана
 # 1) Плиты 1.2 м — без резов (новый заказ)
-PLATES_1_2 = [3.39]*2
+PLATES_1_2 = [3.39] * 2
 
 # Дополнительные целевые ширины, которые получаем продольным резом из 1.2 м
-PLATES_1_08 = []         # нет 1.08 в этом заказе
+# По умолчанию считаем, что доступен такой же набор плит шириной 1.08 м.
+PLATES_1_08 = PLATES_1_2.copy()
 PLATES_0_46 = []         # нет 0.46 в этом заказе
 PLATES_0_32 = [6.63]*4 + [7.83]*3
 PLATES_0_72 = [5.63]*5
@@ -189,10 +190,18 @@ def set_plate_lists_from_text(user_text: str) -> None:
         s_norm = s.replace(',', '.')
         m = re.search(r'(\d+(?:\.\d+)?)\s*[xх]\s*(\d+(?:\.\d+)?)\D*(\d+)?', s)
         if m:
-            w = float(m.group(1).replace(',', '.'))
-            L = float(m.group(2).replace(',', '.'))
+            first = float(m.group(1).replace(',', '.'))
+            second = float(m.group(2).replace(',', '.'))
             q = int((m.group(3) or '1').replace(',', '.'))
-            add_items(w, L, q)
+
+            # Пользователи часто пишут "длина × ширина". Если первая цифра
+            # намного больше (в метрах), а вторая похожа на ширину — меняем местами.
+            if first > 2.0 and second <= 1.5:
+                width_m, length_m = second, first
+            else:
+                width_m, length_m = first, second
+
+            add_items(width_m, length_m, q)
             continue
         # 2) формат "Плиты ПБ 78,3-3,2-8п 3" или "ПБ 78-12-8п 10"
         m2 = re.search(r'плиты?\s*пб\s*([\d\.,]+)\s*-\s*([\d\.,]+)', s)
