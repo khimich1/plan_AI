@@ -56,11 +56,17 @@ def build_procurement_items():
             width_m = width_val / 1000.0 if width_val > 5 else float(width_val)
             order_counter[(length, width_m)] += order['qty']
         for (length, width_m), qty in sorted(order_counter.items(), key=lambda x: (x[0][1], x[0][0])):
+            # Жёсткое правило: плиты 1.2 м считаем целыми, без продольных резов
+            if abs(width_m - 1.2) < 0.01:
+                long_cuts = 0
+            else:
+                long_cuts = 1 if width_m < 1.15 else 0
+
             items.append({
                 'length': length,
                 'width': width_m,
                 'qty': qty,
-                'long_cuts': 1 if width_m < 1.15 else 0,
+                'long_cuts': long_cuts,
                 'trans_cuts': 0
             })
         return items
@@ -89,13 +95,17 @@ def build_procurement_items():
         for plate in all_plates:
             # Определяем количество резов (примерная оценка)
             width_m = plate['width']
-            
-            # Продольные резы: если ширина < 1.2м, значит был рез
-            long_cuts = 1 if width_m < 1.15 else 0
-            
+
+            # Жёсткое правило: плиты 1.2 м считаем целыми, без продольных резов
+            if abs(width_m - 1.2) < 0.01:
+                long_cuts = 0
+            else:
+                # Продольные резы: если ширина < 1.2м, значит был рез
+                long_cuts = 1 if width_m < 1.15 else 0
+
             # Поперечные резы: пока 0, они учтены в оптимизации
             trans_cuts = 0
-            
+
             items.append({
                 'length': plate['length'],
                 'width': width_m,
@@ -103,7 +113,7 @@ def build_procurement_items():
                 'long_cuts': long_cuts,
                 'trans_cuts': trans_cuts
             })
-        
+
         return items
     
     # Приоритет 3: Используем старый OPT_PLAN (если нет заказа)
@@ -238,7 +248,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
             for prim_cut in OPT_CASCADING_PLAN['primary_cuts']:
                 if prim_cut['width'] == width_mm:
                     prim_lengths = prim_cut.get('lengths', [])
-                    if not prim_lengths or any(abs(l - L) < 0.01 for l in prim_lengths):
+                    if not prim_lengths or any(abs(l - L) < 0.05 for l in prim_lengths):
                         prim_qty = prim_cut.get('qty', 0)
                         total_cuts_for_this_size += prim_qty  # Каждый первичный рез = 1 рез
                         primary_rest_width_mm = prim_cut['rest']
@@ -256,7 +266,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
                                         continue
                                     # Учитываем только те вторичные резы, которые берут остатки от ЭТОЙ длины
                                     src_lengths = sec_cut.get('source_lengths', [])
-                                    if src_lengths and not any(abs(sl - L) < 0.01 for sl in src_lengths):
+                                    if src_lengths and not any(abs(sl - L) < 0.05 for sl in src_lengths):
                                         continue
                                     used_rests += sec_cut.get('qty', 0)
 
@@ -271,7 +281,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
                         if OPT_CASCADING_PLAN.get('secondary_cuts'):
                             for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
                                 sec_lengths = sec_cut.get('lengths', [])
-                                if not sec_lengths or any(abs(l - L) < 0.01 for l in sec_lengths):
+                                if not sec_lengths or any(abs(l - L) < 0.05 for l in sec_lengths):
                                     sec_cuts = sec_cut.get('cuts', [])
                                     if width_mm in sec_cuts:
                                         sec_qty = sec_cut.get('qty', 0)
@@ -292,7 +302,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
                                         if src_lens:
                                             src_len = src_lens[0]
 
-                                            if sec_cut.get('type') == 'transverse' or abs(src_len - L) > 0.01:
+                                            if sec_cut.get('type') == 'transverse' or abs(src_len - L) > 0.05:
                                                 # Поперечные резы распределяем по плитам этого типа
                                                 if qty > 0:
                                                     trans_cuts += (1.0 * sec_qty) / qty
@@ -320,7 +330,11 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         else:
             # Если нет данных из плана, используем старую логику
             long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L)
-        
+
+        # Жёсткое правило: плиты шириной 1.2 м считаем без продольных резов
+        if abs(W - 1.2) < 0.01:
+            long_cut_cost = 0.0
+
         unit_price = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost
         weight = cfg.approximate_weight_kg(L, W)
         row_sum = unit_price * qty
@@ -440,9 +454,13 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         else:
             base_price = 0.0
             base_price_1_2m = 0.0
-        
-        # Продольный рез (если ширина < 1.2м, значит был рез)
-        long_cuts = 1 if width_m < 1.15 else 0
+
+        # Продольный рез: для плит 1.2 м считаем, что продольных резов нет
+        if abs(width_m - 1.2) < 0.01:
+            long_cuts = 0
+        else:
+            # Для плит уже меньше 1.2 м предполагаем один продольный рез
+            long_cuts = 1 if width_m < 1.15 else 0
         long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * length)
         
         # Поперечный рез (пока 0, нужно будет добавить логику)
@@ -471,7 +489,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
             for prim_cut in OPT_CASCADING_PLAN['primary_cuts']:
                 if prim_cut['width'] == width_mm:
                     prim_lengths = prim_cut.get('lengths', [])
-                    if not prim_lengths or any(abs(l - length) < 0.01 for l in prim_lengths):
+                    if not prim_lengths or any(abs(l - length) < 0.05 for l in prim_lengths):
                         prim_qty = prim_cut.get('qty', 0)
                         total_cuts_for_this_size += prim_qty  # Каждый первичный рез = 1 рез
                         total_plates_from_cuts += prim_qty   # Каждый первичный рез даёт 1 плиту
@@ -490,7 +508,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                                         continue
                                     # учитываем только вторичные резы от ЭТОЙ длины
                                     src_lengths = sec_cut.get('source_lengths', [])
-                                    if src_lengths and not any(abs(sl - length) < 0.01 for sl in src_lengths):
+                                    if src_lengths and not any(abs(sl - length) < 0.05 for sl in src_lengths):
                                         continue
                                     used_rests += sec_cut.get('qty', 0)
 
@@ -510,7 +528,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                         if OPT_CASCADING_PLAN.get('secondary_cuts'):
                             for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
                                 sec_lengths = sec_cut.get('lengths', [])
-                                if not sec_lengths or any(abs(l - length) < 0.01 for l in sec_lengths):
+                                if not sec_lengths or any(abs(l - length) < 0.05 for l in sec_lengths):
                                     sec_cuts = sec_cut.get('cuts', [])
                                     
                                     # Проверяем, относится ли рез к нашей ширине
@@ -538,7 +556,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                                             src_len = src_lens[0]
 
                                             # Если была операция поперечного реза или изменилась длина
-                                            if sec_cut.get('type') == 'transverse' or abs(src_len - length) > 0.01:
+                                            if sec_cut.get('type') == 'transverse' or abs(src_len - length) > 0.05:
                                                 # Количество поперечных резов распределяем по плитам этого типа
                                                 if qty > 0:
                                                     trans_cuts += (1.0 * sec_qty) / qty
@@ -568,7 +586,12 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                 long_cuts = total_cuts_for_this_size  # Общее количество резов
                 # Пересчитываем стоимость продольных резов: общая стоимость всех резов / количество плит
                 long_cut_cost = (long_cuts * cfg.LONG_CUT_PRICE_PER_M * length) / qty if qty > 0 else 0
-        
+
+        # Жёсткое правило: плиты шириной 1.2 м считаем без продольных резов
+        if abs(width_m - 1.2) < 0.01:
+            long_cuts = 0
+            long_cut_cost = 0.0
+
         # ИТОГО за 1 плиту
         total_per_unit = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost
         
