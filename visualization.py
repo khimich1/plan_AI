@@ -464,7 +464,31 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
             base_price = 0.0
         
         cuts_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L) + trans_cuts * cfg.TRANSVERSE_CUT_PRICE
-        unit_price = base_price + cuts_cost
+        
+        # Добавляем расчет стоимости отходов (как в детальной разбивке)
+        waste_cost = 0.0
+        from optimization import OPT_CASCADING_PLAN
+        width_mm = int(round(W * 1000))
+        
+        # Проверяем OPT_CASCADING_PLAN для определения отходов
+        if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
+            # Ищем первичный рез для этой ширины
+            for prim_cut in OPT_CASCADING_PLAN['primary_cuts']:
+                if prim_cut['width'] == width_mm:
+                    rest_width_mm = prim_cut['rest']
+                    
+                    # Проверяем вторичные резы для определения отходов
+                    if OPT_CASCADING_PLAN.get('secondary_cuts'):
+                        for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                            if sec_cut['source'] == rest_width_mm:
+                                waste_width_mm = sec_cut.get('waste', 0)
+                                if waste_width_mm > 0 and base_price_1_2m > 0:
+                                    # Формула: (ширина_отходов / ширина_плиты) × стоимость_плиты / количество_плит
+                                    waste_cost = (waste_width_mm / 1200.0) * base_price_1_2m / qty if qty > 0 else 0
+                                break
+                    break
+        
+        unit_price = base_price + cuts_cost + waste_cost
         weight = cfg.approximate_weight_kg(L, W)
         row_sum = unit_price * qty
         total += row_sum
@@ -493,6 +517,228 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         ])
         idx += 1
     return rows, total
+
+
+def build_component_breakdown(price_table: dict, price_rows: list = None, reinforcement_code: int = 8):
+    """Формирует детальную разбивку компонентов для каждого наименования."""
+    from optimization import OPT_CASCADING_PLAN
+    from collections import Counter
+    import re
+    
+    # Получаем заказы
+    plan_orders = _get_orders_from_opt_plan()
+    if not plan_orders:
+        # Fallback на старый способ
+        all_orders = []
+        for width_mm, plates_list in [
+            (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
+            (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
+            (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
+            (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08)
+        ]:
+            if plates_list:
+                length_counts = Counter(plates_list)
+                for length, qty in length_counts.items():
+                    all_orders.append({
+                        'length': length,
+                        'width': width_mm,
+                        'qty': qty
+                    })
+        if not all_orders:
+            # Если нет заказов из cfg, используем данные из price_rows
+            if price_rows:
+                print('[DEBUG] build_component_breakdown: используем данные из price_rows')
+                for row in price_rows:
+                    # row: [idx, name, qty, 'шт', week, contractor, weight, price, sum]
+                    name = row[1] if len(row) > 1 else ''
+                    try:
+                        qty = int(str(row[2]).replace(' ', '').replace(',', '')) if len(row) > 2 else 1
+                    except (ValueError, TypeError):
+                        qty = 1
+                    # Парсим имя для получения длины и ширины
+                    # Формат: ПБ 36-0,3-8п (длина 3.6м, ширина 0.3м = 300мм)
+                    # Или: ПБ 36-3,2-8п (длина 3.6м, ширина 3.2м = 3200мм - это неправильно)
+                    # Правильный формат: ПБ 36-0,32-8п (длина 3.6м, ширина 0.32м = 320мм)
+                    match = re.search(r'ПБ\s+(\d+)-([\d,]+)-', name)
+                    if match:
+                        length_dm = int(match.group(1))
+                        length = length_dm / 10.0
+                        width_str = match.group(2).replace(',', '.').replace(' ', '')
+                        width_m = float(width_str)
+                        # Если ширина больше 2, значит это в миллиметрах, иначе в метрах
+                        if width_m > 2:
+                            width_mm = int(width_m)
+                            width_m = width_mm / 1000.0
+                        else:
+                            width_mm = int(width_m * 1000)
+                        all_orders.append({
+                            'length': length,
+                            'width': width_mm,
+                            'qty': qty
+                        })
+            if not all_orders:
+                print('[DEBUG] build_component_breakdown: нет заказов, возвращаем пустой список')
+                return []
+        plan_orders = all_orders
+    
+    print(f'[DEBUG] build_component_breakdown: найдено заказов: {len(plan_orders)}')
+    
+    # Группируем заказы
+    order_counter = Counter()
+    for order in plan_orders:
+        length = round(float(order.get('length', 0)), 3)
+        width_val = order.get('width', 0)
+        width_mm = width_val if width_val > 5 else int(width_val * 1000)
+        order_counter[(length, width_mm)] += order.get('qty', 1)
+    
+    breakdown_tables = []
+    
+    for (length, width_mm), qty in sorted(order_counter.items(), key=lambda x: (x[0][0], x[0][1])):
+        width_m = width_mm / 1000.0
+        name = cfg.make_plate_name(length, width_m)
+        
+        # Получаем базовую цену за 1.2м
+        load_code = 6 if width_m < 1.0 else reinforcement_code
+        db_price = get_price(length, load_code, cfg.PRICE_DB_PATH)
+        base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, length, load_code) or 0.0)
+        
+        # Базовая цена с учетом ширины
+        if base_price_1_2m > 0:
+            width_factor = width_m / 1.2
+            base_price = base_price_1_2m * width_factor
+        else:
+            base_price = 0.0
+            base_price_1_2m = 0.0
+        
+        # Продольный рез (если ширина < 1.2м, значит был рез)
+        long_cuts = 1 if width_m < 1.15 else 0
+        long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * length)
+        
+        # Поперечный рез (пока 0, нужно будет добавить логику)
+        trans_cuts = 0
+        trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
+        
+        # Остаток
+        rest_width_mm = 1200 - width_mm if width_m < 1.15 else 0
+        rest_cost = 0.0
+        rest_used = False
+        
+        # Отходы
+        waste_cost = 0.0
+        waste_width_mm = 0
+        
+        # Проверяем OPT_CASCADING_PLAN для определения остатков и отходов
+        if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
+            # Ищем первичный рез для этой ширины
+            for prim_cut in OPT_CASCADING_PLAN['primary_cuts']:
+                if prim_cut['width'] == width_mm:
+                    rest_width_mm = prim_cut['rest']
+                    
+                    # Проверяем, использован ли остаток во вторичных резах
+                    if OPT_CASCADING_PLAN.get('secondary_cuts'):
+                        for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                            if sec_cut['source'] == rest_width_mm:
+                                rest_used = True
+                                # Рассчитываем отходы
+                                waste_width_mm = sec_cut.get('waste', 0)
+                                if waste_width_mm > 0 and base_price_1_2m > 0:
+                                    # Новая формула: (ширина_отходов / ширина_плиты) × стоимость_плиты / количество_плит
+                                    # waste_width_mm в мм, 1200 - ширина плиты в мм (1.2м)
+                                    waste_cost = (waste_width_mm / 1200.0) * base_price_1_2m / qty if qty > 0 else 0
+                                break
+                    break
+        
+        # ИТОГО за 1 плиту
+        total_per_unit = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost
+        
+        # Округление (до 2 знаков после запятой)
+        total_rounded = round(total_per_unit, 2)
+        
+        # За N плит
+        total_for_qty = total_rounded * qty
+        
+        # Формируем таблицу
+        table_rows = []
+        
+        # Базовая цена
+        base_price_1_2m_str = f"{base_price_1_2m:,.2f}".replace(',', ' ').replace('.', ',')
+        width_m_str = f"{width_m:.2f}".replace('.', ',')
+        calculation_str = f"{base_price_1_2m_str} × ({width_m_str} / 1.2)"
+        table_rows.append([
+            f"Базовая цена ({width_m_str}м)",
+            calculation_str,
+            f"{base_price:,.2f} руб".replace(',', ' ').replace('.', ',')
+        ])
+        
+        # Продольный рез
+        if long_cuts > 0:
+            long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f}".replace('.', ',')
+            table_rows.append([
+                "Продольный рез",
+                long_calc,
+                f"{long_cut_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            ])
+        
+        # Поперечный рез
+        if trans_cuts > 0:
+            trans_calc = f"{cfg.TRANSVERSE_CUT_PRICE:.0f} × {trans_cuts}"
+            table_rows.append([
+                "Поперечный рез",
+                trans_calc,
+                f"{trans_cut_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            ])
+        
+        # Остаток
+        if rest_width_mm > 0:
+            rest_status = "0 (использован)" if rest_used else "0 (не использован)"
+            table_rows.append([
+                f"Остаток ({rest_width_mm}мм)",
+                rest_status,
+                "0,00 руб"
+            ])
+        
+        # Отходы
+        if waste_width_mm > 0:
+            if base_price_1_2m > 0:
+                # Форматируем для отображения: (ширина_отходов / ширина_плиты) × стоимость_плиты / количество_плит
+                base_price_str = f"{base_price_1_2m:,.2f}".replace(',', ' ').replace('.', ',')
+                waste_calc = f"({waste_width_mm} / 1200) × {base_price_str} / {qty}"
+            else:
+                waste_calc = "0"
+            table_rows.append([
+                f"Отходы ({waste_width_mm}мм)",
+                waste_calc,
+                f"{waste_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            ])
+        
+        # ИТОГО за 1 плиту
+        table_rows.append([
+            "ИТОГО за 1 плиту",
+            "",
+            f"{total_per_unit:,.2f} руб".replace(',', ' ').replace('.', ',')
+        ])
+        
+        # Округлено
+        table_rows.append([
+            "Округлено",
+            "",
+            f"{total_rounded:,.2f} руб".replace(',', ' ').replace('.', ',')
+        ])
+        
+        # За N плит
+        table_rows.append([
+            f"За {qty} плит",
+            f"{total_rounded:,.2f} × {qty}".replace(',', ' ').replace('.', ','),
+            f"{total_for_qty:,.2f} руб".replace(',', ' ').replace('.', ',')
+        ])
+        
+        breakdown_tables.append({
+            'name': name,
+            'rows': table_rows
+        })
+    
+    print(f'[DEBUG] build_component_breakdown: создано таблиц разбивки: {len(breakdown_tables)}')
+    return breakdown_tables
 
 
 # ==================== ПОСТРОЕНИЕ ПОСЛЕДОВАТЕЛЬНОСТИ ====================
@@ -990,15 +1236,28 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         pass
 
     price_rows, total_sum = build_price_rows(price_table)
+    breakdown_tables = build_component_breakdown(price_table, price_rows)
+    
+    # Отладочная информация
+    print(f'[DEBUG] breakdown_tables count: {len(breakdown_tables) if breakdown_tables else 0}')
+    if breakdown_tables:
+        for i, bt in enumerate(breakdown_tables):
+            print(f'[DEBUG] breakdown_tables[{i}]: name={bt.get("name")}, rows={len(bt.get("rows", []))}')
+    
     seq = build_layout_sequence()
     total_length = sum(s['length'] for s in seq)
 
-    fig = plt.figure(figsize=(22, 14))
-    gs = fig.add_gridspec(4, 1, height_ratios=[3.0, 1.0, 1.4, 1.8])
+    # Всегда создаем секцию для детальной разбивки
+    num_sections = 5
+    height_ratios = [3.0, 1.0, 1.4, 1.8, 2.0]
+    
+    fig = plt.figure(figsize=(22, 16))
+    gs = fig.add_gridspec(num_sections, 1, height_ratios=height_ratios)
     ax_track = fig.add_subplot(gs[0, 0])
     ax_strips = fig.add_subplot(gs[1, 0])
     ax_table = fig.add_subplot(gs[2, 0])
     ax_price = fig.add_subplot(gs[3, 0])
+    ax_breakdown = fig.add_subplot(gs[4, 0])
     fig.suptitle('КЗ: Дорожка 1 (ширина 1.2 м) — раскладка, резы, ведомости и смета', fontsize=16, fontweight='bold')
 
     ax_track.set_xlim(0, max(total_length + 2, cfg.TRACK_LENGTH_M))
@@ -1227,6 +1486,65 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     if not_priced:
         title += ' (внимание: не найдены цены для некоторых позиций — проверьте прайс)'
     ax_price.set_title(title, fontsize=12, pad=10)
+
+    # Таблица с детальной разбивкой компонентов
+    ax_breakdown.axis('off')
+    ax_breakdown.set_title('Детальная разбивка компонентов', fontsize=12, pad=10, fontweight='bold')
+    
+    if breakdown_tables:
+        print(f'[DEBUG] Создаем таблицу разбивки: {len(breakdown_tables)} наименований')
+        
+        # Формируем объединенную таблицу для всех наименований
+        all_breakdown_rows = []
+        for breakdown in breakdown_tables:
+            # Заголовок с наименованием
+            all_breakdown_rows.append([breakdown['name'], '', ''])
+            # Строки таблицы
+            for row in breakdown['rows']:
+                all_breakdown_rows.append(row)
+            # Пустая строка между таблицами
+            all_breakdown_rows.append(['', '', ''])
+        
+        # Удаляем последнюю пустую строку
+        if all_breakdown_rows and all_breakdown_rows[-1] == ['', '', '']:
+            all_breakdown_rows.pop()
+        
+        print(f'[DEBUG] Всего строк в таблице разбивки: {len(all_breakdown_rows)}')
+        
+        breakdown_headers = ['Компонент', 'Расчёт', 'Сумма']
+        breakdown_table = ax_breakdown.table(
+            cellText=all_breakdown_rows, 
+            colLabels=breakdown_headers, 
+            loc='center', 
+            cellLoc='left', 
+            colLoc='center'
+        )
+        breakdown_table.auto_set_font_size(False)
+        breakdown_table.set_fontsize(9)
+        breakdown_table.scale(1, 1.2)
+        
+        # Выделяем заголовки наименований и итоговые строки
+        row_idx = 0
+        for breakdown in breakdown_tables:
+            # Заголовок наименования
+            for col in range(3):
+                breakdown_table[(row_idx, col)].set_facecolor('#e3f2fd')
+                breakdown_table[(row_idx, col)].set_text_props(weight='bold')
+            row_idx += 1  # Переходим к строкам таблицы
+            
+            # Выделяем строки "ИТОГО", "Округлено" и "За N плит"
+            for i, row in enumerate(breakdown['rows']):
+                if row[0].startswith('ИТОГО') or row[0] == 'Округлено' or row[0].startswith('За '):
+                    for col in range(3):
+                        breakdown_table[(row_idx + i, col)].set_facecolor('#fff9c4')
+                        breakdown_table[(row_idx + i, col)].set_text_props(weight='bold')
+            row_idx += len(breakdown['rows']) + 1  # +1 для пустой строки между таблицами
+        print(f'[DEBUG] Таблица разбивки создана успешно')
+    else:
+        print('[DEBUG] breakdown_tables пустой список - показываем сообщение')
+        ax_breakdown.text(0.5, 0.5, 'Нет данных для отображения детальной разбивки', 
+                         ha='center', va='center', fontsize=12, 
+                         bbox=dict(boxstyle='round', facecolor='#f0f0f0', edgecolor='gray'))
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     csv_path = os.path.join(output_dir, f'Ведомость_Дорожка_1_{timestamp}.csv')
