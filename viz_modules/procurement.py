@@ -220,32 +220,108 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         else:
             base_price = 0.0
         
-        cuts_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L) + trans_cuts * cfg.TRANSVERSE_CUT_PRICE
-        
-        # Добавляем расчет стоимости отходов (как в детальной разбивке)
-        waste_cost = 0.0
+        # Используем ту же логику расчета, что и в build_component_breakdown
         from core.optimization import OPT_CASCADING_PLAN
         width_mm = int(round(W * 1000))
         
-        # Проверяем OPT_CASCADING_PLAN для определения отходов
+        # Инициализация переменных
+        long_cut_cost = 0.0
+        trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
+        rest_cost = 0.0
+        waste_cost = 0.0
+        
+        # Проверяем OPT_CASCADING_PLAN для правильного подсчета резов, остатков и отходов
         if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
-            # Ищем первичный рез для этой ширины
+            total_cuts_for_this_size = 0
+            
+            # Первичные резы
             for prim_cut in OPT_CASCADING_PLAN['primary_cuts']:
                 if prim_cut['width'] == width_mm:
-                    rest_width_mm = prim_cut['rest']
-                    
-                    # Проверяем вторичные резы для определения отходов
-                    if OPT_CASCADING_PLAN.get('secondary_cuts'):
-                        for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
-                            if sec_cut['source'] == rest_width_mm:
-                                waste_width_mm = sec_cut.get('waste', 0)
-                                if waste_width_mm > 0 and base_price_1_2m > 0:
-                                    # Формула: (ширина_отходов / ширина_плиты) × стоимость_плиты / количество_плит
-                                    waste_cost = (waste_width_mm / 1200.0) * base_price_1_2m / qty if qty > 0 else 0
-                                break
-                    break
+                    prim_lengths = prim_cut.get('lengths', [])
+                    if not prim_lengths or any(abs(l - L) < 0.01 for l in prim_lengths):
+                        prim_qty = prim_cut.get('qty', 0)
+                        total_cuts_for_this_size += prim_qty  # Каждый первичный рез = 1 рез
+                        primary_rest_width_mm = prim_cut['rest']
+
+                        # --- Остатки: считаем только те, что образуются при резе ЭТОГО типа плит ---
+                        unused_rest_total_mm = 0.0
+                        if primary_rest_width_mm > 0:
+                            produced_rests = prim_qty  # столько остатков этой ширины образовалось
+                            used_rests = 0
+
+                            # Считаем, сколько этих остатков реально использовано во вторичных резах
+                            if OPT_CASCADING_PLAN.get('secondary_cuts'):
+                                for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                                    if sec_cut.get('source') != primary_rest_width_mm:
+                                        continue
+                                    # Учитываем только те вторичные резы, которые берут остатки от ЭТОЙ длины
+                                    src_lengths = sec_cut.get('source_lengths', [])
+                                    if src_lengths and not any(abs(sl - L) < 0.01 for sl in src_lengths):
+                                        continue
+                                    used_rests += sec_cut.get('qty', 0)
+
+                            unused_rests = max(0, produced_rests - used_rests)
+                            unused_rest_total_mm = unused_rests * primary_rest_width_mm
+
+                            if unused_rest_total_mm > 0 and base_price_1_2m > 0 and qty > 0:
+                                # Стоимость всех неиспользованных остатков, распределённая между плитами этого типа
+                                rest_cost = (unused_rest_total_mm / 1200.0) * base_price_1_2m / qty
+
+                        # --- Отходы и поперечные резы: только те вторичные операции, которые дают ЭТИ плиты ---
+                        if OPT_CASCADING_PLAN.get('secondary_cuts'):
+                            for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                                sec_lengths = sec_cut.get('lengths', [])
+                                if not sec_lengths or any(abs(l - L) < 0.01 for l in sec_lengths):
+                                    sec_cuts = sec_cut.get('cuts', [])
+                                    if width_mm in sec_cuts:
+                                        sec_qty = sec_cut.get('qty', 0)
+                                        sec_pieces = sec_cut.get('pieces', 1)
+
+                                        # 1. Учет количества продольных резов
+                                        current_cuts = sec_qty * sec_pieces
+                                        total_cuts_for_this_size += current_cuts
+
+                                        # 2. Отходы по ширине (waste по ширине распределяем между плитами этого типа)
+                                        waste_w_mm = sec_cut.get('waste', 0)
+                                        if waste_w_mm > 0 and base_price_1_2m > 0 and qty > 0:
+                                            cost_of_waste_piece = (waste_w_mm / 1200.0) * base_price_1_2m
+                                            waste_cost += (cost_of_waste_piece * sec_qty) / qty
+
+                                        # 3. Поперечные резы и отходы по длине
+                                        src_lens = sec_cut.get('source_lengths', [])
+                                        if src_lens:
+                                            src_len = src_lens[0]
+
+                                            if sec_cut.get('type') == 'transverse' or abs(src_len - L) > 0.01:
+                                                # Поперечные резы распределяем по плитам этого типа
+                                                if qty > 0:
+                                                    trans_cuts += (1.0 * sec_qty) / qty
+
+                                                # Отходы по длине
+                                                len_waste = src_len - L
+                                                if len_waste > 0.01:
+                                                    src_price_full = get_price(src_len, load_code, cfg.PRICE_DB_PATH)
+                                                    if src_price_full is None:
+                                                        src_price_full = find_price_for_plate(price_table, src_len, load_code) or 0.0
+
+                                                    src_price_width = src_price_full * (width_mm / 1200.0)
+                                                    cost_len_waste = src_price_width - base_price
+
+                                                    if cost_len_waste > 0:
+                                                        waste_cost += cost_len_waste * (sec_qty / qty)
+                        break
+            
+            # Пересчитываем стоимость продольных резов с учетом реального количества
+            if total_cuts_for_this_size > 0:
+                long_cut_cost = (total_cuts_for_this_size * cfg.LONG_CUT_PRICE_PER_M * L) / qty if qty > 0 else 0
+            else:
+                # Если нет данных из плана, используем старую логику
+                long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L)
+        else:
+            # Если нет данных из плана, используем старую логику
+            long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L)
         
-        unit_price = base_price + cuts_cost + waste_cost
+        unit_price = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost
         weight = cfg.approximate_weight_kg(L, W)
         row_sum = unit_price * qty
         total += row_sum
@@ -381,27 +457,117 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         # Отходы
         waste_cost = 0.0
         waste_width_mm = 0
+        waste_terms = []  # (ширина_отхода_мм, количество_операций) для наглядной формулы
         
-        # Проверяем OPT_CASCADING_PLAN для определения остатков и отходов
+        # Проверяем OPT_CASCADING_PLAN для определения остатков, отходов и количества резов
+        total_cuts_count = 0  # Общее количество резов для отображения в таблице
         if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
-            # Ищем первичный рез для этой ширины
+            # Считаем общее количество резов (первичных + вторичных) для всех плит этой ширины и длины
+            total_cuts_for_this_size = 0
+            total_plates_from_cuts = 0
+            primary_rest_width_mm = 0  # Ширина остатка от первичных резов
+            
+            # Первичные резы
             for prim_cut in OPT_CASCADING_PLAN['primary_cuts']:
                 if prim_cut['width'] == width_mm:
-                    rest_width_mm = prim_cut['rest']
-                    
-                    # Проверяем, использован ли остаток во вторичных резах
-                    if OPT_CASCADING_PLAN.get('secondary_cuts'):
-                        for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
-                            if sec_cut['source'] == rest_width_mm:
+                    prim_lengths = prim_cut.get('lengths', [])
+                    if not prim_lengths or any(abs(l - length) < 0.01 for l in prim_lengths):
+                        prim_qty = prim_cut.get('qty', 0)
+                        total_cuts_for_this_size += prim_qty  # Каждый первичный рез = 1 рез
+                        total_plates_from_cuts += prim_qty   # Каждый первичный рез даёт 1 плиту
+                        primary_rest_width_mm = prim_cut['rest']
+
+                        # --- Остатки: считаем только те, что образуются при резе ЭТОГО типа плит ---
+                        unused_rest_total_mm = 0.0
+                        if primary_rest_width_mm > 0:
+                            produced_rests = prim_qty  # столько остатков этой ширины образовалось
+                            used_rests = 0
+
+                            # Считаем, сколько этих остатков реально использовано во вторичных резах
+                            if OPT_CASCADING_PLAN.get('secondary_cuts'):
+                                for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                                    if sec_cut.get('source') != primary_rest_width_mm:
+                                        continue
+                                    # учитываем только вторичные резы от ЭТОЙ длины
+                                    src_lengths = sec_cut.get('source_lengths', [])
+                                    if src_lengths and not any(abs(sl - length) < 0.01 for sl in src_lengths):
+                                        continue
+                                    used_rests += sec_cut.get('qty', 0)
+
+                            unused_rests = max(0, produced_rests - used_rests)
+                            unused_rest_total_mm = unused_rests * primary_rest_width_mm
+
+                            if unused_rest_total_mm > 0 and base_price_1_2m > 0 and qty > 0:
+                                # Стоимость всех неиспользованных остатков, распределённая между плитами этого типа
+                                rest_cost = (unused_rest_total_mm / 1200.0) * base_price_1_2m / qty
+                                rest_width_mm = unused_rest_total_mm  # для отображения
+                            elif produced_rests > 0:
+                                # Остатки были, но полностью использованы
                                 rest_used = True
-                                # Рассчитываем отходы
-                                waste_width_mm = sec_cut.get('waste', 0)
-                                if waste_width_mm > 0 and base_price_1_2m > 0:
-                                    # Новая формула: (ширина_отходов / ширина_плиты) × стоимость_плиты / количество_плит
-                                    # waste_width_mm в мм, 1200 - ширина плиты в мм (1.2м)
-                                    waste_cost = (waste_width_mm / 1200.0) * base_price_1_2m / qty if qty > 0 else 0
-                                break
-                    break
+                                rest_width_mm = 0
+
+                        # --- Вторичные резы и отходы: только операции, которые дают ЭТИ плиты ---
+                        if OPT_CASCADING_PLAN.get('secondary_cuts'):
+                            for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                                sec_lengths = sec_cut.get('lengths', [])
+                                if not sec_lengths or any(abs(l - length) < 0.01 for l in sec_lengths):
+                                    sec_cuts = sec_cut.get('cuts', [])
+                                    
+                                    # Проверяем, относится ли рез к нашей ширине
+                                    if width_mm in sec_cuts:
+                                        sec_qty = sec_cut.get('qty', 0)
+                                        sec_pieces = sec_cut.get('pieces', 1)
+                                        
+                                        # 1. Учет количества продольных резов и плит
+                                        current_cuts = sec_qty * sec_pieces
+                                        total_cuts_for_this_size += current_cuts
+                                        total_plates_from_cuts += current_cuts
+                                        
+                                        # 2. Отходы по ширине (серые зоны «отход» на визуализации),
+                                        # распределяем стоимость между ВСЕМИ плитами данного типа
+                                        waste_w_mm = sec_cut.get('waste', 0)
+                                        if waste_w_mm > 0 and base_price_1_2m > 0 and qty > 0:
+                                            cost_of_waste_piece = (waste_w_mm / 1200.0) * base_price_1_2m
+                                            waste_cost += (cost_of_waste_piece * sec_qty) / qty
+                                            # Для отображения запоминаем ширину и количество операций
+                                            waste_terms.append((waste_w_mm, sec_qty))
+
+                                        # 3. Поперечные резы (transverse) и отходы по длине
+                                        src_lens = sec_cut.get('source_lengths', [])
+                                        if src_lens:
+                                            src_len = src_lens[0]
+
+                                            # Если была операция поперечного реза или изменилась длина
+                                            if sec_cut.get('type') == 'transverse' or abs(src_len - length) > 0.01:
+                                                # Количество поперечных резов распределяем по плитам этого типа
+                                                if qty > 0:
+                                                    trans_cuts += (1.0 * sec_qty) / qty
+
+                                                # Отходы по длине (серые обрезки по длине)
+                                                len_waste = src_len - length
+                                                if len_waste > 0.01:
+                                                    src_price_full = get_price(src_len, load_code, cfg.PRICE_DB_PATH)
+                                                    if src_price_full is None:
+                                                        src_price_full = find_price_for_plate(price_table, src_len, load_code) or 0.0
+
+                                                    src_price_width = src_price_full * (width_mm / 1200.0)
+                                                    cost_len_waste = src_price_width - base_price
+
+                                                    if cost_len_waste > 0:
+                                                        waste_cost += cost_len_waste * (sec_qty / qty)
+
+                            # После подсчёта trans_cuts обновляем стоимость поперечных резов
+                            trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
+                        break
+            
+            # Если нашли резы в плане, используем их количество
+            if total_plates_from_cuts > 0:
+                # ИСПРАВЛЕНИЕ: Используем общее количество резов, а не делим на количество плит
+                # Стоимость реза на одну плиту = (общее количество резов × стоимость одного реза) / количество плит в заказе
+                total_cuts_count = total_cuts_for_this_size  # Сохраняем для отображения в таблице
+                long_cuts = total_cuts_for_this_size  # Общее количество резов
+                # Пересчитываем стоимость продольных резов: общая стоимость всех резов / количество плит
+                long_cut_cost = (long_cuts * cfg.LONG_CUT_PRICE_PER_M * length) / qty if qty > 0 else 0
         
         # ИТОГО за 1 плиту
         total_per_unit = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost
@@ -427,7 +593,21 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         
         # Продольный рез
         if long_cuts > 0:
-            long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f}".replace('.', ',')
+            # Показываем общее количество резов в расчете
+            if total_cuts_count > 0:
+                # Если есть информация о количестве резов из плана оптимизации
+                if qty > 1:
+                    # Показываем: "460 × 3,6 × 4 / 4" (общее количество резов / количество плит)
+                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {total_cuts_count:.0f} / {qty}".replace('.', ',')
+                else:
+                    # Для одной плиты просто показываем количество резов
+                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {total_cuts_count:.0f}".replace('.', ',')
+            else:
+                # Если нет информации из плана, используем старое отображение
+                if abs(long_cuts - 1.0) > 0.001:
+                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {long_cuts:.2f}".replace('.', ',')
+                else:
+                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f}".replace('.', ',')
             table_rows.append([
                 "Продольный рез",
                 long_calc,
@@ -445,23 +625,39 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         
         # Остаток
         if rest_width_mm > 0:
-            rest_status = "0 (использован)" if rest_used else "0 (не использован)"
+            if rest_cost > 0:
+                # Показываем стоимость остатка
+                base_price_str = f"{base_price_1_2m:,.2f}".replace(',', ' ').replace('.', ',')
+                rest_calc = f"({rest_width_mm} / 1200) × {base_price_str} / {qty}"
+                rest_status_str = f"{rest_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            else:
+                rest_calc = "0 (использован)" if rest_used else "0 (не использован)"
+                rest_status_str = "0,00 руб"
             table_rows.append([
                 f"Остаток ({rest_width_mm}мм)",
-                rest_status,
-                "0,00 руб"
+                rest_calc,
+                rest_status_str
             ])
         
         # Отходы
-        if waste_width_mm > 0:
+        if waste_cost > 0 or waste_terms:
             if base_price_1_2m > 0:
-                # Форматируем для отображения: (ширина_отходов / ширина_плиты) × стоимость_плиты / количество_плит
                 base_price_str = f"{base_price_1_2m:,.2f}".replace(',', ' ').replace('.', ',')
-                waste_calc = f"({waste_width_mm} / 1200) × {base_price_str} / {qty}"
+                if waste_terms:
+                    # Формируем наглядное выражение: "240×2" или "240×2 + 20"
+                    parts = []
+                    for w_mm, n in waste_terms:
+                        w_str = f"{int(w_mm)}"
+                        parts.append(f"{w_str}×{n}" if n > 1 else w_str)
+                    waste_expr = " + ".join(parts)
+                else:
+                    waste_expr = "0"
+                waste_calc = f"({waste_expr} / 1200) × {base_price_str} / {qty}"
             else:
+                waste_expr = "0"
                 waste_calc = "0"
             table_rows.append([
-                f"Отходы ({waste_width_mm}мм)",
+                f"Отходы ({waste_expr}мм)",
                 waste_calc,
                 f"{waste_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
             ])

@@ -78,9 +78,9 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     seq = build_layout_sequence()
     total_length = sum(s['length'] for s in seq)
 
-    # Всегда создаем секцию для детальной разбивки
-    num_sections = 5
-    height_ratios = [3.0, 1.0, 1.4, 1.8, 2.0]
+    # Убрали секцию детальной разбивки - она теперь в отдельном Excel файле
+    num_sections = 4
+    height_ratios = [3.0, 1.0, 1.4, 1.8]
     
     fig = plt.figure(figsize=(22, 16))
     gs = fig.add_gridspec(num_sections, 1, height_ratios=height_ratios)
@@ -88,7 +88,6 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     ax_strips = fig.add_subplot(gs[1, 0])
     ax_table = fig.add_subplot(gs[2, 0])
     ax_price = fig.add_subplot(gs[3, 0])
-    ax_breakdown = fig.add_subplot(gs[4, 0])
     fig.suptitle('КЗ: Дорожка 1 (ширина 1.2 м) — раскладка, резы, ведомости и смета', fontsize=16, fontweight='bold')
 
     ax_track.set_xlim(0, max(total_length + 2, cfg.TRACK_LENGTH_M))
@@ -317,64 +316,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         title += ' (внимание: не найдены цены для некоторых позиций — проверьте прайс)'
     ax_price.set_title(title, fontsize=12, pad=10)
 
-    # Таблица с детальной разбивкой компонентов
-    ax_breakdown.axis('off')
-    ax_breakdown.set_title('Детальная разбивка компонентов', fontsize=12, pad=10, fontweight='bold')
-    
-    if breakdown_tables:
-        print(f'[DEBUG] Создаем таблицу разбивки: {len(breakdown_tables)} наименований')
-        
-        # Формируем объединенную таблицу для всех наименований
-        all_breakdown_rows = []
-        for breakdown in breakdown_tables:
-            # Заголовок с наименованием
-            all_breakdown_rows.append([breakdown['name'], '', ''])
-            # Строки таблицы
-            for row in breakdown['rows']:
-                all_breakdown_rows.append(row)
-            # Пустая строка между таблицами
-            all_breakdown_rows.append(['', '', ''])
-        
-        # Удаляем последнюю пустую строку
-        if all_breakdown_rows and all_breakdown_rows[-1] == ['', '', '']:
-            all_breakdown_rows.pop()
-        
-        print(f'[DEBUG] Всего строк в таблице разбивки: {len(all_breakdown_rows)}')
-        
-        breakdown_headers = ['Компонент', 'Расчёт', 'Сумма']
-        breakdown_table = ax_breakdown.table(
-            cellText=all_breakdown_rows, 
-            colLabels=breakdown_headers, 
-            loc='center', 
-            cellLoc='left', 
-            colLoc='center'
-        )
-        breakdown_table.auto_set_font_size(False)
-        breakdown_table.set_fontsize(9)
-        breakdown_table.scale(1, 1.2)
-        
-        # Выделяем заголовки наименований и итоговые строки
-        row_idx = 0
-        for breakdown in breakdown_tables:
-            # Заголовок наименования
-            for col in range(3):
-                breakdown_table[(row_idx, col)].set_facecolor('#e3f2fd')
-                breakdown_table[(row_idx, col)].set_text_props(weight='bold')
-            row_idx += 1  # Переходим к строкам таблицы
-            
-            # Выделяем строки "ИТОГО", "Округлено" и "За N плит"
-            for i, row in enumerate(breakdown['rows']):
-                if row[0].startswith('ИТОГО') or row[0] == 'Округлено' or row[0].startswith('За '):
-                    for col in range(3):
-                        breakdown_table[(row_idx + i, col)].set_facecolor('#fff9c4')
-                        breakdown_table[(row_idx + i, col)].set_text_props(weight='bold')
-            row_idx += len(breakdown['rows']) + 1  # +1 для пустой строки между таблицами
-        print(f'[DEBUG] Таблица разбивки создана успешно')
-    else:
-        print('[DEBUG] breakdown_tables пустой список - показываем сообщение')
-        ax_breakdown.text(0.5, 0.5, 'Нет данных для отображения детальной разбивки', 
-                         ha='center', va='center', fontsize=12, 
-                         bbox=dict(boxstyle='round', facecolor='#f0f0f0', edgecolor='gray'))
+    # Детальная разбивка теперь сохраняется в отдельный Excel файл, а не отображается на графике
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     csv_path = os.path.join(output_dir, f'Ведомость_Дорожка_1_{timestamp}.csv')
@@ -388,14 +330,46 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             df_v = pd.DataFrame(table_rows, columns=col_labels)
             xlsx_path_v = os.path.join(output_dir, f'Ведомость_Дорожка_1_{timestamp}.xlsx')
             df_v.to_excel(xlsx_path_v, index=False)
+            print(f'[DEBUG] Ведомость сохранена: {xlsx_path_v}')
 
             df_p = pd.DataFrame(price_rows, columns=price_headers)
             xlsx_path_p = os.path.join(output_dir, f'Смета_Дорожка_1_{timestamp}.xlsx')
             with pd.ExcelWriter(xlsx_path_p, engine='openpyxl') as writer:
                 df_p.to_excel(writer, index=False, sheet_name='Смета')
                 df_v.to_excel(writer, index=False, sheet_name='Ведомость')
-        except Exception:
+            print(f'[DEBUG] Смета сохранена: {xlsx_path_p}')
+            
+            # Сохраняем детальную разбивку компонентов в отдельный Excel файл
+            if breakdown_tables:
+                breakdown_headers = ['Компонент', 'Расчёт', 'Сумма']
+                all_breakdown_rows = []
+                for breakdown in breakdown_tables:
+                    # Заголовок с наименованием
+                    all_breakdown_rows.append([breakdown['name'], '', ''])
+                    # Строки таблицы
+                    for row in breakdown['rows']:
+                        all_breakdown_rows.append(row)
+                    # Пустая строка между таблицами
+                    all_breakdown_rows.append(['', '', ''])
+                
+                # Удаляем последнюю пустую строку
+                if all_breakdown_rows and all_breakdown_rows[-1] == ['', '', '']:
+                    all_breakdown_rows.pop()
+                
+                df_breakdown = pd.DataFrame(all_breakdown_rows, columns=breakdown_headers)
+                xlsx_path_breakdown = os.path.join(output_dir, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx')
+                df_breakdown.to_excel(xlsx_path_breakdown, index=False)
+                print(f'[DEBUG] Детальная разбивка сохранена в Excel: {xlsx_path_breakdown}')
+            else:
+                print('[DEBUG] breakdown_tables пустой - файл детальной разбивки не создан')
+        except Exception as e:
+            print(f'[ОШИБКА] При сохранении Excel файлов: {e}')
+            import traceback
+            traceback.print_exc()
             pass
+    else:
+        print('[ПРЕДУПРЕЖДЕНИЕ] pandas не установлен - Excel файлы не будут созданы!')
+        print('[ПРЕДУПРЕЖДЕНИЕ] Установите: pip install pandas openpyxl')
 
     png_path = os.path.join(output_dir, f'Схема_Дорожка_1_КЗ_{timestamp}.png')
     pdf_path = os.path.join(output_dir, f'Схема_Дорожка_1_КЗ_{timestamp}.pdf')
@@ -411,6 +385,8 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     if pd is not None:
         print('  XLSX (ведомость):', os.path.join(output_dir, f'Ведомость_Дорожка_1_{timestamp}.xlsx'))
         print('  XLSX (смета):', os.path.join(output_dir, f'Смета_Дорожка_1_{timestamp}.xlsx'))
+        if breakdown_tables:
+            print('  XLSX (детальная разбивка):', os.path.join(output_dir, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx'))
     return png_path, pdf_path
 
 

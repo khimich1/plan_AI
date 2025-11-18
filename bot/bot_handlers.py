@@ -163,13 +163,29 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
 
             # Извлекаем timestamp из имени PNG
             base = os.path.basename(png_path)
-            # Ожидаемый формат: ..._{timestamp}.png
-            timestamp = base.rsplit('_', 1)[-1].replace('.png', '')
+            # Ожидаемый формат: Схема_Дорожка_1_КЗ_{timestamp}.png
+            # Извлекаем timestamp (всё после "КЗ_")
+            if 'КЗ_' in base:
+                timestamp = base.split('КЗ_', 1)[-1].replace('.png', '')
+            else:
+                # Fallback: последняя часть после последнего подчеркивания
+                timestamp = base.rsplit('_', 1)[-1].replace('.png', '')
+            print(f'[BOT] Извлечен timestamp: {timestamp}')
+            print(f'[BOT] Ищу файлы в директории: {OUTPUTS_DIR_STR}')
+            print(f'[BOT] Директория существует: {os.path.exists(OUTPUTS_DIR_STR)}')
+            
+            # Показываем все файлы с этим timestamp для отладки
+            if os.path.exists(OUTPUTS_DIR_STR):
+                matching_files = [f for f in os.listdir(OUTPUTS_DIR_STR) if timestamp in f]
+                print(f'[BOT] Найдено файлов с timestamp {timestamp}: {len(matching_files)}')
+                for f in matching_files:
+                    print(f'  - {f}')
 
             # Возможные имена доп.файлов (поддерживаем оба варианта из визуализатора)
             candidates = [
                 os.path.join(OUTPUTS_DIR_STR, f'Ведомость_Дорожка_1_{timestamp}.xlsx'),
                 os.path.join(OUTPUTS_DIR_STR, f'Смета_Дорожка_1_{timestamp}.xlsx'),
+                os.path.join(OUTPUTS_DIR_STR, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx'),
                 os.path.join(OUTPUTS_DIR_STR, f'Ведомость_Дорожка_1_{timestamp}.csv'),
                 os.path.join(OUTPUTS_DIR_STR, f'Раскладка_Дорожка_1_{timestamp}.csv'),
             ]
@@ -180,9 +196,19 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
                 await message.answer_document(FSInputFile(png_path))
             if os.path.exists(pdf_path):
                 await message.answer_document(FSInputFile(pdf_path))
+            
+            # Отправляем Excel файлы в правильном порядке
+            files_sent = 0
             for p in candidates:
                 if os.path.exists(p):
+                    print(f'[BOT] ✅ Отправляю файл: {os.path.basename(p)}')
                     await message.answer_document(FSInputFile(p))
+                    files_sent += 1
+                else:
+                    print(f'[BOT] ❌ Файл не найден: {os.path.basename(p)}')
+                    print(f'[BOT]    Полный путь: {p}')
+            
+            print(f'[BOT] Всего отправлено Excel/CSV файлов: {files_sent}')
 
             # Формируем итоговое сообщение
             final_msg = "📋 **Итоги:**\n• Схема раскладки готова\n• Ведомость и смета сформированы"
@@ -209,9 +235,18 @@ async def cmd_build_plan(message: Message):
             png_path, pdf_path = result_paths
             
             # Ищем дополнительные файлы
-            timestamp = os.path.basename(png_path).split('_')[-1].replace('.png', '')
+            # Извлекаем timestamp (всё после "КЗ_")
+            base = os.path.basename(png_path)
+            if 'КЗ_' in base:
+                timestamp = base.split('КЗ_', 1)[-1].replace('.png', '')
+            else:
+                # Fallback: последняя часть после последнего подчеркивания
+                timestamp = base.rsplit('_', 1)[-1].replace('.png', '')
+            
             csv_path = os.path.join(OUTPUTS_DIR_STR, f'Раскладка_Дорожка_1_{timestamp}.csv')
             xlsx_path = os.path.join(OUTPUTS_DIR_STR, f'Ведомость_Дорожка_1_{timestamp}.xlsx')
+            breakdown_path = os.path.join(OUTPUTS_DIR_STR, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx')
+            xlsx_smeta_path = os.path.join(OUTPUTS_DIR_STR, f'Смета_Дорожка_1_{timestamp}.xlsx')
             
             await message.answer("✅ Готово! Отправляю файлы:")
             
@@ -220,11 +255,17 @@ async def cmd_build_plan(message: Message):
                 await message.answer_document(FSInputFile(png_path))
             
             # Отправляем документы
+            if os.path.exists(pdf_path):
+                await message.answer_document(FSInputFile(pdf_path))
+            
             if os.path.exists(xlsx_path):
                 await message.answer_document(FSInputFile(xlsx_path))
             
-            if os.path.exists(pdf_path):
-                await message.answer_document(FSInputFile(pdf_path))
+            if os.path.exists(xlsx_smeta_path):
+                await message.answer_document(FSInputFile(xlsx_smeta_path))
+            
+            if os.path.exists(breakdown_path):
+                await message.answer_document(FSInputFile(breakdown_path))
             
             if os.path.exists(csv_path):
                 await message.answer_document(FSInputFile(csv_path))
