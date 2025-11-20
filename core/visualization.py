@@ -332,7 +332,24 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             df_v.to_excel(xlsx_path_v, index=False)
             print(f'[DEBUG] Ведомость сохранена: {xlsx_path_v}')
 
+            # Смета по дорожке
             df_p = pd.DataFrame(price_rows, columns=price_headers)
+
+            # Добавляем итоговую строку по всему заказу (общая сумма по столбцу "Сумма")
+            total_sum_str = f'{total_sum:,.2f}'.replace(',', ' ').replace('.', ',')
+            total_row = {
+                '№': '',
+                'Наименование': 'ИТОГО',
+                'Кол-во': '',
+                'Ед.': '',
+                'Неделя': '',
+                'Контрагент': '',
+                'Вес(кг)': '',
+                'Цена': '',
+                'Сумма': total_sum_str,
+            }
+            df_p = pd.concat([df_p, pd.DataFrame([total_row])], ignore_index=True)
+
             xlsx_path_p = os.path.join(output_dir, f'Смета_Дорожка_1_{timestamp}.xlsx')
             with pd.ExcelWriter(xlsx_path_p, engine='openpyxl') as writer:
                 df_p.to_excel(writer, index=False, sheet_name='Смета')

@@ -10,21 +10,32 @@ import os
 import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional
+from xml.sax.saxutils import escape
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+
+# Импортируем функцию расчёта веса
+try:
+    from config_and_data import approximate_weight_kg
+except ImportError:
+    # Если не удалось импортировать, используем локальную функцию
+    def approximate_weight_kg(length_m: float, width_m: float, thickness_m: float = 0.22) -> float:
+        """Примерный расчёт веса плиты в килограммах"""
+        volume = length_m * width_m * thickness_m
+        return round(volume * 2400, 2)
 
 
 # ==================== КОНСТАНТЫ ====================
 
-# Реквизиты компании
+# Реквизиты компании (согласно примеру КП)
 COMPANY_NAME = "ООО «Комбинат ЖБК»"
-COMPANY_ADDRESS = "188300, Ленинградская область, г. Гатчина, ул. Заводская, д. 5"
-COMPANY_PHONE = "+7 (812) 336-60-00"
+COMPANY_ADDRESS = "150020, г Ярославль г, проезд Домостроителей, дом 1, строение 3"
+COMPANY_PHONE = "8 (4852) 595 000"
 COMPANY_EMAIL = "info@zhbk.ru"
 COMPANY_INN = "4705123456"
 COMPANY_KPP = "470501001"
@@ -35,54 +46,113 @@ BANK_BIK = "044030653"
 BANK_ACCOUNT = "40702810123456789012"
 BANK_CORR_ACCOUNT = "30101810500000000653"
 
-# Путь к базе данных с ценами (в корне проекта)
-import os
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'pb.db')
+# Путь к базе данных с ценами
+DB_PATH = "pb.db"
+
+# Путь к логотипу
+LOGO_PATH = "банк знаний/ЖБЛСТАРТ.png"
 
 
 # ==================== РЕГИСТРАЦИЯ ШРИФТОВ ====================
 
 def register_fonts():
     """
-    Регистрирует русские шрифты для ReportLab
-    Ищет доступные шрифты Windows с поддержкой кириллицы
+    Регистрирует русские шрифты для ReportLab и старается выбрать Tahoma,
+    чтобы повторить фирменное оформление КП.
     """
-    # Пути к стандартным шрифтам Windows
-    windows_fonts = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts')
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Список шрифтов для регистрации (имя в ReportLab, файл TTF)
-    fonts_to_register = [
-        ('DejaVuSans', 'DejaVuSans.ttf'),
-        ('DejaVuSans-Bold', 'DejaVuSans-Bold.ttf'),
-        ('Arial', 'arial.ttf'),
-        ('Arial-Bold', 'arialbd.ttf'),
-        ('TimesNewRoman', 'times.ttf'),
-        ('TimesNewRoman-Bold', 'timesbd.ttf'),
+    font_paths = []
+    local_font_dirs = [
+        os.path.join(script_dir, 'fonts'),
+        os.path.join(script_dir, 'банк знаний'),
+        os.path.join(script_dir, 'bank'),
     ]
     
-    registered = False
+    for local_dir in local_font_dirs:
+        if os.path.exists(local_dir):
+            font_paths.append(local_dir)
     
-    for font_name, font_file in fonts_to_register:
-        font_path = os.path.join(windows_fonts, font_file)
-        
-        if os.path.exists(font_path):
-            try:
-                pdfmetrics.registerFont(TTFont(font_name, font_path))
-                if not registered:
-                    # Используем первый найденный шрифт как основной
-                    globals()['FONT_NORMAL'] = font_name
-                    globals()['FONT_BOLD'] = font_name + '-Bold' if font_name != 'DejaVuSans' else font_name
-                    registered = True
-            except Exception as e:
-                continue
+    linux_font_paths = [
+        '/usr/share/fonts/truetype/dejavu/',
+        '/usr/share/fonts/truetype/liberation/',
+        '/usr/share/fonts/truetype/msttcorefonts/',
+        '/usr/share/fonts/truetype/freefont/',
+        '/usr/share/fonts/TTF/',
+        '/usr/share/fonts/',
+        '~/.fonts/',
+    ]
     
-    if not registered:
-        # Если не нашли ни одного TTF шрифта, используем встроенные
-        # (но они не поддерживают кириллицу)
-        globals()['FONT_NORMAL'] = 'Helvetica'
-        globals()['FONT_BOLD'] = 'Helvetica-Bold'
+    windows_fonts = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts')
+    if os.path.exists(windows_fonts):
+        font_paths.append(windows_fonts)
     
-    return registered
+    for path in linux_font_paths:
+        expanded = os.path.expanduser(path)
+        if os.path.exists(expanded):
+            font_paths.append(expanded)
+    
+    # Убираем дубликаты, сохраняя порядок
+    seen_paths = set()
+    unique_font_paths = []
+    for path in font_paths:
+        if path not in seen_paths:
+            unique_font_paths.append(path)
+            seen_paths.add(path)
+    
+    fonts_to_register = [
+        ('Tahoma', ('Tahoma.ttf', 'tahoma.ttf')),
+        ('Tahoma-Bold', ('tahomabd.ttf', 'Tahoma-Bold.ttf', 'Tahoma Bold.ttf', 'tahoma-bold.ttf')),
+        ('DejaVuSans', ('DejaVuSans.ttf',)),
+        ('DejaVuSans-Bold', ('DejaVuSans-Bold.ttf',)),
+        ('LiberationSans', ('LiberationSans-Regular.ttf', 'LiberationSans.ttf')),
+        ('LiberationSans-Bold', ('LiberationSans-Bold.ttf',)),
+        ('Arial', ('Arial.ttf', 'arial.ttf')),
+        ('Arial-Bold', ('Arial-Bold.ttf', 'arialbd.ttf')),
+        ('TimesNewRoman', ('TimesNewRoman.ttf', 'times.ttf')),
+        ('TimesNewRoman-Bold', ('TimesNewRoman-Bold.ttf', 'timesbd.ttf')),
+    ]
+    
+    registered_fonts = set()
+    
+    for font_name, candidates in fonts_to_register:
+        for font_dir in unique_font_paths:
+            for candidate in candidates:
+                font_path = os.path.join(font_dir, candidate)
+                if os.path.exists(font_path):
+                    try:
+                        pdfmetrics.registerFont(TTFont(font_name, font_path))
+                        registered_fonts.add(font_name)
+                        break
+                    except Exception:
+                        continue
+            if font_name in registered_fonts:
+                break
+    
+    preferred_pairs = [
+        ('Tahoma', 'Tahoma-Bold'),
+        ('DejaVuSans', 'DejaVuSans-Bold'),
+        ('LiberationSans', 'LiberationSans-Bold'),
+        ('Arial', 'Arial-Bold'),
+        ('TimesNewRoman', 'TimesNewRoman-Bold'),
+    ]
+    
+    for normal, bold in preferred_pairs:
+        if normal in registered_fonts:
+            globals()['FONT_NORMAL'] = normal
+            globals()['FONT_BOLD'] = bold if bold in registered_fonts else normal
+            break
+    else:
+        if registered_fonts:
+            fallback = next(iter(registered_fonts))
+            globals()['FONT_NORMAL'] = fallback
+            globals()['FONT_BOLD'] = fallback
+        else:
+            globals()['FONT_NORMAL'] = 'Helvetica'
+            globals()['FONT_BOLD'] = 'Helvetica-Bold'
+            print("ВНИМАНИЕ: Не найдены шрифты с поддержкой кириллицы! Русский текст может отображаться некорректно.")
+    
+    return bool(registered_fonts)
 
 
 # Регистрируем шрифты при импорте модуля
@@ -185,280 +255,257 @@ def generate_commercial_offer_pdf(
     customer_name: Optional[str] = None
 ) -> io.BytesIO:
     """
-    Генерирует коммерческое предложение в формате PDF
-    
-    Args:
-        order_data: список позиций с полями:
-            - name: название (например "ПБ 78-0.3-8п")
-            - length_m: длина в метрах
-            - width_m: ширина в метрах
-            - qty: количество штук
-            - load_class: класс нагрузки (опционально, по умолчанию 800)
-        offer_number: номер коммерческого предложения
-        offer_date: дата КП в формате "дд.мм.гггг"
-        customer_name: название заказчика (опционально)
-    
-    Returns:
-        BytesIO объект с содержимым PDF
+    Генерирует коммерческое предложение в формате PDF, повторяя фирменное
+    оформление КП № 1133 от 16.10.2025.
     """
-    
-    # Создаём буфер для PDF
     buffer = io.BytesIO()
-    
-    # Создаём документ
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        rightMargin=20*mm,
-        leftMargin=20*mm,
-        topMargin=15*mm,
-        bottomMargin=15*mm
+        rightMargin=10 * mm,
+        leftMargin=10 * mm,
+        topMargin=12 * mm,
+        bottomMargin=15 * mm
     )
     
-    # Стили
+    content_width = doc.width
     styles = getSampleStyleSheet()
     
-    # Кастомные стили с русскими шрифтами
-    style_title = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
+    style_header_info = ParagraphStyle(
+        'HeaderInfo',
+        parent=styles['Normal'],
         fontName=FONT_BOLD,
-        fontSize=16,
-        textColor=colors.HexColor('#1f4788'),
-        spaceAfter=6*mm,
-        alignment=1  # center
+        fontSize=11,
+        leading=14,
+        spaceAfter=2 * mm
     )
     
-    style_normal = ParagraphStyle(
-        'CustomNormal',
+    style_doc_number = ParagraphStyle(
+        'DocNumber',
+        parent=styles['Normal'],
+        fontName=FONT_BOLD,
+        fontSize=11,
+        leading=14,
+        spaceAfter=4 * mm
+    )
+    
+    style_title = ParagraphStyle(
+        'OfferTitle',
+        parent=styles['Normal'],
+        fontName=FONT_BOLD,
+        fontSize=18,
+        leading=22,
+        alignment=1,
+        spaceAfter=1 * mm
+    )
+    
+    style_customer = ParagraphStyle(
+        'OfferCustomer',
+        parent=styles['Normal'],
+        fontName=FONT_BOLD,
+        fontSize=16,
+        leading=20,
+        alignment=1,
+        spaceAfter=6 * mm
+    )
+    
+    style_table_text = ParagraphStyle(
+        'TableText',
         parent=styles['Normal'],
         fontName=FONT_NORMAL,
         fontSize=10,
-        leading=14
-    )
-    
-    style_small = ParagraphStyle(
-        'CustomSmall',
-        parent=styles['Normal'],
-        fontName=FONT_NORMAL,
-        fontSize=9,
         leading=12
     )
     
-    # Элементы документа
+    style_summary = ParagraphStyle(
+        'Summary',
+        parent=styles['Normal'],
+        fontName=FONT_BOLD,
+        fontSize=11,
+        leading=15,
+        spaceAfter=6 * mm
+    )
+    
+    style_conditions = ParagraphStyle(
+        'Conditions',
+        parent=styles['Normal'],
+        fontName=FONT_NORMAL,
+        fontSize=11,
+        leading=14,
+        spaceAfter=2 * mm
+    )
+    
+    style_signature_label = ParagraphStyle(
+        'SignatureLabel',
+        parent=styles['Normal'],
+        fontName=FONT_BOLD,
+        fontSize=12,
+        leading=16
+    )
+    
+    style_signature = ParagraphStyle(
+        'Signature',
+        parent=styles['Normal'],
+        fontName=FONT_NORMAL,
+        fontSize=12,
+        leading=16
+    )
+    
+    style_note = ParagraphStyle(
+        'Note',
+        parent=styles['Normal'],
+        fontName=FONT_NORMAL,
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor('#333333'),
+        spaceBefore=2 * mm
+    )
+    
     story = []
     
-    # ==================== ШАПКА ====================
+    if os.path.exists(LOGO_PATH):
+        try:
+            logo_width = content_width
+            logo_height = logo_width * (207 / 1456.0)
+            story.append(Image(LOGO_PATH, width=logo_width, height=logo_height))
+            story.append(Spacer(1, 4 * mm))
+        except Exception as exc:
+            print(f"Ошибка загрузки логотипа: {exc}")
     
-    # Логотип и название компании
     story.append(Paragraph(
-        f"<b>{COMPANY_NAME}</b>",
+        f"{COMPANY_ADDRESS}<br/>Тел.: {COMPANY_PHONE}",
+        style_header_info
+    ))
+    
+    story.append(Paragraph(
+        f"№ {offer_number} от {offer_date}",
+        style_doc_number
+    ))
+    
+    story.append(Paragraph(
+        "Коммерческое предложение для",
         style_title
     ))
     
-    story.append(Paragraph(
-        f"{COMPANY_ADDRESS}<br/>"
-        f"Тел.: {COMPANY_PHONE}, E-mail: {COMPANY_EMAIL}<br/>"
-        f"ИНН {COMPANY_INN}, КПП {COMPANY_KPP}",
-        style_small
-    ))
+    customer_display = escape(customer_name.strip()) if customer_name else "Заказчик не указан"
+    story.append(Paragraph(customer_display, style_customer))
     
-    story.append(Spacer(1, 8*mm))
+    story.append(Spacer(1, 6 * mm))
     
-    # Заголовок документа
-    story.append(Paragraph(
-        f"<b>КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ № {offer_number}</b><br/>"
-        f"от {offer_date}",
-        style_title
-    ))
+    table_data = [['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']]
     
-    story.append(Spacer(1, 3*mm))
-    
-    # Заказчик (если указан)
-    if customer_name:
-        story.append(Paragraph(
-            f"Заказчик: <b>{customer_name}</b>",
-            style_normal
-        ))
-        story.append(Spacer(1, 3*mm))
-    
-    # Вводный текст
-    story.append(Paragraph(
-        "Уважаемые партнёры!",
-        style_normal
-    ))
-    
-    story.append(Spacer(1, 2*mm))
-    
-    story.append(Paragraph(
-        f"{COMPANY_NAME} предлагает Вам железобетонные плиты перекрытий серии ПБ ЖБК СТАРТ "
-        "собственного производства по следующим ценам:",
-        style_normal
-    ))
-    
-    story.append(Spacer(1, 5*mm))
-    
-    # ==================== ТАБЛИЦА С ПОЗИЦИЯМИ ====================
-    
-    # Заголовки таблицы
-    table_data = [
-        ['№', 'Наименование', 'Ед.изм.', 'Кол-во', 'Цена, руб.', 'Сумма, руб.']
-    ]
-    
-    # Заполняем данные
     totals = calculate_total_cost(order_data)
+    total_weight = 0.0
     
     for idx, item in enumerate(order_data, start=1):
-        name = item.get('name', 'Плита ПБ')
+        name = escape(item.get('name', 'Плиты ПБ'))
         qty = item.get('qty', 0)
         length_m = item.get('length_m', 0)
         width_m = item.get('width_m', 0)
         load_class = item.get('load_class', 800)
         
-        # Получаем цену
         unit_price = get_plate_price(length_m, width_m, load_class)
         item_sum = unit_price * qty
         
+        unit_weight = approximate_weight_kg(length_m, width_m)
+        total_item_weight = unit_weight * qty
+        total_weight += total_item_weight
+        
+        weight_str = f"{total_item_weight:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+        price_str = f"{unit_price:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+        sum_str = f"{item_sum:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+        
         table_data.append([
             str(idx),
-            name,
-            'шт',
+            Paragraph(name, style_table_text),
             str(qty),
-            f"{unit_price:,.2f}".replace(',', ' '),
-            f"{item_sum:,.2f}".replace(',', ' ')
+            'шт',
+            weight_str,
+            price_str,
+            sum_str
         ])
     
-    # Итоги
-    table_data.append([
-        '',
-        'ИТОГО:',
-        '',
-        str(totals['total_qty']),
-        '',
-        f"{totals['subtotal']:,.2f}".replace(',', ' ')
-    ])
+    no_width = 10 * mm
+    qty_width = 14 * mm
+    unit_width = 11 * mm
+    weight_width = 20 * mm
+    price_width = 25 * mm
+    sum_width = 25 * mm
     
-    table_data.append([
-        '',
-        'НДС 20%:',
-        '',
-        '',
-        '',
-        f"{totals['vat_amount']:,.2f}".replace(',', ' ')
-    ])
+    fixed_total = no_width + qty_width + unit_width + weight_width + price_width + sum_width
+    name_width = content_width - fixed_total
     
-    table_data.append([
-        '',
-        'ВСЕГО с НДС:',
-        '',
-        '',
-        '',
-        f"{totals['total_with_vat']:,.2f}".replace(',', ' ')
-    ])
+    if name_width <= 0:
+        ratios = (0.05, 0.45, 0.08, 0.06, 0.18, 0.09, 0.09)
+        col_widths = [content_width * ratio for ratio in ratios]
+    else:
+        col_widths = [
+            no_width,
+            name_width,
+            qty_width,
+            unit_width,
+            weight_width,
+            price_width,
+            sum_width
+        ]
     
-    # Создаём таблицу
-    table = Table(table_data, colWidths=[12*mm, 70*mm, 18*mm, 18*mm, 28*mm, 28*mm])
-    
-    # Стили таблицы
+    table = Table(table_data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
-        # Заголовок
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4788')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0f0f0')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
         ('FONTNAME', (0, 0), (-1, 0), FONT_BOLD),
-        ('FONTSIZE', (0, 0), (-1, 0), 9),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('TOPPADDING', (0, 0), (-1, 0), 8),
+        ('FONTSIZE', (0, 0), (-1, 0), 11),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+        ('TOPPADDING', (0, 0), (-1, 0), 6),
         
-        # Данные
-        ('BACKGROUND', (0, 1), (-1, -4), colors.white),
-        ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-        ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # № по центру
-        ('ALIGN', (3, 1), (3, -1), 'CENTER'),  # Кол-во по центру
-        ('ALIGN', (4, 1), (-1, -1), 'RIGHT'),  # Цены справа
         ('FONTNAME', (0, 1), (-1, -1), FONT_NORMAL),
-        ('FONTSIZE', (0, 1), (-1, -1), 9),
-        ('GRID', (0, 0), (-1, -4), 0.5, colors.grey),
-        
-        # Итоги
-        ('BACKGROUND', (0, -3), (-1, -1), colors.HexColor('#f0f0f0')),
-        ('FONTNAME', (0, -3), (-1, -1), FONT_BOLD),
-        ('FONTSIZE', (0, -3), (-1, -1), 10),
-        ('LINEABOVE', (0, -3), (-1, -3), 1.5, colors.black),
-        ('LINEABOVE', (0, -1), (-1, -1), 1.5, colors.black),
-        ('LINEBELOW', (0, -1), (-1, -1), 1.5, colors.black),
-        
-        # Общие настройки
+        ('FONTSIZE', (0, 1), (-1, -1), 10),
+        ('ALIGN', (0, 1), (0, -1), 'CENTER'),
+        ('ALIGN', (2, 1), (3, -1), 'CENTER'),
+        ('ALIGN', (4, 1), (-1, -1), 'RIGHT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 5),
+        ('TOPPADDING', (0, 1), (-1, -1), 5),
+        
+        ('BOX', (0, 0), (-1, -1), 1.2, colors.black),
+        ('INNERGRID', (0, 0), (-1, -1), 0.6, colors.black),
     ]))
     
     story.append(table)
+    story.append(Spacer(1, 6 * mm))
     
-    story.append(Spacer(1, 8*mm))
+    total_items = len(order_data)
+    weight_summary = f"{total_weight:,.3f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+    subtotal_str = f"{totals['subtotal']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+    vat_str = f"{totals['vat_amount']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     
-    # ==================== УСЛОВИЯ ====================
+    summary_text = (
+        f"Всего наименований {total_items}, общим весом {weight_summary} кг., "
+        f"на сумму {subtotal_str} руб., в том числе НДС {vat_str} руб."
+    )
+    story.append(Paragraph(summary_text, style_summary))
     
-    story.append(Paragraph(
-        "<b>Условия поставки:</b>",
-        style_normal
-    ))
+    story.append(Paragraph("1.Условия поставки:", style_conditions))
+    story.append(Paragraph("2.Условия оплаты: Предварительная оплата в размере 100%", style_conditions))
     
-    story.append(Spacer(1, 2*mm))
+    story.append(Spacer(1, 6 * mm))
     
-    conditions = [
-        "• Срок изготовления: 5-7 рабочих дней с момента поступления оплаты",
-        "• Форма оплаты: безналичный расчёт (100% предоплата)",
-        "• Доставка: рассчитывается отдельно в зависимости от адреса и объёма",
-        "• Разгрузка: силами и средствами заказчика",
-        "• Срок действия предложения: 14 календарных дней"
-    ]
-    
-    for condition in conditions:
-        story.append(Paragraph(condition, style_small))
-    
-    story.append(Spacer(1, 5*mm))
-    
-    # ==================== БАНКОВСКИЕ РЕКВИЗИТЫ ====================
+    story.append(Paragraph("С уважением,", style_signature_label))
+    story.append(Paragraph("Шишов Александр Васильевич", style_signature))
+    story.append(Paragraph("8 920 640 55 85", style_signature))
     
     story.append(Paragraph(
-        "<b>Банковские реквизиты:</b>",
-        style_normal
+        'Доборные плиты ПБ отгружаются только при наличии в наименовании "+доб", '
+        "для получения доборов, просим сообщить Вашему менеджеру до начала изготовления.<br/>"
+        "Все доборы по умолчанию отправляем на утилизацию.",
+        style_note
     ))
     
-    story.append(Spacer(1, 2*mm))
-    
-    bank_details = [
-        f"Получатель: {COMPANY_NAME}",
-        f"ИНН {COMPANY_INN}, КПП {COMPANY_KPP}",
-        f"Расчётный счёт: {BANK_ACCOUNT}",
-        f"Банк: {BANK_NAME}",
-        f"БИК: {BANK_BIK}",
-        f"Корр. счёт: {BANK_CORR_ACCOUNT}"
-    ]
-    
-    for detail in bank_details:
-        story.append(Paragraph(detail, style_small))
-    
-    story.append(Spacer(1, 10*mm))
-    
-    # ==================== ПОДПИСЬ ====================
-    
-    story.append(Paragraph(
-        "С уважением,<br/>"
-        f"Отдел продаж {COMPANY_NAME}<br/>"
-        f"Тел.: {COMPANY_PHONE}<br/>"
-        f"E-mail: {COMPANY_EMAIL}",
-        style_normal
-    ))
-    
-    # Генерируем PDF
     doc.build(story)
-    
-    # Возвращаем буфер в начало
     buffer.seek(0)
-    
     return buffer
 
 

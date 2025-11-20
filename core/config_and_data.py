@@ -238,11 +238,23 @@ def make_plate_name(length_m: float, width_m: float, reinforcement: str = '8п')
     """Формирует строку наименования в стиле прайса: 'Плиты ПБ 63-12-8п'.
     Для лент 0.3/0.2 записывает ширину как '0.3'/'0.2'."""
     length_dm = int(round(length_m * 10))
-    if width_m < 0.5:
-        width_str = '0.3' if abs(width_m - 0.3) < 1e-6 else ('0.2' if abs(width_m - 0.2) < 1e-6 else f'{width_m:.1f}'.replace('.', ','))
+    # Единая логика формирования ширины, как в боте (bot_handlers.py):
+    # - плиты 1.2м / 1.08м / 1.0м → '12' / '10,8' / '10'
+    # - узкие плиты 0.46 / 0.32 / 0.86 и т.п. → '4,6' / '3,2' / '8,6'
+    # - специальные ленты 0.3 / 0.2 → '0.3' / '0.2'
+    if abs(width_m - 0.3) < 1e-6:
+        width_str = '0.3'
+    elif abs(width_m - 0.2) < 1e-6:
+        width_str = '0.2'
     else:
-        width_dm = int(round(width_m * 10))
-        width_str = str(width_dm)
+        # Переводим в дм (например, 0.46м → 4.6; 1.2м → 12.0)
+        width_dm = round(width_m * 10, 1)
+        # Если значение почти целое (12.0, 7.0, 10.0) — пишем без десятичной части
+        if abs(width_dm - round(width_dm)) < 1e-6:
+            width_str = str(int(round(width_dm)))
+        else:
+            # Иначе оставляем одну цифру после запятой и используем запятую как в маркировке
+            width_str = f'{width_dm:.1f}'.replace('.', ',')
     return f'Плиты ПБ {length_dm}-{width_str}-{reinforcement}'
 
 

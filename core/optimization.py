@@ -340,10 +340,17 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             
             # Вариант A: Множественная резка по ширине (одинаковая длина)
             if abs(target_length - source_length) <= tolerance_length:
-                pieces = source_width // target_width
-                if pieces >= 1:
+                # РАНЬШЕ: брали только максимум кусков (pieces = source_width // target_width)
+                # ТЕПЕРЬ: перебираем все варианты от 1 до max_pieces, чтобы можно было
+                # получать 1, 2, ... плит из одного остатка (например, 0.88 → 1×0.32 с хвостом 0.56)
+                max_pieces = source_width // target_width
+                for pieces in range(1, max_pieces + 1):
                     waste = source_width - (pieces * target_width)
-                    if waste < source_width * 0.5:
+                    # Отбрасываем варианты с слишком большим отходом.
+                    # Для случаев с ОДНОЙ плитой позволяем больше отхода (до 80%),
+                    # чтобы не выкидывать схему 0.88 → 0.32 + 0.56.
+                    max_waste_fraction = 0.8 if pieces == 1 else 0.5
+                    if waste <= source_width * max_waste_fraction:
                         secondary_options.append({
                             'id': sec_id,
                             'source_length': source_length,
@@ -424,27 +431,33 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     seen_combinations = set()
     
     for opt in secondary_options:
-        # Правило 3: Убираем дубликаты (одинаковые варианты)
+        # Правило 3: Убираем дубликаты (одинаковые варианты).
+        # ВАЖНО: учитываем также количество кусков (pieces), чтобы варианты
+        # 0.88 → 1×0.32 и 0.88 → 2×0.32 не считались одинаковыми.
         key = (
             opt['source_length'], 
             opt['source_rest'], 
             opt['output_length'], 
             opt['output_width'], 
-            opt['type']
+            opt['type'],
+            opt.get('pieces', 1)
         )
         
         if key in seen_combinations:
             continue
         seen_combinations.add(key)
         
-        # Правило 4: Пропускаем варианты с огромными отходами (> 30% материала)
+        # Правило 4: Пропускаем варианты с огромными отходами.
+        # Для случаев с ОДНОЙ плитой (pieces == 1) позволяем до 80% площади отхода,
+        # иначе — как раньше, 30%.
         waste_width = opt.get('waste', 0)
         waste_length = opt.get('length_waste', 0)
         
         source_area = opt['source_length'] * opt['source_rest']
         waste_area = (waste_width * opt['source_length']) + (waste_length * opt['source_rest'] / 1000.0)
         
-        if opt['type'] != 'multiple_transverse' and waste_area > source_area * 0.3:
+        max_waste_fraction_area = 0.8 if opt.get('pieces', 1) == 1 else 0.3
+        if opt['type'] != 'multiple_transverse' and waste_area > source_area * max_waste_fraction_area:
             continue
         
         # Правило 5: Пропускаем transverse с отходами > 50% длины
@@ -546,6 +559,10 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     total_cost = 0
     for surplus in surplus_vars:
         total_cost += BIG_M * surplus
+
+    # Новое: мягкий приоритет на МЕНЬШЕЕ количество исходных плит 1200 мм.
+    # total_plates_var = сумма всех первичных резов (каждый такой рез — одна плита 1.2 м).
+    total_plates_var = lpSum(x_prim.values())
     
     # 7.1 Стоимость ПЕРВИЧНЫХ РЕЗОВ (плиты + продольные резы)
     print(f"[OPT_2D] Расчёт стоимости первичных резов...")
@@ -637,7 +654,13 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # 7.6 ИТОГОВАЯ ЦЕЛЕВАЯ ФУНКЦИЯ
     print(f"[OPT_2D] Минимизируем: стоимость плит + резов + штрафы + бонусы")
     print(f"[OPT_2D] Конфиг: unused_penalty={opt_config.unused_rest_penalty_coeff}, reuse_bonus={opt_config.secondary_reuse_bonus}")
-    prob += total_cost + unused_penalty + waste_penalty + reuse_bonus
+
+    # Дополнительный приоритет: меньше исходных плит лучше.
+    # Коэффициент 5000 ~ половина средней цены плиты: не ломает расчёт стоимости,
+    # но заставляет оптимизатор избегать лишних плит, если есть альтернатива.
+    plates_priority_penalty = total_plates_var * 5000.0
+
+    prob += total_cost + unused_penalty + waste_penalty + reuse_bonus + plates_priority_penalty
     
     # 8. РЕШЕНИЕ
     print(f"[OPT_2D] Запуск решателя...")
