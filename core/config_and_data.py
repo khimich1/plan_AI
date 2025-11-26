@@ -75,8 +75,19 @@ WASTE_AREA_M2 = round(0.12 * SCRAP_STRIPS_0_12_M_TOTAL, 2)
 PLATE_METADATA: Dict[Tuple[float, int], List[Dict[str, Any]]] = {}
 
 # Карта нагрузок по (длина, ширина) → load_code (6/8/10/12/11...)
+# СТАРАЯ ВЕРСИЯ: хранит только последнее значение нагрузки для (длина, ширина)
 # Заполняется на этапе парсинга текста пользователя.
 PLATE_LOAD_MAP: Dict[Tuple[float, float], int] = {}
+
+# НОВАЯ ВЕРСИЯ: Детальная карта плит с нагрузкой
+# Формат: (длина, ширина, нагрузка) → количество
+# Пример: {(7.3, 1.2, 8): 93, (7.3, 1.2, 10): 4} - 93 плиты 8п + 4 плиты 10п
+PLATE_LOAD_DETAILS: Dict[Tuple[float, float, int], int] = {}
+
+# Карта точных размеров плит: (длина, имя_списка) → точная_ширина_в_метрах
+# Сохраняет ТОЧНУЮ ширину каждой плиты при парсинге заказа.
+# Пример: {(2.8, 'PLATES_0_46'): 0.53} - плита ПБ 28-5,3-8п имеет ширину 530мм, а не 460мм
+PLATE_EXACT_WIDTHS: Dict[Tuple[float, str], float] = {}
 
 
 # ==================== ФУНКЦИИ ПАРСИНГА ====================
@@ -86,7 +97,7 @@ def _clear_all_plate_lists():
     global PLATES_1_2, PLATES_1_5_TO_1_2, PLATES_1_0, PLATES_1_08
     global PLATES_0_46, PLATES_0_32, PLATES_0_72, PLATES_0_70, PLATES_0_86
     global PLATES_0_74, PLATES_0_88, PLATES_0_48, PLATES_0_50, PLATES_0_34
-    global PLATE_LOAD_MAP
+    global PLATE_LOAD_MAP, PLATE_LOAD_DETAILS, PLATE_EXACT_WIDTHS
     PLATES_1_2 = []
     PLATES_1_5_TO_1_2 = []
     PLATES_1_0 = []
@@ -102,6 +113,8 @@ def _clear_all_plate_lists():
     PLATES_0_50 = []
     PLATES_0_34 = []
     PLATE_LOAD_MAP.clear()
+    PLATE_LOAD_DETAILS.clear()
+    PLATE_EXACT_WIDTHS.clear()
 
 
 def _recompute_totals_from_lists():
@@ -178,7 +191,7 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
         
         return val
 
-    def add_items(width_m: float, length_m: float, qty: int):
+    def add_items(width_m: float, length_m: float, qty: int, load_code: int = None):
         """
         Добавляет плиты в соответствующий глобальный список по ширине.
 
@@ -186,48 +199,74 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
         используем правило: берём ближайший МЕНЬШИЙ допустимый рез
         (включая остаточные ширины) и повторно вызываем add_items
         уже с притянутой шириной.
+        
+        Args:
+            width_m: ширина плиты в метрах
+            length_m: длина плиты в метрах
+            qty: количество плит
+            load_code: нагрузка (6, 8, 10, 12, 13 и т.д.) - опционально
         """
         # Специальная обработка плит 1.5 м → заменяем на 1.2 м + 0.3 м
         if 1.45 <= width_m <= 1.55:  # 1.5 м (диапазон ±50 мм)
+            length_rounded = round(float(length_m), 2)
             # Добавляем плиту 1.2 м
             for _ in range(max(0, qty)):
-                PLATES_1_2.append(round(float(length_m), 2))
+                PLATES_1_2.append(length_rounded)
+                # Сохраняем точную ширину 1.2м
+                PLATE_EXACT_WIDTHS[(length_rounded, 'PLATES_1_2')] = 1.2
             # Добавляем плиту 0.3 м (записываем в PLATES_0_32)
             for _ in range(max(0, qty)):
-                PLATES_0_32.append(round(float(length_m), 2))
+                PLATES_0_32.append(length_rounded)
+                # Сохраняем точную ширину 0.3м (попадает в диапазон 0.26-0.32)
+                PLATE_EXACT_WIDTHS[(length_rounded, 'PLATES_0_32')] = 0.3
             return
 
         target = None
+        target_name = None  # Имя списка для сохранения точной ширины
+        
         # Стандартные ширины плит
         if 1.15 <= width_m <= 1.25:
             target = PLATES_1_2
+            target_name = 'PLATES_1_2'
         elif 0.98 <= width_m <= 1.02:
             target = PLATES_1_0
+            target_name = 'PLATES_1_0'
         elif 1.06 <= width_m <= 1.12:
             target = PLATES_1_08
+            target_name = 'PLATES_1_08'
         # Основные части (по таблице допустимых резов: 260-320, 460-530, 660-720, 860-920):
         elif 0.26 <= width_m <= 0.32:    # 260-320 мм
             target = PLATES_0_32
+            target_name = 'PLATES_0_32'
         elif 0.46 <= width_m <= 0.53:    # 460-530 мм
             target = PLATES_0_46
+            target_name = 'PLATES_0_46'
         elif 0.66 <= width_m <= 0.71:    # 660-710 мм → PLATES_0_70
             target = PLATES_0_70
+            target_name = 'PLATES_0_70'
         elif 0.71 < width_m <= 0.72:     # 710-720 мм → PLATES_0_72
             target = PLATES_0_72
+            target_name = 'PLATES_0_72'
         elif 0.86 <= width_m <= 0.92:    # 860-920 мм
             target = PLATES_0_86
+            target_name = 'PLATES_0_86'
         # Остатки (если пользователь явно указал остаточные ширины):
         # Примечание: остатки обычно создаются автоматически оптимизатором
         elif 0.33 < width_m <= 0.35:     # ~340 мм (остаток от 860)
             target = PLATES_0_34
+            target_name = 'PLATES_0_34'
         elif 0.47 < width_m <= 0.49:     # ~480 мм (остаток от 720)
             target = PLATES_0_48
+            target_name = 'PLATES_0_48'
         elif 0.49 < width_m <= 0.51:     # ~500 мм (остаток от 700)
             target = PLATES_0_50
+            target_name = 'PLATES_0_50'
         elif 0.73 < width_m <= 0.75:     # ~740 мм (остаток от 460)
             target = PLATES_0_74
+            target_name = 'PLATES_0_74'
         elif 0.87 < width_m <= 0.89:     # ~880 мм (остаток от 320)
             target = PLATES_0_88
+            target_name = 'PLATES_0_88'
         else:
             # Здесь ширина не попала ни в один диапазон.
             # Применяем правило: «берём меньший рез».
@@ -249,11 +288,31 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
             snapped_width = max(candidates)
 
             # Рекурсивный вызов с притянутой шириной, чтобы сработали диапазоны выше.
-            add_items(snapped_width, length_m, qty)
+            add_items(snapped_width, length_m, qty, load_code)  # Передаём нагрузку дальше
             return
 
+        # Добавляем плиты в список и сохраняем точную ширину
         for _ in range(max(0, qty)):
-            target.append(round(float(length_m), 2))
+            length_rounded = round(float(length_m), 2)
+            target.append(length_rounded)
+            
+            # Сохраняем точную ширину для этой плиты
+            if target_name:
+                key = (length_rounded, target_name)
+                PLATE_EXACT_WIDTHS[key] = round(width_m, 3)
+        
+        # Сохраняем нагрузку (если указана) в PLATE_LOAD_DETAILS
+        if load_code is not None and load_code > 0:
+            length_rounded = round(float(length_m), 2)
+            width_rounded = round(width_m, 3)
+            
+            # Сохраняем в старом формате для обратной совместимости
+            key_old = (length_rounded, width_rounded)
+            PLATE_LOAD_MAP[key_old] = load_code
+            
+            # Сохраняем в новом формате с количеством
+            key_new = (length_rounded, width_rounded, load_code)
+            PLATE_LOAD_DETAILS[key_new] = PLATE_LOAD_DETAILS.get(key_new, 0) + qty
 
     # Список нераспознанных строк для отчёта пользователю
     unparsed_lines = []
@@ -325,18 +384,20 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
                     q = 1
 
             # Пытаемся извлечь нагрузку из марки: ...-8п / -10п / -12,5п
+            load_code = None
             load_match = re.search(r'-\s*([\d\.,]+)\s*п\b', s)
             if load_match:
                 try:
                     load_val = float(load_match.group(1).replace(',', '.'))
-                    load_code = int(round(load_val))
-                    if load_code > 0:
-                        key = (round(L, 2), round(W, 3))
-                        PLATE_LOAD_MAP[key] = load_code
+                    # Округление: 8.0→8, 10.0→10, 12.5→13 (всегда вверх для .5)
+                    load_code = int(load_val + 0.5)
+                    if load_code <= 0:
+                        load_code = None
                 except Exception:
-                    pass
+                    load_code = None
 
-            add_items(W, L, q)
+            # Передаём нагрузку в add_items
+            add_items(W, L, q, load_code)
             parsed = True
             continue
         
@@ -392,13 +453,14 @@ def make_plate_name(
         width_str = '0.2'
     else:
         # Переводим в дм (например, 0.46м → 4.6; 1.2м → 12.0)
-        width_dm = round(width_m * 10, 1)
-        # Если значение почти целое (12.0, 7.0, 10.0) — пишем без десятичной части
+        width_dm = round(width_m * 10, 2)  # Увеличили точность для 6.65
+        # Умное форматирование: убираем лишние нули (6.65→"6,65", 5.3→"5,3", 12.0→"12")
         if abs(width_dm - round(width_dm)) < 1e-6:
+            # Целое число (12.0 → "12")
             width_str = str(int(round(width_dm)))
         else:
-            # Иначе оставляем одну цифру после запятой и используем запятую как в маркировке
-            width_str = f'{width_dm:.1f}'.replace('.', ',')
+            # Дробное число: убираем лишние нули (6.65→"6,65", 5.30→"5,3")
+            width_str = f'{width_dm:.2f}'.rstrip('0').rstrip('.').replace('.', ',')
     return f'Плиты ПБ {length_dm}-{width_str}-{reinforcement}'
 
 
@@ -434,8 +496,8 @@ def parse_load_code_from_name(name: str, default: int = 8) -> int:
         return default
 
     # Округляем до целого кода нагрузки:
-    # 8.0 -> 8, 10.0 -> 10, 12.5 -> 12, 11.0 -> 11
-    load_code = int(round(val))
+    # 8.0 -> 8, 10.0 -> 10, 12.5 -> 13, 11.0 -> 11 (всегда вверх для .5)
+    load_code = int(val + 0.5)
     if load_code <= 0:
         return default
     return load_code
@@ -453,27 +515,38 @@ def get_load_code_for_plate(length_m: float, width_m: float, default: int = 8) -
          6 для узких плит (<1.0 м по ширине) или default (обычно 8) для широких.
     """
     try:
-        key = (round(float(length_m), 2), round(float(width_m), 3))
+        key_base = (round(float(length_m), 2), round(float(width_m), 3))
     except Exception:
         # Если длина/ширина странные, просто используем fallback
         return 6 if (isinstance(width_m, (int, float)) and float(width_m) < 1.0) else default
 
-    # 1) Точное совпадение
-    code = PLATE_LOAD_MAP.get(key)
+    # 1) НОВОЕ: Ищем в PLATE_LOAD_DETAILS (приоритет - самая частая нагрузка для этих размеров)
+    matching_loads = []
+    for (L, W, load), qty in PLATE_LOAD_DETAILS.items():
+        if abs(L - key_base[0]) <= 0.05 and abs(W - key_base[1]) <= 0.05:
+            matching_loads.append((load, qty))
+    
+    if matching_loads:
+        # Возвращаем нагрузку с максимальным количеством плит
+        most_common_load = max(matching_loads, key=lambda x: x[1])[0]
+        return most_common_load
+
+    # 2) Точное совпадение в PLATE_LOAD_MAP (обратная совместимость)
+    code = PLATE_LOAD_MAP.get(key_base)
     if isinstance(code, int) and code > 0:
         return code
 
-    # 2) Поиск по близким значениям (на случай округлений и нормализации ширины)
+    # 3) Поиск по близким значениям (на случай округлений и нормализации ширины)
     LENGTH_TOL = 0.05      # 5 см по длине
     WIDTH_TOL_M = 0.05     # 0.05 м = 50 мм по ширине
 
     for (L, W), c in PLATE_LOAD_MAP.items():
         if not isinstance(c, int) or c <= 0:
             continue
-        if abs(L - key[0]) <= LENGTH_TOL and abs(W - key[1]) <= WIDTH_TOL_M:
+        if abs(L - key_base[0]) <= LENGTH_TOL and abs(W - key_base[1]) <= WIDTH_TOL_M:
             return c
 
-    # 3) Fallback: старая логика по ширине
+    # 4) Fallback: старая логика по ширине
     try:
         w_val = float(width_m)
     except Exception:
@@ -481,6 +554,28 @@ def get_load_code_for_plate(length_m: float, width_m: float, default: int = 8) -
     if w_val < 1.0:
         return 6
     return default
+
+
+def get_exact_width(length_m: float, target_list_name: str, default_width: float) -> float:
+    """
+    Возвращает точную ширину плиты, если она была сохранена при парсинге.
+    Иначе возвращает дефолтное значение (среднее/минимальное для диапазона).
+    
+    Args:
+        length_m: Длина плиты в метрах
+        target_list_name: Имя списка ('PLATES_0_46', 'PLATES_0_32', ...)
+        default_width: Дефолтная ширина в метрах (0.46 для PLATES_0_46)
+    
+    Returns:
+        Точная ширина в метрах (например, 0.53 вместо 0.46)
+    
+    Example:
+        >>> # Плита "ПБ 28-5,3-8п" была добавлена в PLATES_0_46
+        >>> get_exact_width(2.8, 'PLATES_0_46', 0.46)
+        0.53  # Точная ширина 530мм, а не 460мм!
+    """
+    key = (round(float(length_m), 2), target_list_name)
+    return PLATE_EXACT_WIDTHS.get(key, default_width)
 
 
 def approximate_weight_kg(length_m: float, width_m: float, thickness_m: float = 0.22) -> float:

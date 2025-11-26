@@ -689,20 +689,25 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
         orders_2d = []
         
         # Для каждой ширины группируем плиты по длине
-        for width_mm, plates_list in [
-            (1200, cfg.PLATES_1_2), (1080, cfg.PLATES_1_08), (1000, cfg.PLATES_1_0),  # КРИТИЧНО: Плиты БЕЗ реза!
-            (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
-            (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
-            (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
-            (340, cfg.PLATES_0_34)
+        # ВАЖНО: Добавлен target_name для получения точных ширин из PLATE_EXACT_WIDTHS
+        for width_mm, plates_list, target_name in [
+            (1200, cfg.PLATES_1_2, 'PLATES_1_2'), (1080, cfg.PLATES_1_08, 'PLATES_1_08'), (1000, cfg.PLATES_1_0, 'PLATES_1_0'),  # КРИТИЧНО: Плиты БЕЗ реза!
+            (320, cfg.PLATES_0_32, 'PLATES_0_32'), (460, cfg.PLATES_0_46, 'PLATES_0_46'), (700, cfg.PLATES_0_70, 'PLATES_0_70'),
+            (720, cfg.PLATES_0_72, 'PLATES_0_72'), (860, cfg.PLATES_0_86, 'PLATES_0_86'), (880, cfg.PLATES_0_88, 'PLATES_0_88'),
+            (740, cfg.PLATES_0_74, 'PLATES_0_74'), (480, cfg.PLATES_0_48, 'PLATES_0_48'), (500, cfg.PLATES_0_50, 'PLATES_0_50'),
+            (340, cfg.PLATES_0_34, 'PLATES_0_34')
         ]:  # соответствуют cfg.PLATES_*
             if plates_list:
                 # Группируем по длине (плиты с одинаковой длиной объединяем)
                 length_counts = Counter(plates_list)
                 for length, qty in length_counts.items():
+                    # Получаем ТОЧНУЮ ширину из PLATE_EXACT_WIDTHS (если была сохранена при парсинге)
+                    exact_width_m = cfg.get_exact_width(length, target_name, width_mm / 1000.0)
+                    exact_width_mm = int(round(exact_width_m * 1000))
+                    
                     orders_2d.append({
                         'length': length,
-                        'width': width_mm,
+                        'width': exact_width_mm,  # Теперь используем ТОЧНУЮ ширину!
                         'qty': qty
                     })
         
@@ -1167,41 +1172,53 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         order_data = []
         
         # Собираем все плиты по типам
+        # ВАЖНО: Добавлен target_name для получения точных ширин из PLATE_EXACT_WIDTHS
         plate_groups = [
-            (1200, cfg.PLATES_1_2, "12"),
-            (1080, cfg.PLATES_1_08, "10.8"),
-            (1000, cfg.PLATES_1_0, "10"),
-            (320, cfg.PLATES_0_32, "3.2"),
-            (460, cfg.PLATES_0_46, "4.6"),
-            (700, cfg.PLATES_0_70, "7"),
-            (720, cfg.PLATES_0_72, "7.2"),
-            (860, cfg.PLATES_0_86, "8.6"),
-            (880, cfg.PLATES_0_88, "8.8"),
-            (740, cfg.PLATES_0_74, "7.4"),
-            (480, cfg.PLATES_0_48, "4.8"),
-            (500, cfg.PLATES_0_50, "5"),
-            (340, cfg.PLATES_0_34, "3.4"),
+            (1200, cfg.PLATES_1_2, "12", 'PLATES_1_2'),
+            (1080, cfg.PLATES_1_08, "10.8", 'PLATES_1_08'),
+            (1000, cfg.PLATES_1_0, "10", 'PLATES_1_0'),
+            (320, cfg.PLATES_0_32, "3.2", 'PLATES_0_32'),
+            (460, cfg.PLATES_0_46, "4.6", 'PLATES_0_46'),
+            (700, cfg.PLATES_0_70, "7", 'PLATES_0_70'),
+            (720, cfg.PLATES_0_72, "7.2", 'PLATES_0_72'),
+            (860, cfg.PLATES_0_86, "8.6", 'PLATES_0_86'),
+            (880, cfg.PLATES_0_88, "8.8", 'PLATES_0_88'),
+            (740, cfg.PLATES_0_74, "7.4", 'PLATES_0_74'),
+            (480, cfg.PLATES_0_48, "4.8", 'PLATES_0_48'),
+            (500, cfg.PLATES_0_50, "5", 'PLATES_0_50'),
+            (340, cfg.PLATES_0_34, "3.4", 'PLATES_0_34'),
         ]
         
-        for width_mm, plates_list, width_dm_str in plate_groups:
+        for width_mm, plates_list, width_dm_str, target_name in plate_groups:
             if plates_list:
                 # Группируем по длине
                 length_counts = Counter(plates_list)
                 for length_m, qty in length_counts.items():
-                    length_dm = int(round(length_m * 10))
-                    # Формируем наименование в формате "Плиты ПБ 38-12-8п"
-                    if width_mm >= 1000:
-                        width_str = str(int(round(width_mm / 100)))
-                    else:
-                        # Для малых ширин используем дм с точкой
-                        width_str = width_dm_str.replace('.', ',')
+                    # Получаем ТОЧНУЮ ширину из PLATE_EXACT_WIDTHS
+                    exact_width_m = cfg.get_exact_width(length_m, target_name, width_mm / 1000.0)
+                    exact_width_mm = int(round(exact_width_m * 1000))
                     
-                    name = f"Плиты ПБ {length_dm}-{width_str}-8п"
+                    length_dm = int(round(length_m * 10))
+                    
+                    # Получаем нагрузку из PLATE_LOAD_MAP (8п, 10п, 12п и т.д.)
+                    load_code = cfg.get_load_code_for_plate(length_m, exact_width_m, default=8)
+                    
+                    # Формируем наименование в формате "Плиты ПБ 38-12-8п" с ТОЧНОЙ шириной
+                    if exact_width_mm >= 1000:
+                        width_str = str(int(round(exact_width_mm / 100)))
+                    else:
+                        # Для малых ширин используем дм с точкой (например, 5,3 для 530мм, 6,65 для 665мм)
+                        exact_width_dm = exact_width_mm / 100.0
+                        # Умное форматирование: убираем лишние нули (6.65→"6,65", 5.3→"5,3", 12.0→"12")
+                        width_str = f"{exact_width_dm:.2f}".rstrip('0').rstrip('.').replace('.', ',')
+                    
+                    # Используем ПРАВИЛЬНУЮ нагрузку из заказа
+                    name = f"Плиты ПБ {length_dm}-{width_str}-{load_code}п"
                     
                     order_data.append({
                         "name": name,
                         "length_m": length_m,
-                        "width_m": width_mm / 1000.0,  # переводим в метры
+                        "width_m": exact_width_m,  # ТОЧНАЯ ширина в метрах!
                         "qty": qty
                     })
         

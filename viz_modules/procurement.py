@@ -54,8 +54,33 @@ def build_procurement_items():
             width_val = order['width']
             # В заказе ширина приходит в мм (например, 320). Преобразуем в метры.
             width_m = width_val / 1000.0 if width_val > 5 else float(width_val)
-            order_counter[(length, width_m)] += order['qty']
-        for (length, width_m), qty in sorted(order_counter.items(), key=lambda x: (x[0][1], x[0][0])):
+            
+            # ВАЖНО: Получаем нагрузку для этой плиты
+            # Пытаемся найти точную разбивку по нагрузкам
+            found_details = []
+            if cfg.PLATE_LOAD_DETAILS:
+                for (L, W, load), q in cfg.PLATE_LOAD_DETAILS.items():
+                    if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
+                        found_details.append((load, q))
+            
+            total_found = sum(q for _, q in found_details)
+            
+            if found_details and total_found == order['qty']:
+                for load_code, q in found_details:
+                    # Используем ключ с load_code и флагом предупреждения (False = без предупреждения)
+                    order_counter[(length, width_m, load_code, False)] += q
+            else:
+                # Fallback: если не нашли точного совпадения
+                load_code = cfg.get_load_code_for_plate(length, width_m, default=8)
+                # True = предупреждение о том, что нагрузка может быть неточной
+                warning_flag = True if found_details else False
+                if found_details:
+                    print(f"[WARNING] Несовпадение количества для плиты {length}x{width_m}: "
+                          f"В плане {order['qty']}, в деталях {total_found}. Присвоена нагрузка {load_code}п (проверьте!)")
+                
+                order_counter[(length, width_m, load_code, warning_flag)] += order['qty']
+            
+        for (length, width_m, load_code, warning_flag), qty in sorted(order_counter.items(), key=lambda x: (x[0][1], x[0][0], x[0][2])):
             # Жёсткое правило: плиты 1.2 м считаем целыми, без продольных резов
             if abs(width_m - 1.2) < 0.01:
                 long_cuts = 0
@@ -67,35 +92,73 @@ def build_procurement_items():
                 'width': width_m,
                 'qty': qty,
                 'long_cuts': long_cuts,
-                'trans_cuts': 0
+                'trans_cuts': 0,
+                'load_code': load_code,  # Сохраняем нагрузку для дальнейшего использования
+                'warning': warning_flag
             })
         return items
 
-    # Приоритет 2: Используем реальный заказ из cfg.PLATES_* (legacy режим)
-    # Это то, что пользователь заказал вручную, если бот не запускался.
+    # Приоритет 2: Используем PLATE_LOAD_DETAILS (если есть) или реальный заказ из cfg.PLATES_*
+    # PLATE_LOAD_DETAILS содержит (длина, ширина, нагрузка) → количество
+    if cfg.PLATE_LOAD_DETAILS:
+        # Используем PLATE_LOAD_DETAILS напрямую - там уже правильно разделены нагрузки!
+        for (length, width_m, load_code), qty in sorted(cfg.PLATE_LOAD_DETAILS.items(), key=lambda x: (x[0][1], x[0][0], x[0][2])):
+            # Жёсткое правило: плиты 1.2 м считаем целыми, без продольных резов
+            if abs(width_m - 1.2) < 0.01:
+                long_cuts = 0
+            else:
+                long_cuts = 1 if width_m < 1.15 else 0
+
+            trans_cuts = 0
+
+            items.append({
+                'length': length,
+                'width': width_m,
+                'qty': qty,
+                'long_cuts': long_cuts,
+                'trans_cuts': trans_cuts,
+                'load_code': load_code
+            })
+        return items
+    
+    # Legacy режим: Используем cfg.PLATES_* (если PLATE_LOAD_DETAILS пуст)
     all_plates = []
-    for width_mm, plates_list in [
-        (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
-        (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
-        (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
-        (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08), (1200, cfg.PLATES_1_2),
-        (1000, cfg.PLATES_1_0)
+    # ВАЖНО: Добавлен target_name для получения точных ширин из PLATE_EXACT_WIDTHS
+    for width_mm, plates_list, target_name in [
+        (320, cfg.PLATES_0_32, 'PLATES_0_32'), (460, cfg.PLATES_0_46, 'PLATES_0_46'), (700, cfg.PLATES_0_70, 'PLATES_0_70'),
+        (720, cfg.PLATES_0_72, 'PLATES_0_72'), (860, cfg.PLATES_0_86, 'PLATES_0_86'), (880, cfg.PLATES_0_88, 'PLATES_0_88'),
+        (740, cfg.PLATES_0_74, 'PLATES_0_74'), (480, cfg.PLATES_0_48, 'PLATES_0_48'), (500, cfg.PLATES_0_50, 'PLATES_0_50'),
+        (340, cfg.PLATES_0_34, 'PLATES_0_34'), (1080, cfg.PLATES_1_08, 'PLATES_1_08'), (1200, cfg.PLATES_1_2, 'PLATES_1_2'),
+        (1000, cfg.PLATES_1_0, 'PLATES_1_0')
     ]:
         if plates_list:
             length_counts = Counter(plates_list)
             for length, qty in length_counts.items():
+                # Получаем ТОЧНУЮ ширину из PLATE_EXACT_WIDTHS
+                exact_width_m = cfg.get_exact_width(length, target_name, width_mm / 1000.0)
+                
+                # Получаем нагрузку для этой плиты
+                load_code = cfg.get_load_code_for_plate(length, exact_width_m, default=8)
+                
                 all_plates.append({
                     'length': length,
-                    'width': width_mm / 1000.0,  # в метрах
-                    'qty': qty
+                    'width': exact_width_m,  # ТОЧНАЯ ширина в метрах!
+                    'qty': qty,
+                    'load_code': load_code  # Сохраняем нагрузку
                 })
     
     if all_plates:
-        # Есть реальный заказ - используем его
+        # Группируем плиты по (длина, ширина, НАГРУЗКА) чтобы не объединять 8п и 10п
+        plate_groups = Counter()
         for plate in all_plates:
-            # Определяем количество резов (примерная оценка)
+            length = plate['length']
             width_m = plate['width']
-
+            load_code = plate.get('load_code', 8)
+            qty = plate['qty']
+            plate_groups[(length, width_m, load_code)] += qty
+        
+        # Формируем items с учетом нагрузки
+        for (length, width_m, load_code), qty in sorted(plate_groups.items(), key=lambda x: (x[0][1], x[0][0], x[0][2])):
             # Жёсткое правило: плиты 1.2 м считаем целыми, без продольных резов
             if abs(width_m - 1.2) < 0.01:
                 long_cuts = 0
@@ -107,11 +170,12 @@ def build_procurement_items():
             trans_cuts = 0
 
             items.append({
-                'length': plate['length'],
+                'length': length,
                 'width': width_m,
-                'qty': plate['qty'],
+                'qty': qty,
                 'long_cuts': long_cuts,
-                'trans_cuts': trans_cuts
+                'trans_cuts': trans_cuts,
+                'load_code': load_code  # Сохраняем нагрузку
             })
 
         return items
@@ -220,15 +284,21 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         long_cuts, trans_cuts = it['long_cuts'], it['trans_cuts']
 
         # Определяем код нагрузки:
-        #  1) если при парсинге заказа для (L, W) уже известна нагрузка — берём её;
-        #  2) иначе используем прежнюю логику (6 для узких, reinforcement_code для широких).
-        try:
-            load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
-        except Exception:
-            load_code = 6 if W < 1.0 else reinforcement_code
+        #  1) Если нагрузка уже была определена в build_procurement_items - используем её
+        #  2) Если при парсинге заказа для (L, W) уже известна нагрузка — берём её;
+        #  3) Иначе используем прежнюю логику (6 для узких, reinforcement_code для широких).
+        if 'load_code' in it and it['load_code'] is not None:
+            load_code = it['load_code']  # Используем нагрузку из items (приоритет!)
+        else:
+            try:
+                load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
+            except Exception:
+                load_code = 6 if W < 1.0 else reinforcement_code
 
         # Формируем имя плиты уже с правильным значением нагрузки
         name = cfg.make_plate_name(L, W, load_code=load_code)
+        if it.get('warning'):
+            name += " (нагрузка?)"
         db_price = get_price(L, load_code, cfg.PRICE_DB_PATH)
         base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, L, load_code) or 0.0)
         
@@ -436,27 +506,41 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
     
     print(f'[DEBUG] build_component_breakdown: найдено заказов: {len(plan_orders)}')
     
-    # Группируем заказы
+    # Группируем заказы по (длина, ширина, НАГРУЗКА)
     order_counter = Counter()
     for order in plan_orders:
         length = round(float(order.get('length', 0)), 3)
         width_val = order.get('width', 0)
         width_mm = width_val if width_val > 5 else int(width_val * 1000)
-        order_counter[(length, width_mm)] += order.get('qty', 1)
+        width_m = width_mm / 1000.0
+        
+        # Получаем нагрузку для этой плиты
+        found_details = []
+        if cfg.PLATE_LOAD_DETAILS:
+            for (L, W, load), q in cfg.PLATE_LOAD_DETAILS.items():
+                if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
+                    found_details.append((load, q))
+        
+        order_qty = order.get('qty', 1)
+        
+        if found_details and sum(q for _, q in found_details) == order_qty:
+            for load_code, q in found_details:
+                # Ключ: length, width_mm, load_code, warning_flag
+                order_counter[(length, width_mm, load_code, False)] += q
+        else:
+            load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else reinforcement_code))
+            warning_flag = True if found_details else False
+            order_counter[(length, width_mm, load_code, warning_flag)] += order_qty
     
     breakdown_tables = []
     
-    for (length, width_mm), qty in sorted(order_counter.items(), key=lambda x: (x[0][0], x[0][1])):
+    for (length, width_mm, load_code, warning_flag), qty in sorted(order_counter.items(), key=lambda x: (x[0][0], x[0][1], x[0][2])):
         width_m = width_mm / 1000.0
-
-        # Получаем код нагрузки для этой плиты
-        try:
-            load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else reinforcement_code))
-        except Exception:
-            load_code = 6 if width_m < 1.0 else reinforcement_code
 
         # Имя плиты в детальной разбивке тоже должно отражать фактическую нагрузку
         name = cfg.make_plate_name(length, width_m, load_code=load_code)
+        if warning_flag:
+            name += " (нагрузка?)"
         db_price = get_price(length, load_code, cfg.PRICE_DB_PATH)
         base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, length, load_code) or 0.0)
         
