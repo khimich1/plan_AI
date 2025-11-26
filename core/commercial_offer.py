@@ -398,11 +398,23 @@ def generate_commercial_offer_pdf(
     total_weight = 0.0
     
     for idx, item in enumerate(order_data, start=1):
-        name = escape(item.get('name', 'Плиты ПБ'))
+        name_raw = item.get('name', 'Плиты ПБ')
+        name = escape(name_raw)
         qty = item.get('qty', 0)
         length_m = item.get('length_m', 0)
         width_m = item.get('width_m', 0)
-        load_class = item.get('load_class', 800)
+        load_class = item.get('load_class')
+
+        # Если класс нагрузки явно не передан, пробуем вытащить его из имени плиты.
+        # Формат имени: "Плиты ПБ 71-12-10п", "ПБ 69-12-12,5п" и т.п.
+        if load_class is None:
+            try:
+                from config_and_data import parse_load_code_from_name
+            except ImportError:
+                load_class = 800
+            else:
+                load_code = parse_load_code_from_name(name_raw, default=8)
+                load_class = max(1, load_code) * 100  # 8 -> 800, 10 -> 1000 и т.п.
         
         unit_price = get_plate_price(length_m, width_m, load_class)
         item_sum = unit_price * qty

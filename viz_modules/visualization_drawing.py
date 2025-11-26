@@ -18,24 +18,24 @@ def _draw_segment(ax, x0: float, length: float, color: str, label: str, y: float
     ax.text(x0 + length/2, y + height/2, label, ha='center', va='center', fontsize=8, color='white', weight='bold')
 
 
-def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float, label_main: str, label_rest: str | None = None, secondary_cuts: list = None):
+def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float, label_main: str, label_rest: str | None = None, secondary_cuts: list = None, y_base: float = 0.0):
     """Рисует плиту с продольным резом и возможными вторичными резами в остатке"""
     # Фон всей плиты (1.2 м)
-    rect = patches.Rectangle((x0, 0.0), length, cfg.TRACK_WIDTH_M, linewidth=1.2, edgecolor='black', facecolor='#ecf0f1', alpha=1.0)
+    rect = patches.Rectangle((x0, y_base), length, cfg.TRACK_WIDTH_M, linewidth=1.2, edgecolor='black', facecolor='#ecf0f1', alpha=1.0)
     ax.add_patch(rect)
     
     # Основная часть (зелёная)
-    main_rect = patches.Rectangle((x0, 0.0), length, main_w, linewidth=0.8, edgecolor='black', facecolor='#2ecc71', alpha=0.9)
+    main_rect = patches.Rectangle((x0, y_base), length, main_w, linewidth=0.8, edgecolor='black', facecolor='#2ecc71', alpha=0.9)
     ax.add_patch(main_rect)
     
     # ПРОДОЛЬНЫЙ РЕЗ (по ширине) - СИНЯЯ ГОРИЗОНТАЛЬНАЯ ЛИНИЯ
-    ax.plot([x0, x0 + length], [main_w, main_w], color='blue', linestyle='-', linewidth=2.5, alpha=0.8, zorder=10)
+    ax.plot([x0, x0 + length], [y_base + main_w, y_base + main_w], color='blue', linestyle='-', linewidth=2.5, alpha=0.8, zorder=10)
     
-    ax.text(x0 + length/2, main_w/2, label_main, ha='center', va='center', fontsize=8, color='white', weight='bold')
+    ax.text(x0 + length/2, y_base + main_w/2, label_main, ha='center', va='center', fontsize=8, color='white', weight='bold')
     
     # Если есть вторичные резы в остатке
     if secondary_cuts and rest_w > 0.02:
-        y_offset = main_w
+        y_offset = y_base + main_w
         for i, sec_cut in enumerate(secondary_cuts):
             sec_w = sec_cut['width']
             sec_label = sec_cut['label']
@@ -117,13 +117,13 @@ def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float
     elif label_rest and rest_w > 0.02:
         # Обычный остаток без вторичных резов
         # Линия перед остатком уже нарисована (синяя), добавляем только метку
-        ax.text(x0 + length/2, main_w + rest_w/2, label_rest, ha='center', va='center', fontsize=7, color='#2c3e50')
+        ax.text(x0 + length/2, y_base + main_w + rest_w/2, label_rest, ha='center', va='center', fontsize=7, color='#2c3e50')
         # Подпись "остаток"
-        ax.text(x0 + length - 0.2, main_w + rest_w/2, f'остаток\n{rest_w*1000:.0f}мм', ha='right', va='center', fontsize=6, color='#7f8c8d', style='italic')
+        ax.text(x0 + length - 0.2, y_base + main_w + rest_w/2, f'остаток\n{rest_w*1000:.0f}мм', ha='right', va='center', fontsize=6, color='#7f8c8d', style='italic')
 
 
 def _draw_transverse_cut(ax, x0: float, total_length: float, target_length: float, 
-                         width: float, label_target: str, remainder_length: float):
+                         width: float, label_target: str, remainder_length: float, y_base: float = 0.0):
     """
     Рисует плиту с поперечным резом (по длине)
     
@@ -135,22 +135,22 @@ def _draw_transverse_cut(ax, x0: float, total_length: float, target_length: floa
     поперечный рез (красная вертикальная линия)
     """
     # Фон всей плиты
-    rect = patches.Rectangle((x0, 0.0), total_length, width, 
+    rect = patches.Rectangle((x0, y_base), total_length, width, 
                             linewidth=1.2, edgecolor='black', 
                             facecolor='#ecf0f1', alpha=1.0)
     ax.add_patch(rect)
     
     # Левая часть (целевая плита) - зелёная
-    target_rect = patches.Rectangle((x0, 0.0), target_length, width,
+    target_rect = patches.Rectangle((x0, y_base), target_length, width,
                                    linewidth=0.8, edgecolor='black',
                                    facecolor='#27ae60', alpha=0.9)
     ax.add_patch(target_rect)
-    ax.text(x0 + target_length/2, width/2, label_target,
+    ax.text(x0 + target_length/2, y_base + width/2, label_target,
            ha='center', va='center', fontsize=8, color='white', weight='bold')
     
     # Правая часть (остаток) - светло-серая
     if remainder_length > 0.01:
-        remainder_rect = patches.Rectangle((x0 + target_length, 0.0), 
+        remainder_rect = patches.Rectangle((x0 + target_length, y_base), 
                                           remainder_length, width,
                                           linewidth=0.8, edgecolor='gray',
                                           facecolor='#bdc3c7', alpha=0.7)
@@ -158,12 +158,12 @@ def _draw_transverse_cut(ax, x0: float, total_length: float, target_length: floa
         
         # Метка остатка по длине
         if remainder_length > 0.3:  # Показываем метку только если остаток заметный
-            ax.text(x0 + target_length + remainder_length/2, width/2,
+            ax.text(x0 + target_length + remainder_length/2, y_base + width/2,
                    f'остаток\nпо длине\n{remainder_length:.2f}м',
                    ha='center', va='center', fontsize=6, color='#2c3e50', weight='bold')
     
     # КРАСНАЯ ВЕРТИКАЛЬНАЯ ЛИНИЯ - поперечный рез!
     ax.plot([x0 + target_length, x0 + target_length], 
-           [0, width],
+           [y_base, y_base + width],
            color='red', linestyle='--', linewidth=2.5, alpha=0.8)
 

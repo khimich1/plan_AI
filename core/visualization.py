@@ -78,55 +78,131 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     seq = build_layout_sequence()
     total_length = sum(s['length'] for s in seq)
 
-    # Убрали секцию детальной разбивки - она теперь в отдельном Excel файле
-    num_sections = 4
-    height_ratios = [3.0, 1.0, 1.4, 1.8]
+    # Разбиваем плиты на несколько дорожек по 101 метру
+    MAX_TRACK_LENGTH = 101.0  # Максимальная длина одной дорожки
     
-    fig = plt.figure(figsize=(22, 16))
+    tracks = []  # Список дорожек
+    current_track = []
+    current_track_length = 0.0
+    
+    for item in seq:
+        item_length = item['length']
+        
+        # Если плита не помещается - создаём новую дорожку
+        if current_track_length + item_length > MAX_TRACK_LENGTH and current_track:
+            tracks.append({
+                'items': current_track,
+                'length': current_track_length
+            })
+            current_track = []
+            current_track_length = 0.0
+        
+        current_track.append(item)
+        current_track_length += item_length
+    
+    # Добавляем последнюю дорожку
+    if current_track:
+        tracks.append({
+            'items': current_track,
+            'length': current_track_length
+        })
+    
+    num_tracks = len(tracks)
+    print(f"[ВИЗУАЛИЗАЦИЯ] Плиты разбиты на {num_tracks} дорожек по {MAX_TRACK_LENGTH}м")
+
+    # Убрали секцию детальной разбивки - она теперь в отдельном Excel файле
+    # Увеличиваем высоту секции дорожек пропорционально их количеству
+    track_section_height = 3.0 + (num_tracks - 1) * 2.5
+    num_sections = 4
+    height_ratios = [track_section_height, 1.0, 1.4, 1.8]
+    
+    # Увеличиваем общую высоту окна
+    total_fig_height = 16 + (num_tracks - 1) * 5
+    
+    fig = plt.figure(figsize=(22, total_fig_height))
     gs = fig.add_gridspec(num_sections, 1, height_ratios=height_ratios)
     ax_track = fig.add_subplot(gs[0, 0])
     ax_strips = fig.add_subplot(gs[1, 0])
     ax_table = fig.add_subplot(gs[2, 0])
     ax_price = fig.add_subplot(gs[3, 0])
-    fig.suptitle('КЗ: Дорожка 1 (ширина 1.2 м) — раскладка, резы, ведомости и смета', fontsize=16, fontweight='bold')
+    
+    # Заголовок с количеством дорожек
+    if num_tracks == 1:
+        fig.suptitle('КЗ: Дорожка 1 (ширина 1.2 м) — раскладка, резы, ведомости и смета', 
+                     fontsize=16, fontweight='bold')
+    else:
+        fig.suptitle(f'КЗ: Дорожки 1-{num_tracks} (ширина 1.2 м, по {MAX_TRACK_LENGTH}м) — раскладка, резы, ведомости и смета', 
+                     fontsize=16, fontweight='bold')
 
-    ax_track.set_xlim(0, max(total_length + 2, cfg.TRACK_LENGTH_M))
-    ax_track.set_ylim(0, cfg.TRACK_WIDTH_M + 0.8)
+    # Настройка осей для множественных дорожек
+    track_height = cfg.TRACK_WIDTH_M  # 1.2 м
+    track_spacing = 0.3  # Отступ между дорожками
+    total_height = num_tracks * (track_height + track_spacing)
+    
+    ax_track.set_xlim(0, MAX_TRACK_LENGTH + 2)
+    ax_track.set_ylim(0, total_height)
     ax_track.set_aspect('auto')
     ax_track.spines['top'].set_visible(False)
     ax_track.spines['right'].set_visible(False)
-    ax_track.set_yticks([0, 0.6, 1.2])
-    ax_track.set_yticklabels(['0', '0.6', '1.2 м'])
+    
+    # Метки по оси Y (номера дорожек)
+    y_ticks = []
+    y_labels = []
+    for i in range(num_tracks):
+        y_pos = i * (track_height + track_spacing) + track_height / 2
+        y_ticks.append(y_pos)
+        y_labels.append(f'Дор.{i+1}')
+    ax_track.set_yticks(y_ticks)
+    ax_track.set_yticklabels(y_labels)
+    
     ax_track.set_xlabel('Длина (м)')
-    ax_track.set_xticks(range(0, int(max(total_length, cfg.TRACK_LENGTH_M)) + 1, 5))
+    ax_track.set_xticks(range(0, int(MAX_TRACK_LENGTH) + 1, 5))
     ax_track.grid(axis='x', linestyle=':', linewidth=0.5, alpha=0.5)
 
-    track_rect = patches.Rectangle((0, 0), cfg.TRACK_LENGTH_M, cfg.TRACK_WIDTH_M, linewidth=2, edgecolor='black', facecolor='none', linestyle='--')
-    ax_track.add_patch(track_rect)
-
-    x = 0.0
-    for item in seq:
-        if item.get('mode') == 'solid':
-            _draw_segment(ax_track, x, item['length'], '#2ecc71', item['label'])
-        elif item.get('mode') == 'transverse':
-            # Плита с поперечным резом (по длине)
-            _draw_transverse_cut(
-                ax_track, x, 
-                total_length=item['length'],
-                target_length=item['target_length'],
-                width=item['width'],
-                label_target=item['label_target'],
-                remainder_length=item['remainder']
-            )
-        else:
-            # Плиты с резами (первичными и возможными вторичными)
-            _draw_split_plate(
-                ax_track, x, item['length'],
-                main_w=item['main_w'], rest_w=item['rest_w'],
-                label_main=item['label_main'], label_rest=item.get('label_rest'),
-                secondary_cuts=item.get('secondary_cuts')
-            )
-        x += item['length']
+    # Рисуем каждую дорожку
+    for track_idx, track_data in enumerate(tracks):
+        # Y-координата текущей дорожки
+        y_base = track_idx * (track_height + track_spacing)
+        
+        # Рамка дорожки
+        track_rect = patches.Rectangle(
+            (0, y_base), 
+            MAX_TRACK_LENGTH, 
+            track_height, 
+            linewidth=2, 
+            edgecolor='black', 
+            facecolor='none', 
+            linestyle='--'
+        )
+        ax_track.add_patch(track_rect)
+        
+        # Рисуем плиты в этой дорожке
+        x = 0.0
+        for item in track_data['items']:
+            if item.get('mode') == 'solid':
+                _draw_segment(ax_track, x, item['length'], '#2ecc71', item['label'], 
+                            y=y_base, height=track_height)
+            elif item.get('mode') == 'transverse':
+                # Плита с поперечным резом (по длине)
+                _draw_transverse_cut(
+                    ax_track, x, 
+                    total_length=item['length'],
+                    target_length=item['target_length'],
+                    width=item['width'],
+                    label_target=item['label_target'],
+                    remainder_length=item['remainder'],
+                    y_base=y_base
+                )
+            else:
+                # Плиты с резами (первичными и возможными вторичными)
+                _draw_split_plate(
+                    ax_track, x, item['length'],
+                    main_w=item['main_w'], rest_w=item['rest_w'],
+                    label_main=item['label_main'], label_rest=item.get('label_rest'),
+                    secondary_cuts=item.get('secondary_cuts'),
+                    y_base=y_base
+                )
+            x += item['length']
 
     legend_patches = [
         patches.Patch(facecolor='#2ecc71', edgecolor='black', label='🟢 Основа (первичный рез)'),
@@ -146,7 +222,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     # Формируем сводку с учётом каскадной оптимизации
     from .optimization import OPT_CASCADING_PLAN
     txt = (
-        f"Длина по плану: {total_length:.1f} м  |  Продольных резов: {cfg.LONGITUDINAL_CUTS}  |  Подрезов по длине: {cfg.LENGTH_TRIMS}\n"
+        f"Длина по плану: {total_length:.1f} м ({num_tracks} дорожек)  |  Продольных резов: {cfg.LONGITUDINAL_CUTS}  |  Подрезов по длине: {cfg.LENGTH_TRIMS}\n"
         f"Остатки лент 0.3: {cfg.UNUSED_STRIPS_0_3_M_TOTAL:.1f} пог.м  |  Обрезки 0.2: {cfg.SCRAP_STRIPS_0_2_M_TOTAL:.1f} пог.м (≈ {cfg.WASTE_AREA_M2:.2f} м²)"
     )
     
@@ -293,14 +369,18 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
 
     table = ax_table.table(cellText=table_rows, colLabels=col_labels, loc='center', cellLoc='left', colLoc='center')
     table.auto_set_font_size(False)
-    table.set_fontsize(11)
+    # Уменьшаем шрифт если таблица большая
+    table_font_size = 8 if len(table_rows) > 15 else 11
+    table.set_fontsize(table_font_size)
     table.scale(1, 1.5)
 
     ax_price.axis('off')
     price_headers = ['№', 'Наименование', 'Кол-во', 'Ед.', 'Неделя', 'Контрагент', 'Вес(кг)', 'Цена', 'Сумма']
     price_table = ax_price.table(cellText=price_rows, colLabels=price_headers, loc='center', cellLoc='center', colLoc='center')
     price_table.auto_set_font_size(False)
-    price_table.set_fontsize(10)
+    # Уменьшаем шрифт если таблица большая
+    price_font_size = 7 if len(price_rows) > 20 else 10
+    price_table.set_fontsize(price_font_size)
     price_table.scale(1, 1.4)
     price_col_idx = price_headers.index('Цена')
     not_priced = any(row[price_col_idx].strip().startswith('0') for row in price_rows)

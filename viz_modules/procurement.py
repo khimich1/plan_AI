@@ -218,9 +218,17 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
     for it in items:
         L, W, qty = it['length'], it['width'], it['qty']
         long_cuts, trans_cuts = it['long_cuts'], it['trans_cuts']
-        name = cfg.make_plate_name(L, W)
-        
-        load_code = 6 if W < 1.0 else reinforcement_code
+
+        # Определяем код нагрузки:
+        #  1) если при парсинге заказа для (L, W) уже известна нагрузка — берём её;
+        #  2) иначе используем прежнюю логику (6 для узких, reinforcement_code для широких).
+        try:
+            load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
+        except Exception:
+            load_code = 6 if W < 1.0 else reinforcement_code
+
+        # Формируем имя плиты уже с правильным значением нагрузки
+        name = cfg.make_plate_name(L, W, load_code=load_code)
         db_price = get_price(L, load_code, cfg.PRICE_DB_PATH)
         base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, L, load_code) or 0.0)
         
@@ -440,10 +448,15 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
     
     for (length, width_mm), qty in sorted(order_counter.items(), key=lambda x: (x[0][0], x[0][1])):
         width_m = width_mm / 1000.0
-        name = cfg.make_plate_name(length, width_m)
-        
-        # Получаем базовую цену за 1.2м
-        load_code = 6 if width_m < 1.0 else reinforcement_code
+
+        # Получаем код нагрузки для этой плиты
+        try:
+            load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else reinforcement_code))
+        except Exception:
+            load_code = 6 if width_m < 1.0 else reinforcement_code
+
+        # Имя плиты в детальной разбивке тоже должно отражать фактическую нагрузку
+        name = cfg.make_plate_name(length, width_m, load_code=load_code)
         db_price = get_price(length, load_code, cfg.PRICE_DB_PATH)
         base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, length, load_code) or 0.0)
         
