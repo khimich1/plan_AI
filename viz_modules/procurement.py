@@ -71,7 +71,7 @@ def build_procurement_items():
                     order_counter[(length, width_m, load_code, False)] += q
             else:
                 # Fallback: если не нашли точного совпадения
-                load_code = cfg.get_load_code_for_plate(length, width_m, default=8)
+                load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else 8))
                 # True = предупреждение о том, что нагрузка может быть неточной
                 warning_flag = True if found_details else False
                 if found_details:
@@ -138,7 +138,7 @@ def build_procurement_items():
                 exact_width_m = cfg.get_exact_width(length, target_name, width_mm / 1000.0)
                 
                 # Получаем нагрузку для этой плиты
-                load_code = cfg.get_load_code_for_plate(length, exact_width_m, default=8)
+                load_code = cfg.get_load_code_for_plate(length, exact_width_m, default=(6 if exact_width_m < 1.0 else 8))
                 
                 all_plates.append({
                     'length': length,
