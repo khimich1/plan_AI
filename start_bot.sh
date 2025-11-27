@@ -59,19 +59,21 @@ fi
 echo -e "${YELLOW}🔧 Активирую виртуальное окружение...${NC}"
 source venv/bin/activate
 
-# Проверяем наличие файла bot_main.py
-if [ ! -f "bot_main.py" ]; then
-    echo -e "${RED}❌ Файл bot_main.py не найден!${NC}"
+# Проверяем наличие файла run_bot.py
+if [ ! -f "run_bot.py" ]; then
+    echo -e "${RED}❌ Файл run_bot.py не найден!${NC}"
     echo ""
     echo "Нажмите Enter для выхода..."
     read
     exit 1
 fi
 
-# Проверяем наличие файла bot.env
-if [ ! -f "bot.env" ]; then
-    echo -e "${RED}❌ Файл bot.env не найден!${NC}"
-    echo -e "${YELLOW}💡 Создайте файл bot.env с токеном бота${NC}"
+# Проверяем наличие файла .env в корне проекта
+if [ ! -f ".env" ]; then
+    echo -e "${RED}❌ Файл .env не найден!${NC}"
+    echo -e "${YELLOW}💡 Создайте файл .env с токеном бота${NC}"
+    echo -e "${YELLOW}💡 Пример содержимого:${NC}"
+    echo -e "${YELLOW}   BOT_TOKEN=your_token_here${NC}"
     echo ""
     echo "Нажмите Enter для выхода..."
     read
@@ -87,7 +89,7 @@ echo ""
 
 # Запускаем бота и перенаправляем вывод в лог-файл
 # Также выводим в консоль для удобства
-python bot_main.py 2>&1 | tee "$LOG_FILE"
+python run_bot.py 2>&1 | tee "$LOG_FILE"
 
 # Сохраняем код выхода
 EXIT_CODE=${PIPESTATUS[0]}

@@ -36,7 +36,7 @@ from core.visualization import visualize_plan
 from core.config_and_data import set_plate_lists_from_text, parse_name_to_sizes
 from core.optimization import apply_width_optimization, optimize_with_cascading_longitudinal_cuts
 import core.config_and_data as cfg
-from core.commercial_offer import generate_commercial_offer_pdf
+from core.commercial_offer import generate_commercial_offer_pdf, generate_commercial_offer_xlsx
 
 # Импорт из локального модуля
 from .bot_config import OUTPUTS_DIR_STR
@@ -1305,7 +1305,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         else:
             customer_name = user.first_name or "заказчик"
         
-        # Генерируем PDF в памяти
+        # Генерируем PDF и XLSX в памяти
         pdf_buffer = await asyncio.to_thread(
             generate_commercial_offer_pdf,
             order_data,
@@ -1314,12 +1314,33 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             customer_name
         )
         
-        # Сохраняем во временный файл для отправки
+        # Генерируем XLSX
+        try:
+            xlsx_buffer = await asyncio.to_thread(
+                generate_commercial_offer_xlsx,
+                order_data,
+                offer_number,
+                offer_date,
+                customer_name
+            )
+            has_xlsx = True
+        except Exception as e:
+            print(f"[XLSX] Ошибка генерации XLSX: {e}")
+            has_xlsx = False
+        
+        # Сохраняем файлы во временные файлы для отправки
         pdf_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.pdf"
         pdf_path = os.path.join(OUTPUTS_DIR_STR, pdf_filename)
         
+        xlsx_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.xlsx"
+        xlsx_path = os.path.join(OUTPUTS_DIR_STR, xlsx_filename)
+        
         with open(pdf_path, 'wb') as f:
             f.write(pdf_buffer.getvalue())
+        
+        if has_xlsx:
+            with open(xlsx_path, 'wb') as f:
+                f.write(xlsx_buffer.getvalue())
         
         # Формируем сводку по заказу
         total_qty = sum(item['qty'] for item in order_data)
@@ -1336,16 +1357,26 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         if os.path.exists(pdf_path):
             await message.answer_document(
                 FSInputFile(pdf_path),
-                caption=f"📄 Коммерческое предложение № {offer_number}"
+                caption=f"📄 Коммерческое предложение № {offer_number} (PDF)"
             )
+        
+        # Отправляем XLSX
+        if has_xlsx and os.path.exists(xlsx_path):
+            await message.answer_document(
+                FSInputFile(xlsx_path),
+                caption=f"📊 Коммерческое предложение № {offer_number} (XLSX с формулами)"
+            )
+            
+        if os.path.exists(pdf_path):
             await message.answer(
-                "✨ Документ содержит:\n"
+                "✨ Документы содержат:\n"
                 "• Подробную спецификацию\n"
                 "• Расчёт стоимости материалов\n"
                 "• Стоимость резов\n"
                 "• Вес изделий\n"
                 "• НДС (20%)\n"
-                "• Условия оплаты",
+                "• Условия оплаты\n\n"
+                "📊 XLSX файл содержит расчётные формулы Excel!",
                 reply_markup=main_menu_kb()
             )
         else:

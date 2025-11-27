@@ -13,8 +13,8 @@ echo -e "${GREEN}   Остановка Telegram-бота${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
-# Ищем процесс бота
-BOT_PID=$(ps aux | grep "[p]ython.*bot_main.py" | awk '{print $2}')
+# Ищем процесс бота (может быть запущен через run_bot.py или bot_main.py)
+BOT_PID=$(ps aux | grep -E "[p]ython.*(run_bot\.py|bot_main\.py)" | awk '{print $2}')
 
 if [ -z "$BOT_PID" ]; then
     echo -e "${YELLOW}⚠️  Бот не запущен${NC}"
