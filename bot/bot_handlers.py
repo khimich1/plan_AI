@@ -684,35 +684,66 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
             )
             await message.answer(warn_text)
         
-        # 3) Собираем заказы для 2D оптимизации (длина + ширина)
-        from collections import Counter
-        orders_2d = []
+        # 3) Собираем заказы для 2D оптимизации (длина + ширина + НАГРУЗКА!)
+        from collections import Counter, defaultdict
+        import math
         
-        # Для каждой ширины группируем плиты по длине
-        # ВАЖНО: Добавлен target_name для получения точных ширин из PLATE_EXACT_WIDTHS
-        for width_mm, plates_list, target_name in [
-            (1200, cfg.PLATES_1_2, 'PLATES_1_2'), (1080, cfg.PLATES_1_08, 'PLATES_1_08'), (1000, cfg.PLATES_1_0, 'PLATES_1_0'),  # КРИТИЧНО: Плиты БЕЗ реза!
-            (320, cfg.PLATES_0_32, 'PLATES_0_32'), (460, cfg.PLATES_0_46, 'PLATES_0_46'), (700, cfg.PLATES_0_70, 'PLATES_0_70'),
-            (720, cfg.PLATES_0_72, 'PLATES_0_72'), (860, cfg.PLATES_0_86, 'PLATES_0_86'), (880, cfg.PLATES_0_88, 'PLATES_0_88'),
-            (740, cfg.PLATES_0_74, 'PLATES_0_74'), (480, cfg.PLATES_0_48, 'PLATES_0_48'), (500, cfg.PLATES_0_50, 'PLATES_0_50'),
-            (340, cfg.PLATES_0_34, 'PLATES_0_34')
-        ]:  # соответствуют cfg.PLATES_*
-            if plates_list:
-                # Группируем по длине (плиты с одинаковой длиной объединяем)
-                length_counts = Counter(plates_list)
-                for length, qty in length_counts.items():
-                    # Получаем ТОЧНУЮ ширину из PLATE_EXACT_WIDTHS (если была сохранена при парсинге)
-                    exact_width_m = cfg.get_exact_width(length, target_name, width_mm / 1000.0)
-                    exact_width_mm = int(round(exact_width_m * 1000))
-                    
-                    orders_2d.append({
-                        'length': length,
-                        'width': exact_width_mm,  # Теперь используем ТОЧНУЮ ширину!
-                        'qty': qty
-                    })
+        # ✅ НОВАЯ ЛОГИКА: Группируем плиты по нагрузке
+        # ВАЖНО: Группируем по ЦЕЛОЙ части (12.5→12), но сохраняем оригинал для отображения
+        orders_by_load = defaultdict(list)  # {load_group: [orders_2d]}
         
-        # Если после парсинга не осталось ни одной плиты — сразу выходим с понятным сообщением
-        if not orders_2d:
+        print(f"[BOT] Проверяем PLATE_LOAD_DETAILS: {len(cfg.PLATE_LOAD_DETAILS)} записей")
+        
+        # Используем детальную карту с нагрузками (если есть)
+        if cfg.PLATE_LOAD_DETAILS:
+            print("[BOT] ✅ Используем PLATE_LOAD_DETAILS (с нагрузками)")
+            for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
+                width_mm = int(round(width_m * 1000))
+                
+                # Группируем по ЦЕЛОЙ части: 12.5 → группа 12
+                load_group = math.floor(load_code) if isinstance(load_code, (int, float)) else load_code
+                
+                orders_by_load[load_group].append({
+                    'length': length,
+                    'width': width_mm,
+                    'qty': qty,
+                    'load_code': load_code,  # Сохраняем ОРИГИНАЛЬНУЮ нагрузку (12.5)
+                    'load_group': load_group  # Группа для оптимизации (12)
+                })
+                
+                # Форматируем нагрузку для отображения
+                load_display = cfg.format_reinforcement_from_load_code(load_code)
+                print(f"  + {qty}x {length}м × {width_mm}мм, нагрузка {load_display} (группа {load_group}п)")
+        else:
+            # Fallback: Если PLATE_LOAD_DETAILS пуст (старый формат без нагрузок)
+            # Группируем все плиты как нагрузку 8п (дефолт)
+            print("[BOT] ⚠️ PLATE_LOAD_DETAILS пуст, используем fallback (все плиты = 8п)")
+            for width_mm, plates_list, target_name in [
+                (1200, cfg.PLATES_1_2, 'PLATES_1_2'), (1080, cfg.PLATES_1_08, 'PLATES_1_08'), (1000, cfg.PLATES_1_0, 'PLATES_1_0'),
+                (320, cfg.PLATES_0_32, 'PLATES_0_32'), (460, cfg.PLATES_0_46, 'PLATES_0_46'), (700, cfg.PLATES_0_70, 'PLATES_0_70'),
+                (720, cfg.PLATES_0_72, 'PLATES_0_72'), (860, cfg.PLATES_0_86, 'PLATES_0_86'), (880, cfg.PLATES_0_88, 'PLATES_0_88'),
+                (740, cfg.PLATES_0_74, 'PLATES_0_74'), (480, cfg.PLATES_0_48, 'PLATES_0_48'), (500, cfg.PLATES_0_50, 'PLATES_0_50'),
+                (340, cfg.PLATES_0_34, 'PLATES_0_34')
+            ]:
+                if plates_list:
+                    length_counts = Counter(plates_list)
+                    for length, qty in length_counts.items():
+                        # Получаем точную ширину
+                        exact_width_m = cfg.get_exact_width(length, target_name, width_mm / 1000.0)
+                        exact_width_mm = int(round(exact_width_m * 1000))
+                        
+                        # Используем дефолтную нагрузку 8п
+                        load_code = cfg.get_load_code_for_plate(length, exact_width_m, default=8)
+                        
+                        orders_by_load[load_code].append({
+                            'length': length,
+                            'width': exact_width_mm,
+                            'qty': qty,
+                            'load_code': load_code
+                        })
+        
+        # Если после парсинга не осталось ни одной плиты — сразу выходим
+        if not orders_by_load:
             await message.answer(
                 "❌ Не удалось распознать ни одной плиты в вашем сообщении.\n"
                 "Проверьте формат строк (ширина×длина×кол-во или 'Плиты ПБ 78-12-8п 3')."
@@ -720,44 +751,73 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        # Для обратной совместимости сохраняем старый формат (только ширины)
-        orders = {}
-        for order in orders_2d:
-            width = order['width']
-            orders[width] = orders.get(width, 0) + order['qty']
+        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ ДЛЯ КАЖДОЙ НАГРУЗКИ ОТДЕЛЬНО
+        print(f"\n[BOT] Найдено {len(orders_by_load)} групп(ы) по нагрузкам: {sorted(orders_by_load.keys())}")
         
-        # 3) Запускаем 2D оптимизацию (с учётом длины и ширины)
-        optimization_result = None
-        if orders_2d:
-            print(f"[BOT] Запускаем 2D оптимизацию для заказа:")
-            for order in orders_2d:
-                print(f"  - {order['qty']}x {order['length']}м × {order['width']}мм")
+        optimization_results_by_load = {}
+        total_plates_all = 0
+        total_cost_all = 0
+        
+        # Создаём карту группа→оригинальные нагрузки (для правильного отображения)
+        load_group_to_originals = {}  # {12: [12, 12.5], 10: [10], ...}
+        for load_group, orders in orders_by_load.items():
+            originals = set(o['load_code'] for o in orders)
+            load_group_to_originals[load_group] = sorted(originals)
+        
+        for load_group in sorted(orders_by_load.keys()):
+            orders_2d = orders_by_load[load_group]
+            
+            # Для отображения собираем все оригинальные нагрузки в этой группе
+            original_loads = load_group_to_originals[load_group]
+            load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in original_loads]
+            load_display = ", ".join(load_display_list) if len(load_display_list) > 1 else load_display_list[0]
+            
+            print(f"\n[BOT] === Оптимизация для группы {load_group}п ({load_display}) ===")
+            print(f"[BOT] Плит: {sum(o['qty'] for o in orders_2d)} шт, типов: {len(orders_2d)}")
+            
             try:
-                from core.optimization import OPT_CASCADING_PLAN, optimize_with_cascading_longitudinal_cuts
+                from core.optimization import optimize_with_cascading_longitudinal_cuts
                 optimization_result = await asyncio.to_thread(
                     optimize_with_cascading_longitudinal_cuts,
-                    orders_2d=orders_2d  # Передаём как именованный параметр для режима 2D
+                    orders_2d=orders_2d
                 )
-                print(f"[BOT] Получен результат: {optimization_result}")
+                
                 if optimization_result and optimization_result.get('total_plates', 0) > 0:
-                    # Сохраняем результат в глобальную переменную для визуализации
-                    import core.optimization as optimization
-                    optimization.OPT_CASCADING_PLAN = optimization_result
-                    print(f"[BOT] OK: Результат сохранён в optimization.OPT_CASCADING_PLAN")
+                    # Сохраняем с информацией о группе и оригинальных нагрузках
+                    optimization_result['load_group'] = load_group
+                    optimization_result['original_loads'] = original_loads
+                    optimization_results_by_load[load_group] = optimization_result
+                    total_plates_all += optimization_result.get('total_plates', 0)
+                    total_cost_all += optimization_result.get('total_cost', 0)
                     
-                    opt_msg = (
-                        "💡 **Результат оптимизации:**\n"
-                        f"• Плит потребуется: **{optimization_result['total_plates']} шт**\n"
-                        f"• Стоимость: **{optimization_result['total_cost']:,} ₽**\n".replace(',', ' ') +
-                        f"• Отходы: **{optimization_result.get('waste_width', 0)} мм**\n"
-                    )
-                    await message.answer(opt_msg, parse_mode="Markdown")
+                    print(f"[BOT] ✅ Группа {load_group}п ({load_display}): {optimization_result['total_plates']} плит, "
+                          f"{optimization_result.get('total_cost', 0):,} ₽".replace(',', ' '))
             except Exception as e:
-                # Если оптимизация не сработала, продолжаем со старым методом
-                print(f"[Cascading optimization failed]: {e}")
+                print(f"[BOT] ❌ Ошибка оптимизации для группы {load_group}п: {e}")
+        
+        # Сохраняем результаты в глобальную переменную
+        if optimization_results_by_load:
+            import core.optimization as optimization
+            optimization.OPT_CASCADING_PLAN_BY_LOAD = optimization_results_by_load
+            print(f"\n[BOT] ✅ Сохранено {len(optimization_results_by_load)} результатов оптимизации")
+            
+            # Показываем сводку пользователю с ОРИГИНАЛЬНЫМИ нагрузками
+            opt_msg = "💡 **Результат оптимизации по нагрузкам:**\n"
+            for load_group in sorted(optimization_results_by_load.keys()):
+                result = optimization_results_by_load[load_group]
+                original_loads = result.get('original_loads', [load_group])
+                load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in original_loads]
+                load_display = ", ".join(load_display_list)
+                opt_msg += f"• **{load_display}**: {result['total_plates']} плит\n"
+            opt_msg += f"\n**Итого:** {total_plates_all} плит, {total_cost_all:,} ₽\n".replace(',', ' ')
+            
+            await message.answer(opt_msg, parse_mode="Markdown")
+        else:
+            print("[BOT] ⚠️ Оптимизация не дала результатов, используем fallback")
         
         # 4) Строим приоритет ширин (запасной вариант, если каскадная не сработала)
-        if not optimization_result:
+        if not optimization_results_by_load:
+            from core.optimization import apply_width_optimization
             apply_width_optimization()
         
         # 5) Запускаем расчёт и визуализацию

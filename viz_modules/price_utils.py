@@ -181,18 +181,28 @@ def sync_price_xlsx_to_db(xlsx_path: str = cfg.PRICE_XLSX_PATH, db_path: str = c
         conn.close()
 
 
-def find_price_from_db(length_m: float, load_code: int = 8, db_path: str = cfg.PRICE_DB_PATH) -> float:
-    """Ищет цену в БД с допуском ±1 дм."""
+def find_price_from_db(length_m: float, load_code: float | int = 8, db_path: str = cfg.PRICE_DB_PATH) -> float:
+    """
+    Ищет цену в БД с допуском ±1 дм.
+    
+    ВАЖНО: Для нагрузки 12.5 использует цену 12п (math.floor).
+    """
+    import math
+    
     length_dm = int(round(length_m * 10))
+    
+    # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: округляем нагрузку вниз (12.5 → 12)
+    load_code_for_db = int(math.floor(load_code)) if isinstance(load_code, (int, float)) else 8
+    
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
         cur.execute('CREATE TABLE IF NOT EXISTS prices (length_dm INTEGER, load_code INTEGER, price REAL, PRIMARY KEY(length_dm, load_code))')
-        cur.execute('SELECT price FROM prices WHERE length_dm=? AND load_code=?', (length_dm, load_code))
+        cur.execute('SELECT price FROM prices WHERE length_dm=? AND load_code=?', (length_dm, load_code_for_db))
         row = cur.fetchone()
         if row:
             return float(row[0])
-        cur.execute('SELECT price FROM prices WHERE ABS(length_dm-?)<=1 AND load_code=? ORDER BY ABS(length_dm-?) LIMIT 1', (length_dm, load_code, length_dm))
+        cur.execute('SELECT price FROM prices WHERE ABS(length_dm-?)<=1 AND load_code=? ORDER BY ABS(length_dm-?) LIMIT 1', (length_dm, load_code_for_db, length_dm))
         row = cur.fetchone()
         return float(row[0]) if row else None
     finally:

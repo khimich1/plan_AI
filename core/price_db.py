@@ -106,17 +106,30 @@ def import_from_xlsx(xlsx_path: str, db_path: str = DEFAULT_DB, preferred_sheet:
         conn.close()
 
 
-def get_price(length_m: float, load_code: int = 8, db_path: str = DEFAULT_DB) -> Optional[float]:
+def get_price(length_m: float, load_code: float | int = 8, db_path: str = DEFAULT_DB) -> Optional[float]:
+    """
+    Получает цену плиты из базы данных.
+    
+    ВАЖНО: Для нагрузки 12.5 использует цену 12п (math.floor).
+    12.5 кПа считается по цене 12 кПа, но отображается как 12,5п.
+    """
+    import math
+    
     init_schema(db_path)
     length_dm = int(round(length_m * 10))
+    
+    # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: округляем нагрузку вниз (12.5 → 12)
+    # В базе цен нет 12.5, используем цену 12
+    load_code_for_db = int(math.floor(load_code)) if isinstance(load_code, (int, float)) else 8
+    
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
-        cur.execute('SELECT price FROM prices WHERE length_dm=? AND load_code=?', (length_dm, load_code))
+        cur.execute('SELECT price FROM prices WHERE length_dm=? AND load_code=?', (length_dm, load_code_for_db))
         row = cur.fetchone()
         if row:
             return float(row[0])
-        cur.execute('SELECT price FROM prices WHERE ABS(length_dm-?)<=1 AND load_code=? ORDER BY ABS(length_dm-?) LIMIT 1', (length_dm, load_code, length_dm))
+        cur.execute('SELECT price FROM prices WHERE ABS(length_dm-?)<=1 AND load_code=? ORDER BY ABS(length_dm-?) LIMIT 1', (length_dm, load_code_for_db, length_dm))
         row = cur.fetchone()
         return float(row[0]) if row else None
     finally:
