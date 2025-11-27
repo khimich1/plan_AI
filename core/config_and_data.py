@@ -398,8 +398,9 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
             if load_match:
                 try:
                     load_val = float(load_match.group(1).replace(',', '.'))
-                    # Округление: 8.0→8, 10.0→10, 12.5→13 (всегда вверх для .5)
-                    load_code = int(load_val + 0.5)
+                    # ВАЖНО: Сохраняем как float, чтобы 12.5 осталось 12.5 (не округляем до 13!)
+                    # При группировке и ценах будем использовать math.floor()
+                    load_code = load_val
                     if load_code <= 0:
                         load_code = None
                 except Exception:
@@ -425,15 +426,25 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
     return unparsed_lines
 
 
-def format_reinforcement_from_load_code(load_code: int) -> str:
-    """Преобразует код нагрузки (8/10/12/11/6...) в суффикс вида '8п', '10п', '12п'."""
+def format_reinforcement_from_load_code(load_code: float | int) -> str:
+    """Преобразует код нагрузки (8/10/12/12.5/11/6...) в суффикс вида '8п', '10п', '12п', '12,5п'.
+    
+    ВАЖНО: 12.5 отображается как '12,5п' (с запятой), но считается по цене как 12п.
+    """
     try:
-        code = int(load_code)
+        code = float(load_code)
     except Exception:
-        code = 8
+        code = 8.0
     if code <= 0:
-        code = 8
-    return f"{code}п"
+        code = 8.0
+    
+    # Проверяем, дробное ли число (например, 12.5)
+    if abs(code - int(code)) < 1e-6:
+        # Целое число: 8.0 → "8п"
+        return f"{int(code)}п"
+    else:
+        # Дробное число: 12.5 → "12,5п" (с запятой, как в России)
+        return f"{code:.1f}п".replace('.', ',')
 
 
 def make_plate_name(

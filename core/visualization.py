@@ -76,39 +76,84 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             print(f'[DEBUG] breakdown_tables[{i}]: name={bt.get("name")}, rows={len(bt.get("rows", []))}')
     
     seq = build_layout_sequence()
-    total_length = sum(s['length'] for s in seq)
-
-    # Разбиваем плиты на несколько дорожек по 101 метру
-    MAX_TRACK_LENGTH = 101.0  # Максимальная длина одной дорожки
     
-    tracks = []  # Список дорожек
-    current_track = []
-    current_track_length = 0.0
-    
-    for item in seq:
-        item_length = item['length']
+    # ✅ НОВАЯ ЛОГИКА: Проверяем формат данных (с группировкой по нагрузке или без)
+    if isinstance(seq, list) and seq and isinstance(seq[0], dict) and 'load_code' in seq[0]:
+        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Обнаружена группировка по нагрузкам! Групп: {len(seq)}")
         
-        # Если плита не помещается - создаём новую дорожку
-        if current_track_length + item_length > MAX_TRACK_LENGTH and current_track:
+        tracks = []
+        MAX_TRACK_LENGTH = 101.0
+        
+        # Каждая группа нагрузки = отдельные дорожки
+        for group in seq:
+            load_code = group['load_code']
+            items = group['sequence']
+            group_label = group.get('label', f'Нагрузка {load_code}п')
+            
+            print(f"[ВИЗУАЛИЗАЦИЯ] Группа '{group_label}': {len(items)} плит")
+            
+            # Разбиваем группу на дорожки по 101м
+            current_track = []
+            current_track_length = 0.0
+            
+            for item in items:
+                item_length = item['length']
+                
+                if current_track_length + item_length > MAX_TRACK_LENGTH and current_track:
+                    tracks.append({
+                        'items': current_track,
+                        'length': current_track_length,
+                        'load_code': load_code,  # ✅ Сохраняем нагрузку!
+                        'label': group_label
+                    })
+                    current_track = []
+                    current_track_length = 0.0
+                
+                current_track.append(item)
+                current_track_length += item_length
+            
+            if current_track:
+                tracks.append({
+                    'items': current_track,
+                    'length': current_track_length,
+                    'load_code': load_code,  # ✅ Сохраняем нагрузку!
+                    'label': group_label
+                })
+        
+        total_length = sum(t['length'] for t in tracks)
+        
+    else:
+        # СТАРЫЙ ФОРМАТ (без группировки по нагрузке) - работает как раньше
+        print("[ВИЗУАЛИЗАЦИЯ] Используем старый формат (без группировки)")
+        total_length = sum(s['length'] for s in seq)
+        MAX_TRACK_LENGTH = 101.0
+        
+        tracks = []
+        current_track = []
+        current_track_length = 0.0
+        
+        for item in seq:
+            item_length = item['length']
+            
+            if current_track_length + item_length > MAX_TRACK_LENGTH and current_track:
+                tracks.append({
+                    'items': current_track,
+                    'length': current_track_length
+                })
+                current_track = []
+                current_track_length = 0.0
+            
+            current_track.append(item)
+            current_track_length += item_length
+        
+        if current_track:
             tracks.append({
                 'items': current_track,
                 'length': current_track_length
             })
-            current_track = []
-            current_track_length = 0.0
-        
-        current_track.append(item)
-        current_track_length += item_length
-    
-    # Добавляем последнюю дорожку
-    if current_track:
-        tracks.append({
-            'items': current_track,
-            'length': current_track_length
-        })
     
     num_tracks = len(tracks)
-    print(f"[ВИЗУАЛИЗАЦИЯ] Плиты разбиты на {num_tracks} дорожек по {MAX_TRACK_LENGTH}м")
+    print(f"[ВИЗУАЛИЗАЦИЯ] Плиты разбиты на {num_tracks} дорожек")
 
     # Убрали секцию детальной разбивки - она теперь в отдельном Excel файле
     # Увеличиваем высоту секции дорожек пропорционально их количеству
@@ -145,13 +190,19 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     ax_track.spines['top'].set_visible(False)
     ax_track.spines['right'].set_visible(False)
     
-    # Метки по оси Y (номера дорожек)
+    # Метки по оси Y (номера дорожек + НАГРУЗКА!)
     y_ticks = []
     y_labels = []
     for i in range(num_tracks):
         y_pos = i * (track_height + track_spacing) + track_height / 2
         y_ticks.append(y_pos)
-        y_labels.append(f'Дор.{i+1}')
+        
+        # ✅ Если есть информация о нагрузке, показываем её в метке
+        if 'load_code' in tracks[i]:
+            load_label = tracks[i].get('label', f"Нагрузка {tracks[i]['load_code']}п")
+            y_labels.append(f"Д{i+1}\n({load_label})")
+        else:
+            y_labels.append(f'Дор.{i+1}')
     ax_track.set_yticks(y_ticks)
     ax_track.set_yticklabels(y_labels)
     
