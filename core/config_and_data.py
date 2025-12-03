@@ -206,6 +206,16 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
             qty: количество плит
             load_code: нагрузка (6, 8, 10, 12, 13 и т.д.) - опционально
         """
+        # ЗАЩИТА: Проверяем адекватность размеров
+        # Если размеры слишком большие (вероятно, ошибка OCR распознал мм как дм)
+        # то игнорируем эту плиту
+        if width_m > 20.0 or length_m > 200.0:
+            print(f"[PARSER] ⚠️ Пропущена плита с неадекватными размерами: {length_m}м × {width_m}м")
+            return
+        
+        if width_m <= 0 or length_m <= 0:
+            print(f"[PARSER] ⚠️ Пропущена плита с нулевыми размерами: {length_m}м × {width_m}м")
+            return
         # Специальная обработка плит 1.5 м → заменяем на 1.2 м + 0.3 м
         if 1.45 <= width_m <= 1.55:  # 1.5 м (диапазон ±50 мм)
             length_rounded = round(float(length_m), 2)

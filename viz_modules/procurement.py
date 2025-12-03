@@ -309,7 +309,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
             base_price = 0.0
         
         # Используем ту же логику расчета, что и в build_component_breakdown
-        from core.optimization import OPT_CASCADING_PLAN
+        from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
         width_mm = int(round(W * 1000))
         
         # Инициализация переменных
@@ -318,12 +318,22 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         rest_cost = 0.0
         waste_cost = 0.0
         
-        # Проверяем OPT_CASCADING_PLAN для правильного подсчета резов, остатков и отходов
-        if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
+        # Проверяем план оптимизации: сначала BY_LOAD, потом общий
+        current_plan = None
+        if OPT_CASCADING_PLAN_BY_LOAD:
+            import math
+            load_key = int(math.floor(load_code)) if isinstance(load_code, (int, float)) else 8
+            if load_key in OPT_CASCADING_PLAN_BY_LOAD:
+                current_plan = OPT_CASCADING_PLAN_BY_LOAD[load_key]
+        
+        if not current_plan and OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
+            current_plan = OPT_CASCADING_PLAN
+        
+        if current_plan and current_plan.get('primary_cuts'):
             total_cuts_for_this_size = 0
             
             # Первичные резы
-            for prim_cut in OPT_CASCADING_PLAN['primary_cuts']:
+            for prim_cut in current_plan['primary_cuts']:
                 if prim_cut['width'] == width_mm:
                     prim_lengths = prim_cut.get('lengths', [])
                     if not prim_lengths or any(abs(l - L) < 0.05 for l in prim_lengths):
@@ -338,8 +348,8 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
                             used_rests = 0
 
                             # Считаем, сколько этих остатков реально использовано во вторичных резах
-                            if OPT_CASCADING_PLAN.get('secondary_cuts'):
-                                for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                            if current_plan.get('secondary_cuts'):
+                                for sec_cut in current_plan['secondary_cuts']:
                                     if sec_cut.get('source') != primary_rest_width_mm:
                                         continue
                                     # Учитываем только те вторичные резы, которые берут остатки от ЭТОЙ длины
@@ -356,8 +366,8 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
                                 rest_cost = (unused_rest_total_mm / 1200.0) * base_price_1_2m / qty
 
                         # --- Отходы и поперечные резы: только те вторичные операции, которые дают ЭТИ плиты ---
-                        if OPT_CASCADING_PLAN.get('secondary_cuts'):
-                            for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                        if current_plan.get('secondary_cuts'):
+                            for sec_cut in current_plan['secondary_cuts']:
                                 sec_lengths = sec_cut.get('lengths', [])
                                 if not sec_lengths or any(abs(l - L) < 0.05 for l in sec_lengths):
                                     sec_cuts = sec_cut.get('cuts', [])
@@ -446,7 +456,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
 
 def build_component_breakdown(price_table: dict, price_rows: list = None, reinforcement_code: int = 8):
     """Формирует детальную разбивку компонентов для каждого наименования."""
-    from core.optimization import OPT_CASCADING_PLAN
+    from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
     
     # Получаем заказы
     plan_orders = get_orders_from_opt_plan()
@@ -575,15 +585,32 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         waste_terms = []  # (ширина_отхода_мм, количество_операций) для наглядной формулы
         
         # Проверяем OPT_CASCADING_PLAN для определения остатков, отходов и количества резов
+        # Приоритет 1: Ищем план для конкретной нагрузки в OPT_CASCADING_PLAN_BY_LOAD
+        # Приоритет 2: Используем общий план OPT_CASCADING_PLAN
+        current_plan = None
+        if OPT_CASCADING_PLAN_BY_LOAD:
+            # Пытаемся найти план для текущей нагрузки
+            # load_code может быть float (12.5) или int (8, 10, 12)
+            import math
+            load_key = int(math.floor(load_code)) if isinstance(load_code, (int, float)) else 8
+            if load_key in OPT_CASCADING_PLAN_BY_LOAD:
+                current_plan = OPT_CASCADING_PLAN_BY_LOAD[load_key]
+                print(f'[DEBUG] Используем план для нагрузки {load_key}п для плиты {name}')
+        
+        # Если не нашли в BY_LOAD, используем общий план
+        if not current_plan and OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
+            current_plan = OPT_CASCADING_PLAN
+            print(f'[DEBUG] Используем общий план для плиты {name}')
+        
         total_cuts_count = 0  # Общее количество резов для отображения в таблице
-        if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
+        if current_plan and current_plan.get('primary_cuts'):
             # Считаем общее количество резов (первичных + вторичных) для всех плит этой ширины и длины
             total_cuts_for_this_size = 0
             total_plates_from_cuts = 0
             primary_rest_width_mm = 0  # Ширина остатка от первичных резов
             
             # Первичные резы
-            for prim_cut in OPT_CASCADING_PLAN['primary_cuts']:
+            for prim_cut in current_plan['primary_cuts']:
                 if prim_cut['width'] == width_mm:
                     prim_lengths = prim_cut.get('lengths', [])
                     if not prim_lengths or any(abs(l - length) < 0.05 for l in prim_lengths):
@@ -599,8 +626,8 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                             used_rests = 0
 
                             # Считаем, сколько этих остатков реально использовано во вторичных резах
-                            if OPT_CASCADING_PLAN.get('secondary_cuts'):
-                                for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                            if current_plan.get('secondary_cuts'):
+                                for sec_cut in current_plan['secondary_cuts']:
                                     if sec_cut.get('source') != primary_rest_width_mm:
                                         continue
                                     # учитываем только вторичные резы от ЭТОЙ длины
@@ -622,8 +649,8 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                                 rest_width_mm = 0
 
                         # --- Вторичные резы и отходы: только операции, которые дают ЭТИ плиты ---
-                        if OPT_CASCADING_PLAN.get('secondary_cuts'):
-                            for sec_cut in OPT_CASCADING_PLAN['secondary_cuts']:
+                        if current_plan.get('secondary_cuts'):
+                            for sec_cut in current_plan['secondary_cuts']:
                                 sec_lengths = sec_cut.get('lengths', [])
                                 if not sec_lengths or any(abs(l - length) < 0.05 for l in sec_lengths):
                                     sec_cuts = sec_cut.get('cuts', [])

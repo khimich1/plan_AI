@@ -37,6 +37,8 @@ from core.config_and_data import set_plate_lists_from_text, parse_name_to_sizes
 from core.optimization import apply_width_optimization, optimize_with_cascading_longitudinal_cuts
 import core.config_and_data as cfg
 from core.commercial_offer import generate_commercial_offer_pdf
+# Умное OCR: сначала EasyOCR (бесплатно), потом GPT-4o (платно)
+from core.ocr_gpt import recognize_text_smart, GPT_AVAILABLE, EASYOCR_AVAILABLE
 
 # Импорт из локального модуля
 from .bot_config import OUTPUTS_DIR_STR
@@ -94,9 +96,19 @@ async def cmd_start(message: Message):
 @router.message(F.text == "Получить КП")
 async def btn_get_kp(message: Message, state: FSMContext):
     await state.set_state(KPStates.waiting_for_plate_list)
+    
+    # Формируем подсказку о фото в зависимости от доступных методов OCR
+    if GPT_AVAILABLE:
+        photo_hint = "\n📸 Или отправьте фото таблицы - я распознаю через 🧠 GPT-4o (точность 95%+)!"
+    elif EASYOCR_AVAILABLE:
+        photo_hint = "\n📸 Или отправьте фото таблицы - я распознаю через 🤖 EasyOCR!"
+    else:
+        photo_hint = ""
+    
     await message.answer(
         "✍️ Пришлите список плит в свободной форме.\n"
-        "Например: '1.2×3.39 — 2 шт; 0.32×6.63 — 4 шт; 0.32×7.83 — 3 шт'\n\n"
+        "Например: '1.2×3.39 — 2 шт; 0.32×6.63 — 4 шт; 0.32×7.83 — 3 шт'\n"
+        f"{photo_hint}\n\n"
         "Я выполню расчёт с оптимизацией и пришлю схемы и смету.\n"
         "💡 Используется каскадная оптимизация для экономии материала!",
         reply_markup=main_menu_kb()
@@ -442,6 +454,397 @@ def _explain_price_breakdown(name: str, our_price: float, smeta_path: str) -> st
         return f"  💡 Ошибка чтения разбивки: {e}"
 
 
+def create_comparison_excel(kp_path: str, smeta_path: str) -> str:
+    """
+    Создаёт Excel файл с двумя таблицами (смета и КП) рядом + пояснения о ценообразовании.
+    
+    Возвращает путь к созданному файлу.
+    """
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+    
+    if pd is None:
+        raise RuntimeError("pandas не установлена, сравнение КП недоступно.")
+    
+    # Загружаем данные из КП и сметы
+    kp = load_kp_excel(kp_path)
+    smeta = load_smeta_excel(smeta_path)
+    
+    # Ключи, которые есть в обоих файлах
+    common_names = sorted(set(kp.keys()) & set(smeta.keys()), key=str)
+    
+    if not common_names:
+        raise RuntimeError("Не нашёл общих позиций по наименованию плит в двух файлах.")
+    
+    # Создаём новый Excel файл
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Сравнение"
+    
+    # ==================== СТИЛИ ====================
+    # Заголовок
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=12)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    
+    # Подзаголовки
+    subheader_fill = PatternFill(start_color="B4C7E7", end_color="B4C7E7", fill_type="solid")
+    subheader_font = Font(bold=True, size=11)
+    subheader_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    
+    # Названия плит
+    plate_name_fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
+    plate_name_font = Font(bold=True, size=10)
+    
+    # Разница (положительная - зелёный, отрицательная - красный)
+    positive_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    negative_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    
+    # Рамки
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # ==================== ГЛАВНЫЙ ЗАГОЛОВОК ====================
+    ws.merge_cells('A1:N1')
+    cell = ws['A1']
+    cell.value = "📊 СРАВНЕНИЕ СМЕТЫ И КП ЗАВОДА"
+    cell.font = Font(bold=True, size=14, color="FFFFFF")
+    cell.fill = PatternFill(start_color="305496", end_color="305496", fill_type="solid")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 25
+    
+    # ==================== ЗАГОЛОВКИ ТАБЛИЦ ====================
+    row = 3
+    
+    # Заголовок "НАША СМЕТА"
+    ws.merge_cells(f'A{row}:G{row}')
+    cell = ws[f'A{row}']
+    cell.value = "📋 НАША СМЕТА"
+    cell.font = header_font
+    cell.fill = header_fill
+    cell.alignment = header_align
+    
+    # Заголовок "КП ЗАВОДА"
+    ws.merge_cells(f'H{row}:N{row}')
+    cell = ws[f'H{row}']
+    cell.value = "🏭 КП ЗАВОДА"
+    cell.font = header_font
+    cell.fill = header_fill
+    cell.alignment = header_align
+    
+    ws.row_dimensions[row].height = 20
+    row += 1
+    
+    # ==================== СТОЛБЦЫ ТАБЛИЦ ====================
+    # Столбцы для сметы
+    smeta_cols = ['№', 'Наименование', 'Кол-во', 'Вес, кг', 'Цена, ₽', 'Сумма, ₽', 'Примечание']
+    for col_idx, col_name in enumerate(smeta_cols, start=1):
+        cell = ws.cell(row=row, column=col_idx)
+        cell.value = col_name
+        cell.font = subheader_font
+        cell.fill = subheader_fill
+        cell.alignment = subheader_align
+        cell.border = thin_border
+    
+    # Столбцы для КП
+    kp_cols = ['№', 'Наименование', 'Кол-во', 'Цена, ₽', 'Сумма, ₽', 'Разница цены', 'Разница суммы']
+    for col_idx, col_name in enumerate(kp_cols, start=8):
+        cell = ws.cell(row=row, column=col_idx)
+        cell.value = col_name
+        cell.font = subheader_font
+        cell.fill = subheader_fill
+        cell.alignment = subheader_align
+        cell.border = thin_border
+    
+    ws.row_dimensions[row].height = 30
+    row += 1
+    
+    # ==================== ДАННЫЕ ====================
+    # Пытаемся найти файл детальной разбивки
+    breakdown_data = {}
+    try:
+        # Ищем файл детальной разбивки рядом со сметой
+        smeta_dir = os.path.dirname(smeta_path)
+        smeta_name = os.path.basename(smeta_path)
+        
+        # Извлекаем timestamp из имени сметы (например, "Смета_Дорожка_1_20250128_143022.xlsx")
+        timestamp_match = re.search(r'_(\d{8}_\d{6})\.xlsx$', smeta_name)
+        if timestamp_match:
+            timestamp = timestamp_match.group(1)
+            breakdown_path = os.path.join(smeta_dir, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx')
+            
+            if os.path.exists(breakdown_path):
+                # Читаем файл детальной разбивки
+                breakdown_df = pd.read_excel(breakdown_path)
+                current_plate = None
+                
+                for _, br_row in breakdown_df.iterrows():
+                    comp = str(br_row.get('Компонент', '')).strip()
+                    calc = str(br_row.get('Расчёт', '')).strip()
+                    summa = str(br_row.get('Сумма', '')).strip()
+                    
+                    # Если это заголовок плиты (наименование)
+                    if comp and not calc and not summa and 'Плиты ПБ' in comp:
+                        current_plate = _make_plate_key(comp)
+                        breakdown_data[current_plate] = []
+                    elif current_plate and comp:
+                        # Добавляем компонент к текущей плите
+                        breakdown_data[current_plate].append({
+                            'component': comp,
+                            'formula': calc,
+                            'sum': summa
+                        })
+    except Exception as e:
+        print(f"[DEBUG] Не удалось загрузить детальную разбивку: {e}")
+    
+    # Итоги
+    total_smeta = 0.0
+    total_kp = 0.0
+    
+    idx = 1
+    for key in common_names:
+        s = smeta[key]  # строка из нашей сметы
+        k = kp[key]     # строка из КП завода
+        
+        name = s.name or k.name
+        
+        # ===== СМЕТА (столбцы A-G) =====
+        # Номер
+        cell = ws.cell(row=row, column=1, value=idx)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
+        
+        # Наименование
+        cell = ws.cell(row=row, column=2, value=name)
+        cell.font = plate_name_font
+        cell.fill = plate_name_fill
+        cell.border = thin_border
+        
+        # Количество
+        cell = ws.cell(row=row, column=3, value=s.qty)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
+        cell.number_format = '0'
+        
+        # Вес
+        cell = ws.cell(row=row, column=4, value=s.weight)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
+        cell.number_format = '0.00'
+        
+        # Цена
+        cell = ws.cell(row=row, column=5, value=s.price)
+        cell.alignment = Alignment(horizontal="right")
+        cell.border = thin_border
+        cell.number_format = '#,##0.00'
+        
+        # Сумма
+        cell = ws.cell(row=row, column=6, value=s.total)
+        cell.alignment = Alignment(horizontal="right")
+        cell.border = thin_border
+        cell.number_format = '#,##0.00'
+        
+        # Примечание (цена за кг)
+        if s.price_per_kg:
+            note = f"{s.price_per_kg:.2f} ₽/кг"
+        else:
+            note = ""
+        cell = ws.cell(row=row, column=7, value=note)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
+        
+        # ===== КП (столбцы H-N) =====
+        # Номер
+        cell = ws.cell(row=row, column=8, value=idx)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
+        
+        # Наименование
+        cell = ws.cell(row=row, column=9, value=name)
+        cell.font = plate_name_font
+        cell.fill = plate_name_fill
+        cell.border = thin_border
+        
+        # Количество
+        cell = ws.cell(row=row, column=10, value=k.qty)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
+        cell.number_format = '0'
+        
+        # Цена
+        cell = ws.cell(row=row, column=11, value=k.price)
+        cell.alignment = Alignment(horizontal="right")
+        cell.border = thin_border
+        cell.number_format = '#,##0.00'
+        
+        # Сумма
+        cell = ws.cell(row=row, column=12, value=k.total)
+        cell.alignment = Alignment(horizontal="right")
+        cell.border = thin_border
+        cell.number_format = '#,##0.00'
+        
+        # Разница цены (наша - их)
+        price_diff = s.price - k.price
+        cell = ws.cell(row=row, column=13, value=price_diff)
+        cell.alignment = Alignment(horizontal="right")
+        cell.border = thin_border
+        cell.number_format = '#,##0.00'
+        if price_diff > 0:
+            cell.fill = negative_fill  # Мы дороже - красный
+        elif price_diff < 0:
+            cell.fill = positive_fill  # Мы дешевле - зелёный
+        
+        # Разница суммы (наша - их)
+        total_diff = s.total - k.total
+        cell = ws.cell(row=row, column=14, value=total_diff)
+        cell.alignment = Alignment(horizontal="right")
+        cell.border = thin_border
+        cell.number_format = '#,##0.00'
+        if total_diff > 0:
+            cell.fill = negative_fill  # Мы дороже - красный
+        elif total_diff < 0:
+            cell.fill = positive_fill  # Мы дешевле - зелёный
+        
+        total_smeta += s.total
+        total_kp += k.total
+        
+        row += 1
+        
+        # ===== ДЕТАЛЬНАЯ РАЗБИВКА ДЛЯ ЭТОЙ ПЛИТЫ =====
+        if key in breakdown_data and breakdown_data[key]:
+            # Заголовок разбивки
+            ws.merge_cells(f'A{row}:N{row}')
+            cell = ws[f'A{row}']
+            cell.value = "💡 Детальная разбивка цены из нашей сметы:"
+            cell.font = Font(bold=True, italic=True, size=9, color="404040")
+            cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+            ws.row_dimensions[row].height = 18
+            row += 1
+            
+            # Строки разбивки
+            for comp_data in breakdown_data[key]:
+                # Компонент
+                cell = ws.cell(row=row, column=2, value=comp_data['component'])
+                cell.font = Font(size=9, italic=True)
+                cell.alignment = Alignment(horizontal="left")
+                
+                # Расчёт
+                ws.merge_cells(f'C{row}:F{row}')
+                cell = ws.cell(row=row, column=3, value=comp_data['formula'])
+                cell.font = Font(size=9, italic=True, color="404040")
+                cell.alignment = Alignment(horizontal="left")
+                
+                # Сумма
+                cell = ws.cell(row=row, column=7, value=comp_data['sum'])
+                cell.font = Font(size=9, italic=True)
+                cell.alignment = Alignment(horizontal="right")
+                
+                ws.row_dimensions[row].height = 15
+                row += 1
+            
+            # Пустая строка после разбивки
+            row += 1
+        
+        idx += 1
+    
+    # ==================== ИТОГО ====================
+    row += 1
+    
+    # ИТОГО для сметы
+    ws.merge_cells(f'A{row}:E{row}')
+    cell = ws[f'A{row}']
+    cell.value = "ИТОГО (наша смета):"
+    cell.font = Font(bold=True, size=12)
+    cell.alignment = Alignment(horizontal="right")
+    cell.border = thin_border
+    
+    cell = ws.cell(row=row, column=6, value=total_smeta)
+    cell.font = Font(bold=True, size=12)
+    cell.alignment = Alignment(horizontal="right")
+    cell.border = thin_border
+    cell.number_format = '#,##0.00'
+    cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    
+    # ИТОГО для КП
+    ws.merge_cells(f'H{row}:K{row}')
+    cell = ws[f'H{row}']
+    cell.value = "ИТОГО (КП завода):"
+    cell.font = Font(bold=True, size=12)
+    cell.alignment = Alignment(horizontal="right")
+    cell.border = thin_border
+    
+    cell = ws.cell(row=row, column=12, value=total_kp)
+    cell.font = Font(bold=True, size=12)
+    cell.alignment = Alignment(horizontal="right")
+    cell.border = thin_border
+    cell.number_format = '#,##0.00'
+    cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    
+    # Общая разница
+    ws.merge_cells(f'M{row}:N{row}')
+    cell = ws[f'M{row}']
+    diff_total = total_smeta - total_kp
+    cell.value = diff_total
+    cell.font = Font(bold=True, size=12)
+    cell.alignment = Alignment(horizontal="right")
+    cell.border = thin_border
+    cell.number_format = '#,##0.00'
+    if diff_total > 0:
+        cell.fill = negative_fill  # Мы дороже
+    elif diff_total < 0:
+        cell.fill = positive_fill  # Мы дешевле
+    
+    ws.row_dimensions[row].height = 25
+    
+    # ==================== ВЫВОДЫ ====================
+    row += 2
+    ws.merge_cells(f'A{row}:N{row}')
+    cell = ws[f'A{row}']
+    if diff_total > 0:
+        conclusion = f"⚠️ Наша смета на {abs(diff_total):,.2f} ₽ ДОРОЖЕ, чем КП завода"
+    elif diff_total < 0:
+        conclusion = f"✅ Наша смета на {abs(diff_total):,.2f} ₽ ДЕШЕВЛЕ, чем КП завода (экономия!)"
+    else:
+        conclusion = "✅ Цены СОВПАДАЮТ!"
+    cell.value = conclusion
+    cell.font = Font(bold=True, size=11, color="FFFFFF")
+    cell.fill = PatternFill(start_color="70AD47" if diff_total <= 0 else "E74C3C", 
+                            end_color="70AD47" if diff_total <= 0 else "E74C3C", 
+                            fill_type="solid")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[row].height = 30
+    
+    # ==================== ШИРИНА СТОЛБЦОВ ====================
+    ws.column_dimensions['A'].width = 5   # №
+    ws.column_dimensions['B'].width = 30  # Наименование (смета)
+    ws.column_dimensions['C'].width = 8   # Кол-во
+    ws.column_dimensions['D'].width = 10  # Вес
+    ws.column_dimensions['E'].width = 12  # Цена
+    ws.column_dimensions['F'].width = 14  # Сумма
+    ws.column_dimensions['G'].width = 12  # Примечание
+    
+    ws.column_dimensions['H'].width = 5   # №
+    ws.column_dimensions['I'].width = 30  # Наименование (КП)
+    ws.column_dimensions['J'].width = 8   # Кол-во
+    ws.column_dimensions['K'].width = 12  # Цена
+    ws.column_dimensions['L'].width = 14  # Сумма
+    ws.column_dimensions['M'].width = 14  # Разница цены
+    ws.column_dimensions['N'].width = 14  # Разница суммы
+    
+    # Сохраняем файл
+    user_id = os.path.basename(kp_path).split('_')[0]
+    output_path = os.path.join("tmp", f"{user_id}_comparison.xlsx")
+    wb.save(output_path)
+    
+    return output_path
+
+
 def compare_files(kp_path: str, smeta_path: str) -> str:
     """
     Сравнивает два Excel-файла (реальное КП и наша смета)
@@ -597,8 +1000,14 @@ async def start_comparison(message: Message, state: FSMContext):
 
     await state.set_state(CompareStates.waiting_kp)
     await message.answer(
-        "Отправьте, пожалуйста, файл *реального КП* в формате Excel (.xlsx).\n"
-        "Файл должен содержать столбцы: Наименование, Кол-во, Вес(кг), Цена, Сумма.",
+        "📄 Отправьте файл **реального КП завода** в формате Excel (.xlsx)\n\n"
+        "Файл должен содержать столбцы:\n"
+        "• Наименование (или 'Товары (работы, услуги)')\n"
+        "• Кол-во (или 'Количество')\n"
+        "• Цена\n"
+        "• Сумма\n\n"
+        "💡 Столбец 'Вес' не обязателен",
+        parse_mode="Markdown"
     )
 
 
@@ -614,7 +1023,11 @@ async def receive_kp(message: Message, state: FSMContext):
     await state.set_state(CompareStates.waiting_smeta)
 
     await message.answer(
-        "КП получил ✅\nТеперь отправьте файл *нашей сметы* (Excel .xlsx) с тем же набором плит."
+        "✅ КП завода получил!\n\n"
+        "📄 Теперь отправьте файл **нашей сметы** (Excel .xlsx)\n\n"
+        "Это должен быть файл 'Смета_Дорожка_...' или 'Детальная_разбивка_...',\n"
+        "который создаётся при расчёте КП через бота.",
+        parse_mode="Markdown"
     )
 
 
@@ -640,27 +1053,316 @@ async def receive_smeta(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    await message.answer("Сравниваю файлы, подождите пару секунд...")
+    await message.answer("📊 Сравниваю файлы и создаю Excel отчёт, подождите...")
 
     try:
-        result_text = compare_files(kp_path, smeta_path)
+        # Создаём Excel файл со сравнением
+        comparison_path = await asyncio.to_thread(create_comparison_excel, kp_path, smeta_path)
+        
+        # Отправляем Excel файл
+        if os.path.exists(comparison_path):
+            await message.answer(
+                "✅ Сравнение готово!\n\n"
+                "📋 В файле вы найдёте:\n"
+                "• Две таблицы рядом (наша смета и КП завода)\n"
+                "• Сравнение цен по каждой позиции\n"
+                "• Детальную разбивку ценообразования\n"
+                "• Цветовую индикацию разницы (зелёный=экономия, красный=дороже)\n"
+                "• Итоговые суммы и выводы"
+            )
+            await message.answer_document(
+                FSInputFile(comparison_path),
+                caption="📊 Сравнительная таблица КП и сметы"
+            )
+        else:
+            await message.answer("❌ Не удалось создать файл сравнения")
+            
     except Exception as e:  # pylint: disable=broad-except
         # Отключаем разбор разметки, чтобы спецсимволы из текста ошибки не ломали сообщение
-        await message.answer(f"Не удалось сравнить файлы: {e}", parse_mode=None)
+        await message.answer(f"❌ Не удалось сравнить файлы: {e}", parse_mode=None)
+        import traceback
+        traceback.print_exc()
+    finally:
         await state.clear()
-        return
-
-    # Сообщение может быть очень длинным, Telegram ограничивает ~4096 символов.
-    # Поэтому режем текст на безопасные куски и отправляем по очереди.
-    max_len = 4000
-    for i in range(0, len(result_text), max_len):
-        await message.answer(result_text[i : i + max_len])
-    await state.clear()
 
 
 @router.message(CompareStates.waiting_smeta)
 async def receive_smeta_wrong(message: Message, state: FSMContext):  # noqa: ARG001
     await message.answer("Нужно отправить именно файл нашей сметы (Excel-документ). Попробуйте ещё раз.")
+
+@router.message(KPStates.waiting_for_plate_list, F.photo)
+async def receive_photo_with_plates(message: Message, state: FSMContext):
+    """
+    🧠 УМНАЯ обработка фотографий с плитами:
+    1. Скачивает фото
+    2. Пробует бесплатный EasyOCR
+    3. Если не получилось — использует платный GPT-4o
+    4. Парсит распознанный текст
+    5. Обрабатывает заказ
+    """
+    # Проверяем доступность хотя бы одного метода OCR
+    if not EASYOCR_AVAILABLE and not GPT_AVAILABLE:
+        await message.answer(
+            "❌ OCR недоступен. Установите одну из библиотек:\n\n"
+            "🤖 EasyOCR (бесплатно):\n"
+            "   pip install easyocr\n\n"
+            "🧠 GPT-4o (платно, но точнее):\n"
+            "   pip install openai\n"
+            "   Добавьте в .env: OPENAI_API_KEY=sk-...\n\n"
+            "Или отправьте текст заказа вручную."
+        )
+        return
+    
+    # Скачиваем фото (берём самое большое разрешение)
+    photo = message.photo[-1]
+    user_id = message.from_user.id
+    os.makedirs("tmp", exist_ok=True)
+    photo_path = os.path.join("tmp", f"{user_id}_photo.jpg")
+    
+    await message.answer("📸 Получил фото! Анализирую...")
+    
+    try:
+        # Скачиваем фото
+        await message.bot.download(photo, destination=photo_path)
+        
+        # 🔥 УМНОЕ РАСПОЗНАВАНИЕ (EasyOCR → GPT fallback)
+        result = await recognize_text_smart(photo_path, show_cost=True)
+        
+        if not result:
+            await message.answer(
+                "❌ Не удалось распознать текст на фото.\n\n"
+                "💡 Попробуйте:\n"
+                "• Сделать фото при хорошем освещении\n"
+                "• Убедиться, что текст чёткий и читаемый\n"
+                "• Расположить камеру параллельно таблице\n"
+                "• Отправить текст заказа вручную"
+            )
+            # Удаляем временный файл
+            if os.path.exists(photo_path):
+                try:
+                    os.remove(photo_path)
+                except:
+                    pass
+            return
+        
+        # Показываем пользователю результат
+        method_emoji = {"EasyOCR": "🤖", "GPT-4o": "🧠"}
+        emoji = method_emoji.get(result['method'], "🔍")
+        
+        # Формируем красивое сообщение
+        confidence_percent = int(result['confidence'] * 100)
+        status_msg = f"{emoji} **{result['method']}** (уверенность {confidence_percent}%)\n\n"
+        
+        # Добавляем инфо о стоимости, если использовали GPT
+        if result['cost_usd'] > 0:
+            rub_cost = result['cost_usd'] * 75
+            status_msg += f"💰 Стоимость: ${result['cost_usd']:.4f} (~{rub_cost:.2f}₽)\n\n"
+        
+        status_msg += f"📋 Распознанный текст:\n```\n{result['text']}\n```\n\nПродолжаю обработку..."
+        
+        await message.answer(status_msg, parse_mode="Markdown")
+        
+        # Используем распознанный текст
+        cleaned_text = result['text']
+        
+        # Теперь парсим распознанный текст так же, как обычный текст
+        # Используем ту же логику, что и в receive_plate_list_and_build
+        await message.answer("⏳ Считаю КП по вашему списку... Это может занять время.")
+        
+        # 1) Парсим список пользователя в структуры визуализатора
+        unparsed_lines = set_plate_lists_from_text(cleaned_text)
+        
+        # Если какие‑то строки не распознаны по формату — сразу честно говорим об этом
+        if unparsed_lines:
+            warn_text = "⚠️ Некоторые строки я не смог распознать по формату и пропустил:\n"
+            warn_text += "\n".join(f"• {line}" for line in unparsed_lines[:5])  # Показываем первые 5
+            if len(unparsed_lines) > 5:
+                warn_text += f"\n... и ещё {len(unparsed_lines) - 5} строк"
+            warn_text += (
+                "\n\nЯ понимаю, например, такие форматы:\n"
+                "• 1.2×3.39 — 2 шт\n"
+                "• 0,32x6,63 - 4\n"
+                "• Плиты ПБ 78-12-8п 3\n"
+                "• ПБ 66,2-12-8п 6\n"
+            )
+            await message.answer(warn_text)
+        
+        # Дальше используем ту же логику, что и в receive_plate_list_and_build
+        # (копируем код обработки заказа)
+        from collections import Counter, defaultdict
+        import math
+        
+        # ✅ НОВАЯ ЛОГИКА: Группируем плиты по нагрузке
+        orders_by_load = defaultdict(list)  # {load_group: [orders_2d]}
+        
+        print(f"[BOT] Проверяем PLATE_LOAD_DETAILS: {len(cfg.PLATE_LOAD_DETAILS)} записей")
+        
+        # Используем детальную карту с нагрузками (если есть)
+        if cfg.PLATE_LOAD_DETAILS:
+            print("[BOT] ✅ Используем PLATE_LOAD_DETAILS (с нагрузками)")
+            for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
+                width_mm = int(round(width_m * 1000))
+                
+                # Группируем по ЦЕЛОЙ части: 12.5 → группа 12
+                load_group = math.floor(load_code) if isinstance(load_code, (int, float)) else load_code
+                
+                orders_by_load[load_group].append({
+                    'length': length,
+                    'width': width_mm,
+                    'qty': qty,
+                    'load_code': load_code,
+                    'load_group': load_group
+                })
+                
+                load_display = cfg.format_reinforcement_from_load_code(load_code)
+                print(f"  + {qty}x {length}м × {width_mm}мм, нагрузка {load_display} (группа {load_group}п)")
+        else:
+            # Fallback: Если PLATE_LOAD_DETAILS пуст
+            print("[BOT] ⚠️ PLATE_LOAD_DETAILS пуст, используем fallback (все плиты = 8п)")
+            for width_mm, plates_list, target_name in [
+                (1200, cfg.PLATES_1_2, 'PLATES_1_2'), (1080, cfg.PLATES_1_08, 'PLATES_1_08'), (1000, cfg.PLATES_1_0, 'PLATES_1_0'),
+                (320, cfg.PLATES_0_32, 'PLATES_0_32'), (460, cfg.PLATES_0_46, 'PLATES_0_46'), (700, cfg.PLATES_0_70, 'PLATES_0_70'),
+                (720, cfg.PLATES_0_72, 'PLATES_0_72'), (860, cfg.PLATES_0_86, 'PLATES_0_86'), (880, cfg.PLATES_0_88, 'PLATES_0_88'),
+                (740, cfg.PLATES_0_74, 'PLATES_0_74'), (480, cfg.PLATES_0_48, 'PLATES_0_48'), (500, cfg.PLATES_0_50, 'PLATES_0_50'),
+                (340, cfg.PLATES_0_34, 'PLATES_0_34')
+            ]:
+                if plates_list:
+                    length_counts = Counter(plates_list)
+                    for length, qty in length_counts.items():
+                        exact_width_m = cfg.get_exact_width(length, target_name, width_mm / 1000.0)
+                        exact_width_mm = int(round(exact_width_m * 1000))
+                        load_code = cfg.get_load_code_for_plate(length, exact_width_m, default=8)
+                        
+                        orders_by_load[load_code].append({
+                            'length': length,
+                            'width': exact_width_mm,
+                            'qty': qty,
+                            'load_code': load_code
+                        })
+        
+        # Если после парсинга не осталось ни одной плиты — сразу выходим
+        if not orders_by_load:
+            await message.answer(
+                "❌ Не удалось распознать ни одной плиты в вашем сообщении.\n"
+                "Проверьте формат строк (ширина×длина×кол-во или 'Плиты ПБ 78-12-8п 3')."
+            )
+            await state.clear()
+            return
+        
+        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ ДЛЯ КАЖДОЙ НАГРУЗКИ ОТДЕЛЬНО
+        print(f"\n[BOT] Найдено {len(orders_by_load)} групп(ы) по нагрузкам: {sorted(orders_by_load.keys())}")
+        
+        optimization_results_by_load = {}
+        total_plates_all = 0
+        total_cost_all = 0
+        
+        load_group_to_originals = {}
+        for load_group, orders in orders_by_load.items():
+            originals = set(o['load_code'] for o in orders)
+            load_group_to_originals[load_group] = sorted(originals)
+        
+        for load_group in sorted(orders_by_load.keys()):
+            orders_2d = orders_by_load[load_group]
+            
+            original_loads = load_group_to_originals[load_group]
+            load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in original_loads]
+            load_display = ", ".join(load_display_list) if len(load_display_list) > 1 else load_display_list[0]
+            
+            print(f"\n[BOT] === Оптимизация для группы {load_group}п ({load_display}) ===")
+            print(f"[BOT] Плит: {sum(o['qty'] for o in orders_2d)} шт, типов: {len(orders_2d)}")
+            
+            try:
+                from core.optimization import optimize_with_cascading_longitudinal_cuts
+                optimization_result = await asyncio.to_thread(
+                    optimize_with_cascading_longitudinal_cuts,
+                    orders_2d=orders_2d
+                )
+                
+                if optimization_result and optimization_result.get('total_plates', 0) > 0:
+                    optimization_result['load_group'] = load_group
+                    optimization_result['original_loads'] = original_loads
+                    optimization_results_by_load[load_group] = optimization_result
+                    total_plates_all += optimization_result.get('total_plates', 0)
+                    total_cost_all += optimization_result.get('total_cost', 0)
+                    
+                    print(f"[BOT] ✅ Группа {load_group}п ({load_display}): {optimization_result['total_plates']} плит, "
+                          f"{optimization_result.get('total_cost', 0):,} ₽".replace(',', ' '))
+            except Exception as e:
+                print(f"[BOT] ❌ Ошибка оптимизации для группы {load_group}п: {e}")
+        
+        # Сохраняем результаты в глобальную переменную
+        if optimization_results_by_load:
+            import core.optimization as optimization
+            optimization.OPT_CASCADING_PLAN_BY_LOAD = optimization_results_by_load
+            print(f"\n[BOT] ✅ Сохранено {len(optimization_results_by_load)} результатов оптимизации")
+            
+            opt_msg = "💡 **Результат оптимизации по нагрузкам:**\n"
+            for load_group in sorted(optimization_results_by_load.keys()):
+                result = optimization_results_by_load[load_group]
+                original_loads = result.get('original_loads', [load_group])
+                load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in original_loads]
+                load_display = ", ".join(load_display_list)
+                opt_msg += f"• **{load_display}**: {result['total_plates']} плит\n"
+            opt_msg += f"\n**Итого:** {total_plates_all} плит, {total_cost_all:,} ₽\n".replace(',', ' ')
+            
+            await message.answer(opt_msg, parse_mode="Markdown")
+        else:
+            print("[BOT] ⚠️ Оптимизация не дала результатов, используем fallback")
+        
+        # 4) Строим приоритет ширин (запасной вариант)
+        if not optimization_results_by_load:
+            from core.optimization import apply_width_optimization
+            apply_width_optimization()
+        
+        # 5) Запускаем расчёт и визуализацию
+        result_paths = await asyncio.to_thread(visualize_plan, OUTPUTS_DIR_STR)
+        if isinstance(result_paths, tuple) and len(result_paths) >= 2:
+            png_path, pdf_path = result_paths
+            
+            base = os.path.basename(png_path)
+            if 'КЗ_' in base:
+                timestamp = base.split('КЗ_', 1)[-1].replace('.png', '')
+            else:
+                timestamp = base.rsplit('_', 1)[-1].replace('.png', '')
+            
+            candidates = [
+                os.path.join(OUTPUTS_DIR_STR, f'Ведомость_Дорожка_1_{timestamp}.xlsx'),
+                os.path.join(OUTPUTS_DIR_STR, f'Смета_Дорожка_1_{timestamp}.xlsx'),
+                os.path.join(OUTPUTS_DIR_STR, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx'),
+                os.path.join(OUTPUTS_DIR_STR, f'Ведомость_Дорожка_1_{timestamp}.csv'),
+                os.path.join(OUTPUTS_DIR_STR, f'Раскладка_Дорожка_1_{timestamp}.csv'),
+            ]
+            
+            await message.answer("✅ Готово! Отправляю файлы:")
+            
+            if os.path.exists(png_path):
+                await message.answer_document(FSInputFile(png_path))
+            if os.path.exists(pdf_path):
+                await message.answer_document(FSInputFile(pdf_path))
+            
+            files_sent = 0
+            for p in candidates:
+                if os.path.exists(p):
+                    await message.answer_document(FSInputFile(p))
+                    files_sent += 1
+            
+            final_msg = "📋 **Итоги:**\n• Схема раскладки готова\n• Ведомость и смета сформированы"
+            if optimization_results_by_load:
+                final_msg += "\n\n✨ **Использована оптимизация с каскадными резами**\n• Минимум плит\n• Остатки используются повторно"
+            await message.answer(final_msg, parse_mode="Markdown")
+        else:
+            await message.answer("❌ Ошибка при расчёте КП")
+            
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при обработке фото: {str(e)}\n\nПопробуйте отправить текст заказа вручную.")
+    finally:
+        # Удаляем временный файл
+        if os.path.exists(photo_path):
+            try:
+                os.remove(photo_path)
+            except:
+                pass
+        await state.clear()
 
 @router.message(KPStates.waiting_for_plate_list)
 async def receive_plate_list_and_build(message: Message, state: FSMContext):
