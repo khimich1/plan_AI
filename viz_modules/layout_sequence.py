@@ -151,8 +151,76 @@ def build_layout_sequence():
                 pattern_desc = ", ".join([f"{c['width_mm']}мм" for c in info['pattern']])
                 print(f"  Остаток {src_len}м x {src_w}мм: вариант #{idx} -> [{pattern_desc}]")
         
+        # ========== НОВАЯ ЛОГИКА: РАЗДЕЛИТЕЛИ МЕЖДУ ГРУППАМИ РЕЗОВ ==========
+        # Требования завода:
+        # 1. Первая плита ДОЛЖНА быть целой (без реза)
+        # 2. Плиты с одинаковым резом идут подряд
+        # 3. Между группами с РАЗНЫМ резом должна быть целая плита-разделитель
+        all_primary_cuts = OPT_CASCADING_PLAN.get('primary_cuts', [])
+        solid_cuts = [cut for cut in all_primary_cuts if cut['rest'] == 0]
+        
+        # Сортируем целые плиты
+        solid_cuts.sort(key=lambda x: (-x['width'], -x['lengths'][0] if x.get('lengths') else 0))
+        
+        # Сортируем плиты с резом по типу реза
+        cut_with_rest = sorted(
+            [cut for cut in all_primary_cuts if cut['rest'] > 0],
+            key=lambda x: (-x['rest'], -x['width'])
+        )
+        
+        print(f"[VISUAL] Разделение: {len(solid_cuts)} типов целых плит, {len(cut_with_rest)} типов с резом")
+        if solid_cuts:
+            print(f"[VISUAL] Целые плиты: {[(c['width'], c['qty']) for c in solid_cuts]}")
+        
+        # Группируем плиты с резом по типу реза (width, rest)
+        # ВАЖНО: учитываем И ширину И остаток, т.к. это разные настройки станка!
+        from itertools import groupby
+        cut_groups = [list(group) for key, group in groupby(cut_with_rest, key=lambda x: (x['width'], x['rest']))]
+        
+        if cut_groups:
+            print(f"[VISUAL] Найдено {len(cut_groups)} групп резов:")
+            for i, group in enumerate(cut_groups, 1):
+                print(f"[VISUAL]   Группа {i}: width={group[0]['width']}мм, rest={group[0]['rest']}мм, типов={len(group)}")
+        
+        # Формируем последовательность с разделителями
+        ordered_cuts = []
+        
+        # ВАЖНО: Разворачиваем записи целых плит в отдельные плиты
+        # Из записи {qty: 5, lengths: [6.15, 6.15, ...]} создаём 5 записей {qty: 1, lengths: [6.15]}
+        solid_cuts_list = []
+        for cut in solid_cuts:
+            lengths = cut.get('lengths', [])
+            for i in range(cut['qty']):
+                single_cut = cut.copy()
+                single_cut['qty'] = 1  # Каждая запись = 1 плита
+                single_cut['lengths'] = [lengths[i]] if i < len(lengths) else [lengths[0] if lengths else 6.0]
+                solid_cuts_list.append(single_cut)
+        
+        print(f"[VISUAL] Развёрнуто {len(solid_cuts_list)} отдельных целых плит для разделителей")
+        
+        # Правило 1: Первая плита ОБЯЗАТЕЛЬНО целая
+        if solid_cuts_list:
+            ordered_cuts.append(solid_cuts_list.pop(0))
+            print(f"[VISUAL] ✓ Первая плита: целая 1200мм")
+        
+        # Правило 2 и 3: Чередуем группы резов и целые плиты-разделители
+        for i, cut_group in enumerate(cut_groups):
+            ordered_cuts.extend(cut_group)
+            print(f"[VISUAL] Добавлена группа резов #{i+1}: width={cut_group[0]['width']}мм, rest={cut_group[0]['rest']}мм, типов={len(cut_group)}")
+            
+            # После каждой группы (кроме последней) добавляем целую плиту-разделитель
+            if i < len(cut_groups) - 1 and solid_cuts_list:
+                ordered_cuts.append(solid_cuts_list.pop(0))
+                print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами")
+        
+        # Оставшиеся целые плиты добавляем в конец
+        if solid_cuts_list:
+            ordered_cuts.extend(solid_cuts_list)
+            print(f"[VISUAL] Добавлено {len(solid_cuts_list)} оставшихся целых плит в конец")
+        
         # 1. Первичные резы с вторичными резами внутри остатков
-        for cut in OPT_CASCADING_PLAN.get('primary_cuts', []):
+        # ОБРАБАТЫВАЕМ В НОВОМ ПОРЯДКЕ: целая → группа резов → целая → группа резов
+        for cut in ordered_cuts:
             width_mm = cut['width']
             rest_mm = cut['rest']
             qty = cut['qty']
@@ -437,8 +505,75 @@ def _build_sequence_from_plan(plan, plate_label_func):
                     'used': 0
                 })
     
-    # Обрабатываем первичные резы
-    for cut in plan.get('primary_cuts', []):
+    # ========== НОВАЯ ЛОГИКА: РАЗДЕЛИТЕЛИ МЕЖДУ ГРУППАМИ РЕЗОВ ==========
+    # Требования завода:
+    # 1. Первая плита ДОЛЖНА быть целой (без реза)
+    # 2. Плиты с одинаковым резом идут подряд
+    # 3. Между группами с РАЗНЫМ резом должна быть целая плита-разделитель
+    all_primary_cuts = plan.get('primary_cuts', [])
+    solid_cuts = [cut for cut in all_primary_cuts if cut['rest'] == 0]
+    
+    # Сортируем целые плиты
+    solid_cuts.sort(key=lambda x: (-x['width'], -x['lengths'][0] if x.get('lengths') else 0))
+    
+    # Сортируем плиты с резом по типу реза
+    cut_with_rest = sorted(
+        [cut for cut in all_primary_cuts if cut['rest'] > 0],
+        key=lambda x: (-x['rest'], -x['width'])
+    )
+    
+    print(f"[VISUAL] Разделение: {len(solid_cuts)} типов целых плит, {len(cut_with_rest)} типов с резом")
+    if solid_cuts:
+        print(f"[VISUAL] Целые плиты: {[(c['width'], c['qty']) for c in solid_cuts]}")
+    
+    # Группируем плиты с резом по типу реза (width, rest)
+    # ВАЖНО: учитываем И ширину И остаток, т.к. это разные настройки станка!
+    from itertools import groupby
+    cut_groups = [list(group) for key, group in groupby(cut_with_rest, key=lambda x: (x['width'], x['rest']))]
+    
+    if cut_groups:
+        print(f"[VISUAL] Найдено {len(cut_groups)} групп резов:")
+        for i, group in enumerate(cut_groups, 1):
+            print(f"[VISUAL]   Группа {i}: width={group[0]['width']}мм, rest={group[0]['rest']}мм, типов={len(group)}")
+    
+    # Формируем последовательность с разделителями
+    ordered_cuts = []
+    
+    # ВАЖНО: Разворачиваем записи целых плит в отдельные плиты
+    # Из записи {qty: 5, lengths: [6.15, 6.15, ...]} создаём 5 записей {qty: 1, lengths: [6.15]}
+    solid_cuts_list = []
+    for cut in solid_cuts:
+        lengths = cut.get('lengths', [])
+        for i in range(cut['qty']):
+            single_cut = cut.copy()
+            single_cut['qty'] = 1  # Каждая запись = 1 плита
+            single_cut['lengths'] = [lengths[i]] if i < len(lengths) else [lengths[0] if lengths else 6.0]
+            solid_cuts_list.append(single_cut)
+    
+    print(f"[VISUAL] Развёрнуто {len(solid_cuts_list)} отдельных целых плит для разделителей")
+    
+    # Правило 1: Первая плита ОБЯЗАТЕЛЬНО целая
+    if solid_cuts_list:
+        ordered_cuts.append(solid_cuts_list.pop(0))
+        print(f"[VISUAL] ✓ Первая плита: целая 1200мм")
+    
+    # Правило 2 и 3: Чередуем группы резов и целые плиты-разделители
+    for i, cut_group in enumerate(cut_groups):
+        ordered_cuts.extend(cut_group)
+        print(f"[VISUAL] Добавлена группа резов #{i+1}: width={cut_group[0]['width']}мм, rest={cut_group[0]['rest']}мм, типов={len(cut_group)}")
+        
+        # После каждой группы (кроме последней) добавляем целую плиту-разделитель
+        if i < len(cut_groups) - 1 and solid_cuts_list:
+            ordered_cuts.append(solid_cuts_list.pop(0))
+            print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами")
+    
+    # Оставшиеся целые плиты добавляем в конец
+    if solid_cuts_list:
+        ordered_cuts.extend(solid_cuts_list)
+        print(f"[VISUAL] Добавлено {len(solid_cuts_list)} оставшихся целых плит в конец")
+    
+    # Обрабатываем первичные резы В НОВОМ ПОРЯДКЕ: целая → группа резов → целая → группа резов
+    for cut in ordered_cuts:
         width_mm = cut['width']
         rest_mm = cut['rest']
         qty = cut['qty']

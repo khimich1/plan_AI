@@ -93,21 +93,53 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             print(f"[ВИЗУАЛИЗАЦИЯ] Группа '{group_label}': {len(items)} плит")
             
             # Разбиваем группу на дорожки по 101м
+            # ВАЖНО: Каждая дорожка ДОЛЖНА начинаться с целой плиты!
             current_track = []
             current_track_length = 0.0
             
-            for item in items:
+            for i, item in enumerate(items):
                 item_length = item['length']
+                is_solid = (item.get('mode') == 'solid')
                 
-                if current_track_length + item_length > MAX_TRACK_LENGTH and current_track:
-                    tracks.append({
-                        'items': current_track,
-                        'length': current_track_length,
-                        'load_code': load_code,  # ✅ Сохраняем нагрузку!
-                        'label': group_label
-                    })
-                    current_track = []
-                    current_track_length = 0.0
+                # Проверяем, превышен ли лимит
+                exceeds_limit = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
+                
+                if exceeds_limit:
+                    # ПРАВИЛО ЗАВОДА: новая дорожка ДОЛЖНА начинаться с целой плиты!
+                    if not is_solid:
+                        # Текущая плита НЕ целая - ищем следующую целую плиту
+                        next_solid_found = False
+                        for j in range(i + 1, len(items)):
+                            if items[j].get('mode') == 'solid':
+                                next_solid_found = True
+                                break
+                        
+                        if next_solid_found:
+                            # Есть целая плита дальше - добавляем текущую на старую дорожку
+                            # (немного превысим лимит 101м, но соблюдём правило завода)
+                            print(f"[ВИЗУАЛИЗАЦИЯ] Превышение лимита: добавляем плиту с резом на текущую дорожку (правило завода)")
+                        else:
+                            # Целых плит больше нет - начинаем новую дорожку (нарушаем правило)
+                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: новая дорожка начинается с плиты С РЕЗОМ (целых больше нет)")
+                            tracks.append({
+                                'items': current_track,
+                                'length': current_track_length,
+                                'load_code': load_code,
+                                'label': group_label
+                            })
+                            current_track = []
+                            current_track_length = 0.0
+                    else:
+                        # ОК! Начинаем новую дорожку с целой плиты
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ✓ Новая дорожка начинается с целой плиты")
+                        tracks.append({
+                            'items': current_track,
+                            'length': current_track_length,
+                            'load_code': load_code,
+                            'label': group_label
+                        })
+                        current_track = []
+                        current_track_length = 0.0
                 
                 current_track.append(item)
                 current_track_length += item_length
@@ -132,16 +164,45 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         current_track = []
         current_track_length = 0.0
         
-        for item in seq:
+        # ВАЖНО: Каждая дорожка ДОЛЖНА начинаться с целой плиты!
+        for i, item in enumerate(seq):
             item_length = item['length']
+            is_solid = (item.get('mode') == 'solid')
             
-            if current_track_length + item_length > MAX_TRACK_LENGTH and current_track:
-                tracks.append({
-                    'items': current_track,
-                    'length': current_track_length
-                })
-                current_track = []
-                current_track_length = 0.0
+            # Проверяем, превышен ли лимит
+            exceeds_limit = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
+            
+            if exceeds_limit:
+                # ПРАВИЛО ЗАВОДА: новая дорожка ДОЛЖНА начинаться с целой плиты!
+                if not is_solid:
+                    # Текущая плита НЕ целая - ищем следующую целую плиту
+                    next_solid_found = False
+                    for j in range(i + 1, len(seq)):
+                        if seq[j].get('mode') == 'solid':
+                            next_solid_found = True
+                            break
+                    
+                    if next_solid_found:
+                        # Есть целая плита дальше - добавляем текущую на старую дорожку
+                        print(f"[ВИЗУАЛИЗАЦИЯ] Превышение лимита: добавляем плиту с резом на текущую дорожку (правило завода)")
+                    else:
+                        # Целых плит больше нет - начинаем новую дорожку (нарушаем правило)
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: новая дорожка начинается с плиты С РЕЗОМ (целых больше нет)")
+                        tracks.append({
+                            'items': current_track,
+                            'length': current_track_length
+                        })
+                        current_track = []
+                        current_track_length = 0.0
+                else:
+                    # ОК! Начинаем новую дорожку с целой плиты
+                    print(f"[ВИЗУАЛИЗАЦИЯ] ✓ Новая дорожка начинается с целой плиты")
+                    tracks.append({
+                        'items': current_track,
+                        'length': current_track_length
+                    })
+                    current_track = []
+                    current_track_length = 0.0
             
             current_track.append(item)
             current_track_length += item_length

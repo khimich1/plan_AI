@@ -701,6 +701,48 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     'rest_width': opt['rest']
                 })
     
+    # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
+    # Требования завода:
+    # 1. Первая плита ДОЛЖНА быть целой (без реза, rest=0)
+    # 2. Плиты с одинаковым резом должны идти подряд
+    print("[OPT_2D] 🔧 Применяем правила завода для порядка плит...")
+    
+    # Разделяем primary_cuts на группы
+    solid_plates = []    # Целые плиты (rest=0)
+    cut_plates = []      # Плиты с резом (rest>0)
+    
+    for cut in result['primary_cuts']:
+        if cut['rest'] == 0:
+            solid_plates.append(cut)
+        else:
+            cut_plates.append(cut)
+    
+    # ВАЖНО: Сортируем ЦЕЛЫЕ плиты тоже! (чтобы они не перемешивались с резанными)
+    # Сортируем по ширине (целые 1200мм все вместе), потом по первой длине
+    solid_plates.sort(key=lambda x: (-x['width'], -x['lengths'][0] if x.get('lengths') else 0))
+    
+    # Сортируем плиты с резом по (rest, width) — одинаковые резы идут подряд
+    # Сортируем по убыванию ширины остатка, чтобы крупные резы шли в начале
+    cut_plates.sort(key=lambda x: (-x['rest'], -x['width']))
+    
+    # Новый порядок: СНАЧАЛА целые (ОТСОРТИРОВАННЫЕ!), ПОТОМ плиты с резом (сгруппированные)
+    result['primary_cuts'] = solid_plates + cut_plates
+    
+    print(f"[OPT_2D] ✓ Целых плит в начале: {len(solid_plates)}")
+    print(f"[OPT_2D] ✓ Плит с резом (сгруппировано): {len(cut_plates)}")
+    
+    # Пересоздаём plate_assignments в правильном порядке
+    result['plate_assignments'] = []
+    for cut in result['primary_cuts']:
+        for length in cut['lengths']:
+            result['plate_assignments'].append({
+                'length': length,
+                'width': cut['width'],
+                'source': 'primary',
+                'rest_width': cut['rest']
+            })
+    # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
+    
     # Вторичные резы
     for opt in secondary_options:
         qty = int(round(value(x_sec[opt['id']])))
@@ -982,6 +1024,38 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
                 result['waste_width'] += opt.get('waste', 0) * qty
         except:
             pass
+    
+    # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
+    # Требования завода:
+    # 1. Первая плита ДОЛЖНА быть целой (без реза, rest=0)
+    # 2. Плиты с одинаковым резом должны идти подряд
+    print("[OPT_1D] 🔧 Применяем правила завода для порядка плит...")
+    
+    # Разделяем primary_cuts на группы
+    solid_plates = []    # Целые плиты (rest=0)
+    cut_plates = []      # Плиты с резом (rest>0)
+    
+    for cut in result['primary_cuts']:
+        if cut['rest'] == 0:
+            solid_plates.append(cut)
+        else:
+            cut_plates.append(cut)
+    
+    # ВАЖНО: Сортируем ЦЕЛЫЕ плиты тоже! (чтобы они не перемешивались с резанными)
+    # Сортируем по ширине (целые 1200мм все вместе), потом по first элементу
+    if solid_plates:
+        solid_plates.sort(key=lambda x: (-x['width']))
+    
+    # Сортируем плиты с резом по (rest, width) — одинаковые резы идут подряд
+    # Сортируем по убыванию ширины остатка, чтобы крупные резы шли в начале
+    cut_plates.sort(key=lambda x: (-x['rest'], -x['width']))
+    
+    # Новый порядок: СНАЧАЛА целые (ОТСОРТИРОВАННЫЕ!), ПОТОМ плиты с резом (сгруппированные)
+    result['primary_cuts'] = solid_plates + cut_plates
+    
+    print(f"[OPT_1D] ✓ Целых плит в начале: {len(solid_plates)}")
+    print(f"[OPT_1D] ✓ Плит с резом (сгруппировано): {len(cut_plates)}")
+    # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
     
     print(f"[DEBUG] Оптимизатор выбрал вторичных резов: {len(result['secondary_cuts'])}")
     
