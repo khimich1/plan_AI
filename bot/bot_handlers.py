@@ -39,6 +39,8 @@ import core.config_and_data as cfg
 from core.commercial_offer import generate_commercial_offer_pdf, generate_commercial_offer_xlsx
 # Умное OCR: сначала EasyOCR (бесплатно), потом GPT-4o (платно)
 from core.ocr_gpt import recognize_text_smart, GPT_AVAILABLE, EASYOCR_AVAILABLE
+# Импорт функции для получения армирования из БД
+from core.reinforcement_db import get_reinforcement
 
 # Импорт из локального модуля
 from .bot_config import OUTPUTS_DIR_STR
@@ -1191,9 +1193,13 @@ async def receive_photo_with_plates(message: Message, state: FSMContext):
         # (копируем код обработки заказа)
         from collections import Counter, defaultdict
         import math
+        from pathlib import Path
         
-        # ✅ НОВАЯ ЛОГИКА: Группируем плиты по нагрузке
-        orders_by_load = defaultdict(list)  # {load_group: [orders_2d]}
+        # ✅ НОВАЯ ЛОГИКА: Группируем плиты по АРМИРОВАНИЮ (из БД)
+        orders_by_reinforcement = defaultdict(list)  # {reinforcement_value: [orders_2d]}
+        
+        # Путь к БД
+        db_path = Path(__file__).parent / "pb.db"
         
         print(f"[BOT] Проверяем PLATE_LOAD_DETAILS: {len(cfg.PLATE_LOAD_DETAILS)} записей")
         
@@ -1203,19 +1209,31 @@ async def receive_photo_with_plates(message: Message, state: FSMContext):
             for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
                 width_mm = int(round(width_m * 1000))
                 
-                # Группируем по ЦЕЛОЙ части: 12.5 → группа 12
-                load_group = math.floor(load_code) if isinstance(load_code, (int, float)) else load_code
+                # 🔥 ПОЛУЧАЕМ АРМИРОВАНИЕ ИЗ БД по (длина, нагрузка)
+                reinforcement_value = get_reinforcement(
+                    length_m=length,
+                    load_code=load_code,
+                    source='series',  # по серии
+                    db_path=db_path,
+                    allow_fallback=True
+                )
                 
-                orders_by_load[load_group].append({
+                # Если не нашли в БД - используем fallback (группируем по нагрузке как раньше)
+                if reinforcement_value is None:
+                    reinforcement_key = f"load_{math.floor(load_code)}"
+                    print(f"  ⚠️ {qty}x {length}м × {width_mm}мм, нагрузка {cfg.format_reinforcement_from_load_code(load_code)} → армирование НЕ НАЙДЕНО (fallback к группировке по нагрузке)")
+                else:
+                    # Округляем до 1 знака: 5.23 → 5.2 (чтобы близкие значения попали в одну группу)
+                    reinforcement_key = round(reinforcement_value, 1)
+                    print(f"  ✅ {qty}x {length}м × {width_mm}мм, нагрузка {cfg.format_reinforcement_from_load_code(load_code)} → армирование {reinforcement_key}")
+                
+                orders_by_reinforcement[reinforcement_key].append({
                     'length': length,
                     'width': width_mm,
                     'qty': qty,
-                    'load_code': load_code,
-                    'load_group': load_group
+                    'load_code': load_code,  # Сохраняем нагрузку для отображения
+                    'reinforcement': reinforcement_value  # Сохраняем армирование
                 })
-                
-                load_display = cfg.format_reinforcement_from_load_code(load_code)
-                print(f"  + {qty}x {length}м × {width_mm}мм, нагрузка {load_display} (группа {load_group}п)")
         else:
             # Fallback: Если PLATE_LOAD_DETAILS пуст
             print("[BOT] ⚠️ PLATE_LOAD_DETAILS пуст, используем fallback (все плиты = 8п)")
@@ -1233,15 +1251,30 @@ async def receive_photo_with_plates(message: Message, state: FSMContext):
                         exact_width_mm = int(round(exact_width_m * 1000))
                         load_code = cfg.get_load_code_for_plate(length, exact_width_m, default=8)
                         
-                        orders_by_load[load_code].append({
+                        # Получаем армирование из БД
+                        reinforcement_value = get_reinforcement(
+                            length_m=length,
+                            load_code=load_code,
+                            source='series',
+                            db_path=db_path,
+                            allow_fallback=True
+                        )
+                        
+                        if reinforcement_value is None:
+                            reinforcement_key = f"load_{load_code}"
+                        else:
+                            reinforcement_key = round(reinforcement_value, 1)
+                        
+                        orders_by_reinforcement[reinforcement_key].append({
                             'length': length,
                             'width': exact_width_mm,
                             'qty': qty,
-                            'load_code': load_code
+                            'load_code': load_code,
+                            'reinforcement': reinforcement_value
                         })
         
         # Если после парсинга не осталось ни одной плиты — сразу выходим
-        if not orders_by_load:
+        if not orders_by_reinforcement:
             await message.answer(
                 "❌ Не удалось распознать ни одной плиты в вашем сообщении.\n"
                 "Проверьте формат строк (ширина×длина×кол-во или 'Плиты ПБ 78-12-8п 3')."
@@ -1249,26 +1282,38 @@ async def receive_photo_with_plates(message: Message, state: FSMContext):
             await state.clear()
             return
         
-        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ ДЛЯ КАЖДОЙ НАГРУЗКИ ОТДЕЛЬНО
-        print(f"\n[BOT] Найдено {len(orders_by_load)} групп(ы) по нагрузкам: {sorted(orders_by_load.keys())}")
+        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ ДЛЯ КАЖДОГО АРМИРОВАНИЯ ОТДЕЛЬНО
+        # Безопасная сортировка: сначала числа, потом строки (чтобы не ломалось при смешанных типах)
+        keys_list = list(orders_by_reinforcement.keys())
+        numeric_keys = sorted([k for k in keys_list if isinstance(k, (int, float))])
+        string_keys = sorted([k for k in keys_list if isinstance(k, str)])
+        all_keys_sorted = numeric_keys + string_keys
+        print(f"\n[BOT] Найдено {len(orders_by_reinforcement)} групп(ы) по армированию: {all_keys_sorted}")
         
-        optimization_results_by_load = {}
+        optimization_results_by_reinforcement = {}
         total_plates_all = 0
         total_cost_all = 0
         
-        load_group_to_originals = {}
-        for load_group, orders in orders_by_load.items():
-            originals = set(o['load_code'] for o in orders)
-            load_group_to_originals[load_group] = sorted(originals)
+        reinforcement_to_loads = {}
+        for reinforcement_key, orders in orders_by_reinforcement.items():
+            loads = set(o['load_code'] for o in orders)
+            reinforcement_to_loads[reinforcement_key] = sorted(loads)
         
-        for load_group in sorted(orders_by_load.keys()):
-            orders_2d = orders_by_load[load_group]
+        # Используем безопасную отсортированную версию ключей
+        for reinforcement_key in all_keys_sorted:
+            orders_2d = orders_by_reinforcement[reinforcement_key]
             
-            original_loads = load_group_to_originals[load_group]
-            load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in original_loads]
+            loads_in_group = reinforcement_to_loads[reinforcement_key]
+            load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in loads_in_group]
             load_display = ", ".join(load_display_list) if len(load_display_list) > 1 else load_display_list[0]
             
-            print(f"\n[BOT] === Оптимизация для группы {load_group}п ({load_display}) ===")
+            # Красивое отображение ключа группы
+            if isinstance(reinforcement_key, (int, float)):
+                group_label = f"армирование {reinforcement_key}"
+            else:
+                group_label = f"{reinforcement_key}"
+            
+            print(f"\n[BOT] === Оптимизация для {group_label} (нагрузки: {load_display}) ===")
             print(f"[BOT] Плит: {sum(o['qty'] for o in orders_2d)} шт, типов: {len(orders_2d)}")
             
             try:
@@ -1279,30 +1324,40 @@ async def receive_photo_with_plates(message: Message, state: FSMContext):
                 )
                 
                 if optimization_result and optimization_result.get('total_plates', 0) > 0:
-                    optimization_result['load_group'] = load_group
-                    optimization_result['original_loads'] = original_loads
-                    optimization_results_by_load[load_group] = optimization_result
+                    optimization_result['reinforcement_key'] = reinforcement_key
+                    optimization_result['loads_in_group'] = loads_in_group
+                    optimization_results_by_reinforcement[reinforcement_key] = optimization_result
                     total_plates_all += optimization_result.get('total_plates', 0)
                     total_cost_all += optimization_result.get('total_cost', 0)
                     
-                    print(f"[BOT] ✅ Группа {load_group}п ({load_display}): {optimization_result['total_plates']} плит, "
+                    print(f"[BOT] ✅ {group_label} ({load_display}): {optimization_result['total_plates']} плит, "
                           f"{optimization_result.get('total_cost', 0):,} ₽".replace(',', ' '))
             except Exception as e:
-                print(f"[BOT] ❌ Ошибка оптимизации для группы {load_group}п: {e}")
+                print(f"[BOT] ❌ Ошибка оптимизации для {group_label}: {e}")
         
         # Сохраняем результаты в глобальную переменную
-        if optimization_results_by_load:
+        if optimization_results_by_reinforcement:
             import core.optimization as optimization
-            optimization.OPT_CASCADING_PLAN_BY_LOAD = optimization_results_by_load
-            print(f"\n[BOT] ✅ Сохранено {len(optimization_results_by_load)} результатов оптимизации")
+            optimization.OPT_CASCADING_PLAN_BY_LOAD = optimization_results_by_reinforcement
+            print(f"\n[BOT] ✅ Сохранено {len(optimization_results_by_reinforcement)} результатов оптимизации")
             
-            opt_msg = "💡 **Результат оптимизации по нагрузкам:**\n"
-            for load_group in sorted(optimization_results_by_load.keys()):
-                result = optimization_results_by_load[load_group]
-                original_loads = result.get('original_loads', [load_group])
-                load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in original_loads]
+            opt_msg = "💡 **Результат оптимизации по армированию:**\n"
+            # Используем безопасную сортировку результатов
+            result_keys = list(optimization_results_by_reinforcement.keys())
+            result_numeric = sorted([k for k in result_keys if isinstance(k, (int, float))])
+            result_strings = sorted([k for k in result_keys if isinstance(k, str)])
+            for reinforcement_key in result_numeric + result_strings:
+                result = optimization_results_by_reinforcement[reinforcement_key]
+                loads_in_group = result.get('loads_in_group', [])
+                load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in loads_in_group]
                 load_display = ", ".join(load_display_list)
-                opt_msg += f"• **{load_display}**: {result['total_plates']} плит\n"
+                
+                if isinstance(reinforcement_key, (int, float)):
+                    label = f"арм. {reinforcement_key}"
+                else:
+                    label = str(reinforcement_key)
+                
+                opt_msg += f"• **{label}** ({load_display}): {result['total_plates']} плит\n"
             opt_msg += f"\n**Итого:** {total_plates_all} плит, {total_cost_all:,} ₽\n".replace(',', ' ')
             
             await message.answer(opt_msg, parse_mode="Markdown")
@@ -1310,7 +1365,7 @@ async def receive_photo_with_plates(message: Message, state: FSMContext):
             print("[BOT] ⚠️ Оптимизация не дала результатов, используем fallback")
         
         # 4) Строим приоритет ширин (запасной вариант)
-        if not optimization_results_by_load:
+        if not optimization_results_by_reinforcement:
             from core.optimization import apply_width_optimization
             apply_width_optimization()
         
@@ -1386,13 +1441,17 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
             )
             await message.answer(warn_text)
         
-        # 3) Собираем заказы для 2D оптимизации (длина + ширина + НАГРУЗКА!)
+        # 3) Собираем заказы для 2D оптимизации (длина + ширина + АРМИРОВАНИЕ!)
         from collections import Counter, defaultdict
         import math
+        from pathlib import Path
         
-        # ✅ НОВАЯ ЛОГИКА: Группируем плиты по нагрузке
-        # ВАЖНО: Группируем по ЦЕЛОЙ части (12.5→12), но сохраняем оригинал для отображения
-        orders_by_load = defaultdict(list)  # {load_group: [orders_2d]}
+        # ✅ НОВАЯ ЛОГИКА: Группируем плиты по АРМИРОВАНИЮ (из БД)
+        # Получаем реальное армирование по (длина, нагрузка) из reinforcement_loads
+        orders_by_reinforcement = defaultdict(list)  # {reinforcement_value: [orders_2d]}
+        
+        # Путь к БД
+        db_path = Path(__file__).parent / "pb.db"
         
         print(f"[BOT] Проверяем PLATE_LOAD_DETAILS: {len(cfg.PLATE_LOAD_DETAILS)} записей")
         
@@ -1402,23 +1461,33 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
             for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
                 width_mm = int(round(width_m * 1000))
                 
-                # Группируем по ЦЕЛОЙ части: 12.5 → группа 12
-                load_group = math.floor(load_code) if isinstance(load_code, (int, float)) else load_code
+                # 🔥 ПОЛУЧАЕМ АРМИРОВАНИЕ ИЗ БД по (длина, нагрузка)
+                reinforcement_value = get_reinforcement(
+                    length_m=length,
+                    load_code=load_code,
+                    source='series',  # по серии
+                    db_path=db_path,
+                    allow_fallback=True
+                )
                 
-                orders_by_load[load_group].append({
+                # Если не нашли в БД - используем fallback (группируем по нагрузке как раньше)
+                if reinforcement_value is None:
+                    reinforcement_key = f"load_{math.floor(load_code)}"
+                    print(f"  ⚠️ {qty}x {length}м × {width_mm}мм, нагрузка {cfg.format_reinforcement_from_load_code(load_code)} → армирование НЕ НАЙДЕНО (fallback к группировке по нагрузке)")
+                else:
+                    # Округляем до 1 знака: 5.23 → 5.2 (чтобы близкие значения попали в одну группу)
+                    reinforcement_key = round(reinforcement_value, 1)
+                    print(f"  ✅ {qty}x {length}м × {width_mm}мм, нагрузка {cfg.format_reinforcement_from_load_code(load_code)} → армирование {reinforcement_key}")
+                
+                orders_by_reinforcement[reinforcement_key].append({
                     'length': length,
                     'width': width_mm,
                     'qty': qty,
-                    'load_code': load_code,  # Сохраняем ОРИГИНАЛЬНУЮ нагрузку (12.5)
-                    'load_group': load_group  # Группа для оптимизации (12)
+                    'load_code': load_code,  # Сохраняем нагрузку для отображения
+                    'reinforcement': reinforcement_value  # Сохраняем армирование
                 })
-                
-                # Форматируем нагрузку для отображения
-                load_display = cfg.format_reinforcement_from_load_code(load_code)
-                print(f"  + {qty}x {length}м × {width_mm}мм, нагрузка {load_display} (группа {load_group}п)")
         else:
             # Fallback: Если PLATE_LOAD_DETAILS пуст (старый формат без нагрузок)
-            # Группируем все плиты как нагрузку 8п (дефолт)
             print("[BOT] ⚠️ PLATE_LOAD_DETAILS пуст, используем fallback (все плиты = 8п)")
             for width_mm, plates_list, target_name in [
                 (1200, cfg.PLATES_1_2, 'PLATES_1_2'), (1080, cfg.PLATES_1_08, 'PLATES_1_08'), (1000, cfg.PLATES_1_0, 'PLATES_1_0'),
@@ -1437,15 +1506,30 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
                         # Используем дефолтную нагрузку 8п
                         load_code = cfg.get_load_code_for_plate(length, exact_width_m, default=8)
                         
-                        orders_by_load[load_code].append({
+                        # Получаем армирование из БД
+                        reinforcement_value = get_reinforcement(
+                            length_m=length,
+                            load_code=load_code,
+                            source='series',
+                            db_path=db_path,
+                            allow_fallback=True
+                        )
+                        
+                        if reinforcement_value is None:
+                            reinforcement_key = f"load_{load_code}"
+                        else:
+                            reinforcement_key = round(reinforcement_value, 1)
+                        
+                        orders_by_reinforcement[reinforcement_key].append({
                             'length': length,
                             'width': exact_width_mm,
                             'qty': qty,
-                            'load_code': load_code
+                            'load_code': load_code,
+                            'reinforcement': reinforcement_value
                         })
         
         # Если после парсинга не осталось ни одной плиты — сразу выходим
-        if not orders_by_load:
+        if not orders_by_reinforcement:
             await message.answer(
                 "❌ Не удалось распознать ни одной плиты в вашем сообщении.\n"
                 "Проверьте формат строк (ширина×длина×кол-во или 'Плиты ПБ 78-12-8п 3')."
@@ -1453,28 +1537,40 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ ДЛЯ КАЖДОЙ НАГРУЗКИ ОТДЕЛЬНО
-        print(f"\n[BOT] Найдено {len(orders_by_load)} групп(ы) по нагрузкам: {sorted(orders_by_load.keys())}")
+        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ ДЛЯ КАЖДОГО АРМИРОВАНИЯ ОТДЕЛЬНО
+        # Безопасная сортировка: сначала числа, потом строки (чтобы не ломалось при смешанных типах)
+        keys_list = list(orders_by_reinforcement.keys())
+        numeric_keys = sorted([k for k in keys_list if isinstance(k, (int, float))])
+        string_keys = sorted([k for k in keys_list if isinstance(k, str)])
+        all_keys_sorted = numeric_keys + string_keys
+        print(f"\n[BOT] Найдено {len(orders_by_reinforcement)} групп(ы) по армированию: {all_keys_sorted}")
         
-        optimization_results_by_load = {}
+        optimization_results_by_reinforcement = {}
         total_plates_all = 0
         total_cost_all = 0
         
-        # Создаём карту группа→оригинальные нагрузки (для правильного отображения)
-        load_group_to_originals = {}  # {12: [12, 12.5], 10: [10], ...}
-        for load_group, orders in orders_by_load.items():
-            originals = set(o['load_code'] for o in orders)
-            load_group_to_originals[load_group] = sorted(originals)
+        # Создаём карту армирование→оригинальные нагрузки (для правильного отображения)
+        reinforcement_to_loads = {}
+        for reinforcement_key, orders in orders_by_reinforcement.items():
+            loads = set(o['load_code'] for o in orders)
+            reinforcement_to_loads[reinforcement_key] = sorted(loads)
         
-        for load_group in sorted(orders_by_load.keys()):
-            orders_2d = orders_by_load[load_group]
+        # Используем безопасную отсортированную версию ключей
+        for reinforcement_key in all_keys_sorted:
+            orders_2d = orders_by_reinforcement[reinforcement_key]
             
-            # Для отображения собираем все оригинальные нагрузки в этой группе
-            original_loads = load_group_to_originals[load_group]
-            load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in original_loads]
+            # Для отображения собираем все нагрузки в этой группе
+            loads_in_group = reinforcement_to_loads[reinforcement_key]
+            load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in loads_in_group]
             load_display = ", ".join(load_display_list) if len(load_display_list) > 1 else load_display_list[0]
             
-            print(f"\n[BOT] === Оптимизация для группы {load_group}п ({load_display}) ===")
+            # Красивое отображение ключа группы
+            if isinstance(reinforcement_key, (int, float)):
+                group_label = f"армирование {reinforcement_key}"
+            else:
+                group_label = f"{reinforcement_key}"
+            
+            print(f"\n[BOT] === Оптимизация для {group_label} (нагрузки: {load_display}) ===")
             print(f"[BOT] Плит: {sum(o['qty'] for o in orders_2d)} шт, типов: {len(orders_2d)}")
             
             try:
@@ -1485,32 +1581,42 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
                 )
                 
                 if optimization_result and optimization_result.get('total_plates', 0) > 0:
-                    # Сохраняем с информацией о группе и оригинальных нагрузках
-                    optimization_result['load_group'] = load_group
-                    optimization_result['original_loads'] = original_loads
-                    optimization_results_by_load[load_group] = optimization_result
+                    # Сохраняем с информацией о группе
+                    optimization_result['reinforcement_key'] = reinforcement_key
+                    optimization_result['loads_in_group'] = loads_in_group
+                    optimization_results_by_reinforcement[reinforcement_key] = optimization_result
                     total_plates_all += optimization_result.get('total_plates', 0)
                     total_cost_all += optimization_result.get('total_cost', 0)
                     
-                    print(f"[BOT] ✅ Группа {load_group}п ({load_display}): {optimization_result['total_plates']} плит, "
+                    print(f"[BOT] ✅ {group_label} ({load_display}): {optimization_result['total_plates']} плит, "
                           f"{optimization_result.get('total_cost', 0):,} ₽".replace(',', ' '))
             except Exception as e:
-                print(f"[BOT] ❌ Ошибка оптимизации для группы {load_group}п: {e}")
+                print(f"[BOT] ❌ Ошибка оптимизации для {group_label}: {e}")
         
         # Сохраняем результаты в глобальную переменную
-        if optimization_results_by_load:
+        if optimization_results_by_reinforcement:
             import core.optimization as optimization
-            optimization.OPT_CASCADING_PLAN_BY_LOAD = optimization_results_by_load
-            print(f"\n[BOT] ✅ Сохранено {len(optimization_results_by_load)} результатов оптимизации")
+            optimization.OPT_CASCADING_PLAN_BY_LOAD = optimization_results_by_reinforcement
+            print(f"\n[BOT] ✅ Сохранено {len(optimization_results_by_reinforcement)} результатов оптимизации")
             
-            # Показываем сводку пользователю с ОРИГИНАЛЬНЫМИ нагрузками
-            opt_msg = "💡 **Результат оптимизации по нагрузкам:**\n"
-            for load_group in sorted(optimization_results_by_load.keys()):
-                result = optimization_results_by_load[load_group]
-                original_loads = result.get('original_loads', [load_group])
-                load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in original_loads]
+            # Показываем сводку пользователю
+            opt_msg = "💡 **Результат оптимизации по армированию:**\n"
+            # Используем безопасную сортировку результатов
+            result_keys = list(optimization_results_by_reinforcement.keys())
+            result_numeric = sorted([k for k in result_keys if isinstance(k, (int, float))])
+            result_strings = sorted([k for k in result_keys if isinstance(k, str)])
+            for reinforcement_key in result_numeric + result_strings:
+                result = optimization_results_by_reinforcement[reinforcement_key]
+                loads_in_group = result.get('loads_in_group', [])
+                load_display_list = [cfg.format_reinforcement_from_load_code(lc) for lc in loads_in_group]
                 load_display = ", ".join(load_display_list)
-                opt_msg += f"• **{load_display}**: {result['total_plates']} плит\n"
+                
+                if isinstance(reinforcement_key, (int, float)):
+                    label = f"арм. {reinforcement_key}"
+                else:
+                    label = str(reinforcement_key)
+                
+                opt_msg += f"• **{label}** ({load_display}): {result['total_plates']} плит\n"
             opt_msg += f"\n**Итого:** {total_plates_all} плит, {total_cost_all:,} ₽\n".replace(',', ' ')
             
             await message.answer(opt_msg, parse_mode="Markdown")
@@ -1518,7 +1624,7 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
             print("[BOT] ⚠️ Оптимизация не дала результатов, используем fallback")
         
         # 4) Строим приоритет ширин (запасной вариант, если каскадная не сработала)
-        if not optimization_results_by_load:
+        if not optimization_results_by_reinforcement:
             from core.optimization import apply_width_optimization
             apply_width_optimization()
         
@@ -1584,7 +1690,7 @@ async def receive_plate_list_and_build(message: Message, state: FSMContext):
         else:
             await message.answer("❌ Ошибка при расчёте КП")
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
+        await message.answer(f"❌ Ошибка: {str(e)}", parse_mode=None)
     finally:
         await state.clear()
 
@@ -1647,7 +1753,7 @@ async def cmd_build_plan(message: Message):
             await message.answer("❌ Ошибка при расчёте плана")
             
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
+        await message.answer(f"❌ Ошибка: {str(e)}", parse_mode=None)
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
@@ -1702,7 +1808,7 @@ async def cmd_stats(message: Message):
         await message.answer(stats_text, parse_mode="Markdown")
         
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
+        await message.answer(f"❌ Ошибка: {str(e)}", parse_mode=None)
 
 @router.message(Command("optimize"))
 @router.message(F.text == "Оптимизация резов")
@@ -1929,60 +2035,70 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             )
             await message.answer(warn_text)
         
-        # Собираем данные заказа из глобальных списков
+        # 🔥 НОВАЯ ЛОГИКА: Используем build_price_rows для получения ПРАВИЛЬНЫХ цен
+        # (с учётом резов, отходов и остатков - как в смете "Получить КП")
         from collections import Counter
+        from viz_modules.procurement import build_price_rows
+        from viz_modules.price_utils import load_price_table_from_xlsx
+        
+        # Загружаем таблицу цен для расчётов
+        price_table = load_price_table_from_xlsx(cfg.PRICE_XLSX_PATH)
+        
+        # Получаем строки сметы с ПРАВИЛЬНЫМИ ценами (как в "Получить КП")
+        price_rows, total_sum = await asyncio.to_thread(
+            build_price_rows,
+            price_table,
+            reinforcement_code=8
+        )
+        
+        # Формируем order_data из price_rows с правильными ценами
         order_data = []
-        
-        # Собираем все плиты по типам
-        # ВАЖНО: Добавлен target_name для получения точных ширин из PLATE_EXACT_WIDTHS
-        plate_groups = [
-            (1200, cfg.PLATES_1_2, "12", 'PLATES_1_2'),
-            (1080, cfg.PLATES_1_08, "10.8", 'PLATES_1_08'),
-            (1000, cfg.PLATES_1_0, "10", 'PLATES_1_0'),
-            (320, cfg.PLATES_0_32, "3.2", 'PLATES_0_32'),
-            (460, cfg.PLATES_0_46, "4.6", 'PLATES_0_46'),
-            (700, cfg.PLATES_0_70, "7", 'PLATES_0_70'),
-            (720, cfg.PLATES_0_72, "7.2", 'PLATES_0_72'),
-            (860, cfg.PLATES_0_86, "8.6", 'PLATES_0_86'),
-            (880, cfg.PLATES_0_88, "8.8", 'PLATES_0_88'),
-            (740, cfg.PLATES_0_74, "7.4", 'PLATES_0_74'),
-            (480, cfg.PLATES_0_48, "4.8", 'PLATES_0_48'),
-            (500, cfg.PLATES_0_50, "5", 'PLATES_0_50'),
-            (340, cfg.PLATES_0_34, "3.4", 'PLATES_0_34'),
-        ]
-        
-        for width_mm, plates_list, width_dm_str, target_name in plate_groups:
-            if plates_list:
-                # Группируем по длине
-                length_counts = Counter(plates_list)
-                for length_m, qty in length_counts.items():
-                    # Получаем ТОЧНУЮ ширину из PLATE_EXACT_WIDTHS
-                    exact_width_m = cfg.get_exact_width(length_m, target_name, width_mm / 1000.0)
-                    exact_width_mm = int(round(exact_width_m * 1000))
-                    
-                    length_dm = int(round(length_m * 10))
-                    
-                    # Получаем нагрузку из PLATE_LOAD_MAP (8п, 10п, 12п и т.д.)
-                    load_code = cfg.get_load_code_for_plate(length_m, exact_width_m, default=8)
-                    
-                    # Формируем наименование в формате "Плиты ПБ 38-12-8п" с ТОЧНОЙ шириной
-                    if exact_width_mm >= 1000:
-                        width_str = str(int(round(exact_width_mm / 100)))
-                    else:
-                        # Для малых ширин используем дм с точкой (например, 5,3 для 530мм, 6,65 для 665мм)
-                        exact_width_dm = exact_width_mm / 100.0
-                        # Умное форматирование: убираем лишние нули (6.65→"6,65", 5.3→"5,3", 12.0→"12")
-                        width_str = f"{exact_width_dm:.2f}".rstrip('0').rstrip('.').replace('.', ',')
-                    
-                    # Используем ПРАВИЛЬНУЮ нагрузку из заказа
-                    name = f"Плиты ПБ {length_dm}-{width_str}-{load_code}п"
-                    
-                    order_data.append({
-                        "name": name,
-                        "length_m": length_m,
-                        "width_m": exact_width_m,  # ТОЧНАЯ ширина в метрах!
-                        "qty": qty
-                    })
+        for row in price_rows:
+            # row: [idx, name, qty, 'шт', week, contractor, weight, price_str, sum_str]
+            if len(row) < 8:
+                continue
+                
+            name = row[1]
+            qty = row[2]
+            weight_str = row[6]
+            price_str = row[7]  # Строка вида "1 234,56"
+            
+            # Парсим цену обратно в число
+            try:
+                unit_price = float(price_str.replace(' ', '').replace(',', '.'))
+            except (ValueError, AttributeError):
+                unit_price = 0.0
+            
+            # Парсим weight
+            try:
+                weight = float(str(weight_str).replace(' ', '').replace(',', '.'))
+            except (ValueError, AttributeError):
+                weight = 0.0
+            
+            # Парсим name для получения длины, ширины и нагрузки
+            # Формат: "Плиты ПБ 38-12-8п" или "ПБ 38-3,2-8п"
+            match = re.search(r'ПБ\s+(\d+)-([\d,]+)-(\d+)', name)
+            if match:
+                length_dm = int(match.group(1))
+                length_m = length_dm / 10.0
+                
+                width_str_parsed = match.group(2).replace(',', '.')
+                width_m = float(width_str_parsed)
+                # Если ширина больше 2, значит она указана в дециметрах (например, 12 вместо 1.2)
+                if width_m > 2:
+                    width_m = width_m / 10.0
+                
+                load_code = int(match.group(3))
+                
+                order_data.append({
+                    "name": name,
+                    "length_m": length_m,
+                    "width_m": width_m,
+                    "qty": qty,
+                    "load_class": load_code * 100,  # 8 → 800
+                    "unit_price": unit_price,  # 🔥 Цена С УЧЁТОМ РЕЗОВ, ОТХОДОВ И ОСТАТКОВ!
+                    "weight": weight
+                })
         
         if not order_data:
             await message.answer(

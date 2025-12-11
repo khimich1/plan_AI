@@ -224,7 +224,7 @@ def calculate_total_cost(order_data: List[Dict]) -> Dict:
     Рассчитывает общую стоимость заказа
     
     Args:
-        order_data: список позиций заказа с полями name, length_m, width_m, qty
+        order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
     
     Returns:
         Словарь с итоговыми суммами
@@ -234,12 +234,16 @@ def calculate_total_cost(order_data: List[Dict]) -> Dict:
     
     for item in order_data:
         qty = item.get('qty', 0)
-        length_m = item.get('length_m', 0)
-        width_m = item.get('width_m', 0)
-        load_class = item.get('load_class', 800)
         
-        # Получаем цену за единицу
-        unit_price = get_plate_price(length_m, width_m, load_class)
+        # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
+        if 'unit_price' in item and item['unit_price'] is not None:
+            unit_price = item['unit_price']
+        else:
+            # Fallback: старая логика (только базовая цена из БД)
+            length_m = item.get('length_m', 0)
+            width_m = item.get('width_m', 0)
+            load_class = item.get('load_class', 800)
+            unit_price = get_plate_price(length_m, width_m, load_class)
         
         # Считаем сумму по позиции
         item_cost = unit_price * qty
@@ -416,22 +420,33 @@ def generate_commercial_offer_pdf(
         width_m = item.get('width_m', 0)
         load_class = item.get('load_class')
 
-        # Если класс нагрузки явно не передан, пробуем вытащить его из имени плиты.
-        # Формат имени: "Плиты ПБ 71-12-10п", "ПБ 69-12-12,5п" и т.п.
-        if load_class is None:
-            try:
-                from config_and_data import parse_load_code_from_name
-            except ImportError:
-                load_class = 800
-            else:
-                load_code = parse_load_code_from_name(name_raw, default=8)
-                load_class = max(1, load_code) * 100  # 8 -> 800, 10 -> 1000 и т.п.
+        # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
+        if 'unit_price' in item and item['unit_price'] is not None:
+            unit_price = item['unit_price']
+        else:
+            # Fallback: старая логика (только базовая цена из БД)
+            # Если класс нагрузки явно не передан, пробуем вытащить его из имени плиты.
+            # Формат имени: "Плиты ПБ 71-12-10п", "ПБ 69-12-12,5п" и т.п.
+            if load_class is None:
+                try:
+                    from config_and_data import parse_load_code_from_name
+                except ImportError:
+                    load_class = 800
+                else:
+                    load_code = parse_load_code_from_name(name_raw, default=8)
+                    load_class = max(1, load_code) * 100  # 8 -> 800, 10 -> 1000 и т.п.
+            
+            unit_price = get_plate_price(length_m, width_m, load_class)
         
-        unit_price = get_plate_price(length_m, width_m, load_class)
         item_sum = unit_price * qty
         
-        unit_weight = approximate_weight_kg(length_m, width_m)
-        total_item_weight = unit_weight * qty
+        # Вес: если уже передан в item, используем его, иначе рассчитываем
+        if 'weight' in item and item['weight'] is not None:
+            total_item_weight = item['weight']
+        else:
+            unit_weight = approximate_weight_kg(length_m, width_m)
+            total_item_weight = unit_weight * qty
+        
         total_weight += total_item_weight
         
         weight_str = f"{total_item_weight:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
@@ -594,17 +609,28 @@ def generate_commercial_offer_xlsx(
         width_m = item.get('width_m', 0)
         load_class = item.get('load_class')
         
-        # Определяем класс нагрузки из имени, если не передан
-        if load_class is None:
-            try:
-                from config_and_data import parse_load_code_from_name
-                load_code = parse_load_code_from_name(name, default=8)
-                load_class = max(1, load_code) * 100
-            except ImportError:
-                load_class = 800
+        # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
+        if 'unit_price' in item and item['unit_price'] is not None:
+            unit_price = item['unit_price']
+        else:
+            # Fallback: старая логика (только базовая цена из БД)
+            # Определяем класс нагрузки из имени, если не передан
+            if load_class is None:
+                try:
+                    from config_and_data import parse_load_code_from_name
+                    load_code = parse_load_code_from_name(name, default=8)
+                    load_class = max(1, load_code) * 100
+                except ImportError:
+                    load_class = 800
+            
+            unit_price = get_plate_price(length_m, width_m, load_class)
         
-        unit_price = get_plate_price(length_m, width_m, load_class)
-        unit_weight = approximate_weight_kg(length_m, width_m)
+        # Вес: если уже передан в item, используем его, иначе рассчитываем
+        if 'weight' in item and item['weight'] is not None:
+            unit_weight = item['weight'] / qty  # Общий вес делим на количество
+        else:
+            unit_weight = approximate_weight_kg(length_m, width_m)
+        
         total_item_weight = unit_weight * qty
         total_weight += total_item_weight
         
