@@ -18,17 +18,43 @@ from .price_utils import find_price_for_plate
 def get_orders_from_opt_plan():
     """
     Возвращает исходный заказ (length/width/qty), сохранённый оптимизатором.
-    Если заказа нет (например, визуализацию запустили без бота), возвращает None.
+    
+    ПРИОРИТЕТ:
+    1. Собирает заказы из всех планов в OPT_CASCADING_PLAN_BY_LOAD (планы по нагрузкам)
+    2. Если нет, берёт из OPT_CASCADING_PLAN (общий план)
+    3. Если нет, возвращает None
     """
     try:
-        from core.optimization import OPT_CASCADING_PLAN
+        from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
     except ImportError:
         return None
 
+    orders_copy = []
+    
+    # Приоритет 1: Собираем заказы из всех планов по нагрузкам
+    if OPT_CASCADING_PLAN_BY_LOAD:
+        print(f'[DEBUG] get_orders_from_opt_plan: Найдено {len(OPT_CASCADING_PLAN_BY_LOAD)} планов по нагрузкам')
+        for load_key, plan in OPT_CASCADING_PLAN_BY_LOAD.items():
+            if plan and plan.get('orders_requested'):
+                print(f'[DEBUG] Извлекаем заказы из плана для нагрузки {load_key}п: {len(plan["orders_requested"])} позиций')
+                for order in plan['orders_requested']:
+                    try:
+                        orders_copy.append({
+                            'length': float(order.get('length', 0)),
+                            'width': order.get('width', 0),
+                            'qty': int(order.get('qty', 1))
+                        })
+                    except Exception as e:
+                        print(f'[DEBUG] Ошибка парсинга заказа: {e}')
+                        continue
+        if orders_copy:
+            print(f'[DEBUG] ✅ Собрано {len(orders_copy)} заказов из планов по нагрузкам')
+            return orders_copy
+    
+    # Приоритет 2: Fallback на общий план (если BY_LOAD пуст)
     plan = OPT_CASCADING_PLAN
     if plan and plan.get('orders_requested'):
-        # Заказ хранится в формате [{'length': float, 'width': мм, 'qty': int}, ...]
-        orders_copy = []
+        print(f'[DEBUG] get_orders_from_opt_plan: Используем общий план OPT_CASCADING_PLAN')
         for order in plan['orders_requested']:
             try:
                 orders_copy.append({
@@ -38,7 +64,11 @@ def get_orders_from_opt_plan():
                 })
             except Exception:
                 continue
-        return orders_copy
+        if orders_copy:
+            print(f'[DEBUG] ✅ Собрано {len(orders_copy)} заказов из общего плана')
+            return orders_copy
+    
+    print('[DEBUG] ⚠️ get_orders_from_opt_plan: Нет данных ни в BY_LOAD, ни в общем плане')
     return None
 
 
@@ -318,16 +348,67 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         rest_cost = 0.0
         waste_cost = 0.0
         
-        # Проверяем план оптимизации: сначала BY_LOAD, потом общий
+        # Проверяем план оптимизации: ищем по нагрузке через маппинг
+        # ВАЖНО: для одной и той же нагрузки (8п) может быть НЕСКОЛЬКО групп армирования.
+        # Раньше мы брали первую группу, из‑за чего часть плит попадала в "чужой" план
+        # и для них не находились первичные/вторичные резы.
+        #
+        # Новая логика: ищем тот план, в котором именно эта плита (L, W, load_code)
+        # присутствует в orders_requested.
         current_plan = None
         if OPT_CASCADING_PLAN_BY_LOAD:
             import math
+            from core.optimization import LOAD_TO_REINFORCEMENT_MAP
+
             load_key = int(math.floor(load_code)) if isinstance(load_code, (int, float)) else 8
-            if load_key in OPT_CASCADING_PLAN_BY_LOAD:
-                current_plan = OPT_CASCADING_PLAN_BY_LOAD[load_key]
+
+            if LOAD_TO_REINFORCEMENT_MAP and load_key in LOAD_TO_REINFORCEMENT_MAP:
+                reinforcement_keys = LOAD_TO_REINFORCEMENT_MAP[load_key]
+
+                # Перебираем ВСЕ группы армирования для этой нагрузки
+                for reinforcement_key in reinforcement_keys:
+                    plan = OPT_CASCADING_PLAN_BY_LOAD.get(reinforcement_key)
+                    if not plan:
+                        continue
+
+                    orders_req = plan.get('orders_requested') or []
+                    # Ищем нашу плиту по длине/ширине/нагрузке
+                    for ord_item in orders_req:
+                        try:
+                            o_len = float(ord_item.get('length', 0))
+                            o_width = int(ord_item.get('width', 0))
+                            o_load = ord_item.get('load_code', load_key)
+                        except Exception:
+                            continue
+
+                        if (
+                            abs(o_len - L) < 0.05 and
+                            o_width == width_mm and
+                            int(math.floor(float(o_load))) == load_key
+                        ):
+                            current_plan = plan
+                            print(
+                                f'[DEBUG] build_price_rows: нашёл план для {name} — '
+                                f'нагрузка {load_key}п, армирование {reinforcement_key}'
+                            )
+                            break
+
+                    if current_plan:
+                        break
+
+                if not current_plan:
+                    print(
+                        f'[DEBUG] build_price_rows: не найден подходящий план для плиты '
+                        f'{name} при нагрузке {load_key}п. Остатки будут считаться неиспользованными.'
+                    )
+            else:
+                print(
+                    f'[DEBUG] build_price_rows: нагрузка {load_key}п не найдена в LOAD_TO_REINFORCEMENT_MAP. '
+                    f'Остатки будут считаться неиспользованными.'
+                )
         
-        if not current_plan and OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
-            current_plan = OPT_CASCADING_PLAN
+        # ❌ УДАЛЁН fallback на общий план OPT_CASCADING_PLAN
+        # Причина: общий план смешивает остатки от разных нагрузок, что приводит к ошибочному расчёту цен
         
         if current_plan and current_plan.get('primary_cuts'):
             total_cuts_for_this_size = 0
@@ -423,6 +504,14 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         if abs(W - 1.2) < 0.01:
             long_cut_cost = 0.0
 
+        # 🔹 ДОПОЛНИТЕЛЬНО: для диапазона 1020–1080 мм считаем обрезок как отход
+        # Таблица завода говорит, что при ширине 1020–1080 мм остаток от реза идёт в утилизацию.
+        # Здесь мы всегда добавляем стоимость этого обрезка в цену плиты.
+        if 1020 <= width_mm <= 1080 and base_price_1_2m > 0:
+            extra_waste_mm = 1200 - width_mm  # например, 120мм для 1080
+            if extra_waste_mm > 0:
+                waste_cost += (extra_waste_mm / 1200.0) * base_price_1_2m
+
         unit_price = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost
         weight = cfg.approximate_weight_kg(L, W)
         row_sum = unit_price * qty
@@ -489,26 +578,29 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                     except (ValueError, TypeError):
                         qty = 1
                     # Парсим имя для получения длины и ширины
-                    # Формат: ПБ 36-0,3-8п (длина 3.6м, ширина 0.3м = 300мм)
-                    # Или: ПБ 36-3,2-8п (длина 3.6м, ширина 3.2м = 3200мм - это неправильно)
-                    # Правильный формат: ПБ 36-0,32-8п (длина 3.6м, ширина 0.32м = 320мм)
+                    # ФОРМАТ ИМЕНИ: ПБ {длина_дм}-{ширина_дм}-{нагрузка}п
+                    # Примеры:
+                    #   ПБ 28-7,2-8п → длина 28дм=2.8м, ширина 7,2дм=0.72м
+                    #   ПБ 87-2,6-8п → длина 87дм=8.7м, ширина 2,6дм=0.26м
+                    #   ПБ 73-12-8п → длина 73дм=7.3м, ширина 12дм=1.2м
                     match = re.search(r'ПБ\s+(\d+)-([\d,]+)-', name)
                     if match:
                         length_dm = int(match.group(1))
-                        length = length_dm / 10.0
+                        length = length_dm / 10.0  # Дециметры → метры
+                        
                         width_str = match.group(2).replace(',', '.').replace(' ', '')
-                        width_m = float(width_str)
-                        # Если ширина больше 2, значит это в миллиметрах, иначе в метрах
-                        if width_m > 2:
-                            width_mm = int(width_m)
-                            width_m = width_mm / 1000.0
-                        else:
-                            width_mm = int(width_m * 1000)
+                        width_dm = float(width_str)  # ← ШИРИНА ТОЖЕ В ДЕЦИМЕТРАХ!
+                        
+                        # Преобразуем дециметры в миллиметры и метры
+                        width_mm = int(round(width_dm * 100))  # дм × 100 = мм (7.2 → 720мм)
+                        width_m = width_mm / 1000.0  # мм → м (720 → 0.72м)
+                        
                         all_orders.append({
                             'length': length,
                             'width': width_mm,
                             'qty': qty
                         })
+                        print(f'[DEBUG] Распарсили {name}: длина={length}м, ширина={width_m}м ({width_mm}мм)')
             if not all_orders:
                 print('[DEBUG] build_component_breakdown: нет заказов, возвращаем пустой список')
                 return []
@@ -584,23 +676,67 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         waste_width_mm = 0
         waste_terms = []  # (ширина_отхода_мм, количество_операций) для наглядной формулы
         
-        # Проверяем OPT_CASCADING_PLAN для определения остатков, отходов и количества резов
-        # Приоритет 1: Ищем план для конкретной нагрузки в OPT_CASCADING_PLAN_BY_LOAD
-        # Приоритет 2: Используем общий план OPT_CASCADING_PLAN
+        # Проверяем OPT_CASCADING_PLAN_BY_LOAD для определения остатков, отходов и резов.
+        # ВАЖНО: для одной нагрузки может быть несколько групп армирования.
+        # Раньше брали только первую группу → часть плит смотрела не в свой план.
+        # Теперь явно ищем тот план, где эта плита реально присутствует в orders_requested.
         current_plan = None
         if OPT_CASCADING_PLAN_BY_LOAD:
-            # Пытаемся найти план для текущей нагрузки
-            # load_code может быть float (12.5) или int (8, 10, 12)
             import math
+            from core.optimization import LOAD_TO_REINFORCEMENT_MAP
+
             load_key = int(math.floor(load_code)) if isinstance(load_code, (int, float)) else 8
-            if load_key in OPT_CASCADING_PLAN_BY_LOAD:
-                current_plan = OPT_CASCADING_PLAN_BY_LOAD[load_key]
-                print(f'[DEBUG] Используем план для нагрузки {load_key}п для плиты {name}')
+
+            print(f'[DEBUG] build_component_breakdown: ищем план для нагрузки {load_key}п (плита {name})')
+
+            if LOAD_TO_REINFORCEMENT_MAP and load_key in LOAD_TO_REINFORCEMENT_MAP:
+                reinforcement_keys = LOAD_TO_REINFORCEMENT_MAP[load_key]
+
+                for reinforcement_key in reinforcement_keys:
+                    plan = OPT_CASCADING_PLAN_BY_LOAD.get(reinforcement_key)
+                    if not plan:
+                        continue
+
+                    orders_req = plan.get('orders_requested') or []
+                    for ord_item in orders_req:
+                        try:
+                            o_len = float(ord_item.get('length', 0))
+                            o_width = int(ord_item.get('width', 0))
+                            o_load = ord_item.get('load_code', load_key)
+                        except Exception:
+                            continue
+
+                        if (
+                            abs(o_len - length) < 0.05 and
+                            o_width == width_mm and
+                            int(math.floor(float(o_load))) == load_key
+                        ):
+                            current_plan = plan
+                            print(
+                                f'[DEBUG] ✅ Используем план для нагрузки {load_key}п '
+                                f'(армирование {reinforcement_key}) для плиты {name}'
+                            )
+                            break
+
+                    if current_plan:
+                        break
+
+                if not current_plan:
+                    print(
+                        f'[DEBUG] ⚠️ Не найден подходящий план по нагрузке {load_key}п '
+                        f'для плиты {name}. Остатки будут считаться неиспользованными.'
+                    )
+            else:
+                print(
+                    f'[DEBUG] ⚠️ Нагрузка {load_key}п не найдена в LOAD_TO_REINFORCEMENT_MAP. '
+                    f'Остатки для плиты {name} будут считаться неиспользованными.'
+                )
+        else:
+            print(f'[DEBUG] ⚠️ OPT_CASCADING_PLAN_BY_LOAD пустой! Нет планов оптимизации по нагрузкам.')
         
-        # Если не нашли в BY_LOAD, используем общий план
-        if not current_plan and OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
-            current_plan = OPT_CASCADING_PLAN
-            print(f'[DEBUG] Используем общий план для плиты {name}')
+        # ❌ УДАЛЁН fallback на общий план OPT_CASCADING_PLAN
+        # Причина: общий план смешивает остатки от разных нагрузок (4п, 6п, 11п, 16п),
+        # что приводит к ошибочному расчёту: остатки от плит 16п считаются использованными для плит 4п!
         
         total_cuts_count = 0  # Общее количество резов для отображения в таблице
         if current_plan and current_plan.get('primary_cuts'):
@@ -710,7 +846,34 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                 long_cuts = total_cuts_for_this_size  # Общее количество резов
                 # Пересчитываем стоимость продольных резов: общая стоимость всех резов / количество плит
                 long_cut_cost = (long_cuts * cfg.LONG_CUT_PRICE_PER_M * length) / qty if qty > 0 else 0
+        else:
+            # ✅ НОВАЯ ЛОГИКА: Если плана оптимизации нет, рассчитываем остатки вручную
+            print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
+            
+            # Если ширина < 1.15м, значит была продольная резка
+            if width_m < 1.15:
+                # Рассчитываем остаток
+                rest_width_mm = 1200 - width_mm
+                
+                # ВАЖНО: Остаток считаем НЕИСПОЛЬЗОВАННЫМ (т.к. нет информации об оптимизации)
+                if rest_width_mm > 0 and base_price_1_2m > 0:
+                    # Стоимость остатка = (ширина_остатка / 1200) × базовая_цена_1.2м
+                    rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
+                    print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
+                else:
+                    rest_cost = 0.0
 
+        # 🔹 ДОПОЛНИТЕЛЬНО: диапазон 1020–1080 мм — обрезок по таблице завода
+        # Таблица допустимых резов говорит, что при ширине 1020–1080 мм
+        # остаток идёт в утилизацию. Добавим его стоимость как отход.
+        if 1020 <= width_mm <= 1080 and base_price_1_2m > 0:
+            extra_waste_mm = 1200 - width_mm
+            if extra_waste_mm > 0:
+                # Для формулы: показываем, что было extra_waste_mm × qty мм отхода
+                waste_terms.append((extra_waste_mm, qty))
+                # Стоимость отхода на одну плиту
+                waste_cost += (extra_waste_mm / 1200.0) * base_price_1_2m
+                    
         # Жёсткое правило: плиты шириной 1.2 м считаем без продольных резов
         if abs(width_m - 1.2) < 0.01:
             long_cuts = 0

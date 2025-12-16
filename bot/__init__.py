@@ -3,7 +3,7 @@ Telegram бот для расчёта и визуализации дорожек
 """
 
 from .bot_config import BOT_TOKEN, OUTPUTS_DIR, OUTPUTS_DIR_STR, DB_PATH, DB_PATH_STR, PRICES_DIR, PRICES_DIR_STR
-from .bot_handlers import register_handlers
+from .handlers import register_all_handlers
 
 __all__ = [
     'BOT_TOKEN',
@@ -13,6 +13,6 @@ __all__ = [
     'DB_PATH_STR',
     'PRICES_DIR',
     'PRICES_DIR_STR',
-    'register_handlers',
+    'register_all_handlers',
 ]
 

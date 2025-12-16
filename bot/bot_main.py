@@ -13,7 +13,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from bot.bot_handlers import register_handlers
+from bot.handlers import register_all_handlers
 from bot.bot_config import BOT_TOKEN, DB_PATH_STR
 
 # Настройка логирования
@@ -55,7 +55,7 @@ async def main():
     dp = Dispatcher()
     
     # Регистрируем обработчики
-    register_handlers(dp)
+    register_all_handlers(dp)
     
     logger.info("🚀 Бот запущен!")
     

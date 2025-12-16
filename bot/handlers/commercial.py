@@ -1,0 +1,249 @@
+"""Обработчики создания коммерческих предложений PDF/XLSX"""
+import asyncio
+import os
+import re
+import sys
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any
+
+from aiogram import Router, F
+from aiogram.types import Message, FSInputFile
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+
+# Добавляем корень проекта в sys.path
+BOT_DIR = Path(__file__).parent.parent
+PROJECT_ROOT = BOT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.config_and_data import set_plate_lists_from_text
+import core.config_and_data as cfg
+from core.commercial_offer import generate_commercial_offer_pdf, generate_commercial_offer_xlsx
+
+from ..keyboards import main_menu_kb
+from ..states import KPStates
+from ..bot_config import OUTPUTS_DIR_STR
+
+router = Router()
+
+# Кэш заказов пользователей
+ORDER_CACHE: Dict[int, list] = {}
+
+
+@router.message(F.text == "Коммерческое предложение PDF")
+@router.message(Command("commercial_offer"))
+async def btn_commercial_offer(message: Message, state: FSMContext):
+    """Обработчик запроса на создание коммерческого предложения"""
+    await state.set_state(KPStates.waiting_for_commercial_offer)
+    await message.answer(
+        "📄 Создание коммерческого предложения\n\n"
+        "Пришлите список плит в свободной форме.\n\n"
+        "Примеры форматов:\n"
+        "• '1.2×3.39 — 2 шт'\n"
+        "• '0.32×6.63 — 4 шт'\n"
+        "• 'ПБ 38-12-8п 2'\n"
+        "• 'ПБ 66-3-8п 4'\n\n"
+        "Я создам PDF с расчётом стоимости, веса и НДС.",
+        reply_markup=main_menu_kb()
+    )
+
+
+@router.message(KPStates.waiting_for_commercial_offer)
+async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
+    """Обработчик получения заказа и генерации PDF"""
+    await message.answer("⏳ Формирую коммерческое предложение...")
+    
+    try:
+        # Парсим список пользователя и собираем «странные» строки по формату
+        user_text = message.text or ""
+        unparsed_lines = set_plate_lists_from_text(user_text)
+
+        if unparsed_lines:
+            warn_text = "⚠️ Некоторые строки я не смог распознать по формату и пропустил:\n"
+            warn_text += "\n".join(f"• {line}" for line in unparsed_lines)
+            warn_text += (
+                "\n\nЯ понимаю, например, такие форматы:\n"
+                "• 1.2×3.39 — 2 шт\n"
+                "• 0,32x6,63 - 4\n"
+                "• Плиты ПБ 78-12-8п 3\n"
+                "• ПБ 66,2-12-8п 6\n"
+            )
+            await message.answer(warn_text)
+        
+        # 🔥 НОВАЯ ЛОГИКА: Используем build_price_rows для получения ПРАВИЛЬНЫХ цен
+        # (с учётом резов, отходов и остатков - как в смете "Получить КП")
+        from viz_modules.procurement import build_price_rows
+        from viz_modules.price_utils import load_price_table_from_xlsx
+        
+        # Загружаем таблицу цен для расчётов
+        price_table = load_price_table_from_xlsx(cfg.PRICE_XLSX_PATH)
+        
+        # Получаем строки сметы с ПРАВИЛЬНЫМИ ценами (как в "Получить КП")
+        price_rows, total_sum = await asyncio.to_thread(
+            build_price_rows,
+            price_table,
+            reinforcement_code=8
+        )
+        
+        # Формируем order_data из price_rows с правильными ценами
+        order_data = []
+        for row in price_rows:
+            # row: [idx, name, qty, 'шт', week, contractor, weight, price_str, sum_str]
+            if len(row) < 8:
+                continue
+                
+            name = row[1]
+            qty = row[2]
+            weight_str = row[6]
+            price_str = row[7]  # Строка вида "1 234,56"
+            
+            # Парсим цену обратно в число
+            try:
+                unit_price = float(price_str.replace(' ', '').replace(',', '.'))
+            except (ValueError, AttributeError):
+                unit_price = 0.0
+            
+            # Парсим weight
+            try:
+                weight = float(str(weight_str).replace(' ', '').replace(',', '.'))
+            except (ValueError, AttributeError):
+                weight = 0.0
+            
+            # Парсим name для получения длины, ширины и нагрузки
+            # Формат: "Плиты ПБ 38-12-8п" или "ПБ 38-3,2-8п"
+            match = re.search(r'ПБ\s+(\d+)-([\d,]+)-(\d+)', name)
+            if match:
+                length_dm = int(match.group(1))
+                length_m = length_dm / 10.0
+                
+                width_str_parsed = match.group(2).replace(',', '.')
+                width_m = float(width_str_parsed)
+                # Если ширина больше 2, значит она указана в дециметрах (например, 12 вместо 1.2)
+                if width_m > 2:
+                    width_m = width_m / 10.0
+                
+                load_code = int(match.group(3))
+                
+                order_data.append({
+                    "name": name,
+                    "length_m": length_m,
+                    "width_m": width_m,
+                    "qty": qty,
+                    "load_class": load_code * 100,  # 8 → 800
+                    "unit_price": unit_price,  # 🔥 Цена С УЧЁТОМ РЕЗОВ, ОТХОДОВ И ОСТАТКОВ!
+                    "weight": weight
+                })
+        
+        if not order_data:
+            await message.answer(
+                "❌ Не удалось распознать ни одной плиты в вашем сообщении.\n"
+                "Проверьте формат строк (ширина×длина×кол-во или 'Плиты ПБ 78-12-8п 3').",
+                reply_markup=main_menu_kb()
+            )
+            await state.clear()
+            return
+        
+        # Сохраняем заказ в кэш
+        ORDER_CACHE[message.from_user.id] = order_data
+        
+        # Генерируем номер и дату КП
+        offer_number = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d%H%M')}"
+        offer_date = datetime.now().strftime("%d.%m.%Y")
+        
+        # Получаем имя пользователя для КП
+        user = message.from_user
+        if user.last_name:
+            customer_name = f"{user.first_name} {user.last_name}"
+        else:
+            customer_name = user.first_name or "заказчик"
+        
+        # Генерируем PDF и XLSX в памяти
+        pdf_buffer = await asyncio.to_thread(
+            generate_commercial_offer_pdf,
+            order_data,
+            offer_number,
+            offer_date,
+            customer_name
+        )
+        
+        # Генерируем XLSX
+        try:
+            xlsx_buffer = await asyncio.to_thread(
+                generate_commercial_offer_xlsx,
+                order_data,
+                offer_number,
+                offer_date,
+                customer_name
+            )
+            has_xlsx = True
+        except Exception as e:
+            print(f"[XLSX] Ошибка генерации XLSX: {e}")
+            has_xlsx = False
+        
+        # Сохраняем файлы во временные файлы для отправки
+        pdf_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.pdf"
+        pdf_path = os.path.join(OUTPUTS_DIR_STR, pdf_filename)
+        
+        xlsx_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.xlsx"
+        xlsx_path = os.path.join(OUTPUTS_DIR_STR, xlsx_filename)
+        
+        with open(pdf_path, 'wb') as f:
+            f.write(pdf_buffer.getvalue())
+        
+        if has_xlsx:
+            with open(xlsx_path, 'wb') as f:
+                f.write(xlsx_buffer.getvalue())
+        
+        # Формируем сводку по заказу
+        total_qty = sum(item['qty'] for item in order_data)
+        summary = f"✅ Коммерческое предложение готово!\n\n"
+        summary += f"📋 Заказ:\n"
+        for item in order_data:
+            summary += f"  • {item['name']} — {item['qty']} шт\n"
+        summary += f"\n📊 Всего позиций: {len(order_data)}\n"
+        summary += f"📦 Всего плит: {total_qty} шт\n"
+        
+        await message.answer(summary)
+        
+        # Отправляем PDF
+        if os.path.exists(pdf_path):
+            await message.answer_document(
+                FSInputFile(pdf_path),
+                caption=f"📄 Коммерческое предложение № {offer_number} (PDF)"
+            )
+        
+        # Отправляем XLSX
+        if has_xlsx and os.path.exists(xlsx_path):
+            await message.answer_document(
+                FSInputFile(xlsx_path),
+                caption=f"📊 Коммерческое предложение № {offer_number} (XLSX с формулами)"
+            )
+            
+        if os.path.exists(pdf_path):
+            await message.answer(
+                "✨ Документы содержат:\n"
+                "• Подробную спецификацию\n"
+                "• Расчёт стоимости материалов\n"
+                "• Стоимость резов\n"
+                "• Вес изделий\n"
+                "• НДС (20%)\n"
+                "• Условия оплаты\n\n"
+                "📊 XLSX файл содержит расчётные формулы Excel!",
+                reply_markup=main_menu_kb()
+            )
+        else:
+            await message.answer(
+                "❌ Ошибка при сохранении файла",
+                reply_markup=main_menu_kb()
+            )
+    
+    except Exception as e:
+        await message.answer(
+            f"❌ Ошибка при генерации КП: {str(e)}\n\n"
+            "Проверьте формат данных и попробуйте снова.",
+            reply_markup=main_menu_kb()
+        )
+    finally:
+        await state.clear()
+
