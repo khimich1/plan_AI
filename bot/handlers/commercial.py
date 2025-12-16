@@ -3,9 +3,11 @@ import asyncio
 import os
 import re
 import sys
+import math
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
+from collections import defaultdict
 
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile
@@ -20,6 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core.config_and_data import set_plate_lists_from_text
 import core.config_and_data as cfg
 from core.commercial_offer import generate_commercial_offer_pdf, generate_commercial_offer_xlsx
+from core.reinforcement_db import get_reinforcement
 
 from ..keyboards import main_menu_kb
 from ..states import KPStates
@@ -71,15 +74,101 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             )
             await message.answer(warn_text)
         
-        # 🔥 НОВАЯ ЛОГИКА: Используем build_price_rows для получения ПРАВИЛЬНЫХ цен
-        # (с учётом резов, отходов и остатков - как в смете "Получить КП")
+        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ (как в "Получить КП")
+        await message.answer("🔄 Оптимизирую раскрой плит для минимизации стоимости...")
+        
+        # Группируем плиты по армированию (из БД)
+        orders_by_reinforcement = defaultdict(list)
+        db_path = Path(__file__).parent.parent / "pb.db"
+        
+        if cfg.PLATE_LOAD_DETAILS:
+            print("[COMMERCIAL] ✅ Используем PLATE_LOAD_DETAILS (с нагрузками)")
+            for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
+                width_mm = int(round(width_m * 1000))
+                
+                # Получаем армирование из БД по (длина, нагрузка)
+                reinforcement_value = get_reinforcement(
+                    length_m=length,
+                    load_code=load_code,
+                    source='series',
+                    db_path=db_path,
+                    allow_fallback=True
+                )
+                
+                # Если не нашли в БД - используем fallback (группируем по нагрузке)
+                if reinforcement_value is None:
+                    reinforcement_key = f"load_{math.floor(load_code)}"
+                else:
+                    reinforcement_key = round(reinforcement_value, 1)
+                
+                orders_by_reinforcement[reinforcement_key].append({
+                    'length': length,
+                    'width': width_mm,
+                    'qty': qty,
+                    'load_code': load_code,
+                    'reinforcement': reinforcement_value
+                })
+        
+        # Запускаем оптимизацию для каждой группы армирования
+        optimization_results_by_reinforcement = {}
+        
+        if orders_by_reinforcement:
+            # Безопасная сортировка ключей
+            keys_list = list(orders_by_reinforcement.keys())
+            numeric_keys = sorted([k for k in keys_list if isinstance(k, (int, float))])
+            string_keys = sorted([k for k in keys_list if isinstance(k, str)])
+            all_keys_sorted = numeric_keys + string_keys
+            
+            print(f"[COMMERCIAL] Найдено {len(orders_by_reinforcement)} групп(ы) по армированию")
+            
+            for reinforcement_key in all_keys_sorted:
+                orders_2d = orders_by_reinforcement[reinforcement_key]
+                
+                try:
+                    from core.optimization import optimize_with_cascading_longitudinal_cuts
+                    optimization_result = await asyncio.to_thread(
+                        optimize_with_cascading_longitudinal_cuts,
+                        orders_2d=orders_2d
+                    )
+                    
+                    if optimization_result and optimization_result.get('total_plates', 0) > 0:
+                        # Сохраняем с информацией о группе
+                        optimization_result['reinforcement_key'] = reinforcement_key
+                        loads_in_group = set(o['load_code'] for o in orders_2d)
+                        optimization_result['loads_in_group'] = sorted(loads_in_group)
+                        optimization_results_by_reinforcement[reinforcement_key] = optimization_result
+                        
+                        print(f"[COMMERCIAL] ✅ Армирование {reinforcement_key}: {optimization_result['total_plates']} плит")
+                except Exception as e:
+                    print(f"[COMMERCIAL] ❌ Ошибка оптимизации для армирования {reinforcement_key}: {e}")
+            
+            # Сохраняем результаты в глобальную переменную
+            if optimization_results_by_reinforcement:
+                import core.optimization as optimization
+                optimization.OPT_CASCADING_PLAN_BY_LOAD = optimization_results_by_reinforcement
+                
+                # Создаём маппинг нагрузка → армирование для быстрого поиска плана
+                load_to_reinforcement_map = {}
+                for reinforcement_key, result in optimization_results_by_reinforcement.items():
+                    loads_in_group = result.get('loads_in_group', [])
+                    for load_code in loads_in_group:
+                        if load_code not in load_to_reinforcement_map:
+                            load_to_reinforcement_map[load_code] = []
+                        load_to_reinforcement_map[load_code].append(reinforcement_key)
+                
+                optimization.LOAD_TO_REINFORCEMENT_MAP = load_to_reinforcement_map
+                print(f"[COMMERCIAL] ✅ Сохранено {len(optimization_results_by_reinforcement)} результатов оптимизации")
+                
+                await message.answer("✅ Оптимизация завершена! Формирую документы...")
+        
+        # 🔥 ТЕПЕРЬ build_price_rows получит ОПТИМИЗИРОВАННЫЕ данные из OPT_CASCADING_PLAN_BY_LOAD!
         from viz_modules.procurement import build_price_rows
         from viz_modules.price_utils import load_price_table_from_xlsx
         
         # Загружаем таблицу цен для расчётов
         price_table = load_price_table_from_xlsx(cfg.PRICE_XLSX_PATH)
         
-        # Получаем строки сметы с ПРАВИЛЬНЫМИ ценами (как в "Получить КП")
+        # Получаем строки сметы с ПРАВИЛЬНЫМИ ценами (С УЧЁТОМ ОПТИМИЗАЦИИ!)
         price_rows, total_sum = await asyncio.to_thread(
             build_price_rows,
             price_table,
