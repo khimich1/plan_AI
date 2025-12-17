@@ -1,5 +1,5 @@
 """Клавиатуры бота"""
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def main_menu_kb() -> ReplyKeyboardMarkup:
@@ -12,5 +12,15 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="Сравнение результатов")],
         ],
         resize_keyboard=True
+    )
+
+
+def conditions_choice_kb() -> InlineKeyboardMarkup:
+    """Экранная клавиатура выбора условий поставки и оплаты"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="По умолчанию", callback_data="conditions_default")],
+            [InlineKeyboardButton(text="Добавить условие", callback_data="conditions_custom")],
+        ]
     )
 

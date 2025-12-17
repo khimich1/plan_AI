@@ -41,7 +41,15 @@ def init_database():
 async def main():
     """Основная функция запуска бота"""
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN не найден! Проверьте файл bot.env")
+        logger.error("❌ BOT_TOKEN не найден! Проверьте файл bot/bot.env")
+        logger.error("💡 Получите токен у @BotFather в Telegram")
+        return
+    
+    # Проверяем, что токен не является заглушкой
+    if BOT_TOKEN == "your_bot_token_here" or len(BOT_TOKEN) < 20:
+        logger.error("❌ Токен не установлен или неверный!")
+        logger.error("💡 Откройте файл bot/bot.env и замените 'your_bot_token_here' на настоящий токен")
+        logger.error("💡 Получите токен у @BotFather в Telegram: /newbot")
         return
     
     # Инициализируем БД
