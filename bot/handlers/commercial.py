@@ -40,11 +40,6 @@ ORDER_CACHE: Dict[int, list] = {}
 @router.message(Command("commercial_offer"))
 async def btn_commercial_offer(message: Message, state: FSMContext):
     """Обработчик запроса на создание коммерческого предложения - ПОШАГОВЫЙ ОПРОС"""
-    # region agent log
-    import json
-    with open('/home/username/Рабочий стол/my py/plan_AI/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({"location":"commercial.py:38","message":"Starting step 1 - manager name","data":{"user_id":message.from_user.id},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+'\n')
-    # endregion
     # Шаг 1: Запрашиваем имя менеджера
     await state.set_state(KPStates.waiting_manager_name)
     await message.answer(
@@ -61,12 +56,6 @@ async def btn_commercial_offer(message: Message, state: FSMContext):
 async def receive_manager_name(message: Message, state: FSMContext):
     """Шаг 1: Получаем имя менеджера"""
     manager_name = message.text.strip()
-    
-    # region agent log
-    import json
-    with open('/home/username/Рабочий стол/my py/plan_AI/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({"location":"commercial.py:53","message":"Received manager name, moving to step 2","data":{"manager_name":manager_name},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","runId":"run1","hypothesisId":"B"})+'\n')
-    # endregion
     
     # Сохраняем имя менеджера в состояние
     await state.update_data(manager_name=manager_name)
@@ -85,12 +74,6 @@ async def receive_manager_name(message: Message, state: FSMContext):
 async def receive_client_name(message: Message, state: FSMContext):
     """Шаг 2: Получаем имя клиента"""
     client_name = message.text.strip()
-    
-    # region agent log
-    import json
-    with open('/home/username/Рабочий стол/my py/plan_AI/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({"location":"commercial.py:79","message":"Received client name, moving to step 3","data":{"client_name":client_name},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+'\n')
-    # endregion
     
     # Сохраняем имя клиента в состояние
     await state.update_data(client_name=client_name)
