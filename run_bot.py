@@ -14,5 +14,20 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nБот остановлен пользователем")
     except Exception as e:
-        print(f"Критическая ошибка: {e}")
+        error_msg = str(e)
+        print(f"Критическая ошибка: {error_msg}")
+        
+        # Более понятные сообщения для частых ошибок
+        if "Token is invalid" in error_msg or "Unauthorized" in error_msg:
+            print("\n" + "="*50)
+            print("❌ ПРОБЛЕМА: Токен бота неверный или не установлен!")
+            print("="*50)
+            print("💡 Что делать:")
+            print("   1. Откройте Telegram и найдите @BotFather")
+            print("   2. Отправьте команду /newbot")
+            print("   3. Следуйте инструкциям для создания бота")
+            print("   4. Скопируйте полученный токен")
+            print("   5. Откройте файл: bot/bot.env")
+            print("   6. Замените 'your_bot_token_here' на ваш токен")
+            print("="*50)
 

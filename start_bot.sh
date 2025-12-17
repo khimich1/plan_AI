@@ -68,12 +68,36 @@ if [ ! -f "run_bot.py" ]; then
     exit 1
 fi
 
-# Проверяем наличие файла .env в корне проекта
-if [ ! -f ".env" ]; then
-    echo -e "${RED}❌ Файл .env не найден!${NC}"
-    echo -e "${YELLOW}💡 Создайте файл .env с токеном бота${NC}"
+# Проверяем наличие файла с токеном (.env в корне или bot/bot.env)
+HAS_ENV_FILE=false
+ENV_FILE=""
+
+if [ -f ".env" ]; then
+    HAS_ENV_FILE=true
+    ENV_FILE=".env"
+    echo -e "${GREEN}✅ Найден файл .env в корне проекта${NC}"
+elif [ -f "bot/bot.env" ]; then
+    HAS_ENV_FILE=true
+    ENV_FILE="bot/bot.env"
+    echo -e "${GREEN}✅ Найден файл bot/bot.env${NC}"
+fi
+
+if [ "$HAS_ENV_FILE" = false ]; then
+    echo -e "${RED}❌ Файл с токеном не найден!${NC}"
+    echo -e "${YELLOW}💡 Создайте файл .env в корне проекта или bot/bot.env с токеном бота${NC}"
     echo -e "${YELLOW}💡 Пример содержимого:${NC}"
     echo -e "${YELLOW}   BOT_TOKEN=your_token_here${NC}"
+    echo ""
+    echo "Нажмите Enter для выхода..."
+    read
+    exit 1
+fi
+
+# Проверяем, что токен не является заглушкой
+if grep -q "BOT_TOKEN=your_bot_token_here" "$ENV_FILE" 2>/dev/null; then
+    echo -e "${RED}❌ Токен не установлен!${NC}"
+    echo -e "${YELLOW}💡 Откройте файл $ENV_FILE и замените 'your_bot_token_here' на настоящий токен${NC}"
+    echo -e "${YELLOW}💡 Получите токен у @BotFather в Telegram: /newbot${NC}"
     echo ""
     echo "Нажмите Enter для выхода..."
     read

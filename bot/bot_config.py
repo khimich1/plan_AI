@@ -2,10 +2,17 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Загружаем переменные окружения из bot.env внутри папки bot
+# Загружаем переменные окружения
+# Сначала пробуем .env в корне проекта (приоритет)
+# Потом bot.env в папке bot (резервный вариант)
 BOT_DIR = Path(__file__).parent
 PROJECT_ROOT = BOT_DIR.parent
-load_dotenv(BOT_DIR / "bot.env")
+
+# Загружаем .env из корня проекта (если есть)
+load_dotenv(PROJECT_ROOT / ".env", override=False)
+
+# Загружаем bot.env из папки bot (если .env не найден или не содержит токен)
+load_dotenv(BOT_DIR / "bot.env", override=False)
 
 # Токен бота (получите у @BotFather)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
