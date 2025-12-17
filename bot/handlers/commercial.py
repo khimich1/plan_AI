@@ -94,8 +94,74 @@ async def receive_client_name(message: Message, state: FSMContext):
 
 @router.message(KPStates.waiting_plates_list)
 async def receive_plates_list(message: Message, state: FSMContext):
-    """Шаг 3: Получаем список плит"""
-    plates_text = message.text.strip()
+    """Шаг 3: Получаем список плит (текст или фото)"""
+    
+    # === ПРОВЕРЯЕМ, ЧТО ПРИШЛО: ТЕКСТ ИЛИ ФОТО ===
+    
+    if message.photo:
+        # 📸 ПРИШЛО ФОТО — используем GPT сразу
+        await message.answer("📸 Фото получено! Распознаю через GPT-4o...")
+        
+        # Скачиваем фото (берём самое большое разрешение)
+        photo = message.photo[-1]
+        user_id = message.from_user.id
+        os.makedirs("tmp", exist_ok=True)
+        photo_path = os.path.join("tmp", f"{user_id}_commercial_photo.jpg")
+        
+        try:
+            # Скачиваем фото
+            await message.bot.download(photo, destination=photo_path)
+            
+            # 🔥 РАСПОЗНАВАНИЕ ЧЕРЕЗ GPT (force_gpt=True пропускает EasyOCR)
+            from core.ocr_gpt import recognize_text_smart
+            result = await recognize_text_smart(photo_path, force_gpt=True, show_cost=True)
+            
+            if result and result.get('text'):
+                plates_text = result['text']
+                cost = result.get('cost_usd', 0)
+                
+                # Показываем результат распознавания
+                preview = plates_text[:200] + ('...' if len(plates_text) > 200 else '')
+                info_msg = f"✅ Распознано через GPT-4o Vision\n\n📋 Найденные плиты:\n{preview}"
+                
+                if cost > 0:
+                    rub_cost = cost * 75  # Примерный курс
+                    info_msg += f"\n\n💰 Стоимость: ${cost:.4f} (~{rub_cost:.2f}₽)"
+                
+                await message.answer(info_msg)
+            else:
+                await message.answer(
+                    "❌ Не удалось распознать текст на фото.\n"
+                    "Попробуйте:\n"
+                    "• Сделать фото более чётким\n"
+                    "• Прислать текстом\n"
+                    "• Использовать формат 'ПБ XX-XX-Xп количество'"
+                )
+                return
+                
+        except Exception as e:
+            print(f"[COMMERCIAL] Ошибка распознавания фото: {e}")
+            import traceback
+            traceback.print_exc()
+            await message.answer(
+                f"❌ Ошибка при обработке фото: {str(e)}\n\n"
+                "Попробуйте прислать список текстом."
+            )
+            return
+    
+    elif message.text:
+        # 📝 ПРИШЁЛ ТЕКСТ — используем как раньше
+        plates_text = message.text.strip()
+    
+    else:
+        # ❌ НЕ ТЕКСТ И НЕ ФОТО
+        await message.answer(
+            "❌ Пришлите список плит текстом или фото таблицы.\n\n"
+            "Примеры форматов текста:\n"
+            "• '1.2×3.39 — 2 шт'\n"
+            "• 'ПБ 38-12-8п 2'"
+        )
+        return
     
     # Сохраняем список плит в состояние
     await state.update_data(plates_text=plates_text)
@@ -256,6 +322,66 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 "• ПБ 66,2-12-8п 6\n"
             )
             await message.answer(warn_text)
+        
+        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ (упрощённая версия, без разделения по армированию)
+        await message.answer("🔄 Оптимизирую раскрой плит для минимизации стоимости...")
+        
+        # Собираем все плиты в один список orders_2d (без группировки по армированию)
+        orders_2d = []
+        
+        if cfg.PLATE_LOAD_DETAILS:
+            print("[COMMERCIAL] ✅ Используем PLATE_LOAD_DETAILS (с нагрузками)")
+            for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
+                width_mm = int(round(width_m * 1000))
+                
+                orders_2d.append({
+                    'length': length,
+                    'width': width_mm,
+                    'qty': qty,
+                    'load_code': load_code
+                })
+        
+        if orders_2d:
+            print(f"[COMMERCIAL] Всего плит для оптимизации: {sum(o['qty'] for o in orders_2d)} шт, типов: {len(orders_2d)}")
+            
+            try:
+                from core.optimization import optimize_with_cascading_longitudinal_cuts
+                import core.optimization as optimization
+                
+                # Запускаем оптимизацию для ВСЕХ плит сразу (без разделения)
+                optimization_result = await asyncio.to_thread(
+                    optimize_with_cascading_longitudinal_cuts,
+                    orders_2d=orders_2d
+                )
+                
+                if optimization_result and optimization_result.get('total_plates', 0) > 0:
+                    # Сохраняем результат в ОБЩИЙ план (не по нагрузкам)
+                    optimization.OPT_CASCADING_PLAN = optimization_result
+                    
+                    # Также сохраняем в BY_LOAD под общим ключом для совместимости
+                    # Собираем все нагрузки из заказа
+                    all_loads = set(o['load_code'] for o in orders_2d)
+                    optimization_result['loads_in_group'] = sorted(all_loads)
+                    
+                    # Используем специальный ключ 'all' для обозначения, что это общий план
+                    optimization.OPT_CASCADING_PLAN_BY_LOAD = {'all': optimization_result}
+                    
+                    # Создаём маппинг: все нагрузки указывают на общий план
+                    optimization.LOAD_TO_REINFORCEMENT_MAP = {
+                        load_code: ['all'] for load_code in all_loads
+                    }
+                    
+                    total_plates = optimization_result.get('total_plates', 0)
+                    total_cost = optimization_result.get('total_cost', 0)
+                    
+                    print(f"[COMMERCIAL] ✅ Оптимизация завершена: {total_plates} плит, {total_cost:,} ₽".replace(',', ' '))
+                    await message.answer(f"✅ Оптимизация завершена! Использовано {total_plates} исходных плит")
+                    
+            except Exception as e:
+                print(f"[COMMERCIAL] ❌ Ошибка оптимизации: {e}")
+                import traceback
+                traceback.print_exc()
+                # Продолжаем без оптимизации (цены будут посчитаны по старой логике)
         
         # Используем build_price_rows для получения правильных цен
         from viz_modules.procurement import build_price_rows

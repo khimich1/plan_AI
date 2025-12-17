@@ -552,12 +552,33 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             if breakdown_tables:
                 breakdown_headers = ['Компонент', 'Расчёт', 'Сумма']
                 all_breakdown_rows = []
+                grand_total = 0.0  # ✅ НОВОЕ: Общая сумма по всем плитам
+                
                 for breakdown in breakdown_tables:
                     # Заголовок с наименованием
                     all_breakdown_rows.append([breakdown['name'], '', ''])
                     # Строки таблицы
                     for row in breakdown['rows']:
                         all_breakdown_rows.append(row)
+                    
+                    # ✅ НОВОЕ: Извлекаем итоговую сумму для этой плиты
+                    # Последняя строка содержит "За N плит" и общую стоимость
+                    if breakdown['rows']:
+                        last_row = breakdown['rows'][-1]  # Последняя строка
+                        if len(last_row) >= 3:
+                            # Парсим сумму из строки вида "12 345,67 руб"
+                            sum_str = last_row[2]  # Третий столбец "Сумма"
+                            try:
+                                # Убираем пробелы, "руб", заменяем запятую на точку
+                                sum_value = float(
+                                    sum_str.replace(' ', '')
+                                           .replace('руб', '')
+                                           .replace(',', '.')
+                                )
+                                grand_total += sum_value
+                            except (ValueError, AttributeError):
+                                pass  # Пропускаем, если не удалось распарсить
+                    
                     # Пустая строка между таблицами
                     all_breakdown_rows.append(['', '', ''])
                 
@@ -565,10 +586,25 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 if all_breakdown_rows and all_breakdown_rows[-1] == ['', '', '']:
                     all_breakdown_rows.pop()
                 
+                # ✅ НОВОЕ: Добавляем итоговую строку
+                all_breakdown_rows.append(['', '', ''])  # Пустая строка перед итогом
+                all_breakdown_rows.append([
+                    '═══════════════════════════════',
+                    '',
+                    '═══════════════════════════════'
+                ])
+                grand_total_str = f"{grand_total:,.2f} руб".replace(',', ' ').replace('.', ',')
+                all_breakdown_rows.append([
+                    'ИТОГО ПО ВСЕМ ПЛИТАМ',
+                    '',
+                    grand_total_str
+                ])
+                
                 df_breakdown = pd.DataFrame(all_breakdown_rows, columns=breakdown_headers)
                 xlsx_path_breakdown = os.path.join(output_dir, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx')
                 df_breakdown.to_excel(xlsx_path_breakdown, index=False)
                 print(f'[DEBUG] Детальная разбивка сохранена в Excel: {xlsx_path_breakdown}')
+                print(f'[DEBUG] Итоговая сумма по всем плитам: {grand_total_str}')
             else:
                 print('[DEBUG] breakdown_tables пустой - файл детальной разбивки не создан')
         except Exception as e:

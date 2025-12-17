@@ -452,7 +452,8 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
                                 sec_lengths = sec_cut.get('lengths', [])
                                 if not sec_lengths or any(abs(l - L) < 0.05 for l in sec_lengths):
                                     sec_cuts = sec_cut.get('cuts', [])
-                                    if width_mm in sec_cuts:
+                                    # ✅ ИСПРАВЛЕНИЕ: проверяем с допуском ±20мм (как в оптимизаторе)
+                                    if any(abs(width_mm - cut_width) <= 20 for cut_width in sec_cuts):
                                         sec_qty = sec_cut.get('qty', 0)
                                         sec_pieces = sec_cut.get('pieces', 1)
 
@@ -496,6 +497,9 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
             else:
                 # Если нет данных из плана, используем старую логику
                 long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L)
+            
+            # ✅ Пересчитываем стоимость поперечных резов (после обработки плана оптимизации)
+            trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
         else:
             # Если нет данных из плана, используем старую логику
             long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L)
@@ -791,8 +795,8 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                                 if not sec_lengths or any(abs(l - length) < 0.05 for l in sec_lengths):
                                     sec_cuts = sec_cut.get('cuts', [])
                                     
-                                    # Проверяем, относится ли рез к нашей ширине
-                                    if width_mm in sec_cuts:
+                                    # ✅ ИСПРАВЛЕНИЕ: Проверяем с допуском ±20мм (как в оптимизаторе)
+                                    if any(abs(width_mm - cut_width) <= 20 for cut_width in sec_cuts):
                                         sec_qty = sec_cut.get('qty', 0)
                                         sec_pieces = sec_cut.get('pieces', 1)
                                         
@@ -815,7 +819,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                                         if src_lens:
                                             src_len = src_lens[0]
 
-                                            # Если была операция поперечного реза или изменилась длина
+                                            # ✅ ИСПРАВЛЕНИЕ: Если была операция поперечного реза или изменилась длина
                                             if sec_cut.get('type') == 'transverse' or abs(src_len - length) > 0.05:
                                                 # Количество поперечных резов распределяем по плитам этого типа
                                                 if qty > 0:
@@ -882,11 +886,11 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         # ИТОГО за 1 плиту
         total_per_unit = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost
         
-        # Округление (до 2 знаков после запятой)
-        total_rounded = round(total_per_unit, 2)
+        # ✅ ИСПРАВЛЕНИЕ: Сначала умножаем, ПОТОМ округляем (как в build_price_rows)
+        total_for_qty = total_per_unit * qty  # БЕЗ промежуточного округления!
         
-        # За N плит
-        total_for_qty = total_rounded * qty
+        # Округление только для отображения в таблице
+        total_rounded = round(total_per_unit, 2)
         
         # Формируем таблицу
         table_rows = []
