@@ -22,8 +22,9 @@ import core.config_and_data as cfg
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.visualization import visualize_plan
+from core import kp_db
 
-from ..keyboards import main_menu_kb, conditions_choice_kb
+from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb
 from ..states import KPStates
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -456,8 +457,37 @@ async def generate_all_documents(message: Message, state: FSMContext):
             "• Условия оплаты\n\n"
             f"💰 Скидка: {discount_percent}%\n"
             f"👤 Менеджер: {manager_name}\n"
-            f"📊 XLSX файл содержит расчётные формулы Excel!",
-            reply_markup=main_menu_kb()
+            f"📊 XLSX файл содержит расчётные формулы Excel!"
+        )
+        
+        # Сохраняем данные КП для последующего сохранения в БД
+        # ВАЖНО: Сохраняем ДО очистки состояния
+        await state.update_data(
+            kp_order_data=order_data,
+            kp_xlsx_path=xlsx_path if has_xlsx and os.path.exists(xlsx_path) else None,
+            kp_customer_name=client_name,
+            kp_manager_name=manager_name,
+            kp_discount_percent=discount_percent,
+            kp_delivery_conditions=delivery_conditions,
+            kp_payment_conditions=payment_conditions,
+            kp_offer_date=offer_date
+        )
+        
+        # Очищаем состояние, чтобы callback мог сработать
+        # Но данные остаются в state.data
+        await state.set_state(None)
+        
+        print(f"[DEBUG] Данные сохранены в state:")
+        print(f"  - Клиент: {client_name}")
+        print(f"  - Менеджер: {manager_name}")
+        print(f"  - Скидка: {discount_percent}%")
+        print(f"  - Плит: {len(order_data)}")
+        
+        # Предлагаем сохранить КП в базу данных
+        await message.answer(
+            "💾 Хотите сохранить это КП в базу данных?\n\n"
+            "Если сохраните, вы сможете отслеживать статус выполнения заказа.",
+            reply_markup=save_to_db_kb()
         )
     
     except Exception as e:
@@ -468,7 +498,6 @@ async def generate_all_documents(message: Message, state: FSMContext):
         )
         import traceback
         traceback.print_exc()
-    finally:
         await state.clear()
 
 
@@ -711,4 +740,134 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         )
     finally:
         await state.clear()
+
+
+# ==================== ОБРАБОТЧИКИ СОХРАНЕНИЯ КП В БД ====================
+
+@router.callback_query(F.data == "save_kp_to_db")
+async def callback_save_kp_to_db(callback: CallbackQuery, state: FSMContext):
+    """
+    Обработчик кнопки "Сохранить в БД".
+    Запрашивает сроки выполнения КП.
+    """
+    print("[DEBUG] Нажата кнопка 'Сохранить в БД'")
+    
+    # Убираем "часики" с кнопки
+    await callback.answer()
+    
+    # Редактируем сообщение с кнопками
+    await callback.message.edit_text(
+        "✅ Сохраняю КП в базу данных...\n\n"
+        "📅 Укажите сроки выполнения:\n"
+        "(Например: '14 дней', '2 недели', '01.02.2024')"
+    )
+    
+    print("[DEBUG] Переход к состоянию waiting_execution_terms")
+    
+    # Переходим к состоянию ожидания сроков
+    await state.set_state(KPStates.waiting_execution_terms)
+
+
+@router.message(KPStates.waiting_execution_terms)
+async def receive_execution_terms(message: Message, state: FSMContext):
+    """
+    Обработчик ввода сроков выполнения.
+    Сохраняет КП в базу данных plita.db.
+    """
+    execution_terms = message.text.strip()
+    print(f"[DEBUG] Получены сроки: {execution_terms}")
+    
+    # Получаем данные КП из состояния
+    data = await state.get_data()
+    order_data = data.get('kp_order_data', [])
+    xlsx_path = data.get('kp_xlsx_path')
+    customer_name = data.get('kp_customer_name')
+    manager_name = data.get('kp_manager_name')
+    discount_percent = data.get('kp_discount_percent', 0)
+    delivery_conditions = data.get('kp_delivery_conditions')
+    payment_conditions = data.get('kp_payment_conditions')
+    offer_date = data.get('kp_offer_date')
+    
+    print(f"[DEBUG] Данные из state:")
+    print(f"  - Клиент: {customer_name}")
+    print(f"  - Менеджер: {manager_name}")
+    print(f"  - Скидка: {discount_percent}%")
+    print(f"  - Плит в заказе: {len(order_data)}")
+    print(f"  - XLSX путь: {xlsx_path}")
+    
+    try:
+        # Сохраняем КП в базу данных
+        kp_id = kp_db.save_kp_to_db(
+            creation_date=offer_date,
+            order_data=order_data,
+            xlsx_file_path=xlsx_path,
+            customer_name=customer_name,
+            manager_name=manager_name,
+            discount_percent=discount_percent,
+            delivery_conditions=delivery_conditions,
+            payment_conditions=payment_conditions,
+            execution_terms=execution_terms,
+            status='в работе'
+        )
+        
+        # Вычисляем общую сумму для отображения
+        subtotal = 0.0
+        for item in order_data:
+            qty = item.get('qty', 0)
+            unit_price = item.get('unit_price', 0.0)
+            discounted_price = unit_price * (1 - discount_percent / 100)
+            subtotal += discounted_price * qty
+        
+        vat_amount = round(subtotal * 0.20, 2)
+        total_amount = round(subtotal + vat_amount, 2)
+        
+        await message.answer(
+            f"✅ КП успешно сохранено в базу данных!\n\n"
+            f"📋 Информация о КП:\n"
+            f"  • Номер КП: {kp_id}\n"
+            f"  • Дата: {offer_date}\n"
+            f"  • Клиент: {customer_name}\n"
+            f"  • Менеджер: {manager_name}\n"
+            f"  • Сумма: {total_amount:,.2f} ₽ (с НДС)\n"
+            f"  • Сроки: {execution_terms}\n"
+            f"  • Статус: в работе\n\n"
+            f"💡 Вы можете отслеживать статус этого КП в базе данных.",
+            reply_markup=main_menu_kb()
+        )
+    
+    except Exception as e:
+        await message.answer(
+            f"❌ Ошибка при сохранении КП в БД: {str(e)}\n\n"
+            "Попробуйте снова позже.",
+            reply_markup=main_menu_kb()
+        )
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        # Очищаем состояние
+        await state.clear()
+
+
+@router.callback_query(F.data == "skip_save_kp")
+async def callback_skip_save_kp(callback: CallbackQuery, state: FSMContext):
+    """
+    Обработчик кнопки "Не сохранять".
+    Пропускает сохранение КП в БД.
+    """
+    # Убираем "часики" с кнопки
+    await callback.answer()
+    
+    # Редактируем сообщение с кнопками
+    await callback.message.edit_text(
+        "❌ КП не сохранено в базу данных."
+    )
+    
+    await callback.message.answer(
+        "✅ Работа с КП завершена!",
+        reply_markup=main_menu_kb()
+    )
+    
+    # Очищаем состояние
+    await state.clear()
 
