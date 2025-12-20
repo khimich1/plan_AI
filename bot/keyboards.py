@@ -24,3 +24,13 @@ def conditions_choice_kb() -> InlineKeyboardMarkup:
         ]
     )
 
+
+def save_to_db_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для сохранения КП в БД"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💾 Сохранить в БД", callback_data="save_kp_to_db")],
+            [InlineKeyboardButton(text="❌ Не сохранять", callback_data="skip_save_kp")],
+        ]
+    )
+

@@ -14,6 +14,8 @@ class KPStates(StatesGroup):
     waiting_conditions_choice = State()
     waiting_delivery_conditions = State()
     waiting_payment_conditions = State()
+    # Состояния для сохранения КП в БД
+    waiting_execution_terms = State()
 
 
 class CompareStates(StatesGroup):
