@@ -972,8 +972,59 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     Обработчик ввода сроков выполнения.
     Сохраняет КП в базу данных plita.db.
     """
-    execution_terms = message.text.strip()
-    print(f"[DEBUG] Получены сроки: {execution_terms}")
+    execution_terms_input = message.text.strip()
+    print(f"[DEBUG] Получены сроки: {execution_terms_input}")
+    
+    # === ПАРСИМ СРОКИ И ВЫЧИСЛЯЕМ ДАТУ ДЕДЛАЙНА ===
+    from datetime import timedelta
+    import re
+    
+    deadline_date = None
+    
+    # ИСПРАВЛЕНИЕ: Сначала пробуем распознать ДАТУ (чтобы "01.02.2026" не распознавалось как "1 день")
+    # Вариант 1: Формат ДД.ММ.ГГГГ (например: "01.02.2026")
+    try:
+        deadline_date = datetime.strptime(execution_terms_input, '%d.%m.%Y')
+        print(f"[DEBUG] Распознана дата (ДД.ММ.ГГГГ): {deadline_date.strftime('%d.%m.%Y')}")
+    except ValueError:
+        pass
+    
+    # Вариант 2: Формат ГГГГ-ММ-ДД (например: "2026-02-01")
+    if not deadline_date:
+        try:
+            deadline_date = datetime.strptime(execution_terms_input, '%Y-%m-%d')
+            print(f"[DEBUG] Распознана дата (ГГГГ-ММ-ДД): {deadline_date.strftime('%d.%m.%Y')}")
+        except ValueError:
+            pass
+    
+    # Вариант 3: Пользователь ввёл количество дней (например: "14", "14 дней", "30дней")
+    if not deadline_date:
+        match_days = re.search(r'(\d+)\s*(?:дн|день|дней|day|days)', execution_terms_input, re.IGNORECASE)
+        if match_days:
+            days = int(match_days.group(1))
+            deadline_date = datetime.now() + timedelta(days=days)
+            print(f"[DEBUG] Распознано {days} дней, дедлайн: {deadline_date.strftime('%d.%m.%Y')}")
+    
+    # Вариант 4: Пользователь ввёл количество недель (например: "2 недели", "3week")
+    if not deadline_date:
+        match_weeks = re.search(r'(\d+)\s*(?:нед|недел|недели|week|weeks)', execution_terms_input, re.IGNORECASE)
+        if match_weeks:
+            weeks = int(match_weeks.group(1))
+            deadline_date = datetime.now() + timedelta(weeks=weeks)
+            print(f"[DEBUG] Распознано {weeks} недель, дедлайн: {deadline_date.strftime('%d.%m.%Y')}")
+    
+    # Если не удалось распознать, используем 14 дней по умолчанию
+    if not deadline_date:
+        deadline_date = datetime.now() + timedelta(days=14)
+        await message.answer(
+            f"⚠️ Не удалось распознать формат срока.\n"
+            f"Использую значение по умолчанию: 14 дней\n"
+            f"Дедлайн: {deadline_date.strftime('%d.%m.%Y')}"
+        )
+    
+    # Форматируем дату для сохранения в БД
+    execution_terms = deadline_date.strftime('%d.%m.%Y')
+    print(f"[DEBUG] Итоговая дата дедлайна: {execution_terms}")
     
     # Получаем данные КП из состояния
     data = await state.get_data()
@@ -1004,7 +1055,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
             discount_percent=discount_percent,
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
-            execution_terms=execution_terms,
+            execution_terms=execution_terms,  # Теперь это дата в формате ДД.ММ.ГГГГ
             status='в работе'
         )
         
@@ -1027,7 +1078,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
             f"  • Клиент: {customer_name}\n"
             f"  • Менеджер: {manager_name}\n"
             f"  • Сумма: {total_amount:,.2f} ₽ (с НДС)\n"
-            f"  • Сроки: {execution_terms}\n"
+            f"  • Срок изготовления до: {execution_terms}\n"
             f"  • Статус: в работе\n\n"
             f"💡 Вы можете отслеживать статус этого КП в базе данных.",
             reply_markup=main_menu_kb()
