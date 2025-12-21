@@ -32,6 +32,9 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
     """
     conn = sqlite3.connect(db_path)
     try:
+        # КРИТИЧНО: Включаем поддержку FOREIGN KEY (по умолчанию выключена в SQLite)
+        conn.execute('PRAGMA foreign_keys = ON')
+        
         cur = conn.cursor()
         
         # Таблица 1: KP_offers - Основная информация о КП
@@ -163,6 +166,9 @@ def save_kp_to_db(
     
     conn = sqlite3.connect(db_path)
     try:
+        # Включаем поддержку FOREIGN KEY
+        conn.execute('PRAGMA foreign_keys = ON')
+        
         cur = conn.cursor()
         
         # Сохраняем основную информацию о КП
@@ -244,6 +250,7 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
     init_schema(db_path)
     conn = sqlite3.connect(db_path)
     try:
+        conn.execute('PRAGMA foreign_keys = ON')
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
@@ -301,6 +308,7 @@ def get_all_kp_by_status(status: str, db_path: str = DEFAULT_DB) -> List[Dict]:
     init_schema(db_path)
     conn = sqlite3.connect(db_path)
     try:
+        conn.execute('PRAGMA foreign_keys = ON')
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
@@ -338,6 +346,7 @@ def update_kp_status(kp_id: int, new_status: str, db_path: str = DEFAULT_DB) -> 
     init_schema(db_path)
     conn = sqlite3.connect(db_path)
     try:
+        conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         cur.execute('''
             UPDATE kp_meta 
@@ -371,6 +380,7 @@ def save_xlsx_file(kp_id: int, xlsx_file_path: str, db_path: str = DEFAULT_DB) -
     
     conn = sqlite3.connect(db_path)
     try:
+        conn.execute('PRAGMA foreign_keys = ON')
         with open(xlsx_file_path, 'rb') as f:
             xlsx_blob = f.read()
         
@@ -420,6 +430,7 @@ def get_xlsx_file(kp_id: int, output_path: Optional[str] = None, db_path: str = 
     init_schema(db_path)
     conn = sqlite3.connect(db_path)
     try:
+        conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         cur.execute('SELECT xlsx_file FROM kp_files WHERE kp_id = ?', (kp_id,))
         row = cur.fetchone()
@@ -459,6 +470,9 @@ def delete_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> bool:
     init_schema(db_path)
     conn = sqlite3.connect(db_path)
     try:
+        # КРИТИЧНО: Включаем поддержку FOREIGN KEY (по умолчанию выключена в SQLite)
+        conn.execute('PRAGMA foreign_keys = ON')
+        
         cur = conn.cursor()
         
         # Проверяем, существует ли КП
