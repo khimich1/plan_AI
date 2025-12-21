@@ -440,6 +440,47 @@ def get_xlsx_file(kp_id: int, output_path: Optional[str] = None, db_path: str = 
         conn.close()
 
 
+def delete_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> bool:
+    """
+    Удаляет КП из базы данных по порядковому номеру.
+    
+    Простыми словами:
+    - Ищет КП по номеру
+    - Удаляет его из базы (включая все плиты, файлы, метаданные)
+    - Благодаря CASCADE DELETE удаляются все связанные записи автоматически
+    
+    Аргументы:
+        kp_id: порядковый номер КП для удаления
+        db_path: путь к базе данных
+    
+    Возвращает:
+        True если КП был найден и удалён, False если КП не найдено
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        
+        # Проверяем, существует ли КП
+        cur.execute('SELECT kp_id FROM KP_offers WHERE kp_id = ?', (kp_id,))
+        if not cur.fetchone():
+            return False
+        
+        # Удаляем КП (CASCADE автоматически удалит все связанные записи)
+        cur.execute('DELETE FROM KP_offers WHERE kp_id = ?', (kp_id,))
+        
+        conn.commit()
+        print(f"[DB] ✅ КП #{kp_id} успешно удалено из базы данных")
+        return True
+    
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при удалении КП #{kp_id}: {e}")
+        return False
+    
+    finally:
+        conn.close()
+
+
 # ==================== ПРИМЕР ИСПОЛЬЗОВАНИЯ ====================
 
 if __name__ == '__main__':

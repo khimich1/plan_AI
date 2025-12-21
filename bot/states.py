@@ -23,3 +23,7 @@ class CompareStates(StatesGroup):
     waiting_kp = State()
     waiting_smeta = State()
 
+
+class AdminStates(StatesGroup):
+    """Состояния для административных команд"""
+    waiting_delete_confirmation = State()
