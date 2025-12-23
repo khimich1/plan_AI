@@ -8,7 +8,8 @@ import re
 from typing import Optional, Dict
 from .db import (
     init_cost_schema, init_default_constants,
-    get_constant, get_concrete_norms, get_reinforcement_norms, get_izoform_norm
+    get_constant, get_concrete_norms, get_reinforcement_norms, get_izoform_norm,
+    get_kef
 )
 import core.config_and_data as cfg
 
@@ -182,7 +183,22 @@ def calculate_plate_cost(plate_name: str, db_path: str = None) -> Optional[Dict]
         # Fallback: рассчитываем по формуле
         izoform_cost = calculate_izoform_cost(volume_m3, db_path)
     
-    total_cost = concrete_cost + reinforcement_cost + loops_cost + izoform_cost
+    # Прямые затраты (как в листе "Стоимость" Excel)
+    # Формула: R4 = H4 + L4 + P4 + Q4 (Бетон + Армирование + Петли + Изоформ)
+    direct_cost = concrete_cost + reinforcement_cost + loops_cost + izoform_cost
+    
+    # Применяем КЭФ (коэффициент накладных расходов, как в листе "Себестоимость" Excel)
+    # Формула Excel: M3 = L3 × КЭФ (накладные = прямые × КЭФ)
+    # Формула Excel: E3 = Прямые + M3 (полная = прямые + накладные)
+    # Ищем КЭФ для конкретной плиты из БД (если был импортирован из Excel)
+    kef = get_kef(length_dm=length_dm, width_dm=width_dm, load_code=load_code, db_path=db_path)
+    
+    # Накладные расходы = Прямые × КЭФ (как в Excel: M3 = L3 × КЭФ)
+    overhead_cost = direct_cost * kef
+    
+    # Полная себестоимость = Прямые + Накладные (как в Excel: E3 = Прямые + M3)
+    # Или: Полная = Прямые × (1 + КЭФ)
+    full_cost_with_kef = direct_cost + overhead_cost
     
     return {
         'plate_name': plate_name,
@@ -194,7 +210,11 @@ def calculate_plate_cost(plate_name: str, db_path: str = None) -> Optional[Dict]
             'loops': round(loops_cost, 2),
             'izoform': round(izoform_cost, 2)
         },
-        'total_cost': round(total_cost, 2),
+        'direct_cost': round(direct_cost, 2),           # Прямые затраты
+        'overhead_cost': round(overhead_cost, 2),       # Накладные расходы
+        'full_cost_with_kef': round(full_cost_with_kef, 2),  # Полная себестоимость с КЭФ
+        'kef': kef,                                     # Значение КЭФ
+        'total_cost': round(direct_cost, 2),           # Для обратной совместимости
         'breakdown': get_cost_breakdown(
             length_dm, width_dm, load_code, volume_m3, concrete_grade, db_path
         )
@@ -245,17 +265,35 @@ def calculate_concrete_cost(volume_m3: float, concrete_grade: str, db_path: str)
 
 
 def get_reinforcement_cost_from_db(length_dm: int, width_dm: int, load_code: int, db_path: str) -> Optional[float]:
-    """Получает стоимость армирования из БД (загружена из Excel)"""
+    """Получает стоимость армирования из БД (загружена из Excel)
+    
+    В БД хранятся:
+    - wire_kg - количество проволоки в кг
+    - cable_cost - стоимость каната в рублях
+    
+    Возвращает: wire_kg × цена_проволоки + cable_cost
+    """
     import sqlite3
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT cable_cost FROM reinforcement_costs
+            SELECT wire_kg, cable_cost FROM reinforcement_costs
             WHERE length_dm=? AND width_dm=? AND load_code=?
         """, (length_dm, width_dm, load_code))
         row = cur.fetchone()
-        return float(row[0]) if row else None
+        if not row:
+            return None
+        
+        wire_kg = row[0] if row[0] else 0
+        cable_cost = row[1] if row[1] else 0
+        
+        # Рассчитываем стоимость проволоки
+        wire_price = get_constant('wire_price_per_kg', db_path) or 0
+        wire_cost = wire_kg * wire_price
+        
+        # Итого: проволока + канат
+        return wire_cost + cable_cost
     finally:
         conn.close()
 
@@ -339,17 +377,30 @@ def get_cost_breakdown(length_dm: int, width_dm: int, load_code: int, volume_m3:
         """, (length_dm, width_dm, load_code))
         row = cur.fetchone()
         if row:
-            breakdown['reinforcement']['wire_kg'] = round(row[0], 3) if row[0] else 0
-            breakdown['reinforcement']['cable_cost'] = round(row[1], 2) if row[1] else 0
+            wire_kg = row[0] if row[0] else 0
+            cable_cost = row[1] if row[1] else 0
+            breakdown['reinforcement']['wire_kg'] = round(wire_kg, 3)
+            breakdown['reinforcement']['cable_cost'] = round(cable_cost, 2)
+            
+            # Рассчитываем стоимость проволоки для отображения
+            wire_price = get_constant('wire_price_per_kg', db_path) or 0
+            breakdown['reinforcement']['wire_cost'] = round(wire_kg * wire_price, 2)
         else:
             # Fallback
             norms_reinforcement = get_reinforcement_norms(load_code, db_path)
             if norms_reinforcement:
-                breakdown['reinforcement']['wire_kg'] = round(norms_reinforcement['wire_kg_per_m3'] * volume_m3, 3)
-                breakdown['reinforcement']['cable_cost'] = round(norms_reinforcement['cable_cost_per_m3'] * volume_m3, 2)
+                wire_kg = norms_reinforcement['wire_kg_per_m3'] * volume_m3
+                cable_cost = norms_reinforcement['cable_cost_per_m3'] * volume_m3
+                breakdown['reinforcement']['wire_kg'] = round(wire_kg, 3)
+                breakdown['reinforcement']['cable_cost'] = round(cable_cost, 2)
+                
+                # Рассчитываем стоимость проволоки для отображения
+                wire_price = get_constant('wire_price_per_kg', db_path) or 0
+                breakdown['reinforcement']['wire_cost'] = round(wire_kg * wire_price, 2)
             else:
                 breakdown['reinforcement']['wire_kg'] = 0
                 breakdown['reinforcement']['cable_cost'] = 0
+                breakdown['reinforcement']['wire_cost'] = 0
         
         # Изоформ
         cur.execute("""

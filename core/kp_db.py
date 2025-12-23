@@ -153,16 +153,25 @@ def save_kp_to_db(
     """
     init_schema(db_path)
     
-    # Подсчитываем финансовые итоги
-    subtotal = 0.0
-    for item in order_data:
-        qty = item.get('qty', 0)
-        unit_price = item.get('unit_price', 0.0)
-        discounted_price = unit_price * (1 - discount_percent / 100)
-        subtotal += discounted_price * qty
-    
-    vat_amount = round(subtotal * 0.20, 2)
-    total_amount = round(subtotal + vat_amount, 2)
+    # 🔥 ИСПРАВЛЕНИЕ: Используем ту же функцию расчета, что и в XLSX
+    # Это гарантирует, что суммы в БД и в XLSX файле будут одинаковыми
+    try:
+        from core.commercial_offer_xlsx import calculate_total_cost
+        totals = calculate_total_cost(order_data, discount_percent)
+        subtotal = totals['subtotal']
+        vat_amount = totals['vat_amount']
+        total_amount = totals['total_with_vat']
+    except ImportError:
+        # Fallback: старая логика, если модуль не найден
+        subtotal = 0.0
+        for item in order_data:
+            qty = item.get('qty', 0)
+            unit_price = item.get('unit_price', 0.0)
+            discounted_price = unit_price * (1 - discount_percent / 100)
+            subtotal += discounted_price * qty
+        
+        vat_amount = round(subtotal * 0.20, 2)
+        total_amount = round(subtotal + vat_amount, 2)
     
     conn = sqlite3.connect(db_path)
     try:
@@ -490,6 +499,79 @@ def delete_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> bool:
     except Exception as e:
         print(f"[DB] ❌ Ошибка при удалении КП #{kp_id}: {e}")
         return False
+    
+    finally:
+        conn.close()
+
+
+def clear_all_kp(db_path: str = DEFAULT_DB) -> Dict[str, int]:
+    """
+    Полностью очищает все таблицы с КП из базы данных.
+    
+    Простыми словами:
+    - Удаляет ВСЕ КП из базы данных
+    - Очищает все таблицы: KP_offers, kp_plates, kp_files, kp_meta
+    - Сбрасывает счётчики AUTOINCREMENT, чтобы новые КП начинались с 1
+    - Это как стереть все записи из всех таблиц Excel и начать заново
+    
+    Возвращает:
+        Словарь с количеством удалённых записей из каждой таблицы
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        # Включаем поддержку FOREIGN KEY
+        conn.execute('PRAGMA foreign_keys = ON')
+        
+        cur = conn.cursor()
+        
+        # Подсчитываем количество записей перед удалением
+        cur.execute('SELECT COUNT(*) FROM KP_offers')
+        kp_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM kp_plates')
+        plates_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM kp_files')
+        files_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM kp_meta')
+        meta_count = cur.fetchone()[0]
+        
+        # Удаляем все записи из всех таблиц
+        # Порядок важен: сначала зависимые таблицы, потом основную
+        cur.execute('DELETE FROM kp_plates')
+        cur.execute('DELETE FROM kp_files')
+        cur.execute('DELETE FROM kp_meta')
+        cur.execute('DELETE FROM KP_offers')
+        
+        # Сбрасываем счётчики AUTOINCREMENT
+        # Это нужно, чтобы новые КП начинались с номера 1
+        cur.execute('DELETE FROM sqlite_sequence WHERE name IN (?, ?, ?, ?)', 
+                   ('KP_offers', 'kp_plates', 'kp_files', 'kp_meta'))
+        
+        conn.commit()
+        
+        result = {
+            'kp_offers': kp_count,
+            'kp_plates': plates_count,
+            'kp_files': files_count,
+            'kp_meta': meta_count
+        }
+        
+        print(f"[DB] ✅ Полная очистка БД завершена:")
+        print(f"  - Удалено КП: {kp_count}")
+        print(f"  - Удалено записей плит: {plates_count}")
+        print(f"  - Удалено файлов: {files_count}")
+        print(f"  - Удалено метаданных: {meta_count}")
+        
+        return result
+    
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при полной очистке БД: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
     
     finally:
         conn.close()

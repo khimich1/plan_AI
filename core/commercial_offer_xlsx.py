@@ -108,14 +108,14 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) ->
         Словарь с итоговыми суммами
     """
     total_qty = 0
-    total_cost = 0.0
+    total_cost_with_vat = 0.0  # Сумма с НДС (unit_price уже включает НДС)
     
     for item in order_data:
         qty = item.get('qty', 0)
         
         # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
         if 'unit_price' in item and item['unit_price'] is not None:
-            unit_price = item['unit_price']
+            unit_price = item['unit_price']  # Цена УЖЕ включает НДС
         else:
             # Fallback: старая логика (только базовая цена из БД)
             length_m = item.get('length_m', 0)
@@ -126,19 +126,21 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) ->
         # Применяем скидку к цене (если указана)
         discounted_price = unit_price * (1 - discount_percent / 100)
         
-        # Считаем сумму по позиции
+        # Считаем сумму по позиции (это уже с НДС)
         item_cost = discounted_price * qty
         
         total_qty += qty
-        total_cost += item_cost
+        total_cost_with_vat += item_cost
     
-    # НДС 20%
-    vat_amount = round(total_cost * 0.20, 2)
-    total_with_vat = round(total_cost + vat_amount, 2)
+    # 🔥 ИСПРАВЛЕНИЕ: unit_price уже включает НДС, поэтому нужно вычесть НДС
+    # Сумма без НДС = сумма с НДС / 1.20
+    subtotal = round(total_cost_with_vat / 1.20, 2)
+    vat_amount = round(total_cost_with_vat - subtotal, 2)
+    total_with_vat = round(total_cost_with_vat, 2)
     
     return {
         'total_qty': total_qty,
-        'subtotal': round(total_cost, 2),
+        'subtotal': subtotal,
         'vat_amount': vat_amount,
         'total_with_vat': total_with_vat
     }
@@ -420,28 +422,30 @@ def generate_commercial_offer_xlsx(
             discount_cell.font = Font(name='Tahoma', size=11, bold=True, color='FF006100')  # Зелёный цвет для скидки
             discount_cell.alignment = left_align
         
-        # Итоговая сумма без НДС
+        # Итоговая сумма (уже с НДС, так как unit_price включает НДС)
         subtotal_row = summary_row
         worksheet.merge_cells(f'A{subtotal_row}:F{subtotal_row}')
         worksheet[f'A{subtotal_row}'] = f"Всего наименований {total_items}, общим весом {total_weight:,.3f} кг."
         worksheet[f'A{subtotal_row}'].font = summary_font
         worksheet[f'A{subtotal_row}'].alignment = left_align
         
-        # Формула для подсчёта суммы
+        # Формула для подсчёта суммы (это сумма с НДС)
         first_data_row = table_header_row + 1
         last_data_row = table_header_row + len(order_data)
-        worksheet[f'G{subtotal_row}'] = f"=SUM(G{first_data_row}:G{last_data_row})"
-        worksheet[f'G{subtotal_row}'].font = summary_font
-        worksheet[f'G{subtotal_row}'].number_format = '#,##0.00'
-        worksheet[f'G{subtotal_row}'].alignment = right_align
+        sum_with_vat_cell = worksheet[f'G{subtotal_row}']
+        sum_with_vat_cell.value = f"=SUM(G{first_data_row}:G{last_data_row})"
+        sum_with_vat_cell.font = summary_font
+        sum_with_vat_cell.number_format = '#,##0.00'
+        sum_with_vat_cell.alignment = right_align
         
-        # НДС 20%
+        # НДС 20% - вычитаем из суммы с НДС
         vat_row = summary_row + 1
         worksheet.merge_cells(f'A{vat_row}:F{vat_row}')
         worksheet[f'A{vat_row}'] = "в том числе НДС (20%)"
         worksheet[f'A{vat_row}'].font = summary_font
         worksheet[f'A{vat_row}'].alignment = left_align
-        worksheet[f'G{vat_row}'] = f"=G{subtotal_row}*0.2"  # Формула для НДС
+        # НДС = сумма с НДС - сумма без НДС = сумма с НДС - (сумма с НДС / 1.20)
+        worksheet[f'G{vat_row}'] = f"=G{subtotal_row}-G{subtotal_row}/1.2"  # Формула для НДС
         worksheet[f'G{vat_row}'].font = summary_font
         worksheet[f'G{vat_row}'].number_format = '#,##0.00'
         worksheet[f'G{vat_row}'].alignment = right_align

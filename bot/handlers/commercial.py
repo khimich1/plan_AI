@@ -1059,16 +1059,16 @@ async def receive_execution_terms(message: Message, state: FSMContext):
             status='в работе'
         )
         
-        # Вычисляем общую сумму для отображения
-        subtotal = 0.0
-        for item in order_data:
-            qty = item.get('qty', 0)
-            unit_price = item.get('unit_price', 0.0)
-            discounted_price = unit_price * (1 - discount_percent / 100)
-            subtotal += discounted_price * qty
-        
-        vat_amount = round(subtotal * 0.20, 2)
-        total_amount = round(subtotal + vat_amount, 2)
+        # 🔥 ИСПРАВЛЕНИЕ: Используем ту же функцию расчета, что и в XLSX и в save_kp_to_db
+        # Получаем итоговую сумму из сохраненного КП (она уже рассчитана правильно)
+        kp_info = kp_db.get_kp_by_id(kp_id)
+        if kp_info:
+            total_amount = kp_info.get('total_amount', 0)
+        else:
+            # Fallback: если не удалось получить из БД, используем ту же функцию расчета
+            from core.commercial_offer_xlsx import calculate_total_cost
+            totals = calculate_total_cost(order_data, discount_percent)
+            total_amount = totals['total_with_vat']
         
         await message.answer(
             f"✅ КП успешно сохранено в базу данных!\n\n"

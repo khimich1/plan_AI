@@ -7,7 +7,8 @@
 from .db import (
     init_cost_schema, init_default_constants,
     get_constant, get_concrete_norms, 
-    get_reinforcement_norms, get_izoform_norm
+    get_reinforcement_norms, get_izoform_norm,
+    get_kef
 )
 from .calculation import (
     parse_plate_name, calculate_plate_volume,
@@ -21,6 +22,7 @@ __all__ = [
     'init_cost_schema', 'init_default_constants',
     'get_constant', 'get_concrete_norms',
     'get_reinforcement_norms', 'get_izoform_norm',
+    'get_kef',
     # Calculation functions
     'parse_plate_name', 'calculate_plate_volume',
     'calculate_plate_cost', 'calculate_concrete_cost',

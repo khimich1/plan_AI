@@ -85,6 +85,27 @@ def init_cost_schema(db_path: str = DEFAULT_DB) -> None:
             )
         """)
         
+        # Таблица КЭФ по плитам (из Excel)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS plate_kef_values (
+                length_dm INTEGER NOT NULL,
+                width_dm INTEGER NOT NULL,
+                load_code REAL NOT NULL,
+                kef REAL NOT NULL,
+                plate_name TEXT,
+                source_file TEXT,
+                source_row INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (length_dm, width_dm, load_code)
+            )
+        """)
+        
+        # Индекс для быстрого поиска
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_plate_kef_dimensions 
+            ON plate_kef_values(length_dm, width_dm, load_code)
+        """)
+        
         conn.commit()
     finally:
         conn.close()
@@ -115,6 +136,7 @@ def init_default_constants(db_path: str = DEFAULT_DB) -> None:
             ('loop_d18_price', 286.0, 'руб/шт', 'Цена петли д 18'),
             ('loops_per_plate', 2.0, 'шт', 'Количество петель на плиту (стандартно)'),
             ('izoform_price_per_kg', 95.0, 'руб/кг', 'Цена Изоформ-Б "Экстра"'),
+            ('kef', 1.25, 'коэф', 'КЭФ - коэффициент накладных расходов'),
         ]
         
         for key, value, unit, desc in constants:
@@ -246,4 +268,53 @@ def get_izoform_norm(volume_m3: float, db_path: str = DEFAULT_DB) -> Optional[fl
         return float(row[0]) if row else None
     finally:
         conn.close()
+
+
+def get_kef(
+    length_dm: int = None,
+    width_dm: int = None,
+    load_code: float = None,
+    db_path: str = DEFAULT_DB
+) -> float:
+    """
+    Получает КЭФ (коэффициент накладных расходов) из БД
+    
+    КЭФ применяется к прямым затратам для расчёта полной себестоимости:
+    полная_себестоимость = прямые_затраты × КЭФ
+    
+    Логика поиска:
+    1. Если указаны параметры плиты - ищет КЭФ для конкретной плиты
+    2. Если не найден - использует дефолтное значение из cost_constants
+    
+    Args:
+        length_dm: длина плиты в дециметрах (опционально)
+        width_dm: ширина плиты в дециметрах (опционально)
+        load_code: код нагрузки (опционально)
+        db_path: путь к БД
+    
+    Returns:
+        Значение КЭФ (по умолчанию 1.25 если не найден)
+    """
+    init_cost_schema(db_path)
+    
+    # Если указаны параметры плиты - ищем КЭФ для конкретной плиты
+    if length_dm is not None and width_dm is not None and load_code is not None:
+        conn = sqlite3.connect(db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT kef FROM plate_kef_values
+                WHERE length_dm = ? AND width_dm = ? AND load_code = ?
+            """, (length_dm, width_dm, load_code))
+            row = cur.fetchone()
+            if row and row[0] and row[0] >= 1.0:
+                return float(row[0])
+        except Exception as e:
+            print(f"[KEF] ⚠️ Ошибка при чтении КЭФ для плиты: {e}")
+        finally:
+            conn.close()
+    
+    # Fallback: используем дефолтное значение из констант
+    kef = get_constant('kef', db_path)
+    return kef if kef and kef >= 1.0 else 1.25  # Дефолт 1.25 как в Excel
 

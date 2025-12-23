@@ -8,6 +8,7 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="Получить КП")],
             [KeyboardButton(text="Коммерческое предложение PDF")],
+            [KeyboardButton(text="Планирование производства")],
             [KeyboardButton(text="Сравнение результатов")],
         ],
         resize_keyboard=True

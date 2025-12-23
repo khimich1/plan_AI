@@ -216,6 +216,18 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     num_tracks = len(tracks)
     print(f"[ВИЗУАЛИЗАЦИЯ] Плиты разбиты на {num_tracks} дорожек")
 
+    # === РАСЧЁТ МАКСИМАЛЬНОГО АРМИРОВАНИЯ ДЛЯ КАЖДОЙ ДОРОЖКИ ===
+    for track in tracks:
+        max_reinforcement = 0.0
+        for item in track['items']:
+            reinforcement = item.get('reinforcement', 0)
+            # Исключаем fallback значения (999.0)
+            if reinforcement and reinforcement < 999:
+                max_reinforcement = max(max_reinforcement, reinforcement)
+        track['max_reinforcement'] = max_reinforcement
+        if max_reinforcement > 0:
+            print(f"[ВИЗУАЛИЗАЦИЯ] Дорожка: макс. армирование {max_reinforcement:.1f} кг/м²")
+
     # Убрали секцию детальной разбивки - она теперь в отдельном Excel файле
     # Увеличиваем высоту секции дорожек пропорционально их количеству
     track_section_height = 3.0 + (num_tracks - 1) * 2.5
@@ -251,19 +263,31 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     ax_track.spines['top'].set_visible(False)
     ax_track.spines['right'].set_visible(False)
     
-    # Метки по оси Y (номера дорожек + НАГРУЗКА!)
+    # Метки по оси Y (номера дорожек + НАГРУЗКА + АРМИРОВАНИЕ!)
     y_ticks = []
     y_labels = []
     for i in range(num_tracks):
         y_pos = i * (track_height + track_spacing) + track_height / 2
         y_ticks.append(y_pos)
         
-        # ✅ Если есть информация о нагрузке, показываем её в метке
+        # ✅ Формируем метку с нагрузкой и армированием
+        track_label = f"Д{i+1}"
+        
         if 'load_code' in tracks[i]:
             load_label = tracks[i].get('label', f"Нагрузка {tracks[i]['load_code']}п")
-            y_labels.append(f"Д{i+1}\n({load_label})")
-        else:
+            track_label += f"\n({load_label})"
+        
+        # ✅ НОВОЕ: Добавляем максимальное армирование
+        max_reinf = tracks[i].get('max_reinforcement', 0)
+        if max_reinf > 0:
+            track_label += f"\nмакс. арм. {max_reinf:.1f}"
+        
+        if track_label == f"Д{i+1}":
+            # Если нет доп. информации, используем полное название
             y_labels.append(f'Дор.{i+1}')
+        else:
+            y_labels.append(track_label)
+    
     ax_track.set_yticks(y_ticks)
     ax_track.set_yticklabels(y_labels)
     

@@ -27,3 +27,9 @@ class CompareStates(StatesGroup):
 class AdminStates(StatesGroup):
     """Состояния для административных команд"""
     waiting_delete_confirmation = State()
+
+
+class ProductionStates(StatesGroup):
+    """Состояния для планирования производства"""
+    waiting_tracks_count = State()    # Количество дорожек
+    waiting_date_number = State()     # Дата дедлайна

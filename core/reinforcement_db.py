@@ -166,8 +166,9 @@ def get_reinforcement(
 ) -> float | None:
     """
     Возвращает значение армирования по длине и нагрузке.
-    - source: 'erm' (предпочтительно) или 'series'
-    - allow_fallback: искать ближайшую длину ±1 дм, либо переключиться на 'series'
+    Сначала ищет в таблице pb_reinforcement_series, затем в reinforcement_loads.
+    - source: 'erm' (предпочтительно) или 'series' (используется только для reinforcement_loads)
+    - allow_fallback: искать ближайшую длину ±1 дм, либо переключиться на другую таблицу
     """
     length_dm = int(round(length_m * 10))
     load_code_int = int(float(load_code) + 0.5)
@@ -176,45 +177,78 @@ def get_reinforcement(
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
-        # 1) точное совпадение по source
-        cur.execute(
-            """
-            SELECT value FROM reinforcement_loads
-            WHERE length_dm=? AND load_code=? AND source=?
-            """,
-            (length_dm, load_code_int, source),
-        )
-        row = cur.fetchone()
-        if row:
-            return float(row[0])
-
-        # 2) fallback: другая source
-        if allow_fallback:
-            alt_source = "series" if source == "erm" else "erm"
+        
+        # === ШАГ 1: Ищем в новой таблице pb_reinforcement_series ===
+        cur.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='pb_reinforcement_series'
+        """)
+        if cur.fetchone():
+            # Таблица существует - ищем в ней
+            cur.execute("""
+                SELECT reinforcement_value FROM pb_reinforcement_series
+                WHERE length_dm=? AND load_code=?
+            """, (length_dm, load_code_int))
+            row = cur.fetchone()
+            if row:
+                return float(row[0])
+            
+            # Fallback: ближайшая длина ±1 дм в pb_reinforcement_series
+            if allow_fallback:
+                cur.execute("""
+                    SELECT reinforcement_value FROM pb_reinforcement_series
+                    WHERE ABS(length_dm - ?) <= 1 AND load_code=?
+                    ORDER BY ABS(length_dm-?) LIMIT 1
+                """, (length_dm, load_code_int, length_dm))
+                row = cur.fetchone()
+                if row:
+                    return float(row[0])
+        
+        # === ШАГ 2: Fallback - ищем в старой таблице reinforcement_loads ===
+        cur.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='reinforcement_loads'
+        """)
+        if cur.fetchone():
+            # 1) точное совпадение по source
             cur.execute(
                 """
                 SELECT value FROM reinforcement_loads
                 WHERE length_dm=? AND load_code=? AND source=?
                 """,
-                (length_dm, load_code_int, alt_source),
+                (length_dm, load_code_int, source),
             )
             row = cur.fetchone()
             if row:
                 return float(row[0])
 
-        # 3) fallback: ближайшая длина ±1 дм
-        if allow_fallback:
-            cur.execute(
-                """
-                SELECT value FROM reinforcement_loads
-                WHERE ABS(length_dm - ?) <= 1 AND load_code=? AND source=?
-                ORDER BY ABS(length_dm-?) LIMIT 1
-                """,
-                (length_dm, load_code_int, source, length_dm),
-            )
-            row = cur.fetchone()
-            if row:
-                return float(row[0])
+            # 2) fallback: другая source
+            if allow_fallback:
+                alt_source = "series" if source == "erm" else "erm"
+                cur.execute(
+                    """
+                    SELECT value FROM reinforcement_loads
+                    WHERE length_dm=? AND load_code=? AND source=?
+                    """,
+                    (length_dm, load_code_int, alt_source),
+                )
+                row = cur.fetchone()
+                if row:
+                    return float(row[0])
+
+            # 3) fallback: ближайшая длина ±1 дм
+            if allow_fallback:
+                cur.execute(
+                    """
+                    SELECT value FROM reinforcement_loads
+                    WHERE ABS(length_dm - ?) <= 1 AND load_code=? AND source=?
+                    ORDER BY ABS(length_dm-?) LIMIT 1
+                    """,
+                    (length_dm, load_code_int, source, length_dm),
+                )
+                row = cur.fetchone()
+                if row:
+                    return float(row[0])
     finally:
         conn.close()
     return None

@@ -10,6 +10,7 @@ import sqlite3
 import pandas as pd
 from .db import init_cost_schema
 import core.config_and_data as cfg
+from core.config_and_data import parse_load_code_from_name
 
 EXCEL_PATH = os.path.join(cfg.BASE_DIR, "банк знаний", "Расчет новых цен на ПБ 10.09.2025 (1).xls")
 
@@ -43,13 +44,18 @@ def load_volumes_from_excel(db_path: str) -> None:
         volumes_loaded = 0
         for _, row in plate_rows.iterrows():
             plate_name = str(row.iloc[0])
-            match = re.match(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
+            # Используем более гибкий паттерн, который учитывает букву "п" в конце
+            match = re.search(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
             if not match:
                 continue
             
-            length_dm = int(match.group(1))
-            width_dm = int(match.group(2))
-            load_code = int(match.group(3))
+            try:
+                length_dm = int(match.group(1))
+                width_dm = int(match.group(2))
+                # Используем parse_load_code_from_name для правильного парсинга нагрузки (поддерживает "8п", "12,5п" и т.д.)
+                load_code = parse_load_code_from_name(plate_name, default=8)
+            except (ValueError, IndexError):
+                continue
             
             # Объем в колонке 3 (Unnamed: 3)
             volume = row.iloc[3]
@@ -152,13 +158,18 @@ def load_reinforcement_costs_from_excel(db_path: str) -> None:
         costs_loaded = 0
         for _, row in plate_rows.iterrows():
             plate_name = str(row.iloc[0])
-            match = re.match(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
+            # Используем более гибкий паттерн, который учитывает букву "п" в конце
+            match = re.search(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
             if not match:
                 continue
             
-            length_dm = int(match.group(1))
-            width_dm = int(match.group(2))
-            load_code = int(match.group(3))
+            try:
+                length_dm = int(match.group(1))
+                width_dm = int(match.group(2))
+                # Используем parse_load_code_from_name для правильного парсинга нагрузки (поддерживает "8п", "12,5п" и т.д.)
+                load_code = parse_load_code_from_name(plate_name, default=8)
+            except (ValueError, IndexError):
+                continue
             
             # Проволока в колонке 5 (Unnamed: 5) - кг
             wire_kg = row.iloc[5] if pd.notna(row.iloc[5]) else 0
@@ -211,13 +222,18 @@ def load_concrete_costs_from_excel(db_path: str) -> None:
         costs_loaded = 0
         for _, row in plate_rows.iterrows():
             plate_name = str(row.iloc[0])
-            match = re.match(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
+            # Используем более гибкий паттерн, который учитывает букву "п" в конце
+            match = re.search(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
             if not match:
                 continue
             
-            length_dm = int(match.group(1))
-            width_dm = int(match.group(2))
-            load_code = int(match.group(3))
+            try:
+                length_dm = int(match.group(1))
+                width_dm = int(match.group(2))
+                # Используем parse_load_code_from_name для правильного парсинга нагрузки (поддерживает "8п", "12,5п" и т.д.)
+                load_code = parse_load_code_from_name(plate_name, default=8)
+            except (ValueError, IndexError):
+                continue
             
             # Стоимость бетона в колонке 13 ("цена")
             concrete_cost = row.iloc[13] if pd.notna(row.iloc[13]) else 0
@@ -266,13 +282,18 @@ def load_izoform_costs_from_excel(db_path: str) -> None:
         costs_loaded = 0
         for _, row in plate_rows.iterrows():
             plate_name = str(row.iloc[0])
-            match = re.match(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
+            # Используем более гибкий паттерн, который учитывает букву "п" в конце
+            match = re.search(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
             if not match:
                 continue
             
-            length_dm = int(match.group(1))
-            width_dm = int(match.group(2))
-            load_code = int(match.group(3))
+            try:
+                length_dm = int(match.group(1))
+                width_dm = int(match.group(2))
+                # Используем parse_load_code_from_name для правильного парсинга нагрузки (поддерживает "8п", "12,5п" и т.д.)
+                load_code = parse_load_code_from_name(plate_name, default=8)
+            except (ValueError, IndexError):
+                continue
             
             # Изоформ кг в колонке 17
             izoform_kg = row.iloc[17] if pd.notna(row.iloc[17]) else 0
@@ -324,13 +345,18 @@ def load_total_costs_from_excel(db_path: str) -> None:
         costs_loaded = 0
         for _, row in plate_rows.iterrows():
             plate_name = str(row.iloc[0])
-            match = re.match(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
+            # Используем более гибкий паттерн, который учитывает букву "п" в конце
+            match = re.search(r'ПБ\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', plate_name, re.IGNORECASE)
             if not match:
                 continue
             
-            length_dm = int(match.group(1))
-            width_dm = int(match.group(2))
-            load_code = int(match.group(3))
+            try:
+                length_dm = int(match.group(1))
+                width_dm = int(match.group(2))
+                # Используем parse_load_code_from_name для правильного парсинга нагрузки (поддерживает "8п", "12,5п" и т.д.)
+                load_code = parse_load_code_from_name(plate_name, default=8)
+            except (ValueError, IndexError):
+                continue
             
             # Общая сумма в колонке 19
             total_cost = row.iloc[19] if pd.notna(row.iloc[19]) else 0
@@ -347,6 +373,168 @@ def load_total_costs_from_excel(db_path: str) -> None:
         print(f"✅ Загружено {costs_loaded} записей общей себестоимости из Excel")
     finally:
         conn.close()
+
+
+def load_kef_from_excel(db_path: str = None) -> None:
+    """
+    Загружает значения КЭФ из Excel файла в БД.
+    
+    Ищет колонку "КЭФ" в листах "Себестоимость" или "Прайс" и сохраняет
+    значения КЭФ для каждой плиты в таблицу plate_kef_values.
+    """
+    if db_path is None:
+        db_path = cfg.PRICE_DB_PATH
+    
+    from .db import init_cost_schema
+    from core.config_and_data import parse_load_code_from_name
+    
+    init_cost_schema(db_path)
+    
+    # Пробуем открыть .xlsx файл
+    excel_xlsx_path = EXCEL_PATH.replace('.xls', '.xlsx')
+    if not os.path.exists(excel_xlsx_path):
+        excel_xlsx_path = EXCEL_PATH
+    
+    if not os.path.exists(excel_xlsx_path):
+        print(f"❌ Файл Excel не найден: {excel_xlsx_path}")
+        return
+    
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(excel_xlsx_path, data_only=True)
+    except ImportError:
+        print("❌ openpyxl не установлен. Установите: pip install openpyxl")
+        return
+    except Exception as e:
+        print(f"❌ Ошибка открытия Excel: {e}")
+        return
+    
+    print("📊 Загрузка значений КЭФ из Excel...")
+    
+    # Ищем листы с КЭФ
+    sheets_to_check = ['Себестоимость', 'себестоимость', 'Прайс', 'прайс', 'Costing', 'Price']
+    
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        
+        kef_loaded = 0
+        
+        for sheet_name in sheets_to_check:
+            if sheet_name not in wb.sheetnames:
+                continue
+            
+            sheet = wb[sheet_name]
+            print(f"\n📋 Проверяю лист: {sheet_name}")
+            
+            # Ищем колонку "КЭФ"
+            header_row = None
+            kef_col = None
+            
+            # Ищем заголовок
+            for row_idx in range(1, min(20, sheet.max_row + 1)):
+                for col_idx in range(1, min(30, sheet.max_column + 1)):
+                    cell = sheet.cell(row_idx, col_idx)
+                    cell_text = str(cell.value or '').strip().upper()
+                    
+                    if 'КЭФ' in cell_text or 'KEF' in cell_text or 'КОЭФ' in cell_text:
+                        kef_col = col_idx
+                        header_row = row_idx
+                        print(f"  ✓ Найдена колонка КЭФ: колонка {col_idx}, строка {row_idx}")
+                        break
+                
+                if kef_col:
+                    break
+            
+            if not kef_col:
+                print(f"  ⚠️ Колонка КЭФ не найдена на листе {sheet_name}")
+                continue
+            
+            # Ищем колонку с названием плиты
+            name_col = None
+            for col_idx in range(1, min(10, sheet.max_column + 1)):
+                for row_idx in range(1, min(10, sheet.max_row + 1)):
+                    cell = sheet.cell(row_idx, col_idx)
+                    cell_text = str(cell.value or '').strip().upper()
+                    
+                    if any(kw in cell_text for kw in ['НАИМЕНОВАНИЕ', 'ПЛИТ', 'ПБ', 'ПК']):
+                        name_col = col_idx
+                        break
+                
+                if name_col:
+                    break
+            
+            if not name_col:
+                print(f"  ⚠️ Колонка с названием плиты не найдена")
+                continue
+            
+            # Читаем данные (начинаем со строки после заголовка)
+            data_start_row = header_row + 1 if header_row else 2
+            
+            for row_idx in range(data_start_row, sheet.max_row + 1):
+                # Читаем название плиты
+                plate_name_cell = sheet.cell(row_idx, name_col)
+                plate_name = str(plate_name_cell.value or '').strip()
+                
+                if not plate_name or len(plate_name) < 5:
+                    continue
+                
+                if not any(x in plate_name.upper() for x in ['ПБ', 'ПК', 'ПЛИТ']):
+                    continue
+                
+                # Читаем КЭФ
+                kef_cell = sheet.cell(row_idx, kef_col)
+                kef_value = kef_cell.value
+                
+                if kef_value is None:
+                    continue
+                
+                try:
+                    kef = float(kef_value)
+                    if kef < 1.0 or kef > 3.0:
+                        continue
+                except (ValueError, TypeError):
+                    continue
+                
+                # Парсим параметры плиты
+                load_code = parse_load_code_from_name(plate_name, default=8)
+                if '12,5' in plate_name or '12.5' in plate_name:
+                    load_code = 12.5
+                
+                # Извлекаем размеры из названия
+                normalized = plate_name.replace(',', '.')
+                match = re.search(r'п[бк]\s*(\d+)\s*-\s*([\d\.]+)', normalized, re.IGNORECASE)
+                
+                if not match:
+                    continue
+                
+                try:
+                    length_dm = int(float(match.group(1)))
+                    width_dm = int(round(float(match.group(2))))
+                except (ValueError, TypeError):
+                    continue
+                
+                # Сохраняем в БД
+                try:
+                    cur.execute("""
+                        INSERT OR REPLACE INTO plate_kef_values
+                        (length_dm, width_dm, load_code, kef, plate_name, source_file, source_row)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        length_dm, width_dm, load_code, kef,
+                        plate_name, os.path.basename(excel_xlsx_path), row_idx
+                    ))
+                    kef_loaded += 1
+                except Exception as e:
+                    print(f"  ⚠️ Ошибка сохранения КЭФ для {plate_name}: {e}")
+                    continue
+        
+        conn.commit()
+        print(f"\n✓ Загружено {kef_loaded} значений КЭФ из Excel")
+        
+    finally:
+        conn.close()
+        wb.close()
 
 
 def main():
@@ -369,6 +557,7 @@ def main():
     load_reinforcement_costs_from_excel(db_path)
     load_izoform_costs_from_excel(db_path)
     load_total_costs_from_excel(db_path)
+    load_kef_from_excel(db_path)
     
     print()
     print("=" * 80)
