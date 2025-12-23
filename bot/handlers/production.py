@@ -364,7 +364,68 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 'plate_name': plate_data.get('plate_name', '')  # Название плиты
             })
         
-        # === ШАГ 4: ЗАПУСКАЕМ ОПТИМИЗАЦИЮ (ОДИН РАЗ) ===
+        # === ШАГ 4: СОЗДАЁМ LOOKUP-ТАБЛИЦЫ ДЛЯ БЫСТРОГО ДОСТУПА ===
+        # Создаём словари для быстрого поиска информации о плитах O(1) вместо O(n)
+        
+        # 1. Точный lookup: (длина, ширина) → информация о плите
+        plate_lookup_exact = {}
+        for order in orders_2d:
+            key = (round(order['length'], 2), order['width'])
+            if key not in plate_lookup_exact:
+                plate_lookup_exact[key] = {
+                    'kp_date': order.get('kp_date', 'неизвестно'),
+                    'customer': order.get('customer', 'неизвестно'),
+                    'plate_name': order.get('plate_name', ''),
+                    'reinforcement': order.get('reinforcement', 0),
+                    'load_code': order.get('load_code', 8),
+                    'qty': order.get('qty', 1),
+                }
+        
+        # 2. Lookup по длине: длина → информация о плите (для резаных плит)
+        # Резаная плита может иметь другую ширину (665мм вместо 1200мм)
+        plate_lookup_by_length = {}
+        for order in orders_2d:
+            length_key = round(order['length'], 2)
+            # Сохраняем только первую встреченную (обычно это исходная ширина 1200мм)
+            if length_key not in plate_lookup_by_length:
+                plate_lookup_by_length[length_key] = {
+                    'kp_date': order.get('kp_date', 'неизвестно'),
+                    'customer': order.get('customer', 'неизвестно'),
+                    'plate_name': order.get('plate_name', ''),
+                    'reinforcement': order.get('reinforcement', 0),
+                }
+        
+        print(f"[LOOKUP] Создано {len(plate_lookup_exact)} записей (точный поиск)")
+        print(f"[LOOKUP] Создано {len(plate_lookup_by_length)} записей (поиск по длине)")
+        
+        # Вспомогательная функция для умного поиска
+        def get_plate_info_smart(length, width):
+            """
+            Умный поиск информации о плите с двумя стратегиями:
+            1. Точный поиск по (длина, ширина)
+            2. Поиск по длине (для резаных плит с изменённой шириной)
+            """
+            # Стратегия 1: Точный поиск
+            key = (round(length, 2), width)
+            info = plate_lookup_exact.get(key)
+            if info:
+                return info.copy()  # Возвращаем копию, чтобы не изменить оригинал
+            
+            # Стратегия 2: Поиск по длине (для резаных плит)
+            length_key = round(length, 2)
+            info = plate_lookup_by_length.get(length_key)
+            if info:
+                return info.copy()
+            
+            # Fallback: плита не найдена
+            return {
+                'kp_date': 'неизвестно',
+                'customer': 'неизвестно',
+                'plate_name': '',
+                'reinforcement': 0
+            }
+        
+        # === ШАГ 5: ЗАПУСКАЕМ ОПТИМИЗАЦИЮ (ОДИН РАЗ) ===
         optimization_result = await asyncio.to_thread(
             optimize_with_cascading_longitudinal_cuts,
             orders_2d=orders_2d
@@ -655,34 +716,14 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                         if not length:
                             continue
                         
-                        # Ищем информацию о плите
-                        # ВАЖНО: Сначала ищем в orders_2d (там точная информация)
-                        plate_info = None
+                        # Ищем информацию о плите через lookup-таблицу (O(1) вместо O(n))
+                        plate_info = get_plate_info_smart(length, width)
                         
-                        # Ищем в orders_2d с допуском по длине
-                        for order in orders_2d:
-                            if (abs(order['length'] - length) < 0.1 and 
-                                abs(order['width'] - width) < 50):
-                                plate_info = {
-                                    'reinforcement': order.get('reinforcement', 0),
-                                    'kp_date': order.get('kp_date', 'неизвестно'),
-                                    'customer': order.get('customer', 'неизвестно'),
-                                    'plate_name': order.get('plate_name', '')
-                                }
-                                break
-                        
-                        # Если не нашли в orders_2d, пробуем find_plate_info
-                        if not plate_info:
-                            plate_info = find_plate_info(length, width)
-                        
-                        # Если всё равно не нашли, используем fallback
-                        if not plate_info:
-                            plate_info = {
-                                'reinforcement': item.get('reinforcement', 0),
-                                'kp_date': 'неизвестно',
-                                'customer': 'неизвестно',
-                                'plate_name': ''
-                            }
+                        # Если lookup не нашёл, пробуем старый метод (для совместимости)
+                        if plate_info['kp_date'] == 'неизвестно':
+                            legacy_info = find_plate_info(length, width)
+                            if legacy_info and legacy_info.get('kp_date') != 'неизвестно':
+                                plate_info = legacy_info
                         
                         # Проверяем, есть ли уже такая плита в списке
                         found = False
