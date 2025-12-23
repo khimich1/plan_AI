@@ -11,6 +11,30 @@ from core.optimization import OPT_PLAN, OPT_WIDTH_PRIORITY
 def build_layout_sequence():
     """Формирует последовательность сегментов вдоль дорожки, РАЗДЕЛЁННУЮ ПО НАГРУЗКАМ."""
     from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
+    from core.reinforcement_db import get_reinforcement
+    from pathlib import Path
+    
+    # Создаём глобальную карту армирования из PLATE_LOAD_DETAILS
+    reinforcement_map = {}  # {(length, width_mm): reinforcement}
+    
+    if cfg.PLATE_LOAD_DETAILS:
+        db_path = Path(__file__).parent.parent / "pb.db"
+        print(f"[VISUAL] Начинаем создание карты армирования из {len(cfg.PLATE_LOAD_DETAILS)} записей")
+        for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
+            width_mm = int(round(width_m * 1000))
+            reinforcement = get_reinforcement(
+                length_m=length,
+                load_code=load_code,
+                source='series',
+                db_path=db_path,
+                allow_fallback=True
+            )
+            key = (length, width_mm)
+            if reinforcement and reinforcement < 999:
+                reinforcement_map[key] = reinforcement
+                print(f"[VISUAL]   Добавлено: ({length}м, {width_mm}мм) → армирование {reinforcement:.1f}")
+    
+    print(f"[VISUAL] Создана карта армирования: {len(reinforcement_map)} записей")
     sequence = []
 
     def plate_label(L: float, W: float) -> str:
@@ -46,7 +70,7 @@ def build_layout_sequence():
             print(f"[VISUAL] Обрабатываем группу {load_group} ({label})...")
             
             # Строим последовательность для ЭТОЙ нагрузки (используем существующую логику)
-            group_sequence = _build_sequence_from_plan(plan, plate_label)
+            group_sequence = _build_sequence_from_plan(plan, plate_label, reinforcement_map)
             
             all_sequences.append({
                 'load_code': load_group,  # Группа для совместимости
@@ -426,17 +450,21 @@ def build_layout_sequence():
     return sequence
 
 
-def _build_sequence_from_plan(plan, plate_label_func):
+def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     """
     Вспомогательная функция: строит последовательность плит из плана оптимизации.
     
     Args:
         plan: Результат оптимизации (OPT_CASCADING_PLAN)
         plate_label_func: Функция для создания меток плит
+        reinforcement_map: Словарь {(length, width_mm): reinforcement} для получения армирования
     
     Returns:
         Список сегментов (плит) для визуализации
     """
+    if reinforcement_map is None:
+        reinforcement_map = {}
+    
     sequence = []
     
     # Проверяем, есть ли 2D данные (plate_assignments)
@@ -596,6 +624,8 @@ def _build_sequence_from_plan(plan, plate_label_func):
             if transverse_cut_info:
                 # Поперечный рез
                 width_m = width_mm / 1000.0
+                # Получаем армирование из карты
+                reinforcement = reinforcement_map.get((length, width_mm))
                 sequence.append({
                     'length': length,
                     'mode': 'transverse',
@@ -603,7 +633,8 @@ def _build_sequence_from_plan(plan, plate_label_func):
                     'remainder': transverse_cut_info['remainder'],
                     'width': width_m,
                     'label_target': plate_label_func(transverse_cut_info['target_length'], width_m),
-                    'label_remainder': f'Остаток {transverse_cut_info["remainder"]:.2f}м'.replace('.', ',') if transverse_cut_info['remainder'] > 0.1 else ''
+                    'label_remainder': f'Остаток {transverse_cut_info["remainder"]:.2f}м'.replace('.', ',') if transverse_cut_info['remainder'] > 0.1 else '',
+                    'reinforcement': reinforcement
                 })
             else:
                 # Обычная плита
@@ -619,10 +650,18 @@ def _build_sequence_from_plan(plan, plate_label_func):
                 
                 if rest_mm == 0:
                     # Плита без реза
+                    # Получаем армирование из карты по (length, width_mm)
+                    reinforcement = reinforcement_map.get((length, width_mm))
+                    if not reinforcement:
+                        print(f"[VISUAL] ⚠️ Армирование не найдено для целой плиты: {length}м x {width_mm}мм")
+                        print(f"[VISUAL]    Доступные ключи в карте: {list(reinforcement_map.keys())[:5]}")
+                    else:
+                        print(f"[VISUAL] ✓ Армирование найдено для целой плиты: {length}м x {width_mm}мм = {reinforcement:.1f}")
                     sequence.append({
                         'length': length,
                         'mode': 'solid',
-                        'label': plate_label_func(length, main_w)
+                        'label': plate_label_func(length, main_w),
+                        'reinforcement': reinforcement
                     })
                 else:
                     # Плита с резом
@@ -670,6 +709,10 @@ def _build_sequence_from_plan(plan, plate_label_func):
                                     })
                         chosen_variant['used'] += 1
                     
+                    # Получаем армирование из карты
+                    reinforcement = reinforcement_map.get((length, width_mm))
+                    if reinforcement:
+                        print(f"[VISUAL] ✓ Армирование найдено для плиты с резом: {length}м x {width_mm}мм = {reinforcement:.1f}")
                     sequence.append({
                         'length': length,
                         'mode': 'split',
@@ -680,7 +723,8 @@ def _build_sequence_from_plan(plan, plate_label_func):
                             '+0,12' if fake_rest_override else
                             (f'+{rest_w:.2f}'.replace('.', ',') if not secondary_cuts_for_plate else None)
                         ),
-                        'secondary_cuts': secondary_cuts_for_plate
+                        'secondary_cuts': secondary_cuts_for_plate,
+                        'reinforcement': reinforcement
                     })
     
     return sequence

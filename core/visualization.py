@@ -47,8 +47,17 @@ except Exception:
 __all__ = ['visualize_plan', 'build_layout_sequence']
 
 
-def visualize_plan(output_dir: str = 'Визуализация_Раскладки'):
-    """Создаёт визуализацию раскладки плит и сохраняет файлы"""
+def visualize_plan(output_dir: str = 'Визуализация_Раскладки', 
+                    tracks_per_file: int = None, 
+                    start_track_index: int = 0):
+    """
+    Создаёт визуализацию раскладки плит и сохраняет файлы
+    
+    Args:
+        output_dir: Директория для сохранения файлов
+        tracks_per_file: Сколько дорожек поместить в один файл (None = все дорожки)
+        start_track_index: С какой дорожки начинать (0 = с первой)
+    """
     try:
         optimized = optimize_cuts_pulp({300: 4, 500: 3, 700: 2, 900: 2})
         print("Оптимальные резы:", optimized)
@@ -94,6 +103,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             
             # Разбиваем группу на дорожки по 101м
             # ВАЖНО: Каждая дорожка ДОЛЖНА начинаться с целой плиты!
+            # Жёсткое правило: не превышать 101м
             current_track = []
             current_track_length = 0.0
             
@@ -101,45 +111,21 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 item_length = item['length']
                 is_solid = (item.get('mode') == 'solid')
                 
-                # Проверяем, превышен ли лимит
-                exceeds_limit = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
+                # Проверяем: добавление плиты превысит лимит?
+                will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
                 
-                if exceeds_limit:
-                    # ПРАВИЛО ЗАВОДА: новая дорожка ДОЛЖНА начинаться с целой плиты!
-                    if not is_solid:
-                        # Текущая плита НЕ целая - ищем следующую целую плиту
-                        next_solid_found = False
-                        for j in range(i + 1, len(items)):
-                            if items[j].get('mode') == 'solid':
-                                next_solid_found = True
-                                break
-                        
-                        if next_solid_found:
-                            # Есть целая плита дальше - добавляем текущую на старую дорожку
-                            # (немного превысим лимит 101м, но соблюдём правило завода)
-                            print(f"[ВИЗУАЛИЗАЦИЯ] Превышение лимита: добавляем плиту с резом на текущую дорожку (правило завода)")
-                        else:
-                            # Целых плит больше нет - начинаем новую дорожку (нарушаем правило)
-                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: новая дорожка начинается с плиты С РЕЗОМ (целых больше нет)")
-                            tracks.append({
-                                'items': current_track,
-                                'length': current_track_length,
-                                'load_code': load_code,
-                                'label': group_label
-                            })
-                            current_track = []
-                            current_track_length = 0.0
-                    else:
-                        # ОК! Начинаем новую дорожку с целой плиты
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ✓ Новая дорожка начинается с целой плиты")
-                        tracks.append({
-                            'items': current_track,
-                            'length': current_track_length,
-                            'load_code': load_code,
-                            'label': group_label
-                        })
-                        current_track = []
-                        current_track_length = 0.0
+                if will_exceed:
+                    # ПРАВИЛО: Не превышаем 101м НИКОГДА!
+                    # Закрываем дорожку (даже если она будет короткой)
+                    print(f"[ВИЗУАЛИЗАЦИЯ] Закрываем дорожку на {current_track_length:.1f}м (плита {item_length:.1f}м не влезает)")
+                    tracks.append({
+                        'items': current_track,
+                        'length': current_track_length,
+                        'load_code': load_code,
+                        'label': group_label
+                    })
+                    current_track = []
+                    current_track_length = 0.0
                 
                 current_track.append(item)
                 current_track_length += item_length
@@ -165,44 +151,24 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         current_track_length = 0.0
         
         # ВАЖНО: Каждая дорожка ДОЛЖНА начинаться с целой плиты!
+        # Жёсткое правило: не превышать 101м
         for i, item in enumerate(seq):
             item_length = item['length']
             is_solid = (item.get('mode') == 'solid')
             
-            # Проверяем, превышен ли лимит
-            exceeds_limit = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
+            # Проверяем: добавление плиты превысит лимит?
+            will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
             
-            if exceeds_limit:
-                # ПРАВИЛО ЗАВОДА: новая дорожка ДОЛЖНА начинаться с целой плиты!
-                if not is_solid:
-                    # Текущая плита НЕ целая - ищем следующую целую плиту
-                    next_solid_found = False
-                    for j in range(i + 1, len(seq)):
-                        if seq[j].get('mode') == 'solid':
-                            next_solid_found = True
-                            break
-                    
-                    if next_solid_found:
-                        # Есть целая плита дальше - добавляем текущую на старую дорожку
-                        print(f"[ВИЗУАЛИЗАЦИЯ] Превышение лимита: добавляем плиту с резом на текущую дорожку (правило завода)")
-                    else:
-                        # Целых плит больше нет - начинаем новую дорожку (нарушаем правило)
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: новая дорожка начинается с плиты С РЕЗОМ (целых больше нет)")
-                        tracks.append({
-                            'items': current_track,
-                            'length': current_track_length
-                        })
-                        current_track = []
-                        current_track_length = 0.0
-                else:
-                    # ОК! Начинаем новую дорожку с целой плиты
-                    print(f"[ВИЗУАЛИЗАЦИЯ] ✓ Новая дорожка начинается с целой плиты")
-                    tracks.append({
-                        'items': current_track,
-                        'length': current_track_length
-                    })
-                    current_track = []
-                    current_track_length = 0.0
+            if will_exceed:
+                # ПРАВИЛО: Не превышаем 101м НИКОГДА!
+                # Закрываем дорожку (даже если она будет короткой)
+                print(f"[ВИЗУАЛИЗАЦИЯ] Закрываем дорожку на {current_track_length:.1f}м (плита {item_length:.1f}м не влезает)")
+                tracks.append({
+                    'items': current_track,
+                    'length': current_track_length
+                })
+                current_track = []
+                current_track_length = 0.0
             
             current_track.append(item)
             current_track_length += item_length
@@ -213,8 +179,18 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 'length': current_track_length
             })
     
+    num_tracks_total = len(tracks)
+    print(f"[ВИЗУАЛИЗАЦИЯ] Плиты разбиты на {num_tracks_total} дорожек")
+    
+    # ✅ НОВОЕ: Фильтруем дорожки для текущего файла
+    if tracks_per_file is not None:
+        end_track_index = min(start_track_index + tracks_per_file, num_tracks_total)
+        tracks = tracks[start_track_index:end_track_index]
+        actual_start = start_track_index + 1
+        actual_end = start_track_index + len(tracks)
+        print(f"[ВИЗУАЛИЗАЦИЯ] Файл содержит дорожки {actual_start}-{actual_end} (всего {len(tracks)} дорожек в файле)")
+    
     num_tracks = len(tracks)
-    print(f"[ВИЗУАЛИЗАЦИЯ] Плиты разбиты на {num_tracks} дорожек")
 
     # === РАСЧЁТ МАКСИМАЛЬНОГО АРМИРОВАНИЯ ДЛЯ КАЖДОЙ ДОРОЖКИ ===
     for track in tracks:
@@ -231,25 +207,28 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     # Убрали секцию детальной разбивки - она теперь в отдельном Excel файле
     # Увеличиваем высоту секции дорожек пропорционально их количеству
     track_section_height = 3.0 + (num_tracks - 1) * 2.5
-    num_sections = 4
-    height_ratios = [track_section_height, 1.0, 1.4, 1.8]
+    # ✅ УБРАНЫ таблицы с ценами и заказами - теперь только 2 секции
+    num_sections = 2
+    height_ratios = [track_section_height, 1.0]
     
-    # Увеличиваем общую высоту окна
-    total_fig_height = 16 + (num_tracks - 1) * 5
+    # Уменьшаем общую высоту окна (убрали таблицы)
+    total_fig_height = 8 + (num_tracks - 1) * 5
     
     fig = plt.figure(figsize=(22, total_fig_height))
     gs = fig.add_gridspec(num_sections, 1, height_ratios=height_ratios)
     ax_track = fig.add_subplot(gs[0, 0])
     ax_strips = fig.add_subplot(gs[1, 0])
-    ax_table = fig.add_subplot(gs[2, 0])
-    ax_price = fig.add_subplot(gs[3, 0])
+    # ✅ УБРАНЫ секции ax_table (таблица заказа) и ax_price (таблица с ценами)
     
-    # Заголовок с количеством дорожек
+    # ✅ НОВОЕ: Заголовок с правильными номерами дорожек (БЕЗ упоминания сметы)
     if num_tracks == 1:
-        fig.suptitle('КЗ: Дорожка 1 (ширина 1.2 м) — раскладка, резы, ведомости и смета', 
+        track_num = start_track_index + 1
+        fig.suptitle(f'КЗ: Дорожка {track_num} (ширина 1.2 м) — раскладка, резы и ведомости', 
                      fontsize=16, fontweight='bold')
     else:
-        fig.suptitle(f'КЗ: Дорожки 1-{num_tracks} (ширина 1.2 м, по {MAX_TRACK_LENGTH}м) — раскладка, резы, ведомости и смета', 
+        first_track = start_track_index + 1
+        last_track = start_track_index + num_tracks
+        fig.suptitle(f'КЗ: Дорожки {first_track}-{last_track} (ширина 1.2 м, по {MAX_TRACK_LENGTH}м) — раскладка, резы и ведомости', 
                      fontsize=16, fontweight='bold')
 
     # Настройка осей для множественных дорожек
@@ -257,21 +236,27 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     track_spacing = 0.3  # Отступ между дорожками
     total_height = num_tracks * (track_height + track_spacing)
     
-    ax_track.set_xlim(0, MAX_TRACK_LENGTH + 2)
+    # Рассчитываем максимальную длину дорожек для правильного xlim
+    # (некоторые дорожки могут немного превышать 101м из-за правила завода)
+    max_actual_length = max((t.get('length', 0) for t in tracks), default=MAX_TRACK_LENGTH)
+    display_max_length = max(MAX_TRACK_LENGTH, max_actual_length + 1.0)
+    
+    ax_track.set_xlim(0, display_max_length)
     ax_track.set_ylim(0, total_height)
     ax_track.set_aspect('auto')
     ax_track.spines['top'].set_visible(False)
     ax_track.spines['right'].set_visible(False)
     
-    # Метки по оси Y (номера дорожек + НАГРУЗКА + АРМИРОВАНИЕ!)
+    # ✅ НОВОЕ: Метки по оси Y с правильными номерами дорожек
     y_ticks = []
     y_labels = []
     for i in range(num_tracks):
         y_pos = i * (track_height + track_spacing) + track_height / 2
         y_ticks.append(y_pos)
         
-        # ✅ Формируем метку с нагрузкой и армированием
-        track_label = f"Д{i+1}"
+        # Номер дорожки с учётом start_track_index
+        actual_track_num = start_track_index + i + 1
+        track_label = f"Д{actual_track_num}"
         
         if 'load_code' in tracks[i]:
             load_label = tracks[i].get('label', f"Нагрузка {tracks[i]['load_code']}п")
@@ -282,9 +267,9 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         if max_reinf > 0:
             track_label += f"\nмакс. арм. {max_reinf:.1f}"
         
-        if track_label == f"Д{i+1}":
+        if track_label == f"Д{actual_track_num}":
             # Если нет доп. информации, используем полное название
-            y_labels.append(f'Дор.{i+1}')
+            y_labels.append(f'Дор.{actual_track_num}')
         else:
             y_labels.append(track_label)
     
@@ -317,7 +302,8 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         for item in track_data['items']:
             if item.get('mode') == 'solid':
                 _draw_segment(ax_track, x, item['length'], '#2ecc71', item['label'], 
-                            y=y_base, height=track_height)
+                            y=y_base, height=track_height,
+                            reinforcement=item.get('reinforcement'))
             elif item.get('mode') == 'transverse':
                 # Плита с поперечным резом (по длине)
                 _draw_transverse_cut(
@@ -327,7 +313,8 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     width=item['width'],
                     label_target=item['label_target'],
                     remainder_length=item['remainder'],
-                    y_base=y_base
+                    y_base=y_base,
+                    reinforcement=item.get('reinforcement')
                 )
             else:
                 # Плиты с резами (первичными и возможными вторичными)
@@ -336,7 +323,8 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     main_w=item['main_w'], rest_w=item['rest_w'],
                     label_main=item['label_main'], label_rest=item.get('label_rest'),
                     secondary_cuts=item.get('secondary_cuts'),
-                    y_base=y_base
+                    y_base=y_base,
+                    reinforcement=item.get('reinforcement')
                 )
             x += item['length']
 
@@ -367,47 +355,60 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         txt += f"\n\nОПТИМИЗАЦИЯ: Плит потребуется {OPT_CASCADING_PLAN['total_plates']} шт (с каскадными резами)"
         txt += f" | Отходы: {OPT_CASCADING_PLAN.get('waste_width', 0)} мм"
     
-    ax_strips.text(0.02, 0.6, txt, ha='left', va='center', fontsize=12,
-                   bbox=dict(boxstyle='round,pad=0.6', facecolor='#f8f9fa', edgecolor='#bdc3c7'))
+    # Размещаем информацию о резах слева (не мешает дорожкам, т.к. выше)
+    ax_strips.text(0.02, 0.6, txt, ha='left', va='center', fontsize=11,
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='#f8f9fa', edgecolor='#bdc3c7'))
 
     # Формируем детальный план резов или остатков
     if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('total_plates', 0) > 0:
-        # Показываем детальный план каскадных резов
-        details = "[PLAN] ДЕТАЛЬНЫЙ ПЛАН РЕЗОВ:\n\n"
+        # Разбиваем детальный план на 2 колонки для компактности
         
-        # Первичные резы
+        # ЛЕВАЯ КОЛОНКА: Первичные резы
+        details_left = "[1] Первичные резы (из 1200 мм):\n"
         if OPT_CASCADING_PLAN.get('primary_cuts'):
-            details += "[1] Первичные резы (из 1200 мм):\n"
             for cut in OPT_CASCADING_PLAN['primary_cuts']:
-                details += f"  • {cut['qty']} плит → {cut['width']} мм + остаток {cut['rest']} мм\n"
+                details_left += f"• {cut['qty']} плит → {cut['width']} мм + остаток {cut['rest']} мм\n"
+        else:
+            details_left += "  (нет)\n"
+        
+        # ПРАВАЯ КОЛОНКА: Вторичные и поперечные резы
+        details_right = ""
         
         # Вторичные резы
         if OPT_CASCADING_PLAN.get('secondary_cuts'):
-            details += "\n[2] Вторичные резы (из остатков):\n"
+            details_right += "[2] Вторичные резы (из остатков):\n"
             for cut in OPT_CASCADING_PLAN['secondary_cuts']:
                 if cut.get('pieces', 1) > 1:
-                    details += f"  • {cut['qty']} остатков {cut['source']} мм → {cut['pieces']} частей по {cut['cuts'][0]} мм"
+                    details_right += f"• {cut['qty']} остатков {cut['source']} мм → {cut['pieces']} частей по {cut['cuts'][0]} мм"
                     if cut.get('waste', 0) > 0:
-                        details += f" (отход {cut['waste']} мм)"
-                    details += "\n"
+                        details_right += f" (отход {cut['waste']} мм)"
+                    details_right += "\n"
                 else:
                     cuts_str = ' + '.join(str(c) for c in cut['cuts'])
-                    details += f"  • {cut['qty']} остатков {cut['source']} мм → {cuts_str} мм"
+                    details_right += f"• {cut['qty']} остатков {cut['source']} мм → {cuts_str} мм"
                     if cut.get('waste', 0) > 0:
-                        details += f" (отход {cut['waste']} мм)"
-                    details += "\n"
+                        details_right += f" (отход {cut['waste']} мм)"
+                    details_right += "\n"
         
         # Поперечные резы
         if OPT_CASCADING_PLAN.get('transverse_cuts'):
-            details += "\n[RED] Поперечные резы (по длине):\n"
+            if details_right:
+                details_right += "\n"
+            details_right += "[RED] Поперечные резы (по длине):\n"
             for tcut in OPT_CASCADING_PLAN['transverse_cuts']:
-                details += f"  • Плита {tcut['source_length']}м x {tcut['source_width']}мм -> {tcut['target_length']}м"
+                details_right += f"• Плита {tcut['source_length']}м x {tcut['source_width']}мм -> {tcut['target_length']}м"
                 if tcut.get('remainder', 0) > 0.1:
-                    details += f" (остаток {tcut['remainder']:.2f}м)"
-                details += "\n"
+                    details_right += f" (остаток {tcut['remainder']:.2f}м)"
+                details_right += "\n"
         
-        ax_strips.text(0.02, 0.15, details, ha='left', va='center', fontsize=10,
-                       bbox=dict(boxstyle='round,pad=0.5', facecolor='#e8f5e9', edgecolor='#66bb6a'))
+        # Размещаем два блока рядом друг с другом (с достаточным отступом)
+        # Левый блок - первичные резы
+        ax_strips.text(0.02, 0.15, details_left, ha='left', va='center', fontsize=8,
+                       bbox=dict(boxstyle='round,pad=0.4', facecolor='#e8f5e9', edgecolor='#66bb6a'))
+        # Правый блок - вторичные и поперечные резы
+        if details_right:
+            ax_strips.text(0.52, 0.15, details_right, ha='left', va='center', fontsize=8,
+                           bbox=dict(boxstyle='round,pad=0.4', facecolor='#fff3e0', edgecolor='#ffb74d'))
     else:
         # Fallback: показываем старую информацию об остатках
         leftovers = (
@@ -418,8 +419,9 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         ax_strips.text(0.02, 0.15, leftovers, ha='left', va='center', fontsize=11,
                        bbox=dict(boxstyle='round,pad=0.5', facecolor='#eef7ff', edgecolor='#a3c9ff'))
 
-    ax_table.axis('off')
-
+    # ✅ УБРАНА таблица заказа/использования (ax_table)
+    # Но данные всё равно формируем для CSV и Excel файлов
+    
     # Формируем список заказа из реальных данных
     order_list = []
     
@@ -503,132 +505,80 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
 
     col_labels = ['Список плит по заказу', 'Использовано (с учётом резов) / остатки / обрезки']
 
-    table = ax_table.table(cellText=table_rows, colLabels=col_labels, loc='center', cellLoc='left', colLoc='center')
-    table.auto_set_font_size(False)
-    # Уменьшаем шрифт если таблица большая
-    table_font_size = 8 if len(table_rows) > 15 else 11
-    table.set_fontsize(table_font_size)
-    table.scale(1, 1.5)
-
-    ax_price.axis('off')
-    price_headers = ['№', 'Наименование', 'Кол-во', 'Ед.', 'Неделя', 'Контрагент', 'Вес(кг)', 'Цена', 'Сумма']
-    price_table = ax_price.table(cellText=price_rows, colLabels=price_headers, loc='center', cellLoc='center', colLoc='center')
-    price_table.auto_set_font_size(False)
-    # Уменьшаем шрифт если таблица большая
-    price_font_size = 7 if len(price_rows) > 20 else 10
-    price_table.set_fontsize(price_font_size)
-    price_table.scale(1, 1.4)
-    price_col_idx = price_headers.index('Цена')
-    not_priced = any(row[price_col_idx].strip().startswith('0') for row in price_rows)
-    
-    # Используем стоимость из каскадной оптимизации, если она доступна
-    if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('total_cost', 0) > 0:
-        optimized_cost = OPT_CASCADING_PLAN['total_cost']
-        title = f'Итоговая стоимость: {optimized_cost:,.2f} ₽ (оптимизировано)'.replace(',', ' ').replace('.', ',')
-    else:
-        title = f'Итоговая стоимость: {total_sum:,.2f} ₽'.replace(',', ' ').replace('.', ',')
-    
-    if not_priced:
-        title += ' (внимание: не найдены цены для некоторых позиций — проверьте прайс)'
-    ax_price.set_title(title, fontsize=12, pad=10)
+    # ✅ ПОЛНОСТЬЮ УБРАНЫ таблицы: ax_table (заказ/использование) и ax_price (цены)
 
     # Детальная разбивка теперь сохраняется в отдельный Excel файл, а не отображается на графике
 
+    # ✅ НОВОЕ: Формируем суффикс имени файла с правильными номерами дорожек
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    csv_path = os.path.join(output_dir, f'Ведомость_Дорожка_1_{timestamp}.csv')
+    if num_tracks == 1:
+        track_num = start_track_index + 1
+        file_suffix = f'Дорожка_{track_num}_{timestamp}'
+    else:
+        first_track = start_track_index + 1
+        last_track = start_track_index + num_tracks
+        file_suffix = f'Дорожки_{first_track}-{last_track}_{timestamp}'
+    
+    csv_path = os.path.join(output_dir, f'Ведомость_{file_suffix}.csv')
     with open(csv_path, 'w', encoding='utf-8') as f:
         f.write('Список плит по заказу;Использовано (с учётом резов) / остатки / обрезки\n')
         for left, right in table_rows:
             f.write(f'{left};{right}\n')
 
+    # Инициализируем переменные путей (на случай ошибок)
+    xlsx_path_v = None
+    xlsx_path_p = None
+    xlsx_path_breakdown = None
+    
     if pd is not None:
         try:
             df_v = pd.DataFrame(table_rows, columns=col_labels)
-            xlsx_path_v = os.path.join(output_dir, f'Ведомость_Дорожка_1_{timestamp}.xlsx')
+            xlsx_path_v = os.path.join(output_dir, f'Ведомость_{file_suffix}.xlsx')
             df_v.to_excel(xlsx_path_v, index=False)
             print(f'[DEBUG] Ведомость сохранена: {xlsx_path_v}')
 
-            # Смета по дорожке
-            df_p = pd.DataFrame(price_rows, columns=price_headers)
+            # Смета по дорожке (БЕЗ ЦЕН)
+            # Определяем заголовки без столбцов цен
+            price_headers = ['№', 'Наименование', 'Кол-во', 'Ед.', 'Неделя', 'Контрагент']
+            # Обрезаем данные - оставляем только первые 6 столбцов
+            price_rows_for_excel = [row[:6] for row in price_rows]
+            df_p = pd.DataFrame(price_rows_for_excel, columns=price_headers)
 
-            # Добавляем итоговую строку по всему заказу (общая сумма по столбцу "Сумма")
-            total_sum_str = f'{total_sum:,.2f}'.replace(',', ' ').replace('.', ',')
-            total_row = {
-                '№': '',
-                'Наименование': 'ИТОГО',
-                'Кол-во': '',
-                'Ед.': '',
-                'Неделя': '',
-                'Контрагент': '',
-                'Вес(кг)': '',
-                'Цена': '',
-                'Сумма': total_sum_str,
-            }
-            df_p = pd.concat([df_p, pd.DataFrame([total_row])], ignore_index=True)
+            # ✅ Убрана итоговая строка с суммой
+            # (теперь просто список плит без финансовой информации)
 
-            xlsx_path_p = os.path.join(output_dir, f'Смета_Дорожка_1_{timestamp}.xlsx')
+            xlsx_path_p = os.path.join(output_dir, f'Список_плит_{file_suffix}.xlsx')
             with pd.ExcelWriter(xlsx_path_p, engine='openpyxl') as writer:
-                df_p.to_excel(writer, index=False, sheet_name='Смета')
+                df_p.to_excel(writer, index=False, sheet_name='Список плит')
                 df_v.to_excel(writer, index=False, sheet_name='Ведомость')
-            print(f'[DEBUG] Смета сохранена: {xlsx_path_p}')
+            print(f'[DEBUG] Список плит сохранён: {xlsx_path_p}')
             
-            # Сохраняем детальную разбивку компонентов в отдельный Excel файл
+            # Сохраняем детальную разбивку компонентов в отдельный Excel файл (БЕЗ ЦЕН)
             if breakdown_tables:
-                breakdown_headers = ['Компонент', 'Расчёт', 'Сумма']
+                breakdown_headers = ['Компонент', 'Расчёт']  # ✅ Убран столбец "Сумма"
                 all_breakdown_rows = []
-                grand_total = 0.0  # ✅ НОВОЕ: Общая сумма по всем плитам
                 
                 for breakdown in breakdown_tables:
                     # Заголовок с наименованием
-                    all_breakdown_rows.append([breakdown['name'], '', ''])
-                    # Строки таблицы
+                    all_breakdown_rows.append([breakdown['name'], ''])
+                    # Строки таблицы (БЕЗ третьего столбца с суммой)
                     for row in breakdown['rows']:
-                        all_breakdown_rows.append(row)
-                    
-                    # ✅ НОВОЕ: Извлекаем итоговую сумму для этой плиты
-                    # Последняя строка содержит "За N плит" и общую стоимость
-                    if breakdown['rows']:
-                        last_row = breakdown['rows'][-1]  # Последняя строка
-                        if len(last_row) >= 3:
-                            # Парсим сумму из строки вида "12 345,67 руб"
-                            sum_str = last_row[2]  # Третий столбец "Сумма"
-                            try:
-                                # Убираем пробелы, "руб", заменяем запятую на точку
-                                sum_value = float(
-                                    sum_str.replace(' ', '')
-                                           .replace('руб', '')
-                                           .replace(',', '.')
-                                )
-                                grand_total += sum_value
-                            except (ValueError, AttributeError):
-                                pass  # Пропускаем, если не удалось распарсить
+                        # Берём только первые 2 столбца
+                        all_breakdown_rows.append(row[:2])
                     
                     # Пустая строка между таблицами
-                    all_breakdown_rows.append(['', '', ''])
+                    all_breakdown_rows.append(['', ''])
                 
                 # Удаляем последнюю пустую строку
-                if all_breakdown_rows and all_breakdown_rows[-1] == ['', '', '']:
+                if all_breakdown_rows and all_breakdown_rows[-1] == ['', '']:
                     all_breakdown_rows.pop()
                 
-                # ✅ НОВОЕ: Добавляем итоговую строку
-                all_breakdown_rows.append(['', '', ''])  # Пустая строка перед итогом
-                all_breakdown_rows.append([
-                    '═══════════════════════════════',
-                    '',
-                    '═══════════════════════════════'
-                ])
-                grand_total_str = f"{grand_total:,.2f} руб".replace(',', ' ').replace('.', ',')
-                all_breakdown_rows.append([
-                    'ИТОГО ПО ВСЕМ ПЛИТАМ',
-                    '',
-                    grand_total_str
-                ])
+                # ✅ Убрана итоговая сумма
                 
                 df_breakdown = pd.DataFrame(all_breakdown_rows, columns=breakdown_headers)
-                xlsx_path_breakdown = os.path.join(output_dir, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx')
+                xlsx_path_breakdown = os.path.join(output_dir, f'Детальная_разбивка_{file_suffix}.xlsx')
                 df_breakdown.to_excel(xlsx_path_breakdown, index=False)
                 print(f'[DEBUG] Детальная разбивка сохранена в Excel: {xlsx_path_breakdown}')
-                print(f'[DEBUG] Итоговая сумма по всем плитам: {grand_total_str}')
             else:
                 print('[DEBUG] breakdown_tables пустой - файл детальной разбивки не создан')
         except Exception as e:
@@ -640,8 +590,8 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         print('[ПРЕДУПРЕЖДЕНИЕ] pandas не установлен - Excel файлы не будут созданы!')
         print('[ПРЕДУПРЕЖДЕНИЕ] Установите: pip install pandas openpyxl')
 
-    png_path = os.path.join(output_dir, f'Схема_Дорожка_1_КЗ_{timestamp}.png')
-    pdf_path = os.path.join(output_dir, f'Схема_Дорожка_1_КЗ_{timestamp}.pdf')
+    png_path = os.path.join(output_dir, f'Схема_{file_suffix}_КЗ.png')
+    pdf_path = os.path.join(output_dir, f'Схема_{file_suffix}_КЗ.pdf')
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(png_path, dpi=300)
     fig.savefig(pdf_path)
@@ -652,10 +602,12 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     print('  PDF:', pdf_path)
     print('  CSV:', csv_path)
     if pd is not None:
-        print('  XLSX (ведомость):', os.path.join(output_dir, f'Ведомость_Дорожка_1_{timestamp}.xlsx'))
-        print('  XLSX (смета):', os.path.join(output_dir, f'Смета_Дорожка_1_{timestamp}.xlsx'))
-        if breakdown_tables:
-            print('  XLSX (детальная разбивка):', os.path.join(output_dir, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx'))
+        if xlsx_path_v:
+            print('  XLSX (ведомость):', xlsx_path_v)
+        if xlsx_path_p:
+            print('  XLSX (список плит):', xlsx_path_p)
+        if breakdown_tables and xlsx_path_breakdown:
+            print('  XLSX (детальная разбивка):', xlsx_path_breakdown)
     return png_path, pdf_path
 
 

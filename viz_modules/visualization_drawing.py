@@ -11,14 +11,22 @@ import matplotlib.patches as patches
 import core.config_and_data as cfg
 
 
-def _draw_segment(ax, x0: float, length: float, color: str, label: str, y: float = 0.0, height: float = cfg.TRACK_WIDTH_M):
+def _draw_segment(ax, x0: float, length: float, color: str, label: str, y: float = 0.0, height: float = cfg.TRACK_WIDTH_M, reinforcement: float = None):
     """Рисует простой сегмент плиты"""
     rect = patches.Rectangle((x0, y), length, height, linewidth=1, edgecolor='black', facecolor=color, alpha=0.85)
     ax.add_patch(rect)
-    ax.text(x0 + length/2, y + height/2, label, ha='center', va='center', fontsize=8, color='white', weight='bold')
+    
+    # ✅ Добавляем армирование к метке
+    if reinforcement and reinforcement < 999:
+        label_with_reinf = f"{label} ({reinforcement:.1f})"
+    else:
+        label_with_reinf = label
+    
+    # ✅ Поворачиваем текст на 90° (вдоль плиты)
+    ax.text(x0 + length/2, y + height/2, label_with_reinf, ha='center', va='center', fontsize=8, color='white', weight='bold', rotation=90)
 
 
-def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float, label_main: str, label_rest: str | None = None, secondary_cuts: list = None, y_base: float = 0.0):
+def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float, label_main: str, label_rest: str | None = None, secondary_cuts: list = None, y_base: float = 0.0, reinforcement: float = None):
     """Рисует плиту с продольным резом и возможными вторичными резами в остатке"""
     # Фон всей плиты (1.2 м)
     rect = patches.Rectangle((x0, y_base), length, cfg.TRACK_WIDTH_M, linewidth=1.2, edgecolor='black', facecolor='#ecf0f1', alpha=1.0)
@@ -31,7 +39,14 @@ def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float
     # ПРОДОЛЬНЫЙ РЕЗ (по ширине) - СИНЯЯ ГОРИЗОНТАЛЬНАЯ ЛИНИЯ
     ax.plot([x0, x0 + length], [y_base + main_w, y_base + main_w], color='blue', linestyle='-', linewidth=2.5, alpha=0.8, zorder=10)
     
-    ax.text(x0 + length/2, y_base + main_w/2, label_main, ha='center', va='center', fontsize=8, color='white', weight='bold')
+    # ✅ Добавляем армирование к основной метке
+    if reinforcement and reinforcement < 999:
+        label_main_with_reinf = f"{label_main} ({reinforcement:.1f})"
+    else:
+        label_main_with_reinf = label_main
+    
+    # ✅ Поворачиваем текст на 90° (вдоль плиты)
+    ax.text(x0 + length/2, y_base + main_w/2, label_main_with_reinf, ha='center', va='center', fontsize=8, color='white', weight='bold', rotation=90)
     
     # Если есть вторичные резы в остатке
     if secondary_cuts and rest_w > 0.02:
@@ -56,7 +71,8 @@ def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float
                 # Рисуем целевую часть (голубая)
                 sec_rect = patches.Rectangle((x0, y_offset), target_length, sec_w, linewidth=0.8, edgecolor='black', facecolor='#3498db', alpha=0.9)
                 ax.add_patch(sec_rect)
-                ax.text(x0 + target_length/2, y_offset + sec_w/2, sec_label, ha='center', va='center', fontsize=7, color='white', weight='bold')
+                # ✅ Поворачиваем текст на 90° (вдоль плиты)
+                ax.text(x0 + target_length/2, y_offset + sec_w/2, sec_label, ha='center', va='center', fontsize=7, color='white', weight='bold', rotation=90)
                 
                 # Остаток по длине (светло-серый)
                 if remainder > 0.1:
@@ -78,7 +94,8 @@ def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float
                 
                 sec_rect = patches.Rectangle((x0, y_offset), sec_length, sec_w, linewidth=0.8, edgecolor='black', facecolor='#3498db', alpha=0.9)
                 ax.add_patch(sec_rect)
-                ax.text(x0 + sec_length/2, y_offset + sec_w/2, sec_label, ha='center', va='center', fontsize=7, color='white', weight='bold')
+                # ✅ Поворачиваем текст на 90° (вдоль плиты)
+                ax.text(x0 + sec_length/2, y_offset + sec_w/2, sec_label, ha='center', va='center', fontsize=7, color='white', weight='bold', rotation=90)
                 
                 # Если это укороченная плита, рисуем остаток по длине
                 if sec_length < length - 0.1:
@@ -123,7 +140,7 @@ def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float
 
 
 def _draw_transverse_cut(ax, x0: float, total_length: float, target_length: float, 
-                         width: float, label_target: str, remainder_length: float, y_base: float = 0.0):
+                         width: float, label_target: str, remainder_length: float, y_base: float = 0.0, reinforcement: float = None):
     """
     Рисует плиту с поперечным резом (по длине)
     
@@ -145,8 +162,16 @@ def _draw_transverse_cut(ax, x0: float, total_length: float, target_length: floa
                                    linewidth=0.8, edgecolor='black',
                                    facecolor='#27ae60', alpha=0.9)
     ax.add_patch(target_rect)
-    ax.text(x0 + target_length/2, y_base + width/2, label_target,
-           ha='center', va='center', fontsize=8, color='white', weight='bold')
+    
+    # ✅ Добавляем армирование к метке
+    if reinforcement and reinforcement < 999:
+        label_target_with_reinf = f"{label_target} ({reinforcement:.1f})"
+    else:
+        label_target_with_reinf = label_target
+    
+    # ✅ Поворачиваем текст на 90° (вдоль плиты)
+    ax.text(x0 + target_length/2, y_base + width/2, label_target_with_reinf,
+           ha='center', va='center', fontsize=8, color='white', weight='bold', rotation=90)
     
     # Правая часть (остаток) - светло-серая
     if remainder_length > 0.01:
