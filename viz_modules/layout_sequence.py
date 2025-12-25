@@ -283,6 +283,9 @@ def build_layout_sequence():
                     target_length = transverse_cut_info['target_length']
                     remainder = transverse_cut_info['remainder']
                     
+                    # Получаем армирование из карты
+                    reinforcement = reinforcement_map.get((length, width_mm))
+                    
                     sequence.append({
                         'length': length,  # Исходная длина плиты
                         'mode': 'transverse',
@@ -290,7 +293,8 @@ def build_layout_sequence():
                         'remainder': remainder,
                         'width': width_m,
                         'label_target': plate_label(target_length, width_m),
-                        'label_remainder': f'Остаток {remainder:.2f}м'.replace('.', ',') if remainder > 0.1 else ''
+                        'label_remainder': f'Остаток {remainder:.2f}м'.replace('.', ',') if remainder > 0.1 else '',
+                        'reinforcement': reinforcement
                     })
                     print(f"[VISUAL] Плита с поперечным резом: {length}м x {width_mm}мм -> {target_length}м (остаток {remainder:.2f}м)")
                 else:
@@ -309,10 +313,13 @@ def build_layout_sequence():
                     
                     # Специальная обработка для плит БЕЗ реза (rest = 0)
                     if rest_mm == 0:
+                        # Получаем армирование из карты
+                        reinforcement = reinforcement_map.get((length, width_mm))
                         sequence.append({
                             'length': length,
                             'mode': 'solid',
-                            'label': plate_label(length, main_w)
+                            'label': plate_label(length, main_w),
+                            'reinforcement': reinforcement
                         })
                     else:
                         # Плиты С резом
@@ -370,6 +377,8 @@ def build_layout_sequence():
                                         })
                             chosen_variant['used'] += 1
                         
+                        # Получаем армирование из карты
+                        reinforcement = reinforcement_map.get((length, width_mm))
                         sequence.append({
                             'length': length,
                             'mode': 'split',
@@ -380,7 +389,8 @@ def build_layout_sequence():
                                 '+0,12' if fake_rest_override else
                                 (f'+{rest_w:.2f}'.replace('.', ',') if not secondary_cuts_for_plate else None)
                             ),
-                            'secondary_cuts': secondary_cuts_for_plate
+                            'secondary_cuts': secondary_cuts_for_plate,
+                            'reinforcement': reinforcement
                         })
         
         if sequence:
