@@ -572,11 +572,13 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             )
             
             # Вызываем визуализацию для этого диапазона дорожек
+            # ✅ use_production_pricing=True для расчета с raw_material_costs + переармированием
             result_paths = await asyncio.to_thread(
                 visualize_plan,
                 OUTPUTS_DIR_STR,
                 tracks_in_file,
-                start_index
+                start_index,
+                use_production_pricing=True
             )
             
             if isinstance(result_paths, tuple) and len(result_paths) >= 2:

@@ -49,7 +49,8 @@ __all__ = ['visualize_plan', 'build_layout_sequence']
 
 def visualize_plan(output_dir: str = 'Визуализация_Раскладки', 
                     tracks_per_file: int = None, 
-                    start_track_index: int = 0):
+                    start_track_index: int = 0,
+                    use_production_pricing: bool = False):
     """
     Создаёт визуализацию раскладки плит и сохраняет файлы
     
@@ -57,6 +58,8 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         output_dir: Директория для сохранения файлов
         tracks_per_file: Сколько дорожек поместить в один файл (None = все дорожки)
         start_track_index: С какой дорожки начинать (0 = с первой)
+        use_production_pricing: Если True, использует расчет для планирования производства 
+                                (базовая цена из raw_material_costs + переармирование)
     """
     try:
         optimized = optimize_cuts_pulp({300: 4, 500: 3, 700: 2, 900: 2})
@@ -75,8 +78,16 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     except Exception:
         pass
 
-    price_rows, total_sum = build_price_rows(price_table)
-    breakdown_tables = build_component_breakdown(price_table, price_rows)
+    # Выбираем функции в зависимости от режима
+    if use_production_pricing:
+        from viz_modules.procurement import build_price_rows_production, build_component_breakdown_production
+        price_rows, total_sum = build_price_rows_production(price_table)
+        breakdown_tables = build_component_breakdown_production(price_table, price_rows)
+        print("[ВИЗУАЛИЗАЦИЯ] Используется расчет для планирования производства (raw_material_costs + переармирование)")
+    else:
+        price_rows, total_sum = build_price_rows(price_table)
+        breakdown_tables = build_component_breakdown(price_table, price_rows)
+        print("[ВИЗУАЛИЗАЦИЯ] Используется расчет для коммерческого предложения")
     
     # Отладочная информация
     print(f'[DEBUG] breakdown_tables count: {len(breakdown_tables) if breakdown_tables else 0}')
@@ -553,27 +564,25 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 df_v.to_excel(writer, index=False, sheet_name='Ведомость')
             print(f'[DEBUG] Список плит сохранён: {xlsx_path_p}')
             
-            # Сохраняем детальную разбивку компонентов в отдельный Excel файл (БЕЗ ЦЕН)
+            # Сохраняем детальную разбивку компонентов в отдельный Excel файл (С ЦЕНАМИ)
             if breakdown_tables:
-                breakdown_headers = ['Компонент', 'Расчёт']  # ✅ Убран столбец "Сумма"
+                breakdown_headers = ['Компонент', 'Расчёт', 'Сумма']  # ✅ 3 столбца
                 all_breakdown_rows = []
                 
                 for breakdown in breakdown_tables:
                     # Заголовок с наименованием
-                    all_breakdown_rows.append([breakdown['name'], ''])
-                    # Строки таблицы (БЕЗ третьего столбца с суммой)
+                    all_breakdown_rows.append([breakdown['name'], '', ''])
+                    # Строки таблицы (все 3 столбца)
                     for row in breakdown['rows']:
-                        # Берём только первые 2 столбца
-                        all_breakdown_rows.append(row[:2])
+                        # Берём все 3 столбца
+                        all_breakdown_rows.append(row if len(row) >= 3 else row + [''] * (3 - len(row)))
                     
                     # Пустая строка между таблицами
-                    all_breakdown_rows.append(['', ''])
+                    all_breakdown_rows.append(['', '', ''])
                 
                 # Удаляем последнюю пустую строку
-                if all_breakdown_rows and all_breakdown_rows[-1] == ['', '']:
+                if all_breakdown_rows and all_breakdown_rows[-1] == ['', '', '']:
                     all_breakdown_rows.pop()
-                
-                # ✅ Убрана итоговая сумма
                 
                 df_breakdown = pd.DataFrame(all_breakdown_rows, columns=breakdown_headers)
                 xlsx_path_breakdown = os.path.join(output_dir, f'Детальная_разбивка_{file_suffix}.xlsx')

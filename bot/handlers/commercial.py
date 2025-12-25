@@ -385,7 +385,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 # Продолжаем без оптимизации (цены будут посчитаны по старой логике)
         
         # Используем build_price_rows для получения правильных цен
-        from viz_modules.procurement import build_price_rows
+        from viz_modules.procurement import build_price_rows, build_component_breakdown
         from viz_modules.price_utils import load_price_table_from_xlsx
         
         # Загружаем таблицу цен
@@ -396,6 +396,13 @@ async def generate_all_documents(message: Message, state: FSMContext):
             build_price_rows,
             price_table,
             reinforcement_code=8
+        )
+        
+        # Получаем детальную разбивку компонентов (для PDF)
+        breakdown_tables = await asyncio.to_thread(
+            build_component_breakdown,
+            price_table,
+            price_rows
         )
         
         # Формируем order_data
@@ -458,7 +465,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
         offer_number = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d%H%M')}"
         offer_date = datetime.now().strftime("%d.%m.%Y")
         
-        # Генерируем PDF (старая версия, не использует имя менеджера)
+        # Генерируем PDF (без детальной разбивки внутри)
         pdf_buffer = await asyncio.to_thread(
             generate_commercial_offer_pdf,
             order_data,
@@ -494,12 +501,26 @@ async def generate_all_documents(message: Message, state: FSMContext):
         xlsx_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.xlsx"
         xlsx_path = os.path.join(OUTPUTS_DIR_STR, xlsx_filename)
         
+        # Сохраняем детальную разбивку в отдельный Excel файл
+        breakdown_filename = f"Детальная_разбивка_{offer_number}_{offer_date.replace('.', '')}.xlsx"
+        breakdown_path = os.path.join(OUTPUTS_DIR_STR, breakdown_filename)
+        
         with open(pdf_path, 'wb') as f:
             f.write(pdf_buffer.getvalue())
         
         if has_xlsx:
             with open(xlsx_path, 'wb') as f:
                 f.write(xlsx_buffer.getvalue())
+        
+        # Сохраняем детальную разбивку
+        has_breakdown = False
+        if breakdown_tables:
+            from core.commercial_offer import save_breakdown_to_excel
+            has_breakdown = await asyncio.to_thread(
+                save_breakdown_to_excel,
+                breakdown_tables,
+                breakdown_path
+            )
         
         # Формируем сводку
         total_qty = sum(item['qty'] for item in order_data)
@@ -524,6 +545,13 @@ async def generate_all_documents(message: Message, state: FSMContext):
             await message.answer_document(
                 FSInputFile(xlsx_path),
                 caption=f"📊 Коммерческое предложение № {offer_number} (XLSX с формулами)"
+            )
+        
+        # Отправляем детальную разбивку
+        if has_breakdown and os.path.exists(breakdown_path):
+            await message.answer_document(
+                FSInputFile(breakdown_path),
+                caption=f"📋 Детальная разбивка компонентов № {offer_number}"
             )
         
         # Генерируем схему и разбивку
@@ -725,7 +753,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 await message.answer("✅ Оптимизация завершена! Формирую документы...")
         
         # 🔥 ТЕПЕРЬ build_price_rows получит ОПТИМИЗИРОВАННЫЕ данные из OPT_CASCADING_PLAN_BY_LOAD!
-        from viz_modules.procurement import build_price_rows
+        from viz_modules.procurement import build_price_rows, build_component_breakdown
         from viz_modules.price_utils import load_price_table_from_xlsx
         
         # Загружаем таблицу цен для расчётов
@@ -736,6 +764,13 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             build_price_rows,
             price_table,
             reinforcement_code=8
+        )
+        
+        # Получаем детальную разбивку компонентов (для PDF)
+        breakdown_tables = await asyncio.to_thread(
+            build_component_breakdown,
+            price_table,
+            price_rows
         )
         
         # Формируем order_data из price_rows с правильными ценами
@@ -840,12 +875,26 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         xlsx_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.xlsx"
         xlsx_path = os.path.join(OUTPUTS_DIR_STR, xlsx_filename)
         
+        # Сохраняем детальную разбивку в отдельный Excel файл
+        breakdown_filename = f"Детальная_разбивка_{offer_number}_{offer_date.replace('.', '')}.xlsx"
+        breakdown_path = os.path.join(OUTPUTS_DIR_STR, breakdown_filename)
+        
         with open(pdf_path, 'wb') as f:
             f.write(pdf_buffer.getvalue())
         
         if has_xlsx:
             with open(xlsx_path, 'wb') as f:
                 f.write(xlsx_buffer.getvalue())
+        
+        # Сохраняем детальную разбивку
+        has_breakdown = False
+        if breakdown_tables:
+            from core.commercial_offer import save_breakdown_to_excel
+            has_breakdown = await asyncio.to_thread(
+                save_breakdown_to_excel,
+                breakdown_tables,
+                breakdown_path
+            )
         
         # Формируем сводку по заказу
         total_qty = sum(item['qty'] for item in order_data)
@@ -870,6 +919,13 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             await message.answer_document(
                 FSInputFile(xlsx_path),
                 caption=f"📊 Коммерческое предложение № {offer_number} (XLSX с формулами)"
+            )
+        
+        # Отправляем детальную разбивку
+        if has_breakdown and os.path.exists(breakdown_path):
+            await message.answer_document(
+                FSInputFile(breakdown_path),
+                caption=f"📋 Детальная разбивка компонентов № {offer_number}"
             )
         
         # 🔥 ГЕНЕРИРУЕМ СХЕМУ И ДЕТАЛЬНУЮ РАЗБИВКУ (как при "Получить КП")

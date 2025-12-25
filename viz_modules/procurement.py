@@ -547,6 +547,297 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
     return rows, total
 
 
+def build_price_rows_production(price_table: dict, reinforcement_code: int = 8):
+    """
+    Формирует строки сметы для планирования производства.
+    ОТЛИЧИЯ от build_price_rows:
+    - Базовая цена берется из таблицы raw_material_costs (стоимость сырья + производство)
+    - Добавлен компонент "Переармирование" (перерасход прутьев)
+    """
+    from core.raw_material_db import get_raw_material_cost
+    from core.reinforcement_db import get_reinforcement
+    
+    items = build_procurement_items()
+    rows = []
+    total = 0.0
+    idx = 1
+    
+    # ШАГ 1: Находим максимальное армирование во всем заказе
+    max_reinforcement = 0.0
+    for it in items:
+        L, W, qty = it['length'], it['width'], it['qty']
+        load_code = it.get('load_code')
+        if load_code is None:
+            load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
+        
+        # Получаем армирование из БД
+        reinforcement = get_reinforcement(L, load_code, db_path=cfg.PRICE_DB_PATH)
+        if reinforcement and reinforcement > max_reinforcement:
+            max_reinforcement = reinforcement
+    
+    print(f'[PRODUCTION PRICING] Максимальное армирование в заказе: {max_reinforcement} прутьев')
+    
+    # ШАГ 2: Рассчитываем стоимость каждой плиты
+    for it in items:
+        L, W, qty = it['length'], it['width'], it['qty']
+        long_cuts, trans_cuts = it['long_cuts'], it['trans_cuts']
+        
+        # Определяем код нагрузки
+        if 'load_code' in it and it['load_code'] is not None:
+            load_code = it['load_code']
+        else:
+            try:
+                load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
+            except Exception:
+                load_code = 6 if W < 1.0 else reinforcement_code
+        
+        # Формируем имя плиты
+        name = cfg.make_plate_name(L, W, load_code=load_code)
+        if it.get('warning'):
+            name += " (нагрузка?)"
+        
+        # ✅ ИЗМЕНЕНИЕ 1: Базовая цена берется из raw_material_costs
+        # В БД все плиты имеют формат "ПБ XX-12-НАГРУЗКА" (ширина 1.2м)
+        # Поэтому ищем по базовому имени с той же нагрузкой и пересчитываем на фактическую ширину
+        base_name_1_2m = cfg.make_plate_name(L, 1.2, load_code=load_code)
+        # Убираем "Плиты " и букву "п", т.к. в БД хранится формат "ПБ 23-12-8"
+        base_name_1_2m_short = base_name_1_2m.replace('Плиты ', '').replace('п', '')
+        base_price_1_2m = get_raw_material_cost(base_name_1_2m_short, db_path=cfg.PRICE_DB_PATH)
+        
+        if base_price_1_2m is not None:
+            # Пересчитываем на фактическую ширину
+            width_factor = W / 1.2
+            base_price = base_price_1_2m * width_factor
+            print(f'[PRODUCTION PRICING] {name}: базовая цена из БД ({base_name_1_2m_short}: {base_price_1_2m:.2f}) × {width_factor:.3f} = {base_price:.2f} руб')
+        else:
+            # Fallback: если нет в БД, используем старый метод
+            db_price = get_price(L, load_code, cfg.PRICE_DB_PATH)
+            base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, L, load_code) or 0.0)
+            if base_price_1_2m > 0:
+                width_factor = W / 1.2
+                base_price = base_price_1_2m * width_factor
+            else:
+                base_price = 0.0
+            print(f'[WARNING] Нет данных в raw_material_costs для {base_name_1_2m_short}, использую старый метод: {base_price:.2f}')
+        
+        # Используем ту же логику расчета резов, остатков и отходов
+        from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
+        width_mm = int(round(W * 1000))
+        
+        # Инициализация переменных
+        long_cut_cost = 0.0
+        trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
+        rest_cost = 0.0
+        waste_cost = 0.0
+        rest_used = False  # Флаг: используются ли остатки от резов
+        
+        # Проверяем план оптимизации (копируем логику из build_price_rows)
+        current_plan = None
+        if OPT_CASCADING_PLAN_BY_LOAD:
+            import math
+            from core.optimization import LOAD_TO_REINFORCEMENT_MAP
+
+            load_key = int(math.floor(load_code)) if isinstance(load_code, (int, float)) else 8
+
+            if LOAD_TO_REINFORCEMENT_MAP and load_key in LOAD_TO_REINFORCEMENT_MAP:
+                reinforcement_keys = LOAD_TO_REINFORCEMENT_MAP[load_key]
+
+                # Перебираем ВСЕ группы армирования для этой нагрузки
+                for reinforcement_key in reinforcement_keys:
+                    plan = OPT_CASCADING_PLAN_BY_LOAD.get(reinforcement_key)
+                    if not plan:
+                        continue
+
+                    orders_req = plan.get('orders_requested') or []
+                    # Ищем нашу плиту по длине/ширине/нагрузке
+                    for ord_item in orders_req:
+                        try:
+                            o_len = float(ord_item.get('length', 0))
+                            o_width = int(ord_item.get('width', 0))
+                            o_load = ord_item.get('load_code', load_key)
+                        except Exception:
+                            continue
+
+                        if (
+                            abs(o_len - L) < 0.05 and
+                            o_width == width_mm and
+                            int(math.floor(float(o_load))) == load_key
+                        ):
+                            current_plan = plan
+                            print(
+                                f'[DEBUG] build_price_rows_production: нашёл план для {name} — '
+                                f'нагрузка {load_key}п, армирование {reinforcement_key}'
+                            )
+                            break
+
+                    if current_plan:
+                        break
+
+                if not current_plan:
+                    print(
+                        f'[DEBUG] build_price_rows_production: не найден подходящий план для плиты '
+                        f'{name} при нагрузке {load_key}п. Остатки будут считаться неиспользованными.'
+                    )
+            else:
+                print(
+                    f'[DEBUG] build_price_rows_production: нагрузка {load_key}п не найдена в LOAD_TO_REINFORCEMENT_MAP. '
+                    f'Остатки будут считаться неиспользованными.'
+                )
+        
+        if current_plan and current_plan.get('primary_cuts'):
+            total_cuts_for_this_size = 0
+            
+            # Первичные резы
+            for prim_cut in current_plan['primary_cuts']:
+                if prim_cut['width'] == width_mm:
+                    prim_lengths = prim_cut.get('lengths', [])
+                    if not prim_lengths or any(abs(l - L) < 0.05 for l in prim_lengths):
+                        prim_qty = prim_cut.get('qty', 0)
+                        total_cuts_for_this_size += prim_qty
+                        primary_rest_width_mm = prim_cut['rest']
+
+                        # Остатки
+                        unused_rest_total_mm = 0.0
+                        if primary_rest_width_mm > 0:
+                            produced_rests = prim_qty
+                            used_rests = 0
+
+                            if current_plan.get('secondary_cuts'):
+                                for sec_cut in current_plan['secondary_cuts']:
+                                    if sec_cut.get('source') != primary_rest_width_mm:
+                                        continue
+                                    src_lengths = sec_cut.get('source_lengths', [])
+                                    if src_lengths and not any(abs(sl - L) < 0.05 for sl in src_lengths):
+                                        continue
+                                    used_rests += sec_cut.get('qty', 0)
+
+                            unused_rests = max(0, produced_rests - used_rests)
+                            unused_rest_total_mm = unused_rests * primary_rest_width_mm
+
+                            if unused_rest_total_mm > 0 and base_price_1_2m > 0 and qty > 0:
+                                # ✅ ИСПРАВЛЕНО: Используем base_price_1_2m (цена плиты 1.2м), а не base_price (пересчитанная цена)
+                                rest_cost = (unused_rest_total_mm / 1200.0) * base_price_1_2m / qty
+                            elif used_rests > 0:
+                                # Остатки были использованы
+                                rest_used = True
+
+                        # Вторичные резы и отходы
+                        if current_plan.get('secondary_cuts'):
+                            for sec_cut in current_plan['secondary_cuts']:
+                                sec_lengths = sec_cut.get('lengths', [])
+                                if not sec_lengths or any(abs(l - L) < 0.05 for l in sec_lengths):
+                                    sec_cuts = sec_cut.get('cuts', [])
+                                    if any(abs(width_mm - cut_width) <= 20 for cut_width in sec_cuts):
+                                        sec_qty = sec_cut.get('qty', 0)
+                                        sec_pieces = sec_cut.get('pieces', 1)
+
+                                        current_cuts = sec_qty * sec_pieces
+                                        total_cuts_for_this_size += current_cuts
+
+                                        # Отходы по ширине
+                                        waste_w_mm = sec_cut.get('waste', 0)
+                                        if waste_w_mm > 0 and base_price > 0 and qty > 0:
+                                            cost_of_waste_piece = (waste_w_mm / 1200.0) * base_price
+                                            waste_cost += (cost_of_waste_piece * sec_qty) / qty
+
+                                        # Поперечные резы и отходы по длине
+                                        src_lens = sec_cut.get('source_lengths', [])
+                                        if src_lens:
+                                            src_len = src_lens[0]
+
+                                            if sec_cut.get('type') == 'transverse' or abs(src_len - L) > 0.05:
+                                                if qty > 0:
+                                                    trans_cuts += (1.0 * sec_qty) / qty
+
+                                                len_waste = src_len - L
+                                                if len_waste > 0.01:
+                                                    src_plate_name = cfg.make_plate_name(src_len, W, load_code=load_code).replace('Плиты ', '').replace('п', '')
+                                                    src_price_full = get_raw_material_cost(
+                                                        src_plate_name,
+                                                        db_path=cfg.PRICE_DB_PATH
+                                                    )
+                                                    if src_price_full is None:
+                                                        # Fallback
+                                                        src_price_full_db = get_price(src_len, load_code, cfg.PRICE_DB_PATH)
+                                                        if src_price_full_db:
+                                                            src_price_full = src_price_full_db * (width_mm / 1200.0)
+                                                        else:
+                                                            src_price_full = 0.0
+
+                                                    cost_len_waste = src_price_full - base_price
+
+                                                    if cost_len_waste > 0:
+                                                        waste_cost += cost_len_waste * (sec_qty / qty)
+                        break
+            
+            # Пересчитываем стоимость продольных резов
+            if total_cuts_for_this_size > 0:
+                long_cut_cost = (total_cuts_for_this_size * cfg.LONG_CUT_PRICE_PER_M * L) / qty if qty > 0 else 0
+            else:
+                long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L)
+            
+            trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
+        else:
+            # Если нет данных из плана
+            long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * L)
+
+        # Жёсткое правило: плиты 1.2м без продольных резов
+        if abs(W - 1.2) < 0.01:
+            long_cut_cost = 0.0
+
+        # Для диапазона 1020–1080 мм считаем обрезок как отход
+        if 1020 <= width_mm <= 1080 and base_price > 0:
+            extra_waste_mm = 1200 - width_mm
+            if extra_waste_mm > 0:
+                waste_cost += (extra_waste_mm / 1200.0) * base_price
+
+        # ✅ ИЗМЕНЕНИЕ 2: Добавляем компонент "Переармирование"
+        rearm_cost = 0.0
+        reinforcement = get_reinforcement(L, load_code, db_path=cfg.PRICE_DB_PATH)
+        if reinforcement and max_reinforcement > reinforcement:
+            rearm_diff = max_reinforcement - reinforcement
+            
+            # Если плита целая (без резов) ИЛИ остаток не используется
+            if long_cuts == 0 or not rest_used:
+                # Базовая формула для ЦЕЛОЙ плиты 1.2м
+                rearm_cost = rearm_diff * L * 0.170 * 80
+                print(f'[PRODUCTION PRICING] {name}: переармирование (целая/остаток не использован) = ({max_reinforcement:.1f} - {reinforcement:.1f}) × {L} × 0.170 × 80 = {rearm_cost:.2f} руб')
+            else:
+                # Если остаток используется - формула с учётом фактической ширины плиты
+                rearm_cost = rearm_diff * L * 0.170 * 80 * (width_mm / 1200.0)
+                print(f'[PRODUCTION PRICING] {name}: переармирование (остаток использован) = ({max_reinforcement:.1f} - {reinforcement:.1f}) × {L} × 0.170 × 80 × ({width_mm} / 1200) = {rearm_cost:.2f} руб')
+
+        unit_price = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost + rearm_cost
+        weight = cfg.approximate_weight_kg(L, W)
+        row_sum = unit_price * qty
+        total += row_sum
+
+        metadata = []
+        if hasattr(cfg, 'consume_plate_metadata'):
+            try:
+                metadata = cfg.consume_plate_metadata(L, int(round(W * 1000)), qty)
+            except Exception:
+                metadata = []
+        weeks = [m.get('forming_week') for m in metadata if m.get('forming_week') not in (None, '')]
+        week_str = ", ".join(str(w) for w in sorted(set(weeks))) if weeks else ''
+        contractors = [m.get('contractor') for m in metadata if m.get('contractor')]
+        contractor_str = ", ".join(sorted(set(contractors))) if contractors else ''
+
+        rows.append([
+            idx,
+            name,
+            qty,
+            'шт',
+            week_str or '—',
+            contractor_str or '—',
+            f'{weight:.0f}',
+            f'{unit_price:,.2f}'.replace(',', ' ').replace('.', ','),
+            f'{row_sum:,.2f}'.replace(',', ' ').replace('.', ',')
+        ])
+        idx += 1
+    return rows, total
+
+
 def build_component_breakdown(price_table: dict, price_rows: list = None, reinforcement_code: int = 8):
     """Формирует детальную разбивку компонентов для каждого наименования."""
     from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
@@ -1003,5 +1294,495 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         })
     
     print(f'[DEBUG] build_component_breakdown: создано таблиц разбивки: {len(breakdown_tables)}')
+    return breakdown_tables
+
+
+def build_component_breakdown_production(price_table: dict, price_rows: list = None, reinforcement_code: int = 8):
+    """
+    Формирует детальную разбивку компонентов для планирования производства.
+    ОТЛИЧИЯ от build_component_breakdown:
+    - Базовая цена берется из таблицы raw_material_costs
+    - Добавлен компонент "Переармирование"
+    """
+    from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
+    from core.raw_material_db import get_raw_material_cost
+    from core.reinforcement_db import get_reinforcement
+    
+    # Получаем заказы
+    plan_orders = get_orders_from_opt_plan()
+    if not plan_orders:
+        # Fallback на старый способ
+        all_orders = []
+        for width_mm, plates_list in [
+            (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
+            (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
+            (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
+            (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08)
+        ]:
+            if plates_list:
+                length_counts = Counter(plates_list)
+                for length, qty in length_counts.items():
+                    all_orders.append({
+                        'length': length,
+                        'width': width_mm,
+                        'qty': qty
+                    })
+        if not all_orders:
+            # Если нет заказов из cfg, используем данные из price_rows
+            if price_rows:
+                print('[DEBUG] build_component_breakdown_production: используем данные из price_rows')
+                for row in price_rows:
+                    name = row[1] if len(row) > 1 else ''
+                    try:
+                        qty = int(str(row[2]).replace(' ', '').replace(',', '')) if len(row) > 2 else 1
+                    except (ValueError, TypeError):
+                        qty = 1
+                    # Парсим имя
+                    match = re.search(r'ПБ\s+(\d+)-([\d,]+)-', name)
+                    if match:
+                        length_dm = int(match.group(1))
+                        length = length_dm / 10.0
+                        
+                        width_str = match.group(2).replace(',', '.').replace(' ', '')
+                        width_dm = float(width_str)
+                        width_mm = int(round(width_dm * 100))
+                        width_m = width_mm / 1000.0
+                        
+                        all_orders.append({
+                            'length': length,
+                            'width': width_mm,
+                            'qty': qty
+                        })
+                        print(f'[DEBUG] Распарсили {name}: длина={length}м, ширина={width_m}м ({width_mm}мм)')
+            if not all_orders:
+                print('[DEBUG] build_component_breakdown_production: нет заказов, возвращаем пустой список')
+                return []
+        plan_orders = all_orders
+    
+    print(f'[DEBUG] build_component_breakdown_production: найдено заказов: {len(plan_orders)}')
+    
+    # Группируем заказы по (длина, ширина, НАГРУЗКА)
+    order_counter = Counter()
+    for order in plan_orders:
+        length = round(float(order.get('length', 0)), 3)
+        width_val = order.get('width', 0)
+        width_mm = width_val if width_val > 5 else int(width_val * 1000)
+        width_m = width_mm / 1000.0
+        
+        # Получаем нагрузку для этой плиты
+        found_details = []
+        if cfg.PLATE_LOAD_DETAILS:
+            for (L, W, load), q in cfg.PLATE_LOAD_DETAILS.items():
+                if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
+                    found_details.append((load, q))
+        
+        order_qty = order.get('qty', 1)
+        
+        if found_details and sum(q for _, q in found_details) == order_qty:
+            for load_code, q in found_details:
+                order_counter[(length, width_mm, load_code, False)] += q
+        else:
+            load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else reinforcement_code))
+            warning_flag = True if found_details else False
+            order_counter[(length, width_mm, load_code, warning_flag)] += order_qty
+    
+    # ШАГ 1: Находим максимальное армирование во всем заказе
+    max_reinforcement = 0.0
+    for (length, width_mm, load_code, warning_flag), qty in order_counter.items():
+        reinforcement = get_reinforcement(length, load_code, db_path=cfg.PRICE_DB_PATH)
+        if reinforcement and reinforcement > max_reinforcement:
+            max_reinforcement = reinforcement
+    
+    print(f'[PRODUCTION BREAKDOWN] Максимальное армирование в заказе: {max_reinforcement} прутьев')
+    
+    breakdown_tables = []
+    
+    for (length, width_mm, load_code, warning_flag), qty in sorted(order_counter.items(), key=lambda x: (x[0][0], x[0][1], x[0][2])):
+        width_m = width_mm / 1000.0
+
+        # Имя плиты
+        name = cfg.make_plate_name(length, width_m, load_code=load_code)
+        if warning_flag:
+            name += " (нагрузка?)"
+        
+        # ✅ ИЗМЕНЕНИЕ 1: Базовая цена из raw_material_costs
+        # В БД все плиты имеют формат "ПБ XX-12-НАГРУЗКА" (ширина 1.2м)
+        # Поэтому ищем по базовому имени с той же нагрузкой и пересчитываем на фактическую ширину
+        base_name_1_2m = cfg.make_plate_name(length, 1.2, load_code=load_code)
+        # Убираем "Плиты " и букву "п", т.к. в БД хранится формат "ПБ 23-12-8"
+        base_name_1_2m_short = base_name_1_2m.replace('Плиты ', '').replace('п', '')
+        base_price_1_2m = get_raw_material_cost(base_name_1_2m_short, db_path=cfg.PRICE_DB_PATH)
+        
+        if base_price_1_2m is not None:
+            # Пересчитываем на фактическую ширину
+            width_factor = width_m / 1.2
+            base_price = base_price_1_2m * width_factor
+            print(f'[PRODUCTION BREAKDOWN] {name}: базовая цена из БД ({base_name_1_2m_short}: {base_price_1_2m:.2f}) × {width_factor:.3f} = {base_price:.2f} руб')
+        else:
+            # Fallback
+            db_price = get_price(length, load_code, cfg.PRICE_DB_PATH)
+            base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, length, load_code) or 0.0)
+            if base_price_1_2m > 0:
+                width_factor = width_m / 1.2
+                base_price = base_price_1_2m * width_factor
+            else:
+                base_price = 0.0
+                base_price_1_2m = 0.0
+            print(f'[WARNING] Нет данных в raw_material_costs для {base_name_1_2m_short}, использую старый метод: {base_price:.2f}')
+
+        # Продольный рез
+        if abs(width_m - 1.2) < 0.01:
+            long_cuts = 0
+        else:
+            long_cuts = 1 if width_m < 1.15 else 0
+        long_cut_cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * length)
+        
+        # Поперечный рез
+        trans_cuts = 0
+        trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
+        
+        # Остаток
+        rest_width_mm = 1200 - width_mm if width_m < 1.15 else 0
+        rest_cost = 0.0
+        rest_used = False
+        
+        # Отходы
+        waste_cost = 0.0
+        waste_width_mm = 0
+        waste_terms = []
+        
+        # Проверяем план оптимизации (копируем логику из build_component_breakdown)
+        current_plan = None
+        if OPT_CASCADING_PLAN_BY_LOAD:
+            import math
+            from core.optimization import LOAD_TO_REINFORCEMENT_MAP
+
+            load_key = int(math.floor(load_code)) if isinstance(load_code, (int, float)) else 8
+
+            print(f'[DEBUG] build_component_breakdown_production: ищем план для нагрузки {load_key}п (плита {name})')
+
+            if LOAD_TO_REINFORCEMENT_MAP and load_key in LOAD_TO_REINFORCEMENT_MAP:
+                reinforcement_keys = LOAD_TO_REINFORCEMENT_MAP[load_key]
+
+                for reinforcement_key in reinforcement_keys:
+                    plan = OPT_CASCADING_PLAN_BY_LOAD.get(reinforcement_key)
+                    if not plan:
+                        continue
+
+                    orders_req = plan.get('orders_requested') or []
+                    for ord_item in orders_req:
+                        try:
+                            o_len = float(ord_item.get('length', 0))
+                            o_width = int(ord_item.get('width', 0))
+                            o_load = ord_item.get('load_code', load_key)
+                        except Exception:
+                            continue
+
+                        if (
+                            abs(o_len - length) < 0.05 and
+                            o_width == width_mm and
+                            int(math.floor(float(o_load))) == load_key
+                        ):
+                            current_plan = plan
+                            print(
+                                f'[DEBUG] ✅ Используем план для нагрузки {load_key}п '
+                                f'(армирование {reinforcement_key}) для плиты {name}'
+                            )
+                            break
+
+                    if current_plan:
+                        break
+
+                if not current_plan:
+                    print(
+                        f'[DEBUG] ⚠️ Не найден подходящий план по нагрузке {load_key}п '
+                        f'для плиты {name}. Остатки будут считаться неиспользованными.'
+                    )
+            else:
+                print(
+                    f'[DEBUG] ⚠️ Нагрузка {load_key}п не найдена в LOAD_TO_REINFORCEMENT_MAP. '
+                    f'Остатки для плиты {name} будут считаться неиспользованными.'
+                )
+        else:
+            print(f'[DEBUG] ⚠️ OPT_CASCADING_PLAN_BY_LOAD пустой! Нет планов оптимизации по нагрузкам.')
+        
+        total_cuts_count = 0
+        if current_plan and current_plan.get('primary_cuts'):
+            total_cuts_for_this_size = 0
+            total_plates_from_cuts = 0
+            primary_rest_width_mm = 0
+            
+            # Первичные резы
+            for prim_cut in current_plan['primary_cuts']:
+                if prim_cut['width'] == width_mm:
+                    prim_lengths = prim_cut.get('lengths', [])
+                    if not prim_lengths or any(abs(l - length) < 0.05 for l in prim_lengths):
+                        prim_qty = prim_cut.get('qty', 0)
+                        total_cuts_for_this_size += prim_qty
+                        total_plates_from_cuts += prim_qty
+                        primary_rest_width_mm = prim_cut['rest']
+
+                        # Остатки
+                        unused_rest_total_mm = 0.0
+                        if primary_rest_width_mm > 0:
+                            produced_rests = prim_qty
+                            used_rests = 0
+
+                            if current_plan.get('secondary_cuts'):
+                                for sec_cut in current_plan['secondary_cuts']:
+                                    if sec_cut.get('source') != primary_rest_width_mm:
+                                        continue
+                                    src_lengths = sec_cut.get('source_lengths', [])
+                                    if src_lengths and not any(abs(sl - length) < 0.05 for sl in src_lengths):
+                                        continue
+                                    used_rests += sec_cut.get('qty', 0)
+
+                            unused_rests = max(0, produced_rests - used_rests)
+                            unused_rest_total_mm = unused_rests * primary_rest_width_mm
+
+                            if unused_rest_total_mm > 0 and base_price_1_2m > 0 and qty > 0:
+                                # ✅ ИСПРАВЛЕНО: Используем base_price_1_2m (цена плиты 1.2м), а не base_price (пересчитанная цена)
+                                # Остаток считается от полной ширины 1200мм, поэтому нужна цена плиты 1.2м
+                                rest_cost = (unused_rest_total_mm / 1200.0) * base_price_1_2m / qty
+                                rest_width_mm = unused_rest_total_mm
+                            elif produced_rests > 0:
+                                rest_used = True
+                                rest_width_mm = 0
+
+                        # Вторичные резы и отходы
+                        if current_plan.get('secondary_cuts'):
+                            for sec_cut in current_plan['secondary_cuts']:
+                                sec_lengths = sec_cut.get('lengths', [])
+                                if not sec_lengths or any(abs(l - length) < 0.05 for l in sec_lengths):
+                                    sec_cuts = sec_cut.get('cuts', [])
+                                    
+                                    if any(abs(width_mm - cut_width) <= 20 for cut_width in sec_cuts):
+                                        sec_qty = sec_cut.get('qty', 0)
+                                        sec_pieces = sec_cut.get('pieces', 1)
+                                        
+                                        current_cuts = sec_qty * sec_pieces
+                                        total_cuts_for_this_size += current_cuts
+                                        total_plates_from_cuts += current_cuts
+                                        
+                                        # Отходы по ширине
+                                        waste_w_mm = sec_cut.get('waste', 0)
+                                        if waste_w_mm > 0 and base_price > 0 and qty > 0:
+                                            cost_of_waste_piece = (waste_w_mm / 1200.0) * base_price
+                                            waste_cost += (cost_of_waste_piece * sec_qty) / qty
+                                            waste_terms.append((waste_w_mm, sec_qty))
+
+                                        # Поперечные резы
+                                        src_lens = sec_cut.get('source_lengths', [])
+                                        if src_lens:
+                                            src_len = src_lens[0]
+
+                                            if sec_cut.get('type') == 'transverse' or abs(src_len - length) > 0.05:
+                                                if qty > 0:
+                                                    trans_cuts += (1.0 * sec_qty) / qty
+
+                                                len_waste = src_len - length
+                                                if len_waste > 0.01:
+                                                    src_plate_name = cfg.make_plate_name(src_len, width_m, load_code=load_code).replace('Плиты ', '').replace('п', '')
+                                                    src_price_full = get_raw_material_cost(
+                                                        src_plate_name,
+                                                        db_path=cfg.PRICE_DB_PATH
+                                                    )
+                                                    if src_price_full is None:
+                                                        src_price_full_db = get_price(src_len, load_code, cfg.PRICE_DB_PATH)
+                                                        if src_price_full_db:
+                                                            src_price_full = src_price_full_db * (width_mm / 1200.0)
+                                                        else:
+                                                            src_price_full = 0.0
+
+                                                    cost_len_waste = src_price_full - base_price
+
+                                                    if cost_len_waste > 0:
+                                                        waste_cost += cost_len_waste * (sec_qty / qty)
+
+                            trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
+                        break
+            
+            # Если нашли резы в плане
+            if total_plates_from_cuts > 0:
+                total_cuts_count = total_cuts_for_this_size
+                long_cuts = total_cuts_for_this_size
+                long_cut_cost = (long_cuts * cfg.LONG_CUT_PRICE_PER_M * length) / qty if qty > 0 else 0
+        else:
+            # Если плана нет, рассчитываем остатки вручную
+            print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
+            
+            if width_m < 1.15:
+                rest_width_mm = 1200 - width_mm
+                
+                if rest_width_mm > 0 and base_price_1_2m > 0:
+                    # ✅ ИСПРАВЛЕНО: Используем base_price_1_2m (цена плиты 1.2м), а не base_price (пересчитанная цена)
+                    # Остаток считается от полной ширины 1200мм, поэтому нужна цена плиты 1.2м
+                    rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
+                    print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
+                else:
+                    rest_cost = 0.0
+
+        # Для диапазона 1020–1080 мм
+        if 1020 <= width_mm <= 1080 and base_price > 0:
+            extra_waste_mm = 1200 - width_mm
+            if extra_waste_mm > 0:
+                waste_terms.append((extra_waste_mm, qty))
+                waste_cost += (extra_waste_mm / 1200.0) * base_price
+                    
+        # Жёсткое правило: плиты 1.2м без продольных резов
+        if abs(width_m - 1.2) < 0.01:
+            long_cuts = 0
+            long_cut_cost = 0.0
+
+        # ✅ ИЗМЕНЕНИЕ 2: Переармирование
+        rearm_cost = 0.0
+        reinforcement = get_reinforcement(length, load_code, db_path=cfg.PRICE_DB_PATH)
+        if reinforcement and max_reinforcement > reinforcement:
+            rearm_diff = max_reinforcement - reinforcement
+            
+            # Если плита целая (без резов) ИЛИ остаток не используется
+            if long_cuts == 0 or not rest_used:
+                # Базовая формула для ЦЕЛОЙ плиты 1.2м
+                rearm_cost = rearm_diff * length * 0.170 * 80
+                print(f'[PRODUCTION BREAKDOWN] {name}: переармирование (целая/остаток не использован) = ({max_reinforcement:.1f} - {reinforcement:.1f}) × {length} × 0.170 × 80 = {rearm_cost:.2f} руб')
+            else:
+                # Если остаток используется - формула с учётом фактической ширины плиты
+                rearm_cost = rearm_diff * length * 0.170 * 80 * (width_mm / 1200.0)
+                print(f'[PRODUCTION BREAKDOWN] {name}: переармирование (остаток использован) = ({max_reinforcement:.1f} - {reinforcement:.1f}) × {length} × 0.170 × 80 × ({width_mm} / 1200) = {rearm_cost:.2f} руб')
+
+        # ИТОГО
+        total_per_unit = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost + rearm_cost
+        total_for_qty = total_per_unit * qty
+        total_rounded = round(total_per_unit, 2)
+        
+        # Формируем таблицу
+        table_rows = []
+        
+        # Базовая цена
+        # Базовая цена
+        if base_price_1_2m > 0 and abs(width_m - 1.2) > 0.01:
+            # Показываем пересчет для узких плит
+            base_price_1_2m_str = f"{base_price_1_2m:,.2f}".replace(',', ' ').replace('.', ',')
+            width_m_str = f"{width_m:.2f}".replace('.', ',')
+            base_calc = f"{base_price_1_2m_str} × ({width_m_str} / 1,2)"
+        else:
+            # Целая плита 1.2м
+            base_calc = "из БД raw_material_costs"
+        
+        table_rows.append([
+            f"Базовая цена (сырьё + произв.)",
+            base_calc,
+            f"{base_price:,.2f} руб".replace(',', ' ').replace('.', ',')
+        ])
+        
+        # Продольный рез
+        if long_cuts > 0:
+            if total_cuts_count > 0:
+                if qty > 1:
+                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {total_cuts_count:.0f} / {qty}".replace('.', ',')
+                else:
+                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {total_cuts_count:.0f}".replace('.', ',')
+            else:
+                if abs(long_cuts - 1.0) > 0.001:
+                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {long_cuts:.2f}".replace('.', ',')
+                else:
+                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f}".replace('.', ',')
+            table_rows.append([
+                "Продольный рез",
+                long_calc,
+                f"{long_cut_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            ])
+        
+        # Поперечный рез
+        if trans_cuts > 0:
+            trans_calc = f"{cfg.TRANSVERSE_CUT_PRICE:.0f} × {trans_cuts}"
+            table_rows.append([
+                "Поперечный рез",
+                trans_calc,
+                f"{trans_cut_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            ])
+        
+        # Остаток
+        if rest_width_mm > 0:
+            if rest_cost > 0:
+                # ✅ ИСПРАВЛЕНО: Показываем base_price_1_2m (цена плиты 1.2м) в формуле
+                base_price_1_2m_str = f"{base_price_1_2m:,.2f}".replace(',', ' ').replace('.', ',')
+                rest_calc = f"({rest_width_mm} / 1200) × {base_price_1_2m_str} / {qty}"
+                rest_status_str = f"{rest_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            else:
+                rest_calc = "0 (использован)" if rest_used else "0 (не использован)"
+                rest_status_str = "0,00 руб"
+            table_rows.append([
+                f"Остаток ({rest_width_mm}мм)",
+                rest_calc,
+                rest_status_str
+            ])
+        
+        # Отходы
+        if waste_cost > 0 or waste_terms:
+            if base_price > 0:
+                base_price_str = f"{base_price:,.2f}".replace(',', ' ').replace('.', ',')
+                if waste_terms:
+                    parts = []
+                    for w_mm, n in waste_terms:
+                        w_str = f"{int(w_mm)}"
+                        parts.append(f"{w_str}×{n}" if n > 1 else w_str)
+                    waste_expr = " + ".join(parts)
+                else:
+                    waste_expr = "0"
+                waste_calc = f"({waste_expr} / 1200) × {base_price_str} / {qty}"
+            else:
+                waste_expr = "0"
+                waste_calc = "0"
+            table_rows.append([
+                f"Отходы ({waste_expr}мм)",
+                waste_calc,
+                f"{waste_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            ])
+        
+        # ✅ НОВАЯ СТРОКА: Переармирование
+        if rearm_cost > 0:
+            # Формула зависит от того, используется ли остаток
+            if long_cuts == 0 or not rest_used:
+                # Целая плита или остаток не используется
+                rearm_calc = f"({max_reinforcement:.1f} - {reinforcement:.1f}) × {length:.1f} × 0,170 × 80".replace('.', ',')
+            else:
+                # Остаток используется - с учётом ширины
+                width_m_display = width_mm / 1000.0
+                rearm_calc = f"({max_reinforcement:.1f} - {reinforcement:.1f}) × {length:.1f} × 0,170 × 80 × ({width_m_display:.2f} / 1,2)".replace('.', ',')
+            
+            table_rows.append([
+                "Переармирование",
+                rearm_calc,
+                f"{rearm_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            ])
+        
+        # ИТОГО за 1 плиту
+        table_rows.append([
+            "ИТОГО за 1 плиту",
+            "",
+            f"{total_per_unit:,.2f} руб".replace(',', ' ').replace('.', ',')
+        ])
+        
+        # Округлено
+        table_rows.append([
+            "Округлено",
+            "",
+            f"{total_rounded:,.2f} руб".replace(',', ' ').replace('.', ',')
+        ])
+        
+        # За N плит
+        table_rows.append([
+            f"За {qty} плит",
+            f"{total_rounded:,.2f} × {qty}".replace(',', ' ').replace('.', ','),
+            f"{total_for_qty:,.2f} руб".replace(',', ' ').replace('.', ',')
+        ])
+        
+        breakdown_tables.append({
+            'name': name,
+            'rows': table_rows
+        })
+    
+    print(f'[DEBUG] build_component_breakdown_production: создано таблиц разбивки: {len(breakdown_tables)}')
     return breakdown_tables
 

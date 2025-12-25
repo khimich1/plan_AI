@@ -21,7 +21,9 @@ from .procurement import (
     get_orders_from_opt_plan,
     build_procurement_items,
     build_price_rows,
-    build_component_breakdown
+    build_component_breakdown,
+    build_price_rows_production,
+    build_component_breakdown_production
 )
 
 from .layout_sequence import build_layout_sequence
@@ -44,6 +46,8 @@ __all__ = [
     'build_procurement_items',
     'build_price_rows',
     'build_component_breakdown',
+    'build_price_rows_production',
+    'build_component_breakdown_production',
     # layout_sequence
     'build_layout_sequence',
     # visualization_drawing

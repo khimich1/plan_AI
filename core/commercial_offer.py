@@ -270,6 +270,16 @@ def generate_commercial_offer_pdf(
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
     оформление КП № 1133 от 16.10.2025.
+    
+    Args:
+        order_data: список позиций заказа
+        offer_number: номер коммерческого предложения
+        offer_date: дата формирования
+        customer_name: имя заказчика
+    
+    Note:
+        Детальная разбивка компонентов НЕ включается в PDF.
+        Она сохраняется в отдельный Excel файл через save_breakdown_to_excel()
     """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -515,6 +525,9 @@ def generate_commercial_offer_pdf(
     story.append(table)
     story.append(Spacer(1, 6 * mm))
     
+    # ❌ ДЕТАЛЬНАЯ РАЗБИВКА НЕ ДОБАВЛЯЕТСЯ В PDF
+    # Она сохраняется в отдельный Excel файл и отправляется вместе с PDF
+    
     total_items = len(order_data)
     weight_summary = f"{total_weight:,.3f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     subtotal_str = f"{totals['subtotal']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
@@ -545,6 +558,61 @@ def generate_commercial_offer_pdf(
     doc.build(story)
     buffer.seek(0)
     return buffer
+
+
+def save_breakdown_to_excel(breakdown_tables: List[Dict], output_path: str) -> bool:
+    """
+    Сохраняет детальную разбивку компонентов в отдельный Excel файл.
+    
+    Args:
+        breakdown_tables: список таблиц с детальной разбивкой
+        output_path: путь для сохранения Excel файла
+    
+    Returns:
+        True если успешно сохранено, False если ошибка
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        print("[BREAKDOWN] pandas не установлен, невозможно создать Excel файл")
+        return False
+    
+    if not breakdown_tables:
+        print("[BREAKDOWN] breakdown_tables пустой, нечего сохранять")
+        return False
+    
+    try:
+        breakdown_headers = ['Компонент', 'Расчёт', 'Сумма']
+        all_breakdown_rows = []
+        
+        for breakdown in breakdown_tables:
+            # Заголовок с наименованием плиты
+            all_breakdown_rows.append([breakdown['name'], '', ''])
+            
+            # Строки таблицы (все 3 столбца)
+            for row in breakdown['rows']:
+                # Берём все 3 столбца
+                all_breakdown_rows.append(row if len(row) >= 3 else row + [''] * (3 - len(row)))
+            
+            # Пустая строка между таблицами
+            all_breakdown_rows.append(['', '', ''])
+        
+        # Удаляем последнюю пустую строку
+        if all_breakdown_rows and all_breakdown_rows[-1] == ['', '', '']:
+            all_breakdown_rows.pop()
+        
+        df_breakdown = pd.DataFrame(all_breakdown_rows, columns=breakdown_headers)
+        df_breakdown.to_excel(output_path, index=False)
+        print(f'[BREAKDOWN] ✅ Детальная разбивка сохранена: {output_path}')
+        return True
+        
+    except Exception as e:
+        print(f'[BREAKDOWN] ❌ Ошибка сохранения: {e}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 # ==================== ТЕСТИРОВАНИЕ ====================
 
 if __name__ == "__main__":
