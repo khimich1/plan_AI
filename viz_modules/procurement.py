@@ -562,20 +562,26 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8):
     total = 0.0
     idx = 1
     
-    # ШАГ 1: Находим максимальное армирование во всем заказе
-    max_reinforcement = 0.0
-    for it in items:
-        L, W, qty = it['length'], it['width'], it['qty']
-        load_code = it.get('load_code')
-        if load_code is None:
-            load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
-        
-        # Получаем армирование из БД
-        reinforcement = get_reinforcement(L, load_code, db_path=cfg.PRICE_DB_PATH)
-        if reinforcement and reinforcement > max_reinforcement:
-            max_reinforcement = reinforcement
+    # ШАГ 1: Определяем максимальное армирование
+    # НОВОЕ: Используем PLATE_MAX_REINFORCEMENT_MAP если он заполнен (макс. армирование по дорожке)
+    use_track_based_reinforcement = bool(cfg.PLATE_MAX_REINFORCEMENT_MAP)
     
-    print(f'[PRODUCTION PRICING] Максимальное армирование в заказе: {max_reinforcement} прутьев')
+    if use_track_based_reinforcement:
+        print(f'[PRODUCTION PRICING] ✅ Используем максимальное армирование по ДОРОЖКАМ')
+    else:
+        # Fallback: находим максимальное армирование во всем заказе
+        global_max_reinforcement = 0.0
+        for it in items:
+            L, W, qty = it['length'], it['width'], it['qty']
+            load_code = it.get('load_code')
+            if load_code is None:
+                load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
+            
+            reinforcement = get_reinforcement(L, load_code, db_path=cfg.PRICE_DB_PATH)
+            if reinforcement and reinforcement > global_max_reinforcement:
+                global_max_reinforcement = reinforcement
+        
+        print(f'[PRODUCTION PRICING] ⚠️ PLATE_MAX_REINFORCEMENT_MAP пуст, используем глобальный максимум: {global_max_reinforcement} прутьев')
     
     # ШАГ 2: Рассчитываем стоимость каждой плиты
     for it in items:
@@ -792,8 +798,22 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8):
                 waste_cost += (extra_waste_mm / 1200.0) * base_price
 
         # ✅ ИЗМЕНЕНИЕ 2: Добавляем компонент "Переармирование"
+        # НОВОЕ: Используем максимальное армирование ДОРОЖКИ для этой плиты
         rearm_cost = 0.0
         reinforcement = get_reinforcement(L, load_code, db_path=cfg.PRICE_DB_PATH)
+        
+        # Получаем max_reinforcement для этой конкретной плиты
+        if use_track_based_reinforcement:
+            plate_key = (round(L, 3), width_mm)
+            max_reinforcement = cfg.PLATE_MAX_REINFORCEMENT_MAP.get(plate_key, 0)
+            if max_reinforcement == 0:
+                for (l, w), mr in cfg.PLATE_MAX_REINFORCEMENT_MAP.items():
+                    if abs(l - L) < 0.05 and w == width_mm:
+                        max_reinforcement = mr
+                        break
+        else:
+            max_reinforcement = global_max_reinforcement
+        
         if reinforcement and max_reinforcement > reinforcement:
             rearm_diff = max_reinforcement - reinforcement
             
@@ -1386,14 +1406,21 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
             warning_flag = True if found_details else False
             order_counter[(length, width_mm, load_code, warning_flag)] += order_qty
     
-    # ШАГ 1: Находим максимальное армирование во всем заказе
-    max_reinforcement = 0.0
-    for (length, width_mm, load_code, warning_flag), qty in order_counter.items():
-        reinforcement = get_reinforcement(length, load_code, db_path=cfg.PRICE_DB_PATH)
-        if reinforcement and reinforcement > max_reinforcement:
-            max_reinforcement = reinforcement
+    # ШАГ 1: Определяем максимальное армирование
+    # НОВОЕ: Используем PLATE_MAX_REINFORCEMENT_MAP если он заполнен (макс. армирование по дорожке)
+    # Иначе - fallback на максимум по всему заказу
+    use_track_based_reinforcement = bool(cfg.PLATE_MAX_REINFORCEMENT_MAP)
     
-    print(f'[PRODUCTION BREAKDOWN] Максимальное армирование в заказе: {max_reinforcement} прутьев')
+    if use_track_based_reinforcement:
+        print(f'[PRODUCTION BREAKDOWN] ✅ Используем максимальное армирование по ДОРОЖКАМ (из PLATE_MAX_REINFORCEMENT_MAP)')
+    else:
+        # Fallback: находим максимальное армирование во всем заказе
+        global_max_reinforcement = 0.0
+        for (length, width_mm, load_code, warning_flag), qty in order_counter.items():
+            reinforcement = get_reinforcement(length, load_code, db_path=cfg.PRICE_DB_PATH)
+            if reinforcement and reinforcement > global_max_reinforcement:
+                global_max_reinforcement = reinforcement
+        print(f'[PRODUCTION BREAKDOWN] ⚠️ PLATE_MAX_REINFORCEMENT_MAP пуст, используем глобальный максимум: {global_max_reinforcement} прутьев')
     
     breakdown_tables = []
     
@@ -1635,8 +1662,26 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
             long_cut_cost = 0.0
 
         # ✅ ИЗМЕНЕНИЕ 2: Переармирование
+        # НОВОЕ: Используем максимальное армирование ДОРОЖКИ для этой плиты
         rearm_cost = 0.0
         reinforcement = get_reinforcement(length, load_code, db_path=cfg.PRICE_DB_PATH)
+        
+        # Получаем max_reinforcement для этой конкретной плиты
+        if use_track_based_reinforcement:
+            # Ищем в карте по (length, width_mm)
+            plate_key = (round(length, 3), width_mm)
+            max_reinforcement = cfg.PLATE_MAX_REINFORCEMENT_MAP.get(plate_key, 0)
+            if max_reinforcement == 0:
+                # Попробуем с другими округлениями
+                for (l, w), mr in cfg.PLATE_MAX_REINFORCEMENT_MAP.items():
+                    if abs(l - length) < 0.05 and w == width_mm:
+                        max_reinforcement = mr
+                        break
+            if max_reinforcement > 0:
+                print(f'[PRODUCTION BREAKDOWN] {name}: макс. армирование дорожки = {max_reinforcement:.1f}')
+        else:
+            max_reinforcement = global_max_reinforcement
+        
         if reinforcement and max_reinforcement > reinforcement:
             rearm_diff = max_reinforcement - reinforcement
             

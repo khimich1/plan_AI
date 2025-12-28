@@ -89,6 +89,11 @@ PLATE_LOAD_DETAILS: Dict[Tuple[float, float, int], int] = {}
 # Пример: {(2.8, 'PLATES_0_46'): 0.53} - плита ПБ 28-5,3-8п имеет ширину 530мм, а не 460мм
 PLATE_EXACT_WIDTHS: Dict[Tuple[float, str], float] = {}
 
+# Карта максимального армирования дорожки для каждой плиты
+# Формат: (длина, ширина_мм) → максимальное армирование в дорожке, где лежит эта плита
+# Заполняется в visualization.py после формирования дорожек
+PLATE_MAX_REINFORCEMENT_MAP: Dict[Tuple[float, int], float] = {}
+
 
 # ==================== ФУНКЦИИ ПАРСИНГА ====================
 
@@ -97,7 +102,7 @@ def _clear_all_plate_lists():
     global PLATES_1_2, PLATES_1_5_TO_1_2, PLATES_1_0, PLATES_1_08
     global PLATES_0_46, PLATES_0_32, PLATES_0_72, PLATES_0_70, PLATES_0_86
     global PLATES_0_74, PLATES_0_88, PLATES_0_48, PLATES_0_50, PLATES_0_34
-    global PLATE_LOAD_MAP, PLATE_LOAD_DETAILS, PLATE_EXACT_WIDTHS
+    global PLATE_LOAD_MAP, PLATE_LOAD_DETAILS, PLATE_EXACT_WIDTHS, PLATE_MAX_REINFORCEMENT_MAP
     PLATES_1_2 = []
     PLATES_1_5_TO_1_2 = []
     PLATES_1_0 = []
@@ -115,6 +120,7 @@ def _clear_all_plate_lists():
     PLATE_LOAD_MAP.clear()
     PLATE_LOAD_DETAILS.clear()
     PLATE_EXACT_WIDTHS.clear()
+    PLATE_MAX_REINFORCEMENT_MAP.clear()
 
 
 def _recompute_totals_from_lists():

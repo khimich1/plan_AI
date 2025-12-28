@@ -126,6 +126,29 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 is_solid = (item.get('mode') == 'solid')
                 item_reinforcement = item.get('reinforcement', 0) or 0
                 
+                # 🔥 ПРАВИЛО: Если дорожка пустая и текущая плита НЕ целая - 
+                # сначала найти целую плиту для НАЧАЛА дорожки!
+                if not current_track and not is_solid:
+                    found_solid_idx = None
+                    for j in range(i + 1, len(items)):
+                        candidate = items[j]
+                        if candidate.get('mode') == 'solid':
+                            found_solid_idx = j
+                            break
+                    
+                    if found_solid_idx is not None:
+                        # Нашли целую плиту - добавляем её ПЕРВОЙ!
+                        solid_plate = items.pop(found_solid_idx)
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м")
+                        current_track.append(solid_plate)
+                        current_track_length += solid_plate['length']
+                        solid_reinf = solid_plate.get('reinforcement', 0) or 0
+                        max_reinforcement_in_track = max(max_reinforcement_in_track, solid_reinf)
+                        # НЕ увеличиваем i - текущая плита с резом будет добавлена следующей итерацией
+                        continue
+                    else:
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: Целой плиты для начала дорожки не найдено!")
+                
                 # Проверяем: добавление плиты превысит максимум?
                 will_exceed_max = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
                 reached_min = (current_track_length >= MIN_TRACK_LENGTH)
@@ -229,6 +252,29 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             is_solid = (item.get('mode') == 'solid')
             item_reinforcement = item.get('reinforcement', 0) or 0
             
+            # 🔥 ПРАВИЛО: Если дорожка пустая и текущая плита НЕ целая - 
+            # сначала найти целую плиту для НАЧАЛА дорожки!
+            if not current_track and not is_solid:
+                found_solid_idx = None
+                for j in range(i + 1, len(items)):
+                    candidate = items[j]
+                    if candidate.get('mode') == 'solid':
+                        found_solid_idx = j
+                        break
+                
+                if found_solid_idx is not None:
+                    # Нашли целую плиту - добавляем её ПЕРВОЙ!
+                    solid_plate = items.pop(found_solid_idx)
+                    print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м")
+                    current_track.append(solid_plate)
+                    current_track_length += solid_plate['length']
+                    solid_reinf = solid_plate.get('reinforcement', 0) or 0
+                    max_reinforcement_in_track = max(max_reinforcement_in_track, solid_reinf)
+                    # НЕ увеличиваем i - текущая плита с резом будет добавлена следующей итерацией
+                    continue
+                else:
+                    print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: Целой плиты для начала дорожки не найдено!")
+            
             # Проверяем: добавление плиты превысит максимум?
             will_exceed_max = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
             
@@ -323,6 +369,39 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         track['max_reinforcement'] = max_reinforcement
         if max_reinforcement > 0:
             print(f"[ВИЗУАЛИЗАЦИЯ] Дорожка: макс. армирование {max_reinforcement:.1f} кг/м²")
+    
+    # === ЗАПОЛНЯЕМ ГЛОБАЛЬНУЮ КАРТУ МАКСИМАЛЬНОГО АРМИРОВАНИЯ ДЛЯ КАЖДОЙ ПЛИТЫ ===
+    # Это нужно для корректного расчёта переармирования в procurement.py
+    for track in tracks:
+        track_max_reinf = track.get('max_reinforcement', 0)
+        for item in track['items']:
+            length = item.get('length', 0)
+            # Определяем ширину плиты
+            if item.get('mode') == 'solid':
+                width_mm = 1200
+            elif item.get('mode') == 'split':
+                width_mm = int(round(item.get('main_w', 1.2) * 1000))
+            elif item.get('mode') == 'transverse':
+                width_mm = int(round(item.get('width', 1.2) * 1000))
+            else:
+                width_mm = 1200
+            
+            # Сохраняем максимальное армирование дорожки для этой плиты
+            key = (round(length, 3), width_mm)
+            # Если плита уже есть в карте, берём максимум (она может быть в нескольких дорожках)
+            if key in cfg.PLATE_MAX_REINFORCEMENT_MAP:
+                cfg.PLATE_MAX_REINFORCEMENT_MAP[key] = max(cfg.PLATE_MAX_REINFORCEMENT_MAP[key], track_max_reinf)
+            else:
+                cfg.PLATE_MAX_REINFORCEMENT_MAP[key] = track_max_reinf
+    
+    print(f"[ВИЗУАЛИЗАЦИЯ] Заполнена карта макс. армирования: {len(cfg.PLATE_MAX_REINFORCEMENT_MAP)} плит")
+    
+    # ✅ ПЕРЕСЧИТЫВАЕМ breakdown_tables после заполнения PLATE_MAX_REINFORCEMENT_MAP
+    # Это нужно для корректного расчёта переармирования по дорожкам
+    if use_production_pricing and cfg.PLATE_MAX_REINFORCEMENT_MAP:
+        from viz_modules.procurement import build_component_breakdown_production
+        breakdown_tables = build_component_breakdown_production(price_table, price_rows)
+        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Пересчитана детальная разбивка с учётом максимального армирования по дорожкам")
 
     # Убрали секцию детальной разбивки - она теперь в отдельном Excel файле
     # Увеличиваем высоту секции дорожек пропорционально их количеству
