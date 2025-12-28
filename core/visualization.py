@@ -102,53 +102,79 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Обнаружена группировка по нагрузкам! Групп: {len(seq)}")
         
         tracks = []
-        MAX_TRACK_LENGTH = 101.0
+        MIN_TRACK_LENGTH = 96.0   # Минимальная длина дорожки для закрытия
+        MAX_TRACK_LENGTH = 101.0  # Максимальная длина дорожки (ЖЁСТКИЙ ЛИМИТ - НИКОГДА НЕ ПРЕВЫШАТЬ!)
         
         # Каждая группа нагрузки = отдельные дорожки
         for group in seq:
             load_code = group['load_code']
-            items = group['sequence']
+            items = list(group['sequence'])  # Копия для возможной модификации
             group_label = group.get('label', f'Нагрузка {load_code}п')
             
             print(f"[ВИЗУАЛИЗАЦИЯ] Группа '{group_label}': {len(items)} плит")
             
-            # Разбиваем группу на дорожки по 101м
-            # ВАЖНО: Каждая дорожка ДОЛЖНА начинаться с целой плиты!
-            # Жёсткое правило: не превышать 101м
+            # Разбиваем группу на дорожки по 96-101м
+            # ЖЁСТКОЕ ПРАВИЛО: дорожка НИКОГДА не превышает 101м!
             current_track = []
             current_track_length = 0.0
+            max_reinforcement_in_track = 0.0  # Макс. армирование в текущей дорожке
             
-            for i, item in enumerate(items):
+            i = 0
+            while i < len(items):
+                item = items[i]
                 item_length = item['length']
                 is_solid = (item.get('mode') == 'solid')
+                item_reinforcement = item.get('reinforcement', 0) or 0
                 
-                # Проверяем: добавление плиты превысит лимит?
-                will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
+                # Проверяем: добавление плиты превысит максимум?
+                will_exceed_max = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
+                reached_min = (current_track_length >= MIN_TRACK_LENGTH)
                 
-                if will_exceed:
-                    # 🔥 НОВАЯ ЛОГИКА: Проверяем, что следующая плита будет целой
-                    if not is_solid:
-                        # Текущая плита НЕ целая - ищем следующую целую плиту
-                        next_solid_found = False
-                        for j in range(i + 1, min(i + 5, len(items))):  # Смотрим вперед на 5 плит
-                            if items[j].get('mode') == 'solid':
-                                next_solid_found = True
-                                next_solid_distance = j - i
-                                break
+                if will_exceed_max:
+                    # Нужно закрыть дорожку - ЖЁСТКО не превышаем 101м!
+                    remaining_space = MAX_TRACK_LENGTH - current_track_length
+                    
+                    if is_solid and item_length <= remaining_space:
+                        # Текущая плита целая и влезает - добавляем её
+                        current_track.append(item)
+                        current_track_length += item_length
+                        max_reinforcement_in_track = max(max_reinforcement_in_track, item_reinforcement)
+                        i += 1
+                    elif not is_solid:
+                        # Текущая плита с резом - НЕ добавляем её
+                        # Ищем целую плиту для завершения дорожки
+                        found_solid_idx = None
+                        for j in range(i + 1, len(items)):
+                            candidate = items[j]
+                            if candidate.get('mode') == 'solid':
+                                cand_length = candidate['length']
+                                cand_reinf = candidate.get('reinforcement', 0) or 0
+                                
+                                # Проверяем: влезет И армирование <= макс. в дорожке?
+                                if cand_length <= remaining_space:
+                                    if max_reinforcement_in_track == 0 or cand_reinf <= max_reinforcement_in_track:
+                                        found_solid_idx = j
+                                        break
                         
-                        if next_solid_found and next_solid_distance <= 3:
-                            # Следующая целая плита близко - добавляем текущую в эту дорожку
-                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Превышение 101м, но текущая плита НЕ целая - "
-                                  f"добавляем в текущую дорожку (следующая целая через {next_solid_distance} плит)")
-                            current_track.append(item)
-                            current_track_length += item_length
-                            continue
+                        if found_solid_idx is not None:
+                            # Нашли подходящую целую плиту!
+                            candidate = items[found_solid_idx]
+                            print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для завершения: {candidate['length']:.2f}м, арм.={candidate.get('reinforcement', 0):.1f}")
+                            current_track.append(candidate)
+                            current_track_length += candidate['length']
+                            # Удаляем эту плиту из списка (она использована)
+                            items.pop(found_solid_idx)
                         else:
-                            # Следующая целая плита далеко или не найдена
-                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: Дорожка начнётся НЕ с целой плиты (целой нет поблизости)")
+                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Целой плиты для завершения не найдено, закрываем как есть")
+                        
+                        # Текущая плита с резом НЕ добавляется - она пойдёт в следующую дорожку
+                        # i НЕ увеличиваем!
+                    else:
+                        # Целая плита, но не влезает - не добавляем, пойдёт в следующую дорожку
+                        pass
                     
                     # Закрываем дорожку
-                    print(f"[ВИЗУАЛИЗАЦИЯ] Закрываем дорожку на {current_track_length:.1f}м (плита {item_length:.1f}м не влезает)")
+                    print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Закрываем дорожку на {current_track_length:.1f}м (макс. {MAX_TRACK_LENGTH}м)")
                     tracks.append({
                         'items': current_track,
                         'length': current_track_length,
@@ -157,72 +183,115 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     })
                     current_track = []
                     current_track_length = 0.0
+                    max_reinforcement_in_track = 0.0
+                    
+                    # Если текущая была целая и добавлена - i уже увеличен
+                    # Если с резом или целая не влезла - i не увеличиваем, она пойдёт в новую дорожку
+                    if is_solid and item_length <= remaining_space:
+                        continue  # i уже увеличен выше
+                    continue  # Продолжаем цикл без увеличения i
                 
+                # Плита влезает - добавляем
                 current_track.append(item)
                 current_track_length += item_length
+                max_reinforcement_in_track = max(max_reinforcement_in_track, item_reinforcement)
+                i += 1
             
+            # Сохраняем последнюю дорожку группы
             if current_track:
                 tracks.append({
                     'items': current_track,
                     'length': current_track_length,
-                    'load_code': load_code,  # ✅ Сохраняем нагрузку!
+                    'load_code': load_code,
                     'label': group_label
                 })
         
         total_length = sum(t['length'] for t in tracks)
         
     else:
-        # СТАРЫЙ ФОРМАТ (без группировки по нагрузке) - работает как раньше
+        # СТАРЫЙ ФОРМАТ (без группировки по нагрузке)
         print("[ВИЗУАЛИЗАЦИЯ] Используем старый формат (без группировки)")
         total_length = sum(s['length'] for s in seq)
-        MAX_TRACK_LENGTH = 101.0
+        MIN_TRACK_LENGTH = 96.0   # Минимальная длина дорожки для закрытия
+        MAX_TRACK_LENGTH = 101.0  # Максимальная длина дорожки (ЖЁСТКИЙ ЛИМИТ!)
         
         tracks = []
+        items = list(seq)  # Копия для возможной модификации
         current_track = []
         current_track_length = 0.0
+        max_reinforcement_in_track = 0.0
         
-        # ВАЖНО: Каждая дорожка ДОЛЖНА начинаться с целой плиты!
-        # Жёсткое правило: не превышать 101м
-        for i, item in enumerate(seq):
+        # ЖЁСТКОЕ ПРАВИЛО: дорожка НИКОГДА не превышает 101м!
+        i = 0
+        while i < len(items):
+            item = items[i]
             item_length = item['length']
             is_solid = (item.get('mode') == 'solid')
+            item_reinforcement = item.get('reinforcement', 0) or 0
             
-            # Проверяем: добавление плиты превысит лимит?
-            will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
+            # Проверяем: добавление плиты превысит максимум?
+            will_exceed_max = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
             
-            if will_exceed:
-                # 🔥 НОВАЯ ЛОГИКА: Проверяем, что следующая плита будет целой
-                if not is_solid:
-                    # Текущая плита НЕ целая - ищем следующую целую плиту
-                    next_solid_found = False
-                    for j in range(i + 1, min(i + 5, len(seq))):  # Смотрим вперед на 5 плит
-                        if seq[j].get('mode') == 'solid':
-                            next_solid_found = True
-                            next_solid_distance = j - i
-                            break
+            if will_exceed_max:
+                # Нужно закрыть дорожку - ЖЁСТКО не превышаем 101м!
+                remaining_space = MAX_TRACK_LENGTH - current_track_length
+                
+                if is_solid and item_length <= remaining_space:
+                    # Текущая плита целая и влезает - добавляем её
+                    current_track.append(item)
+                    current_track_length += item_length
+                    max_reinforcement_in_track = max(max_reinforcement_in_track, item_reinforcement)
+                    i += 1
+                elif not is_solid:
+                    # Текущая плита с резом - НЕ добавляем её
+                    # Ищем целую плиту для завершения дорожки
+                    found_solid_idx = None
+                    for j in range(i + 1, len(items)):
+                        candidate = items[j]
+                        if candidate.get('mode') == 'solid':
+                            cand_length = candidate['length']
+                            cand_reinf = candidate.get('reinforcement', 0) or 0
+                            
+                            # Проверяем: влезет И армирование <= макс. в дорожке?
+                            if cand_length <= remaining_space:
+                                if max_reinforcement_in_track == 0 or cand_reinf <= max_reinforcement_in_track:
+                                    found_solid_idx = j
+                                    break
                     
-                    if next_solid_found and next_solid_distance <= 3:
-                        # Следующая целая плита близко - добавляем текущую в эту дорожку
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Превышение 101м, но текущая плита НЕ целая - "
-                              f"добавляем в текущую дорожку (следующая целая через {next_solid_distance} плит)")
-                        current_track.append(item)
-                        current_track_length += item_length
-                        continue
+                    if found_solid_idx is not None:
+                        # Нашли подходящую целую плиту!
+                        candidate = items[found_solid_idx]
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для завершения: {candidate['length']:.2f}м, арм.={candidate.get('reinforcement', 0):.1f}")
+                        current_track.append(candidate)
+                        current_track_length += candidate['length']
+                        items.pop(found_solid_idx)
                     else:
-                        # Следующая целая плита далеко или не найдена
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: Дорожка начнётся НЕ с целой плиты (целой нет поблизости)")
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Целой плиты для завершения не найдено, закрываем как есть")
+                    
+                    # Текущая плита с резом НЕ добавляется - она пойдёт в следующую дорожку
+                else:
+                    # Целая плита, но не влезает
+                    pass
                 
                 # Закрываем дорожку
-                print(f"[ВИЗУАЛИЗАЦИЯ] Закрываем дорожку на {current_track_length:.1f}м (плита {item_length:.1f}м не влезает)")
+                print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Закрываем дорожку на {current_track_length:.1f}м (макс. {MAX_TRACK_LENGTH}м)")
                 tracks.append({
                     'items': current_track,
                     'length': current_track_length
                 })
                 current_track = []
                 current_track_length = 0.0
+                max_reinforcement_in_track = 0.0
+                
+                if is_solid and item_length <= remaining_space:
+                    continue
+                continue
             
+            # Плита влезает - добавляем
             current_track.append(item)
             current_track_length += item_length
+            max_reinforcement_in_track = max(max_reinforcement_in_track, item_reinforcement)
+            i += 1
         
         if current_track:
             tracks.append({

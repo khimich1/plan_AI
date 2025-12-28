@@ -12,14 +12,12 @@ def _choose_best_separator(solid_list, next_group, reinforcement_map):
     """
     Выбирает оптимальную плиту-разделитель по армированию.
     
-    Стратегия:
-    1. Определяет максимальное армирование в следующей группе резов
-    2. Ищет целую плиту с армированием <= максимального (оптимально)
-    3. Если нет подходящих, выбирает с минимальным превышением
+    НОВАЯ Стратегия:
+    Выбирает целую плиту с МИНИМАЛЬНЫМ армированием из оставшихся.
     
     Args:
         solid_list: список целых плит [{width, lengths, qty}, ...]
-        next_group: следующая группа резов (для определения макс. армирования)
+        next_group: следующая группа резов (не используется в новой логике)
         reinforcement_map: {(length, width_mm): reinforcement}
     
     Returns:
@@ -27,17 +25,6 @@ def _choose_best_separator(solid_list, next_group, reinforcement_map):
     """
     if not solid_list:
         return None
-    
-    # Определяем максимальное армирование в следующей группе резов
-    max_group_reinforcement = 0.0
-    for cut in next_group:
-        for length in cut.get('lengths', []):
-            width_mm = cut['width']
-            reinforcement = reinforcement_map.get((length, width_mm), 0)
-            if reinforcement and reinforcement < 999:
-                max_group_reinforcement = max(max_group_reinforcement, reinforcement)
-    
-    print(f"[VISUAL] Ищем разделитель: макс. армирование в следующей группе = {max_group_reinforcement:.1f} кг/м")
     
     # Собираем информацию об армировании для каждой целой плиты
     candidates = []
@@ -53,22 +40,11 @@ def _choose_best_separator(solid_list, next_group, reinforcement_map):
             'reinforcement': reinforcement
         })
     
-    # Фильтруем: сначала ищем плиты с армированием <= максимального в группе
-    suitable = [c for c in candidates if c['reinforcement'] <= max_group_reinforcement]
-    
-    if suitable:
-        # Есть подходящие! Выбираем с максимальным (но не превышающим лимит)
-        best = max(suitable, key=lambda x: x['reinforcement'])
-        print(f"[VISUAL] ✅ Выбран оптимальный разделитель: {best['length']:.2f}м x {best['width_mm']}мм, "
-              f"армирование {best['reinforcement']:.1f} кг/м (не превышает {max_group_reinforcement:.1f})")
-        return best['index']
-    else:
-        # Нет подходящих - выбираем с минимальным превышением
-        best = min(candidates, key=lambda x: x['reinforcement'])
-        excess = best['reinforcement'] - max_group_reinforcement
-        print(f"[VISUAL] ⚠️ Выбран разделитель с превышением: {best['length']:.2f}м x {best['width_mm']}мм, "
-              f"армирование {best['reinforcement']:.1f} кг/м (превышение +{excess:.1f} кг/м от {max_group_reinforcement:.1f})")
-        return best['index']
+    # НОВАЯ ЛОГИКА: Выбираем плиту с МИНИМАЛЬНЫМ армированием из оставшихся
+    best = min(candidates, key=lambda x: x['reinforcement'])
+    print(f"[VISUAL] ✅ Выбран разделитель с мин. армированием: {best['length']:.2f}м x {best['width_mm']}мм, "
+          f"армирование {best['reinforcement']:.1f} кг/м")
+    return best['index']
 
 
 def build_layout_sequence():
@@ -239,37 +215,51 @@ def build_layout_sequence():
                 print(f"  Остаток {src_len}м x {src_w}мм: вариант #{idx} -> [{pattern_desc}]")
         
         # ========== НОВАЯ ЛОГИКА: РАЗДЕЛИТЕЛИ МЕЖДУ ГРУППАМИ РЕЗОВ ==========
-        # Требования завода:
-        # 1. Первая плита ДОЛЖНА быть целой (без реза)
-        # 2. Плиты с одинаковым резом идут подряд
-        # 3. Между группами с РАЗНЫМ резом должна быть целая плита-разделитель
+        # Требования завода (ОБНОВЛЁННЫЕ):
+        # 1. Первая плита ДОЛЖНА быть целой с МИНИМАЛЬНЫМ армированием
+        # 2. Плиты с одинаковым резом И одинаковым армированием идут подряд
+        # 3. Группы сортируются по армированию (от меньшего к большему)
+        # 4. Между группами с РАЗНЫМ резом/армированием должна быть целая плита-разделитель с мин. армированием
         all_primary_cuts = OPT_CASCADING_PLAN.get('primary_cuts', [])
         # ВАЖНО: Целая плита = ТОЛЬКО 1200мм без реза! (1080мм - это результат реза!)
         solid_cuts = [cut for cut in all_primary_cuts 
                       if cut['rest'] == 0 and cut['width'] == 1200]
         
-        # Сортируем целые плиты
-        solid_cuts.sort(key=lambda x: (-x['width'], -x['lengths'][0] if x.get('lengths') else 0))
+        # НОВОЕ: Вычисляем армирование для каждой целой плиты и сортируем по армированию (мин. первый)
+        for cut in solid_cuts:
+            length = cut['lengths'][0] if cut.get('lengths') else 6.0
+            width_mm = cut['width']
+            cut['reinforcement'] = reinforcement_map.get((length, width_mm), 999.0)
+        solid_cuts.sort(key=lambda x: (x.get('reinforcement', 999.0), -x['lengths'][0] if x.get('lengths') else 0))
         
-        # Сортируем плиты с резом по типу реза
+        # Плиты с резом - вычисляем армирование для группировки
+        cut_with_rest_raw = [cut for cut in all_primary_cuts if cut['rest'] > 0]
+        
+        # НОВОЕ: Добавляем армирование к каждой плите с резом для группировки
+        for cut in cut_with_rest_raw:
+            length = cut['lengths'][0] if cut.get('lengths') else 6.0
+            width_mm = cut['width']
+            cut['reinforcement'] = reinforcement_map.get((length, width_mm), 999.0)
+        
+        # Сортируем плиты с резом по армированию (мин. первый), потом по типу реза
         cut_with_rest = sorted(
-            [cut for cut in all_primary_cuts if cut['rest'] > 0],
-            key=lambda x: (-x['rest'], -x['width'])
+            cut_with_rest_raw,
+            key=lambda x: (x.get('reinforcement', 999.0), x['width'], x['rest'])
         )
         
         print(f"[VISUAL] Разделение: {len(solid_cuts)} типов целых плит, {len(cut_with_rest)} типов с резом")
         if solid_cuts:
-            print(f"[VISUAL] Целые плиты: {[(c['width'], c['qty']) for c in solid_cuts]}")
+            print(f"[VISUAL] Целые плиты (сортировка по армированию): {[(c['width'], c['qty'], c.get('reinforcement', '?')) for c in solid_cuts[:5]]}")
         
-        # Группируем плиты с резом по типу реза (width, rest)
-        # ВАЖНО: учитываем И ширину И остаток, т.к. это разные настройки станка!
+        # НОВОЕ: Группируем плиты с резом по (width, rest, reinforcement)
+        # Это гарантирует что плиты с одинаковым резом И армированием идут вместе
         from itertools import groupby
-        cut_groups = [list(group) for key, group in groupby(cut_with_rest, key=lambda x: (x['width'], x['rest']))]
+        cut_groups = [list(group) for key, group in groupby(cut_with_rest, key=lambda x: (x['width'], x['rest'], x.get('reinforcement', 999.0)))]
         
         if cut_groups:
-            print(f"[VISUAL] Найдено {len(cut_groups)} групп резов:")
+            print(f"[VISUAL] Найдено {len(cut_groups)} групп резов (сгруппировано по рез+армирование):")
             for i, group in enumerate(cut_groups, 1):
-                print(f"[VISUAL]   Группа {i}: width={group[0]['width']}мм, rest={group[0]['rest']}мм, типов={len(group)}")
+                print(f"[VISUAL]   Группа {i}: width={group[0]['width']}мм, rest={group[0]['rest']}мм, армирование={group[0].get('reinforcement', '?'):.1f}, плит={sum(c['qty'] for c in group)}")
         
         # Формируем последовательность с разделителями
         ordered_cuts = []
@@ -621,37 +611,51 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 })
     
     # ========== НОВАЯ ЛОГИКА: РАЗДЕЛИТЕЛИ МЕЖДУ ГРУППАМИ РЕЗОВ ==========
-    # Требования завода:
-    # 1. Первая плита ДОЛЖНА быть целой (без реза)
-    # 2. Плиты с одинаковым резом идут подряд
-    # 3. Между группами с РАЗНЫМ резом должна быть целая плита-разделитель
+    # Требования завода (ОБНОВЛЁННЫЕ):
+    # 1. Первая плита ДОЛЖНА быть целой с МИНИМАЛЬНЫМ армированием
+    # 2. Плиты с одинаковым резом И одинаковым армированием идут подряд
+    # 3. Группы сортируются по армированию (от меньшего к большему)
+    # 4. Между группами с РАЗНЫМ резом/армированием должна быть целая плита-разделитель с мин. армированием
     all_primary_cuts = plan.get('primary_cuts', [])
     # ВАЖНО: Целая плита = ТОЛЬКО 1200мм без реза! (1080мм - это результат реза!)
     solid_cuts = [cut for cut in all_primary_cuts 
                   if cut['rest'] == 0 and cut['width'] == 1200]
     
-    # Сортируем целые плиты
-    solid_cuts.sort(key=lambda x: (-x['width'], -x['lengths'][0] if x.get('lengths') else 0))
+    # НОВОЕ: Вычисляем армирование для каждой целой плиты и сортируем по армированию (мин. первый)
+    for cut in solid_cuts:
+        length = cut['lengths'][0] if cut.get('lengths') else 6.0
+        width_mm = cut['width']
+        cut['reinforcement'] = reinforcement_map.get((length, width_mm), 999.0)
+    solid_cuts.sort(key=lambda x: (x.get('reinforcement', 999.0), -x['lengths'][0] if x.get('lengths') else 0))
     
-    # Сортируем плиты с резом по типу реза
+    # Плиты с резом - вычисляем армирование для группировки
+    cut_with_rest_raw = [cut for cut in all_primary_cuts if cut['rest'] > 0]
+    
+    # НОВОЕ: Добавляем армирование к каждой плите с резом для группировки
+    for cut in cut_with_rest_raw:
+        length = cut['lengths'][0] if cut.get('lengths') else 6.0
+        width_mm = cut['width']
+        cut['reinforcement'] = reinforcement_map.get((length, width_mm), 999.0)
+    
+    # Сортируем плиты с резом по армированию (мин. первый), потом по типу реза
     cut_with_rest = sorted(
-        [cut for cut in all_primary_cuts if cut['rest'] > 0],
-        key=lambda x: (-x['rest'], -x['width'])
+        cut_with_rest_raw,
+        key=lambda x: (x.get('reinforcement', 999.0), x['width'], x['rest'])
     )
     
     print(f"[VISUAL] Разделение: {len(solid_cuts)} типов целых плит, {len(cut_with_rest)} типов с резом")
     if solid_cuts:
-        print(f"[VISUAL] Целые плиты: {[(c['width'], c['qty']) for c in solid_cuts]}")
+        print(f"[VISUAL] Целые плиты (сортировка по армированию): {[(c['width'], c['qty'], c.get('reinforcement', '?')) for c in solid_cuts[:5]]}")
     
-    # Группируем плиты с резом по типу реза (width, rest)
-    # ВАЖНО: учитываем И ширину И остаток, т.к. это разные настройки станка!
+    # НОВОЕ: Группируем плиты с резом по (width, rest, reinforcement)
+    # Это гарантирует что плиты с одинаковым резом И армированием идут вместе
     from itertools import groupby
-    cut_groups = [list(group) for key, group in groupby(cut_with_rest, key=lambda x: (x['width'], x['rest']))]
+    cut_groups = [list(group) for key, group in groupby(cut_with_rest, key=lambda x: (x['width'], x['rest'], x.get('reinforcement', 999.0)))]
     
     if cut_groups:
-        print(f"[VISUAL] Найдено {len(cut_groups)} групп резов:")
+        print(f"[VISUAL] Найдено {len(cut_groups)} групп резов (сгруппировано по рез+армирование):")
         for i, group in enumerate(cut_groups, 1):
-            print(f"[VISUAL]   Группа {i}: width={group[0]['width']}мм, rest={group[0]['rest']}мм, типов={len(group)}")
+            print(f"[VISUAL]   Группа {i}: width={group[0]['width']}мм, rest={group[0]['rest']}мм, армирование={group[0].get('reinforcement', '?'):.1f}, плит={sum(c['qty'] for c in group)}")
     
     # Формируем последовательность с разделителями
     ordered_cuts = []
