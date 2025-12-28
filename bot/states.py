@@ -33,3 +33,4 @@ class ProductionStates(StatesGroup):
     """Состояния для планирования производства"""
     waiting_tracks_count = State()    # Количество дорожек
     waiting_date_number = State()     # Дата дедлайна
+    waiting_day_selection = State()   # Ожидание выбора дня

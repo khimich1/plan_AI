@@ -8,6 +8,69 @@ import core.config_and_data as cfg
 from core.optimization import OPT_PLAN, OPT_WIDTH_PRIORITY
 
 
+def _choose_best_separator(solid_list, next_group, reinforcement_map):
+    """
+    Выбирает оптимальную плиту-разделитель по армированию.
+    
+    Стратегия:
+    1. Определяет максимальное армирование в следующей группе резов
+    2. Ищет целую плиту с армированием <= максимального (оптимально)
+    3. Если нет подходящих, выбирает с минимальным превышением
+    
+    Args:
+        solid_list: список целых плит [{width, lengths, qty}, ...]
+        next_group: следующая группа резов (для определения макс. армирования)
+        reinforcement_map: {(length, width_mm): reinforcement}
+    
+    Returns:
+        index: индекс лучшей плиты в solid_list (или 0, если не найдено)
+    """
+    if not solid_list:
+        return None
+    
+    # Определяем максимальное армирование в следующей группе резов
+    max_group_reinforcement = 0.0
+    for cut in next_group:
+        for length in cut.get('lengths', []):
+            width_mm = cut['width']
+            reinforcement = reinforcement_map.get((length, width_mm), 0)
+            if reinforcement and reinforcement < 999:
+                max_group_reinforcement = max(max_group_reinforcement, reinforcement)
+    
+    print(f"[VISUAL] Ищем разделитель: макс. армирование в следующей группе = {max_group_reinforcement:.1f} кг/м")
+    
+    # Собираем информацию об армировании для каждой целой плиты
+    candidates = []
+    for idx, plate in enumerate(solid_list):
+        length = plate['lengths'][0] if plate.get('lengths') else 6.0
+        width_mm = plate['width']
+        reinforcement = reinforcement_map.get((length, width_mm), 999.0)
+        
+        candidates.append({
+            'index': idx,
+            'length': length,
+            'width_mm': width_mm,
+            'reinforcement': reinforcement
+        })
+    
+    # Фильтруем: сначала ищем плиты с армированием <= максимального в группе
+    suitable = [c for c in candidates if c['reinforcement'] <= max_group_reinforcement]
+    
+    if suitable:
+        # Есть подходящие! Выбираем с максимальным (но не превышающим лимит)
+        best = max(suitable, key=lambda x: x['reinforcement'])
+        print(f"[VISUAL] ✅ Выбран оптимальный разделитель: {best['length']:.2f}м x {best['width_mm']}мм, "
+              f"армирование {best['reinforcement']:.1f} кг/м (не превышает {max_group_reinforcement:.1f})")
+        return best['index']
+    else:
+        # Нет подходящих - выбираем с минимальным превышением
+        best = min(candidates, key=lambda x: x['reinforcement'])
+        excess = best['reinforcement'] - max_group_reinforcement
+        print(f"[VISUAL] ⚠️ Выбран разделитель с превышением: {best['length']:.2f}м x {best['width_mm']}мм, "
+              f"армирование {best['reinforcement']:.1f} кг/м (превышение +{excess:.1f} кг/м от {max_group_reinforcement:.1f})")
+        return best['index']
+
+
 def build_layout_sequence():
     """Формирует последовательность сегментов вдоль дорожки, РАЗДЕЛЁННУЮ ПО НАГРУЗКАМ."""
     from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
@@ -181,7 +244,9 @@ def build_layout_sequence():
         # 2. Плиты с одинаковым резом идут подряд
         # 3. Между группами с РАЗНЫМ резом должна быть целая плита-разделитель
         all_primary_cuts = OPT_CASCADING_PLAN.get('primary_cuts', [])
-        solid_cuts = [cut for cut in all_primary_cuts if cut['rest'] == 0]
+        # ВАЖНО: Целая плита = ТОЛЬКО 1200мм без реза! (1080мм - это результат реза!)
+        solid_cuts = [cut for cut in all_primary_cuts 
+                      if cut['rest'] == 0 and cut['width'] == 1200]
         
         # Сортируем целые плиты
         solid_cuts.sort(key=lambda x: (-x['width'], -x['lengths'][0] if x.get('lengths') else 0))
@@ -232,10 +297,22 @@ def build_layout_sequence():
             ordered_cuts.extend(cut_group)
             print(f"[VISUAL] Добавлена группа резов #{i+1}: width={cut_group[0]['width']}мм, rest={cut_group[0]['rest']}мм, типов={len(cut_group)}")
             
-            # После каждой группы (кроме последней) добавляем целую плиту-разделитель
+            # После каждой группы (кроме последней) добавляем ОПТИМАЛЬНЫЙ разделитель
             if i < len(cut_groups) - 1 and solid_cuts_list:
-                ordered_cuts.append(solid_cuts_list.pop(0))
-                print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами")
+                # Определяем следующую группу
+                next_group = cut_groups[i + 1]
+                
+                # Умный выбор разделителя по армированию
+                best_idx = _choose_best_separator(solid_cuts_list, next_group, reinforcement_map)
+                
+                if best_idx is not None:
+                    # Извлекаем выбранную плиту
+                    separator = solid_cuts_list.pop(best_idx)
+                    ordered_cuts.append(separator)
+                else:
+                    # Fallback: если функция не смогла выбрать, берём первую
+                    ordered_cuts.append(solid_cuts_list.pop(0))
+                    print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами (fallback)")
         
         # Оставшиеся целые плиты добавляем в конец
         if solid_cuts_list:
@@ -549,7 +626,9 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     # 2. Плиты с одинаковым резом идут подряд
     # 3. Между группами с РАЗНЫМ резом должна быть целая плита-разделитель
     all_primary_cuts = plan.get('primary_cuts', [])
-    solid_cuts = [cut for cut in all_primary_cuts if cut['rest'] == 0]
+    # ВАЖНО: Целая плита = ТОЛЬКО 1200мм без реза! (1080мм - это результат реза!)
+    solid_cuts = [cut for cut in all_primary_cuts 
+                  if cut['rest'] == 0 and cut['width'] == 1200]
     
     # Сортируем целые плиты
     solid_cuts.sort(key=lambda x: (-x['width'], -x['lengths'][0] if x.get('lengths') else 0))
@@ -600,10 +679,22 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
         ordered_cuts.extend(cut_group)
         print(f"[VISUAL] Добавлена группа резов #{i+1}: width={cut_group[0]['width']}мм, rest={cut_group[0]['rest']}мм, типов={len(cut_group)}")
         
-        # После каждой группы (кроме последней) добавляем целую плиту-разделитель
+        # После каждой группы (кроме последней) добавляем ОПТИМАЛЬНЫЙ разделитель
         if i < len(cut_groups) - 1 and solid_cuts_list:
-            ordered_cuts.append(solid_cuts_list.pop(0))
-            print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами")
+            # Определяем следующую группу
+            next_group = cut_groups[i + 1]
+            
+            # Умный выбор разделителя по армированию
+            best_idx = _choose_best_separator(solid_cuts_list, next_group, reinforcement_map)
+            
+            if best_idx is not None:
+                # Извлекаем выбранную плиту
+                separator = solid_cuts_list.pop(best_idx)
+                ordered_cuts.append(separator)
+            else:
+                # Fallback: если функция не смогла выбрать, берём первую
+                ordered_cuts.append(solid_cuts_list.pop(0))
+                print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами (fallback)")
     
     # Оставшиеся целые плиты добавляем в конец
     if solid_cuts_list:

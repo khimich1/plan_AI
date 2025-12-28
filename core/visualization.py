@@ -126,8 +126,28 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
                 
                 if will_exceed:
-                    # ПРАВИЛО: Не превышаем 101м НИКОГДА!
-                    # Закрываем дорожку (даже если она будет короткой)
+                    # 🔥 НОВАЯ ЛОГИКА: Проверяем, что следующая плита будет целой
+                    if not is_solid:
+                        # Текущая плита НЕ целая - ищем следующую целую плиту
+                        next_solid_found = False
+                        for j in range(i + 1, min(i + 5, len(items))):  # Смотрим вперед на 5 плит
+                            if items[j].get('mode') == 'solid':
+                                next_solid_found = True
+                                next_solid_distance = j - i
+                                break
+                        
+                        if next_solid_found and next_solid_distance <= 3:
+                            # Следующая целая плита близко - добавляем текущую в эту дорожку
+                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Превышение 101м, но текущая плита НЕ целая - "
+                                  f"добавляем в текущую дорожку (следующая целая через {next_solid_distance} плит)")
+                            current_track.append(item)
+                            current_track_length += item_length
+                            continue
+                        else:
+                            # Следующая целая плита далеко или не найдена
+                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: Дорожка начнётся НЕ с целой плиты (целой нет поблизости)")
+                    
+                    # Закрываем дорожку
                     print(f"[ВИЗУАЛИЗАЦИЯ] Закрываем дорожку на {current_track_length:.1f}м (плита {item_length:.1f}м не влезает)")
                     tracks.append({
                         'items': current_track,
@@ -171,8 +191,28 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
             
             if will_exceed:
-                # ПРАВИЛО: Не превышаем 101м НИКОГДА!
-                # Закрываем дорожку (даже если она будет короткой)
+                # 🔥 НОВАЯ ЛОГИКА: Проверяем, что следующая плита будет целой
+                if not is_solid:
+                    # Текущая плита НЕ целая - ищем следующую целую плиту
+                    next_solid_found = False
+                    for j in range(i + 1, min(i + 5, len(seq))):  # Смотрим вперед на 5 плит
+                        if seq[j].get('mode') == 'solid':
+                            next_solid_found = True
+                            next_solid_distance = j - i
+                            break
+                    
+                    if next_solid_found and next_solid_distance <= 3:
+                        # Следующая целая плита близко - добавляем текущую в эту дорожку
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Превышение 101м, но текущая плита НЕ целая - "
+                              f"добавляем в текущую дорожку (следующая целая через {next_solid_distance} плит)")
+                        current_track.append(item)
+                        current_track_length += item_length
+                        continue
+                    else:
+                        # Следующая целая плита далеко или не найдена
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: Дорожка начнётся НЕ с целой плиты (целой нет поблизости)")
+                
+                # Закрываем дорожку
                 print(f"[ВИЗУАЛИЗАЦИЯ] Закрываем дорожку на {current_track_length:.1f}м (плита {item_length:.1f}м не влезает)")
                 tracks.append({
                     'items': current_track,
