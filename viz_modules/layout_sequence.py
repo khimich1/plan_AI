@@ -77,13 +77,24 @@ def build_layout_sequence():
     sequence = []
 
     def plate_label(L: float, W: float) -> str:
-        Ldm = int(round(L * 10))
-        Wdm_val = round(W * 10, 1)
-        if abs(Wdm_val - int(Wdm_val)) < 1e-6:
-            Wdm = str(int(Wdm_val))
-        else:
-            Wdm = str(Wdm_val).replace('.', ',')
-        return f'ПБ {Ldm}-{Wdm}-8п'
+        """
+        Создает метку плиты с правильной нагрузкой из данных заказа.
+        Пытается определить load_code из PLATE_LOAD_DETAILS или использует get_load_code_for_plate.
+        """
+        # Пытаемся найти точную нагрузку в PLATE_LOAD_DETAILS
+        load_code = None
+        if cfg.PLATE_LOAD_DETAILS:
+            for (plate_L, plate_W, plate_load), qty in cfg.PLATE_LOAD_DETAILS.items():
+                if abs(plate_L - L) < 0.05 and abs(plate_W - W) < 0.01:
+                    load_code = plate_load
+                    break
+        
+        # Если не нашли в PLATE_LOAD_DETAILS, используем get_load_code_for_plate
+        if load_code is None:
+            load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else 8))
+        
+        # Используем готовую функцию для формирования имени
+        return cfg.make_plate_name(L, W, load_code=load_code)
     
     # ✅ НОВЫЙ ПРИОРИТЕТ 0: OPT_CASCADING_PLAN_BY_LOAD (группировка по нагрузкам)
     print(f"[VISUAL] Проверяем OPT_CASCADING_PLAN_BY_LOAD: {bool(OPT_CASCADING_PLAN_BY_LOAD)}")

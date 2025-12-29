@@ -20,6 +20,7 @@ from core import kp_db
 from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core.optimization import optimize_with_cascading_longitudinal_cuts
+from core.formovka_excel import create_formovka_files_for_tracks
 import core.config_and_data as cfg
 import core.optimization as optimization
 
@@ -367,9 +368,11 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 
                 current_track = []
                 current_track_length = 0.0
+                max_reinforcement_in_track = 0.0
                 
                 for i, item in enumerate(items):
                     item_length = item['length']
+                    item_reinforcement = item.get('reinforcement', 0) or 0
                     will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
                     
                     if will_exceed:
@@ -377,44 +380,54 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                             'items': current_track,
                             'length': current_track_length,
                             'load_code': load_code,
-                            'label': group_label
+                            'label': group_label,
+                            'max_reinforcement': max_reinforcement_in_track
                         })
                         current_track = []
                         current_track_length = 0.0
+                        max_reinforcement_in_track = 0.0
                     
                     current_track.append(item)
                     current_track_length += item_length
+                    max_reinforcement_in_track = max(max_reinforcement_in_track, item_reinforcement)
                 
                 if current_track:
                     all_tracks_list.append({
                         'items': current_track,
                         'length': current_track_length,
                         'load_code': load_code,
-                        'label': group_label
+                        'label': group_label,
+                        'max_reinforcement': max_reinforcement_in_track
                     })
         else:
             current_track = []
             current_track_length = 0.0
+            max_reinforcement_in_track = 0.0
             
             for i, item in enumerate(seq):
                 item_length = item['length']
+                item_reinforcement = item.get('reinforcement', 0) or 0
                 will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
                 
                 if will_exceed:
                     all_tracks_list.append({
                         'items': current_track,
-                        'length': current_track_length
+                        'length': current_track_length,
+                        'max_reinforcement': max_reinforcement_in_track
                     })
                     current_track = []
                     current_track_length = 0.0
+                    max_reinforcement_in_track = 0.0
                 
                 current_track.append(item)
                 current_track_length += item_length
+                max_reinforcement_in_track = max(max_reinforcement_in_track, item_reinforcement)
             
             if current_track:
                 all_tracks_list.append({
                     'items': current_track,
-                    'length': current_track_length
+                    'length': current_track_length,
+                    'max_reinforcement': max_reinforcement_in_track
                 })
         
         total_tracks_count = len(all_tracks_list)
@@ -570,6 +583,9 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
         # Формируем список плит
         tracks_in_current_file = all_tracks_list[start_index:end_index]
         
+        # Список для хранения данных формовки по всем дорожкам
+        formovka_tracks_data = []
+        
         def get_plate_info_smart(length, width):
             key = (round(length, 2), width)
             info = plate_lookup_exact.get(key)
@@ -629,25 +645,69 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     })
             
             if plates_info:
-                track_message = f"📋 Дорожка {track_number}:\n\n"
+                # Получаем максимальное армирование дорожки
+                max_reinforcement = track.get('max_reinforcement', 0)
+                print(f"[FORMOVKA DEBUG] Дорожка {track_number}: {len(plates_info)} плит, макс. арм. {max_reinforcement}")
+                
+                # Формируем заголовок с армированием дорожки
+                if max_reinforcement > 0:
+                    track_message = f"📋 Дорожка {track_number} (макс. арм. {max_reinforcement:.1f}):\n\n"
+                else:
+                    track_message = f"📋 Дорожка {track_number}:\n\n"
+                
                 plates_info.sort(key=lambda x: x['length'], reverse=True)
                 
                 for plate in plates_info:
-                    reinforcement_str = f"{plate['reinforcement']:.1f}"
                     plate_name = plate.get('plate_name', '')
                     
+                    # Если есть готовое имя плиты из КП - используем его
                     if plate_name:
-                        plate_info_str = f"Плиты {plate_name}"
+                        plate_str = f"{plate_name}"
                     else:
-                        length_str = f"{plate['length']:.2f}".replace('.', ',')
-                        width_str = f"{plate['width']}" if plate['width'] != 1200 else "1200"
-                        plate_info_str = f"Плиты {length_str}м × {width_str}мм"
+                        # Формируем имя плиты самостоятельно
+                        length_dm = int(round(plate['length'] * 10))
+                        width_mm = int(plate['width'])
+                        
+                        # Определяем нагрузку (по умолчанию 8п)
+                        load_code = 8
+                        if plate.get('reinforcement', 0) > 0:
+                            # Примерное соответствие армирования и нагрузки
+                            reinforcement = plate['reinforcement']
+                            if reinforcement < 8:
+                                load_code = 6
+                            elif reinforcement < 12:
+                                load_code = 8
+                            elif reinforcement < 15:
+                                load_code = 10
+                            else:
+                                load_code = 12
+                        
+                        # Форматируем ширину
+                        if width_mm == 1200:
+                            width_str = "12"
+                        else:
+                            width_dm = width_mm / 100.0
+                            if abs(width_dm - int(width_dm)) < 0.01:
+                                width_str = str(int(width_dm))
+                            else:
+                                width_str = str(width_dm).replace('.', ',')
+                        
+                        plate_str = f"ПБ {length_dm}-{width_str}-{load_code}п"
+                        # Сохраняем сформированное имя обратно в plate_name для использования в Excel
+                        plate['plate_name'] = plate_str
                     
                     track_message += (
-                        f"  📦 {plate_info_str} × {plate['qty']} шт "
-                        f"(армир. {reinforcement_str}, срок {plate['kp_date']}, "
-                        f"заказчик: {plate['customer']})\n"
+                        f"  🔹 {plate_str} × {plate['qty']} шт "
+                        f"(срок {plate['kp_date']}, заказчик: {plate['customer']})\n"
                     )
+                
+                # Сохраняем данные для файла формовки
+                formovka_tracks_data.append({
+                    'track_number': track_number,
+                    'max_reinforcement': max_reinforcement,
+                    'plates_info': plates_info
+                })
+                print(f"[FORMOVKA DEBUG] Добавлена дорожка {track_number} в formovka_tracks_data (всего: {len(formovka_tracks_data)})")
                 
                 if len(track_message) > 4000:
                     lines = track_message.split('\n')
@@ -664,6 +724,44 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                         await callback.message.answer(current_part)
                 else:
                     await callback.message.answer(track_message)
+        
+        # Создаем Excel-файлы формовки для каждой дорожки
+        print(f"[FORMOVKA DEBUG] formovka_tracks_data count: {len(formovka_tracks_data)}")
+        if formovka_tracks_data:
+            print(f"[FORMOVKA DEBUG] Начинаем создание {len(formovka_tracks_data)} файлов формовки")
+            await callback.message.answer("📄 Генерирую файлы формовки...")
+            
+            # Создаем файлы формовки
+            template_path = os.path.join(PROJECT_ROOT, "банк знаний", "!КЗ ПБ Шаблон.xlsx")
+            print(f"[FORMOVKA DEBUG] Template path: {template_path}")
+            print(f"[FORMOVKA DEBUG] Template exists: {os.path.exists(template_path)}")
+            
+            date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            try:
+                formovka_files = await asyncio.to_thread(
+                    create_formovka_files_for_tracks,
+                    formovka_tracks_data,
+                    OUTPUTS_DIR_STR,
+                    template_path=template_path,
+                    date_str=date_str
+                )
+                print(f"[FORMOVKA DEBUG] Создано файлов: {len(formovka_files)}")
+            except Exception as e:
+                print(f"[FORMOVKA ERROR] Ошибка создания файлов: {e}")
+                import traceback
+                traceback.print_exc()
+                await callback.message.answer(f"⚠️ Ошибка создания файлов формовки: {e}")
+                formovka_files = []
+            
+            # Отправляем файлы формовки
+            for formovka_file in formovka_files:
+                if os.path.exists(formovka_file):
+                    track_num = os.path.basename(formovka_file).split('_')[2]  # Извлекаем номер дорожки
+                    await callback.message.answer_document(
+                        FSInputFile(formovka_file),
+                        caption=f"📋 Формовка (Дорожка {track_num})"
+                    )
     
     await callback.message.answer(
         f"✅ План для Дня {day_number} готов!\n\n"
