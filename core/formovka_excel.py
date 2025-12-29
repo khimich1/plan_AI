@@ -115,43 +115,19 @@ def create_formovka_excel(
         # 3. Номер дорожки (ячейка D3 - "№ дорожки для формовки")
         safe_set_cell('D3', track_number)
         
-        # 4. Армирование - ищем строку с текстом "Армирование" и заполняем соседнюю ячейку
-        found_arm_cell = False
-        for row in range(1, 15):
-            cell_value = ws.cell(row=row, column=1).value  # Колонка A
-            if cell_value and 'Армирование' in str(cell_value):
-                # Армирование записываем в следующую колонку (B) с большим шрифтом
-                ws.cell(row=row, column=2).value = max_reinforcement
-                # Устанавливаем крупный шрифт (например, 48)
-                try:
-                    ws.cell(row=row, column=2).font = Font(size=48, bold=True)
-                except:
-                    pass
-                found_arm_cell = True
-                print(f"[FORMOVKA] ✅ Армирование {max_reinforcement} записано в ячейку B{row} с размером шрифта 48")
-                break
+        # 4. Максимальное армирование записываем в ячейку A12 с большим шрифтом
+        try:
+            ws['A12'] = max_reinforcement
+            ws['A12'].font = Font(size=48, bold=True)
+            print(f"[FORMOVKA] ✅ Армирование {max_reinforcement} записано в ячейку A12 с размером шрифта 48")
+        except Exception as e:
+            print(f"[FORMOVKA] ⚠️ Не удалось записать армирование в A12: {e}")
         
-        if not found_arm_cell:
-            # Fallback: используем фиксированную позицию A10
-            ws['A10'] = max_reinforcement
-            try:
-                ws['A10'].font = Font(size=48, bold=True)
-            except:
-                pass
-            print(f"[FORMOVKA] ⚠️ Ячейка 'Армирование' не найдена, использую A10")
-        
-        # 5. Заполняем плиты (начиная со строки после заголовка)
-        # Ищем заголовок таблицы
-        start_row = 13  # По умолчанию
-        for row in range(10, 20):
-            cell_value = ws.cell(row=row, column=2).value  # Колонка B
-            if cell_value and ('Заказ' in str(cell_value) or 'Номенклатура' in str(cell_value)):
-                start_row = row + 1
-                print(f"[FORMOVKA] ✅ Найден заголовок таблицы в строке {row}, данные с {start_row}")
-                break
-        
-        # Заполняем строки с плитами
-        current_row = start_row
+        # 5. Заполняем плиты
+        # Строка 11 - это заголовки таблицы (не трогаем)
+        # Данные начинаются с 12 строки
+        current_row = 12
+        print(f"[FORMOVKA] 📝 Начинаю заполнять данные с 12 строки")
         for plate in plates_info:
             plate_name = plate.get('plate_name', '')
             qty = plate.get('qty', 0)
