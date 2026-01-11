@@ -298,22 +298,26 @@ def build_layout_sequence():
             ordered_cuts.extend(cut_group)
             print(f"[VISUAL] Добавлена группа резов #{i+1}: width={cut_group[0]['width']}мм, rest={cut_group[0]['rest']}мм, типов={len(cut_group)}")
             
-            # После каждой группы (кроме последней) добавляем ОПТИМАЛЬНЫЙ разделитель
-            if i < len(cut_groups) - 1 and solid_cuts_list:
-                # Определяем следующую группу
-                next_group = cut_groups[i + 1]
-                
-                # Умный выбор разделителя по армированию
-                best_idx = _choose_best_separator(solid_cuts_list, next_group, reinforcement_map)
-                
-                if best_idx is not None:
-                    # Извлекаем выбранную плиту
-                    separator = solid_cuts_list.pop(best_idx)
-                    ordered_cuts.append(separator)
-                else:
-                    # Fallback: если функция не смогла выбрать, берём первую
-                    ordered_cuts.append(solid_cuts_list.pop(0))
-                    print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами (fallback)")
+        # После каждой группы (кроме последней) добавляем ОПТИМАЛЬНЫЙ разделитель
+        if i < len(cut_groups) - 1 and solid_cuts_list:
+            # Определяем следующую группу
+            next_group = cut_groups[i + 1]
+            
+            # Умный выбор разделителя по армированию
+            best_idx = _choose_best_separator(solid_cuts_list, next_group, reinforcement_map)
+            
+            if best_idx is not None:
+                # Извлекаем выбранную плиту
+                separator = solid_cuts_list.pop(best_idx)
+                separator['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: помечаем как разделитель
+                ordered_cuts.append(separator)
+                print(f"[VISUAL] ✓ Разделитель (is_separator=True): целая плита между группами")
+            else:
+                # Fallback: если функция не смогла выбрать, берём первую
+                fallback_sep = solid_cuts_list.pop(0)
+                fallback_sep['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ
+                ordered_cuts.append(fallback_sep)
+                print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами (fallback, is_separator=True)")
         
         # Оставшиеся целые плиты добавляем в конец
         if solid_cuts_list:
@@ -393,11 +397,14 @@ def build_layout_sequence():
                     if rest_mm == 0:
                         # Получаем армирование из карты
                         reinforcement = reinforcement_map.get((length, width_mm))
+                        # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: передаём флаг is_separator
+                        is_separator = cut.get('is_separator', False)
                         sequence.append({
                             'length': length,
                             'mode': 'solid',
                             'label': plate_label(length, main_w),
-                            'reinforcement': reinforcement
+                            'reinforcement': reinforcement,
+                            'is_separator': is_separator  # Для приоритета при разбиении на дорожки
                         })
                     else:
                         # Плиты С резом
@@ -705,11 +712,15 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
             if best_idx is not None:
                 # Извлекаем выбранную плиту
                 separator = solid_cuts_list.pop(best_idx)
+                separator['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: помечаем как разделитель
                 ordered_cuts.append(separator)
+                print(f"[VISUAL] ✓ Разделитель (is_separator=True): целая плита между группами")
             else:
                 # Fallback: если функция не смогла выбрать, берём первую
-                ordered_cuts.append(solid_cuts_list.pop(0))
-                print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами (fallback)")
+                fallback_sep = solid_cuts_list.pop(0)
+                fallback_sep['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ
+                ordered_cuts.append(fallback_sep)
+                print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами (fallback, is_separator=True)")
     
     # Оставшиеся целые плиты добавляем в конец
     if solid_cuts_list:
@@ -773,11 +784,14 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         print(f"[VISUAL]    Доступные ключи в карте: {list(reinforcement_map.keys())[:5]}")
                     else:
                         print(f"[VISUAL] ✓ Армирование найдено для целой плиты: {length}м x {width_mm}мм = {reinforcement:.1f}")
+                    # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: передаём флаг is_separator
+                    is_separator = cut.get('is_separator', False)
                     sequence.append({
                         'length': length,
                         'mode': 'solid',
                         'label': plate_label_func(length, main_w),
-                        'reinforcement': reinforcement
+                        'reinforcement': reinforcement,
+                        'is_separator': is_separator  # Для приоритета при разбиении на дорожки
                     })
                 else:
                     # Плита с резом

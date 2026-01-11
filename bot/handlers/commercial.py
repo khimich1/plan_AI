@@ -27,7 +27,7 @@ from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core import kp_db
 
-from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb
+from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, cancel_process_kb
 from ..states import KPStates
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -49,6 +49,10 @@ async def btn_commercial_offer(message: Message, state: FSMContext):
         "(Это имя будет указано в документе)",
         reply_markup=main_menu_kb()
     )
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
+    )
 
 
 # === ПОШАГОВЫЙ ОПРОС ДЛЯ КОММЕРЧЕСКОГО ПРЕДЛОЖЕНИЯ ===
@@ -68,6 +72,10 @@ async def receive_manager_name(message: Message, state: FSMContext):
         "Шаг 2 из 5: Введите имя клиента\n"
         "(Для кого создается коммерческое предложение)",
         reply_markup=main_menu_kb()
+    )
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
     )
 
 
@@ -90,6 +98,10 @@ async def receive_client_name(message: Message, state: FSMContext):
         "• 'ПБ 38-12-8п 2'\n"
         "• 'ПБ 66-3-8п 4'",
         reply_markup=main_menu_kb()
+    )
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
     )
 
 
@@ -162,6 +174,10 @@ async def receive_plates_list(message: Message, state: FSMContext):
             "• '1.2×3.39 — 2 шт'\n"
             "• 'ПБ 38-12-8п 2'"
         )
+        await message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
+        )
         return
     
     # Сохраняем список плит в состояние
@@ -175,6 +191,10 @@ async def receive_plates_list(message: Message, state: FSMContext):
         "(Просто число, например: 0, 5, 10, 15)\n"
         "0 = без скидки",
         reply_markup=main_menu_kb()
+    )
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
     )
 
 
@@ -192,11 +212,19 @@ async def receive_discount_and_ask_conditions(message: Message, state: FSMContex
                 "Попробуйте снова:",
                 reply_markup=main_menu_kb()
             )
+            await message.answer(
+                "Или нажмите кнопку ниже для отмены:",
+                reply_markup=cancel_process_kb()
+            )
             return
     except ValueError:
         await message.answer(
             "❌ Неверный формат числа. Введите просто число (например: 0, 5, 10):",
             reply_markup=main_menu_kb()
+        )
+        await message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
         )
         return
     
@@ -249,6 +277,10 @@ async def receive_conditions_choice(callback: CallbackQuery, state: FSMContext):
             "(Например: 'Самовывоз со склада' или 'Доставка до объекта')",
             reply_markup=main_menu_kb()
         )
+        await callback.message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
+        )
 
 
 @router.message(KPStates.waiting_delivery_conditions)
@@ -266,6 +298,10 @@ async def receive_delivery_conditions(message: Message, state: FSMContext):
         "Теперь введите условия оплаты:\n"
         "(Например: 'Предварительная оплата 100%' или '50% аванс, 50% по факту отгрузки')",
         reply_markup=main_menu_kb()
+    )
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
     )
 
 
@@ -1175,4 +1211,16 @@ async def callback_skip_save_kp(callback: CallbackQuery, state: FSMContext):
     
     # Очищаем состояние
     await state.clear()
+
+
+@router.callback_query(F.data == "cancel_process")
+async def cancel_commercial_process(callback: CallbackQuery, state: FSMContext):
+    """Отмена процесса создания коммерческого предложения"""
+    await state.clear()
+    await callback.message.answer(
+        "❌ Создание коммерческого предложения отменено.\n"
+        "Выберите действие:",
+        reply_markup=main_menu_kb()
+    )
+    await callback.answer("Отменено")
 

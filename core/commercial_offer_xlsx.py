@@ -33,17 +33,20 @@ except ImportError:
 
 # ==================== КОНСТАНТЫ ====================
 
+# Вычисляем абсолютный путь к корню проекта (папка выше core/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Реквизиты компании
 COMPANY_NAME = "ООО «Комбинат ЖБК»"
 COMPANY_ADDRESS = "150020, г Ярославль г, проезд Домостроителей, дом 1, строение 3"
 COMPANY_PHONE = "8 (4852) 595 000"
 COMPANY_EMAIL = "info@zhbk.ru"
 
-# Путь к базе данных с ценами
-DB_PATH = "pb.db"
+# Путь к базе данных с ценами (абсолютный)
+DB_PATH = os.path.join(PROJECT_ROOT, "pb.db")
 
-# Путь к логотипу
-LOGO_PATH = "банк знаний/ЖБЛСТАРТ.png"
+# Путь к логотипу (абсолютный, чтобы работал из любой директории)
+LOGO_PATH = os.path.join(PROJECT_ROOT, "банк знаний", "ЖБЛСТАРТ.png")
 
 # Коэффициент скидки в процентах (0 = без скидки, 5 = скидка 5%, и т.д.)
 DISCOUNT_PERCENT = 0

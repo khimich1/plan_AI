@@ -10,6 +10,7 @@
 - kp_plates: позиции (плиты) в каждом КП
 - kp_files: файлы XLSX (хранит сам файл как BLOB и путь)
 - kp_meta: метаданные (статус КП)
+- completed_plates: выполненные плиты (перенесены из kp_plates после завершения дня)
 """
 
 import os
@@ -102,12 +103,52 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
             )
         ''')
         
+        # Таблица 5: completed_plates - Выполненные плиты
+        # Сюда переносятся плиты после завершения дня производства
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS completed_plates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                plate_name TEXT NOT NULL,
+                length_m REAL,
+                width_m REAL,
+                load_class INTEGER,
+                qty INTEGER NOT NULL,
+                completed_date TEXT NOT NULL,
+                production_day INTEGER,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Таблица 6: plate_rests - Остатки от резки плит
+        # Хранит информацию об остатках, которые образуются при продольном резе
+        # Статусы: available (доступен), used (использован), completed (выполнен), discarded (списан)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS plate_rests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                source_plate_name TEXT NOT NULL,
+                rest_width_mm INTEGER NOT NULL,
+                length_m REAL NOT NULL,
+                qty INTEGER NOT NULL DEFAULT 1,
+                status TEXT DEFAULT 'available',
+                created_date TEXT NOT NULL,
+                used_date TEXT,
+                production_day INTEGER,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        
         # Создаём индексы для быстрого поиска
         # Это как закладки в книге — помогают быстро найти нужную информацию
         cur.execute('CREATE INDEX IF NOT EXISTS idx_kp_id_plates ON kp_plates(kp_id)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_kp_id_files ON kp_files(kp_id)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_kp_id_meta ON kp_meta(kp_id)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_meta_status ON kp_meta(status)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_completed_kp_id ON completed_plates(kp_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_completed_date ON completed_plates(completed_date)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_kp_id ON plate_rests(kp_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_status ON plate_rests(status)')
         
         conn.commit()
     finally:
@@ -504,6 +545,142 @@ def delete_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> bool:
         conn.close()
 
 
+def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
+    """
+    Полностью очищает ВСЕ данные о плитах из базы данных.
+    
+    Простыми словами:
+    - Удаляет ВСЕ КП (и в работе, и выполненные, и отклонённые)
+    - Удаляет ВСЕ плиты (и невыполненные, и выполненные)
+    - Удаляет ВСЕ остатки от резки
+    - Сбрасывает счётчики AUTOINCREMENT
+    - Это как полностью очистить завод от всех заказов и начать с нуля
+    
+    ⚠️ ВНИМАНИЕ: Это необратимая операция!
+    
+    Возвращает:
+        Словарь с количеством удалённых записей из каждой таблицы
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        # Включаем поддержку FOREIGN KEY
+        conn.execute('PRAGMA foreign_keys = ON')
+        
+        cur = conn.cursor()
+        
+        # Подсчитываем количество записей перед удалением
+        cur.execute('SELECT COUNT(*) FROM KP_offers')
+        kp_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM kp_plates')
+        plates_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM completed_plates')
+        completed_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM plate_rests')
+        rests_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM kp_files')
+        files_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM kp_meta')
+        meta_count = cur.fetchone()[0]
+        
+        # Удаляем все записи из всех таблиц
+        # Порядок важен: сначала зависимые таблицы, потом основную
+        cur.execute('DELETE FROM kp_plates')
+        cur.execute('DELETE FROM completed_plates')
+        cur.execute('DELETE FROM plate_rests')
+        cur.execute('DELETE FROM kp_files')
+        cur.execute('DELETE FROM kp_meta')
+        cur.execute('DELETE FROM KP_offers')
+        
+        # Сбрасываем счётчики AUTOINCREMENT
+        cur.execute('''
+            DELETE FROM sqlite_sequence 
+            WHERE name IN ('KP_offers', 'kp_plates', 'completed_plates', 
+                          'plate_rests', 'kp_files', 'kp_meta')
+        ''')
+        
+        conn.commit()
+        
+        result = {
+            'kp_offers': kp_count,
+            'kp_plates': plates_count,
+            'completed_plates': completed_count,
+            'plate_rests': rests_count,
+            'kp_files': files_count,
+            'kp_meta': meta_count,
+            'total': kp_count + plates_count + completed_count + rests_count + files_count + meta_count
+        }
+        
+        print(f"[DB] ✅ ПОЛНАЯ ОЧИСТКА ВСЕХ ДАННЫХ О ПЛИТАХ:")
+        print(f"  - Удалено КП: {kp_count}")
+        print(f"  - Удалено плит в работе: {plates_count}")
+        print(f"  - Удалено выполненных плит: {completed_count}")
+        print(f"  - Удалено остатков: {rests_count}")
+        print(f"  - Удалено файлов: {files_count}")
+        print(f"  - Удалено метаданных: {meta_count}")
+        print(f"  - ВСЕГО ЗАПИСЕЙ: {result['total']}")
+        
+        return result
+    
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при полной очистке БД: {e}")
+        import traceback
+        traceback.print_exc()
+        conn.rollback()
+        raise
+    
+    finally:
+        conn.close()
+
+
+def get_db_stats(db_path: str = DEFAULT_DB) -> Dict[str, int]:
+    """
+    Получает статистику по базе данных.
+    
+    Возвращает:
+        Словарь с количеством записей в каждой таблице
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        
+        cur.execute('SELECT COUNT(*) FROM KP_offers')
+        kp_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM kp_plates')
+        plates_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM completed_plates')
+        completed_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM plate_rests')
+        rests_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM kp_meta WHERE status = "в работе"')
+        in_work_count = cur.fetchone()[0]
+        
+        cur.execute('SELECT COUNT(*) FROM kp_meta WHERE status = "выполнено"')
+        completed_kp_count = cur.fetchone()[0]
+        
+        return {
+            'kp_total': kp_count,
+            'kp_in_work': in_work_count,
+            'kp_completed': completed_kp_count,
+            'plates_in_work': plates_count,
+            'plates_completed': completed_count,
+            'plate_rests': rests_count
+        }
+    
+    finally:
+        conn.close()
+
+
 def clear_all_kp(db_path: str = DEFAULT_DB) -> Dict[str, int]:
     """
     Полностью очищает все таблицы с КП из базы данных.
@@ -573,6 +750,676 @@ def clear_all_kp(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         traceback.print_exc()
         raise
     
+    finally:
+        conn.close()
+
+
+# ==================== ФУНКЦИИ ДЛЯ ВЫПОЛНЕННЫХ ПЛИТ ====================
+
+def move_plates_to_completed(
+    kp_id: int,
+    plates_to_complete: List[Dict],
+    production_day: int,
+    db_path: str = DEFAULT_DB
+) -> int:
+    """
+    Переносит плиты из kp_plates в completed_plates.
+    
+    Простыми словами:
+    - Берёт список плит, которые нужно отметить как выполненные
+    - Записывает их в таблицу completed_plates
+    - Уменьшает количество в kp_plates (или удаляет, если qty = 0)
+    
+    Аргументы:
+        kp_id: номер КП, к которому относятся плиты
+        plates_to_complete: список плит для переноса (словари с plate_name, qty и т.д.)
+        production_day: номер дня производства
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Количество перенесённых плит (сумма qty)
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    completed_count = 0
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        completed_date = datetime.now().strftime('%d.%m.%Y')
+        
+        for plate in plates_to_complete:
+            plate_name = plate.get('plate_name', '')
+            qty = plate.get('qty', 1)
+            
+            if not plate_name:
+                continue
+            
+            # Вставляем в completed_plates
+            cur.execute('''
+                INSERT INTO completed_plates (
+                    kp_id, plate_name, length_m, width_m, load_class,
+                    qty, completed_date, production_day
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                kp_id,
+                plate_name,
+                plate.get('length_m', 0),
+                plate.get('width_m', 0),
+                plate.get('load_class', 800),
+                qty,
+                completed_date,
+                production_day
+            ))
+            
+            # Уменьшаем qty в kp_plates
+            cur.execute('''
+                UPDATE kp_plates 
+                SET qty = qty - ?
+                WHERE kp_id = ? AND plate_name = ? AND qty > 0
+            ''', (qty, kp_id, plate_name))
+            
+            completed_count += qty
+        
+        # Удаляем записи с qty <= 0
+        cur.execute('DELETE FROM kp_plates WHERE qty <= 0')
+        
+        conn.commit()
+        print(f"[DB] ✅ Перенесено {completed_count} плит в completed_plates (КП #{kp_id}, день {production_day})")
+        return completed_count
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при переносе плит: {e}")
+        conn.rollback()
+        return 0
+    
+    finally:
+        conn.close()
+
+
+# ==================== ФУНКЦИИ ДЛЯ ОСТАТКОВ ПЛИТ ====================
+
+def create_plate_rest(
+    kp_id: int,
+    source_plate_name: str,
+    rest_width_mm: int,
+    length_m: float,
+    production_day: int,
+    qty: int = 1,
+    db_path: str = DEFAULT_DB
+) -> int:
+    """
+    Создает запись об остатке плиты.
+    
+    Простыми словами:
+    - При продольном резе плиты образуется остаток
+    - Эта функция сохраняет информацию об остатке в БД
+    - Остаток можно использовать для других заказов
+    
+    Аргументы:
+        kp_id: номер КП, при выполнении которого образовался остаток
+        source_plate_name: имя исходной плиты (из которой вырезали)
+        rest_width_mm: ширина остатка в мм
+        length_m: длина остатка в метрах
+        production_day: номер дня производства
+        qty: количество остатков (по умолчанию 1)
+        db_path: путь к базе данных
+    
+    Возвращает:
+        ID созданной записи или 0 при ошибке
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        created_date = datetime.now().strftime('%d.%m.%Y')
+        
+        cur.execute('''
+            INSERT INTO plate_rests (
+                kp_id, source_plate_name, rest_width_mm, length_m,
+                qty, status, created_date, production_day
+            ) VALUES (?, ?, ?, ?, ?, 'available', ?, ?)
+        ''', (
+            kp_id,
+            source_plate_name,
+            rest_width_mm,
+            length_m,
+            qty,
+            created_date,
+            production_day
+        ))
+        
+        rest_id = cur.lastrowid
+        conn.commit()
+        print(f"[DB] ✅ Создан остаток #{rest_id}: {rest_width_mm}мм x {length_m}м (КП #{kp_id})")
+        return rest_id
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при создании остатка: {e}")
+        conn.rollback()
+        return 0
+    
+    finally:
+        conn.close()
+
+
+def get_available_rests(
+    kp_id: int = None,
+    db_path: str = DEFAULT_DB
+) -> List[Dict]:
+    """
+    Возвращает список доступных остатков.
+    
+    Простыми словами:
+    - Получает все остатки со статусом 'available'
+    - Можно фильтровать по номеру КП
+    - Возвращает список словарей с информацией об остатках
+    
+    Аргументы:
+        kp_id: номер КП для фильтрации (None = все КП)
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Список словарей с информацией об остатках
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        if kp_id:
+            cur.execute('''
+                SELECT 
+                    pr.id, pr.kp_id, pr.source_plate_name, pr.rest_width_mm,
+                    pr.length_m, pr.qty, pr.status, pr.created_date,
+                    pr.production_day, ko.customer_name
+                FROM plate_rests pr
+                LEFT JOIN KP_offers ko ON pr.kp_id = ko.kp_id
+                WHERE pr.status = 'available' AND pr.kp_id = ?
+                ORDER BY pr.created_date DESC, pr.rest_width_mm DESC
+            ''', (kp_id,))
+        else:
+            cur.execute('''
+                SELECT 
+                    pr.id, pr.kp_id, pr.source_plate_name, pr.rest_width_mm,
+                    pr.length_m, pr.qty, pr.status, pr.created_date,
+                    pr.production_day, ko.customer_name
+                FROM plate_rests pr
+                LEFT JOIN KP_offers ko ON pr.kp_id = ko.kp_id
+                WHERE pr.status = 'available'
+                ORDER BY pr.created_date DESC, pr.rest_width_mm DESC
+            ''')
+        
+        return [dict(row) for row in cur.fetchall()]
+        
+    finally:
+        conn.close()
+
+
+def mark_rest_as_used(
+    rest_id: int,
+    db_path: str = DEFAULT_DB
+) -> bool:
+    """
+    Помечает остаток как использованный.
+    
+    Простыми словами:
+    - Когда остаток используется во вторичном резе
+    - Его статус меняется на 'used'
+    - Он больше не будет показываться как доступный
+    
+    Аргументы:
+        rest_id: ID остатка в БД
+        db_path: путь к базе данных
+    
+    Возвращает:
+        True если успешно, False при ошибке
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        used_date = datetime.now().strftime('%d.%m.%Y')
+        
+        cur.execute('''
+            UPDATE plate_rests
+            SET status = 'used', used_date = ?
+            WHERE id = ? AND status = 'available'
+        ''', (used_date, rest_id))
+        
+        if cur.rowcount > 0:
+            conn.commit()
+            print(f"[DB] ✅ Остаток #{rest_id} помечен как использованный")
+            return True
+        else:
+            print(f"[DB] ⚠️ Остаток #{rest_id} не найден или уже использован")
+            return False
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при обновлении остатка: {e}")
+        conn.rollback()
+        return False
+    
+    finally:
+        conn.close()
+
+
+def complete_plate_rest(
+    rest_id: int,
+    production_day: int,
+    db_path: str = DEFAULT_DB
+) -> bool:
+    """
+    Помечает остаток как выполненный (произведённый).
+    
+    Простыми словами:
+    - Когда остаток изготавливается как отдельная плита
+    - Его статус меняется на 'completed'
+    - Записывается день производства
+    
+    Аргументы:
+        rest_id: ID остатка в БД
+        production_day: номер дня производства
+        db_path: путь к базе данных
+    
+    Возвращает:
+        True если успешно, False при ошибке
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        used_date = datetime.now().strftime('%d.%m.%Y')
+        
+        cur.execute('''
+            UPDATE plate_rests
+            SET status = 'completed', used_date = ?, production_day = ?
+            WHERE id = ? AND status = 'available'
+        ''', (used_date, production_day, rest_id))
+        
+        if cur.rowcount > 0:
+            conn.commit()
+            print(f"[DB] ✅ Остаток #{rest_id} выполнен (день {production_day})")
+            return True
+        else:
+            print(f"[DB] ⚠️ Остаток #{rest_id} не найден или уже обработан")
+            return False
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при завершении остатка: {e}")
+        conn.rollback()
+        return False
+    
+    finally:
+        conn.close()
+
+
+def discard_plate_rest(
+    rest_id: int,
+    db_path: str = DEFAULT_DB
+) -> bool:
+    """
+    Списывает остаток (брак или утилизация).
+    
+    Простыми словами:
+    - Когда остаток больше не нужен (брак, повреждение)
+    - Его статус меняется на 'discarded'
+    - Остаток удаляется из доступных
+    
+    Аргументы:
+        rest_id: ID остатка в БД
+        db_path: путь к базе данных
+    
+    Возвращает:
+        True если успешно, False при ошибке
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        used_date = datetime.now().strftime('%d.%m.%Y')
+        
+        cur.execute('''
+            UPDATE plate_rests
+            SET status = 'discarded', used_date = ?
+            WHERE id = ? AND status = 'available'
+        ''', (used_date, rest_id))
+        
+        if cur.rowcount > 0:
+            conn.commit()
+            print(f"[DB] ✅ Остаток #{rest_id} списан")
+            return True
+        else:
+            print(f"[DB] ⚠️ Остаток #{rest_id} не найден или уже обработан")
+            return False
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при списании остатка: {e}")
+        conn.rollback()
+        return False
+    
+    finally:
+        conn.close()
+
+
+def get_all_plate_rests(db_path: str = DEFAULT_DB) -> List[Dict]:
+    """
+    Получает все остатки (для статистики и отчётов).
+    
+    Возвращает:
+        Список словарей с информацией обо всех остатках
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute('''
+            SELECT 
+                pr.id, pr.kp_id, pr.source_plate_name, pr.rest_width_mm,
+                pr.length_m, pr.qty, pr.status, pr.created_date,
+                pr.used_date, pr.production_day, ko.customer_name
+            FROM plate_rests pr
+            LEFT JOIN KP_offers ko ON pr.kp_id = ko.kp_id
+            ORDER BY pr.created_date DESC, pr.status, pr.rest_width_mm DESC
+        ''')
+        
+        return [dict(row) for row in cur.fetchall()]
+        
+    finally:
+        conn.close()
+
+
+def check_and_update_kp_completion(kp_id: int, db_path: str = DEFAULT_DB) -> bool:
+    """
+    Проверяет, все ли плиты КП выполнены.
+    Если да — меняет статус КП на "выполнено".
+    
+    Простыми словами:
+    - Смотрит, остались ли ещё плиты в kp_plates для данного КП
+    - Если плит не осталось (все выполнены) — ставит статус "выполнено"
+    
+    Аргументы:
+        kp_id: номер КП для проверки
+        db_path: путь к базе данных
+    
+    Возвращает:
+        True если КП полностью выполнен, False если ещё есть плиты
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        
+        # Считаем оставшиеся плиты в КП
+        cur.execute('SELECT SUM(qty) FROM kp_plates WHERE kp_id = ?', (kp_id,))
+        result = cur.fetchone()
+        remaining = result[0] if result[0] else 0
+        
+        if remaining == 0:
+            # Все плиты выполнены — обновляем статус
+            cur.execute('''
+                UPDATE kp_meta SET status = 'выполнено' WHERE kp_id = ?
+            ''', (kp_id,))
+            conn.commit()
+            print(f"[DB] 🎉 КП #{kp_id} полностью выполнен! Статус обновлён.")
+            return True
+        
+        return False
+        
+    finally:
+        conn.close()
+
+
+def get_remaining_plates_for_kp(kp_id: int, db_path: str = DEFAULT_DB) -> List[Dict]:
+    """
+    Получает список оставшихся (невыполненных) плит для КП.
+    
+    Простыми словами:
+    - Возвращает все плиты, которые ещё не выполнены для данного КП
+    
+    Аргументы:
+        kp_id: номер КП
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Список словарей с информацией о плитах
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute('''
+            SELECT * FROM kp_plates 
+            WHERE kp_id = ? AND qty > 0
+            ORDER BY position_number
+        ''', (kp_id,))
+        
+        return [dict(row) for row in cur.fetchall()]
+        
+    finally:
+        conn.close()
+
+
+def get_completed_plates_for_kp(kp_id: int, db_path: str = DEFAULT_DB) -> List[Dict]:
+    """
+    Получает список выполненных плит для КП.
+    
+    Простыми словами:
+    - Возвращает все плиты, которые уже выполнены для данного КП
+    
+    Аргументы:
+        kp_id: номер КП
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Список словарей с информацией о выполненных плитах
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute('''
+            SELECT * FROM completed_plates 
+            WHERE kp_id = ?
+            ORDER BY completed_date, production_day
+        ''', (kp_id,))
+        
+        return [dict(row) for row in cur.fetchall()]
+        
+    finally:
+        conn.close()
+
+
+def get_completed_plates_stats(db_path: str = DEFAULT_DB) -> Dict:
+    """
+    Получает статистику по выполненным плитам.
+    
+    Простыми словами:
+    - Считает общее количество выполненных плит
+    - Считает сколько КП затронуто
+    - Возвращает сводку
+    
+    Возвращает:
+        Словарь со статистикой
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        cur = conn.cursor()
+        
+        # Общее количество записей
+        cur.execute('SELECT COUNT(*) FROM completed_plates')
+        total_records = cur.fetchone()[0]
+        
+        # Общее количество плит (сумма qty)
+        cur.execute('SELECT SUM(qty) FROM completed_plates')
+        result = cur.fetchone()
+        total_qty = result[0] if result[0] else 0
+        
+        # Количество уникальных КП
+        cur.execute('SELECT COUNT(DISTINCT kp_id) FROM completed_plates')
+        kp_count = cur.fetchone()[0]
+        
+        # Количество дней производства
+        cur.execute('SELECT COUNT(DISTINCT production_day) FROM completed_plates')
+        days_count = cur.fetchone()[0]
+        
+        return {
+            'total_records': total_records,
+            'total_plates': total_qty,
+            'kp_count': kp_count,
+            'days_count': days_count
+        }
+        
+    finally:
+        conn.close()
+
+
+def get_completed_plates_by_day(production_day: int, db_path: str = DEFAULT_DB) -> List[Dict]:
+    """
+    Получает все выполненные плиты за конкретный день производства.
+    
+    Аргументы:
+        production_day: номер дня производства
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Список словарей с информацией о плитах
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute('''
+            SELECT cp.*, ko.customer_name
+            FROM completed_plates cp
+            LEFT JOIN KP_offers ko ON cp.kp_id = ko.kp_id
+            WHERE cp.production_day = ?
+            ORDER BY cp.kp_id, cp.plate_name
+        ''', (production_day,))
+        
+        return [dict(row) for row in cur.fetchall()]
+        
+    finally:
+        conn.close()
+
+
+def get_all_plates_in_production(db_path: str = DEFAULT_DB) -> List[Dict]:
+    """
+    Получает все плиты в производстве (из таблицы kp_plates).
+    
+    Простыми словами:
+    - Возвращает все плиты, которые ещё не выполнены
+    - Объединяет с информацией о КП (клиент, дата)
+    
+    Возвращает:
+        Список словарей с информацией о плитах
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute('''
+            SELECT 
+                p.id,
+                p.kp_id,
+                p.position_number,
+                p.plate_name,
+                p.length_m,
+                p.width_m,
+                p.load_class,
+                p.qty,
+                p.unit_weight,
+                p.total_weight,
+                p.discounted_price,
+                ko.customer_name,
+                ko.execution_terms
+            FROM kp_plates p
+            LEFT JOIN KP_offers ko ON p.kp_id = ko.kp_id
+            LEFT JOIN kp_meta m ON p.kp_id = m.kp_id
+            WHERE p.qty > 0 AND (m.status IS NULL OR m.status = 'в работе')
+            ORDER BY p.kp_id, p.position_number
+        ''')
+        
+        return [dict(row) for row in cur.fetchall()]
+        
+    finally:
+        conn.close()
+
+
+def get_all_completed_plates(db_path: str = DEFAULT_DB) -> List[Dict]:
+    """
+    Получает все выполненные плиты (из таблицы completed_plates).
+    
+    Простыми словами:
+    - Возвращает все плиты, которые уже выполнены
+    - Объединяет с информацией о КП (клиент)
+    
+    Возвращает:
+        Список словарей с информацией о выполненных плитах
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute('''
+            SELECT 
+                cp.id,
+                cp.kp_id,
+                cp.plate_name,
+                cp.length_m,
+                cp.width_m,
+                cp.load_class,
+                cp.qty,
+                cp.completed_date,
+                cp.production_day,
+                ko.customer_name,
+                ko.execution_terms
+            FROM completed_plates cp
+            LEFT JOIN KP_offers ko ON cp.kp_id = ko.kp_id
+            ORDER BY cp.completed_date DESC, cp.kp_id, cp.plate_name
+        ''')
+        
+        return [dict(row) for row in cur.fetchall()]
+        
     finally:
         conn.close()
 

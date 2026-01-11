@@ -1317,67 +1317,106 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
     return breakdown_tables
 
 
-def build_component_breakdown_production(price_table: dict, price_rows: list = None, reinforcement_code: int = 8):
+def build_component_breakdown_production(price_table: dict, price_rows: list = None, reinforcement_code: int = 8, tracks_for_day: list = None):
     """
     Формирует детальную разбивку компонентов для планирования производства.
     ОТЛИЧИЯ от build_component_breakdown:
     - Базовая цена берется из таблицы raw_material_costs
     - Добавлен компонент "Переармирование"
+    
+    Args:
+        tracks_for_day: Список дорожек текущего дня. Если указан, будут включены только плиты из этих дорожек.
     """
     from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
     from core.raw_material_db import get_raw_material_cost
     from core.reinforcement_db import get_reinforcement
     
-    # Получаем заказы
-    plan_orders = get_orders_from_opt_plan()
-    if not plan_orders:
-        # Fallback на старый способ
-        all_orders = []
-        for width_mm, plates_list in [
-            (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
-            (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
-            (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
-            (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08)
-        ]:
-            if plates_list:
-                length_counts = Counter(plates_list)
-                for length, qty in length_counts.items():
-                    all_orders.append({
-                        'length': length,
-                        'width': width_mm,
-                        'qty': qty
-                    })
-        if not all_orders:
-            # Если нет заказов из cfg, используем данные из price_rows
-            if price_rows:
-                print('[DEBUG] build_component_breakdown_production: используем данные из price_rows')
-                for row in price_rows:
-                    name = row[1] if len(row) > 1 else ''
-                    try:
-                        qty = int(str(row[2]).replace(' ', '').replace(',', '')) if len(row) > 2 else 1
-                    except (ValueError, TypeError):
-                        qty = 1
-                    # Парсим имя
-                    match = re.search(r'ПБ\s+(\d+)-([\d,]+)-', name)
-                    if match:
-                        length_dm = int(match.group(1))
-                        length = length_dm / 10.0
-                        
-                        width_str = match.group(2).replace(',', '.').replace(' ', '')
-                        width_dm = float(width_str)
-                        width_mm = int(round(width_dm * 100))
-                        width_m = width_mm / 1000.0
-                        
+    # ✅ НОВОЕ: Если указаны дорожки текущего дня, собираем плиты только из них
+    if tracks_for_day:
+        print(f'[PRODUCTION BREAKDOWN] ✅ Фильтруем плиты по дорожкам текущего дня ({len(tracks_for_day)} дорожек)')
+        plan_orders = []
+        plates_from_tracks = Counter()
+        
+        # Собираем все плиты из дорожек текущего дня
+        for track in tracks_for_day:
+            for item in track.get('items', []):
+                length = item.get('length', 0)
+                if not length:
+                    continue
+                
+                # Определяем ширину плиты
+                if item.get('mode') == 'solid':
+                    width_mm = 1200
+                elif item.get('mode') == 'split':
+                    width_mm = int(round(item.get('main_w', 1.2) * 1000))
+                elif item.get('mode') == 'transverse':
+                    width_mm = int(round(item.get('width', 1.2) * 1000))
+                else:
+                    width_mm = 1200
+                
+                # Считаем количество плит этого типа
+                plates_from_tracks[(round(length, 3), width_mm)] += 1
+        
+        # Формируем список заказов из плит дорожек
+        for (length, width_mm), qty in plates_from_tracks.items():
+            plan_orders.append({
+                'length': length,
+                'width': width_mm,
+                'qty': qty
+            })
+        
+        print(f'[PRODUCTION BREAKDOWN] Собрано {len(plan_orders)} типов плит из дорожек текущего дня')
+    else:
+        # Получаем заказы из плана (старая логика - все плиты)
+        plan_orders = get_orders_from_opt_plan()
+        if not plan_orders:
+            # Fallback на старый способ
+            all_orders = []
+            for width_mm, plates_list in [
+                (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
+                (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
+                (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
+                (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08)
+            ]:
+                if plates_list:
+                    length_counts = Counter(plates_list)
+                    for length, qty in length_counts.items():
                         all_orders.append({
                             'length': length,
                             'width': width_mm,
                             'qty': qty
                         })
-                        print(f'[DEBUG] Распарсили {name}: длина={length}м, ширина={width_m}м ({width_mm}мм)')
             if not all_orders:
-                print('[DEBUG] build_component_breakdown_production: нет заказов, возвращаем пустой список')
-                return []
-        plan_orders = all_orders
+                # Если нет заказов из cfg, используем данные из price_rows
+                if price_rows:
+                    print('[DEBUG] build_component_breakdown_production: используем данные из price_rows')
+                    for row in price_rows:
+                        name = row[1] if len(row) > 1 else ''
+                        try:
+                            qty = int(str(row[2]).replace(' ', '').replace(',', '')) if len(row) > 2 else 1
+                        except (ValueError, TypeError):
+                            qty = 1
+                        # Парсим имя
+                        match = re.search(r'ПБ\s+(\d+)-([\d,]+)-', name)
+                        if match:
+                            length_dm = int(match.group(1))
+                            length = length_dm / 10.0
+                            
+                            width_str = match.group(2).replace(',', '.').replace(' ', '')
+                            width_dm = float(width_str)
+                            width_mm = int(round(width_dm * 100))
+                            width_m = width_mm / 1000.0
+                            
+                            all_orders.append({
+                                'length': length,
+                                'width': width_mm,
+                                'qty': qty
+                            })
+                            print(f'[DEBUG] Распарсили {name}: длина={length}м, ширина={width_m}м ({width_mm}мм)')
+                if not all_orders:
+                    print('[DEBUG] build_component_breakdown_production: нет заказов, возвращаем пустой список')
+                    return []
+            plan_orders = all_orders
     
     print(f'[DEBUG] build_component_breakdown_production: найдено заказов: {len(plan_orders)}')
     

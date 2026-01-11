@@ -679,7 +679,10 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         'total_plates': 0,
         'plate_assignments': [],
         # Сохраняем исходный заказ, чтобы визуализация и отчёты точно знали, что просил пользователь
-        'orders_requested': [order.copy() for order in orders_2d]
+        'orders_requested': [order.copy() for order in orders_2d],
+        # Метаданные для отслеживания остатков
+        'rests_created': [],  # Остатки, созданные при первичных резах
+        'rests_used': []      # Остатки, использованные во вторичных резах
     }
     
     # Первичные резы
@@ -742,6 +745,16 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'source': 'primary',
                 'rest_width': cut['rest']
             })
+            
+            # Сохраняем информацию об остатке для отслеживания
+            if cut['rest'] > 0:
+                result['rests_created'].append({
+                    'length': length,
+                    'rest_width_mm': cut['rest'],
+                    'source_width_mm': cut['width']
+                })
+    
+    print(f"[OPT_2D] ✓ Создано остатков: {len(result['rests_created'])}")
     # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
     
     # Вторичные резы
@@ -761,6 +774,12 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             
             # Добавляем каждый кусок в assignments
             for _ in range(qty):
+                # Отмечаем использованный остаток
+                result['rests_used'].append({
+                    'source_length': opt['source_length'],
+                    'source_rest_mm': opt['source_rest']
+                })
+                
                 for _ in range(opt['pieces']):
                     result['plate_assignments'].append({
                         'length': opt['output_length'],
@@ -771,6 +790,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     
     print(f"[OPT_2D] OK! Готово! Использовано {result['total_plates']} плит")
     print(f"[OPT_2D] Создано {len(result['plate_assignments'])} готовых плит")
+    print(f"[OPT_2D] Остатков использовано вторично: {len(result['rests_used'])}")
     
     return result
 

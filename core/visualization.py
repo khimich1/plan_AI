@@ -128,18 +128,32 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 
                 # 🔥 ПРАВИЛО: Если дорожка пустая и текущая плита НЕ целая - 
                 # сначала найти целую плиту для НАЧАЛА дорожки!
+                # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: приоритет НЕ-разделителям!
                 if not current_track and not is_solid:
                     found_solid_idx = None
+                    fallback_separator_idx = None  # Разделитель как запасной вариант
+                    
                     for j in range(i + 1, len(items)):
                         candidate = items[j]
                         if candidate.get('mode') == 'solid':
-                            found_solid_idx = j
-                            break
+                            if not candidate.get('is_separator', False):
+                                # Приоритет: НЕ-разделитель
+                                found_solid_idx = j
+                                break
+                            elif fallback_separator_idx is None:
+                                # Запоминаем первый разделитель как fallback
+                                fallback_separator_idx = j
+                    
+                    # Если не нашли НЕ-разделитель, берём разделитель
+                    if found_solid_idx is None and fallback_separator_idx is not None:
+                        found_solid_idx = fallback_separator_idx
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Используем разделитель для начала дорожки (не идеально)")
                     
                     if found_solid_idx is not None:
                         # Нашли целую плиту - добавляем её ПЕРВОЙ!
                         solid_plate = items.pop(found_solid_idx)
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м")
+                        is_sep = solid_plate.get('is_separator', False)
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м (разделитель={is_sep})")
                         current_track.append(solid_plate)
                         current_track_length += solid_plate['length']
                         solid_reinf = solid_plate.get('reinforcement', 0) or 0
@@ -166,7 +180,10 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     elif not is_solid:
                         # Текущая плита с резом - НЕ добавляем её
                         # Ищем целую плиту для завершения дорожки
+                        # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: приоритет НЕ-разделителям!
                         found_solid_idx = None
+                        fallback_separator_idx = None  # Разделитель как запасной вариант
+                        
                         for j in range(i + 1, len(items)):
                             candidate = items[j]
                             if candidate.get('mode') == 'solid':
@@ -176,13 +193,24 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                                 # Проверяем: влезет И армирование <= макс. в дорожке?
                                 if cand_length <= remaining_space:
                                     if max_reinforcement_in_track == 0 or cand_reinf <= max_reinforcement_in_track:
-                                        found_solid_idx = j
-                                        break
+                                        if not candidate.get('is_separator', False):
+                                            # Приоритет: НЕ-разделитель
+                                            found_solid_idx = j
+                                            break
+                                        elif fallback_separator_idx is None:
+                                            # Запоминаем первый подходящий разделитель
+                                            fallback_separator_idx = j
+                        
+                        # Если не нашли НЕ-разделитель, берём разделитель
+                        if found_solid_idx is None and fallback_separator_idx is not None:
+                            found_solid_idx = fallback_separator_idx
+                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Используем разделитель для завершения дорожки (не идеально)")
                         
                         if found_solid_idx is not None:
                             # Нашли подходящую целую плиту!
                             candidate = items[found_solid_idx]
-                            print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для завершения: {candidate['length']:.2f}м, арм.={candidate.get('reinforcement', 0):.1f}")
+                            is_sep = candidate.get('is_separator', False)
+                            print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для завершения: {candidate['length']:.2f}м, арм.={candidate.get('reinforcement', 0):.1f} (разделитель={is_sep})")
                             current_track.append(candidate)
                             current_track_length += candidate['length']
                             # Удаляем эту плиту из списка (она использована)
@@ -254,18 +282,32 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             
             # 🔥 ПРАВИЛО: Если дорожка пустая и текущая плита НЕ целая - 
             # сначала найти целую плиту для НАЧАЛА дорожки!
+            # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: приоритет НЕ-разделителям!
             if not current_track and not is_solid:
                 found_solid_idx = None
+                fallback_separator_idx = None  # Разделитель как запасной вариант
+                
                 for j in range(i + 1, len(items)):
                     candidate = items[j]
                     if candidate.get('mode') == 'solid':
-                        found_solid_idx = j
-                        break
+                        if not candidate.get('is_separator', False):
+                            # Приоритет: НЕ-разделитель
+                            found_solid_idx = j
+                            break
+                        elif fallback_separator_idx is None:
+                            # Запоминаем первый разделитель как fallback
+                            fallback_separator_idx = j
+                
+                # Если не нашли НЕ-разделитель, берём разделитель
+                if found_solid_idx is None and fallback_separator_idx is not None:
+                    found_solid_idx = fallback_separator_idx
+                    print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Используем разделитель для начала дорожки (не идеально)")
                 
                 if found_solid_idx is not None:
                     # Нашли целую плиту - добавляем её ПЕРВОЙ!
                     solid_plate = items.pop(found_solid_idx)
-                    print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м")
+                    is_sep = solid_plate.get('is_separator', False)
+                    print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м (разделитель={is_sep})")
                     current_track.append(solid_plate)
                     current_track_length += solid_plate['length']
                     solid_reinf = solid_plate.get('reinforcement', 0) or 0
@@ -291,7 +333,10 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 elif not is_solid:
                     # Текущая плита с резом - НЕ добавляем её
                     # Ищем целую плиту для завершения дорожки
+                    # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: приоритет НЕ-разделителям!
                     found_solid_idx = None
+                    fallback_separator_idx = None  # Разделитель как запасной вариант
+                    
                     for j in range(i + 1, len(items)):
                         candidate = items[j]
                         if candidate.get('mode') == 'solid':
@@ -301,13 +346,24 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                             # Проверяем: влезет И армирование <= макс. в дорожке?
                             if cand_length <= remaining_space:
                                 if max_reinforcement_in_track == 0 or cand_reinf <= max_reinforcement_in_track:
-                                    found_solid_idx = j
-                                    break
+                                    if not candidate.get('is_separator', False):
+                                        # Приоритет: НЕ-разделитель
+                                        found_solid_idx = j
+                                        break
+                                    elif fallback_separator_idx is None:
+                                        # Запоминаем первый подходящий разделитель
+                                        fallback_separator_idx = j
+                    
+                    # Если не нашли НЕ-разделитель, берём разделитель
+                    if found_solid_idx is None and fallback_separator_idx is not None:
+                        found_solid_idx = fallback_separator_idx
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Используем разделитель для завершения дорожки (не идеально)")
                     
                     if found_solid_idx is not None:
                         # Нашли подходящую целую плиту!
                         candidate = items[found_solid_idx]
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для завершения: {candidate['length']:.2f}м, арм.={candidate.get('reinforcement', 0):.1f}")
+                        is_sep = candidate.get('is_separator', False)
+                        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для завершения: {candidate['length']:.2f}м, арм.={candidate.get('reinforcement', 0):.1f} (разделитель={is_sep})")
                         current_track.append(candidate)
                         current_track_length += candidate['length']
                         items.pop(found_solid_idx)

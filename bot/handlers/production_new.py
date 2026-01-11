@@ -24,7 +24,7 @@ from core.formovka_excel import create_formovka_files_for_tracks
 import core.config_and_data as cfg
 import core.optimization as optimization
 
-from ..keyboards import main_menu_kb, production_days_kb
+from ..keyboards import main_menu_kb, production_days_kb, production_day_actions_kb, plates_completion_kb, cancel_process_kb
 from ..states import ProductionStates
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -41,6 +41,10 @@ async def btn_production_planning(message: Message, state: FSMContext):
         "(Введите число, например: 5)",
         reply_markup=main_menu_kb()
     )
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
+    )
 
 
 @router.message(ProductionStates.waiting_tracks_count)
@@ -54,10 +58,18 @@ async def receive_tracks_count(message: Message, state: FSMContext):
                 "❌ Количество дорожек должно быть от 1 до 50.\n"
                 "Попробуйте снова:"
             )
+            await message.answer(
+                "Или нажмите кнопку ниже для отмены:",
+                reply_markup=cancel_process_kb()
+            )
             return
     except ValueError:
         await message.answer(
             "❌ Неверный формат. Введите целое число (например: 5):"
+        )
+        await message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
         )
         return
     
@@ -72,6 +84,10 @@ async def receive_tracks_count(message: Message, state: FSMContext):
         "• 01.02.2026 (полная дата)\n"
         "• 2026-02-01 (ISO формат)\n\n"
         "Введите дату:"
+    )
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
     )
 
 
@@ -108,6 +124,10 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                     "❌ Число должно быть от 1 до 31.\n"
                     "Попробуйте снова:"
                 )
+                await message.answer(
+                    "Или нажмите кнопку ниже для отмены:",
+                    reply_markup=cancel_process_kb()
+                )
                 return
             
             now = datetime.now()
@@ -124,6 +144,10 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             "• 01.02.2026 (полная дата)\n"
             "• 2026-02-01 (ISO формат)\n\n"
             "Попробуйте снова:"
+        )
+        await message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
         )
         return
     
@@ -279,7 +303,8 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 'reinforcement': plate_data['reinforcement'],
                 'kp_date': plate_data.get('kp_date', 'неизвестно'),
                 'customer': plate_data.get('customer', 'неизвестно'),
-                'plate_name': plate_data.get('plate_name', '')
+                'plate_name': plate_data.get('plate_name', ''),
+                'kp_id': plate_data.get('kp_id')  # Важно для переноса в completed_plates!
             })
         
         # Lookup-таблицы
@@ -296,6 +321,7 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                     'reinforcement': order.get('reinforcement', 0),
                     'load_code': order.get('load_code', 8),
                     'qty': order.get('qty', 1),
+                    'kp_id': order.get('kp_id'),  # Важно для переноса в completed_plates!
                 }
             
             length_key = round(order['length'], 2)
@@ -305,6 +331,7 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                     'customer': order.get('customer', 'неизвестно'),
                     'plate_name': order.get('plate_name', ''),
                     'reinforcement': order.get('reinforcement', 0),
+                    'kp_id': order.get('kp_id'),  # Важно для переноса в completed_plates!
                 }
         
         # Запуск оптимизации
@@ -765,8 +792,9 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.answer(
         f"✅ План для Дня {day_number} готов!\n\n"
-        f"Хотите просмотреть другой день?",
-        reply_markup=production_days_kb(data['total_days'])
+        f"Нажмите «День выполнен» когда закончите производство,\n"
+        f"или выберите другой день:",
+        reply_markup=production_day_actions_kb(day_number, data['total_days'])
     )
     
     await callback.answer()
@@ -804,4 +832,359 @@ async def process_all_days_selection(callback: CallbackQuery, state: FSMContext)
     
     await state.clear()
     await callback.answer()
+
+
+# === ОБРАБОТЧИКИ ЗАВЕРШЕНИЯ ДНЯ ===
+
+@router.callback_query(F.data.startswith("complete_day_"))
+async def start_day_completion(callback: CallbackQuery, state: FSMContext):
+    """
+    Начало процесса завершения дня.
+    Показываем плиты для отметки брака.
+    """
+    day_number = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    
+    tracks_count = data.get('tracks_count', 1)
+    all_tracks_list = data.get('all_tracks_list', [])
+    plate_lookup_exact = data.get('plate_lookup_exact', {})
+    plate_lookup_by_length = data.get('plate_lookup_by_length', {})
+    
+    if not all_tracks_list:
+        await callback.message.answer(
+            "❌ Данные о дорожках не найдены. Попробуйте заново.",
+            reply_markup=main_menu_kb()
+        )
+        await state.clear()
+        await callback.answer()
+        return
+    
+    # Собираем все плиты дня
+    start_index = (day_number - 1) * tracks_count
+    end_index = min(day_number * tracks_count, len(all_tracks_list))
+    tracks_for_day = all_tracks_list[start_index:end_index]
+    
+    # Функция для получения информации о плите
+    def get_plate_info_smart(length, width):
+        key = (round(length, 2), width)
+        info = plate_lookup_exact.get(key)
+        if info:
+            return info.copy()
+        
+        length_key = round(length, 2)
+        info = plate_lookup_by_length.get(length_key)
+        if info:
+            return info.copy()
+        
+        return {
+            'kp_date': 'неизвестно',
+            'customer': 'неизвестно',
+            'plate_name': '',
+            'kp_id': None
+        }
+    
+    # Собираем уникальные плиты с группировкой
+    day_plates = []
+    
+    for track in tracks_for_day:
+        for item in track.get('items', []):
+            length = item.get('length', 0)
+            width = item.get('width', 1200)
+            
+            if not length:
+                continue
+            
+            plate_info = get_plate_info_smart(length, width)
+            plate_name = plate_info.get('plate_name', '')
+            kp_id = plate_info.get('kp_id')
+            
+            # Если нет имени плиты — формируем его
+            if not plate_name:
+                length_dm = int(round(length * 10))
+                width_mm = int(width)
+                if width_mm == 1200:
+                    width_str = "12"
+                else:
+                    width_dm = width_mm / 100.0
+                    if abs(width_dm - int(width_dm)) < 0.01:
+                        width_str = str(int(width_dm))
+                    else:
+                        width_str = str(width_dm).replace('.', ',')
+                plate_name = f"ПБ {length_dm}-{width_str}-8п"
+            
+            # Ищем такую же плиту в списке
+            found = False
+            for existing in day_plates:
+                if (existing['plate_name'] == plate_name and 
+                    existing['kp_id'] == kp_id):
+                    existing['qty'] += 1
+                    found = True
+                    break
+            
+            if not found:
+                day_plates.append({
+                    'plate_name': plate_name,
+                    'length_m': length,
+                    'width_m': width / 1000.0,
+                    'load_class': 800,
+                    'qty': 1,
+                    'kp_id': kp_id,
+                    'kp_date': plate_info.get('kp_date', 'неизвестно'),
+                    'customer': plate_info.get('customer', 'неизвестно')
+                })
+    
+    if not day_plates:
+        await callback.message.answer(
+            f"❌ Не удалось найти плиты для Дня {day_number}.",
+            reply_markup=production_days_kb(data.get('total_days', 1))
+        )
+        await callback.answer()
+        return
+    
+    # Сохраняем данные для завершения дня
+    await state.update_data(
+        completing_day=day_number,
+        day_plates=day_plates,
+        rejected_indices=[]  # Пустой список — пока нет брака
+    )
+    
+    # Формируем сообщение
+    total_qty = sum(p['qty'] for p in day_plates)
+    
+    await callback.message.answer(
+        f"📋 День {day_number} — завершение производства\n\n"
+        f"Всего плит: {total_qty} шт ({len(day_plates)} позиций)\n\n"
+        f"❗ Отметьте плиты, которые ушли в БРАК:\n"
+        f"(Бракованные плиты останутся на следующий день)\n\n"
+        f"Нажмите на плиту, чтобы отметить её как брак:",
+        reply_markup=plates_completion_kb(day_plates, set())
+    )
+    
+    await state.set_state(ProductionStates.marking_completion)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("toggle_reject_"), ProductionStates.marking_completion)
+async def toggle_plate_rejection(callback: CallbackQuery, state: FSMContext):
+    """
+    Переключение статуса брака для плиты.
+    Нажал — в браке, нажал ещё раз — не в браке.
+    """
+    idx = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    
+    rejected_indices = set(data.get('rejected_indices', []))
+    
+    # Переключаем статус
+    if idx in rejected_indices:
+        rejected_indices.remove(idx)
+    else:
+        rejected_indices.add(idx)
+    
+    await state.update_data(rejected_indices=list(rejected_indices))
+    
+    day_plates = data.get('day_plates', [])
+    
+    # Обновляем клавиатуру
+    await callback.message.edit_reply_markup(
+        reply_markup=plates_completion_kb(day_plates, rejected_indices)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "confirm_completion", ProductionStates.marking_completion)
+async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
+    """
+    Подтверждение завершения дня.
+    Переносит выполненные плиты в completed_plates.
+    Сохраняет информацию об остатках в plate_rests.
+    """
+    data = await state.get_data()
+    day_number = data.get('completing_day', 1)
+    day_plates = data.get('day_plates', [])
+    rejected_indices = set(data.get('rejected_indices', []))
+    
+    # Разделяем на выполненные и бракованные
+    completed_plates = []
+    rejected_plates = []
+    
+    for idx, plate in enumerate(day_plates):
+        if idx in rejected_indices:
+            rejected_plates.append(plate)
+        else:
+            completed_plates.append(plate)
+    
+    # Импортируем функции БД
+    db_path = str(PROJECT_ROOT / "plita.db")
+    
+    # Группируем по kp_id
+    plates_by_kp = defaultdict(list)
+    plates_without_kp = []  # Плиты без kp_id (не найдены в lookup)
+    
+    for plate in completed_plates:
+        kp_id = plate.get('kp_id')
+        if kp_id:
+            plates_by_kp[kp_id].append(plate)
+        else:
+            plates_without_kp.append(plate)
+    
+    total_moved = 0
+    completed_kps = []
+    
+    # Переносим плиты С kp_id (стандартная логика)
+    for kp_id, plates in plates_by_kp.items():
+        moved = kp_db.move_plates_to_completed(kp_id, plates, day_number, db_path)
+        total_moved += moved
+        
+        # Проверяем, завершён ли КП полностью
+        if kp_db.check_and_update_kp_completion(kp_id, db_path):
+            completed_kps.append(kp_id)
+    
+    # ========== НОВОЕ: Обрабатываем плиты БЕЗ kp_id ==========
+    # Эти плиты не были найдены в lookup-таблицах (возможно из-за изменения ширины после реза)
+    # Ищем их в БД по длине
+    import sqlite3
+    for plate in plates_without_kp:
+        length_m = plate.get('length_m', 0)
+        plate_name = plate.get('plate_name', '')
+        
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        
+        # Ищем по длине среди КП "в работе"
+        cur.execute('''
+            SELECT p.kp_id, p.plate_name 
+            FROM kp_plates p
+            JOIN kp_meta m ON p.kp_id = m.kp_id
+            WHERE ABS(p.length_m - ?) < 0.02 
+              AND p.qty > 0
+              AND m.status = 'в работе'
+            ORDER BY p.kp_id
+            LIMIT 1
+        ''', (length_m,))
+        row = cur.fetchone()
+        conn.close()
+        
+        if row:
+            found_kp_id = row[0]
+            db_plate_name = row[1]
+            plate['plate_name'] = db_plate_name  # Используем имя из БД для корректного списания
+            
+            moved = kp_db.move_plates_to_completed(found_kp_id, [plate], day_number, db_path)
+            total_moved += moved
+            print(f"[COMPLETION] ✅ Плита найдена по длине: {plate_name} ({length_m}м) → КП #{found_kp_id}")
+            
+            if kp_db.check_and_update_kp_completion(found_kp_id, db_path):
+                if found_kp_id not in completed_kps:
+                    completed_kps.append(found_kp_id)
+        else:
+            print(f"[COMPLETION] ⚠️ Плита не найдена в БД: {plate_name} ({length_m}м)")
+    # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
+    
+    # ========== СОХРАНЕНИЕ ОСТАТКОВ ==========
+    # Получаем метаданные об остатках из результата оптимизации
+    optimization_result = data.get('optimization_result', {})
+    rests_created = optimization_result.get('rests_created', [])
+    rests_used = optimization_result.get('rests_used', [])
+    
+    # Подсчитываем неиспользованные остатки
+    unused_rests_count = 0
+    
+    # Для каждого созданного остатка проверяем, использован ли он
+    for rest in rests_created:
+        is_used = any(
+            abs(r['source_length'] - rest['length']) < 0.01 and 
+            r['source_rest_mm'] == rest['rest_width_mm']
+            for r in rests_used
+        )
+        
+        if not is_used:
+            # Остаток не использован - сохраняем в plate_rests
+            # Находим kp_id для этого остатка через plate_lookup
+            plate_lookup_exact = data.get('plate_lookup_exact', {})
+            plate_lookup_by_length = data.get('plate_lookup_by_length', {})
+            
+            # Ищем kp_id по длине и ширине
+            key = (round(rest['length'], 2), rest['source_width_mm'])
+            plate_info = plate_lookup_exact.get(key)
+            
+            if not plate_info:
+                length_key = round(rest['length'], 2)
+                plate_info = plate_lookup_by_length.get(length_key)
+            
+            if plate_info and plate_info.get('kp_id'):
+                kp_id = plate_info['kp_id']
+                source_plate_name = plate_info.get('plate_name', f"ПБ {rest['length']}м-{rest['source_width_mm']}мм")
+                
+                kp_db.create_plate_rest(
+                    kp_id=kp_id,
+                    source_plate_name=source_plate_name,
+                    rest_width_mm=rest['rest_width_mm'],
+                    length_m=rest['length'],
+                    production_day=day_number,
+                    db_path=db_path
+                )
+                unused_rests_count += 1
+    # ========== КОНЕЦ СОХРАНЕНИЯ ОСТАТКОВ ==========
+    
+    # Формируем отчёт
+    report = f"✅ День {day_number} завершён!\n\n"
+    report += f"📦 Выполнено плит: {total_moved} шт\n"
+    
+    if rejected_plates:
+        rejected_qty = sum(p['qty'] for p in rejected_plates)
+        report += f"\n❌ В браке: {rejected_qty} шт ({len(rejected_plates)} позиций)\n"
+        report += "Эти плиты останутся на следующий день:\n"
+        for plate in rejected_plates:
+            report += f"   • {plate['plate_name']} × {plate['qty']}\n"
+    
+    # Информация об остатках
+    if unused_rests_count > 0:
+        report += f"\n📦 Остатков на складе: {unused_rests_count} шт\n"
+        report += "(Доступны для следующих заказов)"
+    
+    if completed_kps:
+        report += f"\n🎉 Полностью выполнены КП: {', '.join(map(str, completed_kps))}\n"
+        report += "Статус этих КП изменён на «выполнено»"
+    
+    await callback.message.answer(report, reply_markup=main_menu_kb())
+    await state.clear()
+    await callback.answer("✅ День завершён!")
+
+
+@router.callback_query(F.data == "cancel_completion", ProductionStates.marking_completion)
+async def cancel_day_completion(callback: CallbackQuery, state: FSMContext):
+    """
+    Отмена завершения дня.
+    Возвращаемся к выбору дней.
+    """
+    data = await state.get_data()
+    total_days = data.get('total_days', 1)
+    
+    # Очищаем данные завершения, но оставляем остальные данные
+    await state.update_data(
+        completing_day=None,
+        day_plates=None,
+        rejected_indices=None
+    )
+    
+    await callback.message.answer(
+        "❌ Завершение дня отменено.\n\n"
+        "Выберите день для просмотра:",
+        reply_markup=production_days_kb(total_days)
+    )
+    await state.set_state(ProductionStates.waiting_day_selection)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel_process")
+async def cancel_production_process(callback: CallbackQuery, state: FSMContext):
+    """Отмена процесса планирования производства"""
+    await state.clear()
+    await callback.message.answer(
+        "❌ Планирование производства отменено.\n"
+        "Выберите действие:",
+        reply_markup=main_menu_kb()
+    )
+    await callback.answer("Отменено")
 

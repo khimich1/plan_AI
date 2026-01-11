@@ -1,6 +1,6 @@
 """Регистрация всех обработчиков бота"""
 from aiogram import Dispatcher
-from . import main, kp, comparison, commercial, export, admin, production_new
+from . import main, kp, comparison, commercial, export, admin, production_new, pb_info
 
 
 def register_all_handlers(dp: Dispatcher):
@@ -10,6 +10,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(comparison.router)
     dp.include_router(commercial.router)
     dp.include_router(production_new.router)
+    dp.include_router(pb_info.router)
     dp.include_router(export.router)
     dp.include_router(admin.router)
 

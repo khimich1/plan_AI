@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -14,7 +14,7 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import kp_db
-from ..keyboards import main_menu_kb
+from ..keyboards import main_menu_kb, db_management_kb, db_clear_confirm_kb
 
 router = Router()
 
@@ -289,4 +289,154 @@ async def confirm_clear_all_kp(message: Message, state: FSMContext):
         )
         import traceback
         traceback.print_exc()
+
+
+# ==================== НОВОЕ МЕНЮ УПРАВЛЕНИЯ БД ====================
+
+@router.message(F.text == "⚙️ Управление БД")
+async def btn_db_management(message: Message):
+    """Обработчик кнопки 'Управление БД' из главного меню"""
+    await message.answer(
+        "⚙️ **Управление базой данных**\n\n"
+        "Выберите действие:",
+        parse_mode="Markdown",
+        reply_markup=db_management_kb()
+    )
+
+
+@router.callback_query(F.data == "db_stats")
+async def show_db_stats(callback: CallbackQuery):
+    """Показывает статистику БД"""
+    try:
+        stats = kp_db.get_db_stats()
+        
+        response = "📊 **Статистика базы данных**\n\n"
+        response += f"📋 **КП:**\n"
+        response += f"  • Всего: {stats['kp_total']}\n"
+        response += f"  • В работе: {stats['kp_in_work']}\n"
+        response += f"  • Выполнено: {stats['kp_completed']}\n\n"
+        response += f"📦 **Плиты:**\n"
+        response += f"  • В работе: {stats['plates_in_work']}\n"
+        response += f"  • Выполнено: {stats['plates_completed']}\n\n"
+        response += f"🔧 **Остатки от резки:**\n"
+        response += f"  • Всего: {stats['plate_rests']}\n"
+        
+        await callback.message.answer(
+            response,
+            parse_mode="Markdown",
+            reply_markup=db_management_kb()
+        )
+        await callback.answer()
+    
+    except Exception as e:
+        await callback.message.answer(
+            f"❌ Ошибка при получении статистики: {str(e)}",
+            reply_markup=db_management_kb()
+        )
+        await callback.answer()
+
+
+@router.callback_query(F.data == "db_clear_all")
+async def request_db_clear(callback: CallbackQuery):
+    """Запрос подтверждения полной очистки БД"""
+    try:
+        stats = kp_db.get_db_stats()
+        
+        total = (stats['kp_total'] + stats['plates_in_work'] + 
+                stats['plates_completed'] + stats['plate_rests'])
+        
+        if total == 0:
+            await callback.message.answer(
+                "ℹ️ База данных уже пуста. Нечего удалять.",
+                reply_markup=db_management_kb()
+            )
+            await callback.answer()
+            return
+        
+        warning = (
+            "🔴 **КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ!**\n\n"
+            "Вы собираетесь **ПОЛНОСТЬЮ УДАЛИТЬ ВСЕ ДАННЫЕ** из базы!\n\n"
+            f"📊 Будет удалено:\n"
+            f"  • КП: {stats['kp_total']} шт\n"
+            f"  • Плиты в работе: {stats['plates_in_work']} шт\n"
+            f"  • Выполненные плиты: {stats['plates_completed']} шт\n"
+            f"  • Остатки: {stats['plate_rests']} шт\n"
+            f"  • **ВСЕГО ЗАПИСЕЙ: {total}**\n\n"
+            f"⚠️ **ЭТО ДЕЙСТВИЕ НЕОБРАТИМО!**\n"
+            f"Восстановить данные будет невозможно!\n\n"
+            f"Вы уверены, что хотите продолжить?"
+        )
+        
+        await callback.message.answer(
+            warning,
+            parse_mode="Markdown",
+            reply_markup=db_clear_confirm_kb()
+        )
+        await callback.answer()
+    
+    except Exception as e:
+        await callback.message.answer(
+            f"❌ Ошибка при проверке БД: {str(e)}",
+            reply_markup=db_management_kb()
+        )
+        await callback.answer()
+
+
+@router.callback_query(F.data == "db_clear_confirmed")
+async def confirm_db_clear(callback: CallbackQuery):
+    """Подтверждение и выполнение полной очистки БД"""
+    try:
+        # Выполняем полную очистку
+        result = kp_db.clear_all_plates_data()
+        
+        report = (
+            "✅ **БАЗА ДАННЫХ ПОЛНОСТЬЮ ОЧИЩЕНА!**\n\n"
+            f"📊 Удалено:\n"
+            f"  • КП: {result['kp_offers']}\n"
+            f"  • Плиты в работе: {result['kp_plates']}\n"
+            f"  • Выполненные плиты: {result['completed_plates']}\n"
+            f"  • Остатки: {result['plate_rests']}\n"
+            f"  • Файлы: {result['kp_files']}\n"
+            f"  • Метаданные: {result['kp_meta']}\n"
+            f"  • **ВСЕГО: {result['total']} записей**\n\n"
+            f"🔄 Счётчики сброшены. Новые КП начнутся с #1.\n"
+            f"База данных теперь пуста и готова к новым заказам."
+        )
+        
+        await callback.message.answer(
+            report,
+            parse_mode="Markdown",
+            reply_markup=main_menu_kb()
+        )
+        await callback.answer("✅ База очищена!")
+    
+    except Exception as e:
+        await callback.message.answer(
+            f"❌ Ошибка при очистке БД: {str(e)}\n\n"
+            f"Попробуйте снова позже.",
+            reply_markup=db_management_kb()
+        )
+        await callback.answer("❌ Ошибка!")
+        import traceback
+        traceback.print_exc()
+
+
+@router.callback_query(F.data == "db_clear_cancel")
+async def cancel_db_clear(callback: CallbackQuery):
+    """Отмена очистки БД"""
+    await callback.message.answer(
+        "❌ Очистка отменена. База данных не изменена.",
+        reply_markup=db_management_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "db_back_to_menu")
+async def back_to_menu(callback: CallbackQuery):
+    """Возврат в главное меню"""
+    await callback.message.answer(
+        "Возврат в главное меню",
+        reply_markup=main_menu_kb()
+    )
+    await callback.answer()
 
