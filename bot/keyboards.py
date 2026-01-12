@@ -6,7 +6,6 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
     """Главное меню бота"""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Получить КП")],
             [KeyboardButton(text="Коммерческое предложение PDF")],
             [KeyboardButton(text="Планирование производства")],
             [KeyboardButton(text="Информация о ПБ в работе")],
@@ -212,6 +211,32 @@ def db_clear_confirm_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="❌ Отмена", callback_data="db_clear_cancel")],
         ]
     )
+
+
+def managers_selection_kb(managers_list: list) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для выбора менеджера из списка.
+    
+    Args:
+        managers_list: список словарей с данными менеджеров из БД
+        
+    Returns:
+        InlineKeyboardMarkup с кнопками менеджеров
+    """
+    buttons = []
+    for manager in managers_list:
+        buttons.append([
+            InlineKeyboardButton(
+                text=manager['fio'],
+                callback_data=f"select_manager_{manager['id']}"
+            )
+        ])
+    
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def cancel_process_kb() -> InlineKeyboardMarkup:

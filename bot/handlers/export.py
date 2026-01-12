@@ -20,7 +20,7 @@ async def cmd_myorders(message: Message):
         if not db_path.exists():
             await message.answer(
                 "📋 База данных заказов не найдена.\n\n"
-                "Создайте заказ через 'Получить КП' или 'Коммерческое предложение PDF'",
+                "Создайте заказ через 'Коммерческое предложение PDF'",
                 reply_markup=main_menu_kb()
             )
             return

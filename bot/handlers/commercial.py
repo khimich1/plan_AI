@@ -27,7 +27,7 @@ from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core import kp_db
 
-from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, cancel_process_kb
+from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, cancel_process_kb, managers_selection_kb
 from ..states import KPStates
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -41,42 +41,66 @@ ORDER_CACHE: Dict[int, list] = {}
 @router.message(Command("commercial_offer"))
 async def btn_commercial_offer(message: Message, state: FSMContext):
     """Обработчик запроса на создание коммерческого предложения - ПОШАГОВЫЙ ОПРОС"""
-    # Шаг 1: Запрашиваем имя менеджера
-    await state.set_state(KPStates.waiting_manager_name)
+    # Шаг 1: Запрашиваем выбор менеджера из списка
+    # Получаем список менеджеров из БД
+    from core.kp_db import get_all_managers
+    managers = get_all_managers()
+    
+    if not managers:
+        await message.answer(
+            "⚠️ В базе данных нет менеджеров.\n"
+            "Обратитесь к администратору.",
+            reply_markup=main_menu_kb()
+        )
+        return
+    
+    await state.set_state(KPStates.waiting_manager_selection)
     await message.answer(
         "📄 Создание коммерческого предложения\n\n"
-        "Шаг 1 из 5: Введите имя менеджера\n"
-        "(Это имя будет указано в документе)",
-        reply_markup=main_menu_kb()
-    )
-    await message.answer(
-        "Или нажмите кнопку ниже для отмены:",
-        reply_markup=cancel_process_kb()
+        "Шаг 1 из 5: Выберите менеджера",
+        reply_markup=managers_selection_kb(managers)
     )
 
 
 # === ПОШАГОВЫЙ ОПРОС ДЛЯ КОММЕРЧЕСКОГО ПРЕДЛОЖЕНИЯ ===
 
-@router.message(KPStates.waiting_manager_name)
-async def receive_manager_name(message: Message, state: FSMContext):
-    """Шаг 1: Получаем имя менеджера"""
-    manager_name = message.text.strip()
+@router.callback_query(F.data.startswith("select_manager_"))
+async def select_manager_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора менеджера из списка"""
+    manager_id = int(callback.data.split("_")[-1])
     
-    # Сохраняем имя менеджера в состояние
-    await state.update_data(manager_name=manager_name)
+    # Получаем данные менеджера из БД
+    from core.kp_db import get_manager_by_id
+    manager = get_manager_by_id(manager_id)
     
-    # Переходим к следующему шагу - запрашиваем имя клиента
-    await state.set_state(KPStates.waiting_client_name)
-    await message.answer(
-        f"✅ Менеджер: {manager_name}\n\n"
+    if not manager:
+        await callback.answer("❌ Менеджер не найден", show_alert=True)
+        return
+    
+    # Сохраняем ВСЕ данные менеджера в состояние
+    await state.update_data(
+        manager_id=manager['id'],
+        manager_name=manager['fio'],
+        manager_phone=manager['contact_number'],
+        manager_email=manager['email']
+    )
+    
+    await callback.message.edit_text(
+        f"✅ Менеджер: {manager['fio']}\n\n"
         "Шаг 2 из 5: Введите имя клиента\n"
-        "(Для кого создается коммерческое предложение)",
+        "(Для кого создается коммерческое предложение)"
+    )
+    
+    await state.set_state(KPStates.waiting_client_name)
+    await callback.message.answer(
+        "Введите имя клиента:",
         reply_markup=main_menu_kb()
     )
-    await message.answer(
+    await callback.message.answer(
         "Или нажмите кнопку ниже для отмены:",
         reply_markup=cancel_process_kb()
     )
+    await callback.answer()
 
 
 @router.message(KPStates.waiting_client_name)
@@ -322,6 +346,8 @@ async def generate_all_documents(message: Message, state: FSMContext):
     # Получаем все данные из состояния
     data = await state.get_data()
     manager_name = data.get('manager_name', 'Не указано')
+    manager_phone = data.get('manager_phone', '')
+    manager_email = data.get('manager_email', '')
     client_name = data.get('client_name', 'Не указано')
     plates_text = data.get('plates_text', '')
     discount_percent = data.get('discount_percent', 0)
@@ -501,16 +527,26 @@ async def generate_all_documents(message: Message, state: FSMContext):
         offer_number = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d%H%M')}"
         offer_date = datetime.now().strftime("%d.%m.%Y")
         
-        # Генерируем PDF (без детальной разбивки внутри)
+        # 🆕 ПОЛУЧАЕМ СЛЕДУЮЩИЙ НОМЕР КП ИЗ БД
+        from core.kp_db import get_next_kp_number
+        kp_db_id = get_next_kp_number()
+        print(f"[DEBUG] Предполагаемый номер КП из БД: {kp_db_id}")
+        
+        # Генерируем PDF с номером КП из БД
         pdf_buffer = await asyncio.to_thread(
             generate_commercial_offer_pdf,
             order_data,
             offer_number,
             offer_date,
-            client_name  # Используем имя клиента из опроса
+            client_name,      # Используем имя клиента из опроса
+            manager_name,     # имя менеджера
+            manager_phone,    # телефон менеджера
+            manager_email,    # email менеджера
+            discount_percent, # процент скидки
+            kp_db_id          # 🆕 НОМЕР КП ИЗ БД!
         )
         
-        # Генерируем XLSX с НОВЫМИ параметрами (менеджер, скидка, условия)
+        # Генерируем XLSX с номером КП из БД
         try:
             xlsx_buffer = await asyncio.to_thread(
                 generate_commercial_offer_xlsx,
@@ -518,10 +554,13 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 offer_number,
                 offer_date,
                 client_name,         # Используем имя клиента
-                manager_name,        # НОВОЕ: передаем имя менеджера
-                discount_percent,    # НОВОЕ: передаем процент скидки
-                delivery_conditions, # НОВОЕ: условия поставки
-                payment_conditions   # НОВОЕ: условия оплаты
+                manager_name,        # имя менеджера
+                manager_phone,       # телефон менеджера
+                manager_email,       # email менеджера
+                discount_percent,    # передаем процент скидки
+                delivery_conditions, # условия поставки
+                payment_conditions,  # условия оплаты
+                kp_db_id             # 🆕 НОМЕР КП ИЗ БД!
             )
             has_xlsx = True
         except Exception as e:
@@ -701,7 +740,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             )
             await message.answer(warn_text)
         
-        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ (как в "Получить КП")
+        # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ
         await message.answer("🔄 Оптимизирую раскрой плит для минимизации стоимости...")
         
         # Группируем плиты по армированию (из БД)
@@ -887,7 +926,12 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             order_data,
             offer_number,
             offer_date,
-            customer_name
+            customer_name,
+            None,  # manager_name - не используется в старом потоке
+            None,  # manager_phone
+            None,  # manager_email
+            0,     # discount_percent - в старом потоке нет скидки
+            None   # kp_db_id - старый поток без БД
         )
         
         # Генерируем XLSX
@@ -897,7 +941,14 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 order_data,
                 offer_number,
                 offer_date,
-                customer_name
+                customer_name,
+                None,  # manager_name - не используется в старом потоке
+                None,  # manager_phone
+                None,  # manager_email
+                0,     # discount_percent
+                None,  # delivery_conditions
+                None,  # payment_conditions
+                None   # kp_db_id - старый поток без БД
             )
             has_xlsx = True
         except Exception as e:
@@ -964,7 +1015,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 caption=f"📋 Детальная разбивка компонентов № {offer_number}"
             )
         
-        # 🔥 ГЕНЕРИРУЕМ СХЕМУ И ДЕТАЛЬНУЮ РАЗБИВКУ (как при "Получить КП")
+        # 🔥 ГЕНЕРИРУЕМ СХЕМУ И ДЕТАЛЬНУЮ РАЗБИВКУ
         await message.answer("⏳ Генерирую схему раскладки и детальную разбивку...")
         
         try:
@@ -1124,6 +1175,8 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     xlsx_path = data.get('kp_xlsx_path')
     customer_name = data.get('kp_customer_name')
     manager_name = data.get('kp_manager_name')
+    manager_phone = data.get('manager_phone', '')
+    manager_email = data.get('manager_email', '')
     discount_percent = data.get('kp_discount_percent', 0)
     delivery_conditions = data.get('kp_delivery_conditions')
     payment_conditions = data.get('kp_payment_conditions')

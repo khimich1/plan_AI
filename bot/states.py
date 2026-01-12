@@ -7,7 +7,7 @@ class KPStates(StatesGroup):
     waiting_for_plate_list = State()
     waiting_for_commercial_offer = State()
     # Состояния для пошагового создания коммерческого предложения
-    waiting_manager_name = State()
+    waiting_manager_selection = State()
     waiting_client_name = State()
     waiting_plates_list = State()
     waiting_discount = State()

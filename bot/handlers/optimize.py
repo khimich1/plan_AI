@@ -53,7 +53,7 @@ async def cmd_optimize(message: Message):
         if not orders:
             await message.answer(
                 "⚠️ Нет данных для оптимизации.\n"
-                "Сначала используйте 'Получить КП' для загрузки списка плит.",
+                "Сначала создайте заказ через 'Коммерческое предложение PDF'.",
                 reply_markup=main_menu_kb()
             )
             return
