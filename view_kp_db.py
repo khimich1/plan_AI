@@ -58,7 +58,7 @@ else:
         print(f"👨‍💼 Менеджер: {kp['manager_name']}")
         print(f"💰 Скидка: {kp['discount_percent']}%")
         print(f"💵 Сумма без НДС: {kp['subtotal']:,.2f} ₽")
-        print(f"📊 НДС (20%): {kp['vat_amount']:,.2f} ₽")
+        print(f"📊 НДС (22%): {kp['vat_amount']:,.2f} ₽")
         print(f"💎 ИТОГО: {kp['total_amount']:,.2f} ₽")
         print(f"⏰ Сроки: {kp['execution_terms'] or 'не указаны'}")
         print(f"📌 Статус: {kp['status'] or 'не указан'}")

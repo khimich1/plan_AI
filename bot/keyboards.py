@@ -6,11 +6,21 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
     """Главное меню бота"""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Коммерческое предложение PDF")],
-            [KeyboardButton(text="Планирование производства")],
-            [KeyboardButton(text="Информация о ПБ в работе")],
-            [KeyboardButton(text="Сравнение результатов")],
-            [KeyboardButton(text="⚙️ Управление БД")],
+            # Первая строка - 2 кнопки рядом
+            [
+                KeyboardButton(text="📝 Создать КП"),
+                KeyboardButton(text="📁 Архив")
+            ],
+            # Вторая строка - 2 кнопки рядом
+            [
+                KeyboardButton(text="Планирование производства"),
+                KeyboardButton(text="Информация о ПБ в работе")
+            ],
+            # Третья строка - 2 кнопки рядом
+            [
+                KeyboardButton(text="Сравнение результатов"),
+                KeyboardButton(text="⚙️ Управление БД")
+            ],
         ],
         resize_keyboard=True
     )
@@ -42,6 +52,7 @@ def save_to_db_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="💾 Сохранить в БД", callback_data="save_kp_to_db")],
+            [InlineKeyboardButton(text="📦 В архив", callback_data="save_kp_to_archive")],
             [InlineKeyboardButton(text="❌ Не сохранять", callback_data="skip_save_kp")],
         ]
     )
@@ -244,5 +255,45 @@ def cancel_process_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")]
+        ]
+    )
+
+
+def archive_sections_kb() -> InlineKeyboardMarkup:
+    """
+    Клавиатура для выбора раздела архива.
+    
+    Показывает две кнопки:
+    - 📦 В архиве (КП со статусом "в архиве")
+    - 🏭 В производстве (КП со статусом "в работе")
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📦 В архиве", callback_data="archive_section_archived")],
+            [InlineKeyboardButton(text="🏭 В производстве", callback_data="archive_section_production")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="archive_back_to_menu")],
+        ]
+    )
+
+
+def kp_details_kb(kp_id: int) -> InlineKeyboardMarkup:
+    """
+    Клавиатура действий для конкретного КП.
+    
+    Показывает кнопки:
+    - Скачать PDF
+    - Скачать XLSX
+    - Удалить КП
+    - Назад к списку
+    
+    Args:
+        kp_id: номер КП для формирования callback_data
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Скачать PDF", callback_data=f"download_pdf_{kp_id}")],
+            [InlineKeyboardButton(text="📊 Скачать XLSX", callback_data=f"download_xlsx_{kp_id}")],
+            [InlineKeyboardButton(text="🗑️ Удалить КП", callback_data=f"delete_kp_{kp_id}")],
+            [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="archive_back_to_sections")],
         ]
     )

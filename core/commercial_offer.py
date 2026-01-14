@@ -589,8 +589,8 @@ def generate_commercial_offer_pdf(
         ('FONTNAME', (0, 0), (-1, 0), FONT_BOLD),
         ('FONTSIZE', (0, 0), (-1, 0), 11),
         ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-        ('TOPPADDING', (0, 0), (-1, 0), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 3),  # Уменьшено с 6 до 3
+        ('TOPPADDING', (0, 0), (-1, 0), 3),  # Уменьшено с 6 до 3
         
         ('FONTNAME', (0, 1), (-1, -1), FONT_NORMAL),
         ('FONTSIZE', (0, 1), (-1, -1), 10),
@@ -600,8 +600,8 @@ def generate_commercial_offer_pdf(
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 5),
-        ('TOPPADDING', (0, 1), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 2),  # Уменьшено с 5 до 2
+        ('TOPPADDING', (0, 1), (-1, -1), 2),  # Уменьшено с 5 до 2
         
         ('BOX', (0, 0), (-1, -1), 1.2, colors.black),
         ('INNERGRID', (0, 0), (-1, -1), 0.6, colors.black),

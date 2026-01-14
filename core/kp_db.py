@@ -1748,6 +1748,76 @@ def init_default_managers(db_path: str = DEFAULT_DB) -> int:
     return added_count
 
 
+def get_all_kp_list(db_path: str = DEFAULT_DB) -> Dict[str, List[Dict]]:
+    """
+    Получает все КП, разделенные по статусам.
+    
+    Простыми словами:
+    - Возвращает все КП из базы данных
+    - Группирует их по статусам: "в архиве", "в работе", "выполнено"
+    - Сортирует по номеру КП (от меньшего к большему)
+    
+    Возвращает:
+        Словарь со списками КП по статусам:
+        {
+            'archived': [...],      # КП со статусом "в архиве"
+            'in_production': [...], # КП со статусом "в работе"
+            'completed': [...]      # КП со статусом "выполнено"
+        }
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        # Получаем все КП с их статусами
+        cur.execute('''
+            SELECT 
+                ko.kp_id,
+                ko.creation_date,
+                ko.customer_name,
+                ko.manager_name,
+                ko.discount_percent,
+                ko.subtotal,
+                ko.vat_amount,
+                ko.total_amount,
+                ko.delivery_conditions,
+                ko.payment_conditions,
+                ko.execution_terms,
+                m.status
+            FROM KP_offers ko
+            LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
+            ORDER BY ko.kp_id ASC
+        ''')
+        
+        all_kp = [dict(row) for row in cur.fetchall()]
+        
+        # Группируем по статусам
+        result = {
+            'archived': [],
+            'in_production': [],
+            'completed': []
+        }
+        
+        for kp in all_kp:
+            status = kp.get('status', 'в работе')  # По умолчанию "в работе"
+            
+            if status == 'в архиве':
+                result['archived'].append(kp)
+            elif status == 'в работе':
+                result['in_production'].append(kp)
+            elif status == 'выполнено':
+                result['completed'].append(kp)
+        
+        return result
+        
+    finally:
+        conn.close()
+
+
 # ==================== ПРИМЕР ИСПОЛЬЗОВАНИЯ ====================
 
 if __name__ == '__main__':
