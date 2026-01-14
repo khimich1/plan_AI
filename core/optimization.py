@@ -266,15 +266,16 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         # Вариант 2: Плита С ПРЯМЫМ резом (ширина < исходной плиты)
         elif width < plate_width:
             rest = plate_width - width
-            if rest >= min_useful_width:
-                primary_options.append({
-                    'id': option_id,
-                    'length': length,
-                    'main': width,
-                    'rest': rest,
-                    'type': 'direct'  # Прямой рез
-                })
-                option_id += 1
+            # Создаём вариант для ЛЮБОЙ ширины
+            # Если rest < min_useful_width, остаток просто пойдёт в отход
+            primary_options.append({
+                'id': option_id,
+                'length': length,
+                'main': width,
+                'rest': rest,
+                'type': 'direct'  # Прямой рез
+            })
+            option_id += 1
             
             # НОВОЕ! Вариант 3: Плита через НЕПРЯМОЙ рез (с narrowing остатка)
             # Ищем, можно ли получить эту ширину через сужение остатка от ДРУГОГО реза
@@ -299,9 +300,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # 2.5 ФИЛЬТРАЦИЯ ПЕРВИЧНЫХ ОПЦИЙ (Улучшение 4: убираем заведомо невыгодные)
     filtered_primary = []
     for opt in primary_options:
-        # Правило 1: Пропускаем варианты с маленьким остатком (< min_useful_width)
-        if opt['rest'] > 0 and opt['rest'] < min_useful_width:
-            continue
+        # Правило 1 УДАЛЕНО: теперь плиты с маленьким остатком (< min_useful_width) 
+        # тоже создаются, а остаток просто идёт в отход
         
         # Правило 2: Пропускаем indirect, если есть direct с тем же результатом
         if opt.get('type') == 'indirect':
@@ -362,9 +362,11 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                             'pieces': pieces,
                             'waste': waste,
                             'type': 'multiple',
-                            'source_ids': source_ids
+                            'source_ids': source_ids,
+                            'target_order_key': (target_length, target_width)  # ✅ НОВОЕ: Сохраняем ключ заказа
                         })
                         sec_id += 1
+
             
             # Вариант A2: Комбинированная резка (множественная по ширине + поперечная по длине)
             # Это позволяет резать остаток 5.6м × 880мм → 2× 3.31м × 320мм
@@ -386,7 +388,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                             'waste': waste_width,
                             'length_waste': waste_length,
                             'type': 'multiple_transverse',  # Комбинированный тип
-                            'source_ids': source_ids
+                            'source_ids': source_ids,
+                            'target_order_key': (target_length, target_width)  # ✅ НОВОЕ: Сохраняем ключ заказа
                         })
                         sec_id += 1
             
@@ -404,7 +407,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                         'pieces': 1,
                         'waste': waste,
                         'type': 'narrowing',
-                        'source_ids': source_ids
+                        'source_ids': source_ids,
+                        'target_order_key': (target_length, target_width)  # ✅ НОВОЕ: Сохраняем ключ заказа
                     })
                     sec_id += 1
             
@@ -422,7 +426,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     'waste': 0,
                     'length_waste': length_waste,
                     'type': 'transverse',
-                    'source_ids': source_ids
+                    'source_ids': source_ids,
+                    'target_order_key': (target_length, target_width)  # ✅ НОВОЕ: Сохраняем ключ заказа
                 })
                 sec_id += 1
     
@@ -769,7 +774,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'waste': opt.get('waste', 0),
                 'type': opt['type'],
                 'source_lengths': [opt['source_length']] * qty,  # ИСХОДНАЯ длина остатка
-                'lengths': [opt['output_length']] * qty  # Результирующая длина
+                'lengths': [opt['output_length']] * qty,  # Результирующая длина
+                'target_order_key': opt.get('target_order_key')  # ✅ НОВОЕ: Передаем ключ заказа
             })
             
             # Добавляем каждый кусок в assignments

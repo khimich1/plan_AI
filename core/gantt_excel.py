@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Модуль для создания Excel-файла с диаграммой Ганта производства.
+
+Показывает план производства по КП:
+- Строки: номера КП с информацией о заказчике и дедлайне
+- Столбцы: даты производства
+- Ячейки: закрашены в дни, когда производятся плиты из КП
+
+Цветовая кодировка:
+- Зелёный: КП завершается до дедлайна
+- Жёлтый: КП завершается в день дедлайна  
+- Красный: КП завершается после дедлайна (опаздываем!)
+"""
+
+import os
+from datetime import datetime, timedelta
+from collections import defaultdict
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+from openpyxl.utils import get_column_letter
+
+
+def create_gantt_excel(
+    all_tracks_list: list,
+    tracks_count: int,
+    plate_lookup_exact: dict,
+    plate_lookup_by_length: dict,
+    output_dir: str,
+    start_date: datetime = None
+) -> str:
+    """
+    Создаёт Excel-файл с диаграммой Ганта для планирования производства.
+    
+    Args:
+        all_tracks_list: список всех дорожек с плитами
+        tracks_count: количество дорожек в день
+        plate_lookup_exact: словарь для поиска информации о плитах по (length, width)
+        plate_lookup_by_length: словарь для поиска информации о плитах по длине
+        output_dir: директория для сохранения файла
+        start_date: дата начала производства (по умолчанию - сегодня)
+        
+    Returns:
+        Путь к созданному Excel-файлу
+    """
+    if start_date is None:
+        start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # === ШАГ 1: Собираем информацию о КП из дорожек ===
+    kp_production_info = {}  # {kp_id: {'start_day', 'end_day', 'customer', 'deadline', 'plate_count'}}
+    
+    # Создаём копию lookup для подсчёта (чтобы не модифицировать оригинал)
+    import copy
+    lookup_copy = copy.deepcopy(plate_lookup_exact)
+    lookup_by_length_copy = copy.deepcopy(plate_lookup_by_length)
+    
+    def get_plate_info(length, width):
+        """Получить информацию о плите из lookup"""
+        key = (round(length, 2), width)
+        entries = lookup_copy.get(key, [])
+        
+        for entry in entries:
+            if entry.get('qty_remaining', 0) > 0:
+                entry['qty_remaining'] -= 1
+                return entry.copy()
+        
+        # Fallback по длине
+        length_key = round(length, 2)
+        entries = lookup_by_length_copy.get(length_key, [])
+        for entry in entries:
+            if entry.get('qty_remaining', 0) > 0:
+                entry['qty_remaining'] -= 1
+                return entry.copy()
+        
+        return None
+    
+    # Проходим по всем дорожкам
+    for track_idx, track in enumerate(all_tracks_list):
+        production_day = (track_idx // tracks_count) + 1  # День производства (1, 2, 3, ...)
+        
+        for item in track.get('items', []):
+            if item is None:
+                continue
+            
+            length = item.get('length', 0)
+            if not length:
+                continue
+            
+            # Определяем ширину
+            mode = item.get('mode', 'solid')
+            if mode == 'transverse' and item.get('width'):
+                width = int(item['width'] * 1000)
+            elif mode == 'split' and item.get('main_w'):
+                width = int(item['main_w'] * 1000)
+            else:
+                width = 1200
+            
+            # Получаем информацию о плите
+            plate_info = get_plate_info(length, width)
+            
+            if plate_info:
+                kp_id = plate_info.get('kp_id')
+                if kp_id:
+                    if kp_id not in kp_production_info:
+                        kp_production_info[kp_id] = {
+                            'start_day': production_day,
+                            'end_day': production_day,
+                            'customer': plate_info.get('customer', 'неизвестно'),
+                            'deadline': plate_info.get('kp_date', 'неизвестно'),
+                            'plate_count': 1,
+                            'plates_by_day': defaultdict(int)
+                        }
+                    else:
+                        # Обновляем день начала (минимальный) и конца (максимальный)
+                        kp_production_info[kp_id]['start_day'] = min(
+                            kp_production_info[kp_id]['start_day'], 
+                            production_day
+                        )
+                        kp_production_info[kp_id]['end_day'] = max(
+                            kp_production_info[kp_id]['end_day'], 
+                            production_day
+                        )
+                        kp_production_info[kp_id]['plate_count'] += 1
+                    
+                    # Считаем плиты по дням
+                    kp_production_info[kp_id]['plates_by_day'][production_day] += 1
+            
+            # Обрабатываем вторичные резы
+            secondary_cuts = item.get('secondary_cuts', []) or []
+            for sec_cut in secondary_cuts:
+                sec_width_m = sec_cut.get('width', 0)
+                if sec_width_m <= 0:
+                    continue
+                
+                sec_width = int(sec_width_m * 1000)
+                sec_length = sec_cut.get('target_length') or length
+                
+                sec_plate_info = get_plate_info(sec_length, sec_width)
+                
+                if sec_plate_info:
+                    sec_kp_id = sec_plate_info.get('kp_id')
+                    if sec_kp_id:
+                        if sec_kp_id not in kp_production_info:
+                            kp_production_info[sec_kp_id] = {
+                                'start_day': production_day,
+                                'end_day': production_day,
+                                'customer': sec_plate_info.get('customer', 'неизвестно'),
+                                'deadline': sec_plate_info.get('kp_date', 'неизвестно'),
+                                'plate_count': 1,
+                                'plates_by_day': defaultdict(int)
+                            }
+                        else:
+                            kp_production_info[sec_kp_id]['start_day'] = min(
+                                kp_production_info[sec_kp_id]['start_day'], 
+                                production_day
+                            )
+                            kp_production_info[sec_kp_id]['end_day'] = max(
+                                kp_production_info[sec_kp_id]['end_day'], 
+                                production_day
+                            )
+                            kp_production_info[sec_kp_id]['plate_count'] += 1
+                        
+                        kp_production_info[sec_kp_id]['plates_by_day'][production_day] += 1
+    
+    if not kp_production_info:
+        print("[GANTT] Нет данных о КП для создания диаграммы")
+        return None
+    
+    # === ШАГ 2: Определяем диапазон дней ===
+    total_days = max(info['end_day'] for info in kp_production_info.values())
+    
+    # === ШАГ 3: Создаём Excel ===
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Диаграмма Ганта"
+    
+    # Стили
+    header_font = Font(bold=True, size=11)
+    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    center_align = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Цвета для статусов
+    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")  # Успеваем
+    yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")  # Впритык
+    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")  # Опаздываем
+    
+    # === ШАГ 4: Заголовки ===
+    headers = ["КП", "Заказчик", "Дедлайн", "Плит"]
+    
+    # Добавляем даты
+    date_columns = []
+    for day in range(1, total_days + 1):
+        date = start_date + timedelta(days=day - 1)
+        date_str = date.strftime("%d.%m")
+        headers.append(date_str)
+        date_columns.append(date)
+    
+    # Записываем заголовки
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_align
+        cell.border = thin_border
+    
+    # === ШАГ 5: Данные по КП ===
+    # Сортируем КП по дедлайну
+    sorted_kps = sorted(
+        kp_production_info.items(),
+        key=lambda x: _parse_date(x[1]['deadline'])
+    )
+    
+    row = 2
+    plates_by_day_total = defaultdict(int)  # Итого плит по дням
+    
+    for kp_id, info in sorted_kps:
+        # Колонка КП
+        ws.cell(row=row, column=1, value=kp_id).border = thin_border
+        ws.cell(row=row, column=1).alignment = center_align
+        
+        # Колонка Заказчик
+        customer = info['customer']
+        if len(customer) > 20:
+            customer = customer[:18] + ".."
+        ws.cell(row=row, column=2, value=customer).border = thin_border
+        
+        # Колонка Дедлайн
+        ws.cell(row=row, column=3, value=info['deadline']).border = thin_border
+        ws.cell(row=row, column=3).alignment = center_align
+        
+        # Колонка Плит
+        ws.cell(row=row, column=4, value=info['plate_count']).border = thin_border
+        ws.cell(row=row, column=4).alignment = center_align
+        
+        # Определяем цвет на основе дедлайна
+        deadline_date = _parse_date(info['deadline'])
+        end_production_date = start_date + timedelta(days=info['end_day'] - 1)
+        
+        if deadline_date:
+            if end_production_date < deadline_date:
+                fill_color = green_fill  # Успеваем с запасом
+            elif end_production_date == deadline_date:
+                fill_color = yellow_fill  # Впритык
+            else:
+                fill_color = red_fill  # Опаздываем!
+        else:
+            fill_color = green_fill  # Если дедлайн неизвестен - зелёный
+        
+        # Закрашиваем ячейки для дней производства
+        start_day = info['start_day']
+        end_day = info['end_day']
+        
+        for day in range(1, total_days + 1):
+            col = 4 + day  # Столбец даты (после 4 информационных столбцов)
+            cell = ws.cell(row=row, column=col)
+            cell.border = thin_border
+            cell.alignment = center_align
+            
+            if start_day <= day <= end_day:
+                cell.fill = fill_color
+                # Показываем количество плит в этот день
+                plates_in_day = info['plates_by_day'].get(day, 0)
+                if plates_in_day > 0:
+                    cell.value = plates_in_day
+                    plates_by_day_total[day] += plates_in_day
+        
+        row += 1
+    
+    # === ШАГ 6: Строка итогов ===
+    row += 1  # Пустая строка
+    
+    ws.cell(row=row, column=1, value="ИТОГО").font = header_font
+    ws.cell(row=row, column=1).border = thin_border
+    
+    total_plates = sum(info['plate_count'] for info in kp_production_info.values())
+    ws.cell(row=row, column=4, value=total_plates).font = header_font
+    ws.cell(row=row, column=4).border = thin_border
+    ws.cell(row=row, column=4).alignment = center_align
+    
+    for day in range(1, total_days + 1):
+        col = 4 + day
+        cell = ws.cell(row=row, column=col)
+        cell.value = plates_by_day_total.get(day, 0)
+        cell.font = header_font
+        cell.border = thin_border
+        cell.alignment = center_align
+        cell.fill = header_fill
+    
+    # === ШАГ 7: Настройка ширины столбцов ===
+    ws.column_dimensions['A'].width = 6   # КП
+    ws.column_dimensions['B'].width = 22  # Заказчик
+    ws.column_dimensions['C'].width = 10  # Дедлайн
+    ws.column_dimensions['D'].width = 6   # Плит
+    
+    # Столбцы с датами
+    for col in range(5, 5 + total_days):
+        ws.column_dimensions[get_column_letter(col)].width = 7
+    
+    # === ШАГ 8: Легенда ===
+    legend_row = row + 3
+    ws.cell(row=legend_row, column=1, value="Легенда:").font = Font(bold=True)
+    
+    ws.cell(row=legend_row + 1, column=1, value="")
+    ws.cell(row=legend_row + 1, column=1).fill = green_fill
+    ws.cell(row=legend_row + 1, column=2, value="Успеваем до дедлайна")
+    
+    ws.cell(row=legend_row + 2, column=1, value="")
+    ws.cell(row=legend_row + 2, column=1).fill = yellow_fill
+    ws.cell(row=legend_row + 2, column=2, value="Завершаем в день дедлайна")
+    
+    ws.cell(row=legend_row + 3, column=1, value="")
+    ws.cell(row=legend_row + 3, column=1).fill = red_fill
+    ws.cell(row=legend_row + 3, column=2, value="Опаздываем!")
+    
+    # === ШАГ 9: Сохраняем файл ===
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"Диаграмма_Ганта_{timestamp}.xlsx"
+    filepath = os.path.join(output_dir, filename)
+    
+    wb.save(filepath)
+    print(f"[GANTT] ✅ Диаграмма Ганта сохранена: {filepath}")
+    
+    return filepath
+
+
+def _parse_date(date_str: str) -> datetime:
+    """
+    Парсит строку даты в datetime.
+    Поддерживает форматы: "ДД.ММ.ГГГГ", "ГГГГ-ММ-ДД"
+    
+    Returns:
+        datetime или None если не удалось распарсить
+    """
+    if not date_str or date_str == 'неизвестно':
+        return None
+    
+    # Формат "ДД.ММ.ГГГГ"
+    try:
+        return datetime.strptime(date_str, '%d.%m.%Y')
+    except ValueError:
+        pass
+    
+    # Формат "ГГГГ-ММ-ДД"
+    try:
+        return datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        pass
+    
+    return None

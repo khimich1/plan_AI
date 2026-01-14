@@ -21,6 +21,7 @@ from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core.optimization import optimize_with_cascading_longitudinal_cuts
 from core.formovka_excel import create_formovka_files_for_tracks
+from core.gantt_excel import create_gantt_excel
 import core.config_and_data as cfg
 import core.optimization as optimization
 
@@ -307,32 +308,56 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 'kp_id': plate_data.get('kp_id')  # Важно для переноса в completed_plates!
             })
         
-        # Lookup-таблицы
-        plate_lookup_exact = {}
-        plate_lookup_by_length = {}
+        # Lookup-таблицы (теперь хранят СПИСКИ записей для поддержки нескольких КП)
+        plate_lookup_exact = {}      # {(length, width): [список записей с qty_remaining]}
+        plate_lookup_by_length = {}  # {length: [список записей с qty_remaining]}
         
         for order in orders_2d:
             key = (round(order['length'], 2), order['width'])
-            if key not in plate_lookup_exact:
-                plate_lookup_exact[key] = {
-                    'kp_date': order.get('kp_date', 'неизвестно'),
-                    'customer': order.get('customer', 'неизвестно'),
-                    'plate_name': order.get('plate_name', ''),
-                    'reinforcement': order.get('reinforcement', 0),
-                    'load_code': order.get('load_code', 8),
-                    'qty': order.get('qty', 1),
-                    'kp_id': order.get('kp_id'),  # Важно для переноса в completed_plates!
-                }
+            entry = {
+                'kp_date': order.get('kp_date', 'неизвестно'),
+                'customer': order.get('customer', 'неизвестно'),
+                'plate_name': order.get('plate_name', ''),
+                'reinforcement': order.get('reinforcement', 0),
+                'load_code': order.get('load_code', 8),
+                'qty_remaining': order.get('qty', 1),  # Остаток для списания
+                'kp_id': order.get('kp_id'),
+            }
             
+            # Добавляем в список по ключу (length, width)
+            if key not in plate_lookup_exact:
+                plate_lookup_exact[key] = []
+            plate_lookup_exact[key].append(entry)
+            
+            # Также добавляем в lookup по длине
             length_key = round(order['length'], 2)
+            length_entry = {
+                'kp_date': order.get('kp_date', 'неизвестно'),
+                'customer': order.get('customer', 'неизвестно'),
+                'plate_name': order.get('plate_name', ''),
+                'reinforcement': order.get('reinforcement', 0),
+                'qty_remaining': order.get('qty', 1),
+                'kp_id': order.get('kp_id'),
+            }
             if length_key not in plate_lookup_by_length:
-                plate_lookup_by_length[length_key] = {
-                    'kp_date': order.get('kp_date', 'неизвестно'),
-                    'customer': order.get('customer', 'неизвестно'),
-                    'plate_name': order.get('plate_name', ''),
-                    'reinforcement': order.get('reinforcement', 0),
-                    'kp_id': order.get('kp_id'),  # Важно для переноса в completed_plates!
-                }
+                plate_lookup_by_length[length_key] = []
+            plate_lookup_by_length[length_key].append(length_entry)
+        
+        # Сортируем списки по дате КП (более ранние сроки первыми)
+        def parse_date_for_sort(date_str):
+            """Парсит дату для сортировки. Неизвестные даты идут в конец."""
+            if not date_str or date_str == 'неизвестно':
+                return datetime.max
+            try:
+                return datetime.strptime(date_str, '%d.%m.%Y')
+            except:
+                return datetime.max
+        
+        for key in plate_lookup_exact:
+            plate_lookup_exact[key].sort(key=lambda x: parse_date_for_sort(x.get('kp_date', '')))
+        
+        for key in plate_lookup_by_length:
+            plate_lookup_by_length[key].sort(key=lambda x: parse_date_for_sort(x.get('kp_date', '')))
         
         # Запуск оптимизации
         optimization_result = await asyncio.to_thread(
@@ -349,6 +374,86 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             return
         
         await message.answer(f"✅ Оптимизация завершена! Исходных плит: {optimization_result.get('total_plates', 0)}")
+        
+        # === ШАГ 4.5: ДОПОЛНЕНИЕ LOOKUP ДЛЯ ВТОРИЧНЫХ РЕЗОВ ===
+        if optimization_result.get('secondary_cuts'):
+            # Создаем словарь для быстрого поиска исходных заказов
+            orders_dict = {}
+            for order in orders_2d:
+                key = (round(order['length'], 2), order['width'])
+                if key not in orders_dict:
+                    orders_dict[key] = []
+                orders_dict[key].append(order)
+            
+            # Обрабатываем каждый вторичный рез
+            for sec_cut in optimization_result['secondary_cuts']:
+                target_key = sec_cut.get('target_order_key')
+                if not target_key:
+                    continue  # Пропускаем, если нет метаданных
+                
+                # Находим исходный заказ
+                target_length, target_width = target_key
+                original_orders = orders_dict.get((round(target_length, 2), target_width), [])
+                
+                if not original_orders:
+                    continue  # Заказ не найден
+                
+                # Для каждой плиты из вторичного реза
+                result_lengths = sec_cut.get('lengths', [])
+                result_width = sec_cut['cuts'][0]
+                
+                for result_length in result_lengths:
+                    # Создаём ключ для РЕЗУЛЬТАТА реза
+                    key_result = (round(result_length, 2), result_width)
+                    
+                    # Берём первый подходящий заказ с qty_remaining > 0
+                    original_order = None
+                    for order in original_orders:
+                        # Проверяем, есть ли эта плита в lookup с остатками
+                        original_key = (round(order['length'], 2), order['width'])
+                        if original_key in plate_lookup_exact:
+                            for entry in plate_lookup_exact[original_key]:
+                                if entry.get('qty_remaining', 0) > 0:
+                                    original_order = order
+                                    break
+                        if original_order:
+                            break
+                    
+                    if not original_order:
+                        continue
+                    
+                    # Добавляем в lookup запись для результата
+                    if key_result not in plate_lookup_exact:
+                        plate_lookup_exact[key_result] = []
+                    
+                    # Создаём новую запись, связанную с исходным заказом
+                    plate_lookup_exact[key_result].append({
+                        'kp_date': original_order.get('kp_date', 'неизвестно'),
+                        'customer': original_order.get('customer', 'неизвестно'),
+                        'plate_name': original_order.get('plate_name', ''),
+                        'reinforcement': original_order.get('reinforcement', 0),
+                        'load_code': original_order.get('load_code', 8),
+                        'qty_remaining': 1,  # Одна плита из вторичного реза
+                        'kp_id': original_order.get('kp_id'),
+                        'is_from_secondary': True  # Флаг для отладки
+                    })
+                    
+                    # Также добавляем в lookup по длине
+                    length_key = round(result_length, 2)
+                    if length_key not in plate_lookup_by_length:
+                        plate_lookup_by_length[length_key] = []
+                    
+                    plate_lookup_by_length[length_key].append({
+                        'kp_date': original_order.get('kp_date', 'неизвестно'),
+                        'customer': original_order.get('customer', 'неизвестно'),
+                        'plate_name': original_order.get('plate_name', ''),
+                        'reinforcement': original_order.get('reinforcement', 0),
+                        'qty_remaining': 1,
+                        'kp_id': original_order.get('kp_id'),
+                        'is_from_secondary': True
+                    })
+            
+            print(f"[PRODUCTION] ✅ Дополнено lookup-таблиц: exact={len(plate_lookup_exact)}, by_length={len(plate_lookup_by_length)}")
         
         # === ШАГ 5: ПОДГОТОВКА ДЛЯ ВИЗУАЛИЗАЦИИ ===
         optimization.OPT_CASCADING_PLAN = optimization_result
@@ -613,16 +718,48 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
         # Список для хранения данных формовки по всем дорожкам
         formovka_tracks_data = []
         
+        # Создаем КОПИЮ lookup для формовки (чтобы не влиять на оригинал в state)
+        import copy
+        formovka_lookup_exact = copy.deepcopy(plate_lookup_exact)
+        formovka_lookup_by_length = copy.deepcopy(plate_lookup_by_length)
+        
         def get_plate_info_smart(length, width):
-            key = (round(length, 2), width)
-            info = plate_lookup_exact.get(key)
-            if info:
-                return info.copy()
+            """
+            Умный поиск информации о плите С УЧЕТОМ КОЛИЧЕСТВА.
             
+            Логика:
+            1. Ищем в списке записей по (length, width)
+            2. Находим первую запись с qty_remaining > 0
+            3. Уменьшаем qty_remaining на 1 (списываем плиту)
+            4. Возвращаем информацию о КП
+            
+            ВАЖНО: Работаем с КОПИЕЙ lookup, чтобы не влиять на оригинал.
+            """
+            # 1. Сначала пробуем точное совпадение
+            key = (round(length, 2), width)
+            entries = formovka_lookup_exact.get(key, [])
+            
+            for entry in entries:
+                if entry.get('qty_remaining', 0) > 0:
+                    entry['qty_remaining'] -= 1
+                    return entry.copy()
+            
+            # 2. Если ширина < 1200 (плита с резом), ищем по оригинальной ширине 1200
+            if width < 1200:
+                key_original = (round(length, 2), 1200)
+                entries = formovka_lookup_exact.get(key_original, [])
+                for entry in entries:
+                    if entry.get('qty_remaining', 0) > 0:
+                        entry['qty_remaining'] -= 1
+                        return entry.copy()
+            
+            # 3. Fallback: поиск только по длине
             length_key = round(length, 2)
-            info = plate_lookup_by_length.get(length_key)
-            if info:
-                return info.copy()
+            entries = formovka_lookup_by_length.get(length_key, [])
+            for entry in entries:
+                if entry.get('qty_remaining', 0) > 0:
+                    entry['qty_remaining'] -= 1
+                    return entry.copy()
             
             return {
                 'kp_date': 'неизвестно',
@@ -640,8 +777,18 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
             
             plates_info = []
             for item in track_items:
+                if item is None:
+                    continue
                 length = item.get('length')
-                width = item.get('width', 1200)
+                
+                # Определяем ширину в зависимости от режима плиты
+                mode = item.get('mode', 'solid')
+                if mode == 'transverse' and item.get('width'):
+                    width = int(item['width'] * 1000)  # width в метрах -> мм
+                elif mode == 'split' and item.get('main_w'):
+                    width = int(item['main_w'] * 1000)  # main_w в метрах -> мм
+                else:
+                    width = 1200  # solid или дефолт
                 
                 if not length:
                     continue
@@ -670,6 +817,46 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                         'customer': plate_info['customer'],
                         'plate_name': plate_info.get('plate_name', '')
                     })
+                
+                # НОВОЕ: Обрабатываем плиты из вторичных резов (остатков)
+                secondary_cuts = item.get('secondary_cuts', []) if item else []
+                for sec_cut in (secondary_cuts or []):
+                    sec_width_m = sec_cut.get('width', 0)
+                    if sec_width_m <= 0:
+                        continue
+                    
+                    sec_width = int(sec_width_m * 1000)  # в мм
+                    # Длина: если есть target_length (поперечный рез), иначе длина родительской плиты
+                    sec_length = sec_cut.get('target_length') or length
+                    
+                    sec_plate_info = get_plate_info_smart(sec_length, sec_width)
+                    
+                    # Добавляем в plates_info (аналогично основной плите)
+                    sec_found = False
+                    for existing in plates_info:
+                        if (round(existing['length'], 2) == round(sec_length, 2) and
+                            existing['width'] == sec_width and
+                            existing['kp_date'] == sec_plate_info.get('kp_date', 'неизвестно')):
+                            existing['qty'] += 1
+                            sec_found = True
+                            break
+                    
+                    if not sec_found:
+                        # Формируем имя плиты из label (если есть)
+                        sec_plate_name = sec_plate_info.get('plate_name', '')
+                        if not sec_plate_name and sec_cut.get('label'):
+                            # Убираем префикс "О " из label
+                            sec_plate_name = sec_cut['label'].replace('О ', '').strip()
+                        
+                        plates_info.append({
+                            'length': sec_length,
+                            'width': sec_width,
+                            'qty': 1,
+                            'reinforcement': sec_plate_info.get('reinforcement', 0),
+                            'kp_date': sec_plate_info.get('kp_date', 'неизвестно'),
+                            'customer': sec_plate_info.get('customer', 'неизвестно'),
+                            'plate_name': sec_plate_name
+                        })
             
             if plates_info:
                 # Получаем максимальное армирование дорожки
@@ -800,6 +987,74 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "export_gantt")
+async def export_gantt_chart(callback: CallbackQuery, state: FSMContext):
+    """
+    Обработчик кнопки "Диаграмма Ганта".
+    Создаёт Excel-файл с визуализацией плана производства по КП.
+    """
+    await callback.message.answer("📊 Создаю диаграмму Ганта...")
+    
+    # Получаем данные из state
+    data = await state.get_data()
+    all_tracks_list = data.get('all_tracks_list', [])
+    tracks_count = data.get('tracks_count', 1)
+    plate_lookup_exact = data.get('plate_lookup_exact', {})
+    plate_lookup_by_length = data.get('plate_lookup_by_length', {})
+    total_days = data.get('total_days', 1)
+    
+    if not all_tracks_list:
+        await callback.message.answer(
+            "❌ Нет данных для создания диаграммы.\n"
+            "Сначала выполните анализ производства.",
+            reply_markup=main_menu_kb()
+        )
+        await callback.answer()
+        return
+    
+    try:
+        # Создаём диаграмму Ганта
+        gantt_path = await asyncio.to_thread(
+            create_gantt_excel,
+            all_tracks_list=all_tracks_list,
+            tracks_count=tracks_count,
+            plate_lookup_exact=plate_lookup_exact,
+            plate_lookup_by_length=plate_lookup_by_length,
+            output_dir=OUTPUTS_DIR_STR,
+            start_date=datetime.now()
+        )
+        
+        if gantt_path and os.path.exists(gantt_path):
+            await callback.message.answer_document(
+                FSInputFile(gantt_path),
+                caption=(
+                    "📊 Диаграмма Ганта\n\n"
+                    "Цветовая кодировка:\n"
+                    "🟢 Зелёный — успеваем до дедлайна\n"
+                    "🟡 Жёлтый — завершаем в день дедлайна\n"
+                    "🔴 Красный — опаздываем!"
+                )
+            )
+        else:
+            await callback.message.answer(
+                "⚠️ Не удалось создать диаграмму.\n"
+                "Возможно, нет данных о КП в плане производства."
+            )
+    
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка создания диаграммы: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Показываем клавиатуру выбора дней снова
+    await callback.message.answer(
+        "Выберите день для просмотра:",
+        reply_markup=production_days_kb(total_days)
+    )
+    
+    await callback.answer()
+
+
 @router.callback_query(F.data == "production_all_days")
 async def process_all_days_selection(callback: CallbackQuery, state: FSMContext):
     """Обработчик выбора 'Все дни сразу'"""
@@ -864,17 +1119,49 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     end_index = min(day_number * tracks_count, len(all_tracks_list))
     tracks_for_day = all_tracks_list[start_index:end_index]
     
-    # Функция для получения информации о плите
+    # Создаем КОПИЮ lookup для завершения дня (чтобы не влиять на оригинал в state)
+    import copy
+    completion_lookup_exact = copy.deepcopy(plate_lookup_exact)
+    completion_lookup_by_length = copy.deepcopy(plate_lookup_by_length)
+    
+    # Функция для получения информации о плите (с списанием из lookup)
     def get_plate_info_smart(length, width):
-        key = (round(length, 2), width)
-        info = plate_lookup_exact.get(key)
-        if info:
-            return info.copy()
+        """
+        Умный поиск информации о плите С УЧЕТОМ КОЛИЧЕСТВА.
         
+        Логика:
+        1. Ищем в списке записей по (length, width)
+        2. Находим первую запись с qty_remaining > 0
+        3. Уменьшаем qty_remaining на 1 (списываем плиту)
+        4. Возвращаем информацию о КП
+        
+        ВАЖНО: Работаем с КОПИЕЙ lookup, чтобы не влиять на оригинал.
+        """
+        # 1. Сначала пробуем точное совпадение
+        key = (round(length, 2), width)
+        entries = completion_lookup_exact.get(key, [])
+        
+        for entry in entries:
+            if entry.get('qty_remaining', 0) > 0:
+                entry['qty_remaining'] -= 1
+                return entry.copy()
+        
+        # 2. Если ширина < 1200 (плита с резом), ищем по оригинальной ширине 1200
+        if width < 1200:
+            key_original = (round(length, 2), 1200)
+            entries = completion_lookup_exact.get(key_original, [])
+            for entry in entries:
+                if entry.get('qty_remaining', 0) > 0:
+                    entry['qty_remaining'] -= 1
+                    return entry.copy()
+        
+        # 3. Fallback: поиск только по длине
         length_key = round(length, 2)
-        info = plate_lookup_by_length.get(length_key)
-        if info:
-            return info.copy()
+        entries = completion_lookup_by_length.get(length_key, [])
+        for entry in entries:
+            if entry.get('qty_remaining', 0) > 0:
+                entry['qty_remaining'] -= 1
+                return entry.copy()
         
         return {
             'kp_date': 'неизвестно',
@@ -883,13 +1170,27 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             'kp_id': None
         }
     
-    # Собираем уникальные плиты с группировкой
-    day_plates = []
+    # Собираем плиты по дорожкам (каждая дорожка отдельно)
+    day_plates_by_track = []
+    total_qty = 0
     
-    for track in tracks_for_day:
+    for track_idx, track in enumerate(tracks_for_day):
+        track_number = start_index + track_idx + 1
+        track_plates = []
+        
         for item in track.get('items', []):
+            if item is None:
+                continue
             length = item.get('length', 0)
-            width = item.get('width', 1200)
+            
+            # Определяем ширину в зависимости от режима плиты
+            mode = item.get('mode', 'solid')
+            if mode == 'transverse' and item.get('width'):
+                width = int(item['width'] * 1000)  # width в метрах -> мм
+            elif mode == 'split' and item.get('main_w'):
+                width = int(item['main_w'] * 1000)  # main_w в метрах -> мм
+            else:
+                width = 1200  # solid или дефолт
             
             if not length:
                 continue
@@ -912,28 +1213,99 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                         width_str = str(width_dm).replace('.', ',')
                 plate_name = f"ПБ {length_dm}-{width_str}-8п"
             
-            # Ищем такую же плиту в списке
+            # Получаем дату и заказчика для группировки
+            kp_date = plate_info.get('kp_date', 'неизвестно')
+            customer = plate_info.get('customer', 'неизвестно')
+            
+            # Ищем такую же плиту в списке текущей дорожки
+            # Группируем по: plate_name + kp_id + kp_date + customer
             found = False
-            for existing in day_plates:
+            for existing in track_plates:
                 if (existing['plate_name'] == plate_name and 
-                    existing['kp_id'] == kp_id):
+                    existing['kp_id'] == kp_id and
+                    existing['kp_date'] == kp_date and
+                    existing['customer'] == customer):
                     existing['qty'] += 1
                     found = True
                     break
             
             if not found:
-                day_plates.append({
+                track_plates.append({
                     'plate_name': plate_name,
                     'length_m': length,
                     'width_m': width / 1000.0,
                     'load_class': 800,
                     'qty': 1,
                     'kp_id': kp_id,
-                    'kp_date': plate_info.get('kp_date', 'неизвестно'),
-                    'customer': plate_info.get('customer', 'неизвестно')
+                    'kp_date': kp_date,
+                    'customer': customer
                 })
+            
+            # НОВОЕ: Обрабатываем плиты из вторичных резов (остатков)
+            secondary_cuts = item.get('secondary_cuts', []) if item else []
+            for sec_cut in (secondary_cuts or []):
+                sec_width_m = sec_cut.get('width', 0)
+                if sec_width_m <= 0:
+                    continue
+                
+                sec_width = int(sec_width_m * 1000)  # в мм
+                # Длина: если есть target_length (поперечный рез), иначе длина родительской плиты
+                sec_length = sec_cut.get('target_length') or length
+                
+                sec_plate_info = get_plate_info_smart(sec_length, sec_width)
+                sec_plate_name = sec_plate_info.get('plate_name', '')
+                sec_kp_id = sec_plate_info.get('kp_id')
+                
+                # Если нет имени плиты — берём из label
+                if not sec_plate_name and sec_cut.get('label'):
+                    sec_plate_name = sec_cut['label'].replace('О ', '').strip()
+                
+                # Если всё ещё нет — формируем
+                if not sec_plate_name:
+                    sec_length_dm = int(round(sec_length * 10))
+                    if sec_width == 1200:
+                        sec_width_str = "12"
+                    else:
+                        sec_width_dm = sec_width / 100.0
+                        if abs(sec_width_dm - int(sec_width_dm)) < 0.01:
+                            sec_width_str = str(int(sec_width_dm))
+                        else:
+                            sec_width_str = str(sec_width_dm).replace('.', ',')
+                    sec_plate_name = f"ПБ {sec_length_dm}-{sec_width_str}-8п"
+                
+                sec_kp_date = sec_plate_info.get('kp_date', 'неизвестно')
+                sec_customer = sec_plate_info.get('customer', 'неизвестно')
+                
+                # Ищем такую же плиту в списке
+                sec_found = False
+                for existing in track_plates:
+                    if (existing['plate_name'] == sec_plate_name and 
+                        existing['kp_id'] == sec_kp_id and
+                        existing['kp_date'] == sec_kp_date):
+                        existing['qty'] += 1
+                        sec_found = True
+                        break
+                
+                if not sec_found:
+                    track_plates.append({
+                        'plate_name': sec_plate_name,
+                        'length_m': sec_length,
+                        'width_m': sec_width / 1000.0,
+                        'load_class': 800,
+                        'qty': 1,
+                        'kp_id': sec_kp_id,
+                        'kp_date': sec_kp_date,
+                        'customer': sec_customer
+                    })
+        
+        if track_plates:
+            day_plates_by_track.append({
+                'track_number': track_number,
+                'plates': track_plates
+            })
+            total_qty += sum(p['qty'] for p in track_plates)
     
-    if not day_plates:
+    if not day_plates_by_track:
         await callback.message.answer(
             f"❌ Не удалось найти плиты для Дня {day_number}.",
             reply_markup=production_days_kb(data.get('total_days', 1))
@@ -941,23 +1313,25 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     
+    # Подсчитываем общее количество позиций
+    total_positions = sum(len(track['plates']) for track in day_plates_by_track)
+    
     # Сохраняем данные для завершения дня
     await state.update_data(
         completing_day=day_number,
-        day_plates=day_plates,
-        rejected_indices=[]  # Пустой список — пока нет брака
+        day_plates_by_track=day_plates_by_track,
+        rejected_indices=[]  # Пустой список — пока нет брака (формат: [(track_idx, plate_idx), ...])
     )
     
     # Формируем сообщение
-    total_qty = sum(p['qty'] for p in day_plates)
-    
     await callback.message.answer(
         f"📋 День {day_number} — завершение производства\n\n"
-        f"Всего плит: {total_qty} шт ({len(day_plates)} позиций)\n\n"
+        f"Всего плит: {total_qty} шт ({total_positions} позиций)\n"
+        f"Дорожек: {len(day_plates_by_track)}\n\n"
         f"❗ Отметьте плиты, которые ушли в БРАК:\n"
         f"(Бракованные плиты останутся на следующий день)\n\n"
         f"Нажмите на плиту, чтобы отметить её как брак:",
-        reply_markup=plates_completion_kb(day_plates, set())
+        reply_markup=plates_completion_kb(day_plates_by_track, set())
     )
     
     await state.set_state(ProductionStates.marking_completion)
@@ -970,26 +1344,42 @@ async def toggle_plate_rejection(callback: CallbackQuery, state: FSMContext):
     Переключение статуса брака для плиты.
     Нажал — в браке, нажал ещё раз — не в браке.
     """
-    idx = int(callback.data.split("_")[-1])
+    # Парсим новый формат: toggle_reject_t{track_idx}_p{plate_idx}
+    parts = callback.data.split("_")
+    track_idx = int(parts[2][1:])  # Убираем 't' из 't0'
+    plate_idx = int(parts[3][1:])  # Убираем 'p' из 'p0'
+    
     data = await state.get_data()
     
-    rejected_indices = set(data.get('rejected_indices', []))
+    # rejected_indices теперь список кортежей [(track_idx, plate_idx), ...]
+    rejected_indices_list = data.get('rejected_indices', [])
+    rejected_indices = set(tuple(item) if isinstance(item, list) else item for item in rejected_indices_list)
     
     # Переключаем статус
-    if idx in rejected_indices:
-        rejected_indices.remove(idx)
+    plate_id = (track_idx, plate_idx)
+    if plate_id in rejected_indices:
+        rejected_indices.remove(plate_id)
     else:
-        rejected_indices.add(idx)
+        rejected_indices.add(plate_id)
     
     await state.update_data(rejected_indices=list(rejected_indices))
     
-    day_plates = data.get('day_plates', [])
+    day_plates_by_track = data.get('day_plates_by_track', [])
     
     # Обновляем клавиатуру
     await callback.message.edit_reply_markup(
-        reply_markup=plates_completion_kb(day_plates, rejected_indices)
+        reply_markup=plates_completion_kb(day_plates_by_track, rejected_indices)
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("track_header_"), ProductionStates.marking_completion)
+async def track_header_click(callback: CallbackQuery):
+    """
+    Обработчик для заголовков дорожек.
+    Не делает ничего, просто отвечает на callback.
+    """
+    await callback.answer("Это заголовок дорожки")
 
 
 @router.callback_query(F.data == "confirm_completion", ProductionStates.marking_completion)
@@ -1001,18 +1391,28 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     """
     data = await state.get_data()
     day_number = data.get('completing_day', 1)
-    day_plates = data.get('day_plates', [])
-    rejected_indices = set(data.get('rejected_indices', []))
+    day_plates_by_track = data.get('day_plates_by_track', [])
+    rejected_indices_list = data.get('rejected_indices', [])
+    rejected_indices = set(tuple(item) if isinstance(item, list) else item for item in rejected_indices_list)
     
     # Разделяем на выполненные и бракованные
     completed_plates = []
     rejected_plates = []
     
-    for idx, plate in enumerate(day_plates):
-        if idx in rejected_indices:
-            rejected_plates.append(plate)
-        else:
-            completed_plates.append(plate)
+    for track_idx, track_data in enumerate(day_plates_by_track):
+        plates = track_data.get('plates', [])
+        track_number = track_data.get('track_number', track_idx + 1)
+        
+        for plate_idx, plate in enumerate(plates):
+            plate_id = (track_idx, plate_idx)
+            
+            if plate_id in rejected_indices:
+                # Добавляем информацию о дорожке для отчета
+                plate_with_track = plate.copy()
+                plate_with_track['track_number'] = track_number
+                rejected_plates.append(plate_with_track)
+            else:
+                completed_plates.append(plate)
     
     # Импортируем функции БД
     db_path = str(PROJECT_ROOT / "plita.db")
@@ -1106,11 +1506,15 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
             
             # Ищем kp_id по длине и ширине
             key = (round(rest['length'], 2), rest['source_width_mm'])
-            plate_info = plate_lookup_exact.get(key)
+            plate_info_list = plate_lookup_exact.get(key, [])
+            # plate_lookup_exact тоже возвращает СПИСОК, берём первый элемент
+            plate_info = plate_info_list[0] if plate_info_list else None
             
             if not plate_info:
                 length_key = round(rest['length'], 2)
-                plate_info = plate_lookup_by_length.get(length_key)
+                plate_info_list = plate_lookup_by_length.get(length_key, [])
+                # plate_lookup_by_length возвращает СПИСОК, берём первый элемент
+                plate_info = plate_info_list[0] if plate_info_list else None
             
             if plate_info and plate_info.get('kp_id'):
                 kp_id = plate_info['kp_id']
@@ -1135,8 +1539,17 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
         rejected_qty = sum(p['qty'] for p in rejected_plates)
         report += f"\n❌ В браке: {rejected_qty} шт ({len(rejected_plates)} позиций)\n"
         report += "Эти плиты останутся на следующий день:\n"
+        
+        # Группируем бракованные плиты по дорожкам для отчета
+        rejected_by_track = defaultdict(list)
         for plate in rejected_plates:
-            report += f"   • {plate['plate_name']} × {plate['qty']}\n"
+            track_num = plate.get('track_number', '?')
+            rejected_by_track[track_num].append(plate)
+        
+        for track_num in sorted(rejected_by_track.keys()):
+            report += f"\n  Дорожка {track_num}:\n"
+            for plate in rejected_by_track[track_num]:
+                report += f"   • {plate['plate_name']} × {plate['qty']}\n"
     
     # Информация об остатках
     if unused_rests_count > 0:
@@ -1164,7 +1577,7 @@ async def cancel_day_completion(callback: CallbackQuery, state: FSMContext):
     # Очищаем данные завершения, но оставляем остальные данные
     await state.update_data(
         completing_day=None,
-        day_plates=None,
+        day_plates_by_track=None,
         rejected_indices=None
     )
     

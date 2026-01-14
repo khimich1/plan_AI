@@ -60,6 +60,14 @@ def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     """
     buttons = []
     
+    # Кнопка "Диаграмма Ганта" вверху
+    buttons.append([
+        InlineKeyboardButton(
+            text="📊 Диаграмма Ганта",
+            callback_data="export_gantt"
+        )
+    ])
+    
     # Создаем кнопки по 3 в ряд для компактности
     row = []
     for day in range(1, total_days + 1):
@@ -135,42 +143,73 @@ def production_day_actions_kb(day_number: int, total_days: int) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def plates_completion_kb(plates_list: list, rejected_indices: set) -> InlineKeyboardMarkup:
+def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> InlineKeyboardMarkup:
     """
     Клавиатура для отметки бракованных плит при завершении дня.
     
     Простыми словами:
-    - Показывает список плит с кнопками
+    - Показывает список плит по дорожкам с кнопками
+    - Каждая дорожка начинается с заголовка
     - Нажатие на плиту переключает её статус: брак/не брак
     - Внизу кнопки "Подтвердить" и "Отмена"
     
     Args:
-        plates_list: список плит (словари с plate_name, qty и т.д.)
-        rejected_indices: множество индексов бракованных плит
+        plates_by_track: список дорожек, каждая содержит track_number и список plates
+        rejected_indices: множество кортежей (track_idx, plate_idx) для бракованных плит
         
     Returns:
         InlineKeyboardMarkup с кнопками плит
     """
     buttons = []
     
-    for idx, plate in enumerate(plates_list):
-        # Если плита в браке — показываем ❌, иначе ✅
-        is_rejected = idx in rejected_indices
-        emoji = "❌ БРАК" if is_rejected else "✅"
+    for track_idx, track_data in enumerate(plates_by_track):
+        track_number = track_data.get('track_number', track_idx + 1)
+        plates = track_data.get('plates', [])
         
-        plate_name = plate.get('plate_name', f"Плита {idx+1}")
-        qty = plate.get('qty', 1)
+        if not plates:
+            continue
         
-        # Обрезаем длинные названия
-        if len(plate_name) > 25:
-            plate_name = plate_name[:22] + "..."
-        
+        # Добавляем заголовок дорожки (кнопка без действия)
         buttons.append([
             InlineKeyboardButton(
-                text=f"{emoji} {plate_name} × {qty}",
-                callback_data=f"toggle_reject_{idx}"
+                text=f"━━━━ Дорожка {track_number} ━━━━",
+                callback_data=f"track_header_{track_idx}"
             )
         ])
+        
+        # Добавляем плиты этой дорожки
+        for plate_idx, plate in enumerate(plates):
+            # Если плита в браке — показываем ❌, иначе ✅
+            is_rejected = (track_idx, plate_idx) in rejected_indices
+            emoji = "❌" if is_rejected else "✅"
+            
+            plate_name = plate.get('plate_name', f"Плита {plate_idx+1}")
+            qty = plate.get('qty', 1)
+            kp_date = plate.get('kp_date', '')
+            kp_id = plate.get('kp_id', '')
+            
+            # Форматируем дату коротко: "02.02.2026" -> "02.02"
+            date_short = kp_date[:5] if kp_date and kp_date != 'неизвестно' else ''
+            
+            # Формируем информацию о КП
+            if kp_id and date_short:
+                kp_info = f"({date_short})"
+            elif kp_id:
+                kp_info = f"(КП{kp_id})"
+            else:
+                kp_info = ""
+            
+            # Обрезаем длинные названия (с учетом места для КП-инфо)
+            max_name_len = 18 if kp_info else 25
+            if len(plate_name) > max_name_len:
+                plate_name = plate_name[:max_name_len-2] + ".."
+            
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"{emoji} {plate_name} {kp_info} × {qty}",
+                    callback_data=f"toggle_reject_t{track_idx}_p{plate_idx}"
+                )
+            ])
     
     # Кнопки подтверждения
     buttons.append([
