@@ -37,7 +37,10 @@ async def show_archived_kp(callback: CallbackQuery):
     - Формирует список с кнопками для каждого КП
     - Сортирует по номеру КП (от меньшего к большему)
     """
-    await callback.answer()
+    try:
+        await callback.answer()
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     # Получаем список КП со статусом "в архиве"
     all_kp = kp_db.get_all_kp_list()
@@ -94,7 +97,10 @@ async def show_production_kp(callback: CallbackQuery):
     - Формирует список с кнопками для каждого КП
     - Сортирует по номеру КП (от меньшего к большему)
     """
-    await callback.answer()
+    try:
+        await callback.answer()
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     # Получаем список КП со статусом "в работе"
     all_kp = kp_db.get_all_kp_list()
@@ -298,7 +304,10 @@ async def delete_kp_confirm(callback: CallbackQuery, state: FSMContext):
     - Показывает предупреждение об удалении
     - Просит подтвердить действие
     """
-    await callback.answer()
+    try:
+        await callback.answer()
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     kp_id = int(callback.data.split("_")[-1])
     
@@ -332,7 +341,10 @@ async def delete_kp_execute(callback: CallbackQuery):
     - Удаляет КП из БД (все связанные записи удаляются автоматически)
     - Показывает результат операции
     """
-    await callback.answer()
+    try:
+        await callback.answer()
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     kp_id = int(callback.data.split("_")[-1])
     
@@ -360,7 +372,11 @@ async def delete_kp_execute(callback: CallbackQuery):
 @router.callback_query(F.data == "archive_back_to_sections")
 async def back_to_sections(callback: CallbackQuery):
     """Вернуться к выбору раздела архива"""
-    await callback.answer()
+    try:
+        await callback.answer()
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
+    
     await callback.message.edit_text(
         "📁 Архив коммерческих предложений\n\n"
         "Выберите раздел для просмотра:",
@@ -371,7 +387,11 @@ async def back_to_sections(callback: CallbackQuery):
 @router.callback_query(F.data == "archive_back_to_menu")
 async def back_to_menu(callback: CallbackQuery):
     """Вернуться в главное меню"""
-    await callback.answer()
+    try:
+        await callback.answer()
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
+    
     await callback.message.answer(
         "Главное меню:",
         reply_markup=main_menu_kb()
