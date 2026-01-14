@@ -6,12 +6,21 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
     """Главное меню бота"""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Получить КП")],
-            [KeyboardButton(text="Коммерческое предложение PDF")],
-            [KeyboardButton(text="Планирование производства")],
-            [KeyboardButton(text="Информация о ПБ в работе")],
-            [KeyboardButton(text="Сравнение результатов")],
-            [KeyboardButton(text="⚙️ Управление БД")],
+            # Первая строка - 2 кнопки рядом
+            [
+                KeyboardButton(text="📝 Создать КП"),
+                KeyboardButton(text="📁 Архив")
+            ],
+            # Вторая строка - 2 кнопки рядом
+            [
+                KeyboardButton(text="Планирование производства"),
+                KeyboardButton(text="Информация о ПБ в работе")
+            ],
+            # Третья строка - 2 кнопки рядом
+            [
+                KeyboardButton(text="Сравнение результатов"),
+                KeyboardButton(text="⚙️ Управление БД")
+            ],
         ],
         resize_keyboard=True
     )
@@ -43,6 +52,7 @@ def save_to_db_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="💾 Сохранить в БД", callback_data="save_kp_to_db")],
+            [InlineKeyboardButton(text="📦 В архив", callback_data="save_kp_to_archive")],
             [InlineKeyboardButton(text="❌ Не сохранять", callback_data="skip_save_kp")],
         ]
     )
@@ -253,10 +263,76 @@ def db_clear_confirm_kb() -> InlineKeyboardMarkup:
     )
 
 
+def managers_selection_kb(managers_list: list) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для выбора менеджера из списка.
+    
+    Args:
+        managers_list: список словарей с данными менеджеров из БД
+        
+    Returns:
+        InlineKeyboardMarkup с кнопками менеджеров
+    """
+    buttons = []
+    for manager in managers_list:
+        buttons.append([
+            InlineKeyboardButton(
+                text=manager['fio'],
+                callback_data=f"select_manager_{manager['id']}"
+            )
+        ])
+    
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def cancel_process_kb() -> InlineKeyboardMarkup:
     """Кнопка для отмены процесса и возврата в меню"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")]
+        ]
+    )
+
+
+def archive_sections_kb() -> InlineKeyboardMarkup:
+    """
+    Клавиатура для выбора раздела архива.
+    
+    Показывает две кнопки:
+    - 📦 В архиве (КП со статусом "в архиве")
+    - 🏭 В производстве (КП со статусом "в работе")
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📦 В архиве", callback_data="archive_section_archived")],
+            [InlineKeyboardButton(text="🏭 В производстве", callback_data="archive_section_production")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="archive_back_to_menu")],
+        ]
+    )
+
+
+def kp_details_kb(kp_id: int) -> InlineKeyboardMarkup:
+    """
+    Клавиатура действий для конкретного КП.
+    
+    Показывает кнопки:
+    - Скачать PDF
+    - Скачать XLSX
+    - Удалить КП
+    - Назад к списку
+    
+    Args:
+        kp_id: номер КП для формирования callback_data
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Скачать PDF", callback_data=f"download_pdf_{kp_id}")],
+            [InlineKeyboardButton(text="📊 Скачать XLSX", callback_data=f"download_xlsx_{kp_id}")],
+            [InlineKeyboardButton(text="🗑️ Удалить КП", callback_data=f"delete_kp_{kp_id}")],
+            [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="archive_back_to_sections")],
         ]
     )

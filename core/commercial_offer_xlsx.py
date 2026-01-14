@@ -136,8 +136,8 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) ->
         total_cost_with_vat += item_cost
     
     # 🔥 ИСПРАВЛЕНИЕ: unit_price уже включает НДС, поэтому нужно вычесть НДС
-    # Сумма без НДС = сумма с НДС / 1.20
-    subtotal = round(total_cost_with_vat / 1.20, 2)
+    # Сумма без НДС = сумма с НДС / 1.22
+    subtotal = round(total_cost_with_vat / 1.22, 2)
     vat_amount = round(total_cost_with_vat - subtotal, 2)
     total_with_vat = round(total_cost_with_vat, 2)
     
@@ -149,15 +149,41 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) ->
     }
 
 
+def format_phone(phone: str) -> str:
+    """
+    Форматирует телефон в читаемый вид: +7 (XXX) XXX-XX-XX
+    
+    Args:
+        phone: телефон в виде строки цифр (например: "79621860029")
+        
+    Returns:
+        Отформатированный телефон (например: "+7 (962) 186-00-29")
+    """
+    if not phone:
+        return ""
+    
+    # Оставляем только цифры
+    phone = ''.join(filter(str.isdigit, phone))
+    
+    # Форматируем, если начинается с 7 и имеет 11 цифр
+    if phone.startswith('7') and len(phone) == 11:
+        return f"+7 ({phone[1:4]}) {phone[4:7]}-{phone[7:9]}-{phone[9:11]}"
+    
+    return phone
+
+
 def generate_commercial_offer_xlsx(
     order_data: List[Dict],
     offer_number: str,
     offer_date: str,
     customer_name: Optional[str] = None,
     manager_name: Optional[str] = None,
+    manager_phone: Optional[str] = None,
+    manager_email: Optional[str] = None,
     discount_percent: float = 0,
     delivery_conditions: Optional[str] = None,
-    payment_conditions: Optional[str] = None
+    payment_conditions: Optional[str] = None,
+    kp_db_id: Optional[int] = None
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате XLSX с расчётными формулами
@@ -167,10 +193,13 @@ def generate_commercial_offer_xlsx(
         offer_number: номер КП
         offer_date: дата КП
         customer_name: имя заказчика (будет в строке 16)
-        manager_name: имя менеджера (будет в ячейке A31)
+        manager_name: имя менеджера (выводится в подписи)
+        manager_phone: телефон менеджера (выводится под именем)
+        manager_email: email менеджера (выводится под телефоном)
         discount_percent: процент скидки (0-100, по умолчанию 0)
         delivery_conditions: условия поставки (строка 28, если указано)
         payment_conditions: условия оплаты (строка 29, если указано)
+        kp_db_id: номер КП из базы данных (если КП сохранен в БД)
     
     Returns:
         BytesIO буфер с XLSX файлом
@@ -191,12 +220,29 @@ def generate_commercial_offer_xlsx(
         # Резервируем место под логотип (7 строк как в образце)
         header_data.extend([[""], [""], [""], [""], [""], [""], [""]])
     
+    # Формируем строку с номером КП и датой
+    if kp_db_id:
+        date_line = f"КП № {kp_db_id} от {offer_date}"
+    else:
+        date_line = f"от {offer_date}"
+    
+    # Формируем строку с контактами (МЕНЕДЖЕРА, а не компании!)
+    if manager_phone and manager_email:
+        contacts_line = f"Тел.: {format_phone(manager_phone)}, email: {manager_email}"
+    elif manager_phone:
+        contacts_line = f"Тел.: {format_phone(manager_phone)}"
+    elif manager_email:
+        contacts_line = f"Email: {manager_email}"
+    else:
+        # Fallback: контакты компании, если нет контактов менеджера
+        contacts_line = f"Тел.: {COMPANY_PHONE}, Email: {COMPANY_EMAIL}"
+    
     header_data.extend([
         [COMPANY_NAME],
         [f"{COMPANY_ADDRESS}"],
-        [f"Тел.: {COMPANY_PHONE}, Email: {COMPANY_EMAIL}"],
+        [contacts_line],  # 🆕 КОНТАКТЫ МЕНЕДЖЕРА (не компании!)
         [""],
-        [f"от {offer_date}"],
+        [date_line],
         ["Срок действия коммерческого предложения 3 дня"],
         [""],
         ["Коммерческое предложение для"],
@@ -286,8 +332,8 @@ def generate_commercial_offer_xlsx(
                 logo_img = XLImage(LOGO_PATH)
                 
                 # Масштабируем логотип (оригинал 1456x207)
-                # Делаем ширину примерно на всю ширину таблицы (7 колонок)
-                logo_img.width = 600  # пикселей
+                # Делаем ширину больше для лучшей читаемости
+                logo_img.width = 1000  # пикселей (было 600)
                 logo_img.height = int(logo_img.width * (207 / 1456.0))  # сохраняем пропорции
                 
                 # Объединяем ячейки для логотипа (7 строк x 7 колонок, как в образце)
@@ -441,14 +487,14 @@ def generate_commercial_offer_xlsx(
         sum_with_vat_cell.number_format = '#,##0.00'
         sum_with_vat_cell.alignment = right_align
         
-        # НДС 20% - вычитаем из суммы с НДС
+        # НДС 22% - вычитаем из суммы с НДС
         vat_row = summary_row + 1
         worksheet.merge_cells(f'A{vat_row}:F{vat_row}')
-        worksheet[f'A{vat_row}'] = "в том числе НДС (20%)"
+        worksheet[f'A{vat_row}'] = "в том числе НДС (22%)"
         worksheet[f'A{vat_row}'].font = summary_font
         worksheet[f'A{vat_row}'].alignment = left_align
-        # НДС = сумма с НДС - сумма без НДС = сумма с НДС - (сумма с НДС / 1.20)
-        worksheet[f'G{vat_row}'] = f"=G{subtotal_row}-G{subtotal_row}/1.2"  # Формула для НДС
+        # НДС = сумма с НДС - сумма без НДС = сумма с НДС - (сумма с НДС / 1.22)
+        worksheet[f'G{vat_row}'] = f"=G{subtotal_row}-G{subtotal_row}/1.22"  # Формула для НДС
         worksheet[f'G{vat_row}'].font = summary_font
         worksheet[f'G{vat_row}'].number_format = '#,##0.00'
         worksheet[f'G{vat_row}'].alignment = right_align
@@ -478,12 +524,8 @@ def generate_commercial_offer_xlsx(
         worksheet[f'A{signature_row}'].font = summary_font
         
         signature_row += 1
-        # Используем имя менеджера из параметров или значение по умолчанию
-        worksheet[f'A{signature_row}'] = manager_name or "Шишов Александр Васильевич"
-        worksheet[f'A{signature_row}'].font = table_font
-        
-        signature_row += 1
-        worksheet[f'A{signature_row}'] = "8 920 640 55 85"
+        # Используем только имя менеджера (телефон и email теперь в шапке)
+        worksheet[f'A{signature_row}'] = manager_name or "Менеджер"
         worksheet[f'A{signature_row}'].font = table_font
         
         # Примечание

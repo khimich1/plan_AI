@@ -11,6 +11,8 @@
 - kp_files: файлы XLSX (хранит сам файл как BLOB и путь)
 - kp_meta: метаданные (статус КП)
 - completed_plates: выполненные плиты (перенесены из kp_plates после завершения дня)
+- plate_rests: остатки от резки плит
+- managers: менеджеры (ФИО, контактный номер, email)
 """
 
 import os
@@ -139,6 +141,18 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
             )
         ''')
         
+        # Таблица 7: managers - Менеджеры
+        # Хранит информацию о менеджерах: ФИО, контактный номер, email
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS managers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fio TEXT NOT NULL,
+                contact_number TEXT NOT NULL,
+                email TEXT NOT NULL,
+                UNIQUE(email)
+            )
+        ''')
+        
         # Создаём индексы для быстрого поиска
         # Это как закладки в книге — помогают быстро найти нужную информацию
         cur.execute('CREATE INDEX IF NOT EXISTS idx_kp_id_plates ON kp_plates(kp_id)')
@@ -149,6 +163,7 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
         cur.execute('CREATE INDEX IF NOT EXISTS idx_completed_date ON completed_plates(completed_date)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_kp_id ON plate_rests(kp_id)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_status ON plate_rests(status)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_managers_email ON managers(email)')
         
         conn.commit()
     finally:
@@ -211,7 +226,7 @@ def save_kp_to_db(
             discounted_price = unit_price * (1 - discount_percent / 100)
             subtotal += discounted_price * qty
         
-        vat_amount = round(subtotal * 0.20, 2)
+        vat_amount = round(subtotal * 0.22, 2)
         total_amount = round(subtotal + vat_amount, 2)
     
     conn = sqlite3.connect(db_path)
@@ -1419,6 +1434,385 @@ def get_all_completed_plates(db_path: str = DEFAULT_DB) -> List[Dict]:
         ''')
         
         return [dict(row) for row in cur.fetchall()]
+        
+    finally:
+        conn.close()
+
+
+def get_next_kp_number(db_path: str = DEFAULT_DB) -> int:
+    """
+    Получает следующий свободный номер КП из базы данных.
+    
+    Простыми словами:
+    - Смотрит максимальный номер КП в таблице KP_offers
+    - Возвращает следующий номер (max + 1)
+    - Если таблица пуста, возвращает 1
+    
+    Возвращает:
+        Следующий номер КП для нового коммерческого предложения
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT MAX(kp_id) FROM KP_offers')
+        result = cur.fetchone()
+        
+        max_id = result[0] if result[0] is not None else 0
+        next_id = max_id + 1
+        
+        print(f"[DB] Следующий номер КП: {next_id}")
+        return next_id
+    
+    finally:
+        conn.close()
+
+
+# ==================== ФУНКЦИИ ДЛЯ РАБОТЫ С МЕНЕДЖЕРАМИ ====================
+
+def add_manager(
+    fio: str,
+    contact_number: str,
+    email: str,
+    db_path: str = DEFAULT_DB
+) -> int:
+    """
+    Добавляет нового менеджера в базу данных.
+    
+    Простыми словами:
+    - Сохраняет информацию о менеджере (ФИО, телефон, email)
+    - Email должен быть уникальным (нельзя добавить двух менеджеров с одинаковым email)
+    - Возвращает ID созданного менеджера
+    
+    Аргументы:
+        fio: полное имя менеджера (например: "Иванов Иван Иванович")
+        contact_number: контактный номер телефона (например: "79621860029")
+        email: email адрес (например: "ivanov@example.ru")
+        db_path: путь к базе данных
+    
+    Возвращает:
+        ID созданного менеджера или 0 при ошибке
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO managers (fio, contact_number, email)
+            VALUES (?, ?, ?)
+        ''', (fio, contact_number, email))
+        
+        manager_id = cur.lastrowid
+        conn.commit()
+        print(f"[DB] ✅ Менеджер добавлен: {fio} (ID: {manager_id})")
+        return manager_id
+        
+    except sqlite3.IntegrityError:
+        print(f"[DB] ⚠️ Менеджер с email {email} уже существует")
+        conn.rollback()
+        return 0
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при добавлении менеджера: {e}")
+        conn.rollback()
+        return 0
+    
+    finally:
+        conn.close()
+
+
+def get_all_managers(db_path: str = DEFAULT_DB) -> List[Dict]:
+    """
+    Получает список всех менеджеров.
+    
+    Простыми словами:
+    - Возвращает всех менеджеров из базы данных
+    - Каждый менеджер представлен словарём с полями: id, fio, contact_number, email
+    
+    Возвращает:
+        Список словарей с информацией о менеджерах
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM managers ORDER BY fio')
+        return [dict(row) for row in cur.fetchall()]
+    
+    finally:
+        conn.close()
+
+
+def get_manager_by_id(manager_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
+    """
+    Получает информацию о менеджере по ID.
+    
+    Простыми словами:
+    - Ищет менеджера по его порядковому номеру
+    - Возвращает информацию о нём или None, если не найден
+    
+    Аргументы:
+        manager_id: порядковый номер менеджера
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Словарь с информацией о менеджере или None
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM managers WHERE id = ?', (manager_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+    
+    finally:
+        conn.close()
+
+
+def get_manager_by_email(email: str, db_path: str = DEFAULT_DB) -> Optional[Dict]:
+    """
+    Получает информацию о менеджере по email.
+    
+    Простыми словами:
+    - Ищет менеджера по его email адресу
+    - Возвращает информацию о нём или None, если не найден
+    
+    Аргументы:
+        email: email адрес менеджера
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Словарь с информацией о менеджере или None
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM managers WHERE email = ?', (email,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+    
+    finally:
+        conn.close()
+
+
+def update_manager(
+    manager_id: int,
+    fio: str = None,
+    contact_number: str = None,
+    email: str = None,
+    db_path: str = DEFAULT_DB
+) -> bool:
+    """
+    Обновляет информацию о менеджере.
+    
+    Простыми словами:
+    - Меняет данные менеджера (можно обновить только нужные поля)
+    - Если передать None для какого-то поля, оно не изменится
+    
+    Аргументы:
+        manager_id: порядковый номер менеджера
+        fio: новое ФИО (опционально)
+        contact_number: новый контактный номер (опционально)
+        email: новый email (опционально)
+        db_path: путь к базе данных
+    
+    Возвращает:
+        True если успешно, False если менеджер не найден
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        cur = conn.cursor()
+        
+        # Формируем список обновлений
+        updates = []
+        values = []
+        
+        if fio is not None:
+            updates.append('fio = ?')
+            values.append(fio)
+        if contact_number is not None:
+            updates.append('contact_number = ?')
+            values.append(contact_number)
+        if email is not None:
+            updates.append('email = ?')
+            values.append(email)
+        
+        if not updates:
+            return False
+        
+        values.append(manager_id)
+        query = f'UPDATE managers SET {", ".join(updates)} WHERE id = ?'
+        
+        cur.execute(query, values)
+        conn.commit()
+        
+        if cur.rowcount > 0:
+            print(f"[DB] ✅ Менеджер #{manager_id} обновлён")
+            return True
+        else:
+            print(f"[DB] ⚠️ Менеджер #{manager_id} не найден")
+            return False
+    
+    except sqlite3.IntegrityError:
+        print(f"[DB] ⚠️ Менеджер с таким email уже существует")
+        conn.rollback()
+        return False
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при обновлении менеджера: {e}")
+        conn.rollback()
+        return False
+    
+    finally:
+        conn.close()
+
+
+def delete_manager(manager_id: int, db_path: str = DEFAULT_DB) -> bool:
+    """
+    Удаляет менеджера из базы данных.
+    
+    Простыми словами:
+    - Удаляет менеджера по его порядковому номеру
+    - Это необратимая операция
+    
+    Аргументы:
+        manager_id: порядковый номер менеджера для удаления
+        db_path: путь к базе данных
+    
+    Возвращает:
+        True если менеджер был найден и удалён, False если не найден
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('DELETE FROM managers WHERE id = ?', (manager_id,))
+        conn.commit()
+        
+        if cur.rowcount > 0:
+            print(f"[DB] ✅ Менеджер #{manager_id} удалён")
+            return True
+        else:
+            print(f"[DB] ⚠️ Менеджер #{manager_id} не найден")
+            return False
+    
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при удалении менеджера: {e}")
+        conn.rollback()
+        return False
+    
+    finally:
+        conn.close()
+
+
+def init_default_managers(db_path: str = DEFAULT_DB) -> int:
+    """
+    Добавляет менеджеров по умолчанию в базу данных.
+    
+    Простыми словами:
+    - Добавляет список менеджеров из вашей таблицы
+    - Если менеджер с таким email уже есть, пропускает его
+    - Это удобно для первоначальной загрузки данных
+    
+    Возвращает:
+        Количество успешно добавленных менеджеров
+    """
+    default_managers = [
+        ('Булдаков Александр Алексеевич', '79621860029', 'buldakov@gbkstart.ru'),
+        ('Зубов Алексей Юрьевич', '79621872265', 'zubov@gbkstart.ru'),
+        ('Дургина Ольга Владимировна', '79066395000', 'zakaz@gbkstart.ru'),
+        ('Шишов Александр Васильевич', '79206405585', 'shishov@gbkstart.ru'),
+        ('Кудигин Никита Валерьевич', '79607428972', 'kuligin@gbkstart.ru'),
+    ]
+    
+    init_schema(db_path)
+    added_count = 0
+    
+    for fio, contact_number, email in default_managers:
+        manager_id = add_manager(fio, contact_number, email, db_path)
+        if manager_id > 0:
+            added_count += 1
+    
+    print(f"[DB] ✅ Добавлено менеджеров: {added_count} из {len(default_managers)}")
+    return added_count
+
+
+def get_all_kp_list(db_path: str = DEFAULT_DB) -> Dict[str, List[Dict]]:
+    """
+    Получает все КП, разделенные по статусам.
+    
+    Простыми словами:
+    - Возвращает все КП из базы данных
+    - Группирует их по статусам: "в архиве", "в работе", "выполнено"
+    - Сортирует по номеру КП (от меньшего к большему)
+    
+    Возвращает:
+        Словарь со списками КП по статусам:
+        {
+            'archived': [...],      # КП со статусом "в архиве"
+            'in_production': [...], # КП со статусом "в работе"
+            'completed': [...]      # КП со статусом "выполнено"
+        }
+    """
+    init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        # Получаем все КП с их статусами
+        cur.execute('''
+            SELECT 
+                ko.kp_id,
+                ko.creation_date,
+                ko.customer_name,
+                ko.manager_name,
+                ko.discount_percent,
+                ko.subtotal,
+                ko.vat_amount,
+                ko.total_amount,
+                ko.delivery_conditions,
+                ko.payment_conditions,
+                ko.execution_terms,
+                m.status
+            FROM KP_offers ko
+            LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
+            ORDER BY ko.kp_id ASC
+        ''')
+        
+        all_kp = [dict(row) for row in cur.fetchall()]
+        
+        # Группируем по статусам
+        result = {
+            'archived': [],
+            'in_production': [],
+            'completed': []
+        }
+        
+        for kp in all_kp:
+            status = kp.get('status', 'в работе')  # По умолчанию "в работе"
+            
+            if status == 'в архиве':
+                result['archived'].append(kp)
+            elif status == 'в работе':
+                result['in_production'].append(kp)
+            elif status == 'выполнено':
+                result['completed'].append(kp)
+        
+        return result
         
     finally:
         conn.close()

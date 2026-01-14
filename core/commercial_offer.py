@@ -217,25 +217,26 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
         return round(area_m2 * 4000, 2)
 
 
-def calculate_total_cost(order_data: List[Dict]) -> Dict:
+def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) -> Dict:
     """
     Рассчитывает общую стоимость заказа
     
     Args:
         order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
+        discount_percent: процент скидки (0-100, по умолчанию 0)
     
     Returns:
         Словарь с итоговыми суммами
     """
     total_qty = 0
-    total_cost = 0.0
+    total_cost_with_vat = 0.0  # Сумма с НДС (unit_price уже включает НДС)
     
     for item in order_data:
         qty = item.get('qty', 0)
 
         # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
         if 'unit_price' in item and item['unit_price'] is not None:
-            unit_price = item['unit_price']
+            unit_price = item['unit_price']  # Цена УЖЕ включает НДС
         else:
             # Fallback: старая логика (только базовая цена из БД)
             length_m = item.get('length_m', 0)
@@ -244,31 +245,61 @@ def calculate_total_cost(order_data: List[Dict]) -> Dict:
             unit_price = get_plate_price(length_m, width_m, load_class)
 
         # Применяем скидку к цене (если указана)
-        discounted_price = unit_price * (1 - DISCOUNT_PERCENT / 100)
+        discounted_price = unit_price * (1 - discount_percent / 100)
 
-        # Считаем сумму по позиции
+        # Считаем сумму по позиции (это уже с НДС)
         item_cost = discounted_price * qty
         
         total_qty += qty
-        total_cost += item_cost
+        total_cost_with_vat += item_cost
     
-    # НДС 20%
-    vat_amount = round(total_cost * 0.20, 2)
-    total_with_vat = round(total_cost + vat_amount, 2)
+    # 🔥 ИСПРАВЛЕНИЕ: unit_price уже включает НДС, поэтому нужно вычесть НДС
+    # Сумма без НДС = сумма с НДС / 1.22
+    subtotal = round(total_cost_with_vat / 1.22, 2)
+    vat_amount = round(total_cost_with_vat - subtotal, 2)
+    total_with_vat = round(total_cost_with_vat, 2)
     
     return {
         'total_qty': total_qty,
-        'subtotal': round(total_cost, 2),
+        'subtotal': subtotal,
         'vat_amount': vat_amount,
         'total_with_vat': total_with_vat
     }
+
+
+def format_phone(phone: str) -> str:
+    """
+    Форматирует телефон в читаемый вид: +7 (XXX) XXX-XX-XX
+    
+    Args:
+        phone: телефон в виде строки цифр (например: "79621860029")
+        
+    Returns:
+        Отформатированный телефон (например: "+7 (962) 186-00-29")
+    """
+    if not phone:
+        return ""
+    
+    # Оставляем только цифры
+    phone = ''.join(filter(str.isdigit, phone))
+    
+    # Форматируем, если начинается с 7 и имеет 11 цифр
+    if phone.startswith('7') and len(phone) == 11:
+        return f"+7 ({phone[1:4]}) {phone[4:7]}-{phone[7:9]}-{phone[9:11]}"
+    
+    return phone
 
 
 def generate_commercial_offer_pdf(
     order_data: List[Dict],
     offer_number: str,
     offer_date: str,
-    customer_name: Optional[str] = None
+    customer_name: Optional[str] = None,
+    manager_name: Optional[str] = None,
+    manager_phone: Optional[str] = None,
+    manager_email: Optional[str] = None,
+    discount_percent: float = 0,
+    kp_db_id: Optional[int] = None
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -279,6 +310,11 @@ def generate_commercial_offer_pdf(
         offer_number: номер коммерческого предложения
         offer_date: дата формирования
         customer_name: имя заказчика
+        manager_name: имя менеджера
+        manager_phone: телефон менеджера
+        manager_email: email менеджера
+        discount_percent: процент скидки (0-100, по умолчанию 0)
+        kp_db_id: номер КП из базы данных
     
     Note:
         Детальная разбивка компонентов НЕ включается в PDF.
@@ -296,6 +332,15 @@ def generate_commercial_offer_pdf(
     
     content_width = doc.width
     styles = getSampleStyleSheet()
+    
+    style_company_name = ParagraphStyle(
+        'CompanyName',
+        parent=styles['Normal'],
+        fontName=FONT_BOLD,
+        fontSize=12,
+        leading=15,
+        spaceAfter=2 * mm
+    )
     
     style_header_info = ParagraphStyle(
         'HeaderInfo',
@@ -352,6 +397,15 @@ def generate_commercial_offer_pdf(
         spaceAfter=6 * mm
     )
     
+    style_summary_compact = ParagraphStyle(
+        'SummaryCompact',
+        parent=styles['Normal'],
+        fontName=FONT_BOLD,
+        fontSize=11,
+        leading=14,
+        spaceAfter=1 * mm  # Минимальный отступ между строками
+    )
+    
     style_conditions = ParagraphStyle(
         'Conditions',
         parent=styles['Normal'],
@@ -389,6 +443,7 @@ def generate_commercial_offer_pdf(
     
     story = []
     
+    # Логотип
     if os.path.exists(LOGO_PATH):
         try:
             logo_width = content_width
@@ -398,21 +453,48 @@ def generate_commercial_offer_pdf(
         except Exception as exc:
             print(f"Ошибка загрузки логотипа: {exc}")
     
+    # 1. Название компании
+    story.append(Paragraph(COMPANY_NAME, style_company_name))
+    
+    # 2. Адрес (отдельной строкой)
+    story.append(Paragraph(COMPANY_ADDRESS, style_header_info))
+    
+    # 3. Контакты менеджера (отдельной строкой)
+    if manager_phone and manager_email:
+        contacts_text = f"Тел.: {format_phone(manager_phone)}, email: {manager_email}"
+    elif manager_phone:
+        contacts_text = f"Тел.: {format_phone(manager_phone)}"
+    elif manager_email:
+        contacts_text = f"Email: {manager_email}"
+    else:
+        # Fallback: контакты компании, если нет контактов менеджера
+        contacts_text = f"Тел.: {COMPANY_PHONE}, Email: {COMPANY_EMAIL}"
+    
+    story.append(Paragraph(contacts_text, style_header_info))
+    story.append(Spacer(1, 3 * mm))
+    
+    # 4. Номер КП
+    if kp_db_id:
+        doc_number_text = f"КП № {kp_db_id} от {offer_date}"
+    else:
+        doc_number_text = f"№ {offer_number} от {offer_date}"
+    
+    story.append(Paragraph(doc_number_text, style_doc_number))
+    
+    # 5. Срок действия коммерческого предложения (без отступа перед ним)
     story.append(Paragraph(
-        f"{COMPANY_ADDRESS}<br/>Тел.: {COMPANY_PHONE}",
+        "Срок действия коммерческого предложения 3 дня",
         style_header_info
     ))
+    story.append(Spacer(1, 3 * mm))
     
-    story.append(Paragraph(
-        f"№ {offer_number} от {offer_date}",
-        style_doc_number
-    ))
-    
+    # 6. Заголовок "Коммерческое предложение для"
     story.append(Paragraph(
         "Коммерческое предложение для",
         style_title
     ))
     
+    # 7. Имя клиента
     customer_display = escape(customer_name.strip()) if customer_name else "Заказчик не указан"
     story.append(Paragraph(customer_display, style_customer))
     
@@ -420,7 +502,7 @@ def generate_commercial_offer_pdf(
     
     table_data = [['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']]
     
-    totals = calculate_total_cost(order_data)
+    totals = calculate_total_cost(order_data, discount_percent)
     total_weight = 0.0
     
     for idx, item in enumerate(order_data, start=1):
@@ -450,7 +532,7 @@ def generate_commercial_offer_pdf(
             unit_price = get_plate_price(length_m, width_m, load_class)
         
         # Применяем скидку к цене (если указана)
-        discounted_price = unit_price * (1 - DISCOUNT_PERCENT / 100)
+        discounted_price = unit_price * (1 - discount_percent / 100)
         item_sum = discounted_price * qty
         
         # Вес: если уже передан в item, используем его, иначе рассчитываем
@@ -507,8 +589,8 @@ def generate_commercial_offer_pdf(
         ('FONTNAME', (0, 0), (-1, 0), FONT_BOLD),
         ('FONTSIZE', (0, 0), (-1, 0), 11),
         ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-        ('TOPPADDING', (0, 0), (-1, 0), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 3),  # Уменьшено с 6 до 3
+        ('TOPPADDING', (0, 0), (-1, 0), 3),  # Уменьшено с 6 до 3
         
         ('FONTNAME', (0, 1), (-1, -1), FONT_NORMAL),
         ('FONTSIZE', (0, 1), (-1, -1), 10),
@@ -518,8 +600,8 @@ def generate_commercial_offer_pdf(
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 5),
-        ('TOPPADDING', (0, 1), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 2),  # Уменьшено с 5 до 2
+        ('TOPPADDING', (0, 1), (-1, -1), 2),  # Уменьшено с 5 до 2
         
         ('BOX', (0, 0), (-1, -1), 1.2, colors.black),
         ('INNERGRID', (0, 0), (-1, -1), 0.6, colors.black),
@@ -534,22 +616,48 @@ def generate_commercial_offer_pdf(
     total_items = len(order_data)
     weight_summary = f"{total_weight:,.3f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     subtotal_str = f"{totals['subtotal']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+    total_with_vat_str = f"{totals['total_with_vat']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     vat_str = f"{totals['vat_amount']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     
+    # Если есть скидка, добавляем информацию о ней
+    if discount_percent > 0:
+        discount_style = ParagraphStyle(
+            'DiscountInfo',
+            parent=styles['Normal'],
+            fontName=FONT_BOLD,
+            fontSize=11,
+            leading=14,
+            textColor=colors.HexColor('#006100'),  # Зелёный цвет
+            spaceAfter=2 * mm
+        )
+        story.append(Paragraph(f"Скидка {discount_percent}%", discount_style))
+    
+    # Основная итоговая строка
     summary_text = (
         f"Всего наименований {total_items}, общим весом {weight_summary} кг., "
-        f"на сумму {subtotal_str} руб., в том числе НДС {vat_str} руб."
+        f"на сумму {total_with_vat_str} руб."
     )
-    story.append(Paragraph(summary_text, style_summary))
+    story.append(Paragraph(summary_text, style_summary_compact))
+    
+    # Сумма без НДС
+    subtotal_text = f"Сумма без НДС: {subtotal_str} руб."
+    story.append(Paragraph(subtotal_text, style_summary_compact))
+    
+    # НДС
+    vat_text = f"НДС (22%): {vat_str} руб."
+    story.append(Paragraph(vat_text, style_summary_compact))
+    
+    # Добавляем отступ после всего блока итогов
+    story.append(Spacer(1, 4 * mm))
     
     story.append(Paragraph("1.Условия поставки:", style_conditions))
     story.append(Paragraph("2.Условия оплаты: Предварительная оплата в размере 100%", style_conditions))
     
     story.append(Spacer(1, 6 * mm))
     
+    # Подпись менеджера (только имя, контакты теперь в шапке)
     story.append(Paragraph("С уважением,", style_signature_label))
-    story.append(Paragraph("Шишов Александр Васильевич", style_signature))
-    story.append(Paragraph("8 920 640 55 85", style_signature))
+    story.append(Paragraph(manager_name or "Менеджер", style_signature))
     
     story.append(Paragraph(
         'Доборные плиты ПБ отгружаются только при наличии в наименовании "+доб", '
