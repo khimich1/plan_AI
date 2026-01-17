@@ -1,0 +1,4689 @@
+{
+  "saved_at": "2026-01-16 14:35:50",
+  "gantt_file_path": "C:\\Users\\Роман\\Desktop\\Шишов\\Визуализация_Раскладки\\Диаграмма_Ганта_20260116_143550.xlsx",
+  "total_days": 7,
+  "tracks_count": 5,
+  "target_date": "2026-02-07T00:00:00",
+  "all_tracks_list": [
+    {
+      "items": [
+        {
+          "length": 3.13,
+          "mode": "solid",
+          "label": "Плиты ПБ 31,3-12-8п",
+          "reinforcement": 6.0,
+          "is_separator": false
+        },
+        {
+          "length": 2.2,
+          "mode": "split",
+          "main_w": 0.53,
+          "rest_w": 0.67,
+          "label_main": "Плиты ПБ 22-5,3-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.53,
+              "label": "О Плиты ПБ 22-5,3-8п",
+              "has_transverse": true,
+              "target_length": 2.2
+            }
+          ],
+          "reinforcement": 6.0
+        },
+        {
+          "length": 3.13,
+          "mode": "solid",
+          "label": "Плиты ПБ 31,3-12-8п",
+          "reinforcement": 6.0,
+          "is_separator": true
+        },
+        {
+          "length": 2.06,
+          "mode": "split",
+          "main_w": 0.72,
+          "rest_w": 0.48,
+          "label_main": "Плиты ПБ 20,6-7,2-8п",
+          "label_rest": "+0,48",
+          "secondary_cuts": null,
+          "reinforcement": 6.0
+        },
+        {
+          "length": 2.9,
+          "mode": "split",
+          "main_w": 0.72,
+          "rest_w": 0.48,
+          "label_main": "Плиты ПБ 29-7,2-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.459,
+              "label": "О Плиты ПБ 29-4,59-8п",
+              "has_transverse": true,
+              "target_length": 2.9
+            }
+          ],
+          "reinforcement": 6.0
+        },
+        {
+          "length": 2.9,
+          "mode": "solid",
+          "label": "Плиты ПБ 29-12-8п",
+          "reinforcement": 6.0,
+          "is_separator": true
+        },
+        {
+          "length": 2.9,
+          "mode": "split",
+          "main_w": 0.919,
+          "rest_w": 0.281,
+          "label_main": "Плиты ПБ 29-9,19-8п",
+          "label_rest": "+0,28",
+          "secondary_cuts": null,
+          "reinforcement": 6.0
+        },
+        {
+          "length": 2.9,
+          "mode": "split",
+          "main_w": 0.919,
+          "rest_w": 0.281,
+          "label_main": "Плиты ПБ 29-9,19-8п",
+          "label_rest": "+0,28",
+          "secondary_cuts": null,
+          "reinforcement": 6.0
+        },
+        {
+          "length": 2.9,
+          "mode": "split",
+          "main_w": 0.919,
+          "rest_w": 0.281,
+          "label_main": "Плиты ПБ 29-9,19-8п",
+          "label_rest": "+0,28",
+          "secondary_cuts": null,
+          "reinforcement": 6.0
+        },
+        {
+          "length": 2.9,
+          "mode": "split",
+          "main_w": 0.919,
+          "rest_w": 0.281,
+          "label_main": "Плиты ПБ 29-9,19-8п",
+          "label_rest": "+0,28",
+          "secondary_cuts": null,
+          "reinforcement": 6.0
+        },
+        {
+          "length": 2.9,
+          "mode": "split",
+          "main_w": 0.919,
+          "rest_w": 0.281,
+          "label_main": "Плиты ПБ 29-9,19-8п",
+          "label_rest": "+0,28",
+          "secondary_cuts": null,
+          "reinforcement": 6.0
+        },
+        {
+          "length": 2.9,
+          "mode": "solid",
+          "label": "Плиты ПБ 29-12-8п",
+          "reinforcement": 6.0,
+          "is_separator": true
+        },
+        {
+          "length": 3.38,
+          "mode": "split",
+          "main_w": 0.7,
+          "rest_w": 0.5,
+          "label_main": "Плиты ПБ 33,8-7-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.5,
+              "label": "О Плиты ПБ 32-5-8п",
+              "has_transverse": true,
+              "target_length": 3.2
+            }
+          ],
+          "reinforcement": 7.0
+        },
+        {
+          "length": 3.38,
+          "mode": "split",
+          "main_w": 0.7,
+          "rest_w": 0.5,
+          "label_main": "Плиты ПБ 33,8-7-8п",
+          "label_rest": "+0,50",
+          "secondary_cuts": null,
+          "reinforcement": 7.0
+        },
+        {
+          "length": 3.38,
+          "mode": "split",
+          "main_w": 0.7,
+          "rest_w": 0.5,
+          "label_main": "Плиты ПБ 33,8-7-8п",
+          "label_rest": "+0,50",
+          "secondary_cuts": null,
+          "reinforcement": 7.0
+        },
+        {
+          "length": 2.9,
+          "mode": "solid",
+          "label": "Плиты ПБ 29-12-8п",
+          "reinforcement": 6.0,
+          "is_separator": true
+        },
+        {
+          "length": 3.5,
+          "mode": "split",
+          "main_w": 1.02,
+          "rest_w": 0.18,
+          "label_main": "Плиты ПБ 35-10,2-8п",
+          "label_rest": "+0,18",
+          "secondary_cuts": null,
+          "reinforcement": 7.0
+        },
+        {
+          "length": 2.4,
+          "mode": "solid",
+          "label": "Плиты ПБ 24-12-8п",
+          "reinforcement": 6.0,
+          "is_separator": true
+        },
+        {
+          "length": 3.65,
+          "mode": "split",
+          "main_w": 0.665,
+          "rest_w": 0.535,
+          "label_main": "Плиты ПБ 36,5-6,65-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.53,
+              "label": "О Плиты ПБ 22-5,3-8п",
+              "has_transverse": true,
+              "target_length": 2.2
+            }
+          ],
+          "reinforcement": 8.0
+        },
+        {
+          "length": 3.65,
+          "mode": "split",
+          "main_w": 0.665,
+          "rest_w": 0.535,
+          "label_main": "Плиты ПБ 36,5-6,65-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.459,
+              "label": "О Плиты ПБ 35-4,59-8п",
+              "has_transverse": true,
+              "target_length": 3.5
+            }
+          ],
+          "reinforcement": 8.0
+        },
+        {
+          "length": 2.4,
+          "mode": "solid",
+          "label": "Плиты ПБ 24-12-8п",
+          "reinforcement": 6.0,
+          "is_separator": true
+        },
+        {
+          "length": 3.8899999999999997,
+          "mode": "split",
+          "main_w": 0.72,
+          "rest_w": 0.48,
+          "label_main": "Плиты ПБ 38,9-7,2-8п",
+          "label_rest": "+0,48",
+          "secondary_cuts": null,
+          "reinforcement": 8.0
+        },
+        {
+          "length": 3.5,
+          "mode": "solid",
+          "label": "Плиты ПБ 35-12-8п",
+          "reinforcement": 7.0,
+          "is_separator": true
+        },
+        {
+          "length": 4.79,
+          "mode": "split",
+          "main_w": 0.5,
+          "rest_w": 0.7,
+          "label_main": "Плиты ПБ 47,9-5-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.7,
+              "label": "О Плиты ПБ 47,9-7-8п",
+              "has_transverse": true,
+              "target_length": 4.79
+            }
+          ],
+          "reinforcement": 11.0
+        },
+        {
+          "length": 4.79,
+          "mode": "split",
+          "main_w": 0.5,
+          "rest_w": 0.7,
+          "label_main": "Плиты ПБ 47,9-5-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.7,
+              "label": "О Плиты ПБ 47,9-7-8п",
+              "has_transverse": true,
+              "target_length": 4.79
+            }
+          ],
+          "reinforcement": 11.0
+        },
+        {
+          "length": 4.79,
+          "mode": "split",
+          "main_w": 0.5,
+          "rest_w": 0.7,
+          "label_main": "Плиты ПБ 47,9-5-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.7,
+              "label": "О Плиты ПБ 47,9-7-8п",
+              "has_transverse": true,
+              "target_length": 4.79
+            }
+          ],
+          "reinforcement": 11.0
+        },
+        {
+          "length": 4.79,
+          "mode": "split",
+          "main_w": 0.5,
+          "rest_w": 0.7,
+          "label_main": "Плиты ПБ 47,9-5-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.7,
+              "label": "О Плиты ПБ 47,9-7-8п",
+              "has_transverse": true,
+              "target_length": 4.79
+            }
+          ],
+          "reinforcement": 11.0
+        },
+        {
+          "length": 3.5,
+          "mode": "solid",
+          "label": "Плиты ПБ 35-12-8п",
+          "reinforcement": 7.0,
+          "is_separator": true
+        },
+        {
+          "length": 4.79,
+          "mode": "split",
+          "main_w": 0.7,
+          "rest_w": 0.5,
+          "label_main": "Плиты ПБ 47,9-7-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.5,
+              "label": "О Плиты ПБ 45-5-8п",
+              "has_transverse": true,
+              "target_length": 4.5
+            }
+          ],
+          "reinforcement": 11.0
+        },
+        {
+          "length": 3.3899999999999997,
+          "mode": "solid",
+          "label": "Плиты ПБ 33,9-12-8п",
+          "reinforcement": 7.0,
+          "is_separator": true
+        }
+      ],
+      "length": 100.59000000000002,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 11.0
+    },
+    {
+      "items": [
+        {
+          "length": 5.14,
+          "mode": "split",
+          "main_w": 0.459,
+          "rest_w": 0.741,
+          "label_main": "Плиты ПБ 51,4-4,59-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.7,
+              "label": "О Плиты ПБ 47,9-7-8п",
+              "has_transverse": true,
+              "target_length": 4.79
+            }
+          ],
+          "reinforcement": 13.0
+        },
+        {
+          "length": 3.3899999999999997,
+          "mode": "solid",
+          "label": "Плиты ПБ 33,9-12-8п",
+          "reinforcement": 7.0,
+          "is_separator": true
+        },
+        {
+          "length": 6.12,
+          "mode": "split",
+          "main_w": 0.5,
+          "rest_w": 0.7,
+          "label_main": "Плиты ПБ 61,2-5-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.7,
+              "label": "О Плиты ПБ 47,9-7-8п",
+              "has_transverse": true,
+              "target_length": 4.79
+            }
+          ],
+          "reinforcement": 17.0
+        },
+        {
+          "length": 6.12,
+          "mode": "split",
+          "main_w": 0.5,
+          "rest_w": 0.7,
+          "label_main": "Плиты ПБ 61,2-5-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.7,
+              "label": "О Плиты ПБ 47,9-7-8п",
+              "has_transverse": true,
+              "target_length": 4.79
+            }
+          ],
+          "reinforcement": 17.0
+        },
+        {
+          "length": 6.12,
+          "mode": "split",
+          "main_w": 0.5,
+          "rest_w": 0.7,
+          "label_main": "Плиты ПБ 61,2-5-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.7,
+              "label": "О Плиты ПБ 47,9-7-8п",
+              "has_transverse": true,
+              "target_length": 4.79
+            }
+          ],
+          "reinforcement": 17.0
+        },
+        {
+          "length": 6.12,
+          "mode": "split",
+          "main_w": 0.5,
+          "rest_w": 0.7,
+          "label_main": "Плиты ПБ 61,2-5-8п",
+          "label_rest": null,
+          "secondary_cuts": [
+            {
+              "width": 0.7,
+              "label": "О Плиты ПБ 47,9-7-8п",
+              "has_transverse": true,
+              "target_length": 4.79
+            }
+          ],
+          "reinforcement": 17.0
+        },
+        {
+          "length": 3.3899999999999997,
+          "mode": "solid",
+          "label": "Плиты ПБ 33,9-12-8п",
+          "reinforcement": 7.0,
+          "is_separator": true
+        },
+        {
+          "length": 7.81,
+          "mode": "split",
+          "main_w": 0.86,
+          "rest_w": 0.34,
+          "label_main": "Плиты ПБ 78,1-8,6-8п",
+          "label_rest": "+0,34",
+          "secondary_cuts": null,
+          "reinforcement": 27.0
+        },
+        {
+          "length": 7.81,
+          "mode": "split",
+          "main_w": 0.86,
+          "rest_w": 0.34,
+          "label_main": "Плиты ПБ 78,1-8,6-8п",
+          "label_rest": "+0,34",
+          "secondary_cuts": null,
+          "reinforcement": 27.0
+        },
+        {
+          "length": 7.81,
+          "mode": "split",
+          "main_w": 0.86,
+          "rest_w": 0.34,
+          "label_main": "Плиты ПБ 78,1-8,6-8п",
+          "label_rest": "+0,34",
+          "secondary_cuts": null,
+          "reinforcement": 27.0
+        },
+        {
+          "length": 7.81,
+          "mode": "split",
+          "main_w": 0.86,
+          "rest_w": 0.34,
+          "label_main": "Плиты ПБ 78,1-8,6-8п",
+          "label_rest": "+0,34",
+          "secondary_cuts": null,
+          "reinforcement": 27.0
+        },
+        {
+          "length": 7.81,
+          "mode": "split",
+          "main_w": 0.86,
+          "rest_w": 0.34,
+          "label_main": "Плиты ПБ 78,1-8,6-8п",
+          "label_rest": "+0,34",
+          "secondary_cuts": null,
+          "reinforcement": 27.0
+        },
+        {
+          "length": 3.2,
+          "mode": "solid",
+          "label": "Плиты ПБ 32-12-8п",
+          "reinforcement": 7.0,
+          "is_separator": false
+        },
+        {
+          "length": 3.2,
+          "mode": "solid",
+          "label": "Плиты ПБ 32-12-8п",
+          "reinforcement": 7.0,
+          "is_separator": false
+        },
+        {
+          "length": 3.8899999999999997,
+          "mode": "solid",
+          "label": "Плиты ПБ 38,9-12-8п",
+          "reinforcement": 8.0,
+          "is_separator": false
+        },
+        {
+          "length": 3.8899999999999997,
+          "mode": "solid",
+          "label": "Плиты ПБ 38,9-12-8п",
+          "reinforcement": 8.0,
+          "is_separator": false
+        },
+        {
+          "length": 3.8899999999999997,
+          "mode": "solid",
+          "label": "Плиты ПБ 38,9-12-8п",
+          "reinforcement": 8.0,
+          "is_separator": false
+        },
+        {
+          "length": 3.8899999999999997,
+          "mode": "solid",
+          "label": "Плиты ПБ 38,9-12-8п",
+          "reinforcement": 8.0,
+          "is_separator": false
+        }
+      ],
+      "length": 97.41000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 27.0
+    },
+    {
+      "items": [
+        {
+          "length": 3.8899999999999997,
+          "mode": "solid",
+          "label": "Плиты ПБ 38,9-12-8п",
+          "reinforcement": 8.0,
+          "is_separator": false
+        },
+        {
+          "length": 3.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 37-12-10п",
+          "reinforcement": 9.0,
+          "is_separator": false
+        },
+        {
+          "length": 3.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 37-12-10п",
+          "reinforcement": 9.0,
+          "is_separator": false
+        },
+        {
+          "length": 3.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 37-12-10п",
+          "reinforcement": 9.0,
+          "is_separator": false
+        },
+        {
+          "length": 3.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 37-12-10п",
+          "reinforcement": 9.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.5,
+          "mode": "solid",
+          "label": "Плиты ПБ 45-12-8п",
+          "reinforcement": 10.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.5,
+          "mode": "solid",
+          "label": "Плиты ПБ 45-12-8п",
+          "reinforcement": 10.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.5,
+          "mode": "solid",
+          "label": "Плиты ПБ 45-12-8п",
+          "reinforcement": 10.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.5,
+          "mode": "solid",
+          "label": "Плиты ПБ 45-12-8п",
+          "reinforcement": 10.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.5,
+          "mode": "solid",
+          "label": "Плиты ПБ 45-12-8п",
+          "reinforcement": 10.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.5,
+          "mode": "solid",
+          "label": "Плиты ПБ 45-12-8п",
+          "reinforcement": 10.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        }
+      ],
+      "length": 98.38000000000004,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 11.0
+    },
+    {
+      "items": [
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 4.79,
+          "mode": "solid",
+          "label": "Плиты ПБ 47,9-12-8п",
+          "reinforcement": 11.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.14,
+          "mode": "solid",
+          "label": "Плиты ПБ 51,4-12-8п",
+          "reinforcement": 13.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.14,
+          "mode": "solid",
+          "label": "Плиты ПБ 51,4-12-8п",
+          "reinforcement": 13.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.14,
+          "mode": "solid",
+          "label": "Плиты ПБ 51,4-12-8п",
+          "reinforcement": 13.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.14,
+          "mode": "solid",
+          "label": "Плиты ПБ 51,4-12-8п",
+          "reinforcement": 13.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.14,
+          "mode": "solid",
+          "label": "Плиты ПБ 51,4-12-8п",
+          "reinforcement": 13.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.14,
+          "mode": "solid",
+          "label": "Плиты ПБ 51,4-12-8п",
+          "reinforcement": 13.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.14,
+          "mode": "solid",
+          "label": "Плиты ПБ 51,4-12-8п",
+          "reinforcement": 13.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.6,
+          "mode": "solid",
+          "label": "Плиты ПБ 56-12-8п",
+          "reinforcement": 15.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.6,
+          "mode": "solid",
+          "label": "Плиты ПБ 56-12-8п",
+          "reinforcement": 15.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.6,
+          "mode": "solid",
+          "label": "Плиты ПБ 56-12-8п",
+          "reinforcement": 15.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.6,
+          "mode": "solid",
+          "label": "Плиты ПБ 56-12-8п",
+          "reinforcement": 15.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.84,
+          "mode": "solid",
+          "label": "Плиты ПБ 58,4-12-8п",
+          "reinforcement": 16.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.84,
+          "mode": "solid",
+          "label": "Плиты ПБ 58,4-12-8п",
+          "reinforcement": 16.0,
+          "is_separator": false
+        },
+        {
+          "length": 5.84,
+          "mode": "solid",
+          "label": "Плиты ПБ 58,4-12-8п",
+          "reinforcement": 16.0,
+          "is_separator": false
+        }
+      ],
+      "length": 99.85,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 16.0
+    },
+    {
+      "items": [
+        {
+          "length": 5.84,
+          "mode": "solid",
+          "label": "Плиты ПБ 58,4-12-8п",
+          "reinforcement": 16.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.1899999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,9-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        }
+      ],
+      "length": 98.68999999999997,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 17.0
+    },
+    {
+      "items": [
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.12,
+          "mode": "solid",
+          "label": "Плиты ПБ 61,2-12-8п",
+          "reinforcement": 17.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.279999999999999,
+          "mode": "solid",
+          "label": "Плиты ПБ 62,8-12-8п",
+          "reinforcement": 18.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.279999999999999,
+          "mode": "solid",
+          "label": "Плиты ПБ 62,8-12-8п",
+          "reinforcement": 18.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.279999999999999,
+          "mode": "solid",
+          "label": "Плиты ПБ 62,8-12-8п",
+          "reinforcement": 18.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.279999999999999,
+          "mode": "solid",
+          "label": "Плиты ПБ 62,8-12-8п",
+          "reinforcement": 18.0,
+          "is_separator": false
+        }
+      ],
+      "length": 98.56,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 18.0
+    },
+    {
+      "items": [
+        {
+          "length": 6.279999999999999,
+          "mode": "solid",
+          "label": "Плиты ПБ 62,8-12-8п",
+          "reinforcement": 18.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.279999999999999,
+          "mode": "solid",
+          "label": "Плиты ПБ 62,8-12-8п",
+          "reinforcement": 18.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.279999999999999,
+          "mode": "solid",
+          "label": "Плиты ПБ 62,8-12-8п",
+          "reinforcement": 18.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.279999999999999,
+          "mode": "solid",
+          "label": "Плиты ПБ 62,8-12-8п",
+          "reinforcement": 18.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        }
+      ],
+      "length": 96.4,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 19.0
+    },
+    {
+      "items": [
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        }
+      ],
+      "length": 97.2,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 19.0
+    },
+    {
+      "items": [
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 6.4799999999999995,
+          "mode": "solid",
+          "label": "Плиты ПБ 64,8-12-8п",
+          "reinforcement": 19.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        }
+      ],
+      "length": 97.27999999999997,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 24.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        }
+      ],
+      "length": 94.89999999999998,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 24.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        }
+      ],
+      "length": 94.89999999999998,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 24.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        }
+      ],
+      "length": 94.89999999999998,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 24.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        }
+      ],
+      "length": 94.89999999999998,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 24.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        }
+      ],
+      "length": 94.89999999999998,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 24.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.3,
+          "mode": "solid",
+          "label": "Плиты ПБ 73-12-8п",
+          "reinforcement": 24.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.4,
+          "mode": "solid",
+          "label": "Плиты ПБ 84-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 98.04,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        }
+      ],
+      "length": 93.72000000000001,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 33.0
+    },
+    {
+      "items": [
+        {
+          "length": 7.81,
+          "mode": "solid",
+          "label": "Плиты ПБ 78,1-12-8п",
+          "reinforcement": 33.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.6,
+          "mode": "solid",
+          "label": "Плиты ПБ 86-12-8п",
+          "reinforcement": 35.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.6,
+          "mode": "solid",
+          "label": "Плиты ПБ 86-12-8п",
+          "reinforcement": 35.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.6,
+          "mode": "solid",
+          "label": "Плиты ПБ 86-12-8п",
+          "reinforcement": 35.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        }
+      ],
+      "length": 94.51000000000002,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 36.0
+    },
+    {
+      "items": [
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        }
+      ],
+      "length": 95.70000000000002,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 36.0
+    },
+    {
+      "items": [
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        }
+      ],
+      "length": 95.70000000000002,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 36.0
+    },
+    {
+      "items": [
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        }
+      ],
+      "length": 95.70000000000002,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 36.0
+    },
+    {
+      "items": [
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        }
+      ],
+      "length": 95.70000000000002,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 36.0
+    },
+    {
+      "items": [
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        },
+        {
+          "length": 8.7,
+          "mode": "solid",
+          "label": "Плиты ПБ 87-12-8п",
+          "reinforcement": 36.0,
+          "is_separator": false
+        }
+      ],
+      "length": 34.8,
+      "load_code": "all",
+      "label": "Нагрузка 8п",
+      "max_reinforcement": 36.0
+    }
+  ],
+  "plate_lookup_exact": {
+    "(3.18, 1080)": [
+      {
+        "kp_date": "01.02.2026",
+        "customer": "ooo",
+        "plate_name": "Плиты ПБ 31,8-10,8-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 4
+      }
+    ],
+    "(5.86, 1080)": [
+      {
+        "kp_date": "01.02.2026",
+        "customer": "ooo",
+        "plate_name": "Плиты ПБ 58,6-10,8-8п",
+        "reinforcement": 14.0,
+        "load_code": 8,
+        "qty_remaining": 2,
+        "kp_id": 4
+      }
+    ],
+    "(7.81, 1200)": [
+      {
+        "kp_date": "01.02.2026",
+        "customer": "ooo",
+        "plate_name": "Плиты ПБ 78,1-12-8п",
+        "reinforcement": 25.0,
+        "load_code": 8,
+        "qty_remaining": 5,
+        "kp_id": 4
+      },
+      {
+        "kp_date": "01.02.2026",
+        "customer": "ooo",
+        "plate_name": "Плиты ПБ 78,1-12-10п",
+        "reinforcement": 31.0,
+        "load_code": 10,
+        "qty_remaining": 6,
+        "kp_id": 4
+      },
+      {
+        "kp_date": "04.02.2026",
+        "customer": "ооо киса и киса",
+        "plate_name": "Плиты ПБ 78,1-12-8п",
+        "reinforcement": 25.0,
+        "load_code": 8,
+        "qty_remaining": 52,
+        "kp_id": 5
+      },
+      {
+        "kp_date": "04.02.2026",
+        "customer": "ооо киса и киса",
+        "plate_name": "Плиты ПБ 78,1-12-10п",
+        "reinforcement": 31.0,
+        "load_code": 10,
+        "qty_remaining": 5,
+        "kp_id": 5
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 78,1-12-8п",
+        "reinforcement": 25.0,
+        "load_code": 8,
+        "qty_remaining": 52,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 78,1-12-10п",
+        "reinforcement": 31.0,
+        "load_code": 10,
+        "qty_remaining": 5,
+        "kp_id": 6
+      }
+    ],
+    "(7.3, 1200)": [
+      {
+        "kp_date": "02.02.2026",
+        "customer": "Гусежоп",
+        "plate_name": "Плиты ПБ 73-12-8п",
+        "reinforcement": 22.0,
+        "load_code": 8,
+        "qty_remaining": 81,
+        "kp_id": 1
+      }
+    ],
+    "(8.4, 1200)": [
+      {
+        "kp_date": "02.02.2026",
+        "customer": "Гусежоп",
+        "plate_name": "Плиты ПБ 84-12-8п",
+        "reinforcement": 31.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1
+      }
+    ],
+    "(8.6, 1200)": [
+      {
+        "kp_date": "02.02.2026",
+        "customer": "Гусежоп",
+        "plate_name": "Плиты ПБ 86-12-8п",
+        "reinforcement": 33.0,
+        "load_code": 8,
+        "qty_remaining": 3,
+        "kp_id": 1
+      }
+    ],
+    "(8.7, 1200)": [
+      {
+        "kp_date": "02.02.2026",
+        "customer": "Гусежоп",
+        "plate_name": "Плиты ПБ 87-12-8п",
+        "reinforcement": 34.0,
+        "load_code": 8,
+        "qty_remaining": 55,
+        "kp_id": 1
+      }
+    ],
+    "(4.18, 1080)": [
+      {
+        "kp_date": "04.02.2026",
+        "customer": "ооо киса и киса",
+        "plate_name": "Плиты ПБ 41,8-10,8-8п",
+        "reinforcement": 7.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 5
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 41,8-10,8-8п",
+        "reinforcement": 7.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      }
+    ],
+    "(4.79, 1080)": [
+      {
+        "kp_date": "04.02.2026",
+        "customer": "ооо киса и киса",
+        "plate_name": "Плиты ПБ 47,9-10,8-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 3,
+        "kp_id": 5
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-10,8-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 3,
+        "kp_id": 6
+      }
+    ],
+    "(2.9, 459)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-4,6-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-4,6-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "(2.2, 530)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 22-5,3-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 3,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 22-5,3-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 22-5,3-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "(2.06, 720)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 20,6-7,2-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      }
+    ],
+    "(2.9, 720)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-7,2-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      }
+    ],
+    "(2.9, 919)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-9,2-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 5,
+        "kp_id": 6
+      }
+    ],
+    "(2.4, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 24-12-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 2,
+        "kp_id": 6
+      }
+    ],
+    "(2.9, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-12-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 3,
+        "kp_id": 6
+      }
+    ],
+    "(3.13, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 31,3-12-8п",
+        "reinforcement": 4.0,
+        "load_code": 8,
+        "qty_remaining": 2,
+        "kp_id": 6
+      }
+    ],
+    "(3.5, 459)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 35-4,6-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 35-4,6-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "(3.2, 500)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 32-5-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 32-5-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "(3.38, 700)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 33,8-7-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 3,
+        "kp_id": 6
+      }
+    ],
+    "(3.5, 1020)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 35-10,2-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      }
+    ],
+    "(3.2, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 32-12-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 2,
+        "kp_id": 6
+      }
+    ],
+    "(3.39, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 33,9-12-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 3,
+        "kp_id": 6
+      }
+    ],
+    "(3.5, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 35-12-8п",
+        "reinforcement": 5.0,
+        "load_code": 8,
+        "qty_remaining": 2,
+        "kp_id": 6
+      }
+    ],
+    "(3.65, 665)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 36,5-6,65-8п",
+        "reinforcement": 6.0,
+        "load_code": 8,
+        "qty_remaining": 2,
+        "kp_id": 6
+      }
+    ],
+    "(3.89, 720)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 38,9-7,2-8п",
+        "reinforcement": 6.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      }
+    ],
+    "(3.89, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 38,9-12-8п",
+        "reinforcement": 6.0,
+        "load_code": 8,
+        "qty_remaining": 5,
+        "kp_id": 6
+      }
+    ],
+    "(3.7, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 37-12-10п",
+        "reinforcement": 7.0,
+        "load_code": 10,
+        "qty_remaining": 4,
+        "kp_id": 6
+      }
+    ],
+    "(4.5, 500)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 45-5-8п",
+        "reinforcement": 8.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 45-5-8п",
+        "reinforcement": 8.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "(4.5, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 45-12-8п",
+        "reinforcement": 8.0,
+        "load_code": 8,
+        "qty_remaining": 6,
+        "kp_id": 6
+      }
+    ],
+    "(4.79, 500)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-5-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 4,
+        "kp_id": 6
+      }
+    ],
+    "(4.79, 700)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 10,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "(4.79, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-12-8п",
+        "reinforcement": 9.0,
+        "load_code": 8,
+        "qty_remaining": 16,
+        "kp_id": 6
+      }
+    ],
+    "(5.14, 459)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 51,4-4,6-8п",
+        "reinforcement": 11.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 6
+      }
+    ],
+    "(5.14, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 51,4-12-8п",
+        "reinforcement": 11.0,
+        "load_code": 8,
+        "qty_remaining": 7,
+        "kp_id": 6
+      }
+    ],
+    "(5.6, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 56-12-8п",
+        "reinforcement": 13.0,
+        "load_code": 8,
+        "qty_remaining": 4,
+        "kp_id": 6
+      }
+    ],
+    "(5.84, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 58,4-12-8п",
+        "reinforcement": 14.0,
+        "load_code": 8,
+        "qty_remaining": 4,
+        "kp_id": 6
+      }
+    ],
+    "(6.12, 500)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 61,2-5-8п",
+        "reinforcement": 15.0,
+        "load_code": 8,
+        "qty_remaining": 4,
+        "kp_id": 6
+      }
+    ],
+    "(6.12, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 61,2-12-8п",
+        "reinforcement": 15.0,
+        "load_code": 8,
+        "qty_remaining": 12,
+        "kp_id": 6
+      }
+    ],
+    "(6.19, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 61,9-12-8п",
+        "reinforcement": 15.0,
+        "load_code": 8,
+        "qty_remaining": 15,
+        "kp_id": 6
+      }
+    ],
+    "(6.28, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 62,8-12-8п",
+        "reinforcement": 16.0,
+        "load_code": 8,
+        "qty_remaining": 8,
+        "kp_id": 6
+      }
+    ],
+    "(6.48, 1200)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 64,8-12-8п",
+        "reinforcement": 17.0,
+        "load_code": 8,
+        "qty_remaining": 32,
+        "kp_id": 6
+      }
+    ],
+    "(7.81, 860)": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 78,1-8,6-8п",
+        "reinforcement": 25.0,
+        "load_code": 8,
+        "qty_remaining": 5,
+        "kp_id": 6
+      }
+    ]
+  },
+  "plate_lookup_by_length": {
+    "3.18": [
+      {
+        "kp_date": "01.02.2026",
+        "customer": "ooo",
+        "plate_name": "Плиты ПБ 31,8-10,8-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 1,
+        "kp_id": 4
+      }
+    ],
+    "5.86": [
+      {
+        "kp_date": "01.02.2026",
+        "customer": "ooo",
+        "plate_name": "Плиты ПБ 58,6-10,8-8п",
+        "reinforcement": 14.0,
+        "qty_remaining": 2,
+        "kp_id": 4
+      }
+    ],
+    "7.81": [
+      {
+        "kp_date": "01.02.2026",
+        "customer": "ooo",
+        "plate_name": "Плиты ПБ 78,1-12-8п",
+        "reinforcement": 25.0,
+        "qty_remaining": 5,
+        "kp_id": 4
+      },
+      {
+        "kp_date": "01.02.2026",
+        "customer": "ooo",
+        "plate_name": "Плиты ПБ 78,1-12-10п",
+        "reinforcement": 31.0,
+        "qty_remaining": 6,
+        "kp_id": 4
+      },
+      {
+        "kp_date": "04.02.2026",
+        "customer": "ооо киса и киса",
+        "plate_name": "Плиты ПБ 78,1-12-8п",
+        "reinforcement": 25.0,
+        "qty_remaining": 52,
+        "kp_id": 5
+      },
+      {
+        "kp_date": "04.02.2026",
+        "customer": "ооо киса и киса",
+        "plate_name": "Плиты ПБ 78,1-12-10п",
+        "reinforcement": 31.0,
+        "qty_remaining": 5,
+        "kp_id": 5
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 78,1-8,6-8п",
+        "reinforcement": 25.0,
+        "qty_remaining": 5,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 78,1-12-8п",
+        "reinforcement": 25.0,
+        "qty_remaining": 52,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 78,1-12-10п",
+        "reinforcement": 31.0,
+        "qty_remaining": 5,
+        "kp_id": 6
+      }
+    ],
+    "7.3": [
+      {
+        "kp_date": "02.02.2026",
+        "customer": "Гусежоп",
+        "plate_name": "Плиты ПБ 73-12-8п",
+        "reinforcement": 22.0,
+        "qty_remaining": 81,
+        "kp_id": 1
+      }
+    ],
+    "8.4": [
+      {
+        "kp_date": "02.02.2026",
+        "customer": "Гусежоп",
+        "plate_name": "Плиты ПБ 84-12-8п",
+        "reinforcement": 31.0,
+        "qty_remaining": 1,
+        "kp_id": 1
+      }
+    ],
+    "8.6": [
+      {
+        "kp_date": "02.02.2026",
+        "customer": "Гусежоп",
+        "plate_name": "Плиты ПБ 86-12-8п",
+        "reinforcement": 33.0,
+        "qty_remaining": 3,
+        "kp_id": 1
+      }
+    ],
+    "8.7": [
+      {
+        "kp_date": "02.02.2026",
+        "customer": "Гусежоп",
+        "plate_name": "Плиты ПБ 87-12-8п",
+        "reinforcement": 34.0,
+        "qty_remaining": 55,
+        "kp_id": 1
+      }
+    ],
+    "4.18": [
+      {
+        "kp_date": "04.02.2026",
+        "customer": "ооо киса и киса",
+        "plate_name": "Плиты ПБ 41,8-10,8-8п",
+        "reinforcement": 7.0,
+        "qty_remaining": 1,
+        "kp_id": 5
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 41,8-10,8-8п",
+        "reinforcement": 7.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      }
+    ],
+    "4.79": [
+      {
+        "kp_date": "04.02.2026",
+        "customer": "ооо киса и киса",
+        "plate_name": "Плиты ПБ 47,9-10,8-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 3,
+        "kp_id": 5
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-5-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 4,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 10,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-10,8-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 3,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-12-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 16,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 47,9-7-8п",
+        "reinforcement": 9.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "2.9": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-4,6-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-7,2-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-9,2-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 5,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-12-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 3,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 29-4,6-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "2.2": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 22-5,3-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 3,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 22-5,3-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 22-5,3-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "2.06": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 20,6-7,2-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      }
+    ],
+    "2.4": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 24-12-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 2,
+        "kp_id": 6
+      }
+    ],
+    "3.13": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 31,3-12-8п",
+        "reinforcement": 4.0,
+        "qty_remaining": 2,
+        "kp_id": 6
+      }
+    ],
+    "3.5": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 35-4,6-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 35-10,2-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 35-12-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 2,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 35-4,6-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "3.2": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 32-5-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 32-12-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 2,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 32-5-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "3.38": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 33,8-7-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 3,
+        "kp_id": 6
+      }
+    ],
+    "3.39": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 33,9-12-8п",
+        "reinforcement": 5.0,
+        "qty_remaining": 3,
+        "kp_id": 6
+      }
+    ],
+    "3.65": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 36,5-6,65-8п",
+        "reinforcement": 6.0,
+        "qty_remaining": 2,
+        "kp_id": 6
+      }
+    ],
+    "3.89": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 38,9-7,2-8п",
+        "reinforcement": 6.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 38,9-12-8п",
+        "reinforcement": 6.0,
+        "qty_remaining": 5,
+        "kp_id": 6
+      }
+    ],
+    "3.7": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 37-12-10п",
+        "reinforcement": 7.0,
+        "qty_remaining": 4,
+        "kp_id": 6
+      }
+    ],
+    "4.5": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 45-5-8п",
+        "reinforcement": 8.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 45-12-8п",
+        "reinforcement": 8.0,
+        "qty_remaining": 6,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 45-5-8п",
+        "reinforcement": 8.0,
+        "qty_remaining": 1,
+        "kp_id": 6,
+        "is_from_secondary": true
+      }
+    ],
+    "5.14": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 51,4-4,6-8п",
+        "reinforcement": 11.0,
+        "qty_remaining": 1,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 51,4-12-8п",
+        "reinforcement": 11.0,
+        "qty_remaining": 7,
+        "kp_id": 6
+      }
+    ],
+    "5.6": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 56-12-8п",
+        "reinforcement": 13.0,
+        "qty_remaining": 4,
+        "kp_id": 6
+      }
+    ],
+    "5.84": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 58,4-12-8п",
+        "reinforcement": 14.0,
+        "qty_remaining": 4,
+        "kp_id": 6
+      }
+    ],
+    "6.12": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 61,2-5-8п",
+        "reinforcement": 15.0,
+        "qty_remaining": 4,
+        "kp_id": 6
+      },
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 61,2-12-8п",
+        "reinforcement": 15.0,
+        "qty_remaining": 12,
+        "kp_id": 6
+      }
+    ],
+    "6.19": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 61,9-12-8п",
+        "reinforcement": 15.0,
+        "qty_remaining": 15,
+        "kp_id": 6
+      }
+    ],
+    "6.28": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 62,8-12-8п",
+        "reinforcement": 16.0,
+        "qty_remaining": 8,
+        "kp_id": 6
+      }
+    ],
+    "6.48": [
+      {
+        "kp_date": "05.02.2026",
+        "customer": "ООО прем",
+        "plate_name": "Плиты ПБ 64,8-12-8п",
+        "reinforcement": 17.0,
+        "qty_remaining": 32,
+        "kp_id": 6
+      }
+    ]
+  }
+}

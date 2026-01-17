@@ -8,7 +8,15 @@
 """
 import os
 import re
+import logging
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+# Импортируем пользовательские исключения
+from .exceptions import PlateParseError
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 # ==================== КОНСТАНТЫ ====================
 
@@ -16,10 +24,10 @@ TRACK_LENGTH_M = 101.0
 TRACK_WIDTH_M = 1.2
 
 # Пути к прайсам (BASE_DIR указывает на корень проекта, на уровень выше core/)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PRICE_XLSX_PATH = os.path.join(BASE_DIR, 'банк знаний', 'Новые цены для прайса с 19.08.24.xlsx')
-CUTS_DOCX_PATH = os.path.join(BASE_DIR, 'банк знаний', 'Письмо Цены с 29.05.2024 цены на резы.docx')
-PRICE_DB_PATH = os.path.join(BASE_DIR, 'pb.db')
+BASE_DIR = Path(__file__).resolve().parent.parent
+PRICE_XLSX_PATH = BASE_DIR / 'банк знаний' / 'Новые цены для прайса с 19.08.24.xlsx'
+CUTS_DOCX_PATH = BASE_DIR / 'банк знаний' / 'Письмо Цены с 29.05.2024 цены на резы.docx'
+PRICE_DB_PATH = BASE_DIR / 'pb.db'
 
 # Стоимость резов
 LONG_CUT_PRICE_PER_M = 460.0  # Продольный рез, руб/пог.м
@@ -159,11 +167,30 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
     Неизвестные ширины игнорируем.
     
     Возвращает список нераспознанных строк.
+    
+    Raises:
+        PlateParseError: Если текст пустой или содержит только пробелы
     """
+    # Валидация входных данных
+    if not user_text or not user_text.strip():
+        logger.warning("Получен пустой текст заказа")
+        raise PlateParseError(
+            "Текст заказа пустой. Пожалуйста, введите список плит.\n"
+            "Пример: ПБ 78-12-8п 5 шт"
+        )
+    
     _clear_all_plate_lists()
 
     text = (user_text or '').replace('\u00d7', 'x').replace('×', 'x')
     lines = [l.strip() for l in re.split(r'[\n;]+', text) if l.strip()]
+    
+    # Дополнительная проверка после разбивки на строки
+    if not lines:
+        logger.warning("После разбивки не осталось валидных строк")
+        raise PlateParseError(
+            "Не удалось найти ни одной строки с плитами.\n"
+            "Проверьте формат ввода."
+        )
 
     def normalize_dimension(value_str: str) -> float:
         """
@@ -216,11 +243,23 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
         # Если размеры слишком большие (вероятно, ошибка OCR распознал мм как дм)
         # то игнорируем эту плиту
         if width_m > 20.0 or length_m > 200.0:
-            print(f"[PARSER] ⚠️ Пропущена плита с неадекватными размерами: {length_m}м × {width_m}м")
+            logger.warning(
+                f"Пропущена плита с неадекватными размерами: {length_m}м × {width_m}м. "
+                f"Возможно, OCR распознал мм как дм."
+            )
             return
         
         if width_m <= 0 or length_m <= 0:
-            print(f"[PARSER] ⚠️ Пропущена плита с нулевыми размерами: {length_m}м × {width_m}м")
+            logger.warning(f"Пропущена плита с нулевыми размерами: {length_m}м × {width_m}м")
+            return
+
+        # Защита от зависаний: слишком большое количество может «повесить» бот,
+        # потому что ниже мы добавляем в списки по 1 штуке в цикле.
+        if qty is None or qty <= 0:
+            logger.warning(f"Пропущена плита с некорректным количеством: qty={qty}")
+            return
+        if qty > 500:
+            logger.warning(f"Пропущена строка с слишком большим количеством плит: qty={qty}")
             return
         # Специальная обработка плит 1.5 м → заменяем на 1.2 м + 0.3 м
         if 1.45 <= width_m <= 1.55:  # 1.5 м (диапазон ±50 мм)
@@ -333,13 +372,34 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
     # Список нераспознанных строк для отчёта пользователю
     unparsed_lines = []
 
+    def validate_plate_values(width_m: float, length_m: float, qty: int, raw_line: str) -> tuple[bool, str]:
+        """
+        Простая валидация, чтобы не улетать в странные ошибки глубже по коду.
+
+        Возвращает (ok, reason).
+        """
+        if width_m <= 0 or length_m <= 0:
+            return False, "длина/ширина должны быть больше 0"
+        if qty is None or qty <= 0:
+            return False, "количество должно быть 1 или больше"
+        if qty > 500:
+            return False, "слишком большое количество (макс 500 на строку)"
+
+        # Реалистичные рамки для плит (в метрах)
+        if length_m < 0.5 or length_m > 15.0:
+            return False, f"нереалистичная длина {length_m}м"
+        if width_m < 0.1 or width_m > 2.0:
+            return False, f"нереалистичная ширина {width_m}м"
+
+        return True, ""
+
     for raw in lines:
         s = raw.lower()
         parsed = False
         
         # 1) формат WxL x qty (поддерживает запятую и точку)
         s_norm = s.replace(',', '.')
-        m = re.search(r'(\d+(?:\.\d+)?)\s*[xх]\s*(\d+(?:\.\d+)?)\D*(\d+)?', s)
+        m = re.search(r'(\d+(?:\.\d+)?)\s*[xх]\s*(\d+(?:\.\d+)?)\D*(\d+)?', s_norm)
         if m:
             first = float(m.group(1).replace(',', '.'))
             second = float(m.group(2).replace(',', '.'))
@@ -351,6 +411,11 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
                 width_m, length_m = second, first
             else:
                 width_m, length_m = first, second
+
+            ok, reason = validate_plate_values(width_m, length_m, q, raw)
+            if not ok:
+                unparsed_lines.append(f"{raw} (пропущено: {reason})")
+                continue
 
             add_items(width_m, length_m, q)
             parsed = True
@@ -423,6 +488,11 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
                     load_code = None
 
             # Передаём нагрузку в add_items
+            ok, reason = validate_plate_values(W, L, q, raw)
+            if not ok:
+                unparsed_lines.append(f"{raw} (пропущено: {reason})")
+                continue
+
             add_items(W, L, q, load_code)
             parsed = True
             continue
@@ -433,11 +503,18 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
 
     _recompute_totals_from_lists()
     
-    # Выводим в консоль нераспознанные строки для отладки
+    # Логируем нераспознанные строки для отладки
     if unparsed_lines:
-        print(f"[PARSER WARNING] Нераспознанные строки ({len(unparsed_lines)}):")
-        for line in unparsed_lines:
-            print(f"  - {line}")
+        logger.warning(
+            f"Парсинг завершён с {len(unparsed_lines)} нераспознанными строками. "
+            f"Всего строк обработано: {len(lines)}"
+        )
+        for i, line in enumerate(unparsed_lines[:5], 1):  # Показываем первые 5
+            logger.debug(f"  Нераспознанная строка {i}: {line}")
+        if len(unparsed_lines) > 5:
+            logger.debug(f"  ... и ещё {len(unparsed_lines) - 5} строк")
+    else:
+        logger.info(f"Парсинг завершён успешно. Обработано строк: {len(lines)}")
     
     return unparsed_lines
 
@@ -478,7 +555,16 @@ def make_plate_name(
     if load_code is not None:
         reinforcement = format_reinforcement_from_load_code(load_code)
 
-    length_dm = int(round(length_m * 10))
+    # Умное форматирование длины (аналогично ширине)
+    # Сохраняем дробные дециметры: 5.98м → 59.8дм → "59,8"
+    length_dm_raw = length_m * 10
+    if abs(length_dm_raw - round(length_dm_raw)) < 0.01:
+        # Целое число (6.0м → 60дм → "60")
+        length_str = str(int(round(length_dm_raw)))
+    else:
+        # Дробное число: 5.98м → 59.8дм → "59,8"
+        length_str = f'{length_dm_raw:.1f}'.rstrip('0').rstrip('.').replace('.', ',')
+    
     # Единая логика формирования ширины, как в боте (bot_handlers.py):
     # - плиты 1.2м / 1.08м / 1.0м → '12' / '10,8' / '10'
     # - узкие плиты 0.46 / 0.32 / 0.86 и т.п. → '4,6' / '3,2' / '8,6'
@@ -497,7 +583,7 @@ def make_plate_name(
         else:
             # Дробное число: убираем лишние нули (6.65→"6,65", 5.30→"5,3")
             width_str = f'{width_dm:.2f}'.rstrip('0').rstrip('.').replace('.', ',')
-    return f'Плиты ПБ {length_dm}-{width_str}-{reinforcement}'
+    return f'Плиты ПБ {length_str}-{width_str}-{reinforcement}'
 
 
 def parse_name_to_sizes(name: str) -> tuple:

@@ -42,7 +42,8 @@ def get_orders_from_opt_plan():
                         orders_copy.append({
                             'length': float(order.get('length', 0)),
                             'width': order.get('width', 0),
-                            'qty': int(order.get('qty', 1))
+                            'qty': int(order.get('qty', 1)),
+                            'load_code': order.get('load_code')  # Сохраняем нагрузку!
                         })
                     except Exception as e:
                         print(f'[DEBUG] Ошибка парсинга заказа: {e}')
@@ -60,7 +61,8 @@ def get_orders_from_opt_plan():
                 orders_copy.append({
                     'length': float(order.get('length', 0)),
                     'width': order.get('width', 0),
-                    'qty': int(order.get('qty', 1))
+                    'qty': int(order.get('qty', 1)),
+                    'load_code': order.get('load_code')  # Сохраняем нагрузку!
                 })
             except Exception:
                 continue
@@ -85,30 +87,35 @@ def build_procurement_items():
             # В заказе ширина приходит в мм (например, 320). Преобразуем в метры.
             width_m = width_val / 1000.0 if width_val > 5 else float(width_val)
             
-            # ВАЖНО: Получаем нагрузку для этой плиты
-            # Пытаемся найти точную разбивку по нагрузкам
-            found_details = []
-            if cfg.PLATE_LOAD_DETAILS:
-                for (L, W, load), q in cfg.PLATE_LOAD_DETAILS.items():
-                    if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
-                        found_details.append((load, q))
-            
-            total_found = sum(q for _, q in found_details)
-            
-            if found_details and total_found == order['qty']:
-                for load_code, q in found_details:
-                    # Используем ключ с load_code и флагом предупреждения (False = без предупреждения)
-                    order_counter[(length, width_m, load_code, False)] += q
+            # ПРИОРИТЕТ 1: Если load_code уже пришёл из плана оптимизации - используем его напрямую
+            # Это самый надёжный способ, т.к. load_code сохраняется из PLATE_LOAD_DETAILS при создании плана
+            if order.get('load_code') is not None:
+                load_code = order['load_code']
+                order_counter[(length, width_m, load_code, False)] += order['qty']
             else:
-                # Fallback: если не нашли точного совпадения
-                load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else 8))
-                # True = предупреждение о том, что нагрузка может быть неточной
-                warning_flag = True if found_details else False
-                if found_details:
-                    print(f"[WARNING] Несовпадение количества для плиты {length}x{width_m}: "
-                          f"В плане {order['qty']}, в деталях {total_found}. Присвоена нагрузка {load_code}п (проверьте!)")
+                # ПРИОРИТЕТ 2 (для обратной совместимости): Пытаемся найти в PLATE_LOAD_DETAILS
+                found_details = []
+                if cfg.PLATE_LOAD_DETAILS:
+                    for (L, W, load), q in cfg.PLATE_LOAD_DETAILS.items():
+                        if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
+                            found_details.append((load, q))
                 
-                order_counter[(length, width_m, load_code, warning_flag)] += order['qty']
+                total_found = sum(q for _, q in found_details)
+                
+                if found_details and total_found == order['qty']:
+                    for load_code, q in found_details:
+                        # Используем ключ с load_code и флагом предупреждения (False = без предупреждения)
+                        order_counter[(length, width_m, load_code, False)] += q
+                else:
+                    # Fallback: если не нашли точного совпадения
+                    load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else 8))
+                    # True = предупреждение о том, что нагрузка может быть неточной
+                    warning_flag = True if found_details else False
+                    if found_details:
+                        print(f"[WARNING] Несовпадение количества для плиты {length}x{width_m}: "
+                              f"В плане {order['qty']}, в деталях {total_found}. Присвоена нагрузка {load_code}п (проверьте!)")
+                    
+                    order_counter[(length, width_m, load_code, warning_flag)] += order['qty']
             
         for (length, width_m, load_code, warning_flag), qty in sorted(order_counter.items(), key=lambda x: (x[0][1], x[0][0], x[0][2])):
             # Жёсткое правило: плиты 1.2 м считаем целыми, без продольных резов
@@ -896,11 +903,11 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                     # ФОРМАТ ИМЕНИ: ПБ {длина_дм}-{ширина_дм}-{нагрузка}п
                     # Примеры:
                     #   ПБ 28-7,2-8п → длина 28дм=2.8м, ширина 7,2дм=0.72м
-                    #   ПБ 87-2,6-8п → длина 87дм=8.7м, ширина 2,6дм=0.26м
+                    #   ПБ 59,8-12-8п → длина 59,8дм=5.98м, ширина 12дм=1.2м
                     #   ПБ 73-12-8п → длина 73дм=7.3м, ширина 12дм=1.2м
-                    match = re.search(r'ПБ\s+(\d+)-([\d,]+)-', name)
+                    match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-', name)
                     if match:
-                        length_dm = int(match.group(1))
+                        length_dm = float(match.group(1).replace(',', '.'))
                         length = length_dm / 10.0  # Дециметры → метры
                         
                         width_str = match.group(2).replace(',', '.').replace(' ', '')
@@ -1396,10 +1403,10 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
                             qty = int(str(row[2]).replace(' ', '').replace(',', '')) if len(row) > 2 else 1
                         except (ValueError, TypeError):
                             qty = 1
-                        # Парсим имя
-                        match = re.search(r'ПБ\s+(\d+)-([\d,]+)-', name)
+                        # Парсим имя (поддержка дробных дециметров: "59,8" или "60")
+                        match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-', name)
                         if match:
-                            length_dm = int(match.group(1))
+                            length_dm = float(match.group(1).replace(',', '.'))
                             length = length_dm / 10.0
                             
                             width_str = match.group(2).replace(',', '.').replace(' ', '')

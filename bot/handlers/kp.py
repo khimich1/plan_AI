@@ -1,6 +1,7 @@
 """Обработчики команд для работы с планами"""
 import asyncio
 import os
+import logging
 import sys
 from pathlib import Path
 
@@ -15,6 +16,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.visualization import visualize_plan
 from ..bot_config import OUTPUTS_DIR_STR
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -77,5 +80,11 @@ async def cmd_build_plan(message: Message):
             await message.answer("❌ Ошибка при расчёте плана")
             
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}", parse_mode=None)
+        logger.exception(f"Ошибка в /build_plan: {e}")
+        await message.answer(
+            "❌ Не удалось построить план.\n\n"
+            "Попробуйте ещё раз через минуту.\n"
+            "Если повторяется — откройте файл logs/bot.log и пришлите последние строки.",
+            parse_mode=None
+        )
 

@@ -287,8 +287,8 @@ async def confirm_clear_all_kp(message: Message, state: FSMContext):
             f"Попробуйте снова позже.",
             reply_markup=main_menu_kb()
         )
-        import traceback
-        traceback.print_exc()
+        import logging
+        logging.getLogger(__name__).exception(f"Ошибка при очистке базы данных: {e}")
 
 
 # ==================== НОВОЕ МЕНЮ УПРАВЛЕНИЯ БД ====================
@@ -417,8 +417,8 @@ async def confirm_db_clear(callback: CallbackQuery):
             reply_markup=db_management_kb()
         )
         await callback.answer("❌ Ошибка!")
-        import traceback
-        traceback.print_exc()
+        import logging
+        logging.getLogger(__name__).exception(f"Ошибка при очистке БД: {e}")
 
 
 @router.callback_query(F.data == "db_clear_cancel")

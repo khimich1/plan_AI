@@ -4,10 +4,13 @@ import os
 import re
 import sys
 import math
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile, CallbackQuery
@@ -26,6 +29,10 @@ from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core import kp_db
+from core.exceptions import PlateParseError, FileGenerationError
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, cancel_process_kb, managers_selection_kb
 from ..states import KPStates
@@ -177,9 +184,7 @@ async def receive_plates_list(message: Message, state: FSMContext):
                 return
                 
         except Exception as e:
-            print(f"[COMMERCIAL] Ошибка распознавания фото: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"[COMMERCIAL] Ошибка распознавания фото: {e}")
             await message.answer(
                 f"❌ Ошибка при обработке фото: {str(e)}\n\n"
                 "Попробуйте прислать список текстом."
@@ -372,17 +377,34 @@ async def generate_all_documents(message: Message, state: FSMContext):
     # Теперь запускаем генерацию документов с этими данными
     try:
         # Парсим список пользователя
-        unparsed_lines = set_plate_lists_from_text(plates_text)
+        try:
+            unparsed_lines = set_plate_lists_from_text(plates_text)
+        except PlateParseError as e:
+            # Ошибка парсинга - показываем понятное сообщение
+            logger.warning(f"Ошибка парсинга заказа от пользователя {message.from_user.id}: {e}")
+            await message.answer(
+                f"❌ Не удалось распознать заказ:\n{e}\n\n"
+                f"💡 Проверьте формат:\n"
+                f"• ПБ 78-12-8п 5 шт\n"
+                f"• 1.2x3.39 - 2\n"
+                f"• 0,32x6,63 - 4",
+                reply_markup=main_menu_kb()
+            )
+            await state.clear()
+            return
         
         if unparsed_lines:
-            warn_text = "⚠️ Некоторые строки я не смог распознать по формату и пропустил:\n"
-            warn_text += "\n".join(f"• {line}" for line in unparsed_lines)
+            # Показываем только первые 5 нераспознанных строк, чтобы не спамить
+            warn_text = "⚠️ Некоторые строки не распознаны:\n"
+            warn_text += "\n".join(f"• {line}" for line in unparsed_lines[:5])
+            if len(unparsed_lines) > 5:
+                warn_text += f"\n... и ещё {len(unparsed_lines) - 5} строк"
             warn_text += (
-                "\n\nЯ понимаю, например, такие форматы:\n"
-                "• 1.2×3.39 — 2 шт\n"
+                "\n\n💡 Я понимаю такие форматы:\n"
+                "• ПБ 78-12-8п 3 шт\n"
+                "• 1.2×3.39 — 2\n"
                 "• 0,32x6,63 - 4\n"
-                "• Плиты ПБ 78-12-8п 3\n"
-                "• ПБ 66,2-12-8п 6\n"
+                "• ПБ 66,2-12-8п 6"
             )
             await message.answer(warn_text)
         
@@ -393,7 +415,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
         orders_2d = []
         
         if cfg.PLATE_LOAD_DETAILS:
-            print("[COMMERCIAL] ✅ Используем PLATE_LOAD_DETAILS (с нагрузками)")
+            logger.info("[COMMERCIAL] Используем PLATE_LOAD_DETAILS (с нагрузками)")
             for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
                 width_mm = int(round(width_m * 1000))
                 
@@ -405,7 +427,9 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 })
         
         if orders_2d:
-            print(f"[COMMERCIAL] Всего плит для оптимизации: {sum(o['qty'] for o in orders_2d)} шт, типов: {len(orders_2d)}")
+            logger.info(
+                f"[COMMERCIAL] Всего плит для оптимизации: {sum(o['qty'] for o in orders_2d)} шт, типов: {len(orders_2d)}"
+            )
             
             try:
                 from core.optimization import optimize_with_cascading_longitudinal_cuts
@@ -437,13 +461,13 @@ async def generate_all_documents(message: Message, state: FSMContext):
                     total_plates = optimization_result.get('total_plates', 0)
                     total_cost = optimization_result.get('total_cost', 0)
                     
-                    print(f"[COMMERCIAL] ✅ Оптимизация завершена: {total_plates} плит, {total_cost:,} ₽".replace(',', ' '))
+                    logger.info(
+                        f"[COMMERCIAL] Оптимизация завершена: {total_plates} плит, {total_cost:,} ₽".replace(",", " ")
+                    )
                     await message.answer(f"✅ Оптимизация завершена! Использовано {total_plates} исходных плит")
                     
             except Exception as e:
-                print(f"[COMMERCIAL] ❌ Ошибка оптимизации: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.exception(f"[COMMERCIAL] Ошибка оптимизации: {e}")
                 # Продолжаем без оптимизации (цены будут посчитаны по старой логике)
         
         # Используем build_price_rows для получения правильных цен
@@ -451,7 +475,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
         from viz_modules.price_utils import load_price_table_from_xlsx
         
         # Загружаем таблицу цен
-        price_table = load_price_table_from_xlsx(cfg.PRICE_XLSX_PATH)
+        price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
         
         # Получаем строки сметы
         price_rows, total_sum = await asyncio.to_thread(
@@ -488,10 +512,10 @@ async def generate_all_documents(message: Message, state: FSMContext):
             except (ValueError, AttributeError):
                 weight = 0.0
             
-            # Парсим name
-            match = re.search(r'ПБ\s+(\d+)-([\d,]+)-(\d+)', name)
+            # Парсим name (поддержка дробных дециметров: "59,8" или "60")
+            match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-(\d+)', name)
             if match:
-                length_dm = int(match.group(1))
+                length_dm = float(match.group(1).replace(',', '.'))
                 length_m = length_dm / 10.0
                 
                 width_str_parsed = match.group(2).replace(',', '.')
@@ -530,7 +554,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
         # 🆕 ПОЛУЧАЕМ СЛЕДУЮЩИЙ НОМЕР КП ИЗ БД
         from core.kp_db import get_next_kp_number
         kp_db_id = get_next_kp_number()
-        print(f"[DEBUG] Предполагаемый номер КП из БД: {kp_db_id}")
+        logger.debug(f"Предполагаемый номер КП из БД: {kp_db_id}")
         
         # Генерируем PDF с номером КП из БД
         pdf_buffer = await asyncio.to_thread(
@@ -564,9 +588,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
             )
             has_xlsx = True
         except Exception as e:
-            print(f"[XLSX] Ошибка генерации XLSX: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"[XLSX] Ошибка генерации XLSX: {e}")
             has_xlsx = False
         
         # Сохраняем файлы
@@ -658,9 +680,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
                         caption="📊 Детальная разбивка компонентов"
                     )
         except Exception as e:
-            print(f"[ОШИБКА] При генерации схемы: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Ошибка при генерации схемы: {e}")
         
         await message.answer(
             "✨ Документы содержат:\n"
@@ -692,11 +712,11 @@ async def generate_all_documents(message: Message, state: FSMContext):
         # Но данные остаются в state.data
         await state.set_state(None)
         
-        print(f"[DEBUG] Данные сохранены в state:")
-        print(f"  - Клиент: {client_name}")
-        print(f"  - Менеджер: {manager_name}")
-        print(f"  - Скидка: {discount_percent}%")
-        print(f"  - Плит: {len(order_data)}")
+        logger.debug("Данные сохранены в state")
+        logger.debug(f"  - Клиент: {client_name}")
+        logger.debug(f"  - Менеджер: {manager_name}")
+        logger.debug(f"  - Скидка: {discount_percent}%")
+        logger.debug(f"  - Плит: {len(order_data)}")
         
         # Предлагаем сохранить КП в базу данных
         await message.answer(
@@ -705,14 +725,23 @@ async def generate_all_documents(message: Message, state: FSMContext):
             reply_markup=save_to_db_kb()
         )
     
-    except Exception as e:
+    except FileGenerationError as e:
+        # Ошибка генерации файлов
+        logger.error(f"Ошибка генерации файлов КП для пользователя {message.from_user.id}: {e}", exc_info=True)
         await message.answer(
-            f"❌ Ошибка при генерации КП: {str(e)}\n\n"
+            f"❌ Не удалось создать файлы КП:\n{e}\n\n"
+            "Попробуйте позже или обратитесь к администратору.",
+            reply_markup=main_menu_kb()
+        )
+        await state.clear()
+    except Exception as e:
+        # Непредвиденная ошибка
+        logger.error(f"Непредвиденная ошибка при создании КП для пользователя {message.from_user.id}: {e}", exc_info=True)
+        await message.answer(
+            f"❌ Произошла ошибка: {str(e)}\n\n"
             "Проверьте формат данных и попробуйте снова.",
             reply_markup=main_menu_kb()
         )
-        import traceback
-        traceback.print_exc()
         await state.clear()
 
 
@@ -720,23 +749,40 @@ async def generate_all_documents(message: Message, state: FSMContext):
 
 @router.message(KPStates.waiting_for_commercial_offer)
 async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
-    """Обработчик получения заказа и генерации PDF"""
+    """Обработчик получения заказа и генерации PDF (старый обработчик)"""
     await message.answer("⏳ Формирую коммерческое предложение...")
     
     try:
-        # Парсим список пользователя и собираем «странные» строки по формату
+        # Парсим список пользователя
         user_text = message.text or ""
-        unparsed_lines = set_plate_lists_from_text(user_text)
+        try:
+            unparsed_lines = set_plate_lists_from_text(user_text)
+        except PlateParseError as e:
+            # Ошибка парсинга - показываем понятное сообщение
+            logger.warning(f"Ошибка парсинга заказа от пользователя {message.from_user.id}: {e}")
+            await message.answer(
+                f"❌ Не удалось распознать заказ:\n{e}\n\n"
+                f"💡 Проверьте формат:\n"
+                f"• ПБ 78-12-8п 5 шт\n"
+                f"• 1.2x3.39 - 2\n"
+                f"• 0,32x6,63 - 4",
+                reply_markup=main_menu_kb()
+            )
+            await state.clear()
+            return
 
         if unparsed_lines:
-            warn_text = "⚠️ Некоторые строки я не смог распознать по формату и пропустил:\n"
-            warn_text += "\n".join(f"• {line}" for line in unparsed_lines)
+            # Показываем только первые 5 нераспознанных строк
+            warn_text = "⚠️ Некоторые строки не распознаны:\n"
+            warn_text += "\n".join(f"• {line}" for line in unparsed_lines[:5])
+            if len(unparsed_lines) > 5:
+                warn_text += f"\n... и ещё {len(unparsed_lines) - 5} строк"
             warn_text += (
-                "\n\nЯ понимаю, например, такие форматы:\n"
-                "• 1.2×3.39 — 2 шт\n"
+                "\n\n💡 Я понимаю такие форматы:\n"
+                "• ПБ 78-12-8п 3 шт\n"
+                "• 1.2×3.39 — 2\n"
                 "• 0,32x6,63 - 4\n"
-                "• Плиты ПБ 78-12-8п 3\n"
-                "• ПБ 66,2-12-8п 6\n"
+                "• ПБ 66,2-12-8п 6"
             )
             await message.answer(warn_text)
         
@@ -748,7 +794,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         db_path = Path(__file__).parent.parent / "pb.db"
         
         if cfg.PLATE_LOAD_DETAILS:
-            print("[COMMERCIAL] ✅ Используем PLATE_LOAD_DETAILS (с нагрузками)")
+            logger.info("[COMMERCIAL] Используем PLATE_LOAD_DETAILS (с нагрузками)")
             for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
                 width_mm = int(round(width_m * 1000))
                 
@@ -785,7 +831,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             string_keys = sorted([k for k in keys_list if isinstance(k, str)])
             all_keys_sorted = numeric_keys + string_keys
             
-            print(f"[COMMERCIAL] Найдено {len(orders_by_reinforcement)} групп(ы) по армированию")
+            logger.info(f"[COMMERCIAL] Найдено {len(orders_by_reinforcement)} групп(ы) по армированию")
             
             for reinforcement_key in all_keys_sorted:
                 orders_2d = orders_by_reinforcement[reinforcement_key]
@@ -804,9 +850,11 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                         optimization_result['loads_in_group'] = sorted(loads_in_group)
                         optimization_results_by_reinforcement[reinforcement_key] = optimization_result
                         
-                        print(f"[COMMERCIAL] ✅ Армирование {reinforcement_key}: {optimization_result['total_plates']} плит")
+                        logger.info(
+                            f"[COMMERCIAL] Армирование {reinforcement_key}: {optimization_result['total_plates']} плит"
+                        )
                 except Exception as e:
-                    print(f"[COMMERCIAL] ❌ Ошибка оптимизации для армирования {reinforcement_key}: {e}")
+                    logger.exception(f"[COMMERCIAL] Ошибка оптимизации для армирования {reinforcement_key}: {e}")
             
             # Сохраняем результаты в глобальную переменную
             if optimization_results_by_reinforcement:
@@ -823,7 +871,9 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                         load_to_reinforcement_map[load_code].append(reinforcement_key)
                 
                 optimization.LOAD_TO_REINFORCEMENT_MAP = load_to_reinforcement_map
-                print(f"[COMMERCIAL] ✅ Сохранено {len(optimization_results_by_reinforcement)} результатов оптимизации")
+                logger.info(
+                    f"[COMMERCIAL] Сохранено {len(optimization_results_by_reinforcement)} результатов оптимизации"
+                )
                 
                 await message.answer("✅ Оптимизация завершена! Формирую документы...")
         
@@ -832,7 +882,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         from viz_modules.price_utils import load_price_table_from_xlsx
         
         # Загружаем таблицу цен для расчётов
-        price_table = load_price_table_from_xlsx(cfg.PRICE_XLSX_PATH)
+        price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
         
         # Получаем строки сметы с ПРАВИЛЬНЫМИ ценами (С УЧЁТОМ ОПТИМИЗАЦИИ!)
         price_rows, total_sum = await asyncio.to_thread(
@@ -873,10 +923,10 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 weight = 0.0
             
             # Парсим name для получения длины, ширины и нагрузки
-            # Формат: "Плиты ПБ 38-12-8п" или "ПБ 38-3,2-8п"
-            match = re.search(r'ПБ\s+(\d+)-([\d,]+)-(\d+)', name)
+            # Формат: "Плиты ПБ 59,8-12-8п" или "ПБ 38-3,2-8п" (поддержка дробных дециметров)
+            match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-(\d+)', name)
             if match:
-                length_dm = int(match.group(1))
+                length_dm = float(match.group(1).replace(',', '.'))
                 length_m = length_dm / 10.0
                 
                 width_str_parsed = match.group(2).replace(',', '.')
@@ -952,7 +1002,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             )
             has_xlsx = True
         except Exception as e:
-            print(f"[XLSX] Ошибка генерации XLSX: {e}")
+            logger.exception(f"[XLSX] Ошибка генерации XLSX: {e}")
             has_xlsx = False
         
         # Сохраняем файлы во временные файлы для отправки
@@ -1049,9 +1099,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                         caption="📊 Детальная разбивка компонентов"
                     )
         except Exception as e:
-            print(f"[ОШИБКА] При генерации схемы и разбивки: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Ошибка при генерации схемы и разбивки: {e}")
             # Не прерываем выполнение, просто пропускаем эти файлы
             
         if os.path.exists(pdf_path):
@@ -1096,9 +1144,20 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             )
             await state.clear()
     
-    except Exception as e:
+    except FileGenerationError as e:
+        # Ошибка генерации файлов
+        logger.error(f"Ошибка генерации файлов КП (старый обработчик) для пользователя {message.from_user.id}: {e}", exc_info=True)
         await message.answer(
-            f"❌ Ошибка при генерации КП: {str(e)}\n\n"
+            f"❌ Не удалось создать файлы КП:\n{e}\n\n"
+            "Попробуйте позже или обратитесь к администратору.",
+            reply_markup=main_menu_kb()
+        )
+        await state.clear()
+    except Exception as e:
+        # Непредвиденная ошибка
+        logger.error(f"Непредвиденная ошибка при создании КП (старый обработчик) для пользователя {message.from_user.id}: {e}", exc_info=True)
+        await message.answer(
+            f"❌ Произошла ошибка: {str(e)}\n\n"
             "Проверьте формат данных и попробуйте снова.",
             reply_markup=main_menu_kb()
         )
@@ -1113,7 +1172,7 @@ async def callback_save_kp_to_db(callback: CallbackQuery, state: FSMContext):
     Обработчик кнопки "Сохранить в БД".
     Запрашивает сроки выполнения КП.
     """
-    print("[DEBUG] Нажата кнопка 'Сохранить в БД'")
+    logger.debug("Нажата кнопка 'Сохранить в БД'")
     
     # Убираем "часики" с кнопки
     await callback.answer()
@@ -1125,7 +1184,7 @@ async def callback_save_kp_to_db(callback: CallbackQuery, state: FSMContext):
         "(Например: '14 дней', '2 недели', '01.02.2024')"
     )
     
-    print("[DEBUG] Переход к состоянию waiting_execution_terms")
+    logger.debug("Переход к состоянию waiting_execution_terms")
     
     # Переходим к состоянию ожидания сроков
     await state.set_state(KPStates.waiting_execution_terms)
@@ -1138,7 +1197,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     Сохраняет КП в базу данных plita.db.
     """
     execution_terms_input = message.text.strip()
-    print(f"[DEBUG] Получены сроки: {execution_terms_input}")
+    logger.debug(f"Получены сроки: {execution_terms_input}")
     
     # === ПАРСИМ СРОКИ И ВЫЧИСЛЯЕМ ДАТУ ДЕДЛАЙНА ===
     from datetime import timedelta
@@ -1150,7 +1209,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     # Вариант 1: Формат ДД.ММ.ГГГГ (например: "01.02.2026")
     try:
         deadline_date = datetime.strptime(execution_terms_input, '%d.%m.%Y')
-        print(f"[DEBUG] Распознана дата (ДД.ММ.ГГГГ): {deadline_date.strftime('%d.%m.%Y')}")
+        logger.debug(f"Распознана дата (ДД.ММ.ГГГГ): {deadline_date.strftime('%d.%m.%Y')}")
     except ValueError:
         pass
     
@@ -1158,7 +1217,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     if not deadline_date:
         try:
             deadline_date = datetime.strptime(execution_terms_input, '%Y-%m-%d')
-            print(f"[DEBUG] Распознана дата (ГГГГ-ММ-ДД): {deadline_date.strftime('%d.%m.%Y')}")
+            logger.debug(f"Распознана дата (ГГГГ-ММ-ДД): {deadline_date.strftime('%d.%m.%Y')}")
         except ValueError:
             pass
     
@@ -1168,7 +1227,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
         if match_days:
             days = int(match_days.group(1))
             deadline_date = datetime.now() + timedelta(days=days)
-            print(f"[DEBUG] Распознано {days} дней, дедлайн: {deadline_date.strftime('%d.%m.%Y')}")
+            logger.debug(f"Распознано {days} дней, дедлайн: {deadline_date.strftime('%d.%m.%Y')}")
     
     # Вариант 4: Пользователь ввёл количество недель (например: "2 недели", "3week")
     if not deadline_date:
@@ -1176,7 +1235,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
         if match_weeks:
             weeks = int(match_weeks.group(1))
             deadline_date = datetime.now() + timedelta(weeks=weeks)
-            print(f"[DEBUG] Распознано {weeks} недель, дедлайн: {deadline_date.strftime('%d.%m.%Y')}")
+            logger.debug(f"Распознано {weeks} недель, дедлайн: {deadline_date.strftime('%d.%m.%Y')}")
     
     # Если не удалось распознать, используем 14 дней по умолчанию
     if not deadline_date:
@@ -1189,7 +1248,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     
     # Форматируем дату для сохранения в БД
     execution_terms = deadline_date.strftime('%d.%m.%Y')
-    print(f"[DEBUG] Итоговая дата дедлайна: {execution_terms}")
+    logger.debug(f"Итоговая дата дедлайна: {execution_terms}")
     
     # Получаем данные КП из состояния
     data = await state.get_data()
@@ -1204,13 +1263,13 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     payment_conditions = data.get('kp_payment_conditions')
     offer_date = data.get('kp_offer_date')
     
-    print(f"[DEBUG] Данные из state:")
-    print(f"  - Клиент: {customer_name}")
-    print(f"  - Менеджер: {manager_name}")
-    print(f"  - Скидка: {discount_percent}%")
-    print(f"  - Плит в заказе: {len(order_data)}")
-    print(f"  - XLSX путь: {xlsx_path}")
-    print(f"  - Дата КП: {offer_date}")
+    logger.debug("Данные из state")
+    logger.debug(f"  - Клиент: {customer_name}")
+    logger.debug(f"  - Менеджер: {manager_name}")
+    logger.debug(f"  - Скидка: {discount_percent}%")
+    logger.debug(f"  - Плит в заказе: {len(order_data)}")
+    logger.debug(f"  - XLSX путь: {xlsx_path}")
+    logger.debug(f"  - Дата КП: {offer_date}")
     
     # 🔥 ПРОВЕРКА: Если нет обязательных данных - показываем ошибку
     if not offer_date or not order_data:
@@ -1263,13 +1322,12 @@ async def receive_execution_terms(message: Message, state: FSMContext):
         )
     
     except Exception as e:
+        logger.exception(f"Ошибка при сохранении КП в БД: {e}")
         await message.answer(
-            f"❌ Ошибка при сохранении КП в БД: {str(e)}\n\n"
-            "Попробуйте снова позже.",
+            "❌ Не удалось сохранить КП в базу данных.\n\n"
+            "Попробуйте позже. Если ошибка повторяется — смотри logs/bot.log.",
             reply_markup=main_menu_kb()
         )
-        import traceback
-        traceback.print_exc()
     
     finally:
         # Очищаем состояние
@@ -1311,7 +1369,7 @@ async def callback_save_kp_to_archive(callback: CallbackQuery, state: FSMContext
     - НЕ запрашивает сроки выполнения (execution_terms = None)
     - КП не попадёт в планирование производства
     """
-    print("[DEBUG] Нажата кнопка 'В архив'")
+    logger.debug("Нажата кнопка 'В архив'")
     
     # Убираем "часики" с кнопки
     await callback.answer()
@@ -1334,13 +1392,13 @@ async def callback_save_kp_to_archive(callback: CallbackQuery, state: FSMContext
     payment_conditions = data.get('kp_payment_conditions')
     offer_date = data.get('kp_offer_date')
     
-    print(f"[DEBUG] Данные из state:")
-    print(f"  - Клиент: {customer_name}")
-    print(f"  - Менеджер: {manager_name}")
-    print(f"  - Скидка: {discount_percent}%")
-    print(f"  - Плит в заказе: {len(order_data)}")
-    print(f"  - XLSX путь: {xlsx_path}")
-    print(f"  - Дата КП: {offer_date}")
+    logger.debug("Данные из state")
+    logger.debug(f"  - Клиент: {customer_name}")
+    logger.debug(f"  - Менеджер: {manager_name}")
+    logger.debug(f"  - Скидка: {discount_percent}%")
+    logger.debug(f"  - Плит в заказе: {len(order_data)}")
+    logger.debug(f"  - XLSX путь: {xlsx_path}")
+    logger.debug(f"  - Дата КП: {offer_date}")
     
     # Проверка обязательных данных
     if not offer_date or not order_data:
@@ -1392,13 +1450,12 @@ async def callback_save_kp_to_archive(callback: CallbackQuery, state: FSMContext
         )
     
     except Exception as e:
+        logger.exception(f"Ошибка при сохранении КП в архив: {e}")
         await callback.message.answer(
-            f"❌ Ошибка при сохранении КП в архив: {str(e)}\n\n"
-            "Попробуйте снова позже.",
+            "❌ Не удалось сохранить КП в архив.\n\n"
+            "Попробуйте позже. Если ошибка повторяется — смотри logs/bot.log.",
             reply_markup=main_menu_kb()
         )
-        import traceback
-        traceback.print_exc()
     
     finally:
         # Очищаем состояние

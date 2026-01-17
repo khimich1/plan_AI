@@ -1,10 +1,14 @@
 """Обработчики планирования производства плит"""
 import asyncio
+import logging
 import os
+import json
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 import math
+
+logger = logging.getLogger(__name__)
 
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile, CallbackQuery
@@ -453,7 +457,9 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                         'is_from_secondary': True
                     })
             
-            print(f"[PRODUCTION] ✅ Дополнено lookup-таблиц: exact={len(plate_lookup_exact)}, by_length={len(plate_lookup_by_length)}")
+            logger.info(
+                f"[PRODUCTION] Дополнено lookup-таблиц: exact={len(plate_lookup_exact)}, by_length={len(plate_lookup_by_length)}"
+            )
         
         # === ШАГ 5: ПОДГОТОВКА ДЛЯ ВИЗУАЛИЗАЦИИ ===
         optimization.OPT_CASCADING_PLAN = optimization_result
@@ -596,13 +602,12 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
         await state.set_state(ProductionStates.waiting_day_selection)
         
     except Exception as e:
+        logger.exception(f"Ошибка при планировании производства: {e}")
         await message.answer(
-            f"❌ Ошибка при планировании производства: {str(e)}\n\n"
-            "Попробуйте снова позже.",
+            "❌ Ошибка при планировании производства.\n\n"
+            "Попробуйте позже. Если повторяется — смотри logs/bot.log.",
             reply_markup=main_menu_kb()
         )
-        import traceback
-        traceback.print_exc()
         await state.clear()
 
 
@@ -704,7 +709,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     if breakdown_path is None or os.path.getctime(candidate_path) > os.path.getctime(breakdown_path):
                         breakdown_path = candidate_path
         except Exception as e:
-            print(f"[DEBUG] Ошибка поиска файла разбивки: {e}")
+            logger.exception(f"Ошибка поиска файла разбивки: {e}")
         
         if breakdown_path and os.path.exists(breakdown_path):
             await callback.message.answer_document(
@@ -861,7 +866,9 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
             if plates_info:
                 # Получаем максимальное армирование дорожки
                 max_reinforcement = track.get('max_reinforcement', 0)
-                print(f"[FORMOVKA DEBUG] Дорожка {track_number}: {len(plates_info)} плит, макс. арм. {max_reinforcement}")
+                logger.debug(
+                    f"[FORMOVKA] Дорожка {track_number}: {len(plates_info)} плит, макс. арм. {max_reinforcement}"
+                )
                 
                 # Формируем заголовок с армированием дорожки
                 if max_reinforcement > 0:
@@ -921,7 +928,9 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     'max_reinforcement': max_reinforcement,
                     'plates_info': plates_info
                 })
-                print(f"[FORMOVKA DEBUG] Добавлена дорожка {track_number} в formovka_tracks_data (всего: {len(formovka_tracks_data)})")
+                logger.debug(
+                    f"[FORMOVKA] Добавлена дорожка {track_number} в formovka_tracks_data (всего: {len(formovka_tracks_data)})"
+                )
                 
                 if len(track_message) > 4000:
                     lines = track_message.split('\n')
@@ -940,15 +949,15 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     await callback.message.answer(track_message)
         
         # Создаем Excel-файлы формовки для каждой дорожки
-        print(f"[FORMOVKA DEBUG] formovka_tracks_data count: {len(formovka_tracks_data)}")
+        logger.debug(f"[FORMOVKA] formovka_tracks_data count: {len(formovka_tracks_data)}")
         if formovka_tracks_data:
-            print(f"[FORMOVKA DEBUG] Начинаем создание {len(formovka_tracks_data)} файлов формовки")
+            logger.debug(f"[FORMOVKA] Начинаем создание {len(formovka_tracks_data)} файлов формовки")
             await callback.message.answer("📄 Генерирую файлы формовки...")
             
             # Создаем файлы формовки
             template_path = os.path.join(PROJECT_ROOT, "банк знаний", "!КЗ ПБ Шаблон.xlsx")
-            print(f"[FORMOVKA DEBUG] Template path: {template_path}")
-            print(f"[FORMOVKA DEBUG] Template exists: {os.path.exists(template_path)}")
+            logger.debug(f"[FORMOVKA] Template path: {template_path}")
+            logger.debug(f"[FORMOVKA] Template exists: {os.path.exists(template_path)}")
             
             date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
             
@@ -960,12 +969,13 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     template_path=template_path,
                     date_str=date_str
                 )
-                print(f"[FORMOVKA DEBUG] Создано файлов: {len(formovka_files)}")
+                logger.debug(f"[FORMOVKA] Создано файлов: {len(formovka_files)}")
             except Exception as e:
-                print(f"[FORMOVKA ERROR] Ошибка создания файлов: {e}")
-                import traceback
-                traceback.print_exc()
-                await callback.message.answer(f"⚠️ Ошибка создания файлов формовки: {e}")
+                logger.exception(f"[FORMOVKA] Ошибка создания файлов: {e}")
+                await callback.message.answer(
+                    "⚠️ Не удалось создать файлы формовки.\n"
+                    "Подробности в logs/bot.log."
+                )
                 formovka_files = []
             
             # Отправляем файлы формовки
@@ -1042,9 +1052,11 @@ async def export_gantt_chart(callback: CallbackQuery, state: FSMContext):
             )
     
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка создания диаграммы: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"Ошибка создания диаграммы: {e}")
+        await callback.message.answer(
+            "❌ Не удалось создать диаграмму Ганта.\n"
+            "Подробности в logs/bot.log."
+        )
     
     # Показываем клавиатуру выбора дней снова
     await callback.message.answer(
@@ -1055,37 +1067,100 @@ async def export_gantt_chart(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "production_all_days")
-async def process_all_days_selection(callback: CallbackQuery, state: FSMContext):
-    """Обработчик выбора 'Все дни сразу'"""
+@router.callback_query(F.data == "save_current_plan")
+async def save_current_plan(callback: CallbackQuery, state: FSMContext):
+    """
+    Обработчик сохранения актуального плана производства.
     
-    await callback.message.answer(
-        f"📦 Генерирую планы для всех дней...\n"
-        f"⏳ Это может занять некоторое время..."
-    )
+    Простыми словами:
+    - Получает текущий план производства из state
+    - Генерирует диаграмму Ганта
+    - Сохраняет информацию о плане в JSON файл для дальнейшего использования
+    - План можно будет просмотреть через Архив -> Актуальный план
+    """
+    await callback.message.answer("💾 Сохраняю актуальный план производства...")
     
+    # Получаем данные из state
     data = await state.get_data()
-    total_days = data['total_days']
+    all_tracks_list = data.get('all_tracks_list', [])
+    tracks_count = data.get('tracks_count', 1)
+    plate_lookup_exact = data.get('plate_lookup_exact', {})
+    plate_lookup_by_length = data.get('plate_lookup_by_length', {})
+    total_days = data.get('total_days', 1)
+    target_date = data.get('target_date', datetime.now().isoformat())
     
-    # Генерируем для каждого дня
-    for day in range(1, total_days + 1):
-        class FakeCallbackQuery:
-            def __init__(self, msg, day_num):
-                self.message = msg
-                self.data = f"production_day_{day_num}"
-            
-            async def answer(self):
-                pass
+    if not all_tracks_list:
+        await callback.message.answer(
+            "❌ Нет данных для сохранения.\n"
+            "Сначала выполните анализ производства.",
+            reply_markup=main_menu_kb()
+        )
+        await callback.answer()
+        return
+    
+    try:
+        # Создаём диаграмму Ганта
+        gantt_path = await asyncio.to_thread(
+            create_gantt_excel,
+            all_tracks_list=all_tracks_list,
+            tracks_count=tracks_count,
+            plate_lookup_exact=plate_lookup_exact,
+            plate_lookup_by_length=plate_lookup_by_length,
+            output_dir=OUTPUTS_DIR_STR,
+            start_date=datetime.now()
+        )
         
-        fake_callback = FakeCallbackQuery(callback.message, day)
-        await process_day_selection(fake_callback, state)
+        if not gantt_path or not os.path.exists(gantt_path):
+            await callback.message.answer(
+                "⚠️ Не удалось создать диаграмму Ганта.\n"
+                "План не сохранён."
+            )
+            await callback.answer()
+            return
+        
+        # Создаём директорию для данных, если её нет
+        data_dir = BOT_DIR / "data"
+        data_dir.mkdir(exist_ok=True)
+        
+        # Сохраняем информацию о плане в JSON
+        current_plan_data = {
+            "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "gantt_file_path": gantt_path,
+            "total_days": total_days,
+            "tracks_count": tracks_count,
+            "target_date": target_date,
+            # Сохраняем данные для возможного восстановления плана
+            "all_tracks_list": all_tracks_list,
+            "plate_lookup_exact": {
+                str(k): v for k, v in plate_lookup_exact.items()
+            },
+            "plate_lookup_by_length": {
+                str(k): v for k, v in plate_lookup_by_length.items()
+            }
+        }
+        
+        json_path = data_dir / "current_plan.json"
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(current_plan_data, f, ensure_ascii=False, indent=2)
+        
+        await callback.message.answer(
+            f"✅ Актуальный план успешно сохранён!\n\n"
+            f"📊 Информация о плане:\n"
+            f"  • Дней производства: {total_days}\n"
+            f"  • Дорожек в день: {tracks_count}\n"
+            f"  • Всего дорожек: {len(all_tracks_list)}\n"
+            f"  • Дата сохранения: {current_plan_data['saved_at']}\n\n"
+            f"💡 Теперь вы можете просмотреть этот план через:\n"
+            f"Архив → Актуальный план"
+        )
+        
+    except Exception as e:
+        logger.exception(f"Ошибка при сохранении плана: {e}")
+        await callback.message.answer(
+            "❌ Не удалось сохранить план.\n"
+            "Подробности в logs/bot.log."
+        )
     
-    await callback.message.answer(
-        "✅ Все планы готовы!",
-        reply_markup=main_menu_kb()
-    )
-    
-    await state.clear()
     await callback.answer()
 
 
@@ -1472,13 +1547,13 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
             
             moved = kp_db.move_plates_to_completed(found_kp_id, [plate], day_number, db_path)
             total_moved += moved
-            print(f"[COMPLETION] ✅ Плита найдена по длине: {plate_name} ({length_m}м) → КП #{found_kp_id}")
+            logger.info(f"[COMPLETION] Плита найдена по длине: {plate_name} ({length_m}м) → КП #{found_kp_id}")
             
             if kp_db.check_and_update_kp_completion(found_kp_id, db_path):
                 if found_kp_id not in completed_kps:
                     completed_kps.append(found_kp_id)
         else:
-            print(f"[COMPLETION] ⚠️ Плита не найдена в БД: {plate_name} ({length_m}м)")
+            logger.warning(f"[COMPLETION] Плита не найдена в БД: {plate_name} ({length_m}м)")
     # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
     
     # ========== СОХРАНЕНИЕ ОСТАТКОВ ==========

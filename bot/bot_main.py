@@ -9,6 +9,8 @@ BOT_DIR = Path(__file__).parent
 PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.logging_config import setup_logging
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -16,11 +18,8 @@ from aiogram.enums import ParseMode
 from bot.handlers import register_all_handlers
 from bot.bot_config import BOT_TOKEN, DB_PATH_STR
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Настройка логирования (консоль + logs/bot.log)
+setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def init_database():

@@ -12,8 +12,21 @@ except Exception:
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'pb.db')
 
 
+def _connect(db_path: str) -> sqlite3.Connection:
+    """
+    Безопасное подключение к SQLite.
+
+    - WAL уменьшает риск повреждения БД при сбоях
+    - foreign_keys включает поддержку внешних ключей (где они используются)
+    """
+    conn = _connect(db_path)
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA foreign_keys = ON')
+    return conn
+
+
 def init_schema(db_path: str = DEFAULT_DB) -> None:
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         cur = conn.cursor()
         cur.execute(
@@ -96,7 +109,7 @@ def import_from_xlsx(xlsx_path: str, db_path: str = DEFAULT_DB, preferred_sheet:
                         pass
 
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         cur = conn.cursor()
         cur.executemany('INSERT OR REPLACE INTO prices (length_dm, load_code, price) VALUES (?,?,?)', rows)

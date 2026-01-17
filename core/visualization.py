@@ -8,6 +8,8 @@
 - Визуализация раскладки плит
 """
 import os
+import logging
+from pathlib import Path
 from collections import Counter
 from datetime import datetime
 
@@ -21,6 +23,10 @@ from matplotlib.lines import Line2D
 from . import config_and_data as cfg
 from .optimization import optimize_cuts_pulp
 from .price_db import init_schema, import_from_xlsx
+from .exceptions import FileGenerationError
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 # Импорты из новых модулей
 from viz_modules.price_utils import load_price_table_from_xlsx
@@ -50,7 +56,8 @@ __all__ = ['visualize_plan', 'build_layout_sequence']
 def visualize_plan(output_dir: str = 'Визуализация_Раскладки', 
                     tracks_per_file: int = None, 
                     start_track_index: int = 0,
-                    use_production_pricing: bool = False):
+                    use_production_pricing: bool = False,
+                    auto_import_price_to_db: bool = True):
     """
     Создаёт визуализацию раскладки плит и сохраняет файлы
     
@@ -60,46 +67,93 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         start_track_index: С какой дорожки начинать (0 = с первой)
         use_production_pricing: Если True, использует расчет для планирования производства 
                                 (базовая цена из raw_material_costs + переармирование)
+    
+    Raises:
+        FileGenerationError: Если не удалось создать файлы или загрузить прайс
     """
+    logger.info(f"Начало генерации визуализации. Директория: {output_dir}")
+    
+    # Оптимизация резов (не критично, если не сработает)
     try:
         optimized = optimize_cuts_pulp({300: 4, 500: 3, 700: 2, 900: 2})
-        print("Оптимальные резы:", optimized)
+        logger.info(f"Оптимальные резы рассчитаны: {optimized}")
     except Exception as e:
-        print("[OPT] Ошибка при оптимизации:", e)
+        logger.warning(f"Ошибка при оптимизации резов (не критично): {e}")
 
-    os.makedirs(output_dir, exist_ok=True)
-
-    price_table = load_price_table_from_xlsx(cfg.PRICE_XLSX_PATH)
+    # Создаём директорию для результатов
     try:
-        init_schema(cfg.PRICE_DB_PATH)
-        written = import_from_xlsx(cfg.PRICE_XLSX_PATH, cfg.PRICE_DB_PATH)
-        if written:
-            print(f'[ПРАЙС->БД] записано строк: {written}')
-    except Exception:
-        pass
+        os.makedirs(output_dir, exist_ok=True)
+        logger.debug(f"Директория создана/проверена: {output_dir}")
+    except OSError as e:
+        logger.error(f"Не удалось создать директорию {output_dir}: {e}")
+        raise FileGenerationError(f"Не удалось создать папку для файлов: {e}")
+
+    # Проверяем существование файла прайса (мягкая проверка)
+    if not Path(cfg.PRICE_XLSX_PATH).exists():
+        logger.warning(f"Файл прайса не найден по точному пути: {cfg.PRICE_XLSX_PATH}")
+        logger.info("Попытка автоматического поиска файла прайса в папке 'банк знаний'...")
+    
+    # Загружаем прайс из Excel (функция имеет встроенный автопоиск)
+    # Если не удалось загрузить из Excel - используем цены из БД
+    try:
+        price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
+        if not price_table:
+            logger.warning("Прайс-лист из Excel пуст, будут использованы цены из БД")
+            price_table = {}  # Пустой словарь - цены будут из БД
+        else:
+            logger.info(f"Прайс-лист успешно загружен из Excel ({len(price_table)} позиций)")
+    except Exception as e:
+        logger.warning(f"Не удалось загрузить прайс из Excel: {e}")
+        logger.info("Будут использованы цены из базы данных")
+        price_table = {}  # Пустой словарь - цены будут из БД
+    
+    # Импорт прайса в БД (не критично, если не сработает)
+    if auto_import_price_to_db:
+        try:
+            init_schema(str(cfg.PRICE_DB_PATH))
+
+            # Не импортируем каждый раз: импортируем только если БД отсутствует
+            # или Excel новее базы (иначе это лишняя тяжёлая операция).
+            xlsx_path = Path(cfg.PRICE_XLSX_PATH)
+            db_path = Path(cfg.PRICE_DB_PATH)
+            should_import = (not db_path.exists())
+            if (not should_import) and xlsx_path.exists():
+                try:
+                    should_import = xlsx_path.stat().st_mtime > db_path.stat().st_mtime
+                except Exception:
+                    should_import = True
+
+            if should_import:
+                written = import_from_xlsx(str(cfg.PRICE_XLSX_PATH), str(cfg.PRICE_DB_PATH))
+                if written:
+                    logger.info(f'Прайс импортирован в БД: {written} строк')
+            else:
+                logger.debug("Импорт прайса в БД пропущен: база уже актуальна")
+        except Exception as e:
+            logger.warning(f"Не удалось импортировать прайс в БД (не критично): {e}")
 
     # Выбираем функции в зависимости от режима
     if use_production_pricing:
         from viz_modules.procurement import build_price_rows_production, build_component_breakdown_production
         price_rows, total_sum = build_price_rows_production(price_table)
         breakdown_tables = build_component_breakdown_production(price_table, price_rows)
-        print("[ВИЗУАЛИЗАЦИЯ] Используется расчет для планирования производства (raw_material_costs + переармирование)")
+        logger.info("Используется расчет для планирования производства (raw_material_costs + переармирование)")
     else:
         price_rows, total_sum = build_price_rows(price_table)
         breakdown_tables = build_component_breakdown(price_table, price_rows)
-        print("[ВИЗУАЛИЗАЦИЯ] Используется расчет для коммерческого предложения")
+        logger.info("Используется расчет для коммерческого предложения")
     
     # Отладочная информация
-    print(f'[DEBUG] breakdown_tables count: {len(breakdown_tables) if breakdown_tables else 0}')
+    logger.debug(f'breakdown_tables count: {len(breakdown_tables) if breakdown_tables else 0}')
     if breakdown_tables:
         for i, bt in enumerate(breakdown_tables):
-            print(f'[DEBUG] breakdown_tables[{i}]: name={bt.get("name")}, rows={len(bt.get("rows", []))}')
+            logger.debug(f'breakdown_tables[{i}]: name={bt.get("name")}, rows={len(bt.get("rows", []))}')
     
     seq = build_layout_sequence()
     
     # ✅ НОВАЯ ЛОГИКА: Проверяем формат данных (с группировкой по нагрузке или без)
     if isinstance(seq, list) and seq and isinstance(seq[0], dict) and 'load_code' in seq[0]:
-        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Обнаружена группировка по нагрузкам! Групп: {len(seq)}")
+        logger.info(f"[ВИЗУАЛИЗАЦИЯ] Обнаружена группировка по нагрузкам. Групп: {len(seq)}")
         
         tracks = []
         MIN_TRACK_LENGTH = 96.0   # Минимальная длина дорожки для закрытия
@@ -111,7 +165,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             items = list(group['sequence'])  # Копия для возможной модификации
             group_label = group.get('label', f'Нагрузка {load_code}п')
             
-            print(f"[ВИЗУАЛИЗАЦИЯ] Группа '{group_label}': {len(items)} плит")
+            logger.info(f"[ВИЗУАЛИЗАЦИЯ] Группа '{group_label}': {len(items)} плит")
             
             # Разбиваем группу на дорожки по 96-101м
             # ЖЁСТКОЕ ПРАВИЛО: дорожка НИКОГДА не превышает 101м!
@@ -147,13 +201,15 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     # Если не нашли НЕ-разделитель, берём разделитель
                     if found_solid_idx is None and fallback_separator_idx is not None:
                         found_solid_idx = fallback_separator_idx
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Используем разделитель для начала дорожки (не идеально)")
+                        logger.warning("[ВИЗУАЛИЗАЦИЯ] Используем разделитель для начала дорожки (не идеально)")
                     
                     if found_solid_idx is not None:
                         # Нашли целую плиту - добавляем её ПЕРВОЙ!
                         solid_plate = items.pop(found_solid_idx)
                         is_sep = solid_plate.get('is_separator', False)
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м (разделитель={is_sep})")
+                        logger.info(
+                            f"[ВИЗУАЛИЗАЦИЯ] Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м (разделитель={is_sep})"
+                        )
                         current_track.append(solid_plate)
                         current_track_length += solid_plate['length']
                         solid_reinf = solid_plate.get('reinforcement', 0) or 0
@@ -161,7 +217,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                         # НЕ увеличиваем i - текущая плита с резом будет добавлена следующей итерацией
                         continue
                     else:
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: Целой плиты для начала дорожки не найдено!")
+                        logger.warning("[ВИЗУАЛИЗАЦИЯ] ВНИМАНИЕ: целой плиты для начала дорожки не найдено!")
                 
                 # Проверяем: добавление плиты превысит максимум?
                 will_exceed_max = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
@@ -204,19 +260,22 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                         # Если не нашли НЕ-разделитель, берём разделитель
                         if found_solid_idx is None and fallback_separator_idx is not None:
                             found_solid_idx = fallback_separator_idx
-                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Используем разделитель для завершения дорожки (не идеально)")
+                            logger.warning("[ВИЗУАЛИЗАЦИЯ] Используем разделитель для завершения дорожки (не идеально)")
                         
                         if found_solid_idx is not None:
                             # Нашли подходящую целую плиту!
                             candidate = items[found_solid_idx]
                             is_sep = candidate.get('is_separator', False)
-                            print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для завершения: {candidate['length']:.2f}м, арм.={candidate.get('reinforcement', 0):.1f} (разделитель={is_sep})")
+                            logger.info(
+                                f"[ВИЗУАЛИЗАЦИЯ] Найдена целая плита для завершения: {candidate['length']:.2f}м, "
+                                f"арм.={candidate.get('reinforcement', 0):.1f} (разделитель={is_sep})"
+                            )
                             current_track.append(candidate)
                             current_track_length += candidate['length']
                             # Удаляем эту плиту из списка (она использована)
                             items.pop(found_solid_idx)
                         else:
-                            print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Целой плиты для завершения не найдено, закрываем как есть")
+                            logger.warning("[ВИЗУАЛИЗАЦИЯ] Целой плиты для завершения не найдено, закрываем как есть")
                         
                         # Текущая плита с резом НЕ добавляется - она пойдёт в следующую дорожку
                         # i НЕ увеличиваем!
@@ -225,7 +284,9 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                         pass
                     
                     # Закрываем дорожку
-                    print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Закрываем дорожку на {current_track_length:.1f}м (макс. {MAX_TRACK_LENGTH}м)")
+                    logger.info(
+                        f"[ВИЗУАЛИЗАЦИЯ] Закрываем дорожку на {current_track_length:.1f}м (макс. {MAX_TRACK_LENGTH}м)"
+                    )
                     tracks.append({
                         'items': current_track,
                         'length': current_track_length,
@@ -261,7 +322,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         
     else:
         # СТАРЫЙ ФОРМАТ (без группировки по нагрузке)
-        print("[ВИЗУАЛИЗАЦИЯ] Используем старый формат (без группировки)")
+        logger.info("[ВИЗУАЛИЗАЦИЯ] Используем старый формат (без группировки)")
         total_length = sum(s['length'] for s in seq)
         MIN_TRACK_LENGTH = 96.0   # Минимальная длина дорожки для закрытия
         MAX_TRACK_LENGTH = 101.0  # Максимальная длина дорожки (ЖЁСТКИЙ ЛИМИТ!)
@@ -301,13 +362,15 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 # Если не нашли НЕ-разделитель, берём разделитель
                 if found_solid_idx is None and fallback_separator_idx is not None:
                     found_solid_idx = fallback_separator_idx
-                    print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Используем разделитель для начала дорожки (не идеально)")
+                    logger.warning("[ВИЗУАЛИЗАЦИЯ] Используем разделитель для начала дорожки (не идеально)")
                 
                 if found_solid_idx is not None:
                     # Нашли целую плиту - добавляем её ПЕРВОЙ!
                     solid_plate = items.pop(found_solid_idx)
                     is_sep = solid_plate.get('is_separator', False)
-                    print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м (разделитель={is_sep})")
+                    logger.info(
+                        f"[ВИЗУАЛИЗАЦИЯ] Найдена целая плита для НАЧАЛА дорожки: {solid_plate['length']:.2f}м (разделитель={is_sep})"
+                    )
                     current_track.append(solid_plate)
                     current_track_length += solid_plate['length']
                     solid_reinf = solid_plate.get('reinforcement', 0) or 0
@@ -315,7 +378,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     # НЕ увеличиваем i - текущая плита с резом будет добавлена следующей итерацией
                     continue
                 else:
-                    print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ ВНИМАНИЕ: Целой плиты для начала дорожки не найдено!")
+                    logger.warning("[ВИЗУАЛИЗАЦИЯ] ВНИМАНИЕ: целой плиты для начала дорожки не найдено!")
             
             # Проверяем: добавление плиты превысит максимум?
             will_exceed_max = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
@@ -357,18 +420,21 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     # Если не нашли НЕ-разделитель, берём разделитель
                     if found_solid_idx is None and fallback_separator_idx is not None:
                         found_solid_idx = fallback_separator_idx
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Используем разделитель для завершения дорожки (не идеально)")
+                        logger.warning("[ВИЗУАЛИЗАЦИЯ] Используем разделитель для завершения дорожки (не идеально)")
                     
                     if found_solid_idx is not None:
                         # Нашли подходящую целую плиту!
                         candidate = items[found_solid_idx]
                         is_sep = candidate.get('is_separator', False)
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Найдена целая плита для завершения: {candidate['length']:.2f}м, арм.={candidate.get('reinforcement', 0):.1f} (разделитель={is_sep})")
+                        logger.info(
+                            f"[ВИЗУАЛИЗАЦИЯ] Найдена целая плита для завершения: {candidate['length']:.2f}м, "
+                            f"арм.={candidate.get('reinforcement', 0):.1f} (разделитель={is_sep})"
+                        )
                         current_track.append(candidate)
                         current_track_length += candidate['length']
                         items.pop(found_solid_idx)
                     else:
-                        print(f"[ВИЗУАЛИЗАЦИЯ] ⚠️ Целой плиты для завершения не найдено, закрываем как есть")
+                        logger.warning("[ВИЗУАЛИЗАЦИЯ] Целой плиты для завершения не найдено, закрываем как есть")
                     
                     # Текущая плита с резом НЕ добавляется - она пойдёт в следующую дорожку
                 else:
@@ -376,7 +442,9 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     pass
                 
                 # Закрываем дорожку
-                print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Закрываем дорожку на {current_track_length:.1f}м (макс. {MAX_TRACK_LENGTH}м)")
+                logger.info(
+                    f"[ВИЗУАЛИЗАЦИЯ] Закрываем дорожку на {current_track_length:.1f}м (макс. {MAX_TRACK_LENGTH}м)"
+                )
                 tracks.append({
                     'items': current_track,
                     'length': current_track_length
@@ -402,7 +470,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             })
     
     num_tracks_total = len(tracks)
-    print(f"[ВИЗУАЛИЗАЦИЯ] Плиты разбиты на {num_tracks_total} дорожек")
+    logger.info(f"[ВИЗУАЛИЗАЦИЯ] Плиты разбиты на {num_tracks_total} дорожек")
     
     # ✅ НОВОЕ: Фильтруем дорожки для текущего файла
     if tracks_per_file is not None:
@@ -410,7 +478,9 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         tracks = tracks[start_track_index:end_track_index]
         actual_start = start_track_index + 1
         actual_end = start_track_index + len(tracks)
-        print(f"[ВИЗУАЛИЗАЦИЯ] Файл содержит дорожки {actual_start}-{actual_end} (всего {len(tracks)} дорожек в файле)")
+        logger.info(
+            f"[ВИЗУАЛИЗАЦИЯ] Файл содержит дорожки {actual_start}-{actual_end} (всего {len(tracks)} дорожек в файле)"
+        )
     
     num_tracks = len(tracks)
 
@@ -424,7 +494,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 max_reinforcement = max(max_reinforcement, reinforcement)
         track['max_reinforcement'] = max_reinforcement
         if max_reinforcement > 0:
-            print(f"[ВИЗУАЛИЗАЦИЯ] Дорожка: макс. армирование {max_reinforcement:.1f} кг/м²")
+            logger.info(f"[ВИЗУАЛИЗАЦИЯ] Дорожка: макс. армирование {max_reinforcement:.1f} кг/м²")
     
     # === ЗАПОЛНЯЕМ ГЛОБАЛЬНУЮ КАРТУ МАКСИМАЛЬНОГО АРМИРОВАНИЯ ДЛЯ КАЖДОЙ ПЛИТЫ ===
     # Это нужно для корректного расчёта переармирования в procurement.py
@@ -450,14 +520,14 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             else:
                 cfg.PLATE_MAX_REINFORCEMENT_MAP[key] = track_max_reinf
     
-    print(f"[ВИЗУАЛИЗАЦИЯ] Заполнена карта макс. армирования: {len(cfg.PLATE_MAX_REINFORCEMENT_MAP)} плит")
+    logger.info(f"[ВИЗУАЛИЗАЦИЯ] Заполнена карта макс. армирования: {len(cfg.PLATE_MAX_REINFORCEMENT_MAP)} плит")
     
     # ✅ ПЕРЕСЧИТЫВАЕМ breakdown_tables после заполнения PLATE_MAX_REINFORCEMENT_MAP
     # Это нужно для корректного расчёта переармирования по дорожкам
     if use_production_pricing and cfg.PLATE_MAX_REINFORCEMENT_MAP:
         from viz_modules.procurement import build_component_breakdown_production
         breakdown_tables = build_component_breakdown_production(price_table, price_rows)
-        print(f"[ВИЗУАЛИЗАЦИЯ] ✅ Пересчитана детальная разбивка с учётом максимального армирования по дорожкам")
+        logger.info("[ВИЗУАЛИЗАЦИЯ] Пересчитана детальная разбивка с учётом максимального армирования по дорожкам")
 
     # Убрали секцию детальной разбивки - она теперь в отдельном Excel файле
     # Увеличиваем высоту секции дорожек пропорционально их количеству
@@ -790,7 +860,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             df_v = pd.DataFrame(table_rows, columns=col_labels)
             xlsx_path_v = os.path.join(output_dir, f'Ведомость_{file_suffix}.xlsx')
             df_v.to_excel(xlsx_path_v, index=False)
-            print(f'[DEBUG] Ведомость сохранена: {xlsx_path_v}')
+            logger.debug(f"Ведомость сохранена: {xlsx_path_v}")
 
             # Смета по дорожке (БЕЗ ЦЕН)
             # Определяем заголовки без столбцов цен
@@ -806,7 +876,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             with pd.ExcelWriter(xlsx_path_p, engine='openpyxl') as writer:
                 df_p.to_excel(writer, index=False, sheet_name='Список плит')
                 df_v.to_excel(writer, index=False, sheet_name='Ведомость')
-            print(f'[DEBUG] Список плит сохранён: {xlsx_path_p}')
+            logger.debug(f"Список плит сохранён: {xlsx_path_p}")
             
             # Сохраняем детальную разбивку компонентов в отдельный Excel файл (С ЦЕНАМИ)
             if breakdown_tables:
@@ -831,17 +901,14 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                 df_breakdown = pd.DataFrame(all_breakdown_rows, columns=breakdown_headers)
                 xlsx_path_breakdown = os.path.join(output_dir, f'Детальная_разбивка_{file_suffix}.xlsx')
                 df_breakdown.to_excel(xlsx_path_breakdown, index=False)
-                print(f'[DEBUG] Детальная разбивка сохранена в Excel: {xlsx_path_breakdown}')
+                logger.debug(f"Детальная разбивка сохранена в Excel: {xlsx_path_breakdown}")
             else:
-                print('[DEBUG] breakdown_tables пустой - файл детальной разбивки не создан')
+                logger.debug("breakdown_tables пустой - файл детальной разбивки не создан")
         except Exception as e:
-            print(f'[ОШИБКА] При сохранении Excel файлов: {e}')
-            import traceback
-            traceback.print_exc()
-            pass
+            logger.exception(f"Ошибка при сохранении Excel файлов: {e}")
     else:
-        print('[ПРЕДУПРЕЖДЕНИЕ] pandas не установлен - Excel файлы не будут созданы!')
-        print('[ПРЕДУПРЕЖДЕНИЕ] Установите: pip install pandas openpyxl')
+        logger.warning("pandas не установлен - Excel файлы не будут созданы")
+        logger.warning("Установите: pip install pandas openpyxl")
 
     png_path = os.path.join(output_dir, f'Схема_{file_suffix}_КЗ.png')
     pdf_path = os.path.join(output_dir, f'Схема_{file_suffix}_КЗ.pdf')
@@ -850,17 +917,17 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     fig.savefig(pdf_path)
     plt.close(fig)
 
-    print('[ГОТОВО] Визуализация и файлы сохранены:')
-    print('  PNG:', png_path)
-    print('  PDF:', pdf_path)
-    print('  CSV:', csv_path)
+    logger.info("Визуализация и файлы сохранены")
+    logger.info(f"PNG: {png_path}")
+    logger.info(f"PDF: {pdf_path}")
+    logger.info(f"CSV: {csv_path}")
     if pd is not None:
         if xlsx_path_v:
-            print('  XLSX (ведомость):', xlsx_path_v)
+            logger.info(f"XLSX (ведомость): {xlsx_path_v}")
         if xlsx_path_p:
-            print('  XLSX (список плит):', xlsx_path_p)
+            logger.info(f"XLSX (список плит): {xlsx_path_p}")
         if breakdown_tables and xlsx_path_breakdown:
-            print('  XLSX (детальная разбивка):', xlsx_path_breakdown)
+            logger.info(f"XLSX (детальная разбивка): {xlsx_path_breakdown}")
     return png_path, pdf_path
 
 

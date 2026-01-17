@@ -1,5 +1,6 @@
 """Обработчики для архива коммерческих предложений"""
 import os
+import json
 from pathlib import Path
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
@@ -365,6 +366,93 @@ async def delete_kp_execute(callback: CallbackQuery):
         await callback.message.edit_text(
             f"❌ Ошибка при удалении КП № {kp_id}\n\n"
             f"Возможно, КП уже был удалён ранее.",
+            reply_markup=archive_sections_kb()
+        )
+
+
+@router.callback_query(F.data == "view_current_plan")
+async def view_current_plan(callback: CallbackQuery):
+    """
+    Просмотр актуального плана производства.
+    
+    Простыми словами:
+    - Читает сохранённый файл с информацией об актуальном плане
+    - Проверяет существование файла диаграммы Ганта
+    - Отправляет файл пользователю с информацией о плане
+    """
+    try:
+        await callback.answer()
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
+    
+    # Определяем путь к файлу с данными плана
+    # Берём путь к bot/handlers и поднимаемся на уровень выше к bot/
+    bot_dir = Path(__file__).parent.parent
+    json_path = bot_dir / "data" / "current_plan.json"
+    
+    # Проверяем существование файла
+    if not json_path.exists():
+        await callback.message.edit_text(
+            "📊 Актуальный план не найден\n\n"
+            "❌ Сохранённого актуального плана пока нет.\n\n"
+            "💡 Чтобы создать актуальный план:\n"
+            "1. Перейдите в раздел '🏭 Производство'\n"
+            "2. Создайте план производства\n"
+            "3. После просмотра дня нажмите кнопку '💾 Актуальный план'\n\n"
+            "После этого диаграмма Ганта будет доступна здесь.",
+            reply_markup=archive_sections_kb()
+        )
+        return
+    
+    try:
+        # Читаем JSON файл
+        with open(json_path, 'r', encoding='utf-8') as f:
+            plan_data = json.load(f)
+        
+        gantt_file_path = plan_data.get('gantt_file_path')
+        saved_at = plan_data.get('saved_at', 'неизвестно')
+        total_days = plan_data.get('total_days', 0)
+        tracks_count = plan_data.get('tracks_count', 0)
+        
+        # Проверяем существование файла диаграммы Ганта
+        if not gantt_file_path or not os.path.exists(gantt_file_path):
+            await callback.message.edit_text(
+                "⚠️ Файл диаграммы Ганта не найден\n\n"
+                f"❌ Диаграмма была удалена с диска.\n\n"
+                f"📋 Информация о плане:\n"
+                f"  • Дата сохранения: {saved_at}\n"
+                f"  • Дней производства: {total_days}\n"
+                f"  • Дорожек в день: {tracks_count}\n\n"
+                f"💡 Создайте новый актуальный план через раздел Производство.",
+                reply_markup=archive_sections_kb()
+            )
+            return
+        
+        # Отправляем файл
+        await callback.message.answer_document(
+            FSInputFile(gantt_file_path),
+            caption=(
+                f"📊 Актуальный план производства\n\n"
+                f"📅 Дата сохранения: {saved_at}\n"
+                f"📋 Дней производства: {total_days}\n"
+                f"🏭 Дорожек в день: {tracks_count}\n\n"
+                f"Цветовая кодировка:\n"
+                f"🟢 Зелёный — успеваем до дедлайна\n"
+                f"🟡 Жёлтый — завершаем в день дедлайна\n"
+                f"🔴 Красный — опаздываем!"
+            )
+        )
+        
+        # Возвращаем клавиатуру выбора раздела
+        await callback.message.answer(
+            "Выберите раздел для просмотра:",
+            reply_markup=archive_sections_kb()
+        )
+        
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при чтении плана: {e}\n\n"
+            f"Попробуйте создать новый актуальный план.",
             reply_markup=archive_sections_kb()
         )
 

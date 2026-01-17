@@ -95,14 +95,13 @@ def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
     
-    # Кнопка "Все дни сразу" (если дней больше 1)
-    if total_days > 1:
-        buttons.append([
-            InlineKeyboardButton(
-                text="📦 Все дни сразу",
-                callback_data="production_all_days"
-            )
-        ])
+    # Кнопка "Актуальный план"
+    buttons.append([
+        InlineKeyboardButton(
+            text="💾 Актуальный план",
+            callback_data="save_current_plan"
+        )
+    ])
     
     # Кнопка "Назад в меню"
     buttons.append([
@@ -134,6 +133,14 @@ def production_day_actions_kb(day_number: int, total_days: int) -> InlineKeyboar
         InlineKeyboardButton(
             text="✅ День выполнен",
             callback_data=f"complete_day_{day_number}"
+        )
+    ])
+    
+    # Кнопка "Актуальный план"
+    buttons.append([
+        InlineKeyboardButton(
+            text="💾 Актуальный план",
+            callback_data="save_current_plan"
         )
     ])
     
@@ -302,14 +309,16 @@ def archive_sections_kb() -> InlineKeyboardMarkup:
     """
     Клавиатура для выбора раздела архива.
     
-    Показывает две кнопки:
+    Показывает кнопки:
     - 📦 В архиве (КП со статусом "в архиве")
     - 🏭 В производстве (КП со статусом "в работе")
+    - 📊 Актуальный план (сохранённый план производства)
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📦 В архиве", callback_data="archive_section_archived")],
             [InlineKeyboardButton(text="🏭 В производстве", callback_data="archive_section_production")],
+            [InlineKeyboardButton(text="📊 Актуальный план", callback_data="view_current_plan")],
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="archive_back_to_menu")],
         ]
     )

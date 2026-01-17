@@ -1,13 +1,16 @@
 """Основные команды бота: /start, /help, /stats"""
 import os
+import logging
 from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 
 from ..keyboards import main_menu_kb
 from ..bot_config import OUTPUTS_DIR_STR
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 @router.message(Command("start"))
@@ -36,6 +39,7 @@ async def cmd_help(message: Message):
 **Основные команды:**
 • `/start` - главное меню
 • `/build_plan` - построить план дорожки
+• `/cancel` - отменить текущую операцию (если бот «завис» в диалоге)
 • `/help` - эта справка
 • `/stats` - статистика проекта
 
@@ -82,5 +86,30 @@ async def cmd_stats(message: Message):
         await message.answer(stats_text, parse_mode="Markdown")
         
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}", parse_mode=None)
+        logger.exception(f"Ошибка в /stats: {e}")
+        await message.answer(
+            "❌ Не удалось получить статистику.\n"
+            "Попробуйте позже.",
+            parse_mode=None
+        )
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext):
+    """
+    Универсальная отмена.
+
+    Простыми словами:
+    - если ты «застрял» в каком-то шаге (бот ждёт ввод),
+      команда /cancel сбросит это состояние и вернёт в меню.
+    """
+    try:
+        await state.clear()
+    except Exception as e:
+        logger.exception(f"Ошибка при /cancel: {e}")
+
+    await message.answer(
+        "❌ Операция отменена.\nВыберите действие:",
+        reply_markup=main_menu_kb()
+    )
 

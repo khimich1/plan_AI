@@ -2,8 +2,11 @@
 import asyncio
 import os
 import re
+import logging
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile
@@ -499,7 +502,7 @@ def create_comparison_excel(kp_path: str, smeta_path: str) -> str:
                             'sum': summa
                         })
     except Exception as e:
-        print(f"[DEBUG] Не удалось загрузить детальную разбивку: {e}")
+        logger.exception(f"Не удалось загрузить детальную разбивку: {e}")
     
     # Итоги
     total_smeta = 0.0
@@ -836,9 +839,12 @@ async def receive_smeta(message: Message, state: FSMContext):
             
     except Exception as e:  # pylint: disable=broad-except
         # Отключаем разбор разметки, чтобы спецсимволы из текста ошибки не ломали сообщение
-        await message.answer(f"❌ Не удалось сравнить файлы: {e}", parse_mode=None)
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"Не удалось сравнить файлы: {e}")
+        await message.answer(
+            "❌ Не удалось сравнить файлы.\n"
+            "Подробности в logs/bot.log.",
+            parse_mode=None
+        )
     finally:
         await state.clear()
 

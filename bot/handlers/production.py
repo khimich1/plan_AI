@@ -1,10 +1,13 @@
 """Обработчики планирования производства плит"""
 import asyncio
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 import math
+
+logger = logging.getLogger(__name__)
 
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile, CallbackQuery
@@ -451,13 +454,12 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
         await state.set_state(ProductionStates.waiting_day_selection)
         
     except Exception as e:
+        logger.exception(f"Ошибка при планировании производства: {e}")
         await message.answer(
-            f"❌ Ошибка при планировании производства: {str(e)}\n\n"
-            "Попробуйте снова позже.",
+            "❌ Ошибка при планировании производства.\n"
+            "Подробности в logs/bot.log.",
             reply_markup=main_menu_kb()
         )
-        import traceback
-        traceback.print_exc()
         await state.clear()
 
 
@@ -559,7 +561,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     if breakdown_path is None or os.path.getctime(candidate_path) > os.path.getctime(breakdown_path):
                         breakdown_path = candidate_path
         except Exception as e:
-            print(f"[DEBUG] Ошибка поиска файла разбивки: {e}")
+            logger.exception(f"Ошибка поиска файла разбивки: {e}")
         
         if breakdown_path and os.path.exists(breakdown_path):
             await callback.message.answer_document(

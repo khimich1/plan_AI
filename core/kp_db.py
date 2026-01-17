@@ -24,6 +24,19 @@ from typing import List, Dict, Optional, Tuple
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'plita.db')
 
 
+def _connect(db_path: str) -> sqlite3.Connection:
+    """
+    Безопасное подключение к SQLite (plita.db).
+
+    - WAL уменьшает риск повреждения базы при сбоях/перезапусках.
+    - foreign_keys нужен для корректной работы связей между таблицами.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA foreign_keys = ON')
+    return conn
+
+
 def init_schema(db_path: str = DEFAULT_DB) -> None:
     """
     Создаёт таблицы в базе данных, если их ещё нет.
@@ -33,11 +46,8 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
     - Если нет — создаёт их с нужными колонками
     - Это как создать пустую таблицу Excel с заголовками
     """
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
-        # КРИТИЧНО: Включаем поддержку FOREIGN KEY (по умолчанию выключена в SQLite)
-        conn.execute('PRAGMA foreign_keys = ON')
-        
         cur = conn.cursor()
         
         # Таблица 1: KP_offers - Основная информация о КП
@@ -229,7 +239,7 @@ def save_kp_to_db(
         vat_amount = round(subtotal * 0.22, 2)
         total_amount = round(subtotal + vat_amount, 2)
     
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         # Включаем поддержку FOREIGN KEY
         conn.execute('PRAGMA foreign_keys = ON')
@@ -313,7 +323,7 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
         Словарь с информацией о КП или None, если не найдено
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         conn.execute('PRAGMA foreign_keys = ON')
         conn.row_factory = sqlite3.Row
@@ -371,7 +381,7 @@ def get_all_kp_by_status(status: str, db_path: str = DEFAULT_DB) -> List[Dict]:
         Список словарей с информацией о КП
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         conn.execute('PRAGMA foreign_keys = ON')
         conn.row_factory = sqlite3.Row
@@ -409,7 +419,7 @@ def update_kp_status(kp_id: int, new_status: str, db_path: str = DEFAULT_DB) -> 
         True если успешно, False если КП не найдено
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
@@ -443,7 +453,7 @@ def save_xlsx_file(kp_id: int, xlsx_file_path: str, db_path: str = DEFAULT_DB) -
     if not os.path.exists(xlsx_file_path):
         return False
     
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         conn.execute('PRAGMA foreign_keys = ON')
         with open(xlsx_file_path, 'rb') as f:
@@ -493,7 +503,7 @@ def get_xlsx_file(kp_id: int, output_path: Optional[str] = None, db_path: str = 
         bytes (двоичные данные файла) или None если не найдено
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
@@ -533,7 +543,7 @@ def delete_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> bool:
         True если КП был найден и удалён, False если КП не найдено
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         # КРИТИЧНО: Включаем поддержку FOREIGN KEY (по умолчанию выключена в SQLite)
         conn.execute('PRAGMA foreign_keys = ON')
@@ -577,7 +587,7 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         Словарь с количеством удалённых записей из каждой таблицы
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         # Включаем поддержку FOREIGN KEY
         conn.execute('PRAGMA foreign_keys = ON')
@@ -661,7 +671,7 @@ def get_db_stats(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         Словарь с количеством записей в каждой таблице
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         cur = conn.cursor()
         
@@ -710,7 +720,7 @@ def clear_all_kp(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         Словарь с количеством удалённых записей из каждой таблицы
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         # Включаем поддержку FOREIGN KEY
         conn.execute('PRAGMA foreign_keys = ON')
@@ -795,7 +805,7 @@ def move_plates_to_completed(
         Количество перенесённых плит (сумма qty)
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     completed_count = 0
     
     try:
@@ -884,7 +894,7 @@ def create_plate_rest(
         ID созданной записи или 0 при ошибке
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -940,7 +950,7 @@ def get_available_rests(
         Список словарей с информацией об остатках
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -996,7 +1006,7 @@ def mark_rest_as_used(
         True если успешно, False при ошибке
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1048,7 +1058,7 @@ def complete_plate_rest(
         True если успешно, False при ошибке
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1098,7 +1108,7 @@ def discard_plate_rest(
         True если успешно, False при ошибке
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1136,7 +1146,7 @@ def get_all_plate_rests(db_path: str = DEFAULT_DB) -> List[Dict]:
         Список словарей с информацией обо всех остатках
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1176,7 +1186,7 @@ def check_and_update_kp_completion(kp_id: int, db_path: str = DEFAULT_DB) -> boo
         True если КП полностью выполнен, False если ещё есть плиты
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1217,7 +1227,7 @@ def get_remaining_plates_for_kp(kp_id: int, db_path: str = DEFAULT_DB) -> List[D
         Список словарей с информацией о плитах
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1251,7 +1261,7 @@ def get_completed_plates_for_kp(kp_id: int, db_path: str = DEFAULT_DB) -> List[D
         Список словарей с информацией о выполненных плитах
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1283,7 +1293,7 @@ def get_completed_plates_stats(db_path: str = DEFAULT_DB) -> Dict:
         Словарь со статистикой
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         cur = conn.cursor()
@@ -1328,7 +1338,7 @@ def get_completed_plates_by_day(production_day: int, db_path: str = DEFAULT_DB) 
         Список словарей с информацией о плитах
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1361,7 +1371,7 @@ def get_all_plates_in_production(db_path: str = DEFAULT_DB) -> List[Dict]:
         Список словарей с информацией о плитах
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1408,7 +1418,7 @@ def get_all_completed_plates(db_path: str = DEFAULT_DB) -> List[Dict]:
         Список словарей с информацией о выполненных плитах
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -1452,7 +1462,7 @@ def get_next_kp_number(db_path: str = DEFAULT_DB) -> int:
         Следующий номер КП для нового коммерческого предложения
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         cur = conn.cursor()
@@ -1495,7 +1505,7 @@ def add_manager(
         ID созданного менеджера или 0 при ошибке
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         cur = conn.cursor()
@@ -1534,7 +1544,7 @@ def get_all_managers(db_path: str = DEFAULT_DB) -> List[Dict]:
         Список словарей с информацией о менеджерах
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.row_factory = sqlite3.Row
@@ -1562,7 +1572,7 @@ def get_manager_by_id(manager_id: int, db_path: str = DEFAULT_DB) -> Optional[Di
         Словарь с информацией о менеджере или None
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.row_factory = sqlite3.Row
@@ -1591,7 +1601,7 @@ def get_manager_by_email(email: str, db_path: str = DEFAULT_DB) -> Optional[Dict
         Словарь с информацией о менеджере или None
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.row_factory = sqlite3.Row
@@ -1629,7 +1639,7 @@ def update_manager(
         True если успешно, False если менеджер не найден
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         cur = conn.cursor()
@@ -1693,7 +1703,7 @@ def delete_manager(manager_id: int, db_path: str = DEFAULT_DB) -> bool:
         True если менеджер был найден и удалён, False если не найден
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         cur = conn.cursor()
@@ -1766,7 +1776,7 @@ def get_all_kp_list(db_path: str = DEFAULT_DB) -> Dict[str, List[Dict]]:
         }
     """
     init_schema(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
