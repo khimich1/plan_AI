@@ -19,7 +19,7 @@ def _connect(db_path: str) -> sqlite3.Connection:
     - WAL уменьшает риск повреждения БД при сбоях
     - foreign_keys включает поддержку внешних ключей (где они используются)
     """
-    conn = _connect(db_path)
+    conn = sqlite3.connect(db_path)
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA foreign_keys = ON')
     return conn

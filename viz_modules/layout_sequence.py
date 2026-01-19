@@ -232,9 +232,10 @@ def build_layout_sequence():
         # 3. Группы сортируются по армированию (от меньшего к большему)
         # 4. Между группами с РАЗНЫМ резом/армированием должна быть целая плита-разделитель с мин. армированием
         all_primary_cuts = OPT_CASCADING_PLAN.get('primary_cuts', [])
-        # ВАЖНО: Целая плита = ТОЛЬКО 1200мм без реза! (1080мм - это результат реза!)
+        # ИСПРАВЛЕНО: Целая плита = любая плита без реза (rest=0)
+        # Раньше фильтровали только 1200мм, из-за чего плиты 1080мм и другие терялись!
         solid_cuts = [cut for cut in all_primary_cuts 
-                      if cut['rest'] == 0 and cut['width'] == 1200]
+                      if cut['rest'] == 0]
         
         # НОВОЕ: Вычисляем армирование для каждой целой плиты и сортируем по армированию (мин. первый)
         for cut in solid_cuts:
@@ -290,8 +291,10 @@ def build_layout_sequence():
         
         # Правило 1: Первая плита ОБЯЗАТЕЛЬНО целая
         if solid_cuts_list:
-            ordered_cuts.append(solid_cuts_list.pop(0))
-            print(f"[VISUAL] ✓ Первая плита: целая 1200мм")
+            first_plate = solid_cuts_list.pop(0)
+            ordered_cuts.append(first_plate)
+            first_width = first_plate.get('width', 1200)
+            print(f"[VISUAL] ✓ Первая плита: целая {first_width}мм")
         
         # Правило 2 и 3: Чередуем группы резов и целые плиты-разделители
         for i, cut_group in enumerate(cut_groups):
@@ -635,9 +638,10 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     # 3. Группы сортируются по армированию (от меньшего к большему)
     # 4. Между группами с РАЗНЫМ резом/армированием должна быть целая плита-разделитель с мин. армированием
     all_primary_cuts = plan.get('primary_cuts', [])
-    # ВАЖНО: Целая плита = ТОЛЬКО 1200мм без реза! (1080мм - это результат реза!)
+    # ИСПРАВЛЕНО: Целая плита = любая плита без реза (rest=0)
+    # Раньше фильтровали только 1200мм, из-за чего плиты 1080мм и другие терялись!
     solid_cuts = [cut for cut in all_primary_cuts 
-                  if cut['rest'] == 0 and cut['width'] == 1200]
+                  if cut['rest'] == 0]
     
     # НОВОЕ: Вычисляем армирование для каждой целой плиты и сортируем по армированию (мин. первый)
     for cut in solid_cuts:
@@ -693,8 +697,10 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     
     # Правило 1: Первая плита ОБЯЗАТЕЛЬНО целая
     if solid_cuts_list:
-        ordered_cuts.append(solid_cuts_list.pop(0))
-        print(f"[VISUAL] ✓ Первая плита: целая 1200мм")
+        first_plate = solid_cuts_list.pop(0)
+        ordered_cuts.append(first_plate)
+        first_width = first_plate.get('width', 1200)
+        print(f"[VISUAL] ✓ Первая плита: целая {first_width}мм")
     
     # Правило 2 и 3: Чередуем группы резов и целые плиты-разделители
     for i, cut_group in enumerate(cut_groups):
