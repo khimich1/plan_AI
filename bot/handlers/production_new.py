@@ -1762,7 +1762,8 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     await state.update_data(
         completing_day=day_number,
         day_plates_by_track=day_plates_by_track,
-        rejected_indices=[]  # Пустой список — пока нет брака (формат: [(track_idx, plate_idx), ...])
+        rejected_quantities={},  # Словарь {(track_idx, plate_idx): количество_брака}
+        active_plate_id=None  # Какая плита сейчас открыта для редактирования
     )
     
     # Формируем сообщение
@@ -1772,46 +1773,143 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
         f"Дорожек: {len(day_plates_by_track)}\n\n"
         f"❗ Отметьте плиты, которые ушли в БРАК:\n"
         f"(Бракованные плиты останутся на следующий день)\n\n"
-        f"Нажмите на плиту, чтобы отметить её как брак:",
-        reply_markup=plates_completion_kb(day_plates_by_track, set())
+        f"Нажмите на плиту, чтобы выбрать количество брака:",
+        reply_markup=plates_completion_kb(day_plates_by_track, {}, None)
     )
     
     await state.set_state(ProductionStates.marking_completion)
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("toggle_reject_"), ProductionStates.marking_completion)
-async def toggle_plate_rejection(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith("plate_open_"), ProductionStates.marking_completion)
+async def open_plate_counter(callback: CallbackQuery, state: FSMContext):
     """
-    Переключение статуса брака для плиты.
-    Нажал — в браке, нажал ещё раз — не в браке.
+    Открывает счетчик брака под плитой.
+    Позволяет выбрать количество бракованных плит кнопками +/-.
     """
-    # Парсим новый формат: toggle_reject_t{track_idx}_p{plate_idx}
+    # Парсим формат: plate_open_t{track_idx}_p{plate_idx}
     parts = callback.data.split("_")
     track_idx = int(parts[2][1:])  # Убираем 't' из 't0'
     plate_idx = int(parts[3][1:])  # Убираем 'p' из 'p0'
     
     data = await state.get_data()
-    
-    # rejected_indices теперь список кортежей [(track_idx, plate_idx), ...]
-    rejected_indices_list = data.get('rejected_indices', [])
-    rejected_indices = set(tuple(item) if isinstance(item, list) else item for item in rejected_indices_list)
-    
-    # Переключаем статус
-    plate_id = (track_idx, plate_idx)
-    if plate_id in rejected_indices:
-        rejected_indices.remove(plate_id)
-    else:
-        rejected_indices.add(plate_id)
-    
-    await state.update_data(rejected_indices=list(rejected_indices))
-    
     day_plates_by_track = data.get('day_plates_by_track', [])
+    rejected_quantities = data.get('rejected_quantities', {})
+    
+    # Устанавливаем активную плиту
+    active_plate_id = (track_idx, plate_idx)
+    await state.update_data(active_plate_id=active_plate_id)
     
     # Обновляем клавиатуру
     await callback.message.edit_reply_markup(
-        reply_markup=plates_completion_kb(day_plates_by_track, rejected_indices)
+        reply_markup=plates_completion_kb(day_plates_by_track, rejected_quantities, active_plate_id)
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("reject_plus_"), ProductionStates.marking_completion)
+async def increase_rejection(callback: CallbackQuery, state: FSMContext):
+    """
+    Увеличивает количество брака на 1.
+    Максимум = общему количеству плит.
+    """
+    # Парсим формат: reject_plus_t{track_idx}_p{plate_idx}
+    parts = callback.data.split("_")
+    track_idx = int(parts[2][1:])  # Убираем 't' из 't0'
+    plate_idx = int(parts[3][1:])  # Убираем 'p' из 'p0'
+    
+    data = await state.get_data()
+    day_plates_by_track = data.get('day_plates_by_track', [])
+    rejected_quantities = data.get('rejected_quantities', {})
+    active_plate_id = data.get('active_plate_id')
+    
+    # Получаем максимальное количество плит
+    plate = day_plates_by_track[track_idx]['plates'][plate_idx]
+    max_qty = plate.get('qty', 1)
+    
+    # Увеличиваем брак (макс = max_qty)
+    plate_id = (track_idx, plate_idx)
+    current = rejected_quantities.get(plate_id, 0)
+    if current < max_qty:
+        rejected_quantities[plate_id] = current + 1
+        await state.update_data(rejected_quantities=rejected_quantities)
+        
+        # Обновляем клавиатуру
+        await callback.message.edit_reply_markup(
+            reply_markup=plates_completion_kb(day_plates_by_track, rejected_quantities, active_plate_id)
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("reject_minus_"), ProductionStates.marking_completion)
+async def decrease_rejection(callback: CallbackQuery, state: FSMContext):
+    """
+    Уменьшает количество брака на 1.
+    Минимум = 0.
+    """
+    # Парсим формат: reject_minus_t{track_idx}_p{plate_idx}
+    parts = callback.data.split("_")
+    track_idx = int(parts[2][1:])  # Убираем 't' из 't0'
+    plate_idx = int(parts[3][1:])  # Убираем 'p' из 'p0'
+    
+    data = await state.get_data()
+    day_plates_by_track = data.get('day_plates_by_track', [])
+    rejected_quantities = data.get('rejected_quantities', {})
+    active_plate_id = data.get('active_plate_id')
+    
+    # Уменьшаем брак (мин = 0)
+    plate_id = (track_idx, plate_idx)
+    current = rejected_quantities.get(plate_id, 0)
+    if current > 0:
+        rejected_quantities[plate_id] = current - 1
+        # Если стало 0, удаляем из словаря
+        if rejected_quantities[plate_id] == 0:
+            del rejected_quantities[plate_id]
+        await state.update_data(rejected_quantities=rejected_quantities)
+        
+        # Обновляем клавиатуру
+        await callback.message.edit_reply_markup(
+            reply_markup=plates_completion_kb(day_plates_by_track, rejected_quantities, active_plate_id)
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("reject_reset_"), ProductionStates.marking_completion)
+async def reset_rejection(callback: CallbackQuery, state: FSMContext):
+    """
+    Сбрасывает брак в 0 и закрывает счетчик.
+    """
+    # Парсим формат: reject_reset_t{track_idx}_p{plate_idx}
+    parts = callback.data.split("_")
+    track_idx = int(parts[2][1:])  # Убираем 't' из 't0'
+    plate_idx = int(parts[3][1:])  # Убираем 'p' из 'p0'
+    
+    data = await state.get_data()
+    day_plates_by_track = data.get('day_plates_by_track', [])
+    rejected_quantities = data.get('rejected_quantities', {})
+    
+    # Сбрасываем брак и закрываем счетчик
+    plate_id = (track_idx, plate_idx)
+    if plate_id in rejected_quantities:
+        del rejected_quantities[plate_id]
+    
+    await state.update_data(
+        rejected_quantities=rejected_quantities,
+        active_plate_id=None
+    )
+    
+    # Обновляем клавиатуру
+    await callback.message.edit_reply_markup(
+        reply_markup=plates_completion_kb(day_plates_by_track, rejected_quantities, None)
+    )
+    await callback.answer("Брак сброшен")
+
+
+@router.callback_query(F.data.startswith("reject_info_"), ProductionStates.marking_completion)
+async def reject_info_click(callback: CallbackQuery):
+    """
+    Обработчик для центральной кнопки 'Брак: X/Y' (без действия).
+    """
     await callback.answer()
 
 
@@ -1834,10 +1932,9 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     day_number = data.get('completing_day', 1)
     day_plates_by_track = data.get('day_plates_by_track', [])
-    rejected_indices_list = data.get('rejected_indices', [])
-    rejected_indices = set(tuple(item) if isinstance(item, list) else item for item in rejected_indices_list)
+    rejected_quantities = data.get('rejected_quantities', {})
     
-    # Разделяем на выполненные и бракованные
+    # Разделяем на выполненные и бракованные с учетом частичного брака
     completed_plates = []
     rejected_plates = []
     
@@ -1847,14 +1944,29 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
         
         for plate_idx, plate in enumerate(plates):
             plate_id = (track_idx, plate_idx)
+            reject_qty = rejected_quantities.get(plate_id, 0)
+            total_qty = plate.get('qty', 1)
             
-            if plate_id in rejected_indices:
-                # Добавляем информацию о дорожке для отчета
+            if reject_qty == 0:
+                # Все плиты выполнены
+                completed_plates.append(plate)
+            elif reject_qty >= total_qty:
+                # Все плиты в браке
                 plate_with_track = plate.copy()
                 plate_with_track['track_number'] = track_number
                 rejected_plates.append(plate_with_track)
             else:
-                completed_plates.append(plate)
+                # ЧАСТИЧНЫЙ БРАК: разделяем плиту на 2 части
+                # 1) Выполненная часть
+                completed_part = plate.copy()
+                completed_part['qty'] = total_qty - reject_qty
+                completed_plates.append(completed_part)
+                
+                # 2) Бракованная часть
+                rejected_part = plate.copy()
+                rejected_part['qty'] = reject_qty
+                rejected_part['track_number'] = track_number
+                rejected_plates.append(rejected_part)
     
     # Импортируем функции БД
     db_path = str(PROJECT_ROOT / "plita.db")
@@ -2051,7 +2163,8 @@ async def cancel_day_completion(callback: CallbackQuery, state: FSMContext):
     await state.update_data(
         completing_day=None,
         day_plates_by_track=None,
-        rejected_indices=None
+        rejected_quantities=None,
+        active_plate_id=None
     )
     
     await callback.message.answer(

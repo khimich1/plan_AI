@@ -161,20 +161,22 @@ def production_day_actions_kb(day_number: int, total_days: int) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> InlineKeyboardMarkup:
+def plates_completion_kb(plates_by_track: list, rejected_quantities: dict, active_plate_id: tuple = None) -> InlineKeyboardMarkup:
     """
     Клавиатура для отметки бракованных плит при завершении дня.
     
     Простыми словами:
     - Показывает список плит по дорожкам с кнопками
     - Каждая дорожка начинается с заголовка
-    - Нажатие на плиту переключает её статус: брак/не брак
+    - Клик на плиту открывает счетчик брака под ней
+    - Счетчик позволяет выбрать количество бракованных плит кнопками +/-
     - Плиты из остатков показываются отдельной группой с пометкой
     - Внизу кнопки "Подтвердить" и "Отмена"
     
     Args:
         plates_by_track: список дорожек, каждая содержит track_number и список plates
-        rejected_indices: множество кортежей (track_idx, plate_idx) для бракованных плит
+        rejected_quantities: словарь {(track_idx, plate_idx): количество_брака}
+        active_plate_id: кортеж (track_idx, plate_idx) активной плиты или None
         
     Returns:
         InlineKeyboardMarkup с кнопками плит
@@ -205,12 +207,16 @@ def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> Inline
         
         # Добавляем плиты этой дорожки
         for plate_idx, plate in enumerate(plates):
-            # Если плита в браке — показываем ❌, иначе ✅
-            is_rejected = (track_idx, plate_idx) in rejected_indices
-            emoji = "❌" if is_rejected else "✅"
+            plate_id = (track_idx, plate_idx)
+            
+            # Получаем количество брака для этой плиты
+            reject_qty = rejected_quantities.get(plate_id, 0)
+            total_qty = plate.get('qty', 1)
+            
+            # Если есть брак — показываем ❌, иначе ✅
+            emoji = "❌" if reject_qty > 0 else "✅"
             
             plate_name = plate.get('plate_name', f"Плита {plate_idx+1}")
-            qty = plate.get('qty', 1)
             kp_date = plate.get('kp_date', '')
             kp_id = plate.get('kp_id', '')
             from_rest = plate.get('from_rest', False)
@@ -245,16 +251,39 @@ def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> Inline
             
             # Формируем текст кнопки
             if from_rest:
-                button_text = f"{emoji} {rest_mark} {plate_name} {kp_info} ×{qty}"
+                button_text = f"{emoji} {rest_mark} {plate_name} {kp_info} ×{total_qty}"
             else:
-                button_text = f"{emoji} {plate_name} {kp_info} × {qty}"
+                button_text = f"{emoji} {plate_name} {kp_info} × {total_qty}"
             
+            # Основная кнопка плиты
             buttons.append([
                 InlineKeyboardButton(
                     text=button_text,
-                    callback_data=f"toggle_reject_t{track_idx}_p{plate_idx}"
+                    callback_data=f"plate_open_t{track_idx}_p{plate_idx}"
                 )
             ])
+            
+            # Если это активная плита — добавляем строку управления браком
+            if active_plate_id == plate_id:
+                control_buttons = [
+                    InlineKeyboardButton(
+                        text="−",
+                        callback_data=f"reject_minus_t{track_idx}_p{plate_idx}"
+                    ),
+                    InlineKeyboardButton(
+                        text=f"Брак: {reject_qty}/{total_qty}",
+                        callback_data=f"reject_info_t{track_idx}_p{plate_idx}"
+                    ),
+                    InlineKeyboardButton(
+                        text="+",
+                        callback_data=f"reject_plus_t{track_idx}_p{plate_idx}"
+                    ),
+                    InlineKeyboardButton(
+                        text="🔄 Сбросить",
+                        callback_data=f"reject_reset_t{track_idx}_p{plate_idx}"
+                    )
+                ]
+                buttons.append(control_buttons)
     
     # Кнопки подтверждения
     buttons.append([

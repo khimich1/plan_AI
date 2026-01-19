@@ -9,6 +9,10 @@ from aiogram.fsm.context import FSMContext
 from core import kp_db
 from ..keyboards import main_menu_kb, archive_sections_kb, kp_details_kb
 
+# Определяем пути к директориям проекта
+BOT_DIR = Path(__file__).parent.parent
+PROJECT_ROOT = BOT_DIR.parent
+
 router = Router()
 
 
@@ -61,18 +65,25 @@ async def show_archived_kp(callback: CallbackQuery):
     
     # Создаём inline кнопки для каждого КП
     buttons = []
+    db_path = PROJECT_ROOT / "plita.db"
+    
     for kp in archived_kp:
         kp_id = kp['kp_id']
         customer = kp.get('customer_name', 'Без имени')
         total = kp.get('total_amount', 0)
         date = kp.get('creation_date', '')
         
-        # Обрезаем длинные имена клиентов
-        customer_short = customer[:25] + '...' if len(customer) > 25 else customer
+        # Получаем процент выполнения
+        completion_info = kp_db.get_kp_completion_percentage(kp_id, str(db_path))
+        percentage = completion_info['percentage']
         
+        # Обрезаем длинные имена клиентов
+        customer_short = customer[:20] + '...' if len(customer) > 20 else customer
+        
+        # Формируем текст кнопки с процентом выполнения
         buttons.append([
             InlineKeyboardButton(
-                text=f"КП №{kp_id} | {customer_short} | {total:,.0f}₽",
+                text=f"КП №{kp_id} | {customer_short} | {percentage:.0f}% | {total:,.0f}₽",
                 callback_data=f"view_kp_{kp_id}"
             )
         ])
@@ -121,17 +132,23 @@ async def show_production_kp(callback: CallbackQuery):
     
     # Создаём inline кнопки для каждого КП
     buttons = []
+    db_path = PROJECT_ROOT / "plita.db"
+    
     for kp in production_kp:
         kp_id = kp['kp_id']
         customer = kp.get('customer_name', 'Без имени')
         total = kp.get('total_amount', 0)
         execution_terms = kp.get('execution_terms', '')
         
-        # Обрезаем длинные имена клиентов
-        customer_short = customer[:25] + '...' if len(customer) > 25 else customer
+        # Получаем процент выполнения
+        completion_info = kp_db.get_kp_completion_percentage(kp_id, str(db_path))
+        percentage = completion_info['percentage']
         
-        # Формируем текст кнопки с дедлайном
-        button_text = f"КП №{kp_id} | {customer_short} | {total:,.0f}₽"
+        # Обрезаем длинные имена клиентов
+        customer_short = customer[:20] + '...' if len(customer) > 20 else customer
+        
+        # Формируем текст кнопки с процентом
+        button_text = f"КП №{kp_id} | {customer_short} | {percentage:.0f}% | {total:,.0f}₽"
         if execution_terms:
             button_text += f" | ⏰{execution_terms}"
         
