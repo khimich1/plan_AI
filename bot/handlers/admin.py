@@ -440,3 +440,125 @@ async def back_to_menu(callback: CallbackQuery):
     )
     await callback.answer()
 
+
+@router.callback_query(F.data == "db_view_rests")
+async def view_plate_rests(callback: CallbackQuery):
+    """Экспорт остатков в Excel файл"""
+    try:
+        await callback.message.answer("⏳ Формирую отчёт по остаткам...")
+        
+        # Получаем все остатки из БД
+        rests = kp_db.get_all_plate_rests()
+        
+        if not rests:
+            await callback.message.answer(
+                "ℹ️ Остатков пока нет.",
+                reply_markup=db_management_kb()
+            )
+            await callback.answer()
+            return
+        
+        # Создаём Excel файл
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, PatternFill
+        from datetime import datetime
+        
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Остатки от резки"
+        
+        # Заголовки
+        headers = ['№', 'Ширина (мм)', 'Длина (м)', 'Количество', 'Статус', 'КП №', 'Клиент', 'Исходная плита', 'Дата создания']
+        ws.append(headers)
+        
+        # Стиль заголовков
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+        
+        # Заполняем данные
+        status_map = {
+            'available': '✅ Доступен',
+            'used': '🔧 Использован',
+            'completed': '✔️ Выполнен',
+            'scrapped': '❌ Списан'
+        }
+        
+        for idx, rest in enumerate(rests, 1):
+            status = status_map.get(rest['status'], rest['status'])
+            customer = rest.get('customer_name', 'Не указан')
+            created = rest.get('created_date', 'Не указана')
+            
+            # Форматируем дату
+            if created and created != 'Не указана':
+                try:
+                    dt = datetime.fromisoformat(created)
+                    created = dt.strftime('%d.%m.%Y %H:%M')
+                except:
+                    pass
+            
+            row = [
+                idx,
+                rest['rest_width_mm'],
+                rest['length_m'],
+                rest['qty'],
+                status,
+                rest['kp_id'],
+                customer,
+                rest.get('source_plate_name', 'Не указано'),
+                created
+            ]
+            ws.append(row)
+            
+            # Выравнивание
+            for cell in ws[idx + 1]:
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+        
+        # Настройка ширины столбцов
+        ws.column_dimensions['A'].width = 5
+        ws.column_dimensions['B'].width = 12
+        ws.column_dimensions['C'].width = 10
+        ws.column_dimensions['D'].width = 12
+        ws.column_dimensions['E'].width = 15
+        ws.column_dimensions['F'].width = 8
+        ws.column_dimensions['G'].width = 25
+        ws.column_dimensions['H'].width = 20
+        ws.column_dimensions['I'].width = 18
+        
+        # Сохраняем файл
+        user_id = callback.from_user.id
+        filename = f"остатки_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filepath = PROJECT_ROOT / 'bot' / 'tmp' / f"{user_id}_{filename}"
+        
+        # Создаём папку tmp если её нет
+        filepath.parent.mkdir(exist_ok=True)
+        
+        wb.save(str(filepath))
+        
+        # Отправляем файл
+        from aiogram.types import FSInputFile
+        file = FSInputFile(filepath)
+        
+        await callback.message.answer_document(
+            file,
+            caption=f"📋 **Отчёт по остаткам от резки**\n\n"
+                    f"Всего остатков: {len(rests)} записей\n"
+                    f"Дата формирования: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            parse_mode="Markdown",
+            reply_markup=db_management_kb()
+        )
+        
+        # Удаляем временный файл
+        filepath.unlink()
+        
+        await callback.answer()
+        
+    except Exception as e:
+        await callback.message.answer(
+            f"❌ Ошибка при формировании отчёта: {str(e)}",
+            reply_markup=db_management_kb()
+        )
+        await callback.answer()

@@ -243,12 +243,13 @@ def db_management_kb() -> InlineKeyboardMarkup:
     
     Показывает опции:
     - Очистка всех данных (КП, плиты, остатки)
-    - Экспорт данных (будущая функция)
+    - Просмотр остатков (экспорт в Excel)
     - Статистика БД
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🗑️ Очистить все данные", callback_data="db_clear_all")],
+            [InlineKeyboardButton(text="📋 Просмотр остатков", callback_data="db_view_rests")],
             [InlineKeyboardButton(text="📊 Статистика БД", callback_data="db_stats")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="db_back_to_menu")],
         ]
