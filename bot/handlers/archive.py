@@ -170,6 +170,77 @@ async def show_production_kp(callback: CallbackQuery):
     )
 
 
+@router.callback_query(F.data == "archive_section_completed")
+async def show_completed_kp(callback: CallbackQuery):
+    """
+    Показать выполненные КП (статус "выполнено").
+    
+    Простыми словами:
+    - Получает все КП со статусом "выполнено" из БД
+    - Формирует список с кнопками для каждого КП
+    - Сортирует по номеру КП (от меньшего к большему)
+    """
+    try:
+        await callback.answer()
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
+    
+    # Получаем список КП со статусом "выполнено"
+    all_kp = kp_db.get_all_kp_list()
+    completed_kp = all_kp.get('completed', [])
+    
+    if not completed_kp:
+        await callback.message.edit_text(
+            "✅ Выполненных КП пока нет\n\n"
+            "КП автоматически получают статус 'выполнено', "
+            "когда все плиты из заказа отмечены как выполненные в производстве.",
+            reply_markup=archive_sections_kb()
+        )
+        return
+    
+    # Формируем текст с информацией о КП
+    text = f"✅ Выполненные КП ({len(completed_kp)} шт.)\n\n"
+    
+    # Создаём inline кнопки для каждого КП
+    buttons = []
+    db_path = PROJECT_ROOT / "plita.db"
+    
+    for kp in completed_kp:
+        kp_id = kp['kp_id']
+        customer = kp.get('customer_name', 'Без имени')
+        total = kp.get('total_amount', 0)
+        creation_date = kp.get('creation_date', '')
+        
+        # Получаем процент выполнения (должно быть 100%)
+        completion_info = kp_db.get_kp_completion_percentage(kp_id, str(db_path))
+        percentage = completion_info['percentage']
+        
+        # Обрезаем длинные имена клиентов
+        customer_short = customer[:20] + '...' if len(customer) > 20 else customer
+        
+        # Формируем текст кнопки
+        button_text = f"КП №{kp_id} | {customer_short} | {percentage:.0f}% | {total:,.0f}₽"
+        if creation_date:
+            button_text += f" | 📅{creation_date}"
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text=button_text,
+                callback_data=f"view_kp_{kp_id}"
+            )
+        ])
+    
+    # Кнопка "Назад"
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад", callback_data="archive_back_to_sections")
+    ])
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+
+
 @router.callback_query(F.data.startswith("view_kp_"))
 async def view_kp_details(callback: CallbackQuery):
     """

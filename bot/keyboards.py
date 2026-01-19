@@ -383,12 +383,14 @@ def archive_sections_kb() -> InlineKeyboardMarkup:
     Показывает кнопки:
     - 📦 В архиве (КП со статусом "в архиве")
     - 🏭 В производстве (КП со статусом "в работе")
+    - ✅ Выполненные КП (КП со статусом "выполнено")
     - 📊 Актуальный план (сохранённый план производства)
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📦 В архиве", callback_data="archive_section_archived")],
             [InlineKeyboardButton(text="🏭 В производстве", callback_data="archive_section_production")],
+            [InlineKeyboardButton(text="✅ Выполненные КП", callback_data="archive_section_completed")],
             [InlineKeyboardButton(text="📊 Актуальный план", callback_data="view_current_plan")],
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="archive_back_to_menu")],
         ]
