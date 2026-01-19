@@ -9,16 +9,16 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
             # Первая строка - 2 кнопки рядом
             [
                 KeyboardButton(text="📝 Создать КП"),
-                KeyboardButton(text="📁 Архив")
+                KeyboardButton(text="Планирование производства")
             ],
             # Вторая строка - 2 кнопки рядом
             [
-                KeyboardButton(text="Планирование производства"),
+                KeyboardButton(text="📁 Архив"),
                 KeyboardButton(text="Информация о ПБ в работе")
             ],
             # Третья строка - 2 кнопки рядом
             [
-                KeyboardButton(text="Сравнение результатов"),
+                KeyboardButton(text="📖 Как работает бот"),
                 KeyboardButton(text="⚙️ Управление БД")
             ],
         ],
@@ -32,6 +32,7 @@ def pb_info_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🏭 Плиты в производстве", callback_data="plates_in_production")],
             [InlineKeyboardButton(text="✅ Выполненные плиты", callback_data="completed_plates_export")],
+            [InlineKeyboardButton(text="📊 КП в производстве", callback_data="kp_in_production")],
         ]
     )
 
@@ -168,6 +169,7 @@ def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> Inline
     - Показывает список плит по дорожкам с кнопками
     - Каждая дорожка начинается с заголовка
     - Нажатие на плиту переключает её статус: брак/не брак
+    - Плиты из остатков показываются отдельной группой с пометкой
     - Внизу кнопки "Подтвердить" и "Отмена"
     
     Args:
@@ -182,14 +184,21 @@ def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> Inline
     for track_idx, track_data in enumerate(plates_by_track):
         track_number = track_data.get('track_number', track_idx + 1)
         plates = track_data.get('plates', [])
+        is_from_rests = track_data.get('is_from_rests', False)
         
         if not plates:
             continue
         
         # Добавляем заголовок дорожки (кнопка без действия)
+        # Для плит из остатков показываем специальный заголовок
+        if is_from_rests or track_number == 0:
+            header_text = "━━━━ Из остатков ━━━━"
+        else:
+            header_text = f"━━━━ Дорожка {track_number} ━━━━"
+        
         buttons.append([
             InlineKeyboardButton(
-                text=f"━━━━ Дорожка {track_number} ━━━━",
+                text=header_text,
                 callback_data=f"track_header_{track_idx}"
             )
         ])
@@ -204,6 +213,8 @@ def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> Inline
             qty = plate.get('qty', 1)
             kp_date = plate.get('kp_date', '')
             kp_id = plate.get('kp_id', '')
+            from_rest = plate.get('from_rest', False)
+            match_type = plate.get('match_type', '')
             
             # Форматируем дату коротко: "02.02.2026" -> "02.02"
             date_short = kp_date[:5] if kp_date and kp_date != 'неизвестно' else ''
@@ -216,14 +227,31 @@ def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> Inline
             else:
                 kp_info = ""
             
-            # Обрезаем длинные названия (с учетом места для КП-инфо)
-            max_name_len = 18 if kp_info else 25
+            # Для плит из остатков добавляем пометку о типе
+            if from_rest:
+                if match_type == 'exact':
+                    rest_mark = "[=]"  # Точное совпадение
+                else:
+                    rest_mark = "[рез]"  # Нужен рез
+                # Показываем полное название для плит из остатков
+                max_name_len = 50
+            else:
+                rest_mark = ""
+                max_name_len = 18 if kp_info else 25
+            
+            # Обрезаем длинные названия
             if len(plate_name) > max_name_len:
                 plate_name = plate_name[:max_name_len-2] + ".."
             
+            # Формируем текст кнопки
+            if from_rest:
+                button_text = f"{emoji} {rest_mark} {plate_name} {kp_info} ×{qty}"
+            else:
+                button_text = f"{emoji} {plate_name} {kp_info} × {qty}"
+            
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"{emoji} {plate_name} {kp_info} × {qty}",
+                    text=button_text,
                     callback_data=f"toggle_reject_t{track_idx}_p{plate_idx}"
                 )
             ])
@@ -306,6 +334,19 @@ def cancel_process_kb() -> InlineKeyboardMarkup:
     )
 
 
+def production_filter_kb() -> InlineKeyboardMarkup:
+    """Клавиатура выбора способа фильтрации плит для производства"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📅 По дате", callback_data="filter_by_date")],
+            [InlineKeyboardButton(text="📋 По номерам КП", callback_data="filter_by_kp")],
+            [InlineKeyboardButton(text="📦 Все КП в работе", callback_data="filter_all")],
+            [InlineKeyboardButton(text="👤 По заказчику", callback_data="filter_by_customer")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
+        ]
+    )
+
+
 def archive_sections_kb() -> InlineKeyboardMarkup:
     """
     Клавиатура для выбора раздела архива.
@@ -344,5 +385,62 @@ def kp_details_kb(kp_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📊 Скачать XLSX", callback_data=f"download_xlsx_{kp_id}")],
             [InlineKeyboardButton(text="🗑️ Удалить КП", callback_data=f"delete_kp_{kp_id}")],
             [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="archive_back_to_sections")],
+        ]
+    )
+
+
+def kp_production_details_kb(kp_id: int) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для детального просмотра КП в производстве.
+    
+    Показывает кнопки:
+    - Скачать PDF
+    - Скачать XLSX
+    - Изменить дату (НОВОЕ!)
+    - Назад к списку
+    
+    Args:
+        kp_id: номер КП для формирования callback_data
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Скачать PDF", callback_data=f"download_pdf_{kp_id}")],
+            [InlineKeyboardButton(text="📊 Скачать XLSX", callback_data=f"download_xlsx_{kp_id}")],
+            [InlineKeyboardButton(text="📅 Изменить дату", callback_data=f"change_date_{kp_id}")],
+            [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="kp_in_production")],
+        ]
+    )
+
+
+def instructions_choice_kb() -> InlineKeyboardMarkup:
+    """
+    Клавиатура для выбора роли (Менеджер или Производство).
+    
+    Показывает кнопки:
+    - 👨‍💼 Для Менеджера - инструкция по работе с КП и архивом
+    - 🏭 Для Производства - инструкция по планированию и отчётам
+    - ◀️ Назад в меню - возврат в главное меню
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👨‍💼 Для Менеджера", callback_data="instructions_manager")],
+            [InlineKeyboardButton(text="🏭 Для Производства", callback_data="instructions_production")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="instructions_back_to_menu")],
+        ]
+    )
+
+
+def instructions_back_kb() -> InlineKeyboardMarkup:
+    """
+    Клавиатура для возврата после просмотра инструкции.
+    
+    Показывает кнопки:
+    - 🔙 К выбору роли - вернуться к выбору Менеджер/Производство
+    - 🏠 В главное меню - вернуться в начало
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 К выбору роли", callback_data="instructions_back_to_choice")],
+            [InlineKeyboardButton(text="🏠 В главное меню", callback_data="instructions_back_to_menu")],
         ]
     )

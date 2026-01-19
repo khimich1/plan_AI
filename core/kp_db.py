@@ -1169,6 +1169,123 @@ def get_all_plate_rests(db_path: str = DEFAULT_DB) -> List[Dict]:
         conn.close()
 
 
+def find_matching_rests(
+    length_m: float,
+    width_mm: int,
+    qty_needed: int,
+    db_path: str = DEFAULT_DB
+) -> List[Dict]:
+    """
+    Ищет остатки, из которых можно получить плиту нужного размера.
+    
+    Простыми словами:
+    - Ищет остатки со статусом 'available'
+    - Условие: длина остатка >= длина плиты И ширина остатка >= ширина плиты
+    - Возвращает список подходящих остатков с информацией о типе совпадения
+    
+    Аргументы:
+        length_m: требуемая длина плиты в метрах
+        width_mm: требуемая ширина плиты в мм
+        qty_needed: сколько плит нужно
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Список словарей с информацией о подходящих остатках:
+        - rest_id: ID остатка
+        - rest_length: длина остатка
+        - rest_width_mm: ширина остатка
+        - match_type: 'exact' / 'width_cut' / 'length_cut' / 'both_cuts'
+        - cut_cost: себестоимость резов (0 при exact)
+        - source_plate_name: название исходной плиты
+        - source_kp_id: КП, из которого остаток
+    """
+    # Константы стоимости резов (из config_and_data)
+    LONG_CUT_PRICE_PER_M = 460.0   # Продольный рез, руб/пог.м
+    TRANSVERSE_CUT_PRICE = 1200.0  # Поперечный рез, руб/шт
+    
+    init_schema(db_path)
+    conn = _connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        # Ищем остатки, которые >= по обоим размерам
+        cur.execute('''
+            SELECT 
+                pr.id, pr.kp_id, pr.source_plate_name, pr.rest_width_mm,
+                pr.length_m, pr.qty, pr.status, pr.created_date,
+                pr.production_day, ko.customer_name
+            FROM plate_rests pr
+            LEFT JOIN KP_offers ko ON pr.kp_id = ko.kp_id
+            WHERE pr.status = 'available'
+              AND pr.length_m >= ?
+              AND pr.rest_width_mm >= ?
+            ORDER BY 
+                -- Приоритет: сначала точные совпадения, потом минимальные отходы
+                CASE 
+                    WHEN pr.length_m = ? AND pr.rest_width_mm = ? THEN 0  -- exact
+                    WHEN pr.length_m = ? THEN 1  -- только рез по ширине
+                    WHEN pr.rest_width_mm = ? THEN 2  -- только рез по длине
+                    ELSE 3  -- оба реза
+                END,
+                (pr.length_m - ?) + (pr.rest_width_mm - ?) / 1000.0  -- минимум отходов
+        ''', (length_m, width_mm, length_m, width_mm, length_m, width_mm, length_m, width_mm))
+        
+        results = []
+        qty_collected = 0
+        
+        for row in cur.fetchall():
+            if qty_collected >= qty_needed:
+                break
+            
+            rest = dict(row)
+            rest_length = rest['length_m']
+            rest_width = rest['rest_width_mm']
+            rest_qty = rest['qty']
+            
+            # Определяем тип совпадения и стоимость резов
+            length_match = abs(rest_length - length_m) < 0.01  # точное совпадение по длине
+            width_match = rest_width == width_mm  # точное совпадение по ширине
+            
+            if length_match and width_match:
+                match_type = 'exact'
+                cut_cost = 0.0
+            elif length_match and not width_match:
+                match_type = 'width_cut'
+                cut_cost = LONG_CUT_PRICE_PER_M * length_m
+            elif not length_match and width_match:
+                match_type = 'length_cut'
+                cut_cost = TRANSVERSE_CUT_PRICE
+            else:
+                match_type = 'both_cuts'
+                cut_cost = LONG_CUT_PRICE_PER_M * length_m + TRANSVERSE_CUT_PRICE
+            
+            # Сколько можем взять из этого остатка
+            can_take = min(rest_qty, qty_needed - qty_collected)
+            
+            results.append({
+                'rest_id': rest['id'],
+                'rest_length': rest_length,
+                'rest_width_mm': rest_width,
+                'rest_qty_available': rest_qty,
+                'qty_to_use': can_take,
+                'match_type': match_type,
+                'cut_cost': cut_cost,
+                'source_plate_name': rest['source_plate_name'],
+                'source_kp_id': rest['kp_id'],
+                'source_customer': rest.get('customer_name', 'неизвестно')
+            })
+            
+            qty_collected += can_take
+        
+        return results
+        
+    finally:
+        conn.close()
+
+
 def check_and_update_kp_completion(kp_id: int, db_path: str = DEFAULT_DB) -> bool:
     """
     Проверяет, все ли плиты КП выполнены.
@@ -1823,6 +1940,113 @@ def get_all_kp_list(db_path: str = DEFAULT_DB) -> Dict[str, List[Dict]]:
                 result['completed'].append(kp)
         
         return result
+        
+    finally:
+        conn.close()
+
+
+def get_kp_completion_percentage(kp_id: int, db_path: str = DEFAULT_DB) -> Dict:
+    """
+    Подсчитывает процент выполнения КП.
+    
+    Простыми словами:
+    - Считает сколько плит уже выполнено
+    - Считает сколько всего плит в КП
+    - Возвращает процент выполнения
+    
+    Args:
+        kp_id: номер КП
+        db_path: путь к базе данных
+        
+    Returns:
+        Словарь с информацией:
+        {
+            'total_plates': int,         # Всего плит
+            'completed_plates': int,     # Выполненные плиты  
+            'in_production': int,        # В производстве
+            'percentage': float          # Процент выполнения (0-100)
+        }
+    """
+    init_schema(db_path)
+    conn = _connect(db_path)
+    
+    try:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        # Считаем плиты в производстве (из kp_plates)
+        cur.execute('''
+            SELECT COALESCE(SUM(qty), 0) as qty
+            FROM kp_plates
+            WHERE kp_id = ?
+        ''', (kp_id,))
+        in_production = cur.fetchone()['qty']
+        
+        # Считаем выполненные плиты (из completed_plates)
+        cur.execute('''
+            SELECT COALESCE(SUM(qty), 0) as qty
+            FROM completed_plates
+            WHERE kp_id = ?
+        ''', (kp_id,))
+        completed = cur.fetchone()['qty']
+        
+        # Всего плит
+        total = in_production + completed
+        
+        # Процент выполнения
+        if total > 0:
+            percentage = (completed / total) * 100
+        else:
+            percentage = 0.0
+        
+        return {
+            'total_plates': total,
+            'completed_plates': completed,
+            'in_production': in_production,
+            'percentage': round(percentage, 1)
+        }
+        
+    finally:
+        conn.close()
+
+
+def update_kp_execution_date(kp_id: int, new_date: str, db_path: str = DEFAULT_DB) -> bool:
+    """
+    Обновляет дату выполнения для КП.
+    
+    Простыми словами:
+    - Меняет срок выполнения для КП
+    - Это влияет на все плиты в этом КП
+    
+    Args:
+        kp_id: номер КП
+        new_date: новая дата в формате "DD.MM.YYYY"
+        db_path: путь к базе данных
+        
+    Returns:
+        True при успехе, False при ошибке
+    """
+    init_schema(db_path)
+    conn = _connect(db_path)
+    
+    try:
+        cur = conn.cursor()
+        
+        # Обновляем дату выполнения
+        cur.execute('''
+            UPDATE KP_offers 
+            SET execution_terms = ? 
+            WHERE kp_id = ?
+        ''', (new_date, kp_id))
+        
+        conn.commit()
+        
+        # Проверяем, что обновление произошло
+        return cur.rowcount > 0
+        
+    except Exception as e:
+        conn.rollback()
+        return False
         
     finally:
         conn.close()

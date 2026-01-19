@@ -32,6 +32,15 @@ class AdminStates(StatesGroup):
 class ProductionStates(StatesGroup):
     """Состояния для планирования производства"""
     waiting_tracks_count = State()    # Количество дорожек
+    waiting_filter_method = State()   # НОВОЕ: выбор способа фильтрации
     waiting_date_number = State()     # Дата дедлайна
+    waiting_kp_numbers = State()      # НОВОЕ: ввод номеров КП
+    waiting_customer_name = State()   # НОВОЕ: ввод заказчика
     waiting_day_selection = State()   # Ожидание выбора дня
     marking_completion = State()      # Отметка брака при завершении дня
+
+
+class PBInfoStates(StatesGroup):
+    """Состояния для работы с информацией о КП в производстве"""
+    waiting_kp_number = State()      # Ожидание ввода номера КП
+    waiting_new_date = State()       # Ожидание ввода новой даты

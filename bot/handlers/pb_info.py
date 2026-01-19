@@ -4,7 +4,8 @@ from datetime import datetime
 from pathlib import Path
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
 
 # Импорты из проекта
 import sys
@@ -13,8 +14,9 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import kp_db
-from ..keyboards import main_menu_kb, pb_info_kb
+from ..keyboards import main_menu_kb, pb_info_kb, kp_production_details_kb
 from ..bot_config import OUTPUTS_DIR_STR
+from ..states import PBInfoStates
 
 router = Router()
 
@@ -248,4 +250,311 @@ async def export_completed_plates(callback: CallbackQuery):
         )
     
     await callback.answer()
+
+
+# ==================== ОБРАБОТЧИКИ ДЛЯ КП В ПРОИЗВОДСТВЕ ====================
+
+@router.callback_query(F.data == "kp_in_production")
+async def show_kp_in_production_list(callback: CallbackQuery):
+    """
+    Обработчик кнопки "КП в производстве".
+    Показывает список всех КП в работе с процентом выполнения.
+    """
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    # Получаем список КП со статусом "в работе"
+    all_kp = kp_db.get_all_kp_list()
+    production_kp = all_kp.get('in_production', [])
+    
+    if not production_kp:
+        await callback.message.edit_text(
+            "🏭 В производстве пока нет КП\n\n"
+            "Чтобы отправить КП в производство, создайте его через '📝 Создать КП' "
+            "и нажмите '💾 Сохранить в БД' после генерации документов.",
+            reply_markup=pb_info_kb()
+        )
+        return
+    
+    # Формируем текст с информацией о КП
+    text = f"🏭 КП в производстве ({len(production_kp)} шт.)\n\n"
+    text += "Нажмите на КП для просмотра деталей:"
+    
+    # Создаём inline кнопки для каждого КП с процентом выполнения
+    buttons = []
+    db_path = PROJECT_ROOT / "plita.db"
+    
+    for kp in production_kp:
+        kp_id = kp['kp_id']
+        customer = kp.get('customer_name', 'Без имени')
+        total = kp.get('total_amount', 0)
+        execution_terms = kp.get('execution_terms', '')
+        
+        # Получаем процент выполнения
+        completion_info = kp_db.get_kp_completion_percentage(kp_id, str(db_path))
+        percentage = completion_info['percentage']
+        
+        # Обрезаем длинные имена клиентов
+        customer_short = customer[:20] + '...' if len(customer) > 20 else customer
+        
+        # Формируем текст кнопки с процентом
+        button_text = f"КП №{kp_id} | {customer_short} | {percentage:.0f}%"
+        if execution_terms:
+            button_text += f" | ⏰{execution_terms}"
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text=button_text,
+                callback_data=f"view_prod_kp_{kp_id}"
+            )
+        ])
+    
+    # Кнопка "Назад"
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад", callback_data="pb_info_back")
+    ])
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+
+
+@router.callback_query(F.data.startswith("view_prod_kp_"))
+async def view_kp_production_details(callback: CallbackQuery, state: FSMContext):
+    """
+    Обработчик просмотра детальной информации о КП в производстве.
+    Показывает детальную информацию о КП с процентом выполнения.
+    """
+    await callback.answer()
+    
+    # Извлекаем kp_id из callback_data
+    kp_id = int(callback.data.split("_")[-1])
+    
+    # Получаем информацию о КП из БД
+    db_path = PROJECT_ROOT / "plita.db"
+    kp_info = kp_db.get_kp_by_id(kp_id, str(db_path))
+    
+    if not kp_info:
+        await callback.message.edit_text(
+            f"❌ КП №{kp_id} не найдено в базе данных",
+            reply_markup=pb_info_kb()
+        )
+        return
+    
+    # Проверяем статус КП
+    status = kp_info.get('status', 'в работе')
+    if status != 'в работе':
+        await callback.message.edit_text(
+            f"⚠️ КП №{kp_id} имеет статус '{status}'\n\n"
+            f"Информация доступна только для КП в статусе 'в работе'.",
+            reply_markup=pb_info_kb()
+        )
+        return
+    
+    # Получаем процент выполнения
+    completion_info = kp_db.get_kp_completion_percentage(kp_id, str(db_path))
+    
+    # Формируем детальное описание
+    customer = kp_info.get('customer_name', 'Не указан')
+    total = kp_info.get('total_amount', 0)
+    execution_date = kp_info.get('execution_terms', 'Не указан')
+    
+    text = f"📊 КП №{kp_id} | {total:,.0f}₽ | 🎯 {execution_date}\n\n"
+    text += f"👤 Менеджер: {kp_info.get('manager_name', 'Не указан')}\n"
+    text += f"📅 Дата создания: {kp_info.get('creation_date', 'Не указана')}\n"
+    text += f"🏭 Статус: 🏭 {status}\n"
+    text += f"⏰ Срок выполнения: {execution_date}\n\n"
+    
+    text += f"💰 Финансы:\n"
+    text += f"  • Сумма без НДС: {kp_info.get('subtotal', 0):,.2f} ₽\n"
+    text += f"  • НДС (22%): {kp_info.get('vat_amount', 0):,.2f} ₽\n"
+    text += f"  • Итого с НДС: {total:,.2f} ₽\n"
+    
+    if kp_info.get('discount_percent', 0) > 0:
+        text += f"  • Скидка: {kp_info['discount_percent']}%\n"
+    
+    text += f"\n📦 Состав заказа ({len(kp_info.get('plates', []))} позиций):\n"
+    
+    # Список плит (ограничиваем до 10 позиций)
+    plates = kp_info.get('plates', [])
+    for i, plate in enumerate(plates[:10], 1):
+        text += f"  {i}. {plate['plate_name']} — {plate['qty']} шт\n"
+    
+    if len(plates) > 10:
+        text += f"  ... и ещё {len(plates) - 10} позиций\n"
+    
+    # ПРОЦЕНТ ВЫПОЛНЕНИЯ
+    text += f"\n🎯 Выполнено: {completion_info['completed_plates']} из {completion_info['total_plates']} плит "
+    text += f"({completion_info['percentage']:.0f}%)\n"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=kp_production_details_kb(kp_id)
+    )
+
+
+@router.callback_query(F.data.startswith("change_date_"))
+async def change_kp_date_request(callback: CallbackQuery, state: FSMContext):
+    """
+    Обработчик кнопки "Изменить дату".
+    Запрашивает новую дату выполнения для КП.
+    """
+    await callback.answer()
+    
+    kp_id = int(callback.data.split("_")[-1])
+    
+    # Получаем текущую дату
+    db_path = PROJECT_ROOT / "plita.db"
+    kp_info = kp_db.get_kp_by_id(kp_id, str(db_path))
+    
+    if not kp_info:
+        await callback.message.answer(
+            f"❌ КП №{kp_id} не найдено",
+            reply_markup=main_menu_kb()
+        )
+        return
+    
+    current_date = kp_info.get('execution_terms', 'Не указан')
+    
+    await callback.message.answer(
+        f"📅 Изменение срока выполнения для КП №{kp_id}\n\n"
+        f"Текущий срок: {current_date}\n\n"
+        f"Введите новую дату в формате:\n"
+        f"• 25.03.2026 (ДД.ММ.ГГГГ)\n"
+        f"• 2026-03-25 (ГГГГ-ММ-ДД)",
+        reply_markup=main_menu_kb()
+    )
+    
+    # Сохраняем kp_id в state
+    await state.update_data(kp_id=kp_id, old_date=current_date)
+    await state.set_state(PBInfoStates.waiting_new_date)
+
+
+@router.message(PBInfoStates.waiting_new_date)
+async def receive_new_date(message: Message, state: FSMContext):
+    """
+    Обработчик получения новой даты.
+    Обновляет дату выполнения в БД.
+    """
+    user_input = message.text.strip()
+    data = await state.get_data()
+    kp_id = data.get('kp_id')
+    old_date = data.get('old_date', 'неизвестно')
+    
+    if not kp_id:
+        await message.answer(
+            "❌ Ошибка: не найден номер КП",
+            reply_markup=main_menu_kb()
+        )
+        await state.clear()
+        return
+    
+    # Парсим дату (поддерживаем два формата)
+    new_date = None
+    date_formatted = None
+    
+    # Формат 1: ДД.ММ.ГГГГ
+    try:
+        parsed = datetime.strptime(user_input, '%d.%m.%Y')
+        new_date = parsed.strftime('%d.%m.%Y')
+        date_formatted = new_date
+    except ValueError:
+        pass
+    
+    # Формат 2: ГГГГ-ММ-ДД
+    if not new_date:
+        try:
+            parsed = datetime.strptime(user_input, '%Y-%m-%d')
+            new_date = parsed.strftime('%d.%m.%Y')
+            date_formatted = new_date
+        except ValueError:
+            pass
+    
+    if not new_date:
+        await message.answer(
+            "❌ Неверный формат даты.\n\n"
+            "Поддерживаемые форматы:\n"
+            "• 25.03.2026 (ДД.ММ.ГГГГ)\n"
+            "• 2026-03-25 (ГГГГ-ММ-ДД)\n\n"
+            "Попробуйте снова:"
+        )
+        return
+    
+    # Обновляем дату в БД
+    db_path = PROJECT_ROOT / "plita.db"
+    success = kp_db.update_kp_execution_date(kp_id, new_date, str(db_path))
+    
+    if success:
+        await message.answer(
+            f"✅ Дата выполнения обновлена!\n\n"
+            f"КП №{kp_id}: {old_date} → {date_formatted}\n\n"
+            f"Обновлены все плиты в этом КП.",
+            reply_markup=main_menu_kb()
+        )
+        
+        # Показываем обновлённую карточку КП
+        kp_info = kp_db.get_kp_by_id(kp_id, str(db_path))
+        if kp_info:
+            completion_info = kp_db.get_kp_completion_percentage(kp_id, str(db_path))
+            
+            customer = kp_info.get('customer_name', 'Не указан')
+            total = kp_info.get('total_amount', 0)
+            execution_date = kp_info.get('execution_terms', 'Не указан')
+            status = kp_info.get('status', 'в работе')
+            
+            text = f"📊 КП №{kp_id} | {total:,.0f}₽ | 🎯 {execution_date}\n\n"
+            text += f"👤 Менеджер: {kp_info.get('manager_name', 'Не указан')}\n"
+            text += f"📅 Дата создания: {kp_info.get('creation_date', 'Не указана')}\n"
+            text += f"🏭 Статус: 🏭 {status}\n"
+            text += f"⏰ Срок выполнения: {execution_date}\n\n"
+            
+            text += f"💰 Финансы:\n"
+            text += f"  • Сумма без НДС: {kp_info.get('subtotal', 0):,.2f} ₽\n"
+            text += f"  • НДС (22%): {kp_info.get('vat_amount', 0):,.2f} ₽\n"
+            text += f"  • Итого с НДС: {total:,.2f} ₽\n"
+            
+            if kp_info.get('discount_percent', 0) > 0:
+                text += f"  • Скидка: {kp_info['discount_percent']}%\n"
+            
+            text += f"\n📦 Состав заказа ({len(kp_info.get('plates', []))} позиций):\n"
+            
+            plates = kp_info.get('plates', [])
+            for i, plate in enumerate(plates[:10], 1):
+                text += f"  {i}. {plate['plate_name']} — {plate['qty']} шт\n"
+            
+            if len(plates) > 10:
+                text += f"  ... и ещё {len(plates) - 10} позиций\n"
+            
+            text += f"\n🎯 Выполнено: {completion_info['completed_plates']} из {completion_info['total_plates']} плит "
+            text += f"({completion_info['percentage']:.0f}%)\n"
+            
+            await message.answer(
+                text,
+                reply_markup=kp_production_details_kb(kp_id)
+            )
+    else:
+        await message.answer(
+            f"❌ Ошибка при обновлении даты для КП №{kp_id}",
+            reply_markup=main_menu_kb()
+        )
+    
+    await state.clear()
+
+
+@router.callback_query(F.data == "pb_info_back")
+async def back_to_pb_info_menu(callback: CallbackQuery):
+    """Возврат в меню информации о ПБ"""
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    await callback.message.edit_text(
+        "📊 Информация о плитах ПБ\n\n"
+        "Выберите тип отчёта:",
+        reply_markup=pb_info_kb()
+    )
 

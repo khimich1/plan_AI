@@ -29,7 +29,7 @@ from core.gantt_excel import create_gantt_excel
 import core.config_and_data as cfg
 import core.optimization as optimization
 
-from ..keyboards import main_menu_kb, production_days_kb, production_day_actions_kb, plates_completion_kb, cancel_process_kb
+from ..keyboards import main_menu_kb, production_days_kb, production_day_actions_kb, plates_completion_kb, cancel_process_kb, production_filter_kb
 from ..states import ProductionStates
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -80,75 +80,166 @@ async def receive_tracks_count(message: Message, state: FSMContext):
     
     await state.update_data(tracks_count=tracks_count)
     
-    await state.set_state(ProductionStates.waiting_date_number)
+    # ИЗМЕНЕНИЕ: переходим к выбору способа фильтрации
+    await state.set_state(ProductionStates.waiting_filter_method)
     await message.answer(
         f"✅ Дорожек: {tracks_count}\n\n"
-        "Шаг 2 из 2: До какой даты брать плиты?\n\n"
+        "Шаг 2 из 3: Как выбрать плиты для производства?\n\n"
+        "Выберите способ:",
+        reply_markup=production_filter_kb()
+    )
+
+
+# === ОБРАБОТЧИКИ ВЫБОРА СПОСОБА ФИЛЬТРАЦИИ ===
+
+@router.callback_query(F.data == "filter_by_date", ProductionStates.waiting_filter_method)
+async def filter_by_date(callback: CallbackQuery, state: FSMContext):
+    """Выбор по дате - показываем текущую логику"""
+    await state.update_data(filter_method='date')
+    await state.set_state(ProductionStates.waiting_date_number)
+    await callback.message.answer(
+        "Шаг 3 из 3: До какой даты брать плиты?\n\n"
         "Поддерживаемые форматы:\n"
         "• 25 (число текущего месяца)\n"
         "• 01.02.2026 (полная дата)\n"
         "• 2026-02-01 (ISO формат)\n\n"
-        "Введите дату:"
-    )
-    await message.answer(
-        "Или нажмите кнопку ниже для отмены:",
+        "Введите дату:",
         reply_markup=cancel_process_kb()
     )
+    await callback.answer()
 
 
-@router.message(ProductionStates.waiting_date_number)
-async def receive_date_number_and_plan(message: Message, state: FSMContext):
-    """Получаем дату, запускаем анализ и показываем кнопки выбора дня"""
+@router.callback_query(F.data == "filter_by_kp", ProductionStates.waiting_filter_method)
+async def filter_by_kp(callback: CallbackQuery, state: FSMContext):
+    """Выбор по номерам КП"""
+    await state.update_data(filter_method='kp')
+    await state.set_state(ProductionStates.waiting_kp_numbers)
+    await callback.message.answer(
+        "Шаг 3 из 3: Введите номера КП\n\n"
+        "Поддерживаемые форматы:\n"
+        "• 15 (один номер)\n"
+        "• 15, 18, 22 (несколько через запятую)\n"
+        "• 15-22 (диапазон)\n\n"
+        "Введите номера:",
+        reply_markup=cancel_process_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "filter_all", ProductionStates.waiting_filter_method)
+async def filter_all(callback: CallbackQuery, state: FSMContext):
+    """Выбор всех КП в работе - сразу переходим к загрузке"""
+    await state.update_data(filter_method='all')
+    # Сразу вызываем функцию загрузки (без ввода даты)
+    await load_and_plan_production(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "filter_by_customer", ProductionStates.waiting_filter_method)
+async def filter_by_customer(callback: CallbackQuery, state: FSMContext):
+    """Выбор по заказчику - показываем список заказчиков"""
+    await state.update_data(filter_method='customer')
+    
+    # Загружаем список уникальных заказчиков из БД
+    db_path = PROJECT_ROOT / "plita.db"
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT DISTINCT customer_name 
+        FROM KP_offers 
+        WHERE customer_name IS NOT NULL
+        ORDER BY customer_name
+    ''')
+    customers = [row[0] for row in cur.fetchall()]
+    conn.close()
+    
+    if not customers:
+        await callback.message.answer(
+            "❌ Нет заказчиков в базе данных.",
+            reply_markup=main_menu_kb()
+        )
+        await state.clear()
+        await callback.answer()
+        return
+    
+    # Создаем клавиатуру с заказчиками
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    buttons = []
+    for customer in customers:
+        buttons.append([
+            InlineKeyboardButton(
+                text=customer,
+                callback_data=f"customer_{customer}"
+            )
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад", callback_data="cancel_process")
+    ])
+    
+    await callback.message.answer(
+        "Выберите заказчика:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("customer_"), ProductionStates.waiting_filter_method)
+async def receive_customer_selection(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора заказчика"""
+    customer_name = callback.data.replace("customer_", "")
+    
+    await state.update_data(customer_name=customer_name)
+    
+    await callback.message.answer(f"✅ Заказчик: {customer_name}\n\n⏳ Загружаю плиты...")
+    await load_and_plan_production(callback.message, state)
+    await callback.answer()
+
+
+# === ОБРАБОТЧИКИ ВВОДА НОМЕРОВ КП ===
+
+@router.message(ProductionStates.waiting_kp_numbers)
+async def receive_kp_numbers(message: Message, state: FSMContext):
+    """Парсим номера КП и запускаем планирование"""
     user_input = message.text.strip()
     
-    # === ПАРСИНГ ДАТЫ: поддерживаем разные форматы ===
-    target_date = None
+    kp_ids = []
     
-    # Формат 1: Полная дата "ДД.ММ.ГГГГ"
     try:
-        target_date = datetime.strptime(user_input, '%d.%m.%Y')
-        date_description = target_date.strftime('%d.%m.%Y')
-    except ValueError:
-        pass
-    
-    # Формат 2: Полная дата "ГГГГ-ММ-ДД"
-    if not target_date:
-        try:
-            target_date = datetime.strptime(user_input, '%Y-%m-%d')
-            date_description = target_date.strftime('%d.%m.%Y')
-        except ValueError:
-            pass
-    
-    # Формат 3: Только число месяца
-    if not target_date:
-        try:
-            date_number = int(user_input)
+        # Формат 1: Диапазон "15-22"
+        if '-' in user_input and user_input.count('-') == 1:
+            parts = user_input.split('-')
+            start_str = parts[0].strip()
+            end_str = parts[1].strip()
             
-            if date_number < 1 or date_number > 31:
-                await message.answer(
-                    "❌ Число должно быть от 1 до 31.\n"
-                    "Попробуйте снова:"
-                )
-                await message.answer(
-                    "Или нажмите кнопку ниже для отмены:",
-                    reply_markup=cancel_process_kb()
-                )
-                return
-            
-            now = datetime.now()
-            target_date = datetime(now.year, now.month, date_number)
-            date_description = f"{date_number} {target_date.strftime('%B %Y')}"
-        except ValueError:
-            pass
-    
-    if not target_date:
+            # Проверка что это не дата (не содержит точки)
+            if '.' not in start_str and '.' not in end_str:
+                start_num = int(start_str)
+                end_num = int(end_str)
+                if start_num > end_num:
+                    raise ValueError("Начало диапазона больше конца")
+                kp_ids = list(range(start_num, end_num + 1))
+            else:
+                raise ValueError("Формат не распознан как диапазон номеров КП")
+        
+        # Формат 2: Список "15, 18, 22"
+        elif ',' in user_input:
+            kp_ids = [int(x.strip()) for x in user_input.split(',')]
+        
+        # Формат 3: Одно число "15"
+        else:
+            kp_ids = [int(user_input)]
+        
+        if not kp_ids:
+            raise ValueError("Не указаны номера КП")
+        
+    except ValueError as e:
         await message.answer(
-            "❌ Неверный формат даты.\n\n"
-            "Поддерживаемые форматы:\n"
-            "• 25 (число месяца)\n"
-            "• 01.02.2026 (полная дата)\n"
-            "• 2026-02-01 (ISO формат)\n\n"
-            "Попробуйте снова:"
+            f"❌ Неверный формат: {e}\n\n"
+            "Попробуйте снова:\n"
+            "• 15 (один номер)\n"
+            "• 15, 18, 22 (список)\n"
+            "• 15-22 (диапазон)"
         )
         await message.answer(
             "Или нажмите кнопку ниже для отмены:",
@@ -156,24 +247,39 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
         )
         return
     
+    # Сохраняем номера КП
+    await state.update_data(kp_ids=kp_ids)
+    
+    await message.answer(f"✅ Выбрано КП: {', '.join(map(str, kp_ids))}\n\n⏳ Загружаю плиты...")
+    
+    # Запускаем загрузку
+    await load_and_plan_production(message, state)
+
+
+async def load_and_plan_production(message: Message, state: FSMContext):
+    """
+    Универсальная функция загрузки КП и планирования производства.
+    Работает с разными способами фильтрации: date, kp, all, customer.
+    """
     data = await state.get_data()
     tracks_count = data.get('tracks_count', 1)
+    filter_method = data.get('filter_method', 'date')
     
-    await message.answer(
-        f"✅ Параметры планирования:\n"
-        f"• Дорожек в день: {tracks_count}\n"
-        f"• Плиты со сроком до: {date_description}\n\n"
-        f"⏳ Загружаю плиты из базы данных..."
-    )
+    # === ЗАГРУЗКА КП В ЗАВИСИМОСТИ ОТ ФИЛЬТРА ===
+    db_path = PROJECT_ROOT / "plita.db"
+    pb_db_path = BOT_DIR / "pb.db"
     
-    try:
-        # === ШАГ 1-3: ЗАГРУЗКА И ПОДГОТОВКА ДАННЫХ ===
-        db_path = PROJECT_ROOT / "plita.db"
-        pb_db_path = BOT_DIR / "pb.db"
-        
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    
+    kp_list = []
+    
+    if filter_method == 'date':
+        # Логика по дате
+        target_date_str = data.get('target_date')
+        target_date = datetime.fromisoformat(target_date_str)
+        date_description = data.get('date_description', target_date.strftime('%d.%m.%Y'))
         
         cur.execute("""
             SELECT kp.kp_id, kp.execution_terms, kp.customer_name
@@ -182,7 +288,6 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             WHERE meta.status = 'в работе'
         """)
         
-        kp_list = []
         for row in cur.fetchall():
             kp_id, exec_terms, customer = row
             if not exec_terms:
@@ -199,20 +304,87 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                     })
             except:
                 continue
+    
+    elif filter_method == 'kp':
+        # Логика по номерам КП
+        kp_ids = data.get('kp_ids', [])
         
-        if not kp_list:
-            conn.close()
-            await message.answer(
-                f"❌ Нет КП в работе со сроком до {date_description}.",
-                reply_markup=main_menu_kb()
-            )
-            await state.clear()
-            return
+        placeholders = ','.join('?' * len(kp_ids))
+        cur.execute(f"""
+            SELECT kp.kp_id, kp.execution_terms, kp.customer_name
+            FROM KP_offers kp
+            JOIN kp_meta meta ON kp.kp_id = meta.kp_id
+            WHERE kp.kp_id IN ({placeholders})
+              AND meta.status = 'в работе'
+        """, kp_ids)
         
-        kp_list.sort(key=lambda x: x['date'])
+        for row in cur.fetchall():
+            kp_id, exec_terms, customer = row
+            exec_date = datetime.strptime(exec_terms, '%d.%m.%Y') if exec_terms else datetime.now()
+            kp_list.append({
+                'kp_id': kp_id,
+                'date': exec_date,
+                'day': exec_date.day,
+                'customer': customer
+            })
+    
+    elif filter_method == 'all':
+        # Логика "все КП в работе"
+        cur.execute("""
+            SELECT kp.kp_id, kp.execution_terms, kp.customer_name
+            FROM KP_offers kp
+            JOIN kp_meta meta ON kp.kp_id = meta.kp_id
+            WHERE meta.status = 'в работе'
+        """)
         
-        await message.answer(f"✅ Найдено КП в работе: {len(kp_list)}\nЗагружаю плиты...")
+        for row in cur.fetchall():
+            kp_id, exec_terms, customer = row
+            exec_date = datetime.strptime(exec_terms, '%d.%m.%Y') if exec_terms else datetime.now()
+            kp_list.append({
+                'kp_id': kp_id,
+                'date': exec_date,
+                'day': exec_date.day,
+                'customer': customer
+            })
+    
+    elif filter_method == 'customer':
+        # Логика по заказчику
+        customer_name = data.get('customer_name', '')
         
+        cur.execute("""
+            SELECT kp.kp_id, kp.execution_terms, kp.customer_name
+            FROM KP_offers kp
+            JOIN kp_meta meta ON kp.kp_id = meta.kp_id
+            WHERE meta.status = 'в работе'
+              AND kp.customer_name = ?
+        """, (customer_name,))
+        
+        for row in cur.fetchall():
+            kp_id, exec_terms, customer = row
+            exec_date = datetime.strptime(exec_terms, '%d.%m.%Y') if exec_terms else datetime.now()
+            kp_list.append({
+                'kp_id': kp_id,
+                'date': exec_date,
+                'day': exec_date.day,
+                'customer': customer
+            })
+    
+    if not kp_list:
+        conn.close()
+        await message.answer(
+            "❌ Нет подходящих КП для производства.",
+            reply_markup=main_menu_kb()
+        )
+        await state.clear()
+        return
+    
+    kp_list.sort(key=lambda x: x['date'])
+    
+    await message.answer(f"✅ Найдено КП: {len(kp_list)}\nЗагружаю плиты...")
+    
+    # === ДАЛЬШЕ ВСЯ ТЕКУЩАЯ ЛОГИКА ===
+    # (Копирую из старой функции начиная со строки 376)
+    try:
         # === ШАГ 2: СОБИРАЕМ ПЛИТЫ ===
         plates_by_date_and_reinforcement = defaultdict(lambda: defaultdict(list))
         
@@ -295,6 +467,97 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             await state.clear()
             return
         
+        # === ШАГ 3.5: ПРОВЕРКА ОСТАТКОВ НА СКЛАДЕ ===
+        plates_from_rests = []
+        plates_for_optimizer = []
+        
+        plita_db_path = str(PROJECT_ROOT / 'plita.db')
+        
+        for plate_data in selected_plates:
+            length_m = plate_data['length']
+            width_mm = plate_data['width']
+            qty_needed = plate_data['qty']
+            
+            matching_rests = kp_db.find_matching_rests(
+                length_m=length_m,
+                width_mm=width_mm,
+                qty_needed=qty_needed,
+                db_path=plita_db_path
+            )
+            
+            qty_from_rests = 0
+            
+            if matching_rests:
+                for rest_info in matching_rests:
+                    qty_to_use = rest_info['qty_to_use']
+                    qty_from_rests += qty_to_use
+                    
+                    plates_from_rests.append({
+                        'plate_name': plate_data.get('plate_name', ''),
+                        'length_m': length_m,
+                        'width_mm': width_mm,
+                        'qty': qty_to_use,
+                        'kp_id': plate_data.get('kp_id'),
+                        'kp_date': plate_data.get('kp_date', 'неизвестно'),
+                        'customer': plate_data.get('customer', 'неизвестно'),
+                        'load_code': plate_data.get('load_code', 8),
+                        'reinforcement': plate_data.get('reinforcement', 0),
+                        'rest_id': rest_info['rest_id'],
+                        'rest_length': rest_info['rest_length'],
+                        'rest_width_mm': rest_info['rest_width_mm'],
+                        'match_type': rest_info['match_type'],
+                        'cut_cost': rest_info['cut_cost'],
+                        'source_plate_name': rest_info['source_plate_name'],
+                        'source_kp_id': rest_info['source_kp_id'],
+                        'from_rest': True
+                    })
+            
+            qty_remaining = qty_needed - qty_from_rests
+            if qty_remaining > 0:
+                plate_for_opt = plate_data.copy()
+                plate_for_opt['qty'] = qty_remaining
+                plates_for_optimizer.append(plate_for_opt)
+        
+        if plates_from_rests:
+            total_from_rests = sum(p['qty'] for p in plates_from_rests)
+            rests_msg = f"📦 Плиты из остатков: {total_from_rests} шт\n\n"
+            
+            for p in plates_from_rests:
+                rests_msg += f"✅ {p['plate_name']} × {p['qty']} (КП #{p['kp_id']})\n"
+                rests_msg += f"   Из остатка: {p['rest_length']}м × {p['rest_width_mm']}мм\n"
+                
+                if p['match_type'] == 'exact':
+                    rests_msg += f"   Точное совпадение, себестоимость: 0 руб.\n"
+                elif p['match_type'] == 'width_cut':
+                    rests_msg += f"   Резы: продольный ({p['length_m']}м)\n"
+                    rests_msg += f"   Себестоимость: {p['cut_cost']:.0f} руб.\n"
+                elif p['match_type'] == 'length_cut':
+                    rests_msg += f"   Резы: поперечный\n"
+                    rests_msg += f"   Себестоимость: {p['cut_cost']:.0f} руб.\n"
+                else:
+                    rests_msg += f"   Резы: продольный ({p['length_m']}м), поперечный\n"
+                    rests_msg += f"   Себестоимость: {p['cut_cost']:.0f} руб.\n"
+                
+                rests_msg += "\n"
+            
+            rests_msg += "💰 Эти плиты уже оплачены - чистая прибыль!"
+            await message.answer(rests_msg)
+        
+        if not plates_for_optimizer:
+            await message.answer(
+                "✅ Все плиты можно взять из остатков!\n"
+                "Оптимизация не требуется.",
+                reply_markup=main_menu_kb()
+            )
+            await state.update_data(
+                plates_from_rests=plates_from_rests,
+                all_from_rests=True
+            )
+            await state.clear()
+            return
+        
+        selected_plates = plates_for_optimizer
+        
         await message.answer("⏳ Запускаю оптимизацию раскроя...")
         
         # === ШАГ 4: ОПТИМИЗАЦИЯ ===
@@ -309,12 +572,12 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 'kp_date': plate_data.get('kp_date', 'неизвестно'),
                 'customer': plate_data.get('customer', 'неизвестно'),
                 'plate_name': plate_data.get('plate_name', ''),
-                'kp_id': plate_data.get('kp_id')  # Важно для переноса в completed_plates!
+                'kp_id': plate_data.get('kp_id')
             })
         
-        # Lookup-таблицы (теперь хранят СПИСКИ записей для поддержки нескольких КП)
-        plate_lookup_exact = {}      # {(length, width): [список записей с qty_remaining]}
-        plate_lookup_by_length = {}  # {length: [список записей с qty_remaining]}
+        # Lookup-таблицы
+        plate_lookup_exact = {}
+        plate_lookup_by_length = {}
         
         for order in orders_2d:
             key = (round(order['length'], 2), order['width'])
@@ -324,16 +587,14 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 'plate_name': order.get('plate_name', ''),
                 'reinforcement': order.get('reinforcement', 0),
                 'load_code': order.get('load_code', 8),
-                'qty_remaining': order.get('qty', 1),  # Остаток для списания
+                'qty_remaining': order.get('qty', 1),
                 'kp_id': order.get('kp_id'),
             }
             
-            # Добавляем в список по ключу (length, width)
             if key not in plate_lookup_exact:
                 plate_lookup_exact[key] = []
             plate_lookup_exact[key].append(entry)
             
-            # Также добавляем в lookup по длине
             length_key = round(order['length'], 2)
             length_entry = {
                 'kp_date': order.get('kp_date', 'неизвестно'),
@@ -347,9 +608,8 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 plate_lookup_by_length[length_key] = []
             plate_lookup_by_length[length_key].append(length_entry)
         
-        # Сортируем списки по дате КП (более ранние сроки первыми)
+        # Сортируем списки по дате КП
         def parse_date_for_sort(date_str):
-            """Парсит дату для сортировки. Неизвестные даты идут в конец."""
             if not date_str or date_str == 'неизвестно':
                 return datetime.max
             try:
@@ -381,7 +641,6 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
         
         # === ШАГ 4.5: ДОПОЛНЕНИЕ LOOKUP ДЛЯ ВТОРИЧНЫХ РЕЗОВ ===
         if optimization_result.get('secondary_cuts'):
-            # Создаем словарь для быстрого поиска исходных заказов
             orders_dict = {}
             for order in orders_2d:
                 key = (round(order['length'], 2), order['width'])
@@ -389,31 +648,25 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                     orders_dict[key] = []
                 orders_dict[key].append(order)
             
-            # Обрабатываем каждый вторичный рез
             for sec_cut in optimization_result['secondary_cuts']:
                 target_key = sec_cut.get('target_order_key')
                 if not target_key:
-                    continue  # Пропускаем, если нет метаданных
+                    continue
                 
-                # Находим исходный заказ
                 target_length, target_width = target_key
                 original_orders = orders_dict.get((round(target_length, 2), target_width), [])
                 
                 if not original_orders:
-                    continue  # Заказ не найден
+                    continue
                 
-                # Для каждой плиты из вторичного реза
                 result_lengths = sec_cut.get('lengths', [])
                 result_width = sec_cut['cuts'][0]
                 
                 for result_length in result_lengths:
-                    # Создаём ключ для РЕЗУЛЬТАТА реза
                     key_result = (round(result_length, 2), result_width)
                     
-                    # Берём первый подходящий заказ с qty_remaining > 0
                     original_order = None
                     for order in original_orders:
-                        # Проверяем, есть ли эта плита в lookup с остатками
                         original_key = (round(order['length'], 2), order['width'])
                         if original_key in plate_lookup_exact:
                             for entry in plate_lookup_exact[original_key]:
@@ -426,23 +679,20 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                     if not original_order:
                         continue
                     
-                    # Добавляем в lookup запись для результата
                     if key_result not in plate_lookup_exact:
                         plate_lookup_exact[key_result] = []
                     
-                    # Создаём новую запись, связанную с исходным заказом
                     plate_lookup_exact[key_result].append({
                         'kp_date': original_order.get('kp_date', 'неизвестно'),
                         'customer': original_order.get('customer', 'неизвестно'),
                         'plate_name': original_order.get('plate_name', ''),
                         'reinforcement': original_order.get('reinforcement', 0),
                         'load_code': original_order.get('load_code', 8),
-                        'qty_remaining': 1,  # Одна плита из вторичного реза
+                        'qty_remaining': 1,
                         'kp_id': original_order.get('kp_id'),
-                        'is_from_secondary': True  # Флаг для отладки
+                        'is_from_secondary': True
                     })
                     
-                    # Также добавляем в lookup по длине
                     length_key = round(result_length, 2)
                     if length_key not in plate_lookup_by_length:
                         plate_lookup_by_length[length_key] = []
@@ -580,6 +830,7 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
         )
         
         # === СОХРАНЯЕМ ВСЕ ДАННЫЕ ===
+        target_date_str = data.get('target_date')
         await state.update_data(
             total_tracks_count=total_tracks_count,
             total_days=total_days,
@@ -590,7 +841,8 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             plate_lookup_by_length=plate_lookup_by_length,
             plate_to_kp_info=plate_to_kp_info,
             optimization_result=optimization_result,
-            target_date=target_date.isoformat()
+            target_date=target_date_str,
+            plates_from_rests=plates_from_rests
         )
         
         # === ПОКАЗЫВАЕМ КНОПКИ ===
@@ -609,6 +861,87 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             reply_markup=main_menu_kb()
         )
         await state.clear()
+
+
+@router.message(ProductionStates.waiting_date_number)
+async def receive_date_number_and_plan(message: Message, state: FSMContext):
+    """Парсим дату и запускаем планирование"""
+    user_input = message.text.strip()
+    
+    # === ПАРСИНГ ДАТЫ: поддерживаем разные форматы ===
+    target_date = None
+    date_description = ""
+    
+    # Формат 1: Полная дата "ДД.ММ.ГГГГ"
+    try:
+        target_date = datetime.strptime(user_input, '%d.%m.%Y')
+        date_description = target_date.strftime('%d.%m.%Y')
+    except ValueError:
+        pass
+    
+    # Формат 2: Полная дата "ГГГГ-ММ-ДД"
+    if not target_date:
+        try:
+            target_date = datetime.strptime(user_input, '%Y-%m-%d')
+            date_description = target_date.strftime('%d.%m.%Y')
+        except ValueError:
+            pass
+    
+    # Формат 3: Только число месяца
+    if not target_date:
+        try:
+            date_number = int(user_input)
+            
+            if date_number < 1 or date_number > 31:
+                await message.answer(
+                    "❌ Число должно быть от 1 до 31.\n"
+                    "Попробуйте снова:"
+                )
+                await message.answer(
+                    "Или нажмите кнопку ниже для отмены:",
+                    reply_markup=cancel_process_kb()
+                )
+                return
+            
+            now = datetime.now()
+            target_date = datetime(now.year, now.month, date_number)
+            date_description = f"{date_number} {target_date.strftime('%B %Y')}"
+        except ValueError:
+            pass
+    
+    if not target_date:
+        await message.answer(
+            "❌ Неверный формат даты.\n\n"
+            "Поддерживаемые форматы:\n"
+            "• 25 (число месяца)\n"
+            "• 01.02.2026 (полная дата)\n"
+            "• 2026-02-01 (ISO формат)\n\n"
+            "Попробуйте снова:"
+        )
+        await message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
+        )
+        return
+    
+    # Сохраняем дату и описание
+    await state.update_data(
+        target_date=target_date.isoformat(),
+        date_description=date_description
+    )
+    
+    data = await state.get_data()
+    tracks_count = data.get('tracks_count', 1)
+    
+    await message.answer(
+        f"✅ Параметры планирования:\n"
+        f"• Дорожек в день: {tracks_count}\n"
+        f"• Плиты со сроком до: {date_description}\n\n"
+        f"⏳ Загружаю плиты из базы данных..."
+    )
+    
+    # Запускаем универсальную функцию загрузки
+    await load_and_plan_production(message, state)
 
 
 # === ОБРАБОТЧИКИ ВЫБОРА ДНЯ ===
@@ -1380,6 +1713,40 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             })
             total_qty += sum(p['qty'] for p in track_plates)
     
+    # === ДОБАВЛЯЕМ ПЛИТЫ ИЗ ОСТАТКОВ (если есть) ===
+    # Плиты из остатков добавляются как отдельная "дорожка" с номером 0
+    plates_from_rests = data.get('plates_from_rests', [])
+    rests_for_this_day = []  # Плиты из остатков для текущего дня
+    
+    if plates_from_rests and day_number == 1:
+        # Плиты из остатков показываем только в День 1
+        # (так как они не требуют производства на дорожках)
+        for rest_plate in plates_from_rests:
+            rests_for_this_day.append({
+                'plate_name': rest_plate.get('plate_name', ''),
+                'length_m': rest_plate.get('length_m', 0),
+                'width_m': rest_plate.get('width_mm', 0) / 1000.0,
+                'load_class': rest_plate.get('load_code', 8) * 100,
+                'qty': rest_plate.get('qty', 1),
+                'kp_id': rest_plate.get('kp_id'),
+                'kp_date': rest_plate.get('kp_date', 'неизвестно'),
+                'customer': rest_plate.get('customer', 'неизвестно'),
+                # Флаги для отличия от обычных плит
+                'from_rest': True,
+                'rest_id': rest_plate.get('rest_id'),
+                'match_type': rest_plate.get('match_type', 'exact'),
+                'cut_cost': rest_plate.get('cut_cost', 0)
+            })
+        
+        if rests_for_this_day:
+            # Добавляем как "Дорожку 0: Из остатков" в начало списка
+            day_plates_by_track.insert(0, {
+                'track_number': 0,  # Номер 0 = из остатков
+                'plates': rests_for_this_day,
+                'is_from_rests': True  # Флаг для отображения в клавиатуре
+            })
+            total_qty += sum(p['qty'] for p in rests_for_this_day)
+    
     if not day_plates_by_track:
         await callback.message.answer(
             f"❌ Не удалось найти плиты для Дня {day_number}.",
@@ -1506,14 +1873,41 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     total_moved = 0
     completed_kps = []
     
-    # Переносим плиты С kp_id (стандартная логика)
+    # === ОБРАБОТКА ПЛИТ ИЗ ОСТАТКОВ ===
+    # Сначала обрабатываем плиты из остатков (помечаем остатки как использованные)
+    rests_used_count = 0
+    for plate in completed_plates:
+        if plate.get('from_rest') and plate.get('rest_id'):
+            rest_id = plate['rest_id']
+            # Помечаем остаток как использованный
+            if kp_db.mark_rest_as_used(rest_id, db_path):
+                rests_used_count += 1
+                logger.info(f"[COMPLETION] Остаток #{rest_id} помечен как использованный")
+            
+            # Переносим плиту в completed_plates
+            kp_id = plate.get('kp_id')
+            if kp_id:
+                moved = kp_db.move_plates_to_completed(kp_id, [plate], day_number, db_path)
+                total_moved += moved
+                
+                if kp_db.check_and_update_kp_completion(kp_id, db_path):
+                    if kp_id not in completed_kps:
+                        completed_kps.append(kp_id)
+    
+    # Переносим плиты С kp_id (стандартная логика, исключая плиты из остатков)
     for kp_id, plates in plates_by_kp.items():
-        moved = kp_db.move_plates_to_completed(kp_id, plates, day_number, db_path)
+        # Фильтруем плиты из остатков (они уже обработаны выше)
+        plates_not_from_rests = [p for p in plates if not p.get('from_rest')]
+        if not plates_not_from_rests:
+            continue
+        
+        moved = kp_db.move_plates_to_completed(kp_id, plates_not_from_rests, day_number, db_path)
         total_moved += moved
         
         # Проверяем, завершён ли КП полностью
         if kp_db.check_and_update_kp_completion(kp_id, db_path):
-            completed_kps.append(kp_id)
+            if kp_id not in completed_kps:
+                completed_kps.append(kp_id)
     
     # ========== НОВОЕ: Обрабатываем плиты БЕЗ kp_id ==========
     # Эти плиты не были найдены в lookup-таблицах (возможно из-за изменения ширины после реза)
@@ -1609,6 +2003,10 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     # Формируем отчёт
     report = f"✅ День {day_number} завершён!\n\n"
     report += f"📦 Выполнено плит: {total_moved} шт\n"
+    
+    # Информация о плитах из остатков
+    if rests_used_count > 0:
+        report += f"💰 Из остатков: {rests_used_count} шт (чистая прибыль!)\n"
     
     if rejected_plates:
         rejected_qty = sum(p['qty'] for p in rejected_plates)

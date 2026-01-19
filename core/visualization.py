@@ -684,65 +684,8 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     ax_strips.text(0.02, 0.6, txt, ha='left', va='center', fontsize=11,
                    bbox=dict(boxstyle='round,pad=0.5', facecolor='#f8f9fa', edgecolor='#bdc3c7'))
 
-    # Формируем детальный план резов или остатков
-    if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('total_plates', 0) > 0:
-        # Разбиваем детальный план на 2 колонки для компактности
-        
-        # ЛЕВАЯ КОЛОНКА: Первичные резы
-        details_left = "[1] Первичные резы (из 1200 мм):\n"
-        if OPT_CASCADING_PLAN.get('primary_cuts'):
-            for cut in OPT_CASCADING_PLAN['primary_cuts']:
-                details_left += f"• {cut['qty']} плит → {cut['width']} мм + остаток {cut['rest']} мм\n"
-        else:
-            details_left += "  (нет)\n"
-        
-        # ПРАВАЯ КОЛОНКА: Вторичные и поперечные резы
-        details_right = ""
-        
-        # Вторичные резы
-        if OPT_CASCADING_PLAN.get('secondary_cuts'):
-            details_right += "[2] Вторичные резы (из остатков):\n"
-            for cut in OPT_CASCADING_PLAN['secondary_cuts']:
-                if cut.get('pieces', 1) > 1:
-                    details_right += f"• {cut['qty']} остатков {cut['source']} мм → {cut['pieces']} частей по {cut['cuts'][0]} мм"
-                    if cut.get('waste', 0) > 0:
-                        details_right += f" (отход {cut['waste']} мм)"
-                    details_right += "\n"
-                else:
-                    cuts_str = ' + '.join(str(c) for c in cut['cuts'])
-                    details_right += f"• {cut['qty']} остатков {cut['source']} мм → {cuts_str} мм"
-                    if cut.get('waste', 0) > 0:
-                        details_right += f" (отход {cut['waste']} мм)"
-                    details_right += "\n"
-        
-        # Поперечные резы
-        if OPT_CASCADING_PLAN.get('transverse_cuts'):
-            if details_right:
-                details_right += "\n"
-            details_right += "[RED] Поперечные резы (по длине):\n"
-            for tcut in OPT_CASCADING_PLAN['transverse_cuts']:
-                details_right += f"• Плита {tcut['source_length']}м x {tcut['source_width']}мм -> {tcut['target_length']}м"
-                if tcut.get('remainder', 0) > 0.1:
-                    details_right += f" (остаток {tcut['remainder']:.2f}м)"
-                details_right += "\n"
-        
-        # Размещаем два блока рядом друг с другом (с достаточным отступом)
-        # Левый блок - первичные резы
-        ax_strips.text(0.02, 0.15, details_left, ha='left', va='center', fontsize=8,
-                       bbox=dict(boxstyle='round,pad=0.4', facecolor='#e8f5e9', edgecolor='#66bb6a'))
-        # Правый блок - вторичные и поперечные резы
-        if details_right:
-            ax_strips.text(0.52, 0.15, details_right, ha='left', va='center', fontsize=8,
-                           bbox=dict(boxstyle='round,pad=0.4', facecolor='#fff3e0', edgecolor='#ffb74d'))
-    else:
-        # Fallback: показываем старую информацию об остатках
-        leftovers = (
-            "Остатки/обрезки:\n"
-            "Ленты 0.3: 3x3.8 м; 1x2.9 м\n"
-            f"Ленты 0.2 (обрезки): {', '.join(f'{L:.1f} м' for L in cfg.PLATES_1_0)}"
-        )
-        ax_strips.text(0.02, 0.15, leftovers, ha='left', va='center', fontsize=11,
-                       bbox=dict(boxstyle='round,pad=0.5', facecolor='#eef7ff', edgecolor='#a3c9ff'))
+    # Детальный план резов убран из визуализации (по запросу пользователя)
+    # Все данные о резах сохраняются в Excel файлах
 
     # ✅ УБРАНА таблица заказа/использования (ax_table)
     # Но данные всё равно формируем для CSV и Excel файлов
