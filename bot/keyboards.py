@@ -160,6 +160,74 @@ def production_day_actions_kb(day_number: int, total_days: int) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def production_day_completed_kb(current_day: int, total_days: int) -> InlineKeyboardMarkup:
+    """
+    Клавиатура, которая показывается ПОСЛЕ завершения дня.
+    
+    Кнопки:
+    - "Перейти к следующему дню" — открывает оставшиеся дни (current_day+1 .. total_days)
+    - "Назад в меню" — возвращает в главное меню
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="➡️ Перейти к следующему дню",
+                    callback_data=f"production_next_days_{current_day}"
+                )
+            ],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
+        ]
+    )
+
+
+def production_remaining_days_kb(from_day: int, total_days: int) -> InlineKeyboardMarkup:
+    """
+    Показывает ТОЛЬКО оставшиеся дни после from_day.
+    Например: from_day=2, total_days=5 -> кнопки День 3, День 4, День 5.
+    """
+    buttons = []
+    
+    # Кнопка "Диаграмма Ганта" вверху (как в основном выборе дней)
+    buttons.append([
+        InlineKeyboardButton(
+            text="📊 Диаграмма Ганта",
+            callback_data="export_gantt"
+        )
+    ])
+    
+    # Дни (по 3 в ряд)
+    row = []
+    for day in range(from_day + 1, total_days + 1):
+        row.append(InlineKeyboardButton(
+            text=f"📅 День {day}",
+            callback_data=f"production_day_{day}"
+        ))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    
+    # "Актуальный план"
+    buttons.append([
+        InlineKeyboardButton(
+            text="💾 Актуальный план",
+            callback_data="save_current_plan"
+        )
+    ])
+    
+    # "Назад в меню"
+    buttons.append([
+        InlineKeyboardButton(
+            text="◀️ Назад в меню",
+            callback_data="cancel_process"
+        )
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> InlineKeyboardMarkup:
     """
     Клавиатура для отметки бракованных плит при завершении дня.
@@ -312,12 +380,14 @@ def archive_sections_kb() -> InlineKeyboardMarkup:
     Показывает кнопки:
     - 📦 В архиве (КП со статусом "в архиве")
     - 🏭 В производстве (КП со статусом "в работе")
+    - ✅ Выполненные КП (КП со статусом "выполнено")
     - 📊 Актуальный план (сохранённый план производства)
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📦 В архиве", callback_data="archive_section_archived")],
             [InlineKeyboardButton(text="🏭 В производстве", callback_data="archive_section_production")],
+            [InlineKeyboardButton(text="✅ Выполненные КП", callback_data="archive_section_completed")],
             [InlineKeyboardButton(text="📊 Актуальный план", callback_data="view_current_plan")],
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="archive_back_to_menu")],
         ]

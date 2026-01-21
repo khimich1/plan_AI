@@ -153,6 +153,66 @@ async def show_production_kp(callback: CallbackQuery):
     )
 
 
+@router.callback_query(F.data == "archive_section_completed")
+async def show_completed_kp(callback: CallbackQuery):
+    """
+    Показать выполненные КП (статус "выполнено").
+    
+    Простыми словами:
+    - Получает все КП со статусом "выполнено" из БД
+    - Формирует список с кнопками для каждого КП
+    """
+    try:
+        await callback.answer()
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
+    
+    all_kp = kp_db.get_all_kp_list()
+    completed_kp = all_kp.get('completed', [])
+    
+    if not completed_kp:
+        await callback.message.edit_text(
+            "✅ Выполненных КП пока нет\n\n"
+            "💡 Как появляется выполненное КП:\n"
+            "1) Отправьте КП в производство («💾 Сохранить в БД»)\n"
+            "2) В разделе планирования завершайте дни\n"
+            "3) Когда все плиты КП выполнены — статус станет «выполнено».",
+            reply_markup=archive_sections_kb()
+        )
+        return
+    
+    text = f"✅ Выполненные КП ({len(completed_kp)} шт.)\n\n"
+    
+    buttons = []
+    for kp in completed_kp:
+        kp_id = kp['kp_id']
+        customer = kp.get('customer_name', 'Без имени')
+        total = kp.get('total_amount', 0)
+        date = kp.get('creation_date', '')
+        
+        customer_short = customer[:25] + '...' if len(customer) > 25 else customer
+        
+        button_text = f"КП №{kp_id} | {customer_short} | {total:,.0f}₽"
+        if date:
+            button_text += f" | 📅{date}"
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text=button_text,
+                callback_data=f"view_kp_{kp_id}"
+            )
+        ])
+    
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад", callback_data="archive_back_to_sections")
+    ])
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+
+
 @router.callback_query(F.data.startswith("view_kp_"))
 async def view_kp_details(callback: CallbackQuery):
     """

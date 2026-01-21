@@ -29,7 +29,15 @@ from core.gantt_excel import create_gantt_excel
 import core.config_and_data as cfg
 import core.optimization as optimization
 
-from ..keyboards import main_menu_kb, production_days_kb, production_day_actions_kb, plates_completion_kb, cancel_process_kb
+from ..keyboards import (
+    main_menu_kb,
+    production_days_kb,
+    production_day_actions_kb,
+    plates_completion_kb,
+    cancel_process_kb,
+    production_day_completed_kb,
+    production_remaining_days_kb,
+)
 from ..states import ProductionStates
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -1635,9 +1643,63 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
         report += f"\n🎉 Полностью выполнены КП: {', '.join(map(str, completed_kps))}\n"
         report += "Статус этих КП изменён на «выполнено»"
     
-    await callback.message.answer(report, reply_markup=main_menu_kb())
-    await state.clear()
+    # ВАЖНО: не очищаем весь state — иначе нельзя будет открыть оставшиеся дни.
+    # Чистим только временные данные завершения дня.
+    total_days = data.get('total_days', 1)
+    await state.update_data(
+        completing_day=None,
+        day_plates_by_track=None,
+        rejected_indices=None
+    )
+    await state.set_state(ProductionStates.waiting_day_selection)
+    
+    await callback.message.answer(
+        report,
+        reply_markup=production_day_completed_kb(day_number, total_days)
+    )
     await callback.answer("✅ День завершён!")
+
+
+@router.callback_query(F.data.startswith("production_next_days_"))
+async def show_remaining_days_after_completion(callback: CallbackQuery, state: FSMContext):
+    """
+    Кнопка "Перейти к следующему дню" после завершения дня.
+    Показывает оставшиеся дни производства (N+1..total_days).
+    """
+    try:
+        current_day = int(callback.data.split("_")[-1])
+    except Exception:
+        current_day = 1
+    
+    data = await state.get_data()
+    total_days = data.get("total_days")
+    
+    if not total_days:
+        # Если state уже потерян — просим начать заново
+        await callback.message.answer(
+            "❌ Не нашёл данные плана в памяти.\n"
+            "Запустите «Планирование производства» заново.",
+            reply_markup=main_menu_kb()
+        )
+        await callback.answer()
+        return
+    
+    if current_day >= total_days:
+        await callback.message.answer(
+            "✅ Это был последний день.\n\n"
+            "Оставшихся дней нет. Можете открыть любой день для просмотра:",
+            reply_markup=production_days_kb(total_days)
+        )
+        await state.set_state(ProductionStates.waiting_day_selection)
+        await callback.answer()
+        return
+    
+    await callback.message.answer(
+        "Выберите следующий день производства:",
+        reply_markup=production_remaining_days_kb(current_day, total_days)
+    )
+    await state.set_state(ProductionStates.waiting_day_selection)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "cancel_completion", ProductionStates.marking_completion)
