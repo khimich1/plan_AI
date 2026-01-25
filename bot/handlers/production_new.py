@@ -1103,7 +1103,8 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                 'kp_date': 'неизвестно',
                 'customer': 'неизвестно',
                 'plate_name': '',
-                'reinforcement': 0
+                'reinforcement': 0,
+                'kp_id': None
             }
         
         for track_idx_in_file, track in enumerate(tracks_in_current_file):
@@ -1153,7 +1154,8 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                         'reinforcement': plate_info['reinforcement'],
                         'kp_date': plate_info['kp_date'],
                         'customer': plate_info['customer'],
-                        'plate_name': plate_info.get('plate_name', '')
+                        'plate_name': plate_info.get('plate_name', ''),
+                        'kp_id': plate_info.get('kp_id')
                     })
                 
                 # НОВОЕ: Обрабатываем плиты из вторичных резов (остатков)
@@ -1193,7 +1195,8 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                             'reinforcement': sec_plate_info.get('reinforcement', 0),
                             'kp_date': sec_plate_info.get('kp_date', 'неизвестно'),
                             'customer': sec_plate_info.get('customer', 'неизвестно'),
-                            'plate_name': sec_plate_name
+                            'plate_name': sec_plate_name,
+                            'kp_id': sec_plate_info.get('kp_id')
                         })
             
             if plates_info:
