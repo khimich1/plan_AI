@@ -70,6 +70,8 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
         
         # Таблица 2: kp_plates - Позиции (плиты) в каждом КП
         # kp_id - связь с KP_offers
+        # status - статус плиты: "в производстве" (доступна для планирования) или "в плане" (уже добавлена в план)
+        # plan_id - ID плана, в который добавлена плита (для связи и отката при удалении плана)
         cur.execute('''
             CREATE TABLE IF NOT EXISTS kp_plates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,6 +85,8 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
                 unit_weight REAL,
                 total_weight REAL,
                 discounted_price REAL,
+                status TEXT DEFAULT 'в производстве',
+                plan_id TEXT,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
             )
         ''')
@@ -174,6 +178,42 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
         cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_kp_id ON plate_rests(kp_id)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_status ON plate_rests(status)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_managers_email ON managers(email)')
+        # Индексы для status и plan_id создаются в блоке миграции ниже
+        
+        # === МИГРАЦИЯ: Добавляем колонки status и plan_id если их нет ===
+        # Это нужно для существующих баз данных, где таблица уже создана без этих полей
+        cur.execute("PRAGMA table_info(kp_plates)")
+        columns = [col[1] for col in cur.fetchall()]
+        
+        if 'status' not in columns:
+            print("[DB] Миграция: добавляем колонку status в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN status TEXT DEFAULT 'в производстве'")
+            # Устанавливаем статус для всех существующих записей
+            cur.execute("UPDATE kp_plates SET status = 'в производстве' WHERE status IS NULL")
+            print("[DB] ✅ Колонка status добавлена")
+        
+        # Создаём индекс для status (после того, как колонка точно существует)
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_plates_status ON kp_plates(status)')
+        
+        if 'plan_id' not in columns:
+            print("[DB] Миграция: добавляем колонку plan_id в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN plan_id TEXT")
+            print("[DB] ✅ Колонка plan_id добавлена")
+        
+        # Создаём индекс для plan_id (после того, как колонка точно существует)
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_plates_plan_id ON kp_plates(plan_id)')
+        
+        # === МИГРАЦИЯ: Добавляем колонку status в kp_meta если её нет ===
+        # Это нужно для существующих баз данных, где таблица уже создана без этого поля
+        cur.execute("PRAGMA table_info(kp_meta)")
+        meta_columns = [col[1] for col in cur.fetchall()]
+        
+        if 'status' not in meta_columns:
+            print("[DB] Миграция: добавляем колонку status в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN status TEXT DEFAULT 'в работе'")
+            # Устанавливаем статус для всех существующих записей
+            cur.execute("UPDATE kp_meta SET status = 'в работе' WHERE status IS NULL")
+            print("[DB] ✅ Колонка status добавлена в kp_meta")
         
         conn.commit()
     finally:
@@ -1363,6 +1403,233 @@ def get_remaining_plates_for_kp(kp_id: int, db_path: str = DEFAULT_DB) -> List[D
         conn.close()
 
 
+# =============================================================================
+# ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ СТАТУСАМИ ПЛИТ
+# =============================================================================
+
+def mark_plates_as_planned(
+    kp_id: int,
+    plate_name: str,
+    qty_to_plan: int,
+    plan_id: str,
+    db_path: str = DEFAULT_DB
+) -> bool:
+    """
+    Помечает плиты как 'в плане' при сохранении плана.
+    
+    Простыми словами:
+    - Находит плиту по kp_id и plate_name со статусом 'в производстве'
+    - Если qty_to_plan = всему qty — просто меняет статус на 'в плане'
+    - Если qty_to_plan < qty — разбивает запись на две:
+      * Одна с qty_to_plan и статусом 'в плане'
+      * Вторая с остатком и статусом 'в производстве'
+    
+    Аргументы:
+        kp_id: номер КП
+        plate_name: название плиты (например, "ПБ 60-12-8п")
+        qty_to_plan: сколько плит добавить в план
+        plan_id: ID плана (для связи и отката)
+        db_path: путь к базе данных
+    
+    Возвращает:
+        True если успешно, False при ошибке
+    """
+    init_schema(db_path)
+    conn = _connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        
+        # Находим плиту со статусом 'в производстве'
+        cur.execute('''
+            SELECT id, qty, position_number, length_m, width_m, load_class,
+                   unit_weight, total_weight, discounted_price
+            FROM kp_plates
+            WHERE kp_id = ? AND plate_name = ? AND status = 'в производстве' AND qty > 0
+            ORDER BY id
+            LIMIT 1
+        ''', (kp_id, plate_name))
+        
+        row = cur.fetchone()
+        if not row:
+            print(f"[DB] ⚠️ Плита не найдена: КП #{kp_id}, {plate_name} (статус 'в производстве')")
+            return False
+        
+        plate_id, current_qty, pos_num, length_m, width_m, load_class, unit_w, total_w, price = row
+        
+        if qty_to_plan > current_qty:
+            print(f"[DB] ⚠️ Запрошено {qty_to_plan}, но доступно только {current_qty}")
+            qty_to_plan = current_qty
+        
+        if qty_to_plan == current_qty:
+            # Простой случай: все плиты идут в план
+            cur.execute('''
+                UPDATE kp_plates
+                SET status = 'в плане', plan_id = ?
+                WHERE id = ?
+            ''', (plan_id, plate_id))
+            print(f"[DB] ✅ Плита {plate_name} x{qty_to_plan} помечена как 'в плане' (план {plan_id})")
+        else:
+            # Разбиваем запись на две
+            remaining_qty = current_qty - qty_to_plan
+            
+            # 1. Обновляем существующую запись: уменьшаем qty, помечаем 'в плане'
+            cur.execute('''
+                UPDATE kp_plates
+                SET qty = ?, status = 'в плане', plan_id = ?
+                WHERE id = ?
+            ''', (qty_to_plan, plan_id, plate_id))
+            
+            # 2. Создаём новую запись с остатком (статус 'в производстве')
+            cur.execute('''
+                INSERT INTO kp_plates (
+                    kp_id, position_number, plate_name, length_m, width_m, load_class,
+                    qty, unit_weight, total_weight, discounted_price, status, plan_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'в производстве', NULL)
+            ''', (kp_id, pos_num, plate_name, length_m, width_m, load_class,
+                  remaining_qty, unit_w, total_w, price))
+            
+            print(f"[DB] ✅ Плита {plate_name} разбита: {qty_to_plan} в план, {remaining_qty} осталось")
+        
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при пометке плиты как 'в плане': {e}")
+        conn.rollback()
+        return False
+    
+    finally:
+        conn.close()
+
+
+def return_plates_to_production(
+    kp_id: int,
+    plate_name: str,
+    qty: int,
+    db_path: str = DEFAULT_DB
+) -> bool:
+    """
+    Возвращает плиты обратно в статус 'в производстве'.
+    
+    Простыми словами:
+    - Используется при браке: бракованные плиты возвращаются в производство
+    - Находит плиту со статусом 'в плане' и меняет статус на 'в производстве'
+    - Очищает plan_id
+    
+    Аргументы:
+        kp_id: номер КП
+        plate_name: название плиты
+        qty: количество плит для возврата
+        db_path: путь к базе данных
+    
+    Возвращает:
+        True если успешно, False при ошибке
+    """
+    init_schema(db_path)
+    conn = _connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        
+        # Находим плиту со статусом 'в плане'
+        cur.execute('''
+            SELECT id, qty
+            FROM kp_plates
+            WHERE kp_id = ? AND plate_name = ? AND status = 'в плане' AND qty > 0
+            ORDER BY id
+            LIMIT 1
+        ''', (kp_id, plate_name))
+        
+        row = cur.fetchone()
+        if not row:
+            # Плита могла уже быть возвращена или не была в плане
+            print(f"[DB] ⚠️ Плита для возврата не найдена: КП #{kp_id}, {plate_name}")
+            return False
+        
+        plate_id, current_qty = row
+        
+        # Возвращаем в производство
+        cur.execute('''
+            UPDATE kp_plates
+            SET status = 'в производстве', plan_id = NULL
+            WHERE id = ?
+        ''', (plate_id,))
+        
+        conn.commit()
+        print(f"[DB] ✅ Плита {plate_name} x{qty} возвращена в производство (КП #{kp_id})")
+        return True
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при возврате плиты в производство: {e}")
+        conn.rollback()
+        return False
+    
+    finally:
+        conn.close()
+
+
+def return_plan_plates_to_production(plan_id: str, db_path: str = DEFAULT_DB) -> int:
+    """
+    Возвращает ВСЕ плиты плана обратно в производство.
+    
+    Простыми словами:
+    - Используется при удалении плана
+    - Находит все плиты с данным plan_id
+    - Меняет их статус на 'в производстве'
+    - Очищает plan_id
+    
+    Аргументы:
+        plan_id: ID плана
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Количество возвращённых плит (записей)
+    """
+    init_schema(db_path)
+    conn = _connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        
+        # Считаем сколько плит вернём
+        cur.execute('''
+            SELECT COUNT(*), COALESCE(SUM(qty), 0)
+            FROM kp_plates
+            WHERE plan_id = ?
+        ''', (plan_id,))
+        
+        count_result = cur.fetchone()
+        records_count = count_result[0] if count_result else 0
+        qty_total = count_result[1] if count_result else 0
+        
+        if records_count == 0:
+            print(f"[DB] ℹ️ Нет плит для возврата из плана {plan_id}")
+            return 0
+        
+        # Возвращаем все плиты плана в производство
+        cur.execute('''
+            UPDATE kp_plates
+            SET status = 'в производстве', plan_id = NULL
+            WHERE plan_id = ?
+        ''', (plan_id,))
+        
+        conn.commit()
+        print(f"[DB] ✅ Возвращено {records_count} записей ({qty_total} плит) из плана {plan_id} в производство")
+        return records_count
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при возврате плит плана в производство: {e}")
+        conn.rollback()
+        return 0
+    
+    finally:
+        conn.close()
+
+
 def get_completed_plates_for_kp(kp_id: int, db_path: str = DEFAULT_DB) -> List[Dict]:
     """
     Получает список выполненных плит для КП.
@@ -1508,6 +1775,8 @@ def get_all_plates_in_production(db_path: str = DEFAULT_DB) -> List[Dict]:
                 p.unit_weight,
                 p.total_weight,
                 p.discounted_price,
+                p.status as plate_status,
+                p.plan_id,
                 ko.customer_name,
                 ko.execution_terms
             FROM kp_plates p

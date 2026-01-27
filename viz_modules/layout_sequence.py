@@ -18,7 +18,7 @@ def _choose_best_separator(solid_list, next_group, reinforcement_map):
     Args:
         solid_list: список целых плит [{width, lengths, qty}, ...]
         next_group: следующая группа резов (не используется в новой логике)
-        reinforcement_map: {(length, width_mm): reinforcement}
+        reinforcement_map: {(length, width_mm, load_code): reinforcement}
     
     Returns:
         index: индекс лучшей плиты в solid_list (или 0, если не найдено)
@@ -31,7 +31,7 @@ def _choose_best_separator(solid_list, next_group, reinforcement_map):
     for idx, plate in enumerate(solid_list):
         length = plate['lengths'][0] if plate.get('lengths') else 6.0
         width_mm = plate['width']
-        reinforcement = reinforcement_map.get((length, width_mm), 999.0)
+        reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
         
         candidates.append({
             'index': idx,
@@ -47,6 +47,96 @@ def _choose_best_separator(solid_list, next_group, reinforcement_map):
     return best['index']
 
 
+def _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code=None):
+    """
+    Получает армирование из карты по (length, width_mm, load_code).
+    
+    Карта имеет ключи (length, width_mm, load_code).
+    Если load_code указан - ищет точное совпадение.
+    Если load_code=None - ищет первое совпадение по (length, width_mm).
+    
+    Args:
+        reinforcement_map: {(length, width_mm, load_code): reinforcement}
+        length: длина плиты в метрах
+        width_mm: ширина плиты в мм
+        load_code: код нагрузки (опционально)
+    
+    Returns:
+        reinforcement или None
+    """
+    if load_code is not None:
+        # Точный поиск по всем трём параметрам
+        return reinforcement_map.get((length, width_mm, load_code))
+    
+    # Поиск по (length, width_mm) - возвращаем первое найденное
+    for (l, w, lc), reinforcement in reinforcement_map.items():
+        if abs(l - length) < 0.01 and w == width_mm:
+            return reinforcement
+    return None
+
+
+def _split_group_into_subgroups(cut_group, max_length=90.0):
+    """
+    Разбивает группу резов на подгруппы по max_length метров.
+    
+    ВАЖНО: Группа уже содержит плиты с одинаковым резом И армированием
+    (благодаря предварительной группировке через groupby).
+    Эта функция просто режет по длине, НЕ меняя порядок плит.
+    
+    Args:
+        cut_group: список записей [{width, rest, qty, lengths, reinforcement}, ...]
+        max_length: максимальная длина подгруппы в метрах (по умолчанию 90м)
+    
+    Returns:
+        list[list]: Список подгрупп [[cut1, cut2], [cut3, cut4], ...]
+        
+    Example:
+        >>> group = [
+        ...     {'width': 320, 'rest': 880, 'qty': 10, 'lengths': [8.0]*10},
+        ...     {'width': 320, 'rest': 880, 'qty': 5, 'lengths': [7.5]*5}
+        ... ]
+        >>> subgroups = _split_group_into_subgroups(group, max_length=90.0)
+        >>> # Результат: [[10 плит по 8м], [5 плит по 7.5м и ещё...]]
+    """
+    subgroups = []
+    current_subgroup = []
+    current_length = 0.0
+    
+    print(f"[VISUAL] Разбиваю группу на подгруппы (макс {max_length}м)...")
+    
+    for cut in cut_group:
+        qty = cut['qty']
+        lengths = cut.get('lengths', [])
+        
+        # Обрабатываем каждую плиту в записи
+        for i in range(qty):
+            length = lengths[i] if i < len(lengths) else (lengths[0] if lengths else 6.0)
+            
+            # Проверяем: влезет ли плита в текущую подгруппу?
+            if current_length + length > max_length and current_subgroup:
+                # Закрываем текущую подгруппу
+                subgroups.append(current_subgroup)
+                print(f"[VISUAL]   Подгруппа #{len(subgroups)} закрыта: {current_length:.1f}м ({len(current_subgroup)} записей)")
+                current_subgroup = []
+                current_length = 0.0
+            
+            # Создаём запись для 1 плиты (разворачиваем qty=10 → 10 записей с qty=1)
+            single_cut = cut.copy()
+            single_cut['qty'] = 1
+            single_cut['lengths'] = [length]
+            
+            current_subgroup.append(single_cut)
+            current_length += length
+    
+    # Добавляем последнюю подгруппу
+    if current_subgroup:
+        subgroups.append(current_subgroup)
+        print(f"[VISUAL]   Подгруппа #{len(subgroups)} закрыта: {current_length:.1f}м ({len(current_subgroup)} записей)")
+    
+    print(f"[VISUAL] ✓ Группа разбита на {len(subgroups)} подгрупп")
+    return subgroups
+
+
 def build_layout_sequence():
     """Формирует последовательность сегментов вдоль дорожки, РАЗДЕЛЁННУЮ ПО НАГРУЗКАМ."""
     from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
@@ -54,7 +144,8 @@ def build_layout_sequence():
     from pathlib import Path
     
     # Создаём глобальную карту армирования из PLATE_LOAD_DETAILS
-    reinforcement_map = {}  # {(length, width_mm): reinforcement}
+    # Ключ включает load_code для точного определения армирования
+    reinforcement_map = {}  # {(length, width_mm, load_code): reinforcement}
     
     if cfg.PLATE_LOAD_DETAILS:
         db_path = Path(__file__).parent.parent / "pb.db"
@@ -68,10 +159,10 @@ def build_layout_sequence():
                 db_path=db_path,
                 allow_fallback=True
             )
-            key = (length, width_mm)
+            key = (length, width_mm, load_code)  # Теперь включает load_code!
             if reinforcement and reinforcement < 999:
                 reinforcement_map[key] = reinforcement
-                print(f"[VISUAL]   Добавлено: ({length}м, {width_mm}мм) → армирование {reinforcement:.1f}")
+                print(f"[VISUAL]   Добавлено: ({length}м, {width_mm}мм, нагрузка {load_code}) → армирование {reinforcement:.1f}")
     
     print(f"[VISUAL] Создана карта армирования: {len(reinforcement_map)} записей")
     sequence = []
@@ -241,7 +332,7 @@ def build_layout_sequence():
         for cut in solid_cuts:
             length = cut['lengths'][0] if cut.get('lengths') else 6.0
             width_mm = cut['width']
-            cut['reinforcement'] = reinforcement_map.get((length, width_mm), 999.0)
+            cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
         solid_cuts.sort(key=lambda x: (x.get('reinforcement', 999.0), -x['lengths'][0] if x.get('lengths') else 0))
         
         # Плиты с резом - вычисляем армирование для группировки
@@ -251,7 +342,7 @@ def build_layout_sequence():
         for cut in cut_with_rest_raw:
             length = cut['lengths'][0] if cut.get('lengths') else 6.0
             width_mm = cut['width']
-            cut['reinforcement'] = reinforcement_map.get((length, width_mm), 999.0)
+            cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
         
         # Сортируем плиты с резом по армированию (мин. первый), потом по типу реза
         cut_with_rest = sorted(
@@ -298,29 +389,58 @@ def build_layout_sequence():
         
         # Правило 2 и 3: Чередуем группы резов и целые плиты-разделители
         for i, cut_group in enumerate(cut_groups):
-            ordered_cuts.extend(cut_group)
-            print(f"[VISUAL] Добавлена группа резов #{i+1}: width={cut_group[0]['width']}мм, rest={cut_group[0]['rest']}мм, типов={len(cut_group)}")
+            # Рассчитываем суммарную длину группы
+            total_group_length = sum(
+                cut['lengths'][0] * cut['qty'] 
+                for cut in cut_group
+                if cut.get('lengths')
+            )
             
-        # После каждой группы (кроме последней) добавляем ОПТИМАЛЬНЫЙ разделитель
-        if i < len(cut_groups) - 1 and solid_cuts_list:
-            # Определяем следующую группу
-            next_group = cut_groups[i + 1]
+            print(f"[VISUAL] Группа резов #{i+1}: width={cut_group[0]['width']}мм, rest={cut_group[0]['rest']}мм, "
+                  f"типов={len(cut_group)}, длина={total_group_length:.1f}м")
             
-            # Умный выбор разделителя по армированию
-            best_idx = _choose_best_separator(solid_cuts_list, next_group, reinforcement_map)
-            
-            if best_idx is not None:
-                # Извлекаем выбранную плиту
-                separator = solid_cuts_list.pop(best_idx)
-                separator['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: помечаем как разделитель
-                ordered_cuts.append(separator)
-                print(f"[VISUAL] ✓ Разделитель (is_separator=True): целая плита между группами")
+            # Если группа слишком большая (>90м), разбиваем на подгруппы
+            if total_group_length > 90.0:
+                print(f"[VISUAL] ⚠️ Группа #{i+1} слишком большая ({total_group_length:.1f}м > 90м), разбиваем на подгруппы")
+                subgroups = _split_group_into_subgroups(cut_group, max_length=90.0)
+                
+                # Добавляем подгруппы с разделителями МЕЖДУ ними
+                for j, subgroup in enumerate(subgroups):
+                    ordered_cuts.extend(subgroup)
+                    print(f"[VISUAL]   Добавлена подгруппа #{i+1}.{j+1}: {len(subgroup)} плит")
+                    
+                    # После каждой подгруппы (кроме последней в этой группе)
+                    if j < len(subgroups) - 1 and solid_cuts_list:
+                        separator = solid_cuts_list.pop(0)
+                        separator['is_separator'] = True
+                        ordered_cuts.append(separator)
+                        print(f"[VISUAL]   ✓ Разделитель между подгруппами: целая плита")
             else:
-                # Fallback: если функция не смогла выбрать, берём первую
-                fallback_sep = solid_cuts_list.pop(0)
-                fallback_sep['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ
-                ordered_cuts.append(fallback_sep)
-                print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами (fallback, is_separator=True)")
+                # Группа помещается в 1 дорожку - добавляем как есть
+                ordered_cuts.extend(cut_group)
+                print(f"[VISUAL] Добавлена группа резов #{i+1} (влезает в дорожку)")
+            
+            # После каждой ГРУППЫ (кроме последней) добавляем ОПТИМАЛЬНЫЙ разделитель
+            if i < len(cut_groups) - 1 and solid_cuts_list:
+                # Определяем следующую группу
+                next_group = cut_groups[i + 1]
+                
+                # Умный выбор разделителя по армированию
+                best_idx = _choose_best_separator(solid_cuts_list, next_group, reinforcement_map)
+                
+                if best_idx is not None:
+                    # Извлекаем выбранную плиту
+                    separator = solid_cuts_list.pop(best_idx)
+                    separator['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: помечаем как разделитель
+                    ordered_cuts.append(separator)
+                    print(f"[VISUAL] ✓ Разделитель (is_separator=True): целая плита между группами")
+                else:
+                    # Fallback: если функция не смогла выбрать, берём первую
+                    if solid_cuts_list:
+                        fallback_sep = solid_cuts_list.pop(0)
+                        fallback_sep['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ
+                        ordered_cuts.append(fallback_sep)
+                        print(f"[VISUAL] ✓ Разделитель: целая плита между группами (fallback, is_separator=True)")
         
         # Оставшиеся целые плиты добавляем в конец
         if solid_cuts_list:
@@ -351,6 +471,12 @@ def build_layout_sequence():
                 # Берём длину для этой плиты
                 length = lengths_for_cut[i] if i < len(lengths_for_cut) else 6.0
                 
+                # НОВОЕ: Получаем информацию о КП для этой плиты
+                kp_id = cut.get('kp_id')
+                customer = cut.get('customer')
+                kp_date = cut.get('kp_date')
+                plate_name_from_cut = cut.get('plate_name')
+                
                 # ИСПРАВЛЕНИЕ: Проверяем вторичные резы для КОНКРЕТНОГО остатка (длина + ширина)
                 sec_variants = secondary_cuts_info.get((length, rest_mm)) or []
                 
@@ -369,7 +495,7 @@ def build_layout_sequence():
                     remainder = transverse_cut_info['remainder']
                     
                     # Получаем армирование из карты
-                    reinforcement = reinforcement_map.get((length, width_mm))
+                    reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm)
                     
                     sequence.append({
                         'length': length,  # Исходная длина плиты
@@ -379,7 +505,11 @@ def build_layout_sequence():
                         'width': width_m,
                         'label_target': plate_label(target_length, width_m),
                         'label_remainder': f'Остаток {remainder:.2f}м'.replace('.', ',') if remainder > 0.1 else '',
-                        'reinforcement': reinforcement
+                        'reinforcement': reinforcement,
+                        'kp_id': kp_id,
+                        'customer': customer,
+                        'kp_date': kp_date,
+                        'plate_name': plate_name_from_cut
                     })
                     print(f"[VISUAL] Плита с поперечным резом: {length}м x {width_mm}мм -> {target_length}м (остаток {remainder:.2f}м)")
                 else:
@@ -399,7 +529,7 @@ def build_layout_sequence():
                     # Специальная обработка для плит БЕЗ реза (rest = 0)
                     if rest_mm == 0:
                         # Получаем армирование из карты
-                        reinforcement = reinforcement_map.get((length, width_mm))
+                        reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm)
                         # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: передаём флаг is_separator
                         is_separator = cut.get('is_separator', False)
                         sequence.append({
@@ -407,7 +537,11 @@ def build_layout_sequence():
                             'mode': 'solid',
                             'label': plate_label(length, main_w),
                             'reinforcement': reinforcement,
-                            'is_separator': is_separator  # Для приоритета при разбиении на дорожки
+                            'is_separator': is_separator,  # Для приоритета при разбиении на дорожки
+                            'kp_id': kp_id,
+                            'customer': customer,
+                            'kp_date': kp_date,
+                            'plate_name': plate_name_from_cut
                         })
                     else:
                         # Плиты С резом
@@ -466,7 +600,7 @@ def build_layout_sequence():
                             chosen_variant['used'] += 1
                         
                         # Получаем армирование из карты
-                        reinforcement = reinforcement_map.get((length, width_mm))
+                        reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm)
                         sequence.append({
                             'length': length,
                             'mode': 'split',
@@ -478,7 +612,11 @@ def build_layout_sequence():
                                 (f'+{rest_w:.2f}'.replace('.', ',') if not secondary_cuts_for_plate else None)
                             ),
                             'secondary_cuts': secondary_cuts_for_plate,
-                            'reinforcement': reinforcement
+                            'reinforcement': reinforcement,
+                            'kp_id': kp_id,
+                            'customer': customer,
+                            'kp_date': kp_date,
+                            'plate_name': plate_name_from_cut
                         })
         
         if sequence:
@@ -555,7 +693,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     Args:
         plan: Результат оптимизации (OPT_CASCADING_PLAN)
         plate_label_func: Функция для создания меток плит
-        reinforcement_map: Словарь {(length, width_mm): reinforcement} для получения армирования
+        reinforcement_map: Словарь {(length, width_mm, load_code): reinforcement} для получения армирования
     
     Returns:
         Список сегментов (плит) для визуализации
@@ -647,7 +785,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     for cut in solid_cuts:
         length = cut['lengths'][0] if cut.get('lengths') else 6.0
         width_mm = cut['width']
-        cut['reinforcement'] = reinforcement_map.get((length, width_mm), 999.0)
+        cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
     solid_cuts.sort(key=lambda x: (x.get('reinforcement', 999.0), -x['lengths'][0] if x.get('lengths') else 0))
     
     # Плиты с резом - вычисляем армирование для группировки
@@ -657,7 +795,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     for cut in cut_with_rest_raw:
         length = cut['lengths'][0] if cut.get('lengths') else 6.0
         width_mm = cut['width']
-        cut['reinforcement'] = reinforcement_map.get((length, width_mm), 999.0)
+        cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
     
     # Сортируем плиты с резом по армированию (мин. первый), потом по типу реза
     cut_with_rest = sorted(
@@ -704,10 +842,38 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     
     # Правило 2 и 3: Чередуем группы резов и целые плиты-разделители
     for i, cut_group in enumerate(cut_groups):
-        ordered_cuts.extend(cut_group)
-        print(f"[VISUAL] Добавлена группа резов #{i+1}: width={cut_group[0]['width']}мм, rest={cut_group[0]['rest']}мм, типов={len(cut_group)}")
+        # Рассчитываем суммарную длину группы
+        total_group_length = sum(
+            cut['lengths'][0] * cut['qty'] 
+            for cut in cut_group
+            if cut.get('lengths')
+        )
         
-        # После каждой группы (кроме последней) добавляем ОПТИМАЛЬНЫЙ разделитель
+        print(f"[VISUAL] Группа резов #{i+1}: width={cut_group[0]['width']}мм, rest={cut_group[0]['rest']}мм, "
+              f"типов={len(cut_group)}, длина={total_group_length:.1f}м")
+        
+        # Если группа слишком большая (>90м), разбиваем на подгруппы
+        if total_group_length > 90.0:
+            print(f"[VISUAL] ⚠️ Группа #{i+1} слишком большая ({total_group_length:.1f}м > 90м), разбиваем на подгруппы")
+            subgroups = _split_group_into_subgroups(cut_group, max_length=90.0)
+            
+            # Добавляем подгруппы с разделителями МЕЖДУ ними
+            for j, subgroup in enumerate(subgroups):
+                ordered_cuts.extend(subgroup)
+                print(f"[VISUAL]   Добавлена подгруппа #{i+1}.{j+1}: {len(subgroup)} плит")
+                
+                # После каждой подгруппы (кроме последней в этой группе)
+                if j < len(subgroups) - 1 and solid_cuts_list:
+                    separator = solid_cuts_list.pop(0)
+                    separator['is_separator'] = True
+                    ordered_cuts.append(separator)
+                    print(f"[VISUAL]   ✓ Разделитель между подгруппами: целая плита")
+        else:
+            # Группа помещается в 1 дорожку - добавляем как есть
+            ordered_cuts.extend(cut_group)
+            print(f"[VISUAL] Добавлена группа резов #{i+1} (влезает в дорожку)")
+        
+        # После каждой ГРУППЫ (кроме последней) добавляем ОПТИМАЛЬНЫЙ разделитель
         if i < len(cut_groups) - 1 and solid_cuts_list:
             # Определяем следующую группу
             next_group = cut_groups[i + 1]
@@ -723,10 +889,11 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 print(f"[VISUAL] ✓ Разделитель (is_separator=True): целая плита между группами")
             else:
                 # Fallback: если функция не смогла выбрать, берём первую
-                fallback_sep = solid_cuts_list.pop(0)
-                fallback_sep['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ
-                ordered_cuts.append(fallback_sep)
-                print(f"[VISUAL] ✓ Разделитель: целая плита 1200мм между группами (fallback, is_separator=True)")
+                if solid_cuts_list:
+                    fallback_sep = solid_cuts_list.pop(0)
+                    fallback_sep['is_separator'] = True  # МЯГКОЕ РЕЗЕРВИРОВАНИЕ
+                    ordered_cuts.append(fallback_sep)
+                    print(f"[VISUAL] ✓ Разделитель: целая плита между группами (fallback, is_separator=True)")
     
     # Оставшиеся целые плиты добавляем в конец
     if solid_cuts_list:
@@ -751,6 +918,12 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
         for i in range(qty):
             length = lengths_for_cut[i] if i < len(lengths_for_cut) else 6.0
             
+            # НОВОЕ: Получаем информацию о КП для этой плиты
+            kp_id = cut.get('kp_id')
+            customer = cut.get('customer')
+            kp_date = cut.get('kp_date')
+            plate_name_from_cut = cut.get('plate_name')
+            
             sec_variants = secondary_cuts_info.get((length, rest_mm)) or []
             transverse_cut_info = transverse_cut_map.get((length, width_mm))
             
@@ -758,7 +931,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 # Поперечный рез
                 width_m = width_mm / 1000.0
                 # Получаем армирование из карты
-                reinforcement = reinforcement_map.get((length, width_mm))
+                reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm)
                 sequence.append({
                     'length': length,
                     'mode': 'transverse',
@@ -767,7 +940,11 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     'width': width_m,
                     'label_target': plate_label_func(transverse_cut_info['target_length'], width_m),
                     'label_remainder': f'Остаток {transverse_cut_info["remainder"]:.2f}м'.replace('.', ',') if transverse_cut_info['remainder'] > 0.1 else '',
-                    'reinforcement': reinforcement
+                    'reinforcement': reinforcement,
+                    'kp_id': kp_id,
+                    'customer': customer,
+                    'kp_date': kp_date,
+                    'plate_name': plate_name_from_cut
                 })
             else:
                 # Обычная плита
@@ -784,7 +961,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 if rest_mm == 0:
                     # Плита без реза
                     # Получаем армирование из карты по (length, width_mm)
-                    reinforcement = reinforcement_map.get((length, width_mm))
+                    reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm)
                     if not reinforcement:
                         print(f"[VISUAL] ⚠️ Армирование не найдено для целой плиты: {length}м x {width_mm}мм")
                         print(f"[VISUAL]    Доступные ключи в карте: {list(reinforcement_map.keys())[:5]}")
@@ -797,7 +974,11 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'mode': 'solid',
                         'label': plate_label_func(length, main_w),
                         'reinforcement': reinforcement,
-                        'is_separator': is_separator  # Для приоритета при разбиении на дорожки
+                        'is_separator': is_separator,  # Для приоритета при разбиении на дорожки
+                        'kp_id': kp_id,
+                        'customer': customer,
+                        'kp_date': kp_date,
+                        'plate_name': plate_name_from_cut
                     })
                 else:
                     # Плита с резом
@@ -846,7 +1027,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         chosen_variant['used'] += 1
                     
                     # Получаем армирование из карты
-                    reinforcement = reinforcement_map.get((length, width_mm))
+                    reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm)
                     if reinforcement:
                         print(f"[VISUAL] ✓ Армирование найдено для плиты с резом: {length}м x {width_mm}мм = {reinforcement:.1f}")
                     sequence.append({
@@ -860,7 +1041,11 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                             (f'+{rest_w:.2f}'.replace('.', ',') if not secondary_cuts_for_plate else None)
                         ),
                         'secondary_cuts': secondary_cuts_for_plate,
-                        'reinforcement': reinforcement
+                        'reinforcement': reinforcement,
+                        'kp_id': kp_id,
+                        'customer': customer,
+                        'kp_date': kp_date,
+                        'plate_name': plate_name_from_cut
                     })
     
     return sequence

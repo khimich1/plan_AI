@@ -59,9 +59,29 @@ def save_to_db_kb() -> InlineKeyboardMarkup:
     )
 
 
+def production_menu_kb() -> InlineKeyboardMarkup:
+    """
+    Начальное меню планирования производства.
+    
+    Показывает кнопки:
+    - Календарный план — просмотр активного плана с датами
+    - Начать планирование — создание нового плана
+    - Планы — просмотр всех сохранённых планов
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📅 Календарный план", callback_data="view_calendar_plan")],
+            [InlineKeyboardButton(text="🚀 Начать планирование", callback_data="start_new_planning")],
+            [InlineKeyboardButton(text="📋 Планы", callback_data="view_all_plans")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
+        ]
+    )
+
+
 def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     """
     Создает клавиатуру с кнопками для выбора дня производства
+    (старая версия, оставлена для совместимости)
     
     Args:
         total_days: общее количество дней работы
@@ -96,10 +116,10 @@ def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
     
-    # Кнопка "Актуальный план"
+    # Кнопка "Сохранить план"
     buttons.append([
         InlineKeyboardButton(
-            text="💾 Актуальный план",
+            text="💾 Сохранить план",
             callback_data="save_current_plan"
         )
     ])
@@ -115,7 +135,149 @@ def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def production_day_actions_kb(day_number: int, total_days: int) -> InlineKeyboardMarkup:
+def calendar_days_kb(
+    total_days: int, 
+    start_date: str, 
+    completed_days: list = None,
+    days_info: dict = None,
+    show_save_button: bool = True
+) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру с ДАТАМИ для выбора дня производства.
+    
+    Простыми словами:
+    - Вместо "День 1, День 2" показывает "22.01, 23.01, 24.01..."
+    - Выполненные дни отмечаются галочкой ✅
+    - Невыполненные — значком 📅
+    - Показывает ГЛОБАЛЬНУЮ загруженность: "22.01 3/5" (3 дорожки занято во ВСЕХ планах / 5 максимум)
+    
+    Args:
+        total_days: общее количество дней работы
+        start_date: дата начала плана в формате "YYYY-MM-DD" или "DD.MM.YYYY"
+        completed_days: список номеров выполненных дней [1, 2, 3]
+        days_info: информация о днях с ГЛОБАЛЬНОЙ загруженностью {
+            "2026-01-22": {"occupied": 3, "max": 5, "completed": False, "day_number": 1},
+            ...
+        }
+        show_save_button: показывать кнопку "Сохранить план" (по умолчанию True)
+        
+    Returns:
+        InlineKeyboardMarkup с кнопками-датами
+    """
+    from datetime import datetime, timedelta
+    
+    # Константа максимума дорожек (импортируем здесь чтобы избежать циклических импортов)
+    MAX_TRACKS = 5
+    
+    if completed_days is None:
+        completed_days = []
+    
+    if days_info is None:
+        days_info = {}
+    
+    # Парсим дату начала
+    parsed_start = None
+    if start_date:
+        # Пробуем разные форматы
+        for fmt in ['%Y-%m-%d', '%d.%m.%Y', '%Y-%m-%dT%H:%M:%S']:
+            try:
+                parsed_start = datetime.strptime(start_date.split('T')[0] if 'T' in start_date else start_date, fmt.split('T')[0])
+                break
+            except ValueError:
+                continue
+    
+    # Если не удалось распарсить — используем сегодня
+    if not parsed_start:
+        parsed_start = datetime.now()
+    
+    buttons = []
+    
+    # Кнопка "Диаграмма Ганта" вверху
+    buttons.append([
+        InlineKeyboardButton(
+            text="📊 Диаграмма Ганта",
+            callback_data="export_gantt"
+        )
+    ])
+    
+    # Получаем текущую дату для фильтрации прошедших дней
+    today = datetime.now().date()
+    
+    # Создаем кнопки по 3 в ряд для компактности
+    row = []
+    for day in range(1, total_days + 1):
+        # Вычисляем дату этого дня
+        day_date = parsed_start + timedelta(days=day - 1)
+        date_str = day_date.strftime("%d.%m")  # Формат: "22.01"
+        date_key = day_date.strftime("%Y-%m-%d")  # Формат: "2026-01-22"
+        
+        # Получаем информацию о дне из days_info
+        day_data = days_info.get(date_key, {})
+        
+        # ГЛОБАЛЬНАЯ загруженность: occupied = занято во всех планах
+        occupied_tracks = day_data.get('occupied', 0)
+        max_tracks = day_data.get('max', MAX_TRACKS)
+        is_completed = day_data.get('completed', False)
+        
+        # Скрываем выполненные прошедшие дни
+        if (day in completed_days or is_completed) and day_date.date() < today:
+            continue
+        
+        # Определяем эмодзи: галочка если выполнен, календарь если нет
+        if day in completed_days or is_completed:
+            emoji = "✅"
+        else:
+            emoji = "📅"
+        
+        # Формируем текст кнопки с ГЛОБАЛЬНОЙ загруженностью
+        if occupied_tracks > 0:
+            # Показываем загруженность: "22.01 3/5" (занято/максимум)
+            button_text = f"{emoji} {date_str} {occupied_tracks}/{max_tracks}"
+        else:
+            # Обычный формат без загруженности
+            button_text = f"{emoji} {date_str}"
+        
+        row.append(InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"production_day_{day}"
+        ))
+        
+        # Каждые 3 кнопки - новый ряд
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    
+    # Добавляем оставшиеся кнопки
+    if row:
+        buttons.append(row)
+    
+    # Кнопка "Сохранить план" (только если нужна)
+    if show_save_button:
+        buttons.append([
+            InlineKeyboardButton(
+                text="💾 Сохранить план",
+                callback_data="save_current_plan"
+            )
+        ])
+    
+    # Кнопка "Назад в меню"
+    buttons.append([
+        InlineKeyboardButton(
+            text="◀️ Назад в меню",
+            callback_data="cancel_process"
+        )
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def production_day_actions_kb(
+    day_number: int, 
+    total_days: int, 
+    start_date: str = None, 
+    completed_days: list = None,
+    show_save_button: bool = True
+) -> InlineKeyboardMarkup:
     """
     Клавиатура действий после просмотра дня производства.
     Показывает кнопку "Выполнено" и кнопки для перехода на другие дни.
@@ -123,10 +285,34 @@ def production_day_actions_kb(day_number: int, total_days: int) -> InlineKeyboar
     Args:
         day_number: номер текущего дня
         total_days: общее количество дней
+        start_date: дата начала плана (опционально)
+        completed_days: список выполненных дней (опционально)
+        show_save_button: показывать кнопку "Сохранить план" (по умолчанию True)
         
     Returns:
         InlineKeyboardMarkup с кнопками действий
     """
+    from datetime import datetime, timedelta
+    
+    if completed_days is None:
+        completed_days = []
+    
+    # Парсим дату начала
+    parsed_start = None
+    if start_date:
+        for fmt in ['%Y-%m-%d', '%d.%m.%Y']:
+            try:
+                parsed_start = datetime.strptime(start_date.split('T')[0] if 'T' in start_date else start_date, fmt)
+                break
+            except ValueError:
+                continue
+    
+    if not parsed_start:
+        parsed_start = datetime.now()
+    
+    # Получаем текущую дату для фильтрации прошедших дней
+    today = datetime.now().date()
+    
     buttons = []
     
     # Кнопка "День выполнен" для текущего дня
@@ -137,19 +323,34 @@ def production_day_actions_kb(day_number: int, total_days: int) -> InlineKeyboar
         )
     ])
     
-    # Кнопка "Актуальный план"
-    buttons.append([
-        InlineKeyboardButton(
-            text="💾 Актуальный план",
-            callback_data="save_current_plan"
-        )
-    ])
+    # Кнопка "Сохранить план" (только если нужна)
+    if show_save_button:
+        buttons.append([
+            InlineKeyboardButton(
+                text="💾 Сохранить план",
+                callback_data="save_current_plan"
+            )
+        ])
     
-    # Кнопки навигации по дням (по 3 в ряд)
+    # Кнопки навигации по дням (по 3 в ряд) с датами
     row = []
     for day in range(1, total_days + 1):
+        # Вычисляем дату
+        day_date = parsed_start + timedelta(days=day - 1)
+        date_str = day_date.strftime("%d.%m")
+        
+        # Определяем эмодзи
+        if day in completed_days:
+            emoji = "✅"
+        else:
+            emoji = "📅"
+        
+        # Скрываем выполненные прошедшие дни
+        if day in completed_days and day_date.date() < today:
+            continue
+        
         row.append(InlineKeyboardButton(
-            text=f"📅 День {day}",
+            text=f"{emoji} {date_str}",
             callback_data=f"production_day_{day}"
         ))
         if len(row) == 3:
@@ -221,6 +422,7 @@ def plates_completion_kb(plates_by_track: list, rejected_quantities: dict, activ
             kp_id = plate.get('kp_id', '')
             from_rest = plate.get('from_rest', False)
             match_type = plate.get('match_type', '')
+            is_secondary = plate.get('is_secondary', False)  # Флаг вторичного реза
             
             # Форматируем дату коротко: "02.02.2026" -> "02.02"
             date_short = kp_date[:5] if kp_date and kp_date != 'неизвестно' else ''
@@ -244,6 +446,11 @@ def plates_completion_kb(plates_by_track: list, rejected_quantities: dict, activ
             else:
                 rest_mark = ""
                 max_name_len = 18 if kp_info else 25
+            
+            # Добавляем метку для вторичных резов
+            if is_secondary:
+                plate_name = f"[2] {plate_name}"  # [2] = вторичный рез (из остатка основной плиты)
+                max_name_len += 4  # Учитываем длину метки
             
             # Обрезаем длинные названия
             if len(plate_name) > max_name_len:
@@ -473,5 +680,193 @@ def instructions_back_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🔙 К выбору роли", callback_data="instructions_back_to_choice")],
             [InlineKeyboardButton(text="🏠 В главное меню", callback_data="instructions_back_to_menu")],
+        ]
+    )
+
+
+def plans_list_kb(plans_list: list, active_plan_id: str = None) -> InlineKeyboardMarkup:
+    """
+    Клавиатура со списком всех сохранённых планов.
+    
+    Простыми словами:
+    - Показывает список планов с их названиями
+    - Активный план помечается звёздочкой ⭐
+    - Внизу кнопки "Создать новый план" и "Назад"
+    
+    Args:
+        plans_list: список планов из plans_metadata.json
+        active_plan_id: ID активного плана (помечается звёздочкой)
+        
+    Returns:
+        InlineKeyboardMarkup с кнопками планов
+    """
+    buttons = []
+    
+    if not plans_list:
+        # Если планов нет — показываем сообщение
+        buttons.append([
+            InlineKeyboardButton(
+                text="📭 Нет сохранённых планов",
+                callback_data="no_plans_info"
+            )
+        ])
+    else:
+        # Показываем список планов
+        for plan in plans_list:
+            plan_id = plan.get('id', '')
+            plan_name = plan.get('name', f'План {plan_id}')
+            total_days = plan.get('total_days', 0)
+            total_tracks = plan.get('total_tracks', 0)
+            
+            # Помечаем активный план звёздочкой
+            if plan_id == active_plan_id:
+                emoji = "⭐"
+            else:
+                emoji = "📋"
+            
+            # Формируем текст кнопки
+            button_text = f"{emoji} {plan_name} ({total_days}д, {total_tracks} дор.)"
+            
+            # Обрезаем если слишком длинный
+            if len(button_text) > 50:
+                button_text = button_text[:47] + "..."
+            
+            buttons.append([
+                InlineKeyboardButton(
+                    text=button_text,
+                    callback_data=f"select_plan_{plan_id}"
+                )
+            ])
+    
+    # Кнопка создания нового плана
+    buttons.append([
+        InlineKeyboardButton(
+            text="➕ Создать новый план",
+            callback_data="create_new_plan"
+        )
+    ])
+    
+    # Кнопка "Назад"
+    buttons.append([
+        InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data="back_to_production_menu"
+        )
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def plan_actions_kb(plan_id: str, is_active: bool = False) -> InlineKeyboardMarkup:
+    """
+    Клавиатура действий с выбранным планом.
+    
+    Показывает кнопки:
+    - Открыть календарь плана
+    - Сделать активным (если не активный)
+    - Удалить план
+    - Назад к списку
+    
+    Args:
+        plan_id: ID плана
+        is_active: является ли план активным
+    """
+    buttons = []
+    
+    # Открыть календарь
+    buttons.append([
+        InlineKeyboardButton(
+            text="📅 Открыть календарь",
+            callback_data=f"open_plan_calendar_{plan_id}"
+        )
+    ])
+    
+    # Сделать активным (если не активный)
+    if not is_active:
+        buttons.append([
+            InlineKeyboardButton(
+                text="⭐ Сделать активным",
+                callback_data=f"activate_plan_{plan_id}"
+            )
+        ])
+    
+    # Удалить план
+    buttons.append([
+        InlineKeyboardButton(
+            text="🗑️ Удалить план",
+            callback_data=f"delete_plan_{plan_id}"
+        )
+    ])
+    
+    # Назад к списку
+    buttons.append([
+        InlineKeyboardButton(
+            text="◀️ К списку планов",
+            callback_data="view_all_plans"
+        )
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def confirm_delete_plan_kb(plan_id: str) -> InlineKeyboardMarkup:
+    """
+    Клавиатура подтверждения удаления плана.
+    
+    Args:
+        plan_id: ID плана для удаления
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="⚠️ Да, удалить план",
+                callback_data=f"confirm_delete_plan_{plan_id}"
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="view_all_plans"
+            )],
+        ]
+    )
+
+
+def day_documents_menu_kb(day_number: int, track_numbers: str) -> InlineKeyboardMarkup:
+    """
+    Меню выбора типа документа для дня производства.
+    
+    Простыми словами:
+    - После просмотра состава дня показывает кнопки
+    - Каждая кнопка генерирует определённый тип документа
+    - Пользователь выбирает только нужные документы
+    
+    Args:
+        day_number: номер дня в плане (например, 3)
+        track_numbers: строка с номерами дорожек (например, "7-9" или "7")
+        
+    Returns:
+        InlineKeyboardMarkup с кнопками выбора документов
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"📐 Схема дорожек {track_numbers}",
+                callback_data=f"generate_schema_{day_number}"
+            )],
+            [InlineKeyboardButton(
+                text=f"📊 Детальная разбивка",
+                callback_data=f"generate_breakdown_{day_number}"
+            )],
+            [InlineKeyboardButton(
+                text=f"📋 Файлы формовки",
+                callback_data=f"generate_formovka_{day_number}"
+            )],
+            [InlineKeyboardButton(
+                text="✅ День выполнен",
+                callback_data=f"complete_day_{day_number}"
+            )],
+            [InlineKeyboardButton(
+                text="◀️ Назад к календарю",
+                callback_data="back_to_calendar"
+            )],
         ]
     )

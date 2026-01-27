@@ -28,6 +28,13 @@ def _draw_segment(ax, x0: float, length: float, color: str, label: str, y: float
 
 def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float, label_main: str, label_rest: str | None = None, secondary_cuts: list = None, y_base: float = 0.0, reinforcement: float = None):
     """Рисует плиту с продольным резом и возможными вторичными резами в остатке"""
+    # Защитная проверка: сумма ширин не должна превышать ширину дорожки (1200мм = 1.2м)
+    total_width = main_w + rest_w
+    if total_width > cfg.TRACK_WIDTH_M + 0.001:
+        print(f"[WARNING] Ширина превышена: {main_w:.3f} + {rest_w:.3f} = {total_width:.3f} > {cfg.TRACK_WIDTH_M}")
+        # Корректируем rest_w чтобы уместиться в дорожку
+        rest_w = max(0, cfg.TRACK_WIDTH_M - main_w)
+    
     # Фон всей плиты (1.2 м)
     rect = patches.Rectangle((x0, y_base), length, cfg.TRACK_WIDTH_M, linewidth=1.2, edgecolor='black', facecolor='#ecf0f1', alpha=1.0)
     ax.add_patch(rect)

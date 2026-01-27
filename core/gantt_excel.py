@@ -78,7 +78,13 @@ def create_gantt_excel(
     
     # Проходим по всем дорожкам
     for track_idx, track in enumerate(all_tracks_list):
-        production_day = (track_idx // tracks_count) + 1  # День производства (1, 2, 3, ...)
+        # НОВАЯ ЛОГИКА: Берём день из самой дорожки (если есть)
+        # Если нет — используем старую формулу для совместимости со старыми планами
+        if isinstance(track, dict) and 'production_day' in track:
+            production_day = track['production_day']
+        else:
+            # Старая формула (для обратной совместимости)
+            production_day = (track_idx // tracks_count) + 1
         
         for item in track.get('items', []):
             if item is None:
@@ -88,44 +94,76 @@ def create_gantt_excel(
             if not length:
                 continue
             
-            # Определяем ширину
-            mode = item.get('mode', 'solid')
-            if mode == 'transverse' and item.get('width'):
-                width = int(item['width'] * 1000)
-            elif mode == 'split' and item.get('main_w'):
-                width = int(item['main_w'] * 1000)
+            # НОВАЯ ЛОГИКА: Приоритет — kp_id из самого элемента
+            kp_id = item.get('kp_id')
+            customer = item.get('customer')
+            kp_date = item.get('kp_date')
+            
+            # Если kp_id есть в элементе, используем его напрямую (точная информация!)
+            if kp_id:
+                if kp_id not in kp_production_info:
+                    kp_production_info[kp_id] = {
+                        'start_day': production_day,
+                        'end_day': production_day,
+                        'customer': customer or 'неизвестно',
+                        'deadline': kp_date or 'неизвестно',
+                        'plate_count': 1,
+                        'plates_by_day': defaultdict(int)
+                    }
+                else:
+                    # Обновляем день начала (минимальный) и конца (максимальный)
+                    kp_production_info[kp_id]['start_day'] = min(
+                        kp_production_info[kp_id]['start_day'], 
+                        production_day
+                    )
+                    kp_production_info[kp_id]['end_day'] = max(
+                        kp_production_info[kp_id]['end_day'], 
+                        production_day
+                    )
+                    kp_production_info[kp_id]['plate_count'] += 1
+                
+                # Считаем плиты по дням
+                kp_production_info[kp_id]['plates_by_day'][production_day] += 1
             else:
-                width = 1200
-            
-            # Получаем информацию о плите
-            plate_info = get_plate_info(length, width)
-            
-            if plate_info:
-                kp_id = plate_info.get('kp_id')
-                if kp_id:
-                    if kp_id not in kp_production_info:
-                        kp_production_info[kp_id] = {
-                            'start_day': production_day,
-                            'end_day': production_day,
-                            'customer': plate_info.get('customer', 'неизвестно'),
-                            'deadline': plate_info.get('kp_date', 'неизвестно'),
-                            'plate_count': 1,
-                            'plates_by_day': defaultdict(int)
-                        }
-                    else:
-                        # Обновляем день начала (минимальный) и конца (максимальный)
-                        kp_production_info[kp_id]['start_day'] = min(
-                            kp_production_info[kp_id]['start_day'], 
-                            production_day
-                        )
-                        kp_production_info[kp_id]['end_day'] = max(
-                            kp_production_info[kp_id]['end_day'], 
-                            production_day
-                        )
-                        kp_production_info[kp_id]['plate_count'] += 1
-                    
-                    # Считаем плиты по дням
-                    kp_production_info[kp_id]['plates_by_day'][production_day] += 1
+                # Fallback: пытаемся найти по размерам (старая логика)
+                # Определяем ширину
+                mode = item.get('mode', 'solid')
+                if mode == 'transverse' and item.get('width'):
+                    width = int(item['width'] * 1000)
+                elif mode == 'split' and item.get('main_w'):
+                    width = int(item['main_w'] * 1000)
+                else:
+                    width = 1200
+                
+                # Получаем информацию о плите через lookup
+                plate_info = get_plate_info(length, width)
+                
+                if plate_info:
+                    kp_id = plate_info.get('kp_id')
+                    if kp_id:
+                        if kp_id not in kp_production_info:
+                            kp_production_info[kp_id] = {
+                                'start_day': production_day,
+                                'end_day': production_day,
+                                'customer': plate_info.get('customer', 'неизвестно'),
+                                'deadline': plate_info.get('kp_date', 'неизвестно'),
+                                'plate_count': 1,
+                                'plates_by_day': defaultdict(int)
+                            }
+                        else:
+                            # Обновляем день начала (минимальный) и конца (максимальный)
+                            kp_production_info[kp_id]['start_day'] = min(
+                                kp_production_info[kp_id]['start_day'], 
+                                production_day
+                            )
+                            kp_production_info[kp_id]['end_day'] = max(
+                                kp_production_info[kp_id]['end_day'], 
+                                production_day
+                            )
+                            kp_production_info[kp_id]['plate_count'] += 1
+                        
+                        # Считаем плиты по дням
+                        kp_production_info[kp_id]['plates_by_day'][production_day] += 1
             
             # Обрабатываем вторичные резы
             secondary_cuts = item.get('secondary_cuts', []) or []
@@ -137,36 +175,106 @@ def create_gantt_excel(
                 sec_width = int(sec_width_m * 1000)
                 sec_length = sec_cut.get('target_length') or length
                 
-                sec_plate_info = get_plate_info(sec_length, sec_width)
+                # НОВАЯ ЛОГИКА: Сначала проверяем kp_id в элементе
+                # (для вторичных резов — это kp_id родительской плиты)
+                sec_kp_id = item.get('kp_id')  # Берем из основного элемента!
+                sec_customer = item.get('customer')
+                sec_kp_date = item.get('kp_date')
                 
-                if sec_plate_info:
-                    sec_kp_id = sec_plate_info.get('kp_id')
-                    if sec_kp_id:
-                        if sec_kp_id not in kp_production_info:
-                            kp_production_info[sec_kp_id] = {
-                                'start_day': production_day,
-                                'end_day': production_day,
-                                'customer': sec_plate_info.get('customer', 'неизвестно'),
-                                'deadline': sec_plate_info.get('kp_date', 'неизвестно'),
-                                'plate_count': 1,
-                                'plates_by_day': defaultdict(int)
-                            }
-                        else:
-                            kp_production_info[sec_kp_id]['start_day'] = min(
-                                kp_production_info[sec_kp_id]['start_day'], 
-                                production_day
-                            )
-                            kp_production_info[sec_kp_id]['end_day'] = max(
-                                kp_production_info[sec_kp_id]['end_day'], 
-                                production_day
-                            )
-                            kp_production_info[sec_kp_id]['plate_count'] += 1
-                        
-                        kp_production_info[sec_kp_id]['plates_by_day'][production_day] += 1
+                if sec_kp_id:
+                    # Используем точную информацию из элемента
+                    if sec_kp_id not in kp_production_info:
+                        kp_production_info[sec_kp_id] = {
+                            'start_day': production_day,
+                            'end_day': production_day,
+                            'customer': sec_customer or 'неизвестно',
+                            'deadline': sec_kp_date or 'неизвестно',
+                            'plate_count': 1,
+                            'plates_by_day': defaultdict(int)
+                        }
+                    else:
+                        kp_production_info[sec_kp_id]['start_day'] = min(
+                            kp_production_info[sec_kp_id]['start_day'], 
+                            production_day
+                        )
+                        kp_production_info[sec_kp_id]['end_day'] = max(
+                            kp_production_info[sec_kp_id]['end_day'], 
+                            production_day
+                        )
+                        kp_production_info[sec_kp_id]['plate_count'] += 1
+                    
+                    kp_production_info[sec_kp_id]['plates_by_day'][production_day] += 1
+                else:
+                    # Fallback: пытаемся найти по размерам
+                    sec_plate_info = get_plate_info(sec_length, sec_width)
+                    
+                    if sec_plate_info:
+                        sec_kp_id = sec_plate_info.get('kp_id')
+                        if sec_kp_id:
+                            if sec_kp_id not in kp_production_info:
+                                kp_production_info[sec_kp_id] = {
+                                    'start_day': production_day,
+                                    'end_day': production_day,
+                                    'customer': sec_plate_info.get('customer', 'неизвестно'),
+                                    'deadline': sec_plate_info.get('kp_date', 'неизвестно'),
+                                    'plate_count': 1,
+                                    'plates_by_day': defaultdict(int)
+                                }
+                            else:
+                                kp_production_info[sec_kp_id]['start_day'] = min(
+                                    kp_production_info[sec_kp_id]['start_day'], 
+                                    production_day
+                                )
+                                kp_production_info[sec_kp_id]['end_day'] = max(
+                                    kp_production_info[sec_kp_id]['end_day'], 
+                                    production_day
+                                )
+                                kp_production_info[sec_kp_id]['plate_count'] += 1
+                            
+                            kp_production_info[sec_kp_id]['plates_by_day'][production_day] += 1
+    
+    # === РЕЗЕРВНЫЙ ВАРИАНТ: Собираем плиты без КП ===
+    # Если не нашли КП для некоторых плит, собираем их в отдельную группу
+    unknown_kp_count = 0
+    for track_idx, track in enumerate(all_tracks_list):
+        # Определяем день производства
+        if isinstance(track, dict) and 'production_day' in track:
+            production_day = track['production_day']
+        else:
+            production_day = (track_idx // tracks_count) + 1
+        
+        # Подсчитываем плиты в дорожке
+        plates_in_track = len([item for item in track.get('items', []) if item is not None])
+        unknown_kp_count += plates_in_track
+    
+    # Вычитаем найденные плиты
+    found_plates = sum(info['plate_count'] for info in kp_production_info.values())
+    unknown_kp_count -= found_plates
+    
+    # Если есть плиты без КП, добавляем их как отдельную группу
+    if unknown_kp_count > 0:
+        print(f"[GANTT] ⚠️ Найдено {unknown_kp_count} плит без информации о КП")
+        # Добавляем резервную группу
+        kp_production_info['НЕИЗВЕСТНО'] = {
+            'start_day': 1,
+            'end_day': max((info['end_day'] for info in kp_production_info.values()), default=1),
+            'customer': 'Информация отсутствует',
+            'deadline': 'неизвестно',
+            'plate_count': unknown_kp_count,
+            'plates_by_day': defaultdict(int)
+        }
     
     if not kp_production_info:
-        print("[GANTT] Нет данных о КП для создания диаграммы")
-        return None
+        print("[GANTT] ⚠️ Нет данных о плитах для создания диаграммы")
+        # Создаём минимальную диаграмму
+        kp_production_info['ПУСТО'] = {
+            'start_day': 1,
+            'end_day': 1,
+            'customer': 'План пуст',
+            'deadline': 'неизвестно',
+            'plate_count': 0,
+            'plates_by_day': defaultdict(int)
+        }
     
     # === ШАГ 2: Определяем диапазон дней ===
     total_days = max(info['end_day'] for info in kp_production_info.values())
@@ -192,6 +300,18 @@ def create_gantt_excel(
     yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")  # Впритык
     red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")  # Опаздываем
     
+    # === ШАГ 3.5: Подсчитываем дорожки по дням ===
+    tracks_by_day = defaultdict(int)  # {day_number: count_of_tracks}
+    
+    for track_idx, track in enumerate(all_tracks_list):
+        # Определяем день производства для дорожки
+        if isinstance(track, dict) and 'production_day' in track:
+            production_day = track['production_day']
+        else:
+            production_day = (track_idx // tracks_count) + 1
+        
+        tracks_by_day[production_day] += 1
+    
     # === ШАГ 4: Заголовки ===
     headers = ["КП", "Заказчик", "Дедлайн", "Плит"]
     
@@ -203,13 +323,50 @@ def create_gantt_excel(
         headers.append(date_str)
         date_columns.append(date)
     
-    # Записываем заголовки
+    # Записываем первую строку заголовков (даты)
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = center_align
         cell.border = thin_border
+    
+    # === ШАГ 4.5: Вторая строка заголовков (загруженность дорожек) ===
+    # Добавляем информацию о дорожках: "3/5" = 3 дорожки занято из 5 максимум
+    MAX_TRACKS = 5  # Максимальное количество дорожек в день
+    
+    # Первые 4 колонки объединяем (КП, Заказчик, Дедлайн, Плит)
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=4)
+    cell = ws.cell(row=2, column=1, value="Загруженность дорожек")
+    cell.font = Font(bold=True, size=10, italic=True)
+    cell.fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
+    cell.alignment = center_align
+    cell.border = thin_border
+    
+    # Для каждого дня показываем загруженность
+    for day in range(1, total_days + 1):
+        col = 4 + day
+        occupied_tracks = tracks_by_day.get(day, 0)
+        tracks_info = f"{occupied_tracks}/{MAX_TRACKS}"
+        
+        cell = ws.cell(row=2, column=col, value=tracks_info)
+        cell.font = Font(bold=False, size=9)
+        cell.alignment = center_align
+        cell.border = thin_border
+        
+        # Цветовая индикация загруженности
+        if occupied_tracks == 0:
+            # Пусто - белый
+            cell.fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+        elif occupied_tracks < MAX_TRACKS:
+            # Есть свободные места - светло-зелёный
+            cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+        elif occupied_tracks == MAX_TRACKS:
+            # Полностью занято - жёлтый
+            cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+        else:
+            # Перегружено (больше 5) - красный
+            cell.fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
     
     # === ШАГ 5: Данные по КП ===
     # Сортируем КП по дедлайну
@@ -218,7 +375,7 @@ def create_gantt_excel(
         key=lambda x: _parse_date(x[1]['deadline'])
     )
     
-    row = 2
+    row = 3  # Начинаем с 3-й строки (после заголовков и загруженности)
     plates_by_day_total = defaultdict(int)  # Итого плит по дням
     
     for kp_id, info in sorted_kps:
@@ -326,7 +483,7 @@ def create_gantt_excel(
     filepath = os.path.join(output_dir, filename)
     
     wb.save(filepath)
-    print(f"[GANTT] ✅ Диаграмма Ганта сохранена: {filepath}")
+    print(f"[GANTT] Diagramma Ganta sohranena: {filepath}")
     
     return filepath
 

@@ -1,5 +1,8 @@
 """Обработчики административных команд (удаление КП и т.д.)"""
 import sys
+import os
+import json
+import shutil
 from pathlib import Path
 
 from aiogram import Router, F
@@ -355,13 +358,17 @@ async def request_db_clear(callback: CallbackQuery):
         
         warning = (
             "🔴 **КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ!**\n\n"
-            "Вы собираетесь **ПОЛНОСТЬЮ УДАЛИТЬ ВСЕ ДАННЫЕ** из базы!\n\n"
-            f"📊 Будет удалено:\n"
+            "Вы собираетесь **ПОЛНОСТЬЮ УДАЛИТЬ ВСЕ ДАННЫЕ** из базы и планов!\n\n"
+            f"📊 Будет удалено из БД:\n"
             f"  • КП: {stats['kp_total']} шт\n"
             f"  • Плиты в работе: {stats['plates_in_work']} шт\n"
             f"  • Выполненные плиты: {stats['plates_completed']} шт\n"
             f"  • Остатки: {stats['plate_rests']} шт\n"
             f"  • **ВСЕГО ЗАПИСЕЙ: {total}**\n\n"
+            f"📅 Также будут удалены:\n"
+            f"  • Текущий план производства\n"
+            f"  • Весь календарь планов\n"
+            f"  • Архив всех планов\n\n"
             f"⚠️ **ЭТО ДЕЙСТВИЕ НЕОБРАТИМО!**\n"
             f"Восстановить данные будет невозможно!\n\n"
             f"Вы уверены, что хотите продолжить?"
@@ -382,25 +389,86 @@ async def request_db_clear(callback: CallbackQuery):
         await callback.answer()
 
 
+def clear_all_plans_data():
+    """
+    Очищает все данные планов производства (JSON файлы).
+    
+    Удаляет:
+    - current_plan.json (текущий план)
+    - plans_metadata.json (метаданные планов)
+    - Все файлы планов в папке plans/
+    
+    Возвращает словарь с количеством удалённых файлов.
+    """
+    result = {
+        'current_plan': 0,
+        'metadata': 0,
+        'plan_files': 0,
+        'total': 0
+    }
+    
+    try:
+        # Путь к папке data
+        data_dir = BOT_DIR / 'data'
+        
+        # Удаляем current_plan.json
+        current_plan_file = data_dir / 'current_plan.json'
+        if current_plan_file.exists():
+            current_plan_file.unlink()
+            result['current_plan'] = 1
+        
+        # Удаляем plans_metadata.json
+        metadata_file = data_dir / 'plans_metadata.json'
+        if metadata_file.exists():
+            metadata_file.unlink()
+            result['metadata'] = 1
+        
+        # Удаляем папку plans/ со всеми файлами
+        plans_dir = data_dir / 'plans'
+        if plans_dir.exists() and plans_dir.is_dir():
+            # Подсчитываем файлы перед удалением
+            plan_files = list(plans_dir.glob('*.json'))
+            result['plan_files'] = len(plan_files)
+            
+            # Удаляем всю папку
+            shutil.rmtree(plans_dir)
+        
+        result['total'] = result['current_plan'] + result['metadata'] + result['plan_files']
+        
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception(f"Ошибка при очистке планов: {e}")
+    
+    return result
+
+
 @router.callback_query(F.data == "db_clear_confirmed")
 async def confirm_db_clear(callback: CallbackQuery):
-    """Подтверждение и выполнение полной очистки БД"""
+    """Подтверждение и выполнение полной очистки БД и планов"""
     try:
-        # Выполняем полную очистку
-        result = kp_db.clear_all_plates_data()
+        # Выполняем полную очистку БД
+        result_db = kp_db.clear_all_plates_data()
+        
+        # Выполняем очистку планов производства
+        result_plans = clear_all_plans_data()
         
         report = (
-            "✅ **БАЗА ДАННЫХ ПОЛНОСТЬЮ ОЧИЩЕНА!**\n\n"
-            f"📊 Удалено:\n"
-            f"  • КП: {result['kp_offers']}\n"
-            f"  • Плиты в работе: {result['kp_plates']}\n"
-            f"  • Выполненные плиты: {result['completed_plates']}\n"
-            f"  • Остатки: {result['plate_rests']}\n"
-            f"  • Файлы: {result['kp_files']}\n"
-            f"  • Метаданные: {result['kp_meta']}\n"
-            f"  • **ВСЕГО: {result['total']} записей**\n\n"
+            "✅ **БАЗА ДАННЫХ И ПЛАНЫ ПОЛНОСТЬЮ ОЧИЩЕНЫ!**\n\n"
+            f"📊 Удалено из БД:\n"
+            f"  • КП: {result_db['kp_offers']}\n"
+            f"  • Плиты в работе: {result_db['kp_plates']}\n"
+            f"  • Выполненные плиты: {result_db['completed_plates']}\n"
+            f"  • Остатки: {result_db['plate_rests']}\n"
+            f"  • Файлы: {result_db['kp_files']}\n"
+            f"  • Метаданные: {result_db['kp_meta']}\n"
+            f"  • **Итого записей БД: {result_db['total']}**\n\n"
+            f"📅 Удалено файлов планов:\n"
+            f"  • Текущий план: {result_plans['current_plan']}\n"
+            f"  • Метаданные планов: {result_plans['metadata']}\n"
+            f"  • Архивных планов: {result_plans['plan_files']}\n"
+            f"  • **Итого файлов планов: {result_plans['total']}**\n\n"
             f"🔄 Счётчики сброшены. Новые КП начнутся с #1.\n"
-            f"База данных теперь пуста и готова к новым заказам."
+            f"База данных и планы полностью очищены и готовы к работе!"
         )
         
         await callback.message.answer(
@@ -408,7 +476,7 @@ async def confirm_db_clear(callback: CallbackQuery):
             parse_mode="Markdown",
             reply_markup=main_menu_kb()
         )
-        await callback.answer("✅ База очищена!")
+        await callback.answer("✅ База и планы очищены!")
     
     except Exception as e:
         await callback.message.answer(

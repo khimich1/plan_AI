@@ -31,13 +31,17 @@ class AdminStates(StatesGroup):
 
 class ProductionStates(StatesGroup):
     """Состояния для планирования производства"""
+    waiting_start_date = State()      # НОВОЕ: дата начала плана
     waiting_tracks_count = State()    # Количество дорожек
-    waiting_filter_method = State()   # НОВОЕ: выбор способа фильтрации
+    waiting_filter_method = State()   # Выбор способа фильтрации
     waiting_date_number = State()     # Дата дедлайна
-    waiting_kp_numbers = State()      # НОВОЕ: ввод номеров КП
-    waiting_customer_name = State()   # НОВОЕ: ввод заказчика
+    waiting_kp_numbers = State()      # Ввод номеров КП
+    waiting_customer_name = State()   # Ввод заказчика
     waiting_day_selection = State()   # Ожидание выбора дня
     marking_completion = State()      # Отметка брака при завершении дня
+    viewing_calendar = State()        # НОВОЕ: просмотр календарного плана
+    viewing_plans_list = State()      # Просмотр списка планов
+    confirming_plan_delete = State()  # Подтверждение удаления плана
 
 
 class PBInfoStates(StatesGroup):

@@ -1,0 +1,23 @@
+{
+  "plans": [
+    {
+      "id": "plan_20260127_162550",
+      "name": "План с 27.01.2026",
+      "created_at": "2026-01-27 16:25:50",
+      "start_date": "2026-01-27",
+      "total_days": 4,
+      "tracks_count": 5,
+      "total_tracks": 20
+    },
+    {
+      "id": "plan_20260127_165816",
+      "name": "План с 01.02.2026",
+      "created_at": "2026-01-27 16:58:16",
+      "start_date": "2026-02-01",
+      "total_days": 4,
+      "tracks_count": 5,
+      "total_tracks": 20
+    }
+  ],
+  "active_plan_id": "plan_20260127_165816"
+}
