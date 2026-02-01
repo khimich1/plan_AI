@@ -606,6 +606,21 @@ def cancel_process_kb() -> InlineKeyboardMarkup:
     )
 
 
+def tracks_choice_kb() -> InlineKeyboardMarkup:
+    """Клавиатура выбора количества дорожек (1-5)"""
+    buttons = []
+    # Создаем кнопки от 1 до 5 в один ряд
+    row = []
+    for i in range(1, 6):
+        row.append(InlineKeyboardButton(text=str(i), callback_data=f"tracks_{i}"))
+    buttons.append(row)
+    
+    # Кнопка отмены
+    buttons.append([InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def production_filter_kb() -> InlineKeyboardMarkup:
     """Клавиатура выбора способа фильтрации плит для производства"""
     return InlineKeyboardMarkup(

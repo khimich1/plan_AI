@@ -325,14 +325,15 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                         entry['qty_remaining'] -= 1
                         return entry.copy()
         
-        return {
-            'kp_date': 'неизвестно',
-            'customer': 'неизвестно',
-            'plate_name': '',
-            'reinforcement': 0
-        }
-    
-    for track_idx_in_file, track in enumerate(tracks_in_current_file):
+            return {
+                'kp_id': None,
+                'kp_date': 'неизвестно',
+                'customer': 'неизвестно',
+                'plate_name': '',
+                'reinforcement': 0
+            }
+        
+        for track_idx_in_file, track in enumerate(tracks_in_current_file):
         track_number = start_index + track_idx_in_file + 1
         track_items = track.get('items', [])
             
@@ -366,6 +367,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     abs(existing['reinforcement'] - plate_info['reinforcement']) < 0.1 and
                     existing['kp_date'] == plate_info['kp_date'] and
                     existing['customer'] == plate_info['customer'] and
+                    existing.get('kp_id') == plate_info.get('kp_id') and
                     existing.get('plate_name', '') == plate_info.get('plate_name', '')):
                     existing['qty'] += 1
                     found = True
@@ -379,6 +381,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     'reinforcement': plate_info['reinforcement'],
                     'kp_date': plate_info['kp_date'],
                     'customer': plate_info['customer'],
+                    'kp_id': plate_info.get('kp_id'),
                     'plate_name': plate_info.get('plate_name', '')
                 })
                 
@@ -400,6 +403,8 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                 for existing in plates_info:
                     if (round(existing['length'], 2) == round(sec_length, 2) and
                         existing['width'] == sec_width and
+                        abs(existing['reinforcement'] - sec_plate_info.get('reinforcement', 0)) < 0.1 and
+                        existing.get('kp_id') == sec_plate_info.get('kp_id') and
                         existing['kp_date'] == sec_plate_info.get('kp_date', 'неизвестно')):
                         existing['qty'] += 1
                         sec_found = True
@@ -419,6 +424,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                         'reinforcement': sec_plate_info.get('reinforcement', 0),
                         'kp_date': sec_plate_info.get('kp_date', 'неизвестно'),
                         'customer': sec_plate_info.get('customer', 'неизвестно'),
+                        'kp_id': sec_plate_info.get('kp_id'),
                         'plate_name': sec_plate_name
                     })
             
@@ -789,6 +795,7 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                             return entry.copy()
             
             return {
+                'kp_id': None,
                 'kp_date': 'неизвестно',
                 'customer': 'неизвестно',
                 'plate_name': '',
@@ -821,12 +828,15 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                     continue
                 
                 plate_info = get_plate_info_smart(length, width)
+                # Номер КП: из lookup или из элемента дорожки (item)
+                kp_id = plate_info.get('kp_id') or item.get('kp_id')
                 
                 found = False
                 for existing in plates_info:
                     if (round(existing['length'], 2) == round(length, 2) and
                         existing['width'] == width and
                         abs(existing['reinforcement'] - plate_info['reinforcement']) < 0.1 and
+                        existing.get('kp_id') == kp_id and
                         existing['kp_date'] == plate_info['kp_date'] and
                         existing['customer'] == plate_info['customer'] and
                         existing.get('plate_name', '') == plate_info.get('plate_name', '')):
@@ -842,6 +852,7 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                         'reinforcement': plate_info['reinforcement'],
                         'kp_date': plate_info['kp_date'],
                         'customer': plate_info['customer'],
+                        'kp_id': kp_id,
                         'plate_name': plate_info.get('plate_name', '')
                     })
                 

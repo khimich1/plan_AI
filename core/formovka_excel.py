@@ -120,12 +120,17 @@ def create_formovka_excel(
                 break
             
             # B - Заказ, № (kp_id)
-            kp_id_value = plate.get('kp_id', '')
-            if kp_id_value is None:
+            kp_id_value = plate.get('kp_id')
+            if kp_id_value is None or kp_id_value == '':
                 kp_id_value = ''
+            
             cell_b = ws.cell(row=current_row, column=2)
             cell_b.value = kp_id_value
-            cell_b.number_format = '0'  # Форматируем как число, чтобы не было даты
+            # Если это число, форматируем как число, иначе как текст
+            if isinstance(kp_id_value, (int, float)):
+                cell_b.number_format = '0'
+            else:
+                cell_b.number_format = '@'
             
             # C - Номенклатура
             plate_name = plate.get('plate_name', '')

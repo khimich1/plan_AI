@@ -17,7 +17,7 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from ..keyboards import (
-    cancel_process_kb, production_filter_kb, main_menu_kb
+    cancel_process_kb, production_filter_kb, main_menu_kb, tracks_choice_kb
 )
 from ..states import ProductionStates
 
@@ -130,14 +130,14 @@ async def receive_start_date(message: Message, state: FSMContext):
     await message.answer(
         f"✅ Дата начала плана: {date_description}\n\n"
         "📋 Шаг 2 из 3: Сколько дорожек нужно загрузить в день?\n"
-        "(Введите число, например: 5)",
-        reply_markup=cancel_process_kb()
+        "(Выберите число или введите вручную)",
+        reply_markup=tracks_choice_kb()
     )
 
 
 @router.message(ProductionStates.waiting_tracks_count)
 async def receive_tracks_count(message: Message, state: FSMContext):
-    """Получаем количество дорожек"""
+    """Получаем количество дорожек (текстовый ввод)"""
     try:
         tracks_count = int(message.text.strip())
         
@@ -147,8 +147,8 @@ async def receive_tracks_count(message: Message, state: FSMContext):
                 "Попробуйте снова:"
             )
             await message.answer(
-                "Или нажмите кнопку ниже для отмены:",
-                reply_markup=cancel_process_kb()
+                "Или выберите число на кнопках ниже:",
+                reply_markup=tracks_choice_kb()
             )
             return
     except ValueError:
@@ -156,8 +156,8 @@ async def receive_tracks_count(message: Message, state: FSMContext):
             "❌ Неверный формат. Введите целое число (например: 5):"
         )
         await message.answer(
-            "Или нажмите кнопку ниже для отмены:",
-            reply_markup=cancel_process_kb()
+            "Или выберите число на кнопках ниже:",
+            reply_markup=tracks_choice_kb()
         )
         return
     
@@ -171,6 +171,27 @@ async def receive_tracks_count(message: Message, state: FSMContext):
         "Выберите способ:",
         reply_markup=production_filter_kb()
     )
+
+
+@router.callback_query(F.data.startswith("tracks_"), ProductionStates.waiting_tracks_count)
+async def process_tracks_choice(callback: CallbackQuery, state: FSMContext):
+    """Обработчик нажатия на кнопку с количеством дорожек"""
+    tracks_count = int(callback.data.split("_")[1])
+    
+    await state.update_data(tracks_count=tracks_count)
+    
+    # Убираем кнопки у текущего сообщения
+    await callback.message.edit_reply_markup(reply_markup=None)
+    
+    # Переходим к выбору способа фильтрации
+    await state.set_state(ProductionStates.waiting_filter_method)
+    await callback.message.answer(
+        f"✅ Дорожек: {tracks_count}\n\n"
+        "📋 Шаг 3 из 3: Как выбрать плиты для производства?\n\n"
+        "Выберите способ:",
+        reply_markup=production_filter_kb()
+    )
+    await callback.answer()
 
 
 # === ОБРАБОТЧИКИ ВЫБОРА СПОСОБА ФИЛЬТРАЦИИ ===
