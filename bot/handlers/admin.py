@@ -1,5 +1,8 @@
 """Обработчики административных команд (удаление КП и т.д.)"""
 import sys
+import os
+import json
+import shutil
 from pathlib import Path
 
 from aiogram import Router, F
@@ -355,13 +358,17 @@ async def request_db_clear(callback: CallbackQuery):
         
         warning = (
             "🔴 **КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ!**\n\n"
-            "Вы собираетесь **ПОЛНОСТЬЮ УДАЛИТЬ ВСЕ ДАННЫЕ** из базы!\n\n"
-            f"📊 Будет удалено:\n"
+            "Вы собираетесь **ПОЛНОСТЬЮ УДАЛИТЬ ВСЕ ДАННЫЕ** из базы и планов!\n\n"
+            f"📊 Будет удалено из БД:\n"
             f"  • КП: {stats['kp_total']} шт\n"
             f"  • Плиты в работе: {stats['plates_in_work']} шт\n"
             f"  • Выполненные плиты: {stats['plates_completed']} шт\n"
             f"  • Остатки: {stats['plate_rests']} шт\n"
             f"  • **ВСЕГО ЗАПИСЕЙ: {total}**\n\n"
+            f"📅 Также будут удалены:\n"
+            f"  • Текущий план производства\n"
+            f"  • Весь календарь планов\n"
+            f"  • Архив всех планов\n\n"
             f"⚠️ **ЭТО ДЕЙСТВИЕ НЕОБРАТИМО!**\n"
             f"Восстановить данные будет невозможно!\n\n"
             f"Вы уверены, что хотите продолжить?"
@@ -382,25 +389,86 @@ async def request_db_clear(callback: CallbackQuery):
         await callback.answer()
 
 
+def clear_all_plans_data():
+    """
+    Очищает все данные планов производства (JSON файлы).
+    
+    Удаляет:
+    - current_plan.json (текущий план)
+    - plans_metadata.json (метаданные планов)
+    - Все файлы планов в папке plans/
+    
+    Возвращает словарь с количеством удалённых файлов.
+    """
+    result = {
+        'current_plan': 0,
+        'metadata': 0,
+        'plan_files': 0,
+        'total': 0
+    }
+    
+    try:
+        # Путь к папке data
+        data_dir = BOT_DIR / 'data'
+        
+        # Удаляем current_plan.json
+        current_plan_file = data_dir / 'current_plan.json'
+        if current_plan_file.exists():
+            current_plan_file.unlink()
+            result['current_plan'] = 1
+        
+        # Удаляем plans_metadata.json
+        metadata_file = data_dir / 'plans_metadata.json'
+        if metadata_file.exists():
+            metadata_file.unlink()
+            result['metadata'] = 1
+        
+        # Удаляем папку plans/ со всеми файлами
+        plans_dir = data_dir / 'plans'
+        if plans_dir.exists() and plans_dir.is_dir():
+            # Подсчитываем файлы перед удалением
+            plan_files = list(plans_dir.glob('*.json'))
+            result['plan_files'] = len(plan_files)
+            
+            # Удаляем всю папку
+            shutil.rmtree(plans_dir)
+        
+        result['total'] = result['current_plan'] + result['metadata'] + result['plan_files']
+        
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception(f"Ошибка при очистке планов: {e}")
+    
+    return result
+
+
 @router.callback_query(F.data == "db_clear_confirmed")
 async def confirm_db_clear(callback: CallbackQuery):
-    """Подтверждение и выполнение полной очистки БД"""
+    """Подтверждение и выполнение полной очистки БД и планов"""
     try:
-        # Выполняем полную очистку
-        result = kp_db.clear_all_plates_data()
+        # Выполняем полную очистку БД
+        result_db = kp_db.clear_all_plates_data()
+        
+        # Выполняем очистку планов производства
+        result_plans = clear_all_plans_data()
         
         report = (
-            "✅ **БАЗА ДАННЫХ ПОЛНОСТЬЮ ОЧИЩЕНА!**\n\n"
-            f"📊 Удалено:\n"
-            f"  • КП: {result['kp_offers']}\n"
-            f"  • Плиты в работе: {result['kp_plates']}\n"
-            f"  • Выполненные плиты: {result['completed_plates']}\n"
-            f"  • Остатки: {result['plate_rests']}\n"
-            f"  • Файлы: {result['kp_files']}\n"
-            f"  • Метаданные: {result['kp_meta']}\n"
-            f"  • **ВСЕГО: {result['total']} записей**\n\n"
+            "✅ **БАЗА ДАННЫХ И ПЛАНЫ ПОЛНОСТЬЮ ОЧИЩЕНЫ!**\n\n"
+            f"📊 Удалено из БД:\n"
+            f"  • КП: {result_db['kp_offers']}\n"
+            f"  • Плиты в работе: {result_db['kp_plates']}\n"
+            f"  • Выполненные плиты: {result_db['completed_plates']}\n"
+            f"  • Остатки: {result_db['plate_rests']}\n"
+            f"  • Файлы: {result_db['kp_files']}\n"
+            f"  • Метаданные: {result_db['kp_meta']}\n"
+            f"  • **Итого записей БД: {result_db['total']}**\n\n"
+            f"📅 Удалено файлов планов:\n"
+            f"  • Текущий план: {result_plans['current_plan']}\n"
+            f"  • Метаданные планов: {result_plans['metadata']}\n"
+            f"  • Архивных планов: {result_plans['plan_files']}\n"
+            f"  • **Итого файлов планов: {result_plans['total']}**\n\n"
             f"🔄 Счётчики сброшены. Новые КП начнутся с #1.\n"
-            f"База данных теперь пуста и готова к новым заказам."
+            f"База данных и планы полностью очищены и готовы к работе!"
         )
         
         await callback.message.answer(
@@ -408,7 +476,7 @@ async def confirm_db_clear(callback: CallbackQuery):
             parse_mode="Markdown",
             reply_markup=main_menu_kb()
         )
-        await callback.answer("✅ База очищена!")
+        await callback.answer("✅ База и планы очищены!")
     
     except Exception as e:
         await callback.message.answer(
@@ -440,3 +508,125 @@ async def back_to_menu(callback: CallbackQuery):
     )
     await callback.answer()
 
+
+@router.callback_query(F.data == "db_view_rests")
+async def view_plate_rests(callback: CallbackQuery):
+    """Экспорт остатков в Excel файл"""
+    try:
+        await callback.message.answer("⏳ Формирую отчёт по остаткам...")
+        
+        # Получаем все остатки из БД
+        rests = kp_db.get_all_plate_rests()
+        
+        if not rests:
+            await callback.message.answer(
+                "ℹ️ Остатков пока нет.",
+                reply_markup=db_management_kb()
+            )
+            await callback.answer()
+            return
+        
+        # Создаём Excel файл
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, PatternFill
+        from datetime import datetime
+        
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Остатки от резки"
+        
+        # Заголовки
+        headers = ['№', 'Ширина (мм)', 'Длина (м)', 'Количество', 'Статус', 'КП №', 'Клиент', 'Исходная плита', 'Дата создания']
+        ws.append(headers)
+        
+        # Стиль заголовков
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+        
+        # Заполняем данные
+        status_map = {
+            'available': '✅ Доступен',
+            'used': '🔧 Использован',
+            'completed': '✔️ Выполнен',
+            'scrapped': '❌ Списан'
+        }
+        
+        for idx, rest in enumerate(rests, 1):
+            status = status_map.get(rest['status'], rest['status'])
+            customer = rest.get('customer_name', 'Не указан')
+            created = rest.get('created_date', 'Не указана')
+            
+            # Форматируем дату
+            if created and created != 'Не указана':
+                try:
+                    dt = datetime.fromisoformat(created)
+                    created = dt.strftime('%d.%m.%Y %H:%M')
+                except:
+                    pass
+            
+            row = [
+                idx,
+                rest['rest_width_mm'],
+                rest['length_m'],
+                rest['qty'],
+                status,
+                rest['kp_id'],
+                customer,
+                rest.get('source_plate_name', 'Не указано'),
+                created
+            ]
+            ws.append(row)
+            
+            # Выравнивание
+            for cell in ws[idx + 1]:
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+        
+        # Настройка ширины столбцов
+        ws.column_dimensions['A'].width = 5
+        ws.column_dimensions['B'].width = 12
+        ws.column_dimensions['C'].width = 10
+        ws.column_dimensions['D'].width = 12
+        ws.column_dimensions['E'].width = 15
+        ws.column_dimensions['F'].width = 8
+        ws.column_dimensions['G'].width = 25
+        ws.column_dimensions['H'].width = 20
+        ws.column_dimensions['I'].width = 18
+        
+        # Сохраняем файл
+        user_id = callback.from_user.id
+        filename = f"остатки_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filepath = PROJECT_ROOT / 'bot' / 'tmp' / f"{user_id}_{filename}"
+        
+        # Создаём папку tmp если её нет
+        filepath.parent.mkdir(exist_ok=True)
+        
+        wb.save(str(filepath))
+        
+        # Отправляем файл
+        from aiogram.types import FSInputFile
+        file = FSInputFile(filepath)
+        
+        await callback.message.answer_document(
+            file,
+            caption=f"📋 **Отчёт по остаткам от резки**\n\n"
+                    f"Всего остатков: {len(rests)} записей\n"
+                    f"Дата формирования: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            parse_mode="Markdown",
+            reply_markup=db_management_kb()
+        )
+        
+        # Удаляем временный файл
+        filepath.unlink()
+        
+        await callback.answer()
+        
+    except Exception as e:
+        await callback.message.answer(
+            f"❌ Ошибка при формировании отчёта: {str(e)}",
+            reply_markup=db_management_kb()
+        )
+        await callback.answer()

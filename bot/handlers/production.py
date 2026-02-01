@@ -196,7 +196,7 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             cur.execute("""
                 SELECT plate_name, length_m, width_m, load_class, qty
                 FROM kp_plates
-                WHERE kp_id = ?
+                WHERE kp_id = ? AND status = 'в производстве'
             """, (kp_id,))
             
             for row in cur.fetchall():
@@ -232,7 +232,7 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             cur.execute("""
                 SELECT plate_name, length_m, width_m
                 FROM kp_plates
-                WHERE kp_id = ?
+                WHERE kp_id = ? AND status = 'в производстве'
             """, (kp_id,))
             for row in cur.fetchall():
                 plate_name, length_m, width_m = row
@@ -357,68 +357,10 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
         await message.answer("⏳ Подсчитываю дорожки...")
         
         from viz_modules.layout_sequence import build_layout_sequence
+        from core.visualization import split_sequence_into_tracks
+        
         seq = build_layout_sequence()
-        
-        MAX_TRACK_LENGTH = 101.0
-        all_tracks_list = []
-        
-        if isinstance(seq, list) and seq and isinstance(seq[0], dict) and 'load_code' in seq[0]:
-            for group in seq:
-                load_code = group['load_code']
-                items = group['sequence']
-                group_label = group.get('label', f'Нагрузка {load_code}п')
-                
-                current_track = []
-                current_track_length = 0.0
-                
-                for i, item in enumerate(items):
-                    item_length = item['length']
-                    will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
-                    
-                    if will_exceed:
-                        all_tracks_list.append({
-                            'items': current_track,
-                            'length': current_track_length,
-                            'load_code': load_code,
-                            'label': group_label
-                        })
-                        current_track = []
-                        current_track_length = 0.0
-                    
-                    current_track.append(item)
-                    current_track_length += item_length
-                
-                if current_track:
-                    all_tracks_list.append({
-                        'items': current_track,
-                        'length': current_track_length,
-                        'load_code': load_code,
-                        'label': group_label
-                    })
-        else:
-            current_track = []
-            current_track_length = 0.0
-            
-            for i, item in enumerate(seq):
-                item_length = item['length']
-                will_exceed = (current_track_length + item_length > MAX_TRACK_LENGTH and current_track)
-                
-                if will_exceed:
-                    all_tracks_list.append({
-                        'items': current_track,
-                        'length': current_track_length
-                    })
-                    current_track = []
-                    current_track_length = 0.0
-                
-                current_track.append(item)
-                current_track_length += item_length
-            
-            if current_track:
-                all_tracks_list.append({
-                    'items': current_track,
-                    'length': current_track_length
-                })
+        all_tracks_list = split_sequence_into_tracks(seq)
         
         total_tracks_count = len(all_tracks_list)
         total_days = math.ceil(total_tracks_count / tracks_count)

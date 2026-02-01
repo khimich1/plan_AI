@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Модуль создания Excel-файлов формовки по дорожкам.
-Заполняет шаблон "!КЗ ПБ Шаблон.xlsx" данными о плитах на дорожке.
+Использует шаблон "!КЗ ПБ Шаблон.xlsx" и заполняет его данными.
 """
 import os
 import shutil
@@ -11,11 +11,18 @@ from typing import List, Dict, Optional
 
 try:
     from openpyxl import load_workbook
-    from openpyxl.styles import Font
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
     print("[FORMOVKA] ⚠️ openpyxl не установлен. Установите: pip install openpyxl")
+
+
+# Путь к шаблону по умолчанию
+DEFAULT_TEMPLATE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "банк знаний",
+    "!КЗ ПБ Шаблон.xlsx"
+)
 
 
 def create_formovka_excel(
@@ -23,11 +30,11 @@ def create_formovka_excel(
     max_reinforcement: float,
     plates_info: List[Dict],
     output_dir: str,
-    template_path: str = "банк знаний/!КЗ ПБ Шаблон.xlsx",
+    template_path: str = None,
     date_str: Optional[str] = None
 ) -> Optional[str]:
     """
-    Создает Excel-файл формовки для дорожки по шаблону.
+    Создает Excel-файл формовки для дорожки на основе шаблона.
     
     Args:
         track_number: Номер дорожки
@@ -35,11 +42,12 @@ def create_formovka_excel(
         plates_info: Список словарей с информацией о плитах:
             - plate_name: название плиты (например "ПБ 80-12-10п")
             - qty: количество штук
-            - kp_date: срок/дата заказа (опционально)
+            - length: длина плиты в метрах
+            - kp_id: номер КП
             - customer: заказчик (опционально)
         output_dir: Директория для сохранения файла
-        template_path: Путь к шаблону Excel
-        date_str: Дата формовки (по умолчанию текущая)
+        template_path: Путь к шаблону Excel (по умолчанию "банк знаний/!КЗ ПБ Шаблон.xlsx")
+        date_str: Суффикс для имени файла (по умолчанию текущая дата/время)
     
     Returns:
         Путь к созданному файлу или None в случае ошибки
@@ -47,6 +55,10 @@ def create_formovka_excel(
     if not OPENPYXL_AVAILABLE:
         print("[FORMOVKA] ❌ openpyxl не установлен")
         return None
+    
+    # Используем шаблон по умолчанию если не указан
+    if template_path is None:
+        template_path = DEFAULT_TEMPLATE
     
     if not os.path.exists(template_path):
         print(f"[FORMOVKA] ❌ Шаблон не найден: {template_path}")
@@ -71,121 +83,64 @@ def create_formovka_excel(
         
         # Открываем скопированный файл
         wb = load_workbook(output_path)
-        ws = wb.active  # Первый лист
+        ws = wb.active
         
-        # ========== ЗАПОЛНЯЕМ ДАННЫЕ ==========
-        
-        # Формат даты
+        # Текущая дата
         current_date = datetime.now().strftime("%d.%m.%Y")
         
-        # Функция для безопасной записи в ячейку (может быть merged)
-        def safe_set_cell(cell_ref, value):
-            try:
-                cell = ws[cell_ref]
-                # Проверяем, не является ли ячейка частью объединённого диапазона
-                if hasattr(cell, 'value'):
-                    cell.value = value
-                    return True
-            except Exception as e:
-                print(f"[FORMOVKA] Предупреждение: не удалось записать в {cell_ref}: {e}")
-                # Пробуем использовать cell напрямую
-                try:
-                    ws.cell(row=cell.row, column=cell.column).value = value
-                    return True
-                except:
-                    pass
-            return False
+        # ==================== ЗАПОЛНЯЕМ ДАННЫЕ ====================
         
-        # 1. Дата формовки (ячейка B3, согласно скриншоту)
-        safe_set_cell('B3', current_date)
-        # Устанавливаем размер шрифта 32 для B3
-        try:
-            ws['B3'].font = Font(size=32)
-        except Exception as e:
-            print(f"[FORMOVKA] ⚠️ Не удалось установить шрифт для B3: {e}")
+        # B1 (объединено B1:B5) - Дата формовки
+        ws['B1'] = current_date
         
-        # 2. Дата приемки ОТК (ячейка B7)
-        safe_set_cell('B7', current_date)
-        # Устанавливаем размер шрифта 32 для B7
-        try:
-            ws['B7'].font = Font(size=32)
-        except Exception as e:
-            print(f"[FORMOVKA] ⚠️ Не удалось установить шрифт для B7: {e}")
+        # D1 (объединено D1:D6) - № дорожки - НЕ ТРОГАЕМ (там заголовок)
+        # Номер дорожки указывается в C10 или в другом месте? 
+        # По шаблону нет отдельной ячейки для номера дорожки
         
-        # 3. Номер дорожки (ячейка D3 - "№ дорожки для формовки")
-        safe_set_cell('D3', track_number)
+        # B6 (объединено B6:B9) - Дата приемки ОТК (формула =B1+1, оставляем)
+        # Но можно переписать если нужно
         
-        # 4. Максимальное армирование записываем в ячейку A12 с большим шрифтом
-        try:
-            ws['A12'] = max_reinforcement
-            ws['A12'].font = Font(size=48, bold=True)
-            print(f"[FORMOVKA] ✅ Армирование {max_reinforcement} записано в ячейку A12 с размером шрифта 48")
-        except Exception as e:
-            print(f"[FORMOVKA] ⚠️ Не удалось записать армирование в A12: {e}")
+        # A12 - Армирование (большим шрифтом)
+        ws['A12'] = max_reinforcement
         
-        # 5. Заполняем плиты
-        # Строка 11 - это заголовки таблицы (не трогаем)
-        # Данные начинаются с 12 строки
-        current_row = 12
-        print(f"[FORMOVKA] 📝 Начинаю заполнять данные с 12 строки")
+        # ==================== ЗАПОЛНЯЕМ ПЛИТЫ (строки 13-27) ====================
+        
+        # Очищаем существующие данные в шаблоне (строки 13-27)
+        for row in range(13, 28):
+            ws.cell(row=row, column=2).value = None  # B - Заказ, №
+            ws.cell(row=row, column=3).value = None  # C - Номенклатура
+            ws.cell(row=row, column=4).value = None  # D - Количество
+            # E - Метраж (оставляем пустым, формула будет считать)
+        
+        # Заполняем данные о плитах
+        current_row = 13
         for plate in plates_info:
+            if current_row > 27:  # Максимум 15 строк для плит
+                print(f"[FORMOVKA] ⚠️ Превышен лимит строк (15), остальные плиты пропущены")
+                break
+            
+            # B - Заказ, № (kp_id)
+            kp_id_value = plate.get('kp_id', '')
+            if kp_id_value is None:
+                kp_id_value = ''
+            cell_b = ws.cell(row=current_row, column=2)
+            cell_b.value = kp_id_value
+            cell_b.number_format = '0'  # Форматируем как число, чтобы не было даты
+            
+            # C - Номенклатура
             plate_name = plate.get('plate_name', '')
-            qty = plate.get('qty', 0)
-            kp_date = plate.get('kp_date', '')
-            
-            # Если нет готового имени плиты, формируем его
-            if not plate_name or plate_name.strip() == '':
-                length = plate.get('length', 0)
-                width = plate.get('width', 1200)
-                reinforcement = plate.get('reinforcement', 0)
-                
-                # Формируем имя плиты
-                length_dm = int(round(length * 10))
-                
-                # Определяем нагрузку по армированию
-                if reinforcement > 0:
-                    if reinforcement < 8:
-                        load_code = 6
-                    elif reinforcement < 12:
-                        load_code = 8
-                    elif reinforcement < 15:
-                        load_code = 10
-                    else:
-                        load_code = 12
-                else:
-                    load_code = 8
-                
-                # Форматируем ширину
-                if width == 1200:
-                    width_str = "12"
-                else:
-                    width_dm = width / 100.0
-                    if abs(width_dm - int(width_dm)) < 0.01:
-                        width_str = str(int(width_dm))
-                    else:
-                        width_str = str(width_dm).replace('.', ',')
-                
-                plate_name = f"ПБ {length_dm}-{width_str}-{load_code}п"
-            
-            # Формируем номер заказа (используем дату КП или текущую дату)
-            if kp_date and kp_date != 'неизвестно':
-                order_number = kp_date
-            else:
-                order_number = current_date
-            
-            # Колонка B - Заказ, №
-            ws.cell(row=current_row, column=2).value = order_number
-            
-            # Колонка C - Номенклатура (название плиты)
             ws.cell(row=current_row, column=3).value = plate_name
             
-            # Колонка D - Количество в формовку
+            # D - Количество в формовку
+            qty = plate.get('qty', 0)
             ws.cell(row=current_row, column=4).value = qty
             
-            print(f"[FORMOVKA] Строка {current_row}: {plate_name} × {qty} шт, заказ {order_number}")
+            # E - Метраж ПЛАН (можно оставить пустым или заполнить формулой)
+            # В шаблоне колонка E для ручного ввода, G9 считает сумму
+            
             current_row += 1
         
-        # Сохраняем изменения
+        # Сохраняем файл
         wb.save(output_path)
         wb.close()
         
@@ -203,7 +158,7 @@ def create_formovka_files_for_tracks(
     tracks_data: List[Dict],
     output_dir: str,
     start_track_number: int = 1,
-    template_path: str = "банк знаний/!КЗ ПБ Шаблон.xlsx",
+    template_path: str = None,
     date_str: Optional[str] = None
 ) -> List[str]:
     """
@@ -215,9 +170,9 @@ def create_formovka_files_for_tracks(
             - max_reinforcement: максимальное армирование
             - plates_info: список плит на дорожке
         output_dir: Директория для сохранения файлов
-        start_track_number: Начальный номер дорожки (используется если track_number не указан)
+        start_track_number: Начальный номер дорожки (если track_number не указан)
         template_path: Путь к шаблону
-        date_str: Дата (по умолчанию текущая)
+        date_str: Суффикс для имени файла
     
     Returns:
         Список путей к созданным файлам
@@ -253,18 +208,13 @@ def create_formovka_files_for_tracks(
 # ==================== ТЕСТИРОВАНИЕ ====================
 
 if __name__ == "__main__":
-    # Тестовые данные
+    # Тестовые данные (как на скриншоте)
     test_plates = [
         {
-            'plate_name': 'ПБ 80-12-10п',
-            'qty': 4,
-            'kp_date': '01.02.2026',
-            'customer': 'Алексей'
-        },
-        {
-            'plate_name': 'ПБ 56-12-6п',
-            'qty': 2,
-            'kp_date': '01.02.2026',
+            'plate_name': 'Плиты ПБ 78,1-12-8п',
+            'qty': 12,
+            'length': 7.81,
+            'kp_id': 4,
             'customer': 'Алексей'
         }
     ]
@@ -272,10 +222,9 @@ if __name__ == "__main__":
     # Создаем тестовый файл
     result = create_formovka_excel(
         track_number=1,
-        max_reinforcement=39.0,
+        max_reinforcement=33,
         plates_info=test_plates,
-        output_dir="test_formovka",
-        template_path="банк знаний/!КЗ ПБ Шаблон.xlsx"
+        output_dir="test_formovka"
     )
     
     if result:

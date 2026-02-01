@@ -19,6 +19,11 @@ from dataclasses import dataclass
 
 # ==================== КОНФИГУРАЦИЯ ОПТИМИЗАЦИИ ====================
 
+# Ширина пропила (в мм) - НЕ используется в расчётах
+# Пропил косвенно учитывается в таблице NARROWING_TABLE через значения narrowing
+# Формально для совместимости оставляем константу, но не применяем в расчётах
+KERF_WIDTH_MM = 0
+
 @dataclass
 class OptimizationConfig:
     """
@@ -177,9 +182,10 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     ✅ Учёт стоимости продольных и поперечных резов
     ✅ Фильтрация бесполезных вариантов (скорость ↑ в 2-3 раза)
     ✅ Настраиваемые штрафы и бонусы через OptimizationConfig
+    ✅ Сохранение kp_id и customer для каждой плиты (для диаграммы Ганта)
     
     Args:
-        orders_2d: [{'length': 5.6, 'width': 320, 'qty': 11}, ...] — спрос по (длина, ширина)
+        orders_2d: [{'length': 5.6, 'width': 320, 'qty': 11, 'kp_id': 1, 'customer': 'Роман'}, ...] — спрос по (длина, ширина)
         plate_width: ширина исходной плиты в мм (1200)
         min_useful_width: минимальная полезная ширина остатка
         opt_config: конфигурация параметров оптимизации (штрафы, бонусы)
@@ -189,7 +195,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             'primary_cuts': [{'width', 'rest', 'qty', 'lengths': [5.6, ...]}, ...],
             'secondary_cuts': [{'source', 'cuts', 'qty', 'pieces', 'lengths': [...], 'type'}, ...],
             'total_plates': int,
-            'plate_assignments': [{'length', 'width', 'source', ...}, ...]
+            'plate_assignments': [{'length', 'width', 'source', 'kp_id', 'customer', ...}, ...]
         }
     """
     # Используем дефолтную конфигурацию, если не передана
@@ -215,6 +221,23 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         key = (order['length'], order['width'])
         demand_2d[key] = demand_2d.get(key, 0) + order['qty']
     
+    # 1.5 НОВОЕ: Создаём маппинг (length, width) -> информация о КП
+    # Это нужно для точного определения заказчика в диаграмме Ганта
+    order_info_map = {}  # {(length, width): {'kp_id', 'customer', 'kp_date', 'plate_name'}}
+    for order in orders_2d:
+        key = (order['length'], order['width'])
+        # Сохраняем информацию о первом заказе с такими параметрами
+        # (если несколько заказов одинаковые, берём первый)
+        if key not in order_info_map:
+            order_info_map[key] = {
+                'kp_id': order.get('kp_id'),
+                'customer': order.get('customer', 'неизвестно'),
+                'kp_date': order.get('kp_date', 'неизвестно'),
+                'plate_name': order.get('plate_name', ''),
+                'load_code': order.get('load_code', 8),
+                'reinforcement': order.get('reinforcement', 0)
+            }
+    
     tolerance_length = 0.01  # ±10мм по длине
     tolerance_width = 20     # ±20мм по ширине
     
@@ -224,6 +247,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     
     # Таблица сужений (из таблицы допустимых резов)
     # Формат: (исходная_ширина_остатка, целевая_ширина, отход)
+    # ВАЖНО: Значения остатков рассчитаны БЕЗ явного учёта пропила в коде
+    # Пропил косвенно учтён через значения narrowing (разница между source_rest и target_w)
     NARROWING_TABLE = [
         (480, 460, 20),   # Остаток 480мм → 460мм (из реза 720+480)
         (500, 460, 40),   # Остаток 500мм → 460мм (из реза 700+500)
@@ -251,6 +276,9 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     solid_widths = sorted(set([plate_width, 1080]))
 
     for (length, width), qty in demand_2d.items():
+        # Получаем информацию о КП для этой плиты
+        order_info = order_info_map.get((length, width), {})
+        
         # Вариант 1: Плита БЕЗ реза (ширины из списка solid_widths)
         # Эти ширины НЕ РЕЖУТСЯ и используются как есть
         if width in solid_widths:
@@ -259,12 +287,17 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'length': length,
                 'main': width,
                 'rest': 0,
-                'type': 'solid'  # Без резов
+                'type': 'solid',  # Без резов
+                'kp_id': order_info.get('kp_id'),
+                'customer': order_info.get('customer'),
+                'kp_date': order_info.get('kp_date'),
+                'plate_name': order_info.get('plate_name')
             })
             option_id += 1
 
         # Вариант 2: Плита С ПРЯМЫМ резом (ширина < исходной плиты)
         elif width < plate_width:
+            # Пропил косвенно учтён в таблице NARROWING_TABLE
             rest = plate_width - width
             # Создаём вариант для ЛЮБОЙ ширины
             # Если rest < min_useful_width, остаток просто пойдёт в отход
@@ -273,7 +306,11 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'length': length,
                 'main': width,
                 'rest': rest,
-                'type': 'direct'  # Прямой рез
+                'type': 'direct',  # Прямой рез
+                'kp_id': order_info.get('kp_id'),
+                'customer': order_info.get('customer'),
+                'kp_date': order_info.get('kp_date'),
+                'plate_name': order_info.get('plate_name')
             })
             option_id += 1
             
@@ -291,7 +328,11 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                             'rest': rest_w,           # Например, 480мм (остаток)
                             'type': 'indirect',       # Непрямой рез через narrowing
                             'target_width': width,    # Целевая ширина: 460мм (что нужно)
-                            'narrowing_waste': waste  # Отход при сужении: 20мм
+                            'narrowing_waste': waste, # Отход при сужении: 20мм
+                            'kp_id': order_info.get('kp_id'),
+                            'customer': order_info.get('customer'),
+                            'kp_date': order_info.get('kp_date'),
+                            'plate_name': order_info.get('plate_name')
                         })
                         option_id += 1
     
@@ -341,7 +382,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         for (target_length, target_width), qty in demand_2d.items():
             
             # Вариант A: Множественная резка по ширине (одинаковая длина)
-            if abs(target_length - source_length) <= tolerance_length:
+            # ВАЖНО: Нельзя получить больше, чем есть! target_width <= source_width
+            if abs(target_length - source_length) <= tolerance_length and target_width <= source_width:
                 # РАНЬШЕ: брали только максимум кусков (pieces = source_width // target_width)
                 # ТЕПЕРЬ: перебираем все варианты от 1 до max_pieces, чтобы можно было
                 # получать 1, 2, ... плит из одного остатка (например, 0.88 → 1×0.32 с хвостом 0.56)
@@ -370,7 +412,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             
             # Вариант A2: Комбинированная резка (множественная по ширине + поперечная по длине)
             # Это позволяет резать остаток 5.6м × 880мм → 2× 3.31м × 320мм
-            if target_length < source_length - 0.1:  # Целевая длина КОРОЧЕ остатка
+            # ВАЖНО: Нельзя получить больше, чем есть! target_width <= source_width
+            if target_length < source_length - 0.1 and target_width <= source_width:  # Целевая длина КОРОЧЕ остатка
                 pieces = source_width // target_width
                 if pieces >= 1:
                     # Проверяем, что целевая длина влезает хотя бы раз
@@ -413,8 +456,12 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     sec_id += 1
             
             # Вариант C: Поперечный рез (transverse cut)
+            # ВАЖНО: Нельзя получить больше, чем есть! target_width <= source_width
+            # (раньше проверяли abs(target_width - source_width) <= tolerance_width, 
+            #  что позволяло target_width > source_width на 20мм — это баг!)
             if (target_length < source_length - 0.1 and
-                abs(target_width - source_width) <= tolerance_width):
+                target_width <= source_width and
+                source_width - target_width <= tolerance_width):
                 length_waste = (source_length - target_length) * 1000  # в мм
                 secondary_options.append({
                     'id': sec_id,
@@ -698,7 +745,11 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'width': opt['main'],
                 'rest': opt['rest'],
                 'qty': qty,
-                'lengths': [opt['length']] * qty
+                'lengths': [opt['length']] * qty,
+                'kp_id': opt.get('kp_id'),
+                'customer': opt.get('customer'),
+                'kp_date': opt.get('kp_date'),
+                'plate_name': opt.get('plate_name')
             })
             result['total_plates'] += qty
             
@@ -707,7 +758,11 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     'length': opt['length'],
                     'width': opt['main'],
                     'source': 'primary',
-                    'rest_width': opt['rest']
+                    'rest_width': opt['rest'],
+                    'kp_id': opt.get('kp_id'),
+                    'customer': opt.get('customer'),
+                    'kp_date': opt.get('kp_date'),
+                    'plate_name': opt.get('plate_name')
                 })
     
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
@@ -748,7 +803,11 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'length': length,
                 'width': cut['width'],
                 'source': 'primary',
-                'rest_width': cut['rest']
+                'rest_width': cut['rest'],
+                'kp_id': cut.get('kp_id'),
+                'customer': cut.get('customer'),
+                'kp_date': cut.get('kp_date'),
+                'plate_name': cut.get('plate_name')
             })
             
             # Сохраняем информацию об остатке для отслеживания
@@ -766,6 +825,10 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     for opt in secondary_options:
         qty = int(round(value(x_sec[opt['id']])))
         if qty > 0:
+            # Получаем информацию о КП для целевого заказа
+            target_key = opt.get('target_order_key')
+            order_info = order_info_map.get(target_key, {}) if target_key else {}
+            
             result['secondary_cuts'].append({
                 'source': opt['source_rest'],
                 'cuts': [opt['output_width']],
@@ -775,7 +838,11 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'type': opt['type'],
                 'source_lengths': [opt['source_length']] * qty,  # ИСХОДНАЯ длина остатка
                 'lengths': [opt['output_length']] * qty,  # Результирующая длина
-                'target_order_key': opt.get('target_order_key')  # ✅ НОВОЕ: Передаем ключ заказа
+                'target_order_key': opt.get('target_order_key'),  # ✅ НОВОЕ: Передаем ключ заказа
+                'kp_id': order_info.get('kp_id'),
+                'customer': order_info.get('customer'),
+                'kp_date': order_info.get('kp_date'),
+                'plate_name': order_info.get('plate_name')
             })
             
             # Добавляем каждый кусок в assignments
@@ -791,7 +858,11 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                         'length': opt['output_length'],
                         'width': opt['output_width'],
                         'source': 'secondary',
-                        'source_rest': opt['source_rest']
+                        'source_rest': opt['source_rest'],
+                        'kp_id': order_info.get('kp_id'),
+                        'customer': order_info.get('customer'),
+                        'kp_date': order_info.get('kp_date'),
+                        'plate_name': order_info.get('plate_name')
                     })
     
     print(f"[OPT_2D] OK! Готово! Использовано {result['total_plates']} плит")
@@ -849,6 +920,7 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
             })
             continue
 
+        # Пропил косвенно учтён в таблице NARROWING_TABLE
         rest_w = plate_width - target_w
         if rest_w >= min_useful_width:  # Остаток достаточно большой
             primary_cut_options.append({

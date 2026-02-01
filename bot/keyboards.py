@@ -9,16 +9,16 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
             # Первая строка - 2 кнопки рядом
             [
                 KeyboardButton(text="📝 Создать КП"),
-                KeyboardButton(text="📁 Архив")
+                KeyboardButton(text="Планирование производства")
             ],
             # Вторая строка - 2 кнопки рядом
             [
-                KeyboardButton(text="Планирование производства"),
+                KeyboardButton(text="📁 Архив"),
                 KeyboardButton(text="Информация о ПБ в работе")
             ],
             # Третья строка - 2 кнопки рядом
             [
-                KeyboardButton(text="Сравнение результатов"),
+                KeyboardButton(text="📖 Как работает бот"),
                 KeyboardButton(text="⚙️ Управление БД")
             ],
         ],
@@ -32,6 +32,7 @@ def pb_info_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🏭 Плиты в производстве", callback_data="plates_in_production")],
             [InlineKeyboardButton(text="✅ Выполненные плиты", callback_data="completed_plates_export")],
+            [InlineKeyboardButton(text="📊 КП в производстве", callback_data="kp_in_production")],
         ]
     )
 
@@ -58,9 +59,29 @@ def save_to_db_kb() -> InlineKeyboardMarkup:
     )
 
 
+def production_menu_kb() -> InlineKeyboardMarkup:
+    """
+    Начальное меню планирования производства.
+    
+    Показывает кнопки:
+    - Календарный план — просмотр активного плана с датами
+    - Начать планирование — создание нового плана
+    - Планы — просмотр всех сохранённых планов
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📅 Календарный план", callback_data="view_calendar_plan")],
+            [InlineKeyboardButton(text="🚀 Начать планирование", callback_data="start_new_planning")],
+            [InlineKeyboardButton(text="📋 Планы", callback_data="view_all_plans")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
+        ]
+    )
+
+
 def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     """
     Создает клавиатуру с кнопками для выбора дня производства
+    (старая версия, оставлена для совместимости)
     
     Args:
         total_days: общее количество дней работы
@@ -95,10 +116,10 @@ def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
     
-    # Кнопка "Актуальный план"
+    # Кнопка "Сохранить план"
     buttons.append([
         InlineKeyboardButton(
-            text="💾 Актуальный план",
+            text="💾 Сохранить план",
             callback_data="save_current_plan"
         )
     ])
@@ -114,81 +135,64 @@ def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def production_day_actions_kb(day_number: int, total_days: int) -> InlineKeyboardMarkup:
+def calendar_days_kb(
+    total_days: int, 
+    start_date: str, 
+    completed_days: list = None,
+    days_info: dict = None,
+    show_save_button: bool = True
+) -> InlineKeyboardMarkup:
     """
-    Клавиатура действий после просмотра дня производства.
-    Показывает кнопку "Выполнено" и кнопки для перехода на другие дни.
+    Создает клавиатуру с ДАТАМИ для выбора дня производства.
+    
+    Простыми словами:
+    - Вместо "День 1, День 2" показывает "22.01, 23.01, 24.01..."
+    - Выполненные дни отмечаются галочкой ✅
+    - Невыполненные — значком 📅
+    - Показывает ГЛОБАЛЬНУЮ загруженность: "22.01 3/5" (3 дорожки занято во ВСЕХ планах / 5 максимум)
     
     Args:
-        day_number: номер текущего дня
-        total_days: общее количество дней
+        total_days: общее количество дней работы
+        start_date: дата начала плана в формате "YYYY-MM-DD" или "DD.MM.YYYY"
+        completed_days: список номеров выполненных дней [1, 2, 3]
+        days_info: информация о днях с ГЛОБАЛЬНОЙ загруженностью {
+            "2026-01-22": {"occupied": 3, "max": 5, "completed": False, "day_number": 1},
+            ...
+        }
+        show_save_button: показывать кнопку "Сохранить план" (по умолчанию True)
         
     Returns:
-        InlineKeyboardMarkup с кнопками действий
+        InlineKeyboardMarkup с кнопками-датами
     """
+    from datetime import datetime, timedelta
+    
+    # Константа максимума дорожек (импортируем здесь чтобы избежать циклических импортов)
+    MAX_TRACKS = 5
+    
+    if completed_days is None:
+        completed_days = []
+    
+    if days_info is None:
+        days_info = {}
+    
+    # Парсим дату начала
+    parsed_start = None
+    if start_date:
+        # Пробуем разные форматы
+        for fmt in ['%Y-%m-%d', '%d.%m.%Y', '%Y-%m-%dT%H:%M:%S']:
+            try:
+                parsed_start = datetime.strptime(start_date.split('T')[0] if 'T' in start_date else start_date, fmt.split('T')[0])
+                break
+            except ValueError:
+                continue
+    
+    # Если не удалось распарсить — используем сегодня
+    if not parsed_start:
+        parsed_start = datetime.now()
+    
     buttons = []
     
-    # Кнопка "День выполнен" для текущего дня
-    buttons.append([
-        InlineKeyboardButton(
-            text="✅ День выполнен",
-            callback_data=f"complete_day_{day_number}"
-        )
-    ])
-    
-    # Кнопка "Актуальный план"
-    buttons.append([
-        InlineKeyboardButton(
-            text="💾 Актуальный план",
-            callback_data="save_current_plan"
-        )
-    ])
-    
-    # Кнопки навигации по дням (по 3 в ряд)
-    row = []
-    for day in range(1, total_days + 1):
-        row.append(InlineKeyboardButton(
-            text=f"📅 День {day}",
-            callback_data=f"production_day_{day}"
-        ))
-        if len(row) == 3:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def production_day_completed_kb(current_day: int, total_days: int) -> InlineKeyboardMarkup:
-    """
-    Клавиатура, которая показывается ПОСЛЕ завершения дня.
-    
-    Кнопки:
-    - "Перейти к следующему дню" — открывает оставшиеся дни (current_day+1 .. total_days)
-    - "Назад в меню" — возвращает в главное меню
-    """
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="➡️ Перейти к следующему дню",
-                    callback_data=f"production_next_days_{current_day}"
-                )
-            ],
-            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
-        ]
-    )
-
-
-def production_remaining_days_kb(from_day: int, total_days: int) -> InlineKeyboardMarkup:
-    """
-    Показывает ТОЛЬКО оставшиеся дни после from_day.
-    Например: from_day=2, total_days=5 -> кнопки День 3, День 4, День 5.
-    """
-    buttons = []
-    
-    # Кнопка "Диаграмма Ганта" вверху (как в основном выборе дней)
+    # Кнопка "Диаграмма Ганта" вверху
     buttons.append([
         InlineKeyboardButton(
             text="📊 Диаграмма Ганта",
@@ -196,28 +200,67 @@ def production_remaining_days_kb(from_day: int, total_days: int) -> InlineKeyboa
         )
     ])
     
-    # Дни (по 3 в ряд)
+    # Получаем текущую дату для фильтрации прошедших дней
+    today = datetime.now().date()
+    
+    # Создаем кнопки по 3 в ряд для компактности
     row = []
-    for day in range(from_day + 1, total_days + 1):
+    for day in range(1, total_days + 1):
+        # Вычисляем дату этого дня
+        day_date = parsed_start + timedelta(days=day - 1)
+        date_str = day_date.strftime("%d.%m")  # Формат: "22.01"
+        date_key = day_date.strftime("%Y-%m-%d")  # Формат: "2026-01-22"
+        
+        # Получаем информацию о дне из days_info
+        day_data = days_info.get(date_key, {})
+        
+        # ГЛОБАЛЬНАЯ загруженность: occupied = занято во всех планах
+        occupied_tracks = day_data.get('occupied', 0)
+        max_tracks = day_data.get('max', MAX_TRACKS)
+        is_completed = day_data.get('completed', False)
+        
+        # Скрываем выполненные прошедшие дни
+        if (day in completed_days or is_completed) and day_date.date() < today:
+            continue
+        
+        # Определяем эмодзи: галочка если выполнен, календарь если нет
+        if day in completed_days or is_completed:
+            emoji = "✅"
+        else:
+            emoji = "📅"
+        
+        # Формируем текст кнопки с ГЛОБАЛЬНОЙ загруженностью
+        if occupied_tracks > 0:
+            # Показываем загруженность: "22.01 3/5" (занято/максимум)
+            button_text = f"{emoji} {date_str} {occupied_tracks}/{max_tracks}"
+        else:
+            # Обычный формат без загруженности
+            button_text = f"{emoji} {date_str}"
+        
         row.append(InlineKeyboardButton(
-            text=f"📅 День {day}",
+            text=button_text,
             callback_data=f"production_day_{day}"
         ))
+        
+        # Каждые 3 кнопки - новый ряд
         if len(row) == 3:
             buttons.append(row)
             row = []
+    
+    # Добавляем оставшиеся кнопки
     if row:
         buttons.append(row)
     
-    # "Актуальный план"
-    buttons.append([
-        InlineKeyboardButton(
-            text="💾 Актуальный план",
-            callback_data="save_current_plan"
-        )
-    ])
+    # Кнопка "Сохранить план" (только если нужна)
+    if show_save_button:
+        buttons.append([
+            InlineKeyboardButton(
+                text="💾 Сохранить план",
+                callback_data="save_current_plan"
+            )
+        ])
     
-    # "Назад в меню"
+    # Кнопка "Назад в меню"
     buttons.append([
         InlineKeyboardButton(
             text="◀️ Назад в меню",
@@ -228,19 +271,113 @@ def production_remaining_days_kb(from_day: int, total_days: int) -> InlineKeyboa
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> InlineKeyboardMarkup:
+def production_day_actions_kb(
+    day_number: int, 
+    total_days: int, 
+    start_date: str = None, 
+    completed_days: list = None,
+    show_save_button: bool = True
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура действий после просмотра дня производства.
+    Показывает кнопку "Выполнено" и кнопки для перехода на другие дни.
+    
+    Args:
+        day_number: номер текущего дня
+        total_days: общее количество дней
+        start_date: дата начала плана (опционально)
+        completed_days: список выполненных дней (опционально)
+        show_save_button: показывать кнопку "Сохранить план" (по умолчанию True)
+        
+    Returns:
+        InlineKeyboardMarkup с кнопками действий
+    """
+    from datetime import datetime, timedelta
+    
+    if completed_days is None:
+        completed_days = []
+    
+    # Парсим дату начала
+    parsed_start = None
+    if start_date:
+        for fmt in ['%Y-%m-%d', '%d.%m.%Y']:
+            try:
+                parsed_start = datetime.strptime(start_date.split('T')[0] if 'T' in start_date else start_date, fmt)
+                break
+            except ValueError:
+                continue
+    
+    if not parsed_start:
+        parsed_start = datetime.now()
+    
+    # Получаем текущую дату для фильтрации прошедших дней
+    today = datetime.now().date()
+    
+    buttons = []
+    
+    # Кнопка "День выполнен" для текущего дня
+    buttons.append([
+        InlineKeyboardButton(
+            text="✅ День выполнен",
+            callback_data=f"complete_day_{day_number}"
+        )
+    ])
+    
+    # Кнопка "Сохранить план" (только если нужна)
+    if show_save_button:
+        buttons.append([
+            InlineKeyboardButton(
+                text="💾 Сохранить план",
+                callback_data="save_current_plan"
+            )
+        ])
+    
+    # Кнопки навигации по дням (по 3 в ряд) с датами
+    row = []
+    for day in range(1, total_days + 1):
+        # Вычисляем дату
+        day_date = parsed_start + timedelta(days=day - 1)
+        date_str = day_date.strftime("%d.%m")
+        
+        # Определяем эмодзи
+        if day in completed_days:
+            emoji = "✅"
+        else:
+            emoji = "📅"
+        
+        # Скрываем выполненные прошедшие дни
+        if day in completed_days and day_date.date() < today:
+            continue
+        
+        row.append(InlineKeyboardButton(
+            text=f"{emoji} {date_str}",
+            callback_data=f"production_day_{day}"
+        ))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def plates_completion_kb(plates_by_track: list, rejected_quantities: dict, active_plate_id: tuple = None) -> InlineKeyboardMarkup:
     """
     Клавиатура для отметки бракованных плит при завершении дня.
     
     Простыми словами:
     - Показывает список плит по дорожкам с кнопками
     - Каждая дорожка начинается с заголовка
-    - Нажатие на плиту переключает её статус: брак/не брак
+    - Клик на плиту открывает счетчик брака под ней
+    - Счетчик позволяет выбрать количество бракованных плит кнопками +/-
+    - Плиты из остатков показываются отдельной группой с пометкой
     - Внизу кнопки "Подтвердить" и "Отмена"
     
     Args:
         plates_by_track: список дорожек, каждая содержит track_number и список plates
-        rejected_indices: множество кортежей (track_idx, plate_idx) для бракованных плит
+        rejected_quantities: словарь {(track_idx, plate_idx): количество_брака}
+        active_plate_id: кортеж (track_idx, plate_idx) активной плиты или None
         
     Returns:
         InlineKeyboardMarkup с кнопками плит
@@ -250,28 +387,42 @@ def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> Inline
     for track_idx, track_data in enumerate(plates_by_track):
         track_number = track_data.get('track_number', track_idx + 1)
         plates = track_data.get('plates', [])
+        is_from_rests = track_data.get('is_from_rests', False)
         
         if not plates:
             continue
         
         # Добавляем заголовок дорожки (кнопка без действия)
+        # Для плит из остатков показываем специальный заголовок
+        if is_from_rests or track_number == 0:
+            header_text = "━━━━ Из остатков ━━━━"
+        else:
+            header_text = f"━━━━ Дорожка {track_number} ━━━━"
+        
         buttons.append([
             InlineKeyboardButton(
-                text=f"━━━━ Дорожка {track_number} ━━━━",
+                text=header_text,
                 callback_data=f"track_header_{track_idx}"
             )
         ])
         
         # Добавляем плиты этой дорожки
         for plate_idx, plate in enumerate(plates):
-            # Если плита в браке — показываем ❌, иначе ✅
-            is_rejected = (track_idx, plate_idx) in rejected_indices
-            emoji = "❌" if is_rejected else "✅"
+            plate_id = (track_idx, plate_idx)
+            
+            # Получаем количество брака для этой плиты
+            reject_qty = rejected_quantities.get(plate_id, 0)
+            total_qty = plate.get('qty', 1)
+            
+            # Если есть брак — показываем ❌, иначе ✅
+            emoji = "❌" if reject_qty > 0 else "✅"
             
             plate_name = plate.get('plate_name', f"Плита {plate_idx+1}")
-            qty = plate.get('qty', 1)
             kp_date = plate.get('kp_date', '')
             kp_id = plate.get('kp_id', '')
+            from_rest = plate.get('from_rest', False)
+            match_type = plate.get('match_type', '')
+            is_secondary = plate.get('is_secondary', False)  # Флаг вторичного реза
             
             # Форматируем дату коротко: "02.02.2026" -> "02.02"
             date_short = kp_date[:5] if kp_date and kp_date != 'неизвестно' else ''
@@ -284,17 +435,62 @@ def plates_completion_kb(plates_by_track: list, rejected_indices: set) -> Inline
             else:
                 kp_info = ""
             
-            # Обрезаем длинные названия (с учетом места для КП-инфо)
-            max_name_len = 18 if kp_info else 25
+            # Для плит из остатков добавляем пометку о типе
+            if from_rest:
+                if match_type == 'exact':
+                    rest_mark = "[=]"  # Точное совпадение
+                else:
+                    rest_mark = "[рез]"  # Нужен рез
+                # Показываем полное название для плит из остатков
+                max_name_len = 50
+            else:
+                rest_mark = ""
+                max_name_len = 18 if kp_info else 25
+            
+            # Добавляем метку для вторичных резов
+            if is_secondary:
+                plate_name = f"[2] {plate_name}"  # [2] = вторичный рез (из остатка основной плиты)
+                max_name_len += 4  # Учитываем длину метки
+            
+            # Обрезаем длинные названия
             if len(plate_name) > max_name_len:
                 plate_name = plate_name[:max_name_len-2] + ".."
             
+            # Формируем текст кнопки
+            if from_rest:
+                button_text = f"{emoji} {rest_mark} {plate_name} {kp_info} ×{total_qty}"
+            else:
+                button_text = f"{emoji} {plate_name} {kp_info} × {total_qty}"
+            
+            # Основная кнопка плиты
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"{emoji} {plate_name} {kp_info} × {qty}",
-                    callback_data=f"toggle_reject_t{track_idx}_p{plate_idx}"
+                    text=button_text,
+                    callback_data=f"plate_open_t{track_idx}_p{plate_idx}"
                 )
             ])
+            
+            # Если это активная плита — добавляем строку управления браком
+            if active_plate_id == plate_id:
+                control_buttons = [
+                    InlineKeyboardButton(
+                        text="−",
+                        callback_data=f"reject_minus_t{track_idx}_p{plate_idx}"
+                    ),
+                    InlineKeyboardButton(
+                        text=f"Брак: {reject_qty}/{total_qty}",
+                        callback_data=f"reject_info_t{track_idx}_p{plate_idx}"
+                    ),
+                    InlineKeyboardButton(
+                        text="+",
+                        callback_data=f"reject_plus_t{track_idx}_p{plate_idx}"
+                    ),
+                    InlineKeyboardButton(
+                        text="🔄 Сбросить",
+                        callback_data=f"reject_reset_t{track_idx}_p{plate_idx}"
+                    )
+                ]
+                buttons.append(control_buttons)
     
     # Кнопки подтверждения
     buttons.append([
@@ -311,12 +507,13 @@ def db_management_kb() -> InlineKeyboardMarkup:
     
     Показывает опции:
     - Очистка всех данных (КП, плиты, остатки)
-    - Экспорт данных (будущая функция)
+    - Просмотр остатков (экспорт в Excel)
     - Статистика БД
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🗑️ Очистить все данные", callback_data="db_clear_all")],
+            [InlineKeyboardButton(text="📋 Просмотр остатков", callback_data="db_view_rests")],
             [InlineKeyboardButton(text="📊 Статистика БД", callback_data="db_stats")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="db_back_to_menu")],
         ]
@@ -373,6 +570,19 @@ def cancel_process_kb() -> InlineKeyboardMarkup:
     )
 
 
+def production_filter_kb() -> InlineKeyboardMarkup:
+    """Клавиатура выбора способа фильтрации плит для производства"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📅 По дате", callback_data="filter_by_date")],
+            [InlineKeyboardButton(text="📋 По номерам КП", callback_data="filter_by_kp")],
+            [InlineKeyboardButton(text="📦 Все КП в работе", callback_data="filter_all")],
+            [InlineKeyboardButton(text="👤 По заказчику", callback_data="filter_by_customer")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
+        ]
+    )
+
+
 def archive_sections_kb() -> InlineKeyboardMarkup:
     """
     Клавиатура для выбора раздела архива.
@@ -413,5 +623,250 @@ def kp_details_kb(kp_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📊 Скачать XLSX", callback_data=f"download_xlsx_{kp_id}")],
             [InlineKeyboardButton(text="🗑️ Удалить КП", callback_data=f"delete_kp_{kp_id}")],
             [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="archive_back_to_sections")],
+        ]
+    )
+
+
+def kp_production_details_kb(kp_id: int) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для детального просмотра КП в производстве.
+    
+    Показывает кнопки:
+    - Скачать PDF
+    - Скачать XLSX
+    - Изменить дату (НОВОЕ!)
+    - Назад к списку
+    
+    Args:
+        kp_id: номер КП для формирования callback_data
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Скачать PDF", callback_data=f"download_pdf_{kp_id}")],
+            [InlineKeyboardButton(text="📊 Скачать XLSX", callback_data=f"download_xlsx_{kp_id}")],
+            [InlineKeyboardButton(text="📅 Изменить дату", callback_data=f"change_date_{kp_id}")],
+            [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="kp_in_production")],
+        ]
+    )
+
+
+def instructions_choice_kb() -> InlineKeyboardMarkup:
+    """
+    Клавиатура для выбора роли (Менеджер или Производство).
+    
+    Показывает кнопки:
+    - 👨‍💼 Для Менеджера - инструкция по работе с КП и архивом
+    - 🏭 Для Производства - инструкция по планированию и отчётам
+    - ◀️ Назад в меню - возврат в главное меню
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👨‍💼 Для Менеджера", callback_data="instructions_manager")],
+            [InlineKeyboardButton(text="🏭 Для Производства", callback_data="instructions_production")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="instructions_back_to_menu")],
+        ]
+    )
+
+
+def instructions_back_kb() -> InlineKeyboardMarkup:
+    """
+    Клавиатура для возврата после просмотра инструкции.
+    
+    Показывает кнопки:
+    - 🔙 К выбору роли - вернуться к выбору Менеджер/Производство
+    - 🏠 В главное меню - вернуться в начало
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 К выбору роли", callback_data="instructions_back_to_choice")],
+            [InlineKeyboardButton(text="🏠 В главное меню", callback_data="instructions_back_to_menu")],
+        ]
+    )
+
+
+def plans_list_kb(plans_list: list, active_plan_id: str = None) -> InlineKeyboardMarkup:
+    """
+    Клавиатура со списком всех сохранённых планов.
+    
+    Простыми словами:
+    - Показывает список планов с их названиями
+    - Активный план помечается звёздочкой ⭐
+    - Внизу кнопки "Создать новый план" и "Назад"
+    
+    Args:
+        plans_list: список планов из plans_metadata.json
+        active_plan_id: ID активного плана (помечается звёздочкой)
+        
+    Returns:
+        InlineKeyboardMarkup с кнопками планов
+    """
+    buttons = []
+    
+    if not plans_list:
+        # Если планов нет — показываем сообщение
+        buttons.append([
+            InlineKeyboardButton(
+                text="📭 Нет сохранённых планов",
+                callback_data="no_plans_info"
+            )
+        ])
+    else:
+        # Показываем список планов
+        for plan in plans_list:
+            plan_id = plan.get('id', '')
+            plan_name = plan.get('name', f'План {plan_id}')
+            total_days = plan.get('total_days', 0)
+            total_tracks = plan.get('total_tracks', 0)
+            
+            # Помечаем активный план звёздочкой
+            if plan_id == active_plan_id:
+                emoji = "⭐"
+            else:
+                emoji = "📋"
+            
+            # Формируем текст кнопки
+            button_text = f"{emoji} {plan_name} ({total_days}д, {total_tracks} дор.)"
+            
+            # Обрезаем если слишком длинный
+            if len(button_text) > 50:
+                button_text = button_text[:47] + "..."
+            
+            buttons.append([
+                InlineKeyboardButton(
+                    text=button_text,
+                    callback_data=f"select_plan_{plan_id}"
+                )
+            ])
+    
+    # Кнопка создания нового плана
+    buttons.append([
+        InlineKeyboardButton(
+            text="➕ Создать новый план",
+            callback_data="create_new_plan"
+        )
+    ])
+    
+    # Кнопка "Назад"
+    buttons.append([
+        InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data="back_to_production_menu"
+        )
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def plan_actions_kb(plan_id: str, is_active: bool = False) -> InlineKeyboardMarkup:
+    """
+    Клавиатура действий с выбранным планом.
+    
+    Показывает кнопки:
+    - Открыть календарь плана
+    - Сделать активным (если не активный)
+    - Удалить план
+    - Назад к списку
+    
+    Args:
+        plan_id: ID плана
+        is_active: является ли план активным
+    """
+    buttons = []
+    
+    # Открыть календарь
+    buttons.append([
+        InlineKeyboardButton(
+            text="📅 Открыть календарь",
+            callback_data=f"open_plan_calendar_{plan_id}"
+        )
+    ])
+    
+    # Сделать активным (если не активный)
+    if not is_active:
+        buttons.append([
+            InlineKeyboardButton(
+                text="⭐ Сделать активным",
+                callback_data=f"activate_plan_{plan_id}"
+            )
+        ])
+    
+    # Удалить план
+    buttons.append([
+        InlineKeyboardButton(
+            text="🗑️ Удалить план",
+            callback_data=f"delete_plan_{plan_id}"
+        )
+    ])
+    
+    # Назад к списку
+    buttons.append([
+        InlineKeyboardButton(
+            text="◀️ К списку планов",
+            callback_data="view_all_plans"
+        )
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def confirm_delete_plan_kb(plan_id: str) -> InlineKeyboardMarkup:
+    """
+    Клавиатура подтверждения удаления плана.
+    
+    Args:
+        plan_id: ID плана для удаления
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="⚠️ Да, удалить план",
+                callback_data=f"confirm_delete_plan_{plan_id}"
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="view_all_plans"
+            )],
+        ]
+    )
+
+
+def day_documents_menu_kb(day_number: int, track_numbers: str) -> InlineKeyboardMarkup:
+    """
+    Меню выбора типа документа для дня производства.
+    
+    Простыми словами:
+    - После просмотра состава дня показывает кнопки
+    - Каждая кнопка генерирует определённый тип документа
+    - Пользователь выбирает только нужные документы
+    
+    Args:
+        day_number: номер дня в плане (например, 3)
+        track_numbers: строка с номерами дорожек (например, "7-9" или "7")
+        
+    Returns:
+        InlineKeyboardMarkup с кнопками выбора документов
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"📐 Схема дорожек {track_numbers}",
+                callback_data=f"generate_schema_{day_number}"
+            )],
+            [InlineKeyboardButton(
+                text=f"📊 Детальная разбивка",
+                callback_data=f"generate_breakdown_{day_number}"
+            )],
+            [InlineKeyboardButton(
+                text=f"📋 Файлы формовки",
+                callback_data=f"generate_formovka_{day_number}"
+            )],
+            [InlineKeyboardButton(
+                text="✅ День выполнен",
+                callback_data=f"complete_day_{day_number}"
+            )],
+            [InlineKeyboardButton(
+                text="◀️ Назад к календарю",
+                callback_data="back_to_calendar"
+            )],
         ]
     )

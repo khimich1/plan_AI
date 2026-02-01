@@ -1177,11 +1177,38 @@ async def callback_save_kp_to_db(callback: CallbackQuery, state: FSMContext):
     # Убираем "часики" с кнопки
     await callback.answer()
     
+    # === РАСЧЕТ КОЛИЧЕСТВА ДОРОЖЕК И СРОКОВ ===
+    # Получаем данные КП из состояния
+    data = await state.get_data()
+    order_data = data.get('kp_order_data', [])
+    
+    # Подсчитываем количество дорожек для планирования производства
+    MAX_TRACK_LENGTH = 101.0
+    total_length = 0.0
+    
+    # Суммируем длины всех плит с учетом количества
+    for item in order_data:
+        length = item.get('length_m', 0)
+        qty = item.get('qty', 1)
+        total_length += length * qty
+    
+    # Простой расчет: делим общую длину на максимальную длину дорожки
+    # (это приблизительная оценка, точный расчет делается при планировании производства)
+    estimated_tracks = max(1, int(round(total_length / MAX_TRACK_LENGTH + 0.5)))
+    
+    # Расчет сроков: количество дорожек / 5 (производительность 5 дорожек в день)
+    estimated_days = max(1, int(round(estimated_tracks / 5.0 + 0.5)))
+    
+    logger.debug(f"Расчет сроков: общая длина={total_length:.1f}м, дорожек≈{estimated_tracks}, дней≈{estimated_days}")
+    
     # Редактируем сообщение с кнопками
     await callback.message.edit_text(
         "✅ Сохраняю КП в базу данных...\n\n"
+        f"⏱️ Оценка производства:\n"
+        f"  • Примерно дорожек: {estimated_tracks}\n"
+        f"  • Примерно дней: {estimated_days}\n\n"
         "📅 Укажите сроки выполнения:\n"
-        "(Например: '14 дней', '2 недели', '01.02.2024')"
+        f"(Например: '{estimated_days} дней', '2 недели', '01.02.2024')"
     )
     
     logger.debug("Переход к состоянию waiting_execution_terms")
