@@ -49,6 +49,10 @@ def _count_plates_in_tracks(all_tracks_list: list) -> dict:
     - Возвращает словарь {(length, width, load_code): qty}
     """
     counts = {}  # {(length, width, load_code): qty}
+    # #region agent log
+    import json as _json
+    _debug_log = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+    # #endregion
     
     for track in all_tracks_list:
         for item in track.get('items', []):
@@ -72,8 +76,14 @@ def _count_plates_in_tracks(all_tracks_list: list) -> dict:
             key = (length, width, load_code)
             counts[key] = counts.get(key, 0) + 1
             
-            # DEBUG: логируем плиты с нагрузкой 16п
             plate_name = item.get('plate_name', '')
+            # #region agent log H6: ВСЕ primary плиты с нестандартной шириной (не 1200/720)
+            if width not in [1200, 720, 1080]:
+                with open(_debug_log, 'a', encoding='utf-8') as _f:
+                    _f.write(_json.dumps({"hypothesisId": "H6", "location": "production_export:_count_plates_in_tracks:primary", "message": "Primary плита (нестандартная)", "data": {"plate_name": plate_name, "length": length, "width": width, "load_code": load_code, "mode": mode, "key": str(key)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+            # #endregion
+            
+            # DEBUG: логируем плиты с нагрузкой 16п
             if '16п' in plate_name or load_code == 1600:
                 logger.debug(f"[COUNT_TRACKS] Плита: {plate_name}, длина={length}, ширина={width}, load_code={load_code}, mode={mode}")
             
@@ -87,6 +97,10 @@ def _count_plates_in_tracks(all_tracks_list: list) -> dict:
                 if sec_width > 0:
                     sec_key = (round(sec_length, 2), sec_width, load_code)  # наследуем load_code
                     counts[sec_key] = counts.get(sec_key, 0) + 1
+                    # #region agent log H6: ВСЕ вторичные резы (не только 460/530/665)
+                    with open(_debug_log, 'a', encoding='utf-8') as _f:
+                        _f.write(_json.dumps({"hypothesisId": "H6", "location": "production_export:_count_plates_in_tracks:secondary", "message": "Вторичный рез", "data": {"parent_plate": plate_name, "sec_length": sec_length, "sec_width": sec_width, "load_code": load_code, "sec_key": str(sec_key), "sec_cut_raw": str(sec_cut)[:200]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                    # #endregion
     
     return counts
 
@@ -114,6 +128,10 @@ def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float 
     """
     lost = []
     tracks_used = {}  # Отслеживаем, сколько плит уже "использовали" из tracks
+    # #region agent log
+    import json as _json2
+    _debug_log2 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+    # #endregion
     
     for order in orders_2d:
         length = round(order.get('length', 0), 2)
@@ -152,6 +170,12 @@ def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float 
                     
                     if qty_found >= qty_ordered:
                         break
+        
+        # #region agent log H2: результат поиска для плит 460, 530, 665
+        if width in [460, 530, 665] or '4,6' in plate_name or '5,3' in plate_name or '6,65' in plate_name:
+            with open(_debug_log2, 'a', encoding='utf-8') as _f2:
+                _f2.write(_json2.dumps({"hypothesisId": "H2", "location": "production_export:_find_lost_plates", "message": "Поиск плиты в tracks", "data": {"plate_name": plate_name, "kp_id": kp_id, "length": length, "width": width, "load_code": load_code, "qty_ordered": qty_ordered, "qty_found": qty_found, "is_lost": qty_found < qty_ordered}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+        # #endregion
         
         # Если нашли меньше, чем заказано — плиты потеряны
         if qty_found < qty_ordered:

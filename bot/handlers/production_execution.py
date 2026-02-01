@@ -1,5 +1,6 @@
 """Основная логика планирования производства - оптимизация и распределение по дням"""
 import asyncio
+import json
 import logging
 import sqlite3
 import math
@@ -164,6 +165,10 @@ async def load_and_plan_production(message: Message, state: FSMContext):
     
     # === ДАЛЬШЕ ВСЯ ТЕКУЩАЯ ЛОГИКА ===
     try:
+        # #region agent log
+        _dl = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H1", "location": "production_execution.py:try_start", "message": "planning_try_start", "data": {"filter_method": filter_method, "len_kp_list": len(kp_list)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        # #endregion
         # === ШАГ 2: СОБИРАЕМ ПЛИТЫ ===
         plates_by_date_and_reinforcement = defaultdict(lambda: defaultdict(list))
         
@@ -251,7 +256,9 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         plates_for_optimizer = []
         
         plita_db_path = str(PROJECT_ROOT / 'plita.db')
-        
+        # #region agent log
+        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H2", "location": "production_execution.py:before_rests", "message": "before_find_matching_rests", "data": {"len_selected_plates": len(selected_plates), "plita_db_exists": __import__("os").path.exists(plita_db_path)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        # #endregion
         for plate_data in selected_plates:
             length_m = plate_data['length']
             width_mm = plate_data['width']
@@ -336,7 +343,9 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             return
         
         selected_plates = plates_for_optimizer
-        
+        # #region agent log
+        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H3", "location": "production_execution.py:before_optimizer", "message": "before_optimizer", "data": {"len_plates_for_optimizer": len(plates_for_optimizer)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        # #endregion
         await message.answer("⏳ Запускаю оптимизацию раскроя...")
         
         # === ШАГ 4: ОПТИМИЗАЦИЯ ===
@@ -413,7 +422,9 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             optimize_with_cascading_longitudinal_cuts,
             orders_2d=orders_2d
         )
-        
+        # #region agent log
+        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H3", "location": "production_execution.py:after_optimizer", "message": "after_optimizer", "data": {"has_result": bool(optimization_result), "total_plates": optimization_result.get("total_plates", 0) if optimization_result else 0}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        # #endregion
         if not optimization_result or optimization_result.get('total_plates', 0) == 0:
             await message.answer(
                 "❌ Оптимизация не дала результатов.",
@@ -577,9 +588,14 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         
         from viz_modules.layout_sequence import build_layout_sequence
         from core.visualization import split_sequence_into_tracks
-        
+        # #region agent log
+        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H4", "location": "production_execution.py:before_build_layout", "message": "before_build_layout", "data": {}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        # #endregion
         seq = build_layout_sequence()
         all_tracks_list = split_sequence_into_tracks(seq)
+        # #region agent log
+        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H4", "location": "production_execution.py:after_split_tracks", "message": "after_split_tracks", "data": {"tracks_count": len(all_tracks_list)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        # #endregion
 
         # === ШАГ 6.5: ЗАЩИТА ОТ ПОТЕРИ ПЛИТ (РЕСКЬЮ) ===
         def _count_tracks_for_rescue(tracks_list):
@@ -735,6 +751,9 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         )
         
         # Рассчитываем days_info с глобальной загруженностью для новых дат
+        # #region agent log
+        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H5", "location": "production_execution.py:before_global_occupancy", "message": "before_global_occupancy", "data": {"total_days": total_days}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        # #endregion
         global_occupancy = get_global_day_occupancy()
         
         # Создаём days_info для каждого дня нового плана
@@ -825,6 +844,9 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         await state.set_state(ProductionStates.waiting_day_selection)
         
     except Exception as e:
+        # #region agent log
+        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H_exc", "location": "production_execution.py:except", "message": "planning_exception", "data": {"exc_type": type(e).__name__, "exc_msg": str(e)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        # #endregion
         logger.exception(f"Ошибка при планировании производства: {e}")
         await message.answer(
             "❌ Ошибка при планировании производства.\n\n"

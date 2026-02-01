@@ -253,6 +253,20 @@ def get_active_plan() -> Optional[dict]:
     return load_plan(active_id)
 
 
+def get_all_active_plan_ids() -> List[str]:
+    """
+    Возвращает список ID всех планов, которые сохранены в metadata.
+    
+    Используется как fallback для заполнения plan_ids при завершении дня,
+    если source_plans пуст.
+    
+    Returns:
+        list: Список plan_id из metadata (может быть пуст)
+    """
+    metadata = load_plans_metadata()
+    return list(metadata.get('plans', {}).keys())
+
+
 def distribute_tracks_by_days(
     tracks_list: list,
     start_date: str,
