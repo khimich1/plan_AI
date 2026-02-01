@@ -19,6 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.gantt_excel import create_gantt_excel
 from core import kp_db
+import core.config_and_data as cfg
 
 from ..keyboards import main_menu_kb, calendar_days_kb
 from ..bot_config import OUTPUTS_DIR_STR
@@ -27,10 +28,148 @@ from ..bot_config import OUTPUTS_DIR_STR
 from .plan_manager import (
     get_active_plan_id, add_tracks_to_plan, format_plan_stats_message,
     get_all_tracks_from_plan, get_global_days_info, get_global_day_occupancy,
-    MAX_TRACKS_PER_DAY, get_all_plans_gantt_data, convert_lookup_keys_to_tuples
+    MAX_TRACKS_PER_DAY, get_all_plans_gantt_data, convert_lookup_keys_to_tuples,
+    save_plan, update_plan_metadata, set_active_plan, get_plan_path
 )
 
 router = Router()
+
+
+# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ЗАЩИТЫ ОТ ПОТЕРИ ПЛИТ ===
+
+def _count_plates_in_tracks(all_tracks_list: list) -> dict:
+    """
+    Подсчитывает плиты в tracks с группировкой по (length, width, load_code).
+    
+    Простыми словами:
+    - Проходит по всем дорожкам и плитам
+    - Считает, сколько плит каждого размера И load_code попало в план
+    - ИСПРАВЛЕНИЕ: Также считает плиты из secondary_cuts (вторичных резов)
+    - ИСПРАВЛЕНИЕ: Теперь ключ включает load_code для различения плит с разной нагрузкой
+    - Возвращает словарь {(length, width, load_code): qty}
+    """
+    counts = {}  # {(length, width, load_code): qty}
+    
+    for track in all_tracks_list:
+        for item in track.get('items', []):
+            if not item:
+                continue
+            
+            length = round(item.get('length', 0), 2)
+            load_code = cfg.normalize_load_code(item.get('load_code', 8))  # ИСПРАВЛЕНИЕ: получаем load_code
+            
+            # Определяем ширину в зависимости от mode
+            mode = item.get('mode', 'solid')
+            if mode == 'split':
+                width = round(item.get('main_w', 1.2) * 1000)  # round для корректного округления float
+            elif mode == 'transverse':
+                width = round(item.get('width', 1.2) * 1000)
+            else:
+                # solid mode - берём width из поля (ИСПРАВЛЕНИЕ: учитываем реальную ширину)
+                width = round(item.get('width', 1.2) * 1000)
+            
+            # ИСПРАВЛЕНИЕ: ключ теперь включает load_code
+            key = (length, width, load_code)
+            counts[key] = counts.get(key, 0) + 1
+            
+            # DEBUG: логируем плиты с нагрузкой 16п
+            plate_name = item.get('plate_name', '')
+            if '16п' in plate_name or load_code == 1600:
+                logger.debug(f"[COUNT_TRACKS] Плита: {plate_name}, длина={length}, ширина={width}, load_code={load_code}, mode={mode}")
+            
+            # НОВОЕ: Плиты из вторичных резов (secondary_cuts)
+            # Эти плиты получены из остатков primary плит и тоже должны учитываться
+            # Примечание: secondary_cuts наследуют load_code от родительской плиты
+            for sec_cut in item.get('secondary_cuts', []) or []:
+                sec_width = round(sec_cut.get('width', 0) * 1000)  # round для корректного округления
+                # Длина: если есть target_length (поперечный рез), иначе длина родительской плиты
+                sec_length = sec_cut.get('target_length') or length
+                if sec_width > 0:
+                    sec_key = (round(sec_length, 2), sec_width, load_code)  # наследуем load_code
+                    counts[sec_key] = counts.get(sec_key, 0) + 1
+    
+    return counts
+
+
+def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float = 0.03) -> list:
+    """
+    Находит плиты из orders_2d, которые не попали в tracks.
+    
+    Простыми словами:
+    - Для каждого заказа проверяет, сколько плит попало в tracks
+    - Если попало меньше, чем заказано — плиты "потеряны"
+    - Возвращает список потерянных плит для возврата в производство
+    
+    ИСПРАВЛЕНИЕ: Теперь учитывает load_code для различения плит с разной нагрузкой:
+    - Плиты с одинаковыми размерами, но разным load_code (8п vs 16п) учитываются отдельно
+    - Плита 33,8-12-16п НЕ может быть использована для выполнения заказа 33,8-12-8п
+    
+    Аргументы:
+        orders_2d: список заказов [{'length', 'width', 'qty', 'load_code', 'kp_id', 'plate_name'}, ...]
+        plates_in_tracks: словарь {(length, width, load_code): qty} — что попало в tracks
+        tolerance: допуск по длине (метры) для fuzzy-поиска
+    
+    Возвращает:
+        список потерянных плит [{'kp_id', 'plate_name', 'qty_lost'}, ...]
+    """
+    lost = []
+    tracks_used = {}  # Отслеживаем, сколько плит уже "использовали" из tracks
+    
+    for order in orders_2d:
+        length = round(order.get('length', 0), 2)
+        width = order.get('width', 1200)
+        load_code = cfg.normalize_load_code(order.get('load_code', 8))  # ИСПРАВЛЕНИЕ: получаем load_code
+        qty_ordered = order.get('qty', 1)
+        kp_id = order.get('kp_id')
+        plate_name = order.get('plate_name', '')
+        
+        # Ищем в tracks с fuzzy по длине И точным совпадением по load_code
+        qty_found = 0
+        
+        for track_key, t_qty in plates_in_tracks.items():
+            # Распаковываем ключ (может быть 2 или 3 элемента для обратной совместимости)
+            if len(track_key) == 3:
+                t_len, t_width, t_load_code = track_key
+            else:
+                t_len, t_width = track_key
+                t_load_code = 8  # значение по умолчанию для старых данных
+            t_load_code = cfg.normalize_load_code(t_load_code)
+            
+            # ИСПРАВЛЕНИЕ: Проверяем совпадение по load_code
+            load_code_matches = (t_load_code == load_code)
+            
+            # Проверяем совпадение по ширине с tolerance 20мм
+            width_matches = abs(t_width - width) <= 20
+            
+            if load_code_matches and width_matches and abs(t_len - length) <= tolerance:
+                already_used = tracks_used.get(track_key, 0)
+                available = t_qty - already_used
+                
+                if available > 0:
+                    take = min(available, qty_ordered - qty_found)
+                    qty_found += take
+                    tracks_used[track_key] = already_used + take
+                    
+                    if qty_found >= qty_ordered:
+                        break
+        
+        # Если нашли меньше, чем заказано — плиты потеряны
+        if qty_found < qty_ordered:
+            logger.warning(f"[LOST_PLATE] Потеряна: {plate_name} x{qty_ordered - qty_found} "
+                          f"(заказ: длина={length}, ширина={width}, load_code={load_code}, qty={qty_ordered}, найдено={qty_found})")
+            # Логируем доступные ключи с похожей длиной
+            similar_keys = [(k, v) for k, v in plates_in_tracks.items() 
+                           if abs(k[0] - length) <= tolerance * 2]
+            if similar_keys:
+                logger.warning(f"[LOST_PLATE]   Похожие в tracks: {similar_keys[:5]}")
+            lost.append({
+                'kp_id': kp_id,
+                'plate_name': plate_name,
+                'qty_lost': qty_ordered - qty_found,
+                'load_code': load_code  # ИСПРАВЛЕНИЕ: сохраняем load_code для отладки
+            })
+    
+    return lost
 
 
 @router.callback_query(F.data == "export_gantt")
@@ -241,9 +380,12 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.answer("💾 Сохраняю дорожки в план...")
     
+    plan_saved = False  # Флаг для отката
+    plan_id = None
+    
     try:
         
-        # Добавляем дорожки к плану (или создаём новый)
+        # ШАБЛОН ИСПРАВЛЕНИЯ: Подготавливаем план БЕЗ сохранения на диск
         updated_plan, stats = add_tracks_to_plan(
             plan_id=active_plan_id,
             new_tracks_list=all_tracks_list,
@@ -252,19 +394,60 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
             plate_lookup_exact=plate_lookup_exact,
             plate_lookup_by_length=plate_lookup_by_length,
             orders_2d=orders_2d,
-            optimization_result=optimization_result
+            optimization_result=optimization_result,
+            auto_save=False  # НЕ сохраняем автоматически!
         )
         
-        # === ПОМЕЧАЕМ ПЛИТЫ КАК "В ПЛАНЕ" ===
-        # Проходим по всем заказам и помечаем плиты в БД
         db_path = str(PROJECT_ROOT / "plita.db")
         plan_id = updated_plan['id']
         
+        # === ИСПРАВЛЕНО: СНАЧАЛА ОПРЕДЕЛЯЕМ ПОТЕРЯННЫЕ ПЛИТЫ ===
+        # Подсчитываем, сколько плит реально попало в tracks ПЕРЕД пометкой
+        plates_in_tracks = _count_plates_in_tracks(all_tracks_list)
+        lost_plates = _find_lost_plates(orders_2d, plates_in_tracks, tolerance=0.03)
+        
+        # Создаём множество потерянных плит для быстрой проверки
+        lost_plates_set = set()
+        if lost_plates:
+            for lp in lost_plates:
+                # Ключ: (kp_id, plate_name) для идентификации потерянной плиты
+                lost_plates_set.add((lp.get('kp_id'), lp.get('plate_name')))
+            lost_info = ", ".join([f"{lp['plate_name']} x{lp['qty_lost']}" for lp in lost_plates[:3]])
+            if len(lost_plates) > 3:
+                lost_info += f" и ещё {len(lost_plates) - 3}..."
+            logger.warning(f"[SAVE_PLAN] Обнаружены потерянные плиты (НЕ будут помечены как 'в плане'): {lost_info}")
+        
+        # === ТЕПЕРЬ ПОМЕЧАЕМ ТОЛЬКО ПЛИТЫ, КОТОРЫЕ В ПЛАНЕ ===
+        # НЕ помечаем потерянные плиты - они остаются "в производстве"
         plates_marked = 0
+        plates_failed = 0
+        plates_skipped = 0  # Пропущенные (потерянные)
+        
         for order in orders_2d:
             kp_id = order.get('kp_id')
             plate_name = order.get('plate_name')
             qty = order.get('qty', 1)
+            
+            # Проверяем, не потеряна ли эта плита
+            order_key = (kp_id, plate_name)
+            
+            if order_key in lost_plates_set:
+                # Находим, сколько плит потеряно для этого заказа
+                qty_lost = 0
+                for lp in lost_plates:
+                    if lp.get('kp_id') == kp_id and lp.get('plate_name') == plate_name:
+                        qty_lost = lp.get('qty_lost', qty)
+                        break
+                
+                qty_to_mark = qty - qty_lost
+                if qty_to_mark <= 0:
+                    plates_skipped += 1
+                    logger.info(f"[SAVE_PLAN] Пропускаем потерянную плиту: КП #{kp_id}, {plate_name} x{qty} (вся потеряна)")
+                    continue
+                else:
+                    # Частичная потеря - помечаем только то, что попало в план
+                    logger.info(f"[SAVE_PLAN] Частичная потеря: КП #{kp_id}, {plate_name} - помечаем {qty_to_mark} из {qty}")
+                    qty = qty_to_mark
             
             if kp_id and plate_name and qty > 0:
                 success = kp_db.mark_plates_as_planned(
@@ -276,8 +459,27 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                 )
                 if success:
                     plates_marked += 1
+                else:
+                    plates_failed += 1
+                    logger.warning(f"[SAVE_PLAN] Не удалось пометить плиту: КП #{kp_id}, {plate_name} x{qty}")
         
         logger.info(f"[SAVE_PLAN] Помечено {plates_marked} позиций плит как 'в плане' для плана {plan_id}")
+        if plates_skipped > 0:
+            logger.info(f"[SAVE_PLAN] Пропущено {plates_skipped} потерянных плит (остаются 'в производстве')")
+        
+        # Если не удалось пометить плиты - откатываем и не сохраняем план
+        if plates_failed > 0:
+            logger.error(f"[SAVE_PLAN] Не удалось пометить {plates_failed} плит. Откатываю помеченные плиты...")
+            kp_db.return_plan_plates_to_production(plan_id, db_path)
+            raise Exception(f"Не удалось пометить {plates_failed} плит в БД")
+        
+        # === ТЕПЕРЬ СОХРАНЯЕМ ПЛАН НА ДИСК ===
+        # Плиты уже помечены в БД, теперь можно безопасно сохранить план
+        save_plan(updated_plan)
+        update_plan_metadata(updated_plan)
+        set_active_plan(plan_id)
+        plan_saved = True  # Отмечаем, что план сохранён
+        logger.info(f"[SAVE_PLAN] План {plan_id} успешно сохранён на диск")
         
         # Сохраняем ID активного плана в state и устанавливаем флаг from_saved_plan
         await state.update_data(
@@ -358,8 +560,31 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
         
     except Exception as e:
         logger.exception(f"Ошибка при сохранении плана: {e}")
+        
+        # === ОТКАТ ИЗМЕНЕНИЙ ===
+        # Если плиты были помечены, но сохранение плана не удалось - возвращаем плиты
+        if plan_id:
+            try:
+                db_path = str(PROJECT_ROOT / "plita.db")
+                recovered = kp_db.return_plan_plates_to_production(plan_id, db_path)
+                if recovered > 0:
+                    logger.info(f"[ROLLBACK] Возвращено {recovered} плит в производство")
+            except Exception as rollback_error:
+                logger.error(f"[ROLLBACK] Ошибка при откате плит: {rollback_error}")
+        
+        # Если план был сохранён на диск, но потом произошла ошибка - удаляем файл
+        if plan_saved and plan_id:
+            try:
+                plan_path = get_plan_path(plan_id)
+                if plan_path.exists():
+                    os.remove(plan_path)
+                    logger.info(f"[ROLLBACK] Удалён файл плана {plan_id}")
+            except Exception as delete_error:
+                logger.error(f"[ROLLBACK] Ошибка при удалении файла плана: {delete_error}")
+        
         await callback.message.answer(
             "❌ Не удалось сохранить план.\n"
+            "Все изменения отменены.\n"
             "Подробности в logs/bot.log."
         )
     

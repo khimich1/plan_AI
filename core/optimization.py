@@ -170,6 +170,67 @@ def optimize_cuts_pulp(orders: dict | None = None) -> dict:
 
 # ==================== СОВРЕМЕННЫЕ ФУНКЦИИ ОПТИМИЗАЦИИ ====================
 
+def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
+    """
+    Возвращает информацию о следующем КП с qty_remaining > 0 и уменьшает счётчик.
+    
+    Простыми словами:
+    - Ищет в списке записей для данного (length, width, load_code) первую запись, 
+      у которой ещё есть неназначенные плиты (qty_remaining > 0)
+    - Уменьшает счётчик qty_remaining на 1
+    - Возвращает копию информации о КП
+    
+    Args:
+        order_info_list: словарь {(length, width, load_code): [список записей КП]}
+        key: кортеж (length, width, load_code)
+    
+    Returns:
+        dict: информация о КП (kp_id, customer, kp_date, plate_name, load_code) или пустой словарь
+    """
+    entries = order_info_list.get(key, [])
+    for entry in entries:
+        if entry.get('qty_remaining', 0) > 0:
+            entry['qty_remaining'] -= 1
+            # Возвращаем копию без qty_remaining (он служебный)
+            return {
+                'kp_id': entry.get('kp_id'),
+                'customer': entry.get('customer'),
+                'kp_date': entry.get('kp_date'),
+                'plate_name': entry.get('plate_name'),
+                'load_code': entry.get('load_code'),
+                'reinforcement': entry.get('reinforcement')
+            }
+    return {}
+
+
+def _peek_order_info(order_info_list: dict, key: tuple) -> dict:
+    """
+    Возвращает информацию о первом КП с qty_remaining > 0 БЕЗ уменьшения счётчика.
+    
+    Используется для получения информации при создании primary_options,
+    когда ещё не известно, будет ли опция использована.
+    
+    Args:
+        order_info_list: словарь {(length, width, load_code): [список записей КП]}
+        key: кортеж (length, width, load_code)
+    
+    Returns:
+        dict: информация о КП (включая load_code) или пустой словарь
+    """
+    entries = order_info_list.get(key, [])
+    for entry in entries:
+        if entry.get('qty_remaining', 0) > 0:
+            return {
+                'kp_id': entry.get('kp_id'),
+                'customer': entry.get('customer'),
+                'kp_date': entry.get('kp_date'),
+                'plate_name': entry.get('plate_name'),
+                'load_code': entry.get('load_code'),
+                'reinforcement': entry.get('reinforcement')
+            }
+    return {}
+
+
 def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                                min_useful_width: int = 200,
                                opt_config: OptimizationConfig = None) -> dict:
@@ -215,28 +276,32 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     for order in orders_2d:
         print(f"  {order['qty']}x {order['length']}м x {order['width']}мм")
     
-    # 1. ПОДГОТОВКА: Группируем спрос по (length, width)
-    demand_2d = {}  # {(length, width): qty}
+    # 1. ПОДГОТОВКА: Группируем спрос по (length, width, load_code)
+    # ИСПРАВЛЕНИЕ: Добавляем load_code в ключ для различения плит с одинаковыми размерами, но разной нагрузкой
+    demand_2d = {}  # {(length, width, load_code): qty}
     for order in orders_2d:
-        key = (order['length'], order['width'])
+        load_code = order.get('load_code', 800)
+        key = (order['length'], order['width'], load_code)
         demand_2d[key] = demand_2d.get(key, 0) + order['qty']
     
-    # 1.5 НОВОЕ: Создаём маппинг (length, width) -> информация о КП
-    # Это нужно для точного определения заказчика в диаграмме Ганта
-    order_info_map = {}  # {(length, width): {'kp_id', 'customer', 'kp_date', 'plate_name'}}
+    # 1.5 НОВОЕ: Создаём маппинг (length, width, load_code) -> СПИСОК информации о КП
+    # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code для различения плит с разной нагрузкой
+    order_info_list = {}  # {(length, width, load_code): [список записей для каждого КП]}
     for order in orders_2d:
-        key = (order['length'], order['width'])
-        # Сохраняем информацию о первом заказе с такими параметрами
-        # (если несколько заказов одинаковые, берём первый)
-        if key not in order_info_map:
-            order_info_map[key] = {
-                'kp_id': order.get('kp_id'),
-                'customer': order.get('customer', 'неизвестно'),
-                'kp_date': order.get('kp_date', 'неизвестно'),
-                'plate_name': order.get('plate_name', ''),
-                'load_code': order.get('load_code', 8),
-                'reinforcement': order.get('reinforcement', 0)
-            }
+        load_code = order.get('load_code', 800)
+        key = (order['length'], order['width'], load_code)
+        if key not in order_info_list:
+            order_info_list[key] = []
+        # Добавляем запись для КАЖДОГО заказа с qty_remaining
+        order_info_list[key].append({
+            'kp_id': order.get('kp_id'),
+            'customer': order.get('customer', 'неизвестно'),
+            'kp_date': order.get('kp_date', 'неизвестно'),
+            'plate_name': order.get('plate_name', ''),
+            'load_code': load_code,
+            'reinforcement': order.get('reinforcement', 0),
+            'qty_remaining': order.get('qty', 1)  # Сколько плит этого КП осталось назначить
+        })
     
     tolerance_length = 0.01  # ±10мм по длине
     tolerance_width = 20     # ±20мм по ширине
@@ -275,9 +340,10 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     
     solid_widths = sorted(set([plate_width, 1080]))
 
-    for (length, width), qty in demand_2d.items():
-        # Получаем информацию о КП для этой плиты
-        order_info = order_info_map.get((length, width), {})
+    for (length, width, load_code), qty in demand_2d.items():
+        # Получаем информацию о КП для этой плиты (без уменьшения счётчика)
+        # ИСПРАВЛЕНИЕ: Ключ теперь включает load_code
+        order_info = _peek_order_info(order_info_list, (length, width, load_code))
         
         # Вариант 1: Плита БЕЗ реза (ширины из списка solid_widths)
         # Эти ширины НЕ РЕЖУТСЯ и используются как есть
@@ -288,6 +354,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'main': width,
                 'rest': 0,
                 'type': 'solid',  # Без резов
+                'load_code': order_info.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
                 'kp_id': order_info.get('kp_id'),
                 'customer': order_info.get('customer'),
                 'kp_date': order_info.get('kp_date'),
@@ -307,6 +374,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'main': width,
                 'rest': rest,
                 'type': 'direct',  # Прямой рез
+                'load_code': order_info.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
                 'kp_id': order_info.get('kp_id'),
                 'customer': order_info.get('customer'),
                 'kp_date': order_info.get('kp_date'),
@@ -329,6 +397,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                             'type': 'indirect',       # Непрямой рез через narrowing
                             'target_width': width,    # Целевая ширина: 460мм (что нужно)
                             'narrowing_waste': waste, # Отход при сужении: 20мм
+                            'load_code': order_info.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
                             'kp_id': order_info.get('kp_id'),
                             'customer': order_info.get('customer'),
                             'kp_date': order_info.get('kp_date'),
@@ -378,8 +447,9 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         if source_width < min_useful_width:
             continue
         
-        # Для каждого остатка проверяем все целевые (length, width)
-        for (target_length, target_width), qty in demand_2d.items():
+        # Для каждого остатка проверяем все целевые (length, width, load_code)
+        # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code
+        for (target_length, target_width, target_load_code), qty in demand_2d.items():
             
             # Вариант A: Множественная резка по ширине (одинаковая длина)
             # ВАЖНО: Нельзя получить больше, чем есть! target_width <= source_width
@@ -405,7 +475,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                             'waste': waste,
                             'type': 'multiple',
                             'source_ids': source_ids,
-                            'target_order_key': (target_length, target_width)  # ✅ НОВОЕ: Сохраняем ключ заказа
+                            'target_order_key': (target_length, target_width, target_load_code)  # ИСПРАВЛЕНИЕ: Добавляем load_code
                         })
                         sec_id += 1
 
@@ -432,7 +502,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                             'length_waste': waste_length,
                             'type': 'multiple_transverse',  # Комбинированный тип
                             'source_ids': source_ids,
-                            'target_order_key': (target_length, target_width)  # ✅ НОВОЕ: Сохраняем ключ заказа
+                            'target_order_key': (target_length, target_width, target_load_code)  # ИСПРАВЛЕНИЕ: Добавляем load_code
                         })
                         sec_id += 1
             
@@ -451,7 +521,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                         'waste': waste,
                         'type': 'narrowing',
                         'source_ids': source_ids,
-                        'target_order_key': (target_length, target_width)  # ✅ НОВОЕ: Сохраняем ключ заказа
+                        'target_order_key': (target_length, target_width, target_load_code)  # ИСПРАВЛЕНИЕ: Добавляем load_code
                     })
                     sec_id += 1
             
@@ -474,7 +544,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     'length_waste': length_waste,
                     'type': 'transverse',
                     'source_ids': source_ids,
-                    'target_order_key': (target_length, target_width)  # ✅ НОВОЕ: Сохраняем ключ заказа
+                    'target_order_key': (target_length, target_width, target_load_code)  # ИСПРАВЛЕНИЕ: Добавляем load_code
                 })
                 sec_id += 1
     
@@ -534,57 +604,83 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     x_sec = {opt['id']: LpVariable(f"sec_{opt['id']}", lowBound=0, cat=LpInteger) 
              for opt in secondary_options}
     
-    # 5. ОГРАНИЧЕНИЯ: Покрытие спроса по (length, width)
+    # 5. ОГРАНИЧЕНИЯ: Покрытие спроса по (length, width, load_code)
+    # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code для различения плит с разной нагрузкой
     BIG_M = 1e6
     surplus_vars = []
-    for (target_length, target_width), qty in demand_2d.items():
+    for (target_length, target_width, target_load_code), qty in demand_2d.items():
         sources = []
         
         # Источник 1a: Первичные резы ПРЯМЫЕ (type='direct' или 'solid')
         # Эти резы дают целевую ширину напрямую (main == target_width)
+        # ИСПРАВЛЕНИЕ: Проверяем также load_code
         for opt in primary_options:
             if (abs(opt['length'] - target_length) <= tolerance_length and 
                 abs(opt['main'] - target_width) <= tolerance_width and
-                opt.get('type') in ['direct', 'solid']):
+                opt.get('type') in ['direct', 'solid'] and
+                opt.get('load_code', 800) == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
                 sources.append(x_prim[opt['id']])
         
         # Источник 1b: Первичные резы НЕПРЯМЫЕ (type='indirect', через narrowing)
         # Эти резы дают целевую ширину через сужение остатка
+        # ИСПРАВЛЕНИЕ: Проверяем также load_code
         for opt in primary_options:
             if (abs(opt['length'] - target_length) <= tolerance_length and
                 opt.get('type') == 'indirect' and
-                abs(opt.get('target_width', 0) - target_width) <= tolerance_width):
+                abs(opt.get('target_width', 0) - target_width) <= tolerance_width and
+                opt.get('load_code', 800) == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
                 # Непрямой рез: остаток автоматически сужается до целевой ширины
                 sources.append(x_prim[opt['id']])
         
         # Источник 2: Вторичные резы
+        # ИСПРАВЛЕНИЕ: Для secondary резов проверяем target_order_key который включает load_code
         for opt in secondary_options:
+            opt_target_key = opt.get('target_order_key', (0, 0, 800))
+            if len(opt_target_key) == 3:
+                opt_target_load = opt_target_key[2]
+            else:
+                opt_target_load = 800  # Обратная совместимость
             if (abs(opt['output_length'] - target_length) <= tolerance_length and 
-                abs(opt['output_width'] - target_width) <= tolerance_width):
+                abs(opt['output_width'] - target_width) <= tolerance_width and
+                opt_target_load == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
                 sources.append(x_sec[opt['id']] * opt['pieces'])
         
         if sources:
             length_label = str(target_length).replace('.', '_')
-            surplus = LpVariable(f"surplus_{length_label}_{target_width}", lowBound=0, cat=LpInteger)
+            surplus = LpVariable(f"surplus_{length_label}_{target_width}_{target_load_code}", lowBound=0, cat=LpInteger)
             surplus_vars.append(surplus)
-            prob += lpSum(sources) == qty + surplus, f"demand_{target_length}m_{target_width}mm"
+            prob += lpSum(sources) == qty + surplus, f"demand_{target_length}m_{target_width}mm_{target_load_code}"
+        else:
+            # === КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: НЕТ ИСТОЧНИКОВ ДЛЯ СПРОСА ===
+            # Эта плита НЕ МОЖЕТ быть произведена из доступных опций!
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[OPT_2D] ❌ НЕТ ИСТОЧНИКОВ для плиты: {target_length}м x {target_width}мм (load={target_load_code}) x{qty}шт!")
+            logger.error(f"[OPT_2D]    Эта плита НЕ БУДЕТ включена в план!")
+            logger.error(f"[OPT_2D]    Возможные причины:")
+            logger.error(f"[OPT_2D]      - Нестандартная ширина {target_width}мм не поддерживается NARROWING_TABLE")
+            logger.error(f"[OPT_2D]      - Нет подходящих исходных плит для реза")
+            logger.error(f"[OPT_2D]      - Несовместимый load_code={target_load_code}")
+            print(f"[OPT_2D] ⚠️ ВНИМАНИЕ: Плита {target_length}м x {target_width}мм НЕ МОЖЕТ быть произведена!")
     
     # 5.5 ПРИОРИТЕТНОЕ ОГРАНИЧЕНИЕ: Solid плиты ОБЯЗАТЕЛЬНЫ для полных ширин (1200/1080мм)!
+    # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code
     print(f"[OPT_2D] Проверяем приоритетные ограничения для solid-плит: {solid_widths}")
-    for (target_length, target_width), qty in demand_2d.items():
+    for (target_length, target_width, target_load_code), qty in demand_2d.items():
         if target_width in solid_widths:
             solid_sources = []
             for opt in primary_options:
                 if (abs(opt['length'] - target_length) <= tolerance_length and 
                     opt['main'] == target_width and
                     opt.get('type') == 'solid' and
-                    opt['main'] == target_width):
+                    opt['main'] == target_width and
+                    opt.get('load_code', 800) == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
                     solid_sources.append(x_prim[opt['id']])
             
             if solid_sources:
                 # ЖЁСТКОЕ требование: удовлетворить спрос ТОЛЬКО solid-плитами!
-                prob += lpSum(solid_sources) >= qty, f"solid_priority_{target_length}m_{target_width}mm"
-                print(f"[OPT_2D] ✓ ПРИОРИТЕТ: {qty} плит {target_width}мм × {target_length}м ОБЯЗАТЕЛЬНО solid (без реза)")
+                prob += lpSum(solid_sources) >= qty, f"solid_priority_{target_length}m_{target_width}mm_{target_load_code}"
+                print(f"[OPT_2D] ✓ ПРИОРИТЕТ: {qty} плит {target_width}мм × {target_length}м (load={target_load_code}) ОБЯЗАТЕЛЬНО solid")
     
     # 6. ОГРАНИЧЕНИЯ: Баланс остатков
     for (source_length, source_width), source_ids in possible_rests.items():
@@ -738,31 +834,45 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     }
     
     # Первичные резы
+    # ИСПРАВЛЕНИЕ: Для каждой плиты получаем свой kp_id из order_info_list!
+    # Раньше все плиты с одинаковыми (length, width) получали kp_id первого КП.
+    # Теперь каждая плита создаётся отдельно со своим kp_id.
     for opt in primary_options:
         qty = int(round(value(x_prim[opt['id']])))
         if qty > 0:
-            result['primary_cuts'].append({
-                'width': opt['main'],
-                'rest': opt['rest'],
-                'qty': qty,
-                'lengths': [opt['length']] * qty,
-                'kp_id': opt.get('kp_id'),
-                'customer': opt.get('customer'),
-                'kp_date': opt.get('kp_date'),
-                'plate_name': opt.get('plate_name')
-            })
-            result['total_plates'] += qty
-            
+            # Создаём ОТДЕЛЬНУЮ запись для КАЖДОЙ плиты
             for _ in range(qty):
+                # Получаем информацию о следующем КП с уменьшением счётчика
+                # ИСПРАВЛЕНИЕ: Для indirect типа используем target_width (заказанная ширина),
+                # для direct/solid — main (они совпадают с заказом)
+                lookup_width = opt.get('target_width', opt['main']) if opt.get('type') == 'indirect' else opt['main']
+                # ИСПРАВЛЕНИЕ: Добавляем load_code в ключ поиска
+                lookup_load_code = opt.get('load_code', 800)
+                plate_info = _get_next_order_info(order_info_list, (opt['length'], lookup_width, lookup_load_code))
+                
+                result['primary_cuts'].append({
+                    'width': opt['main'],
+                    'rest': opt['rest'],
+                    'qty': 1,  # Каждая плита отдельно!
+                    'lengths': [opt['length']],
+                    'load_code': plate_info.get('load_code', 800) if plate_info else opt.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
+                    'kp_id': plate_info.get('kp_id') if plate_info else opt.get('kp_id'),
+                    'customer': plate_info.get('customer') if plate_info else opt.get('customer'),
+                    'kp_date': plate_info.get('kp_date') if plate_info else opt.get('kp_date'),
+                    'plate_name': plate_info.get('plate_name') if plate_info else opt.get('plate_name')
+                })
+                result['total_plates'] += 1
+                
                 result['plate_assignments'].append({
                     'length': opt['length'],
                     'width': opt['main'],
                     'source': 'primary',
                     'rest_width': opt['rest'],
-                    'kp_id': opt.get('kp_id'),
-                    'customer': opt.get('customer'),
-                    'kp_date': opt.get('kp_date'),
-                    'plate_name': opt.get('plate_name')
+                    'load_code': plate_info.get('load_code', 800) if plate_info else opt.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
+                    'kp_id': plate_info.get('kp_id') if plate_info else opt.get('kp_id'),
+                    'customer': plate_info.get('customer') if plate_info else opt.get('customer'),
+                    'kp_date': plate_info.get('kp_date') if plate_info else opt.get('kp_date'),
+                    'plate_name': plate_info.get('plate_name') if plate_info else opt.get('plate_name')
                 })
     
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
@@ -822,30 +932,13 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
     
     # Вторичные резы
+    # ИСПРАВЛЕНИЕ: Для каждой плиты из вторичного реза получаем свой kp_id!
     for opt in secondary_options:
         qty = int(round(value(x_sec[opt['id']])))
         if qty > 0:
-            # Получаем информацию о КП для целевого заказа
             target_key = opt.get('target_order_key')
-            order_info = order_info_map.get(target_key, {}) if target_key else {}
             
-            result['secondary_cuts'].append({
-                'source': opt['source_rest'],
-                'cuts': [opt['output_width']],
-                'qty': qty,
-                'pieces': opt['pieces'],
-                'waste': opt.get('waste', 0),
-                'type': opt['type'],
-                'source_lengths': [opt['source_length']] * qty,  # ИСХОДНАЯ длина остатка
-                'lengths': [opt['output_length']] * qty,  # Результирующая длина
-                'target_order_key': opt.get('target_order_key'),  # ✅ НОВОЕ: Передаем ключ заказа
-                'kp_id': order_info.get('kp_id'),
-                'customer': order_info.get('customer'),
-                'kp_date': order_info.get('kp_date'),
-                'plate_name': order_info.get('plate_name')
-            })
-            
-            # Добавляем каждый кусок в assignments
+            # Добавляем каждый вторичный рез ОТДЕЛЬНО со своим kp_id
             for _ in range(qty):
                 # Отмечаем использованный остаток
                 result['rests_used'].append({
@@ -853,16 +946,36 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     'source_rest_mm': opt['source_rest']
                 })
                 
+                # Для каждой плиты (pieces) из этого реза получаем свой kp_id
                 for _ in range(opt['pieces']):
+                    # Получаем информацию о следующем КП
+                    plate_info = _get_next_order_info(order_info_list, target_key) if target_key else {}
+                    
+                    result['secondary_cuts'].append({
+                        'source': opt['source_rest'],
+                        'cuts': [opt['output_width']],
+                        'qty': 1,  # Каждая плита отдельно!
+                        'pieces': 1,
+                        'waste': opt.get('waste', 0),
+                        'type': opt['type'],
+                        'source_lengths': [opt['source_length']],
+                        'lengths': [opt['output_length']],
+                        'target_order_key': target_key,
+                        'kp_id': plate_info.get('kp_id') if plate_info else None,
+                        'customer': plate_info.get('customer') if plate_info else None,
+                        'kp_date': plate_info.get('kp_date') if plate_info else None,
+                        'plate_name': plate_info.get('plate_name') if plate_info else None
+                    })
+                    
                     result['plate_assignments'].append({
                         'length': opt['output_length'],
                         'width': opt['output_width'],
                         'source': 'secondary',
                         'source_rest': opt['source_rest'],
-                        'kp_id': order_info.get('kp_id'),
-                        'customer': order_info.get('customer'),
-                        'kp_date': order_info.get('kp_date'),
-                        'plate_name': order_info.get('plate_name')
+                        'kp_id': plate_info.get('kp_id') if plate_info else None,
+                        'customer': plate_info.get('customer') if plate_info else None,
+                        'kp_date': plate_info.get('kp_date') if plate_info else None,
+                        'plate_name': plate_info.get('plate_name') if plate_info else None
                     })
     
     print(f"[OPT_2D] OK! Готово! Использовано {result['total_plates']} плит")

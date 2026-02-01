@@ -5,7 +5,7 @@ import sqlite3
 import math
 from datetime import datetime, timedelta
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             
             for row in cur.fetchall():
                 plate_name, length_m, width_m, load_class, qty = row
-                load_code = load_class // 100
+                load_code = cfg.normalize_load_code(load_class // 100)
                 reinforcement_value = get_reinforcement(
                     length_m=length_m,
                     load_code=load_code,
@@ -194,7 +194,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 plates_by_date_and_reinforcement[kp_date][reinforcement_value].append({
                     'plate_name': plate_name,
                     'length': length_m,
-                    'width': int(width_m * 1000),
+                    'width': round(width_m * 1000),  # round вместо int для корректного округления
                     'load_code': load_code,
                     'qty': qty,
                     'reinforcement': reinforcement_value,
@@ -214,7 +214,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             """, (kp_id,))
             for row in cur.fetchall():
                 plate_name, length_m, width_m = row
-                key = (round(length_m, 2), int(width_m * 1000))
+                key = (round(length_m, 2), round(width_m * 1000))  # round для корректного округления
                 if key not in plate_to_kp_info:
                     plate_to_kp_info[key] = {
                         'kp_id': kp_id,
@@ -279,7 +279,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                         'kp_id': plate_data.get('kp_id'),
                         'kp_date': plate_data.get('kp_date', 'неизвестно'),
                         'customer': plate_data.get('customer', 'неизвестно'),
-                        'load_code': plate_data.get('load_code', 8),
+                        'load_code': cfg.normalize_load_code(plate_data.get('load_code', 8)),
                         'reinforcement': plate_data.get('reinforcement', 0),
                         'rest_id': rest_info['rest_id'],
                         'rest_length': rest_info['rest_length'],
@@ -346,13 +346,19 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 'length': plate_data['length'],
                 'width': plate_data['width'],
                 'qty': plate_data['qty'],
-                'load_code': plate_data['load_code'],
+                'load_code': cfg.normalize_load_code(plate_data['load_code']),
                 'reinforcement': plate_data['reinforcement'],
                 'kp_date': plate_data.get('kp_date', 'неизвестно'),
                 'customer': plate_data.get('customer', 'неизвестно'),
                 'plate_name': plate_data.get('plate_name', ''),
                 'kp_id': plate_data.get('kp_id')
             })
+        
+        # ✅ НОВОЕ: Логируем все плиты ДО оптимизации
+        logger.info(f"[TRACE] ===== ШАГ 1: ПЛИТЫ ДО ОПТИМИЗАЦИИ =====")
+        logger.info(f"[TRACE] Всего плит: {sum(p['qty'] for p in orders_2d)}")
+        for p in orders_2d:
+            logger.info(f"[TRACE]   {p['plate_name']} × {p['qty']} (длина={p['length']:.2f}м, ширина={p['width']}мм, КП #{p.get('kp_id', '?')})")
         
         # Lookup-таблицы
         plate_lookup_exact = {}
@@ -365,7 +371,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 'customer': order.get('customer', 'неизвестно'),
                 'plate_name': order.get('plate_name', ''),
                 'reinforcement': order.get('reinforcement', 0),
-                'load_code': order.get('load_code', 8),
+                'load_code': cfg.normalize_load_code(order.get('load_code', 8)),
                 'qty_remaining': order.get('qty', 1),
                 'kp_id': order.get('kp_id'),
             }
@@ -418,11 +424,59 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         
         await message.answer(f"✅ Оптимизация завершена! Исходных плит: {optimization_result.get('total_plates', 0)}")
         
+        # ✅ НОВОЕ: Логируем результаты оптимизации
+        logger.info(f"[TRACE] ===== ШАГ 2: РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ =====")
+        logger.info(f"[TRACE] Первичных резов: {len(optimization_result.get('primary_cuts', []))}")
+        logger.info(f"[TRACE] Вторичных резов: {len(optimization_result.get('secondary_cuts', []))}")
+        
+        # Подсчитываем плиты по типам
+        primary_plates_count = 0
+        for cut in optimization_result.get('primary_cuts', []):
+            primary_plates_count += cut.get('qty', 0)
+            logger.info(f"[TRACE]   Первичный: {cut['width']}мм + {cut['rest']}мм × {cut['qty']} (длины={cut.get('lengths', [])})")
+        
+        secondary_plates_count = 0
+        for cut in optimization_result.get('secondary_cuts', []):
+            secondary_plates_count += cut.get('qty', 0) * cut.get('pieces', 1)
+            logger.info(f"[TRACE]   Вторичный: {cut['source']}мм → {cut['cuts']} × {cut['qty']} (тип={cut.get('type', '?')})")
+        
+        logger.info(f"[TRACE] Плит из первичных резов: {primary_plates_count}")
+        logger.info(f"[TRACE] Плит из вторичных резов: {secondary_plates_count}")
+        logger.info(f"[TRACE] Всего плит после оптимизации: {primary_plates_count + secondary_plates_count}")
+        
+        # === ПРОВЕРКА: вход vs выход оптимизатора ===
+        input_plates = sum(p['qty'] for p in orders_2d)
+        output_plates = len(optimization_result.get('plate_assignments', []))
+        if input_plates != output_plates:
+            logger.error(
+                f"[OPT_CHECK] ❌ РАСХОЖДЕНИЕ! Запрошено плит: {input_plates}, "
+                f"получено из оптимизатора: {output_plates}, потеряно: {input_plates - output_plates}"
+            )
+            ordered = Counter(
+                (round(o['length'], 2), o['width'], cfg.normalize_load_code(o.get('load_code', 8)))
+                for o in orders_2d for _ in range(o['qty'])
+            )
+            def _plate_key(p):
+                length = round(p.get('length', 0), 2)
+                width = p.get('width', 0)
+                load = cfg.normalize_load_code(p.get('load_code', 8))
+                return (length, width, load)
+            produced = Counter(_plate_key(p) for p in optimization_result.get('plate_assignments', []))
+            missing = ordered - produced
+            if missing:
+                logger.error(f"[OPT_CHECK] Не хватает в результате: {dict(missing)}")
+        else:
+            logger.info(f"[OPT_CHECK] ✅ Совпадение: запрошено {input_plates} плит, получено {output_plates}")
+        
         # === ШАГ 4.5: ДОПОЛНЕНИЕ LOOKUP ДЛЯ ВТОРИЧНЫХ РЕЗОВ ===
         if optimization_result.get('secondary_cuts'):
             orders_dict = {}
             for order in orders_2d:
-                key = (round(order['length'], 2), order['width'])
+                key = (
+                    round(order['length'], 2),
+                    order['width'],
+                    cfg.normalize_load_code(order.get('load_code', 8))
+                )
                 if key not in orders_dict:
                     orders_dict[key] = []
                 orders_dict[key].append(order)
@@ -432,8 +486,8 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 if not target_key:
                     continue
                 
-                target_length, target_width = target_key
-                original_orders = orders_dict.get((round(target_length, 2), target_width), [])
+                target_length, target_width, target_load_code = target_key
+                original_orders = orders_dict.get((round(target_length, 2), target_width, target_load_code), [])
                 
                 if not original_orders:
                     continue
@@ -466,7 +520,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                         'customer': original_order.get('customer', 'неизвестно'),
                         'plate_name': original_order.get('plate_name', ''),
                         'reinforcement': original_order.get('reinforcement', 0),
-                        'load_code': original_order.get('load_code', 8),
+                        'load_code': cfg.normalize_load_code(original_order.get('load_code', 8)),
                         'qty_remaining': 1,
                         'kp_id': original_order.get('kp_id'),
                         'is_from_secondary': True
@@ -506,7 +560,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         for plate_data in orders_2d:
             length = plate_data['length']
             width_m = plate_data['width'] / 1000.0
-            load_code = plate_data['load_code']
+            load_code = cfg.normalize_load_code(plate_data['load_code'])
             
             key = (length, width_m, load_code)
             if key in cfg.PLATE_LOAD_DETAILS:
@@ -526,6 +580,130 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         
         seq = build_layout_sequence()
         all_tracks_list = split_sequence_into_tracks(seq)
+
+        # === ШАГ 6.5: ЗАЩИТА ОТ ПОТЕРИ ПЛИТ (РЕСКЬЮ) ===
+        def _count_tracks_for_rescue(tracks_list):
+            counts = {}
+            for track in tracks_list:
+                for item in track.get('items', []):
+                    if not item:
+                        continue
+                    length = round(item.get('length', 0), 2)
+                    load_code = cfg.normalize_load_code(item.get('load_code', 8))
+                    mode = item.get('mode', 'solid')
+                    if mode == 'split':
+                        width_mm = round(item.get('main_w', 1.2) * 1000)
+                    elif mode == 'transverse':
+                        width_mm = round(item.get('width', 1.2) * 1000)
+                    else:
+                        width_mm = round(item.get('width', 1.2) * 1000)
+                    key = (length, width_mm, load_code)
+                    counts[key] = counts.get(key, 0) + 1
+                    for sec_cut in item.get('secondary_cuts', []) or []:
+                        sec_width_mm = round(sec_cut.get('width', 0) * 1000)
+                        sec_length = sec_cut.get('target_length') or length
+                        if sec_width_mm > 0:
+                            sec_key = (round(sec_length, 2), sec_width_mm, load_code)
+                            counts[sec_key] = counts.get(sec_key, 0) + 1
+            return counts
+
+        def _build_order_info_map(orders_list):
+            info_map = {}
+            for order in orders_list:
+                key = (
+                    round(order.get('length', 0), 2),
+                    order.get('width', 1200),
+                    cfg.normalize_load_code(order.get('load_code', 8))
+                )
+                if key not in info_map:
+                    info_map[key] = []
+                info_map[key].append({
+                    'kp_id': order.get('kp_id'),
+                    'customer': order.get('customer'),
+                    'kp_date': order.get('kp_date'),
+                    'plate_name': order.get('plate_name', ''),
+                    'qty_remaining': order.get('qty', 1)
+                })
+            return info_map
+
+        def _create_rescue_tracks(missing_counts, info_map):
+            rescue_tracks = []
+            current_track = []
+            current_len = 0.0
+            max_len = 101.0
+
+            def _flush_track():
+                nonlocal current_track, current_len
+                if current_track:
+                    rescue_tracks.append({
+                        'items': current_track,
+                        'length': current_len,
+                        'load_code': 0,
+                        'label': 'РЕСКЬЮ',
+                        'max_reinforcement': 0.0
+                    })
+                current_track = []
+                current_len = 0.0
+
+            for key, qty_missing in missing_counts.items():
+                length, width_mm, load_code = key
+                width_m = width_mm / 1000.0
+                for _ in range(qty_missing):
+                    if current_track and current_len + length > max_len:
+                        _flush_track()
+                    # Достаём информацию о КП (если есть)
+                    order_info = None
+                    for entry in info_map.get(key, []):
+                        if entry.get('qty_remaining', 0) > 0:
+                            entry['qty_remaining'] -= 1
+                            order_info = entry
+                            break
+                    plate_name = ''
+                    if order_info and order_info.get('plate_name'):
+                        plate_name = order_info['plate_name']
+                    else:
+                        plate_name = cfg.make_plate_name(length, width_m, load_code=load_code)
+                    current_track.append({
+                        'length': length,
+                        'mode': 'solid',
+                        'width': width_m,
+                        'load_code': load_code,
+                        'label': plate_name,
+                        'reinforcement': 0,
+                        'kp_id': order_info.get('kp_id') if order_info else None,
+                        'customer': order_info.get('customer') if order_info else None,
+                        'kp_date': order_info.get('kp_date') if order_info else None,
+                        'plate_name': plate_name
+                    })
+                    current_len += length
+            _flush_track()
+            return rescue_tracks
+
+        # Считаем потери
+        order_counts = {}
+        for order in orders_2d:
+            key = (
+                round(order.get('length', 0), 2),
+                order.get('width', 1200),
+                cfg.normalize_load_code(order.get('load_code', 8))
+            )
+            order_counts[key] = order_counts.get(key, 0) + order.get('qty', 1)
+
+        track_counts = _count_tracks_for_rescue(all_tracks_list)
+        missing_counts = {}
+        for key, qty_need in order_counts.items():
+            qty_have = track_counts.get(key, 0)
+            if qty_have < qty_need:
+                missing_counts[key] = qty_need - qty_have
+
+        if missing_counts:
+            info_map = _build_order_info_map(orders_2d)
+            rescue_tracks = _create_rescue_tracks(missing_counts, info_map)
+            all_tracks_list.extend(rescue_tracks)
+            logger.warning(
+                f"[RESCUE] Добавлены дополнительные дорожки: {len(rescue_tracks)}. "
+                f"Потеряно плит: {sum(missing_counts.values())}"
+            )
         
         total_tracks_count = len(all_tracks_list)
         total_days = math.ceil(total_tracks_count / tracks_count)

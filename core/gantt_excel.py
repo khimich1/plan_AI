@@ -129,9 +129,9 @@ def create_gantt_excel(
                 # Определяем ширину
                 mode = item.get('mode', 'solid')
                 if mode == 'transverse' and item.get('width'):
-                    width = int(item['width'] * 1000)
+                    width = round(item['width'] * 1000)  # round для корректного округления float
                 elif mode == 'split' and item.get('main_w'):
-                    width = int(item['main_w'] * 1000)
+                    width = round(item['main_w'] * 1000)  # round для корректного округления
                 else:
                     width = 1200
                 
@@ -172,7 +172,7 @@ def create_gantt_excel(
                 if sec_width_m <= 0:
                     continue
                 
-                sec_width = int(sec_width_m * 1000)
+                sec_width = round(sec_width_m * 1000)  # round для корректного округления float
                 sec_length = sec_cut.get('target_length') or length
                 
                 # НОВАЯ ЛОГИКА: Сначала проверяем kp_id в элементе

@@ -19,6 +19,7 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import kp_db
+import core.config_and_data as cfg
 
 from ..keyboards import main_menu_kb, calendar_days_kb, plates_completion_kb
 from ..states import ProductionStates
@@ -134,7 +135,7 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     completion_lookup_by_length = copy.deepcopy(plate_lookup_by_length)
     
     # Функция для получения информации о плите (с списанием из lookup)
-    def get_plate_info_smart(length, width):
+    def get_plate_info_smart(length, width, expected_kp_id=None):
         """
         Умный поиск информации о плите С УЧЕТОМ КОЛИЧЕСТВА.
         
@@ -145,32 +146,72 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
         4. Возвращаем информацию о КП
         
         ВАЖНО: Работаем с КОПИЕЙ lookup, чтобы не влиять на оригинал.
+        
+        FUZZY-ПОИСК: Если точный ключ не найден, ищем с tolerance 0.03м (30мм)
+        по длине. Это нужно, потому что оптимизатор может округлять длины
+        (например, 3.8м -> 3.79м или 5.71м -> 5.7м).
         """
+        TOLERANCE = 0.03  # 30мм tolerance для fuzzy-поиска
+        rounded_length = round(length, 2)
+        
+        # ✅ ЛОГИРУЕМ ПОИСК ПЛИТЫ
+        logger.debug(f"[TRACE] Ищем плиту: длина={length:.2f}м ({rounded_length:.2f}м), ширина={width}мм")
+        
         # 1. Сначала пробуем точное совпадение
-        key = (round(length, 2), width)
+        key = (rounded_length, width)
         entries = completion_lookup_exact.get(key, [])
         
+        if entries:
+            logger.debug(f"[TRACE]   Найдено {len(entries)} записей для ключа {key}")
+        
         for entry in entries:
+            if expected_kp_id and entry.get('kp_id') != expected_kp_id:
+                continue
             if entry.get('qty_remaining', 0) > 0:
                 entry['qty_remaining'] -= 1
                 return entry.copy()
         
-        # 2. Если ширина < 1200 (плита с резом), ищем по оригинальной ширине 1200
-        if width < 1200:
-            key_original = (round(length, 2), 1200)
-            entries = completion_lookup_exact.get(key_original, [])
-            for entry in entries:
-                if entry.get('qty_remaining', 0) > 0:
-                    entry['qty_remaining'] -= 1
-                    return entry.copy()
+        # 2. Fuzzy-поиск с tolerance по длине И ширине в exact lookup
+        # ИСПРАВЛЕНИЕ: Убран некорректный поиск по ширине 1200 для плит с резом,
+        # так как это вызывало проблемы для вторичных резов (плиты 460мм искались как 1200мм)
+        logger.debug(f"[TRACE]   Пробуем fuzzy-поиск (tolerance={TOLERANCE}м)")
+        for lookup_key, entries in completion_lookup_exact.items():
+            key_length, key_width = lookup_key
+            # Проверяем ширину с tolerance 20мм (для небольших отклонений типа 460 vs 459)
+            if abs(key_width - width) > 20:
+                continue
+            # Проверяем длину с tolerance
+            if abs(key_length - rounded_length) <= TOLERANCE:
+                for entry in entries:
+                    if expected_kp_id and entry.get('kp_id') != expected_kp_id:
+                        continue
+                    if entry.get('qty_remaining', 0) > 0:
+                        entry['qty_remaining'] -= 1
+                        logger.debug(f"[TRACE]   ✓ Найдено FUZZY совпадение: ключ={lookup_key}, КП #{entry.get('kp_id', '?')}")
+                        return entry.copy()
         
-        # 3. Fallback: поиск только по длине
-        length_key = round(length, 2)
-        entries = completion_lookup_by_length.get(length_key, [])
+        # 4. Fallback: поиск только по длине (точный)
+        entries = completion_lookup_by_length.get(rounded_length, [])
         for entry in entries:
+            if expected_kp_id and entry.get('kp_id') != expected_kp_id:
+                continue
             if entry.get('qty_remaining', 0) > 0:
                 entry['qty_remaining'] -= 1
                 return entry.copy()
+        
+        # 5. Fuzzy fallback: поиск по длине с tolerance
+        for lookup_length, entries in completion_lookup_by_length.items():
+            if abs(lookup_length - rounded_length) <= TOLERANCE:
+                for entry in entries:
+                    if expected_kp_id and entry.get('kp_id') != expected_kp_id:
+                        continue
+                    if entry.get('qty_remaining', 0) > 0:
+                        entry['qty_remaining'] -= 1
+                        return entry.copy()
+        
+        # ✅ ЛОГИРУЕМ ОШИБКУ ПОИСКА
+        logger.warning(f"[TRACE]   ❌ НЕ НАЙДЕНО совпадение для: длина={length:.2f}м, ширина={width}мм")
+        logger.warning(f"[TRACE]   Доступные ключи в lookup_exact: {list(completion_lookup_exact.keys())[:10]}")
         
         return {
             'kp_date': 'неизвестно',
@@ -178,6 +219,18 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             'plate_name': '',
             'kp_id': None
         }
+    
+    # ✅ НОВОЕ: Логируем плиты ДО обработки для списания
+    logger.info(f"[TRACE] ===== ШАГ 7: ПЛИТЫ ПЕРЕД СПИСАНИЕМ (День {day_number}) =====")
+    logger.info(f"[TRACE] Дорожек для этого дня: {len(tracks_for_day)}")
+    
+    total_items_before = 0
+    for track_idx, track in enumerate(tracks_for_day):
+        items_count = len(track.get('items', []))
+        total_items_before += items_count
+        logger.info(f"[TRACE]   Дорожка #{start_index + track_idx + 1}: {items_count} плит")
+    
+    logger.info(f"[TRACE] Всего плит в дорожках: {total_items_before}")
     
     # Собираем плиты по дорожкам (каждая дорожка отдельно)
     day_plates_by_track = []
@@ -195,36 +248,57 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             # Определяем ширину в зависимости от режима плиты
             mode = item.get('mode', 'solid')
             if mode == 'transverse' and item.get('width'):
-                width = int(item['width'] * 1000)  # width в метрах -> мм
+                width = round(item['width'] * 1000)  # round для корректного округления float
             elif mode == 'split' and item.get('main_w'):
-                width = int(item['main_w'] * 1000)  # main_w в метрах -> мм
+                width = round(item['main_w'] * 1000)  # round для корректного округления
             else:
-                width = 1200  # solid или дефолт
+                # solid mode - берём width из поля (ИСПРАВЛЕНИЕ: учитываем реальную ширину)
+                width = round(item.get('width', 1.2) * 1000)  # round для корректного округления
             
             if not length:
                 continue
             
-            plate_info = get_plate_info_smart(length, width)
-            plate_name = plate_info.get('plate_name', '')
-            kp_id = plate_info.get('kp_id')
+            item_kp_id = item.get('kp_id')
+            item_plate_name = item.get('plate_name')
+            item_load_code = cfg.normalize_load_code(item.get('load_code', 8))
+
+            plate_info = get_plate_info_smart(length, width, expected_kp_id=item_kp_id)
+            plate_name = plate_info.get('plate_name', '') or (item_plate_name or '')
+            kp_id = plate_info.get('kp_id') or item_kp_id
             
             # Если нет имени плиты — формируем его
+            if not plate_name and kp_id:
+                # Пытаемся взять точное имя из БД по kp_id+размерам
+                try:
+                    conn = None
+                    db_path = str(PROJECT_ROOT / "plita.db")
+                    conn = sqlite3.connect(db_path)
+                    cur = conn.cursor()
+                    cur.execute('''
+                        SELECT plate_name, load_class
+                        FROM kp_plates
+                        WHERE kp_id = ?
+                          AND status = 'в плане'
+                          AND ABS(length_m - ?) < 0.02
+                          AND ABS(width_m - ?) < 0.01
+                        LIMIT 1
+                    ''', (kp_id, length, width / 1000.0))
+                    row = cur.fetchone()
+                    if row:
+                        plate_name = row[0]
+                        item_load_code = cfg.normalize_load_code((row[1] or 800) / 100)
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
             if not plate_name:
-                length_dm = int(round(length * 10))
-                width_mm = int(width)
-                if width_mm == 1200:
-                    width_str = "12"
-                else:
-                    width_dm = width_mm / 100.0
-                    if abs(width_dm - int(width_dm)) < 0.01:
-                        width_str = str(int(width_dm))
-                    else:
-                        width_str = str(width_dm).replace('.', ',')
-                plate_name = f"ПБ {length_dm}-{width_str}-8п"
+                plate_name = cfg.make_plate_name(length, width / 1000.0, load_code=item_load_code)
             
             # Получаем дату и заказчика для группировки
-            kp_date = plate_info.get('kp_date', 'неизвестно')
-            customer = plate_info.get('customer', 'неизвестно')
+            kp_date = plate_info.get('kp_date', 'неизвестно') or item.get('kp_date', 'неизвестно')
+            customer = plate_info.get('customer', 'неизвестно') or item.get('customer', 'неизвестно')
             
             # Ищем такую же плиту в списке текущей дорожки
             # Группируем по: plate_name + kp_id + kp_date + customer + width
@@ -246,7 +320,7 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                     'plate_name': plate_name,
                     'length_m': length,
                     'width_m': width_m,
-                    'load_class': 800,
+                    'load_class': int(cfg.normalize_load_code(item_load_code) * 100),
                     'qty': 1,
                     'kp_id': kp_id,
                     'kp_date': kp_date,
@@ -261,33 +335,20 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                 if sec_width_m <= 0:
                     continue
                 
-                sec_width = int(sec_width_m * 1000)  # в мм
+                sec_width = round(sec_width_m * 1000)  # round для корректного округления float
                 # Длина: если есть target_length (поперечный рез), иначе длина родительской плиты
                 sec_length = sec_cut.get('target_length') or length
                 
-                sec_plate_info = get_plate_info_smart(sec_length, sec_width)
-                sec_plate_name = sec_plate_info.get('plate_name', '')
-                sec_kp_id = sec_plate_info.get('kp_id')
+                sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=item_kp_id)
+                sec_plate_name = sec_plate_info.get('plate_name', '') or (sec_cut.get('label', '') or '').replace('О ', '').strip()
+                sec_kp_id = sec_plate_info.get('kp_id') or item_kp_id
                 
                 # Если нет имени плиты — берём из label
-                if not sec_plate_name and sec_cut.get('label'):
-                    sec_plate_name = sec_cut['label'].replace('О ', '').strip()
-                
-                # Если всё ещё нет — формируем
                 if not sec_plate_name:
-                    sec_length_dm = int(round(sec_length * 10))
-                    if sec_width == 1200:
-                        sec_width_str = "12"
-                    else:
-                        sec_width_dm = sec_width / 100.0
-                        if abs(sec_width_dm - int(sec_width_dm)) < 0.01:
-                            sec_width_str = str(int(sec_width_dm))
-                        else:
-                            sec_width_str = str(sec_width_dm).replace('.', ',')
-                    sec_plate_name = f"ПБ {sec_length_dm}-{sec_width_str}-8п"
+                    sec_plate_name = cfg.make_plate_name(sec_length, sec_width / 1000.0, load_code=item_load_code)
                 
-                sec_kp_date = sec_plate_info.get('kp_date', 'неизвестно')
-                sec_customer = sec_plate_info.get('customer', 'неизвестно')
+                sec_kp_date = sec_plate_info.get('kp_date', 'неизвестно') or item.get('kp_date', 'неизвестно')
+                sec_customer = sec_plate_info.get('customer', 'неизвестно') or item.get('customer', 'неизвестно')
                 sec_width_m = sec_width / 1000.0
                 
                 # Ищем такую же плиту в списке (только среди вторичных!)
@@ -308,7 +369,7 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                         'plate_name': sec_plate_name,
                         'length_m': sec_length,
                         'width_m': sec_width_m,
-                        'load_class': 800,
+                        'load_class': int(cfg.normalize_load_code(item_load_code) * 100),
                         'qty': 1,
                         'kp_id': sec_kp_id,
                         'kp_date': sec_kp_date,
@@ -378,6 +439,22 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     
     # Подсчитываем общее количество позиций
     total_positions = sum(len(track['plates']) for track in day_plates_by_track)
+    
+    # ✅ НОВОЕ: Логируем результаты формирования списка для списания
+    logger.info(f"[TRACE] ===== ШАГ 8: ПЛИТЫ ДЛЯ СПИСАНИЯ (day_plates_by_track) =====")
+    logger.info(f"[TRACE] Дорожек: {len(day_plates_by_track)}")
+    logger.info(f"[TRACE] Позиций (уникальных плит): {total_positions}")
+    logger.info(f"[TRACE] Всего плит (с количеством): {total_qty}")
+    
+    for track_data in day_plates_by_track:
+        track_num = track_data['track_number']
+        plates_count = len(track_data['plates'])
+        qty_sum = sum(p['qty'] for p in track_data['plates'])
+        logger.info(f"[TRACE]   Дорожка #{track_num}: {plates_count} позиций, {qty_sum} шт")
+        
+        for plate in track_data['plates']:
+            is_sec = " [ВТОРИЧНЫЙ]" if plate.get('is_secondary') else ""
+            logger.info(f"[TRACE]     - {plate['plate_name']} × {plate['qty']} (ширина={plate['width_m']*1000:.0f}мм, КП #{plate.get('kp_id', '?')}){is_sec}")
     
     # Сохраняем данные для завершения дня
     await state.update_data(

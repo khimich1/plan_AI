@@ -625,6 +625,35 @@ def parse_load_code_from_name(name: str, default: int = 8) -> int:
     return load_code
 
 
+def normalize_load_code(value, default: int = 8):
+    """
+    Нормализует код нагрузки к единому формату (6/8/10/12/12.5/16...).
+    
+    Примеры:
+    - 800 -> 8
+    - 1200 -> 12
+    - 12.0 -> 12
+    - "8" -> 8
+    - None/ошибка -> default
+    """
+    if value is None:
+        return default
+    try:
+        val = float(value)
+    except Exception:
+        return default
+    
+    if val >= 100:
+        val = val / 100.0
+    
+    # Если почти целое — возвращаем int
+    if abs(val - round(val)) < 1e-6:
+        return int(round(val))
+    
+    # Оставляем дробный код (например, 12.5)
+    return round(val, 1)
+
+
 def get_load_code_for_plate(length_m: float, width_m: float, default: int = 8) -> int:
     """
     Возвращает код нагрузки для плиты по (длина, ширина).

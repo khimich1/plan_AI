@@ -305,7 +305,8 @@ def add_tracks_to_plan(
     plate_lookup_by_length: dict,
     orders_2d: list,
     optimization_result: dict,
-    plan_name: Optional[str] = None
+    plan_name: Optional[str] = None,
+    auto_save: bool = True
 ) -> Tuple[dict, dict]:
     """
     Добавляет дорожки к существующему плану или создаёт новый.
@@ -326,6 +327,8 @@ def add_tracks_to_plan(
         orders_2d: Заказы 2D
         optimization_result: Результат оптимизации
         plan_name: Название плана (для нового)
+        auto_save: Если True - сохраняет план автоматически (по умолчанию),
+                   если False - только подготавливает план без сохранения
         
     Returns:
         Tuple[dict, dict]: (обновлённый план, статистика изменений)
@@ -441,14 +444,15 @@ def add_tracks_to_plan(
     # Обновляем optimization_result (заменяем на последний)
     plan['optimization_result'] = optimization_result
     
-    # Сохраняем план
-    save_plan(plan)
-    
-    # Обновляем метаданные
-    update_plan_metadata(plan)
-    
-    # Устанавливаем как активный
-    set_active_plan(plan_id)
+    # Сохраняем план только если auto_save=True
+    if auto_save:
+        save_plan(plan)
+        
+        # Обновляем метаданные
+        update_plan_metadata(plan)
+        
+        # Устанавливаем как активный
+        set_active_plan(plan_id)
     
     return plan, stats
 

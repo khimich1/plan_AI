@@ -935,7 +935,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
     for order in plan_orders:
         length = round(float(order.get('length', 0)), 3)
         width_val = order.get('width', 0)
-        width_mm = width_val if width_val > 5 else int(width_val * 1000)
+        width_mm = width_val if width_val > 5 else round(width_val * 1000)  # round для корректного округления
         width_m = width_mm / 1000.0
         
         # Получаем нагрузку для этой плиты
@@ -1432,7 +1432,7 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
     for order in plan_orders:
         length = round(float(order.get('length', 0)), 3)
         width_val = order.get('width', 0)
-        width_mm = width_val if width_val > 5 else int(width_val * 1000)
+        width_mm = width_val if width_val > 5 else round(width_val * 1000)  # round для корректного округления
         width_m = width_mm / 1000.0
         
         # Получаем нагрузку для этой плиты
