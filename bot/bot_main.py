@@ -10,6 +10,7 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.logging_config import setup_logging
+from core import kp_db
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -33,6 +34,14 @@ def init_database():
             logger.info("💡 Бот продолжит работу, но некоторые функции могут быть недоступны")
         else:
             logger.info(f"✅ База данных {db_path} найдена")
+            
+            # Автоматически восстанавливаем застрявшие плиты при старте
+            try:
+                recovered = kp_db.recover_stuck_plates(db_path)
+                if recovered > 0:
+                    logger.info(f"🔧 При старте восстановлено {recovered} застрявших плит")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось проверить застрявшие плиты: {e}")
     except Exception as e:
         logger.error(f"❌ Ошибка проверки БД: {e}")
         # Не прерываем работу - база может быть создана позже

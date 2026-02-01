@@ -528,6 +528,25 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     num_tracks_total = len(tracks)
     logger.info(f"[ВИЗУАЛИЗАЦИЯ] Плиты разбиты на {num_tracks_total} дорожек")
     
+    # ✅ НОВОЕ: Логируем плиты в дорожках
+    logger.info(f"[TRACE] ===== ШАГ 6: ПЛИТЫ В ДОРОЖКАХ (tracks) =====")
+    logger.info(f"[TRACE] Всего дорожек: {len(tracks)}")
+    
+    total_plates_in_tracks = 0
+    for i, track in enumerate(tracks):
+        track_plates = len(track['items'])
+        total_plates_in_tracks += track_plates
+        
+        # Подсчитываем плиты с вторичными резами
+        secondary_in_track = 0
+        for item in track['items']:
+            if item.get('secondary_cuts'):
+                secondary_in_track += len(item['secondary_cuts'])
+        
+        logger.info(f"[TRACE]   Дорожка #{i+1}: {track_plates} основных плит + {secondary_in_track} вторичных = {track_plates + secondary_in_track} всего")
+    
+    logger.info(f"[TRACE] ИТОГО плит во всех дорожках: {total_plates_in_tracks}")
+    
     # ✅ НОВОЕ: Фильтруем дорожки для текущего файла
     if tracks_per_file is not None:
         end_track_index = min(start_track_index + tracks_per_file, num_tracks_total)

@@ -59,6 +59,42 @@ def save_to_db_kb() -> InlineKeyboardMarkup:
     )
 
 
+def save_to_db_with_files_kb(
+    has_pdf: bool = False,
+    has_xlsx: bool = False,
+    has_breakdown: bool = False,
+    has_schema: bool = False,
+    has_schema_breakdown: bool = False,
+) -> InlineKeyboardMarkup:
+    """
+    Объединённая клавиатура: кнопки скачивания файлов + сохранение в БД.
+    Кнопки файлов показываются только для существующих документов.
+    """
+    buttons = []
+    # Ряд с кнопками файлов (по 2-3 в ряд)
+    file_row = []
+    if has_pdf:
+        file_row.append(InlineKeyboardButton(text="📄 PDF", callback_data="kp_file_pdf"))
+    if has_xlsx:
+        file_row.append(InlineKeyboardButton(text="📊 XLSX", callback_data="kp_file_xlsx"))
+    if has_breakdown:
+        file_row.append(InlineKeyboardButton(text="📋 Разбивка", callback_data="kp_file_breakdown"))
+    if file_row:
+        buttons.append(file_row)
+    second_file_row = []
+    if has_schema:
+        second_file_row.append(InlineKeyboardButton(text="📐 Схема", callback_data="kp_file_schema"))
+    if has_schema_breakdown:
+        second_file_row.append(InlineKeyboardButton(text="📊 Разб.схемы", callback_data="kp_file_schema_breakdown"))
+    if second_file_row:
+        buttons.append(second_file_row)
+    # Кнопки сохранения
+    buttons.append([InlineKeyboardButton(text="💾 Сохранить в БД", callback_data="save_kp_to_db")])
+    buttons.append([InlineKeyboardButton(text="📦 В архив", callback_data="save_kp_to_archive")])
+    buttons.append([InlineKeyboardButton(text="❌ Не сохранять", callback_data="skip_save_kp")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def production_menu_kb() -> InlineKeyboardMarkup:
     """
     Начальное меню планирования производства.

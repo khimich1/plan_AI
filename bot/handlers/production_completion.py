@@ -19,13 +19,15 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import kp_db
+import core.config_and_data as cfg
 
 from ..keyboards import main_menu_kb, calendar_days_kb, plates_completion_kb
 from ..states import ProductionStates
 
 # Импорт менеджера планов
 from .plan_manager import (
-    get_active_plan_id, mark_day_completed, get_tracks_for_date_from_all_plans
+    get_active_plan_id, mark_day_completed, get_tracks_for_date_from_all_plans,
+    get_all_active_plan_ids
 )
 
 router = Router()
@@ -134,50 +136,126 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     completion_lookup_by_length = copy.deepcopy(plate_lookup_by_length)
     
     # Функция для получения информации о плите (с списанием из lookup)
-    def get_plate_info_smart(length, width):
+    def get_plate_info_smart(length, width, expected_kp_id=None, load_code=None):
         """
         Умный поиск информации о плите С УЧЕТОМ КОЛИЧЕСТВА.
         
         Логика:
         1. Ищем в списке записей по (length, width)
-        2. Находим первую запись с qty_remaining > 0
+        2. При одном ключе могут быть 8п/10п/12,5п — предпочитаем запись с совпадающим load_code
         3. Уменьшаем qty_remaining на 1 (списываем плиту)
         4. Возвращаем информацию о КП
         
         ВАЖНО: Работаем с КОПИЕЙ lookup, чтобы не влиять на оригинал.
+        
+        FUZZY-ПОИСК: Если точный ключ не найден, ищем с tolerance 0.03м (30мм) по длине.
         """
-        # 1. Сначала пробуем точное совпадение
-        key = (round(length, 2), width)
-        entries = completion_lookup_exact.get(key, [])
-        
-        for entry in entries:
-            if entry.get('qty_remaining', 0) > 0:
-                entry['qty_remaining'] -= 1
-                return entry.copy()
-        
-        # 2. Если ширина < 1200 (плита с резом), ищем по оригинальной ширине 1200
-        if width < 1200:
-            key_original = (round(length, 2), 1200)
-            entries = completion_lookup_exact.get(key_original, [])
+        TOLERANCE = 0.03  # 30мм tolerance для fuzzy-поиска
+        rounded_length = round(length, 2)
+        if load_code is None:
+            load_code = 8
+        load_code = cfg.normalize_load_code(load_code)
+
+        def load_code_matches(entry):
+            entry_lc = entry.get('load_code')
+            if entry_lc is None:
+                entry_lc = 8
+            return abs(cfg.normalize_load_code(entry_lc) - load_code) < 0.01
+
+        def pick_best(entries):
+            """Выбрать запись: приоритет (kp_id + load_code) -> load_code -> kp_id -> любая."""
+            for entry in entries:
+                if entry.get('qty_remaining', 0) <= 0:
+                    continue
+                if expected_kp_id and entry.get('kp_id') == expected_kp_id and load_code_matches(entry):
+                    return entry
+            for entry in entries:
+                if entry.get('qty_remaining', 0) <= 0:
+                    continue
+                if load_code_matches(entry):
+                    return entry
+            for entry in entries:
+                if entry.get('qty_remaining', 0) <= 0:
+                    continue
+                if expected_kp_id and entry.get('kp_id') == expected_kp_id:
+                    return entry
             for entry in entries:
                 if entry.get('qty_remaining', 0) > 0:
-                    entry['qty_remaining'] -= 1
-                    return entry.copy()
+                    return entry
+            return None
+
+        logger.debug(f"[TRACE] Ищем плиту: длина={length:.2f}м ({rounded_length:.2f}м), ширина={width}мм, load_code={load_code}")
         
-        # 3. Fallback: поиск только по длине
-        length_key = round(length, 2)
-        entries = completion_lookup_by_length.get(length_key, [])
-        for entry in entries:
-            if entry.get('qty_remaining', 0) > 0:
-                entry['qty_remaining'] -= 1
-                return entry.copy()
+        # 1. Точное совпадение по (length, width)
+        key = (rounded_length, width)
+        entries = completion_lookup_exact.get(key, [])
+        if entries:
+            logger.debug(f"[TRACE]   Найдено {len(entries)} записей для ключа {key}")
+        best = pick_best(entries)
+        if best:
+            best['qty_remaining'] -= 1
+            logger.debug(f"[TRACE]   ✓ Найдено ТОЧНОЕ совпадение, КП #{best.get('kp_id', '?')}")
+            return best.copy()
         
+        # 2. Fuzzy по длине и ширине в exact lookup
+        logger.debug(f"[TRACE]   Пробуем fuzzy-поиск (tolerance={TOLERANCE}м)")
+        best_match = None
+        for lookup_key, entries in completion_lookup_exact.items():
+            if not isinstance(lookup_key, (tuple, list)) or len(lookup_key) < 2:
+                continue
+            key_length = float(lookup_key[0]) if lookup_key[0] is not None else 0
+            key_width = int(lookup_key[1]) if isinstance(lookup_key[1], (int, float)) else width
+            if abs(key_width - width) > 20:
+                continue
+            if abs(key_length - rounded_length) <= TOLERANCE:
+                best_match = pick_best(entries)
+                if best_match:
+                    break
+        if best_match:
+            best_match['qty_remaining'] -= 1
+            logger.debug(f"[TRACE]   ✓ Найдено FUZZY совпадение, КП #{best_match.get('kp_id', '?')}")
+            return best_match.copy()
+        
+        # 3. По длине (точный)
+        entries = completion_lookup_by_length.get(rounded_length, [])
+        best = pick_best(entries)
+        if best:
+            best['qty_remaining'] -= 1
+            logger.debug(f"[TRACE]   ✓ Найдено по длине, КП #{best.get('kp_id', '?')}")
+            return best.copy()
+        
+        # 4. Fuzzy по длине в by_length
+        best_match = None
+        for lookup_length, entries in completion_lookup_by_length.items():
+            ll = float(lookup_length) if isinstance(lookup_length, str) else lookup_length
+            if abs(ll - rounded_length) <= TOLERANCE:
+                best_match = pick_best(entries)
+                if best_match:
+                    break
+        if best_match:
+            best_match['qty_remaining'] -= 1
+            logger.debug(f"[TRACE]   ✓ Найдено FUZZY по длине, КП #{best_match.get('kp_id', '?')}")
+            return best_match.copy()
+        
+        logger.warning(f"[TRACE]   ❌ НЕ НАЙДЕНО совпадение для: длина={length:.2f}м, ширина={width}мм, load_code={load_code}")
         return {
             'kp_date': 'неизвестно',
             'customer': 'неизвестно',
             'plate_name': '',
             'kp_id': None
         }
+    
+    # ✅ НОВОЕ: Логируем плиты ДО обработки для списания
+    logger.info(f"[TRACE] ===== ШАГ 7: ПЛИТЫ ПЕРЕД СПИСАНИЕМ (День {day_number}) =====")
+    logger.info(f"[TRACE] Дорожек для этого дня: {len(tracks_for_day)}")
+    
+    total_items_before = 0
+    for track_idx, track in enumerate(tracks_for_day):
+        items_count = len(track.get('items', []))
+        total_items_before += items_count
+        logger.info(f"[TRACE]   Дорожка #{start_index + track_idx + 1}: {items_count} плит")
+    
+    logger.info(f"[TRACE] Всего плит в дорожках: {total_items_before}")
     
     # Собираем плиты по дорожкам (каждая дорожка отдельно)
     day_plates_by_track = []
@@ -186,7 +264,15 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     for track_idx, track in enumerate(tracks_for_day):
         track_number = start_index + track_idx + 1
         track_plates = []
-        
+        # #region agent log H8: items в track
+        _track_items = track.get('items', [])
+        _split_items = [i for i in _track_items if i and i.get('mode') == 'split' and i.get('secondary_cuts')]
+        if _split_items and track_idx == 0:  # Только первая дорожка для краткости
+            _d8 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+            import json as _j8
+            with open(_d8, 'a', encoding='utf-8') as _f8:
+                _f8.write(_j8.dumps({"hypothesisId": "H8", "location": "production_completion:track_items", "message": "Items с secondary_cuts в track", "data": {"track_idx": track_idx, "items_count": len(_track_items), "split_with_sec_count": len(_split_items), "day": day_number}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+        # #endregion
         for item in track.get('items', []):
             if item is None:
                 continue
@@ -195,36 +281,73 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             # Определяем ширину в зависимости от режима плиты
             mode = item.get('mode', 'solid')
             if mode == 'transverse' and item.get('width'):
-                width = int(item['width'] * 1000)  # width в метрах -> мм
+                width = round(item['width'] * 1000)  # round для корректного округления float
             elif mode == 'split' and item.get('main_w'):
-                width = int(item['main_w'] * 1000)  # main_w в метрах -> мм
+                width = round(item['main_w'] * 1000)  # round для корректного округления
             else:
-                width = 1200  # solid или дефолт
+                # solid mode - берём width из поля (ИСПРАВЛЕНИЕ: учитываем реальную ширину)
+                width = round(item.get('width', 1.2) * 1000)  # round для корректного округления
             
             if not length:
                 continue
             
-            plate_info = get_plate_info_smart(length, width)
-            plate_name = plate_info.get('plate_name', '')
-            kp_id = plate_info.get('kp_id')
+            item_kp_id = item.get('kp_id')
+            item_plate_name = item.get('plate_name')
+            item_load_code = cfg.normalize_load_code(item.get('load_code', 8))
+
+            plate_info = get_plate_info_smart(length, width, expected_kp_id=item_kp_id, load_code=item_load_code)
+            plate_name = plate_info.get('plate_name', '') or (item_plate_name or '')
+            kp_id = plate_info.get('kp_id') or item_kp_id
             
             # Если нет имени плиты — формируем его
+            if not plate_name and kp_id:
+                # Пытаемся взять точное имя из БД по kp_id+размерам
+                try:
+                    conn = None
+                    db_path = str(PROJECT_ROOT / "plita.db")
+                    conn = sqlite3.connect(db_path)
+                    cur = conn.cursor()
+                    # Сначала пробуем точный поиск по длине и ширине
+                    cur.execute('''
+                        SELECT plate_name, load_class, width_m
+                        FROM kp_plates
+                        WHERE kp_id = ?
+                          AND status = 'в плане'
+                          AND ABS(length_m - ?) < 0.02
+                          AND ABS(width_m - ?) < 0.01
+                        LIMIT 1
+                    ''', (kp_id, length, width / 1000.0))
+                    row = cur.fetchone()
+                    
+                    # Если не нашли — ищем ТОЛЬКО по длине (для вторичных резов с неправильной шириной)
+                    if not row:
+                        cur.execute('''
+                            SELECT plate_name, load_class, width_m
+                            FROM kp_plates
+                            WHERE kp_id = ?
+                              AND status = 'в плане'
+                              AND ABS(length_m - ?) < 0.02
+                            LIMIT 1
+                        ''', (kp_id, length))
+                        row = cur.fetchone()
+                    
+                    if row:
+                        plate_name = row[0]
+                        item_load_code = cfg.normalize_load_code((row[1] or 800) / 100)
+                        # Обновляем width на правильное значение из БД
+                        width = row[2] * 1000  # width_m → мм
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
             if not plate_name:
-                length_dm = int(round(length * 10))
-                width_mm = int(width)
-                if width_mm == 1200:
-                    width_str = "12"
-                else:
-                    width_dm = width_mm / 100.0
-                    if abs(width_dm - int(width_dm)) < 0.01:
-                        width_str = str(int(width_dm))
-                    else:
-                        width_str = str(width_dm).replace('.', ',')
-                plate_name = f"ПБ {length_dm}-{width_str}-8п"
+                plate_name = cfg.make_plate_name(length, width / 1000.0, load_code=item_load_code)
             
             # Получаем дату и заказчика для группировки
-            kp_date = plate_info.get('kp_date', 'неизвестно')
-            customer = plate_info.get('customer', 'неизвестно')
+            kp_date = plate_info.get('kp_date', 'неизвестно') or item.get('kp_date', 'неизвестно')
+            customer = plate_info.get('customer', 'неизвестно') or item.get('customer', 'неизвестно')
             
             # Ищем такую же плиту в списке текущей дорожки
             # Группируем по: plate_name + kp_id + kp_date + customer + width
@@ -246,7 +369,7 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                     'plate_name': plate_name,
                     'length_m': length,
                     'width_m': width_m,
-                    'load_class': 800,
+                    'load_class': int(cfg.normalize_load_code(item_load_code) * 100),
                     'qty': 1,
                     'kp_id': kp_id,
                     'kp_date': kp_date,
@@ -256,38 +379,43 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             
             # НОВОЕ: Обрабатываем плиты из вторичных резов (остатков)
             secondary_cuts = item.get('secondary_cuts', []) if item else []
+            # #region agent log H8: secondary_cuts в item
+            if secondary_cuts:
+                _d8 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+                import json as _j8
+                with open(_d8, 'a', encoding='utf-8') as _f8:
+                    _f8.write(_j8.dumps({"hypothesisId": "H8", "location": "production_completion:secondary_cuts_check", "message": "secondary_cuts в item", "data": {"item_plate_name": item.get('plate_name', ''), "item_mode": item.get('mode', ''), "sec_cuts_count": len(secondary_cuts), "sec_cuts_sample": str(secondary_cuts)[:300], "day": day_number}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+            # #endregion
             for sec_cut in (secondary_cuts or []):
                 sec_width_m = sec_cut.get('width', 0)
                 if sec_width_m <= 0:
                     continue
                 
-                sec_width = int(sec_width_m * 1000)  # в мм
+                sec_width = round(sec_width_m * 1000)  # round для корректного округления float
                 # Длина: если есть target_length (поперечный рез), иначе длина родительской плиты
                 sec_length = sec_cut.get('target_length') or length
                 
-                sec_plate_info = get_plate_info_smart(sec_length, sec_width)
-                sec_plate_name = sec_plate_info.get('plate_name', '')
+                # ИСПРАВЛЕНИЕ: Для вторичных резов ищем по ВСЕМ КП, без ограничения
+                # Сначала пробуем найти с expected_kp_id (если родительский КП совпадает)
+                sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=item_kp_id, load_code=item_load_code)
                 sec_kp_id = sec_plate_info.get('kp_id')
                 
+                # Если не нашли с ограничением — ищем по ВСЕМ КП
+                if not sec_kp_id:
+                    sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=None, load_code=item_load_code)
+                    sec_kp_id = sec_plate_info.get('kp_id')
+                
+                sec_plate_name = sec_plate_info.get('plate_name', '') or (sec_cut.get('label', '') or '').replace('О ', '').strip()
+                # Fallback на item_kp_id только если вообще ничего не нашли
+                if not sec_kp_id:
+                    sec_kp_id = item_kp_id
+                
                 # Если нет имени плиты — берём из label
-                if not sec_plate_name and sec_cut.get('label'):
-                    sec_plate_name = sec_cut['label'].replace('О ', '').strip()
-                
-                # Если всё ещё нет — формируем
                 if not sec_plate_name:
-                    sec_length_dm = int(round(sec_length * 10))
-                    if sec_width == 1200:
-                        sec_width_str = "12"
-                    else:
-                        sec_width_dm = sec_width / 100.0
-                        if abs(sec_width_dm - int(sec_width_dm)) < 0.01:
-                            sec_width_str = str(int(sec_width_dm))
-                        else:
-                            sec_width_str = str(sec_width_dm).replace('.', ',')
-                    sec_plate_name = f"ПБ {sec_length_dm}-{sec_width_str}-8п"
+                    sec_plate_name = cfg.make_plate_name(sec_length, sec_width / 1000.0, load_code=item_load_code)
                 
-                sec_kp_date = sec_plate_info.get('kp_date', 'неизвестно')
-                sec_customer = sec_plate_info.get('customer', 'неизвестно')
+                sec_kp_date = sec_plate_info.get('kp_date', 'неизвестно') or item.get('kp_date', 'неизвестно')
+                sec_customer = sec_plate_info.get('customer', 'неизвестно') or item.get('customer', 'неизвестно')
                 sec_width_m = sec_width / 1000.0
                 
                 # Ищем такую же плиту в списке (только среди вторичных!)
@@ -302,13 +430,19 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                         existing['qty'] += 1
                         sec_found = True
                         break
-                
+                # #region agent log H7: secondary cuts 51,8-5 / 58,5-5,3
+                if '51,8-5' in sec_plate_name or '58,5-5,3' in sec_plate_name:
+                    _d7 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+                    import json as _j7
+                    with open(_d7, 'a', encoding='utf-8') as _f7:
+                        _f7.write(_j7.dumps({"hypothesisId": "H7", "location": "production_completion:secondary_cut_added", "message": "Вторичный рез в track_plates", "data": {"sec_plate_name": sec_plate_name, "sec_kp_id": sec_kp_id, "sec_length": sec_length, "sec_width_m": sec_width_m, "day": day_number, "merged": sec_found}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                # #endregion
                 if not sec_found:
                     track_plates.append({
                         'plate_name': sec_plate_name,
                         'length_m': sec_length,
                         'width_m': sec_width_m,
-                        'load_class': 800,
+                        'load_class': int(cfg.normalize_load_code(item_load_code) * 100),
                         'qty': 1,
                         'kp_id': sec_kp_id,
                         'kp_date': sec_kp_date,
@@ -378,6 +512,22 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     
     # Подсчитываем общее количество позиций
     total_positions = sum(len(track['plates']) for track in day_plates_by_track)
+    
+    # ✅ НОВОЕ: Логируем результаты формирования списка для списания
+    logger.info(f"[TRACE] ===== ШАГ 8: ПЛИТЫ ДЛЯ СПИСАНИЯ (day_plates_by_track) =====")
+    logger.info(f"[TRACE] Дорожек: {len(day_plates_by_track)}")
+    logger.info(f"[TRACE] Позиций (уникальных плит): {total_positions}")
+    logger.info(f"[TRACE] Всего плит (с количеством): {total_qty}")
+    
+    for track_data in day_plates_by_track:
+        track_num = track_data['track_number']
+        plates_count = len(track_data['plates'])
+        qty_sum = sum(p['qty'] for p in track_data['plates'])
+        logger.info(f"[TRACE]   Дорожка #{track_num}: {plates_count} позиций, {qty_sum} шт")
+        
+        for plate in track_data['plates']:
+            is_sec = " [ВТОРИЧНЫЙ]" if plate.get('is_secondary') else ""
+            logger.info(f"[TRACE]     - {plate['plate_name']} × {plate['qty']} (ширина={plate['width_m']*1000:.0f}мм, КП #{plate.get('kp_id', '?')}){is_sec}")
     
     # Сохраняем данные для завершения дня
     await state.update_data(
@@ -592,12 +742,42 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     # Импортируем функции БД
     db_path = str(PROJECT_ROOT / "plita.db")
     
+    # plan_ids для Fallback-поиска плит в других КП того же плана
+    source_plans = data.get('current_day_source_plans', [])
+    active_plan_id = data.get('active_plan_id') or get_active_plan_id()
+    plan_ids = list(source_plans) if source_plans else ([active_plan_id] if active_plan_id else [])
+    
+    # ИСПРАВЛЕНИЕ: Если plan_ids пуст, получаем все сохранённые планы из metadata
+    # Это обеспечивает работу fallback-механизмов даже при отсутствии source_plans
+    if not plan_ids:
+        plan_ids = get_all_active_plan_ids()
+        logger.info(f"[COMPLETION] plan_ids был пуст, загружено {len(plan_ids)} планов из metadata")
+    
     # Группируем по kp_id
     plates_by_kp = defaultdict(list)
     plates_without_kp = []  # Плиты без kp_id (не найдены в lookup)
+    # #region agent log
+    import json as _json3
+    _debug_log3 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+    # #endregion
     
+    # #region agent log H7: сводка по completed_plates (в т.ч. 5 типов, которые не списались)
+    _d7 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+    import json as _j7
+    _key_substrings = ('51,8-5', '58,5-5,3', '61,1-12-10', '36,6-6,65', '64,8-12-12,5', '78,1-12-10', '78,1-12-12,5')
+    _targets = [p for p in completed_plates if any(s in p.get('plate_name', '') for s in _key_substrings)]
+    with open(_d7, 'a', encoding='utf-8') as _f7:
+        _f7.write(_j7.dumps({"hypothesisId": "H7", "location": "production_completion:completed_plates_summary", "message": "Целевые плиты в completed_plates", "data": {"day": day_number, "target_count": len(_targets), "targets": [{"name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "length_m": p.get("length_m"), "load_class": p.get("load_class")} for p in _targets], "total_plates": len(completed_plates)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    # #endregion
     for plate in completed_plates:
         kp_id = plate.get('kp_id')
+        plate_name = plate.get('plate_name', '')
+        width_m = plate.get('width_m', 0)
+        # #region agent log H3/H5: плиты с/без kp_id
+        if not kp_id or width_m in [0.46, 0.53, 0.5, 0.665] or '4,6' in plate_name or '5,3' in plate_name or '6,65' in plate_name or '51,8-5' in plate_name or '58,5-5,3' in plate_name:
+            with open(_debug_log3, 'a', encoding='utf-8') as _f3:
+                _f3.write(_json3.dumps({"hypothesisId": "H3", "location": "production_completion:confirm_day_completion", "message": "Плита при списании", "data": {"plate_name": plate_name, "kp_id": kp_id, "width_m": width_m, "has_kp_id": bool(kp_id), "qty": plate.get('qty', 1)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+        # #endregion
         if kp_id:
             plates_by_kp[kp_id].append(plate)
         else:
@@ -620,7 +800,7 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
             # Переносим плиту в completed_plates
             kp_id = plate.get('kp_id')
             if kp_id:
-                moved = kp_db.move_plates_to_completed(kp_id, [plate], day_number, db_path)
+                moved = kp_db.move_plates_to_completed(kp_id, [plate], day_number, db_path, plan_ids=plan_ids)
                 total_moved += moved
                 
                 if kp_db.check_and_update_kp_completion(kp_id, db_path):
@@ -634,7 +814,7 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
         if not plates_not_from_rests:
             continue
         
-        moved = kp_db.move_plates_to_completed(kp_id, plates_not_from_rests, day_number, db_path)
+        moved = kp_db.move_plates_to_completed(kp_id, plates_not_from_rests, day_number, db_path, plan_ids=plan_ids)
         total_moved += moved
         
         # Проверяем, завершён ли КП полностью
@@ -643,27 +823,30 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
                 completed_kps.append(kp_id)
     
     # ========== НОВОЕ: Обрабатываем плиты БЕЗ kp_id ==========
-    # Эти плиты не были найдены в lookup-таблицах (возможно из-за изменения ширины после реза)
-    # Ищем их в БД по длине
+    # Эти плиты не были найдены в lookup-таблицах (возможно из-за изменения ширины после реза).
+    # Ищем их в БД по длине И по классу нагрузки (load_class), иначе находили плиту 8п вместо 10п/12,5п
+    # и move_plates_to_completed не списывал — там везде фильтр по load_class.
     for plate in plates_without_kp:
         length_m = plate.get('length_m', 0)
         plate_name = plate.get('plate_name', '')
+        load_class = plate.get('load_class', 800)
         
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
         
-        # Ищем по длине среди КП "в работе" и плит "в плане"
+        # Ищем по длине И по классу нагрузки среди КП "в работе" и плит "в плане"
         cur.execute('''
             SELECT p.kp_id, p.plate_name 
             FROM kp_plates p
             JOIN kp_meta m ON p.kp_id = m.kp_id
             WHERE ABS(p.length_m - ?) < 0.02 
+              AND p.load_class = ?
               AND p.qty > 0
               AND m.status = 'в работе'
               AND p.status = 'в плане'
             ORDER BY p.kp_id
             LIMIT 1
-        ''', (length_m,))
+        ''', (length_m, load_class))
         row = cur.fetchone()
         conn.close()
         
@@ -672,15 +855,15 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
             db_plate_name = row[1]
             plate['plate_name'] = db_plate_name  # Используем имя из БД для корректного списания
             
-            moved = kp_db.move_plates_to_completed(found_kp_id, [plate], day_number, db_path)
+            moved = kp_db.move_plates_to_completed(found_kp_id, [plate], day_number, db_path, plan_ids=plan_ids)
             total_moved += moved
-            logger.info(f"[COMPLETION] Плита найдена по длине: {plate_name} ({length_m}м) → КП #{found_kp_id}")
+            logger.info(f"[COMPLETION] Плита найдена по длине+классу: {plate_name} ({length_m}м, {load_class}) → КП #{found_kp_id}")
             
             if kp_db.check_and_update_kp_completion(found_kp_id, db_path):
                 if found_kp_id not in completed_kps:
                     completed_kps.append(found_kp_id)
         else:
-            logger.warning(f"[COMPLETION] Плита не найдена в БД: {plate_name} ({length_m}м)")
+            logger.warning(f"[COMPLETION] Плита не найдена в БД: {plate_name} ({length_m}м, load_class={load_class})")
     # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
     
     # ========== ВОЗВРАТ БРАКОВАННЫХ ПЛИТ В ПРОИЗВОДСТВО ==========

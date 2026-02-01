@@ -34,7 +34,7 @@ from core.exceptions import PlateParseError, FileGenerationError
 # Настройка логирования
 logger = logging.getLogger(__name__)
 
-from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, cancel_process_kb, managers_selection_kb
+from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, save_to_db_with_files_kb, cancel_process_kb, managers_selection_kb
 from ..states import KPStates
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -42,6 +42,9 @@ router = Router()
 
 # Кэш заказов пользователей
 ORDER_CACHE: Dict[int, list] = {}
+
+# Кеш результата оптимизации по user_id (для отложенной генерации схемы)
+OPT_PLAN_CACHE: Dict[int, dict] = {}
 
 
 @router.message(F.text == "📝 Создать КП")
@@ -458,6 +461,13 @@ async def generate_all_documents(message: Message, state: FSMContext):
                         load_code: ['all'] for load_code in all_loads
                     }
                     
+                    # Кешируем для отложенной генерации схемы (по нажатию кнопки)
+                    OPT_PLAN_CACHE[message.from_user.id] = {
+                        'plan': optimization_result,
+                        'by_load': optimization.OPT_CASCADING_PLAN_BY_LOAD,
+                        'load_map': dict(optimization.LOAD_TO_REINFORCEMENT_MAP),
+                    }
+                    
                     total_plates = optimization_result.get('total_plates', 0)
                     total_cost = optimization_result.get('total_cost', 0)
                     
@@ -556,69 +566,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
         kp_db_id = get_next_kp_number()
         logger.debug(f"Предполагаемый номер КП из БД: {kp_db_id}")
         
-        # Генерируем PDF с номером КП из БД
-        pdf_buffer = await asyncio.to_thread(
-            generate_commercial_offer_pdf,
-            order_data,
-            offer_number,
-            offer_date,
-            client_name,      # Используем имя клиента из опроса
-            manager_name,     # имя менеджера
-            manager_phone,    # телефон менеджера
-            manager_email,    # email менеджера
-            discount_percent, # процент скидки
-            kp_db_id          # 🆕 НОМЕР КП ИЗ БД!
-        )
-        
-        # Генерируем XLSX с номером КП из БД
-        try:
-            xlsx_buffer = await asyncio.to_thread(
-                generate_commercial_offer_xlsx,
-                order_data,
-                offer_number,
-                offer_date,
-                client_name,         # Используем имя клиента
-                manager_name,        # имя менеджера
-                manager_phone,       # телефон менеджера
-                manager_email,       # email менеджера
-                discount_percent,    # передаем процент скидки
-                delivery_conditions, # условия поставки
-                payment_conditions,  # условия оплаты
-                kp_db_id             # 🆕 НОМЕР КП ИЗ БД!
-            )
-            has_xlsx = True
-        except Exception as e:
-            logger.exception(f"[XLSX] Ошибка генерации XLSX: {e}")
-            has_xlsx = False
-        
-        # Сохраняем файлы
-        pdf_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.pdf"
-        pdf_path = os.path.join(OUTPUTS_DIR_STR, pdf_filename)
-        
-        xlsx_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.xlsx"
-        xlsx_path = os.path.join(OUTPUTS_DIR_STR, xlsx_filename)
-        
-        # Сохраняем детальную разбивку в отдельный Excel файл
-        breakdown_filename = f"Детальная_разбивка_{offer_number}_{offer_date.replace('.', '')}.xlsx"
-        breakdown_path = os.path.join(OUTPUTS_DIR_STR, breakdown_filename)
-        
-        with open(pdf_path, 'wb') as f:
-            f.write(pdf_buffer.getvalue())
-        
-        if has_xlsx:
-            with open(xlsx_path, 'wb') as f:
-                f.write(xlsx_buffer.getvalue())
-        
-        # Сохраняем детальную разбивку
-        has_breakdown = False
-        if breakdown_tables:
-            from core.commercial_offer import save_breakdown_to_excel
-            has_breakdown = await asyncio.to_thread(
-                save_breakdown_to_excel,
-                breakdown_tables,
-                breakdown_path
-            )
-        
+        # Документы генерируются по нажатию кнопок — показываем кнопки сразу
         # Формируем сводку
         total_qty = sum(item['qty'] for item in order_data)
         summary = f"✅ Коммерческое предложение готово!\n\n"
@@ -626,86 +574,37 @@ async def generate_all_documents(message: Message, state: FSMContext):
         for item in order_data:
             summary += f"  • {item['name']} — {item['qty']} шт\n"
         summary += f"\n📊 Всего позиций: {len(order_data)}\n"
-        summary += f"📦 Всего плит: {total_qty} шт\n"
+        summary += f"📦 Всего плит: {total_qty} шт\n\n"
+        summary += "✨ Документы содержат:\n"
+        summary += "• Подробную спецификацию\n"
+        summary += "• Расчёт стоимости материалов\n"
+        summary += "• Стоимость резов\n"
+        summary += "• Вес изделий\n"
+        summary += "• НДС (22%)\n"
+        summary += "• Условия оплаты\n\n"
+        summary += f"💰 Скидка: {discount_percent}%\n"
+        summary += f"👤 Менеджер: {manager_name}\n"
+        summary += f"📊 XLSX файл содержит расчётные формулы Excel!"
         
-        await message.answer(summary)
-        
-        # Отправляем PDF
-        if os.path.exists(pdf_path):
-            await message.answer_document(
-                FSInputFile(pdf_path),
-                caption=f"📄 Коммерческое предложение № {offer_number} (PDF)"
-            )
-        
-        # Отправляем XLSX
-        if has_xlsx and os.path.exists(xlsx_path):
-            await message.answer_document(
-                FSInputFile(xlsx_path),
-                caption=f"📊 Коммерческое предложение № {offer_number} (XLSX с формулами)"
-            )
-        
-        # Отправляем детальную разбивку
-        if has_breakdown and os.path.exists(breakdown_path):
-            await message.answer_document(
-                FSInputFile(breakdown_path),
-                caption=f"📋 Детальная разбивка компонентов № {offer_number}"
-            )
-        
-        # Генерируем схему и разбивку
-        await message.answer("⏳ Генерирую схему раскладки и детальную разбивку...")
-        
-        try:
-            result_paths = await asyncio.to_thread(visualize_plan, OUTPUTS_DIR_STR)
-            
-            if isinstance(result_paths, tuple) and len(result_paths) >= 2:
-                png_path, pdf_schema_path = result_paths
-                
-                base = os.path.basename(png_path)
-                if 'КЗ_' in base:
-                    timestamp = base.split('КЗ_', 1)[-1].replace('.png', '')
-                else:
-                    timestamp = base.rsplit('_', 1)[-1].replace('.png', '')
-                
-                breakdown_path = os.path.join(OUTPUTS_DIR_STR, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx')
-                
-                if os.path.exists(pdf_schema_path):
-                    await message.answer_document(
-                        FSInputFile(pdf_schema_path),
-                        caption="📐 Схема раскладки плит"
-                    )
-                
-                if os.path.exists(breakdown_path):
-                    await message.answer_document(
-                        FSInputFile(breakdown_path),
-                        caption="📊 Детальная разбивка компонентов"
-                    )
-        except Exception as e:
-            logger.exception(f"Ошибка при генерации схемы: {e}")
-        
-        await message.answer(
-            "✨ Документы содержат:\n"
-            "• Подробную спецификацию\n"
-            "• Расчёт стоимости материалов\n"
-            "• Стоимость резов\n"
-            "• Вес изделий\n"
-            "• НДС (22%)\n"
-            "• Условия оплаты\n\n"
-            f"💰 Скидка: {discount_percent}%\n"
-            f"👤 Менеджер: {manager_name}\n"
-            f"📊 XLSX файл содержит расчётные формулы Excel!"
-        )
-        
-        # Сохраняем данные КП для последующего сохранения в БД
-        # ВАЖНО: Сохраняем ДО очистки состояния
+        # Сохраняем данные для генерации по нажатию кнопок
         await state.update_data(
             kp_order_data=order_data,
-            kp_xlsx_path=xlsx_path if has_xlsx and os.path.exists(xlsx_path) else None,
+            kp_breakdown_tables=breakdown_tables,
+            kp_offer_number=offer_number,
+            kp_offer_date=offer_date,
+            kp_db_id=kp_db_id,
+            kp_pdf_path=None,
+            kp_xlsx_path=None,
+            kp_breakdown_path=None,
+            kp_schema_pdf_path=None,
+            kp_schema_breakdown_path=None,
             kp_customer_name=client_name,
             kp_manager_name=manager_name,
+            kp_manager_phone=manager_phone,
+            kp_manager_email=manager_email,
             kp_discount_percent=discount_percent,
             kp_delivery_conditions=delivery_conditions,
             kp_payment_conditions=payment_conditions,
-            kp_offer_date=offer_date
         )
         
         # Очищаем состояние, чтобы callback мог сработать
@@ -718,11 +617,19 @@ async def generate_all_documents(message: Message, state: FSMContext):
         logger.debug(f"  - Скидка: {discount_percent}%")
         logger.debug(f"  - Плит: {len(order_data)}")
         
-        # Предлагаем сохранить КП в базу данных
+        # Кнопки для генерации документов по нажатию (все доступны)
         await message.answer(
+            f"{summary}\n\n"
             "💾 Хотите сохранить это КП в базу данных?\n\n"
-            "Если сохраните, вы сможете отслеживать статус выполнения заказа.",
-            reply_markup=save_to_db_kb()
+            "Если сохраните, вы сможете отслеживать статус выполнения заказа.\n\n"
+            "📥 Сгенерируйте и скачайте нужные файлы по кнопкам ниже:",
+            reply_markup=save_to_db_with_files_kb(
+                has_pdf=True,
+                has_xlsx=True,
+                has_breakdown=bool(breakdown_tables),
+                has_schema=True,
+                has_schema_breakdown=True,
+            )
         )
     
     except FileGenerationError as e:
@@ -871,6 +778,12 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                         load_to_reinforcement_map[load_code].append(reinforcement_key)
                 
                 optimization.LOAD_TO_REINFORCEMENT_MAP = load_to_reinforcement_map
+                # Кешируем для отложенной генерации схемы
+                OPT_PLAN_CACHE[message.from_user.id] = {
+                    'plan': None,
+                    'by_load': dict(optimization.OPT_CASCADING_PLAN_BY_LOAD),
+                    'load_map': dict(optimization.LOAD_TO_REINFORCEMENT_MAP),
+                }
                 logger.info(
                     f"[COMMERCIAL] Сохранено {len(optimization_results_by_reinforcement)} результатов оптимизации"
                 )
@@ -970,69 +883,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         else:
             customer_name = user.first_name or "заказчик"
         
-        # Генерируем PDF и XLSX в памяти
-        pdf_buffer = await asyncio.to_thread(
-            generate_commercial_offer_pdf,
-            order_data,
-            offer_number,
-            offer_date,
-            customer_name,
-            None,  # manager_name - не используется в старом потоке
-            None,  # manager_phone
-            None,  # manager_email
-            0,     # discount_percent - в старом потоке нет скидки
-            None   # kp_db_id - старый поток без БД
-        )
-        
-        # Генерируем XLSX
-        try:
-            xlsx_buffer = await asyncio.to_thread(
-                generate_commercial_offer_xlsx,
-                order_data,
-                offer_number,
-                offer_date,
-                customer_name,
-                None,  # manager_name - не используется в старом потоке
-                None,  # manager_phone
-                None,  # manager_email
-                0,     # discount_percent
-                None,  # delivery_conditions
-                None,  # payment_conditions
-                None   # kp_db_id - старый поток без БД
-            )
-            has_xlsx = True
-        except Exception as e:
-            logger.exception(f"[XLSX] Ошибка генерации XLSX: {e}")
-            has_xlsx = False
-        
-        # Сохраняем файлы во временные файлы для отправки
-        pdf_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.pdf"
-        pdf_path = os.path.join(OUTPUTS_DIR_STR, pdf_filename)
-        
-        xlsx_filename = f"КП_{offer_number}_{offer_date.replace('.', '')}.xlsx"
-        xlsx_path = os.path.join(OUTPUTS_DIR_STR, xlsx_filename)
-        
-        # Сохраняем детальную разбивку в отдельный Excel файл
-        breakdown_filename = f"Детальная_разбивка_{offer_number}_{offer_date.replace('.', '')}.xlsx"
-        breakdown_path = os.path.join(OUTPUTS_DIR_STR, breakdown_filename)
-        
-        with open(pdf_path, 'wb') as f:
-            f.write(pdf_buffer.getvalue())
-        
-        if has_xlsx:
-            with open(xlsx_path, 'wb') as f:
-                f.write(xlsx_buffer.getvalue())
-        
-        # Сохраняем детальную разбивку
-        has_breakdown = False
-        if breakdown_tables:
-            from core.commercial_offer import save_breakdown_to_excel
-            has_breakdown = await asyncio.to_thread(
-                save_breakdown_to_excel,
-                breakdown_tables,
-                breakdown_path
-            )
-        
+        # Документы генерируются по нажатию кнопок — показываем кнопки сразу
         # Формируем сводку по заказу
         total_qty = sum(item['qty'] for item in order_data)
         summary = f"✅ Коммерческое предложение готово!\n\n"
@@ -1040,109 +891,54 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         for item in order_data:
             summary += f"  • {item['name']} — {item['qty']} шт\n"
         summary += f"\n📊 Всего позиций: {len(order_data)}\n"
-        summary += f"📦 Всего плит: {total_qty} шт\n"
+        summary += f"📦 Всего плит: {total_qty} шт\n\n"
+        summary += "✨ Документы содержат:\n"
+        summary += "• Подробную спецификацию\n"
+        summary += "• Расчёт стоимости материалов\n"
+        summary += "• Стоимость резов\n"
+        summary += "• Вес изделий\n"
+        summary += "• НДС (22%)\n"
+        summary += "• Условия оплаты\n\n"
+        summary += "📊 XLSX файл содержит расчётные формулы Excel!\n"
+        summary += "📐 Схема раскладки и детальная разбивка — по кнопкам."
         
-        await message.answer(summary)
+        # Сохраняем данные для генерации по нажатию кнопок
+        await state.update_data(
+            kp_order_data=order_data,
+            kp_breakdown_tables=breakdown_tables,
+            kp_offer_number=offer_number,
+            kp_offer_date=offer_date,
+            kp_db_id=None,
+            kp_pdf_path=None,
+            kp_xlsx_path=None,
+            kp_breakdown_path=None,
+            kp_schema_pdf_path=None,
+            kp_schema_breakdown_path=None,
+            kp_customer_name=customer_name,
+            kp_manager_name=None,
+            kp_manager_phone=None,
+            kp_manager_email=None,
+            kp_discount_percent=0,
+            kp_delivery_conditions=None,
+            kp_payment_conditions=None,
+        )
         
-        # Отправляем PDF
-        if os.path.exists(pdf_path):
-            await message.answer_document(
-                FSInputFile(pdf_path),
-                caption=f"📄 Коммерческое предложение № {offer_number} (PDF)"
-            )
+        await state.set_state(None)
         
-        # Отправляем XLSX
-        if has_xlsx and os.path.exists(xlsx_path):
-            await message.answer_document(
-                FSInputFile(xlsx_path),
-                caption=f"📊 Коммерческое предложение № {offer_number} (XLSX с формулами)"
+        # Кнопки для генерации документов по нажатию
+        await message.answer(
+            f"{summary}\n\n"
+            "💾 Хотите сохранить это КП в базу данных?\n\n"
+            "Если сохраните, вы сможете отслеживать статус выполнения заказа.\n\n"
+            "📥 Сгенерируйте и скачайте нужные файлы по кнопкам ниже:",
+            reply_markup=save_to_db_with_files_kb(
+                has_pdf=True,
+                has_xlsx=True,
+                has_breakdown=bool(breakdown_tables),
+                has_schema=True,
+                has_schema_breakdown=True,
             )
-        
-        # Отправляем детальную разбивку
-        if has_breakdown and os.path.exists(breakdown_path):
-            await message.answer_document(
-                FSInputFile(breakdown_path),
-                caption=f"📋 Детальная разбивка компонентов № {offer_number}"
-            )
-        
-        # 🔥 ГЕНЕРИРУЕМ СХЕМУ И ДЕТАЛЬНУЮ РАЗБИВКУ
-        await message.answer("⏳ Генерирую схему раскладки и детальную разбивку...")
-        
-        try:
-            # Запускаем визуализацию (создаёт PDF схемы и XLSX детальной разбивки)
-            result_paths = await asyncio.to_thread(visualize_plan, OUTPUTS_DIR_STR)
-            
-            if isinstance(result_paths, tuple) and len(result_paths) >= 2:
-                png_path, pdf_schema_path = result_paths
-                
-                # Извлекаем timestamp из имени PNG для поиска дополнительных файлов
-                base = os.path.basename(png_path)
-                if 'КЗ_' in base:
-                    timestamp = base.split('КЗ_', 1)[-1].replace('.png', '')
-                else:
-                    timestamp = base.rsplit('_', 1)[-1].replace('.png', '')
-                
-                # Ищем файл детальной разбивки
-                breakdown_path = os.path.join(OUTPUTS_DIR_STR, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx')
-                
-                # Отправляем PDF схемы
-                if os.path.exists(pdf_schema_path):
-                    await message.answer_document(
-                        FSInputFile(pdf_schema_path),
-                        caption="📐 Схема раскладки плит"
-                    )
-                
-                # Отправляем XLSX детальной разбивки
-                if os.path.exists(breakdown_path):
-                    await message.answer_document(
-                        FSInputFile(breakdown_path),
-                        caption="📊 Детальная разбивка компонентов"
-                    )
-        except Exception as e:
-            logger.exception(f"Ошибка при генерации схемы и разбивки: {e}")
-            # Не прерываем выполнение, просто пропускаем эти файлы
-            
-        if os.path.exists(pdf_path):
-            # Сохраняем данные КП для последующего сохранения в БД
-            await state.update_data(
-                kp_order_data=order_data,
-                kp_xlsx_path=xlsx_path if has_xlsx and os.path.exists(xlsx_path) else None,
-                kp_customer_name=customer_name,
-                kp_manager_name=None,  # В старом потоке нет менеджера
-                kp_discount_percent=0,  # В старом потоке нет скидки
-                kp_delivery_conditions=None,
-                kp_payment_conditions=None,
-                kp_offer_date=offer_date  # 🔥 ИСПРАВЛЕНИЕ: Сохраняем дату!
-            )
-            
-            # Очищаем состояние FSM, но оставляем данные
-            await state.set_state(None)
-            
-            await message.answer(
-                "✨ Документы содержат:\n"
-                "• Подробную спецификацию\n"
-                "• Расчёт стоимости материалов\n"
-                "• Стоимость резов\n"
-                "• Вес изделий\n"
-                "• НДС (22%)\n"
-                "• Условия оплаты\n\n"
-                "📊 XLSX файл содержит расчётные формулы Excel!\n"
-                "📐 Схема раскладки и детальная разбивка также готовы!",
-                reply_markup=main_menu_kb()
-            )
-            
-            # Предлагаем сохранить КП в базу данных
-            await message.answer(
-                "💾 Хотите сохранить это КП в базу данных?\n\n"
-                "Если сохраните, вы сможете отслеживать статус выполнения заказа.",
-                reply_markup=save_to_db_kb()
-            )
-        else:
-            await message.answer(
-                "❌ Ошибка при сохранении файла",
-                reply_markup=main_menu_kb()
-            )
-            await state.clear()
+        )
     
     except FileGenerationError as e:
         # Ошибка генерации файлов
@@ -1162,6 +958,147 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             reply_markup=main_menu_kb()
         )
         await state.clear()
+
+
+# ==================== ОБРАБОТЧИКИ СКАЧИВАНИЯ ФАЙЛОВ КП ====================
+
+FILE_TYPE_TO_KEY = {
+    "pdf": "kp_pdf_path",
+    "xlsx": "kp_xlsx_path",
+    "breakdown": "kp_breakdown_path",
+    "schema": "kp_schema_pdf_path",
+    "schema_breakdown": "kp_schema_breakdown_path",
+}
+
+FILE_TYPE_CAPTIONS = {
+    "pdf": "📄 Коммерческое предложение (PDF)",
+    "xlsx": "📊 Коммерческое предложение (XLSX)",
+    "breakdown": "📋 Детальная разбивка компонентов",
+    "schema": "📐 Схема раскладки плит",
+    "schema_breakdown": "📊 Детальная разбивка по схеме",
+}
+
+
+@router.callback_query(F.data.startswith("kp_file_"))
+async def callback_kp_file_download(callback: CallbackQuery, state: FSMContext):
+    """Генерирует и отправляет файл КП по нажатию кнопки. Если файл ещё не создан — создаёт."""
+    await callback.answer()
+    
+    file_type = callback.data.replace("kp_file_", "")
+    if file_type not in FILE_TYPE_TO_KEY:
+        await callback.message.answer("❌ Неизвестный тип файла.")
+        return
+    
+    data = await state.get_data()
+    path = data.get(FILE_TYPE_TO_KEY[file_type])
+    
+    # Если файл уже есть — отправляем
+    if path and os.path.exists(path):
+        try:
+            await callback.message.answer_document(
+                FSInputFile(path),
+                caption=FILE_TYPE_CAPTIONS.get(file_type, "Файл")
+            )
+        except Exception as e:
+            logger.exception(f"Ошибка отправки файла {file_type}: {e}")
+            await callback.message.answer(f"❌ Не удалось отправить файл: {e}")
+        return
+    
+    # Генерируем по требованию
+    order_data = data.get('kp_order_data', [])
+    if not order_data:
+        await callback.message.answer("❌ Данные КП недоступны. Создайте КП заново.")
+        return
+    
+    offer_number = data.get('kp_offer_number', f"kp_{datetime.now().strftime('%Y%m%d%H%M')}")
+    offer_date = data.get('kp_offer_date', datetime.now().strftime("%d.%m.%Y"))
+    client_name = data.get('kp_customer_name', 'Клиент')
+    manager_name = data.get('kp_manager_name') or ''
+    manager_phone = data.get('kp_manager_phone') or ''
+    manager_email = data.get('kp_manager_email') or ''
+    discount_percent = data.get('kp_discount_percent', 0)
+    delivery_conditions = data.get('kp_delivery_conditions') or ''
+    payment_conditions = data.get('kp_payment_conditions') or ''
+    kp_db_id = data.get('kp_db_id')
+    
+    try:
+        if file_type == "pdf":
+            await callback.message.answer("⏳ Генерирую PDF...")
+            pdf_buffer = await asyncio.to_thread(
+                generate_commercial_offer_pdf,
+                order_data, offer_number, offer_date,
+                client_name, manager_name, manager_phone, manager_email,
+                discount_percent, kp_db_id
+            )
+            path = os.path.join(OUTPUTS_DIR_STR, f"КП_{offer_number}_{offer_date.replace('.', '')}.pdf")
+            with open(path, 'wb') as f:
+                f.write(pdf_buffer.getvalue())
+            await state.update_data(kp_pdf_path=path)
+            await callback.message.answer_document(FSInputFile(path), caption=FILE_TYPE_CAPTIONS["pdf"])
+            
+        elif file_type == "xlsx":
+            await callback.message.answer("⏳ Генерирую XLSX...")
+            xlsx_buffer = await asyncio.to_thread(
+                generate_commercial_offer_xlsx,
+                order_data, offer_number, offer_date,
+                client_name, manager_name, manager_phone, manager_email,
+                discount_percent, delivery_conditions, payment_conditions, kp_db_id
+            )
+            path = os.path.join(OUTPUTS_DIR_STR, f"КП_{offer_number}_{offer_date.replace('.', '')}.xlsx")
+            with open(path, 'wb') as f:
+                f.write(xlsx_buffer.getvalue())
+            await state.update_data(kp_xlsx_path=path)
+            await callback.message.answer_document(FSInputFile(path), caption=FILE_TYPE_CAPTIONS["xlsx"])
+            
+        elif file_type == "breakdown":
+            breakdown_tables = data.get('kp_breakdown_tables', [])
+            if not breakdown_tables:
+                await callback.message.answer("❌ Детальная разбивка недоступна.")
+                return
+            await callback.message.answer("⏳ Генерирую разбивку...")
+            from core.commercial_offer import save_breakdown_to_excel
+            path = os.path.join(OUTPUTS_DIR_STR, f"Детальная_разбивка_{offer_number}_{offer_date.replace('.', '')}.xlsx")
+            await asyncio.to_thread(save_breakdown_to_excel, breakdown_tables, path)
+            if os.path.exists(path):
+                await state.update_data(kp_breakdown_path=path)
+                await callback.message.answer_document(FSInputFile(path), caption=FILE_TYPE_CAPTIONS["breakdown"])
+            else:
+                await callback.message.answer("❌ Не удалось создать файл разбивки.")
+                
+        elif file_type in ("schema", "schema_breakdown"):
+            # Восстанавливаем план оптимизации из кеша (для корректной схемы)
+            user_id = callback.from_user.id
+            if user_id in OPT_PLAN_CACHE:
+                import core.optimization as optimization
+                cached = OPT_PLAN_CACHE[user_id]
+                optimization.OPT_CASCADING_PLAN = cached.get('plan')
+                optimization.OPT_CASCADING_PLAN_BY_LOAD = cached.get('by_load', {})
+                optimization.LOAD_TO_REINFORCEMENT_MAP = cached.get('load_map', {})
+            
+            schema_pdf_path = data.get('kp_schema_pdf_path')
+            schema_breakdown_path = data.get('kp_schema_breakdown_path')
+            
+            if (not schema_pdf_path or not os.path.exists(schema_pdf_path)) or \
+               (file_type == "schema_breakdown" and (not schema_breakdown_path or not os.path.exists(schema_breakdown_path))):
+                await callback.message.answer("⏳ Генерирую схему раскладки...")
+                result_paths = await asyncio.to_thread(visualize_plan, OUTPUTS_DIR_STR)
+                if isinstance(result_paths, tuple) and len(result_paths) >= 2:
+                    png_path, pdf_schema_path = result_paths
+                    base = os.path.basename(png_path)
+                    timestamp = base.split('КЗ_', 1)[-1].replace('.png', '') if 'КЗ_' in base else base.rsplit('_', 1)[-1].replace('.png', '')
+                    schema_breakdown_path = os.path.join(OUTPUTS_DIR_STR, f'Детальная_разбивка_Дорожка_1_{timestamp}.xlsx')
+                    schema_pdf_path = pdf_schema_path if os.path.exists(pdf_schema_path) else None
+                    await state.update_data(kp_schema_pdf_path=schema_pdf_path, kp_schema_breakdown_path=schema_breakdown_path)
+            
+            send_path = schema_pdf_path if file_type == "schema" else schema_breakdown_path
+            if send_path and os.path.exists(send_path):
+                await callback.message.answer_document(FSInputFile(send_path), caption=FILE_TYPE_CAPTIONS[file_type])
+            else:
+                await callback.message.answer("❌ Не удалось сгенерировать схему.")
+                
+    except Exception as e:
+        logger.exception(f"Ошибка генерации {file_type}: {e}")
+        await callback.message.answer(f"❌ Ошибка при создании файла: {e}")
 
 
 # ==================== ОБРАБОТЧИКИ СОХРАНЕНИЯ КП В БД ====================
@@ -1283,12 +1220,31 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     xlsx_path = data.get('kp_xlsx_path')
     customer_name = data.get('kp_customer_name')
     manager_name = data.get('kp_manager_name')
-    manager_phone = data.get('manager_phone', '')
-    manager_email = data.get('manager_email', '')
+    manager_phone = data.get('kp_manager_phone', '')
+    manager_email = data.get('kp_manager_email', '')
     discount_percent = data.get('kp_discount_percent', 0)
     delivery_conditions = data.get('kp_delivery_conditions')
     payment_conditions = data.get('kp_payment_conditions')
     offer_date = data.get('kp_offer_date')
+    offer_number = data.get('kp_offer_number', '')
+    kp_db_id = data.get('kp_db_id')
+    
+    # Генерируем XLSX, если ещё не создан
+    if not xlsx_path or not os.path.exists(xlsx_path):
+        try:
+            await message.answer("⏳ Генерирую XLSX для сохранения в БД...")
+            xlsx_buffer = await asyncio.to_thread(
+                generate_commercial_offer_xlsx,
+                order_data, offer_number, offer_date,
+                customer_name, manager_name, manager_phone, manager_email,
+                discount_percent, delivery_conditions, payment_conditions, kp_db_id
+            )
+            xlsx_path = os.path.join(OUTPUTS_DIR_STR, f"КП_{offer_number}_{offer_date.replace('.', '')}.xlsx")
+            with open(xlsx_path, 'wb') as f:
+                f.write(xlsx_buffer.getvalue())
+            await state.update_data(kp_xlsx_path=xlsx_path)
+        except Exception as e:
+            logger.exception(f"Ошибка генерации XLSX для save: {e}")
     
     logger.debug("Данные из state")
     logger.debug(f"  - Клиент: {customer_name}")
@@ -1357,7 +1313,9 @@ async def receive_execution_terms(message: Message, state: FSMContext):
         )
     
     finally:
-        # Очищаем состояние
+        user_id = message.from_user.id
+        if user_id in OPT_PLAN_CACHE:
+            del OPT_PLAN_CACHE[user_id]
         await state.clear()
 
 
@@ -1367,20 +1325,13 @@ async def callback_skip_save_kp(callback: CallbackQuery, state: FSMContext):
     Обработчик кнопки "Не сохранять".
     Пропускает сохранение КП в БД.
     """
-    # Убираем "часики" с кнопки
     await callback.answer()
+    user_id = callback.from_user.id
+    if user_id in OPT_PLAN_CACHE:
+        del OPT_PLAN_CACHE[user_id]
     
-    # Редактируем сообщение с кнопками
-    await callback.message.edit_text(
-        "❌ КП не сохранено в базу данных."
-    )
-    
-    await callback.message.answer(
-        "✅ Работа с КП завершена!",
-        reply_markup=main_menu_kb()
-    )
-    
-    # Очищаем состояние
+    await callback.message.edit_text("❌ КП не сохранено в базу данных.")
+    await callback.message.answer("✅ Работа с КП завершена!", reply_markup=main_menu_kb())
     await state.clear()
 
 
@@ -1412,12 +1363,31 @@ async def callback_save_kp_to_archive(callback: CallbackQuery, state: FSMContext
     xlsx_path = data.get('kp_xlsx_path')
     customer_name = data.get('kp_customer_name')
     manager_name = data.get('kp_manager_name')
-    manager_phone = data.get('manager_phone', '')
-    manager_email = data.get('manager_email', '')
+    manager_phone = data.get('kp_manager_phone', '')
+    manager_email = data.get('kp_manager_email', '')
     discount_percent = data.get('kp_discount_percent', 0)
     delivery_conditions = data.get('kp_delivery_conditions')
     payment_conditions = data.get('kp_payment_conditions')
     offer_date = data.get('kp_offer_date')
+    offer_number = data.get('kp_offer_number', '')
+    kp_db_id = data.get('kp_db_id')
+    
+    # Генерируем XLSX, если ещё не создан
+    if (not xlsx_path or not os.path.exists(xlsx_path)) and order_data:
+        try:
+            await callback.message.answer("⏳ Генерирую XLSX для сохранения в архив...")
+            xlsx_buffer = await asyncio.to_thread(
+                generate_commercial_offer_xlsx,
+                order_data, offer_number, offer_date,
+                customer_name, manager_name, manager_phone, manager_email,
+                discount_percent, delivery_conditions, payment_conditions, kp_db_id
+            )
+            xlsx_path = os.path.join(OUTPUTS_DIR_STR, f"КП_{offer_number}_{offer_date.replace('.', '')}.xlsx")
+            with open(xlsx_path, 'wb') as f:
+                f.write(xlsx_buffer.getvalue())
+            await state.update_data(kp_xlsx_path=xlsx_path)
+        except Exception as e:
+            logger.exception(f"Ошибка генерации XLSX для archive: {e}")
     
     logger.debug("Данные из state")
     logger.debug(f"  - Клиент: {customer_name}")
@@ -1485,7 +1455,9 @@ async def callback_save_kp_to_archive(callback: CallbackQuery, state: FSMContext
         )
     
     finally:
-        # Очищаем состояние
+        user_id = callback.from_user.id
+        if user_id in OPT_PLAN_CACHE:
+            del OPT_PLAN_CACHE[user_id]
         await state.clear()
 
 

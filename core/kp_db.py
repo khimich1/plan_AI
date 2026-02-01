@@ -821,11 +821,26 @@ def clear_all_kp(db_path: str = DEFAULT_DB) -> Dict[str, int]:
 
 # ==================== ФУНКЦИИ ДЛЯ ВЫПОЛНЕННЫХ ПЛИТ ====================
 
+def _normalize_plate_name(name: str) -> str:
+    """
+    Нормализует имя плиты для совпадений:
+    - убирает префикс "Плиты "
+    - лишние пробелы
+    """
+    if not name:
+        return ''
+    cleaned = str(name).strip()
+    if cleaned.lower().startswith('плиты '):
+        cleaned = cleaned[6:].strip()
+    return cleaned
+
+
 def move_plates_to_completed(
     kp_id: int,
     plates_to_complete: List[Dict],
     production_day: int,
-    db_path: str = DEFAULT_DB
+    db_path: str = DEFAULT_DB,
+    plan_ids: Optional[List[str]] = None
 ) -> int:
     """
     Переносит плиты из kp_plates в completed_plates.
@@ -847,44 +862,141 @@ def move_plates_to_completed(
     init_schema(db_path)
     conn = _connect(db_path)
     completed_count = 0
+    # #region agent log
+    import json as _json4
+    _debug_log4 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+    # #endregion
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         completed_date = datetime.now().strftime('%d.%m.%Y')
         
+        # Целевые подстроки для логов (плиты, которые не списались у пользователя)
+        _target_substrings = ('61,1-12-10', '36,6-6,65', '64,8-12-12,5', '78,1-12-10', '78,1-12-12,5')
+        _is_target = lambda n: any(s in (n or '') for s in _target_substrings)
+
+        def find_one_row(plate_name, length_m, width_m, load_class, prefer_kp_id):
+            """Находит одну строку в kp_plates для списания (id, kp_id, plate_name, width_m, qty)."""
+            # 1) По kp_id + plate_name
+            cur.execute('''
+                SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                WHERE kp_id = ? AND plate_name = ? AND qty > 0 AND status = 'в плане'
+                LIMIT 1
+            ''', (prefer_kp_id, plate_name))
+            row = cur.fetchone()
+            if row:
+                return row
+            # 2) Нормализованное имя
+            normalized_name = _normalize_plate_name(plate_name)
+            if normalized_name and normalized_name != plate_name:
+                cur.execute('''
+                    SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                    WHERE kp_id = ? AND plate_name = ? AND qty > 0 AND status = 'в плане'
+                    LIMIT 1
+                ''', (prefer_kp_id, normalized_name))
+                row = cur.fetchone()
+                if row:
+                    return row
+            # 3) По размерам в prefer_kp_id
+            if length_m and width_m:
+                cur.execute('''
+                    SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                    WHERE kp_id = ? AND status = 'в плане' AND qty > 0
+                      AND ABS(length_m - ?) < 0.02 AND ABS(width_m - ?) < 0.01 AND load_class = ?
+                    LIMIT 1
+                ''', (prefer_kp_id, length_m, width_m, load_class))
+                row = cur.fetchone()
+                if row:
+                    return row
+            # 4) По длине + нагрузке в prefer_kp_id
+            if length_m:
+                cur.execute('''
+                    SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                    WHERE kp_id = ? AND status = 'в плане' AND qty > 0
+                      AND ABS(length_m - ?) < 0.02 AND load_class = ?
+                    LIMIT 1
+                ''', (prefer_kp_id, length_m, load_class))
+                row = cur.fetchone()
+                if row:
+                    return row
+            # 5) По plan_ids
+            if length_m and plan_ids:
+                placeholders = ','.join('?' * len(plan_ids))
+                cur.execute(f'''
+                    SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                    WHERE plan_id IN ({placeholders}) AND status = 'в плане' AND qty > 0
+                      AND ABS(length_m - ?) < 0.02 AND load_class = ?
+                    ORDER BY CASE WHEN kp_id = ? THEN 0 ELSE 1 END, id
+                    LIMIT 1
+                ''', (*plan_ids, length_m, load_class, prefer_kp_id))
+                row = cur.fetchone()
+                if row:
+                    return row
+            # 6) По длине + нагрузке в любом КП
+            if length_m:
+                cur.execute('''
+                    SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                    WHERE status = 'в плане' AND qty > 0
+                      AND ABS(length_m - ?) < 0.02 AND load_class = ?
+                    ORDER BY CASE WHEN kp_id = ? THEN 0 ELSE 1 END, id
+                    LIMIT 1
+                ''', (length_m, load_class, prefer_kp_id))
+                row = cur.fetchone()
+                if row:
+                    return row
+            return None
+
         for plate in plates_to_complete:
             plate_name = plate.get('plate_name', '')
-            qty = plate.get('qty', 1)
+            qty_remaining = plate.get('qty', 1)
+            length_m = plate.get('length_m', 0)
+            width_m = plate.get('width_m', 0)
+            load_class = plate.get('load_class', 800)
             
             if not plate_name:
                 continue
-            
-            # Вставляем в completed_plates
-            cur.execute('''
-                INSERT INTO completed_plates (
-                    kp_id, plate_name, length_m, width_m, load_class,
-                    qty, completed_date, production_day
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                kp_id,
-                plate_name,
-                plate.get('length_m', 0),
-                plate.get('width_m', 0),
-                plate.get('load_class', 800),
-                qty,
-                completed_date,
-                production_day
-            ))
-            
-            # Уменьшаем qty в kp_plates
-            cur.execute('''
-                UPDATE kp_plates 
-                SET qty = qty - ?
-                WHERE kp_id = ? AND plate_name = ? AND qty > 0
-            ''', (qty, kp_id, plate_name))
-            
-            completed_count += qty
+
+            # #region agent log: целевые плиты на входе в списание
+            if _is_target(plate_name):
+                cur.execute('SELECT plate_name, length_m, width_m, load_class, qty FROM kp_plates WHERE kp_id = ? AND status = ? AND qty > 0 LIMIT 10', (kp_id, 'в плане'))
+                _rows_in_db = [dict(zip(('plate_name', 'length_m', 'width_m', 'load_class', 'qty'), r)) for r in cur.fetchall()]
+                with open(_debug_log4, 'a', encoding='utf-8') as _f4:
+                    _f4.write(_json4.dumps({"hypothesisId": "H5", "location": "kp_db:move_plates_to_completed", "message": "Целевая плита на входе", "data": {"kp_id": kp_id, "plate_name": plate_name, "length_m": length_m, "width_m": width_m, "load_class": load_class, "qty": qty_remaining, "rows_in_db_for_kp": _rows_in_db}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+            # #endregion
+
+            # Списываем по одной строке за раз, чтобы добирать остаток из других КП (не оставлять 1 шт «в плане»)
+            current_plate_name = plate_name
+            current_width_m = width_m
+            while qty_remaining > 0:
+                row = find_one_row(current_plate_name, length_m, current_width_m, load_class, kp_id)
+                if not row:
+                    break
+                row_id, row_kp_id, row_plate_name, row_width_m, row_qty = row
+                deduct = min(qty_remaining, row_qty)
+                cur.execute('UPDATE kp_plates SET qty = qty - ? WHERE id = ?', (deduct, row_id))
+                qty_remaining -= deduct
+                completed_count += deduct
+                current_plate_name = row_plate_name
+                current_width_m = row_width_m
+                cur.execute('''
+                    INSERT INTO completed_plates (
+                        kp_id, plate_name, length_m, width_m, load_class,
+                        qty, completed_date, production_day
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (row_kp_id, row_plate_name, length_m, row_width_m, load_class, deduct, completed_date, production_day))
+                if deduct > 0 and (row_kp_id != kp_id):
+                    print(f"[DB] ⚠️ Плита списана из КП #{row_kp_id}: {row_plate_name} (qty={deduct})")
+
+            if qty_remaining > 0:
+                print(f"[DB] ⚠️ Не найдена плита для списания: КП #{kp_id}, {current_plate_name} (осталось qty={qty_remaining})")
+                # #region agent log H5: плита не найдена в БД
+                if _is_target(current_plate_name) or current_width_m in [0.46, 0.5, 0.53, 0.665] or '4,6' in current_plate_name or '5,3' in current_plate_name or '6,65' in current_plate_name or '51,8-5' in current_plate_name:
+                    cur.execute('SELECT plate_name, length_m, width_m, load_class, qty FROM kp_plates WHERE kp_id = ? AND status = ? AND qty > 0 LIMIT 10', (kp_id, 'в плане'))
+                    _rows_in_db = [dict(zip(('plate_name', 'length_m', 'width_m', 'load_class', 'qty'), r)) for r in cur.fetchall()]
+                    with open(_debug_log4, 'a', encoding='utf-8') as _f4:
+                        _f4.write(_json4.dumps({"hypothesisId": "H5", "location": "kp_db:move_plates_to_completed", "message": "Плита НЕ НАЙДЕНА в БД", "data": {"kp_id": kp_id, "plate_name": current_plate_name, "length_m": length_m, "width_m": current_width_m, "load_class": load_class, "qty": qty_remaining, "rows_in_db_for_kp": _rows_in_db}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                # #endregion
         
         # Удаляем записи с qty <= 0
         cur.execute('DELETE FROM kp_plates WHERE qty <= 0')
@@ -1417,8 +1529,12 @@ def mark_plates_as_planned(
     """
     Помечает плиты как 'в плане' при сохранении плана.
     
+    ИСПРАВЛЕНО: Теперь обрабатывает ВСЕ записи с одинаковым plate_name,
+    а не только первую (убран LIMIT 1).
+    
     Простыми словами:
-    - Находит плиту по kp_id и plate_name со статусом 'в производстве'
+    - Находит ВСЕ плиты по kp_id и plate_name со статусом 'в производстве'
+    - Обрабатывает их по очереди, пока не наберется нужное qty_to_plan
     - Если qty_to_plan = всему qty — просто меняет статус на 'в плане'
     - Если qty_to_plan < qty — разбивает запись на две:
       * Одна с qty_to_plan и статусом 'в плане'
@@ -1441,57 +1557,73 @@ def mark_plates_as_planned(
         conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         
-        # Находим плиту со статусом 'в производстве'
+        # ИСПРАВЛЕНО: Находим ВСЕ плиты со статусом 'в производстве' (без LIMIT 1)
         cur.execute('''
             SELECT id, qty, position_number, length_m, width_m, load_class,
                    unit_weight, total_weight, discounted_price
             FROM kp_plates
             WHERE kp_id = ? AND plate_name = ? AND status = 'в производстве' AND qty > 0
             ORDER BY id
-            LIMIT 1
         ''', (kp_id, plate_name))
         
-        row = cur.fetchone()
-        if not row:
+        rows = cur.fetchall()
+        if not rows:
             print(f"[DB] ⚠️ Плита не найдена: КП #{kp_id}, {plate_name} (статус 'в производстве')")
             return False
         
-        plate_id, current_qty, pos_num, length_m, width_m, load_class, unit_w, total_w, price = row
+        # Подсчитываем общее доступное количество
+        total_available = sum(row[1] for row in rows)
         
-        if qty_to_plan > current_qty:
-            print(f"[DB] ⚠️ Запрошено {qty_to_plan}, но доступно только {current_qty}")
-            qty_to_plan = current_qty
+        if qty_to_plan > total_available:
+            print(f"[DB] ⚠️ Запрошено {qty_to_plan}, но доступно только {total_available}")
+            qty_to_plan = total_available
         
-        if qty_to_plan == current_qty:
-            # Простой случай: все плиты идут в план
-            cur.execute('''
-                UPDATE kp_plates
-                SET status = 'в плане', plan_id = ?
-                WHERE id = ?
-            ''', (plan_id, plate_id))
-            print(f"[DB] ✅ Плита {plate_name} x{qty_to_plan} помечена как 'в плане' (план {plan_id})")
-        else:
-            # Разбиваем запись на две
-            remaining_qty = current_qty - qty_to_plan
-            
-            # 1. Обновляем существующую запись: уменьшаем qty, помечаем 'в плане'
-            cur.execute('''
-                UPDATE kp_plates
-                SET qty = ?, status = 'в плане', plan_id = ?
-                WHERE id = ?
-            ''', (qty_to_plan, plan_id, plate_id))
-            
-            # 2. Создаём новую запись с остатком (статус 'в производстве')
-            cur.execute('''
-                INSERT INTO kp_plates (
-                    kp_id, position_number, plate_name, length_m, width_m, load_class,
-                    qty, unit_weight, total_weight, discounted_price, status, plan_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'в производстве', NULL)
-            ''', (kp_id, pos_num, plate_name, length_m, width_m, load_class,
-                  remaining_qty, unit_w, total_w, price))
-            
-            print(f"[DB] ✅ Плита {plate_name} разбита: {qty_to_plan} в план, {remaining_qty} осталось")
+        # Обрабатываем записи по очереди
+        remaining_to_plan = qty_to_plan
+        processed_count = 0
         
+        for row in rows:
+            if remaining_to_plan <= 0:
+                break
+            
+            plate_id, current_qty, pos_num, length_m, width_m, load_class, unit_w, total_w, price = row
+            
+            if current_qty <= remaining_to_plan:
+                # Вся запись идет в план
+                cur.execute('''
+                    UPDATE kp_plates
+                    SET status = 'в плане', plan_id = ?
+                    WHERE id = ?
+                ''', (plan_id, plate_id))
+                print(f"[DB] ✅ Плита {plate_name} x{current_qty} помечена как 'в плане' (запись #{plate_id})")
+                remaining_to_plan -= current_qty
+                processed_count += current_qty
+            else:
+                # Частичная обработка: разбиваем запись
+                qty_for_plan = remaining_to_plan
+                remaining_in_production = current_qty - qty_for_plan
+                
+                # 1. Обновляем существующую запись: уменьшаем qty, помечаем 'в плане'
+                cur.execute('''
+                    UPDATE kp_plates
+                    SET qty = ?, status = 'в плане', plan_id = ?
+                    WHERE id = ?
+                ''', (qty_for_plan, plan_id, plate_id))
+                
+                # 2. Создаём новую запись с остатком (статус 'в производстве')
+                cur.execute('''
+                    INSERT INTO kp_plates (
+                        kp_id, position_number, plate_name, length_m, width_m, load_class,
+                        qty, unit_weight, total_weight, discounted_price, status, plan_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'в производстве', NULL)
+                ''', (kp_id, pos_num, plate_name, length_m, width_m, load_class,
+                      remaining_in_production, unit_w, total_w, price))
+                
+                print(f"[DB] ✅ Плита {plate_name} разбита: {qty_for_plan} в план, {remaining_in_production} осталось (запись #{plate_id})")
+                remaining_to_plan = 0
+                processed_count += qty_for_plan
+        
+        print(f"[DB] ✅ Итого помечено {processed_count} плит '{plate_name}' как 'в плане' (план {plan_id})")
         conn.commit()
         return True
         
@@ -1513,10 +1645,14 @@ def return_plates_to_production(
     """
     Возвращает плиты обратно в статус 'в производстве'.
     
+    ИСПРАВЛЕНО: Теперь обрабатывает ВСЕ записи с одинаковым plate_name,
+    а не только первую (убран LIMIT 1).
+    
     Простыми словами:
     - Используется при браке: бракованные плиты возвращаются в производство
-    - Находит плиту со статусом 'в плане' и меняет статус на 'в производстве'
+    - Находит ВСЕ плиты со статусом 'в плане' и меняет статус на 'в производстве'
     - Очищает plan_id
+    - Обрабатывает нужное количество (qty) по записям
     
     Аргументы:
         kp_id: номер КП
@@ -1534,32 +1670,49 @@ def return_plates_to_production(
         conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         
-        # Находим плиту со статусом 'в плане'
+        # ИСПРАВЛЕНО: Находим ВСЕ плиты со статусом 'в плане' (без LIMIT 1)
         cur.execute('''
             SELECT id, qty
             FROM kp_plates
             WHERE kp_id = ? AND plate_name = ? AND status = 'в плане' AND qty > 0
             ORDER BY id
-            LIMIT 1
         ''', (kp_id, plate_name))
         
-        row = cur.fetchone()
-        if not row:
+        rows = cur.fetchall()
+        if not rows:
             # Плита могла уже быть возвращена или не была в плане
             print(f"[DB] ⚠️ Плита для возврата не найдена: КП #{kp_id}, {plate_name}")
             return False
         
-        plate_id, current_qty = row
+        # Обрабатываем записи по очереди
+        remaining_to_return = qty
+        processed_count = 0
         
-        # Возвращаем в производство
-        cur.execute('''
-            UPDATE kp_plates
-            SET status = 'в производстве', plan_id = NULL
-            WHERE id = ?
-        ''', (plate_id,))
+        for row in rows:
+            if remaining_to_return <= 0:
+                break
+            
+            plate_id, current_qty = row
+            
+            if current_qty <= remaining_to_return:
+                # Вся запись возвращается в производство
+                cur.execute('''
+                    UPDATE kp_plates
+                    SET status = 'в производстве', plan_id = NULL
+                    WHERE id = ?
+                ''', (plate_id,))
+                print(f"[DB] ✅ Плита {plate_name} x{current_qty} возвращена в производство (запись #{plate_id})")
+                remaining_to_return -= current_qty
+                processed_count += current_qty
+            else:
+                # Частичный возврат: возвращаем только нужное количество
+                # Остаток остается в плане
+                print(f"[DB] ⚠️ Частичный возврат пока не реализован для записи #{plate_id}")
+                # TODO: При необходимости можно добавить разбиение записи
+                break
         
         conn.commit()
-        print(f"[DB] ✅ Плита {plate_name} x{qty} возвращена в производство (КП #{kp_id})")
+        print(f"[DB] ✅ Итого возвращено {processed_count} плит '{plate_name}' в производство (КП #{kp_id})")
         return True
         
     except Exception as e:
@@ -1623,6 +1776,185 @@ def return_plan_plates_to_production(plan_id: str, db_path: str = DEFAULT_DB) ->
         
     except Exception as e:
         print(f"[DB] ❌ Ошибка при возврате плит плана в производство: {e}")
+        conn.rollback()
+        return 0
+    
+    finally:
+        conn.close()
+
+
+def recover_stuck_plates(db_path: str = DEFAULT_DB) -> int:
+    """
+    Возвращает "застрявшие" плиты обратно в производство.
+    
+    Простыми словами:
+    - Застрявшая плита = статус 'в плане', но не была списана
+    - Эти плиты не попали в tracks при планировании
+    - Возвращаем их в 'в производстве', чтобы можно было заново запланировать
+    
+    Когда использовать:
+    - После выполнения планов, если часть плит "потерялась"
+    - Через команду бота /recover_plates
+    
+    Аргументы:
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Количество восстановленных записей плит
+    """
+    init_schema(db_path)
+    conn = _connect(db_path)
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        
+        # Сначала посмотрим, сколько плит застряло
+        cur.execute('''
+            SELECT COUNT(*), COALESCE(SUM(qty), 0)
+            FROM kp_plates
+            WHERE status = 'в плане'
+        ''')
+        
+        count_result = cur.fetchone()
+        records_count = count_result[0] if count_result else 0
+        qty_total = count_result[1] if count_result else 0
+        
+        if records_count == 0:
+            print("[DB] ℹ️ Нет застрявших плит для восстановления")
+            return 0
+        
+        # Возвращаем все плиты со статусом 'в плане' в производство
+        cur.execute('''
+            UPDATE kp_plates
+            SET status = 'в производстве', plan_id = NULL
+            WHERE status = 'в плане'
+        ''')
+        
+        conn.commit()
+        print(f"[DB] ✅ Восстановлено {records_count} записей ({qty_total} плит) из статуса 'в плане' в 'в производстве'")
+        return records_count
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при восстановлении застрявших плит: {e}")
+        conn.rollback()
+        return 0
+    
+    finally:
+        conn.close()
+
+
+def return_lost_plates_to_production(
+    plan_id: str,
+    lost_plates: list,
+    db_path: str = DEFAULT_DB
+) -> int:
+    """
+    Возвращает конкретные "потерянные" плиты обратно в производство.
+    
+    ИСПРАВЛЕНО: Теперь обрабатывает ВСЕ записи с одинаковым plate_name,
+    а не только первую (убран LIMIT 1).
+    
+    Простыми словами:
+    - Принимает список плит, которые не попали в tracks
+    - Возвращает их статус на 'в производстве'
+    - Используется как защита при сохранении плана
+    - Обрабатывает нужное количество (qty_lost) по нескольким записям
+    
+    Аргументы:
+        plan_id: ID плана (для логирования)
+        lost_plates: список словарей [{'kp_id': X, 'plate_name': Y, 'qty_lost': Z}, ...]
+        db_path: путь к базе данных
+    
+    Возвращает:
+        Количество восстановленных записей
+    """
+    if not lost_plates:
+        return 0
+    
+    init_schema(db_path)
+    conn = _connect(db_path)
+    total_returned = 0
+    
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        
+        for lost in lost_plates:
+            kp_id = lost.get('kp_id')
+            plate_name = lost.get('plate_name')
+            qty_lost = lost.get('qty_lost', 0)
+            
+            if not kp_id or not plate_name or qty_lost <= 0:
+                continue
+            
+            # ИСПРАВЛЕНО: Ищем ВСЕ плиты со статусом 'в плане' и данным plan_id (без LIMIT 1)
+            cur.execute('''
+                SELECT id, qty
+                FROM kp_plates
+                WHERE kp_id = ? AND plate_name = ? AND status = 'в плане' AND plan_id = ?
+                ORDER BY id
+            ''', (kp_id, plate_name, plan_id))
+            
+            rows = cur.fetchall()
+            if not rows:
+                print(f"[DB] ⚠️ Потерянная плита не найдена: КП #{kp_id}, {plate_name}")
+                continue
+            
+            # Обрабатываем записи по очереди
+            remaining_to_return = qty_lost
+            
+            for row in rows:
+                if remaining_to_return <= 0:
+                    break
+                
+                plate_id, current_qty = row
+                
+                if remaining_to_return >= current_qty:
+                    # Возвращаем всю запись в производство
+                    cur.execute('''
+                        UPDATE kp_plates
+                        SET status = 'в производстве', plan_id = NULL
+                        WHERE id = ?
+                    ''', (plate_id,))
+                    print(f"[DB] ✅ Возвращена вся запись: {plate_name} x{current_qty} (запись #{plate_id})")
+                    remaining_to_return -= current_qty
+                    total_returned += 1
+                else:
+                    # Частичный возврат: уменьшаем qty в плане, создаём новую запись в производстве
+                    new_qty_in_plan = current_qty - remaining_to_return
+                    
+                    # Обновляем существующую запись
+                    cur.execute('''
+                        UPDATE kp_plates
+                        SET qty = ?
+                        WHERE id = ?
+                    ''', (new_qty_in_plan, plate_id))
+                    
+                    # Создаём новую запись для возвращённых плит
+                    cur.execute('''
+                        INSERT INTO kp_plates (
+                            kp_id, position_number, plate_name, length_m, width_m,
+                            load_class, qty, unit_weight, total_weight, discounted_price,
+                            status, plan_id
+                        )
+                        SELECT 
+                            kp_id, position_number, plate_name, length_m, width_m,
+                            load_class, ?, unit_weight, total_weight, discounted_price,
+                            'в производстве', NULL
+                        FROM kp_plates WHERE id = ?
+                    ''', (remaining_to_return, plate_id))
+                    
+                    print(f"[DB] ✅ Частичный возврат: {plate_name} x{remaining_to_return} (осталось в плане: {new_qty_in_plan}, запись #{plate_id})")
+                    remaining_to_return = 0
+                    total_returned += 1
+        
+        conn.commit()
+        print(f"[DB] ✅ Всего возвращено {total_returned} записей потерянных плит")
+        return total_returned
+        
+    except Exception as e:
+        print(f"[DB] ❌ Ошибка при возврате потерянных плит: {e}")
         conn.rollback()
         return 0
     
@@ -1782,7 +2114,7 @@ def get_all_plates_in_production(db_path: str = DEFAULT_DB) -> List[Dict]:
             FROM kp_plates p
             LEFT JOIN KP_offers ko ON p.kp_id = ko.kp_id
             LEFT JOIN kp_meta m ON p.kp_id = m.kp_id
-            WHERE p.qty > 0 AND (m.status IS NULL OR m.status = 'в работе')
+            WHERE p.qty > 0 AND p.status = 'в производстве' AND (m.status IS NULL OR m.status = 'в работе')
             ORDER BY p.kp_id, p.position_number
         ''')
         

@@ -216,7 +216,7 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 plates_by_date_and_reinforcement[kp_date][reinforcement_value].append({
                     'plate_name': plate_name,
                     'length': length_m,
-                    'width': int(width_m * 1000),
+                    'width': round(width_m * 1000),  # round вместо int для корректного округления float
                     'load_code': load_code,
                     'qty': qty,
                     'reinforcement': reinforcement_value,
@@ -236,7 +236,7 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             """, (kp_id,))
             for row in cur.fetchall():
                 plate_name, length_m, width_m = row
-                key = (round(length_m, 2), int(width_m * 1000))
+                key = (round(length_m, 2), round(width_m * 1000))  # round для корректного округления
                 if key not in plate_to_kp_info:
                     plate_to_kp_info[key] = {
                         'kp_id': kp_id,
@@ -281,33 +281,41 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 'reinforcement': plate_data['reinforcement'],
                 'kp_date': plate_data.get('kp_date', 'неизвестно'),
                 'customer': plate_data.get('customer', 'неизвестно'),
-                'plate_name': plate_data.get('plate_name', '')
+                'plate_name': plate_data.get('plate_name', ''),
+                'kp_id': plate_data.get('kp_id')  # ИСПРАВЛЕНИЕ: добавлено kp_id для корректной пометки плит
             })
         
-        # Lookup-таблицы
+        # Lookup-таблицы (ИСПРАВЛЕНО: теперь хранят СПИСОК записей для каждого ключа)
+        # Это позволяет корректно обрабатывать плиты с одинаковыми размерами из разных КП
         plate_lookup_exact = {}
         plate_lookup_by_length = {}
         
         for order in orders_2d:
             key = (round(order['length'], 2), order['width'])
             if key not in plate_lookup_exact:
-                plate_lookup_exact[key] = {
-                    'kp_date': order.get('kp_date', 'неизвестно'),
-                    'customer': order.get('customer', 'неизвестно'),
-                    'plate_name': order.get('plate_name', ''),
-                    'reinforcement': order.get('reinforcement', 0),
-                    'load_code': order.get('load_code', 8),
-                    'qty': order.get('qty', 1),
-                }
+                plate_lookup_exact[key] = []
+            # Добавляем каждый заказ как отдельную запись с qty_remaining
+            plate_lookup_exact[key].append({
+                'kp_id': order.get('kp_id'),
+                'kp_date': order.get('kp_date', 'неизвестно'),
+                'customer': order.get('customer', 'неизвестно'),
+                'plate_name': order.get('plate_name', ''),
+                'reinforcement': order.get('reinforcement', 0),
+                'load_code': order.get('load_code', 8),
+                'qty_remaining': order.get('qty', 1),  # Счётчик для списания
+            })
             
             length_key = round(order['length'], 2)
             if length_key not in plate_lookup_by_length:
-                plate_lookup_by_length[length_key] = {
-                    'kp_date': order.get('kp_date', 'неизвестно'),
-                    'customer': order.get('customer', 'неизвестно'),
-                    'plate_name': order.get('plate_name', ''),
-                    'reinforcement': order.get('reinforcement', 0),
-                }
+                plate_lookup_by_length[length_key] = []
+            plate_lookup_by_length[length_key].append({
+                'kp_id': order.get('kp_id'),
+                'kp_date': order.get('kp_date', 'неизвестно'),
+                'customer': order.get('customer', 'неизвестно'),
+                'plate_name': order.get('plate_name', ''),
+                'reinforcement': order.get('reinforcement', 0),
+                'qty_remaining': order.get('qty', 1),
+            })
         
         # Запуск оптимизации
         optimization_result = await asyncio.to_thread(
@@ -515,21 +523,73 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
         tracks_in_current_file = all_tracks_list[start_index:end_index]
         
         def get_plate_info_smart(length, width):
-            key = (round(length, 2), width)
-            info = plate_lookup_exact.get(key)
-            if info:
-                return info.copy()
+            """
+            Поиск информации о плите с fuzzy-поиском по длине.
             
-            length_key = round(length, 2)
-            info = plate_lookup_by_length.get(length_key)
+            ИСПРАВЛЕНО: Теперь работает со списками записей и учитывает qty_remaining.
+            
+            FUZZY-ПОИСК: Если точный ключ не найден, ищем с tolerance 0.03м (30мм)
+            по длине. Это нужно, потому что оптимизатор может округлять длины.
+            """
+            TOLERANCE = 0.03  # 30мм tolerance для fuzzy-поиска
+            rounded_length = round(length, 2)
+            
+            def find_in_list(entries_list):
+                """Находит первую запись с qty_remaining > 0 (БЕЗ уменьшения счётчика)"""
+                if not entries_list:
+                    return None
+                for entry in entries_list:
+                    if entry.get('qty_remaining', 0) > 0:
+                        return entry.copy()
+                # Если все qty_remaining == 0, возвращаем первую запись
+                return entries_list[0].copy() if entries_list else None
+            
+            # 1. Точное совпадение
+            key = (rounded_length, width)
+            entries = plate_lookup_exact.get(key, [])
+            info = find_in_list(entries)
             if info:
-                return info.copy()
+                return info
+            
+            # 2. Если ширина < 1200 (плита с резом), ищем по оригинальной ширине 1200
+            if width < 1200:
+                key_original = (rounded_length, 1200)
+                entries = plate_lookup_exact.get(key_original, [])
+                info = find_in_list(entries)
+                if info:
+                    return info
+            
+            # 3. Fuzzy-поиск с tolerance по длине в exact lookup
+            for lookup_key, entries in plate_lookup_exact.items():
+                key_length, key_width = lookup_key
+                # Проверяем ширину (точно или 1200 для split)
+                if key_width != width and key_width != 1200:
+                    continue
+                # Проверяем длину с tolerance
+                if abs(key_length - rounded_length) <= TOLERANCE:
+                    info = find_in_list(entries)
+                    if info:
+                        return info
+            
+            # 4. Точный fallback по длине
+            entries = plate_lookup_by_length.get(rounded_length, [])
+            info = find_in_list(entries)
+            if info:
+                return info
+            
+            # 5. Fuzzy fallback: поиск по длине с tolerance
+            for lookup_length, entries in plate_lookup_by_length.items():
+                if abs(lookup_length - rounded_length) <= TOLERANCE:
+                    info = find_in_list(entries)
+                    if info:
+                        return info
             
             return {
                 'kp_date': 'неизвестно',
                 'customer': 'неизвестно',
                 'plate_name': '',
-                'reinforcement': 0
+                'reinforcement': 0,
+                'kp_id': None
             }
         
         for track_idx_in_file, track in enumerate(tracks_in_current_file):

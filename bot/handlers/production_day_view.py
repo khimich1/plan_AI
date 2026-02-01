@@ -271,9 +271,16 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
         4. Возвращаем информацию о КП
         
         ВАЖНО: Работаем с КОПИЕЙ lookup, чтобы не влиять на оригинал.
+        
+        FUZZY-ПОИСК: Если точный ключ не найден, ищем с tolerance 0.03м (30мм)
+        по длине. Это нужно, потому что оптимизатор может округлять длины
+        (например, 3.8м -> 3.79м или 5.71м -> 5.7м).
         """
+        TOLERANCE = 0.03  # 30мм tolerance для fuzzy-поиска
+        rounded_length = round(length, 2)
+        
         # 1. Сначала пробуем точное совпадение
-        key = (round(length, 2), width)
+        key = (rounded_length, width)
         entries = formovka_lookup_exact.get(key, [])
         
         for entry in entries:
@@ -283,20 +290,40 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
         
         # 2. Если ширина < 1200 (плита с резом), ищем по оригинальной ширине 1200
         if width < 1200:
-            key_original = (round(length, 2), 1200)
+            key_original = (rounded_length, 1200)
             entries = formovka_lookup_exact.get(key_original, [])
             for entry in entries:
                 if entry.get('qty_remaining', 0) > 0:
                     entry['qty_remaining'] -= 1
                     return entry.copy()
         
-        # 3. Fallback: поиск только по длине
-        length_key = round(length, 2)
-        entries = formovka_lookup_by_length.get(length_key, [])
+        # 3. Fuzzy-поиск с tolerance по длине в exact lookup
+        for lookup_key, entries in formovka_lookup_exact.items():
+            key_length, key_width = lookup_key
+            # Проверяем ширину (точно или 1200 для split)
+            if key_width != width and key_width != 1200:
+                continue
+            # Проверяем длину с tolerance
+            if abs(key_length - rounded_length) <= TOLERANCE:
+                for entry in entries:
+                    if entry.get('qty_remaining', 0) > 0:
+                        entry['qty_remaining'] -= 1
+                        return entry.copy()
+        
+        # 4. Fallback: поиск только по длине (точный)
+        entries = formovka_lookup_by_length.get(rounded_length, [])
         for entry in entries:
             if entry.get('qty_remaining', 0) > 0:
                 entry['qty_remaining'] -= 1
                 return entry.copy()
+        
+        # 5. Fuzzy fallback: поиск по длине с tolerance
+        for lookup_length, entries in formovka_lookup_by_length.items():
+            if abs(lookup_length - rounded_length) <= TOLERANCE:
+                for entry in entries:
+                    if entry.get('qty_remaining', 0) > 0:
+                        entry['qty_remaining'] -= 1
+                        return entry.copy()
         
         return {
             'kp_date': 'неизвестно',
@@ -321,9 +348,9 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
             # Определяем ширину в зависимости от режима плиты
             mode = item.get('mode', 'solid')
             if mode == 'transverse' and item.get('width'):
-                width = int(item['width'] * 1000)  # width в метрах -> мм
+                width = round(item['width'] * 1000)  # round для корректного округления float
             elif mode == 'split' and item.get('main_w'):
-                width = int(item['main_w'] * 1000)  # main_w в метрах -> мм
+                width = round(item['main_w'] * 1000)  # round для корректного округления
             else:
                 width = 1200  # solid или дефолт
                 
@@ -362,7 +389,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                 if sec_width_m <= 0:
                     continue
                     
-                sec_width = int(sec_width_m * 1000)  # в мм
+                sec_width = round(sec_width_m * 1000)  # round для корректного округления float
                 # Длина: если есть target_length (поперечный рез), иначе длина родительской плиты
                 sec_length = sec_cut.get('target_length') or length
                     
@@ -706,9 +733,17 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
         formovka_lookup_by_length = copy.deepcopy(plate_lookup_by_length)
         
         def get_plate_info_smart(length, width):
-            """Умный поиск информации о плите С УЧЕТОМ КОЛИЧЕСТВА."""
+            """
+            Умный поиск информации о плите С УЧЕТОМ КОЛИЧЕСТВА.
+            
+            FUZZY-ПОИСК: Если точный ключ не найден, ищем с tolerance 0.03м (30мм)
+            по длине. Это нужно, потому что оптимизатор может округлять длины.
+            """
+            TOLERANCE = 0.03  # 30мм tolerance для fuzzy-поиска
+            rounded_length = round(length, 2)
+            
             # 1. Сначала пробуем точное совпадение
-            key = (round(length, 2), width)
+            key = (rounded_length, width)
             entries = formovka_lookup_exact.get(key, [])
             
             for entry in entries:
@@ -718,20 +753,40 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
             
             # 2. Если ширина < 1200 (плита с резом), ищем по оригинальной ширине 1200
             if width < 1200:
-                key_original = (round(length, 2), 1200)
+                key_original = (rounded_length, 1200)
                 entries = formovka_lookup_exact.get(key_original, [])
                 for entry in entries:
                     if entry.get('qty_remaining', 0) > 0:
                         entry['qty_remaining'] -= 1
                         return entry.copy()
             
-            # 3. Fallback: поиск только по длине
-            length_key = round(length, 2)
-            entries = formovka_lookup_by_length.get(length_key, [])
+            # 3. Fuzzy-поиск с tolerance по длине в exact lookup
+            for lookup_key, entries in formovka_lookup_exact.items():
+                key_length, key_width = lookup_key
+                # Проверяем ширину (точно или 1200 для split)
+                if key_width != width and key_width != 1200:
+                    continue
+                # Проверяем длину с tolerance
+                if abs(key_length - rounded_length) <= TOLERANCE:
+                    for entry in entries:
+                        if entry.get('qty_remaining', 0) > 0:
+                            entry['qty_remaining'] -= 1
+                            return entry.copy()
+            
+            # 4. Fallback: поиск только по длине (точный)
+            entries = formovka_lookup_by_length.get(rounded_length, [])
             for entry in entries:
                 if entry.get('qty_remaining', 0) > 0:
                     entry['qty_remaining'] -= 1
                     return entry.copy()
+            
+            # 5. Fuzzy fallback: поиск по длине с tolerance
+            for lookup_length, entries in formovka_lookup_by_length.items():
+                if abs(lookup_length - rounded_length) <= TOLERANCE:
+                    for entry in entries:
+                        if entry.get('qty_remaining', 0) > 0:
+                            entry['qty_remaining'] -= 1
+                            return entry.copy()
             
             return {
                 'kp_date': 'неизвестно',
@@ -756,9 +811,9 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                 # Определяем ширину в зависимости от режима плиты
                 mode = item.get('mode', 'solid')
                 if mode == 'transverse' and item.get('width'):
-                    width = int(item['width'] * 1000)
+                    width = round(item['width'] * 1000)  # round для корректного округления float
                 elif mode == 'split' and item.get('main_w'):
-                    width = int(item['main_w'] * 1000)
+                    width = round(item['main_w'] * 1000)  # round для корректного округления
                 else:
                     width = 1200
                 
@@ -797,7 +852,7 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                     if sec_width_m <= 0:
                         continue
                     
-                    sec_width = int(sec_width_m * 1000)
+                    sec_width = round(sec_width_m * 1000)  # round для корректного округления float
                     sec_length = sec_cut.get('target_length') or length
                     
                     sec_plate_info = get_plate_info_smart(sec_length, sec_width)

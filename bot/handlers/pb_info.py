@@ -35,7 +35,8 @@ PRODUCTION_COLUMNS = {
     'total_weight': 'Общий вес (кг)',
     'discounted_price': 'Цена со скидкой',
     'customer_name': 'Заказчик',
-    'execution_terms': 'Срок выполнения'
+    'execution_terms': 'Срок выполнения',
+    'plate_status': 'Статус производства'
 }
 
 # Маппинг колонок для выполненных плит (completed_plates)

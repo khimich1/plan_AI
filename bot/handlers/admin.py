@@ -509,6 +509,74 @@ async def back_to_menu(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.message(Command("recover_plates"))
+async def cmd_recover_plates(message: Message):
+    """
+    Восстанавливает "застрявшие" плиты (статус 'в плане', но не в треках).
+    Использование: /recover_plates
+    
+    Простыми словами:
+    - Если плиты были добавлены в план, но не попали в tracks
+    - И не были списаны через "День выполнен"
+    - Они "застряли" в статусе "в плане" и недоступны для нового планирования
+    - Эта команда возвращает их обратно в "в производстве"
+    """
+    try:
+        # Сначала покажем, сколько плит застряло
+        import sqlite3
+        db_path = str(PROJECT_ROOT / "plita.db")
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        
+        cur.execute('''
+            SELECT COUNT(*), COALESCE(SUM(qty), 0)
+            FROM kp_plates
+            WHERE status = 'в плане'
+        ''')
+        
+        result = cur.fetchone()
+        records = result[0] if result else 0
+        total_qty = result[1] if result else 0
+        conn.close()
+        
+        if records == 0:
+            await message.answer(
+                "ℹ️ Застрявших плит не найдено.\n\n"
+                "Все плиты имеют корректный статус.",
+                reply_markup=main_menu_kb()
+            )
+            return
+        
+        # Показываем информацию и восстанавливаем
+        await message.answer(
+            f"🔧 **Восстановление застрявших плит**\n\n"
+            f"Найдено:\n"
+            f"  • Записей: {records}\n"
+            f"  • Плит: {total_qty}\n\n"
+            f"⏳ Возвращаю в статус 'в производстве'...",
+            parse_mode="Markdown"
+        )
+        
+        # Выполняем восстановление
+        recovered = kp_db.recover_stuck_plates(db_path)
+        
+        await message.answer(
+            f"✅ **Восстановление завершено!**\n\n"
+            f"Возвращено в производство: {recovered} записей\n\n"
+            f"Теперь эти плиты снова доступны для планирования.",
+            parse_mode="Markdown",
+            reply_markup=main_menu_kb()
+        )
+        
+    except Exception as e:
+        await message.answer(
+            f"❌ Ошибка при восстановлении плит: {str(e)}",
+            reply_markup=main_menu_kb()
+        )
+        import logging
+        logging.getLogger(__name__).exception(f"Ошибка при восстановлении плит: {e}")
+
+
 @router.callback_query(F.data == "db_view_rests")
 async def view_plate_rests(callback: CallbackQuery):
     """Экспорт остатков в Excel файл"""
