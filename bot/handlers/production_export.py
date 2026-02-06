@@ -196,6 +196,114 @@ def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float 
     return lost
 
 
+@router.callback_query(F.data == "export_gantt_current")
+async def export_gantt_current_plan(callback: CallbackQuery, state: FSMContext):
+    """
+    Обработчик кнопки "📈 Диаграмма этого плана".
+    Строит диаграмму Ганта по ТЕКУЩЕМУ плану в памяти (FSM state), даже если план ещё не сохранён.
+    """
+    await callback.message.answer("📈 Создаю диаграмму Ганта по текущему плану...")
+
+    data = await state.get_data()
+
+    all_tracks_list = data.get('all_tracks_list') or []
+    tracks_count = data.get('tracks_count')
+    plate_lookup_exact = data.get('plate_lookup_exact') or {}
+    plate_lookup_by_length = data.get('plate_lookup_by_length') or {}
+    plan_start_date = data.get('plan_start_date')
+
+    if not all_tracks_list or not tracks_count:
+        await callback.message.answer(
+            "❌ Текущий план не найден в памяти.\n\n"
+            "💡 Сначала выполните планирование:\n"
+            "1️⃣ Планирование производства → «🚀 Начать планирование»\n"
+            "2️⃣ Выберите КП и дождитесь сообщения «✅ План готов!»\n"
+            "3️⃣ Затем нажмите «📈 Диаграмма этого плана»"
+        )
+        await callback.answer()
+        return
+
+    # Парсим дату начала (нужна для дат в Excel)
+    start_date_for_gantt = datetime.now()
+    if plan_start_date:
+        try:
+            start_date_for_gantt = datetime.strptime(str(plan_start_date)[:10], '%Y-%m-%d')
+        except Exception:
+            pass
+
+    try:
+        gantt_path = await asyncio.to_thread(
+            create_gantt_excel,
+            all_tracks_list=all_tracks_list,
+            tracks_count=int(tracks_count),
+            plate_lookup_exact=convert_lookup_keys_to_tuples(plate_lookup_exact),
+            plate_lookup_by_length=convert_lookup_keys_to_tuples(plate_lookup_by_length),
+            output_dir=OUTPUTS_DIR_STR,
+            start_date=start_date_for_gantt
+        )
+
+        if gantt_path and os.path.exists(gantt_path):
+            total_days = data.get('total_days')
+            total_tracks_count = data.get('total_tracks_count') or len(all_tracks_list)
+
+            start_str = start_date_for_gantt.strftime('%d.%m.%Y')
+            end_str = ''
+            if isinstance(total_days, int) and total_days > 0:
+                end_dt = start_date_for_gantt + timedelta(days=total_days - 1)
+                end_str = end_dt.strftime('%d.%m.%Y')
+
+            caption_lines = [
+                "📈 Диаграмма Ганта этого плана (ещё не сохранённого)\n",
+                f"📅 Дата начала: {start_str}",
+            ]
+            if end_str:
+                caption_lines.append(f"📅 Период: {start_str} — {end_str}")
+            if total_days:
+                caption_lines.append(f"📆 Дней: {total_days}")
+            caption_lines.append(f"🛤️ Дорожек: {total_tracks_count}")
+            caption_lines.append("\nПодсказка:")
+            caption_lines.append("• «📊 Диаграмма Ганта» — это суммарно по ВСЕМ сохранённым планам")
+            caption = "\n".join(caption_lines)
+
+            await callback.message.answer_document(
+                FSInputFile(gantt_path),
+                caption=caption
+            )
+        else:
+            await callback.message.answer(
+                "⚠️ Не удалось создать диаграмму.\n"
+                "Возможно, в текущем плане нет данных для построения."
+            )
+
+    except Exception as e:
+        logger.exception(f"Ошибка создания диаграммы текущего плана: {e}")
+        await callback.message.answer(
+            "❌ Не удалось создать диаграмму Ганта по текущему плану.\n"
+            "Подробности в logs/bot.log."
+        )
+
+    # Возвращаем клавиатуру выбора дней (чтобы не теряться)
+    total_days_state = data.get('total_days', 0)
+    plan_start_date_state = data.get('plan_start_date', datetime.now().strftime('%Y-%m-%d'))
+    completed_days = data.get('completed_days', [])
+    days_info = data.get('days_info', {})
+    from_saved_plan = data.get('from_saved_plan', False)
+
+    if isinstance(total_days_state, int) and total_days_state > 0:
+        await callback.message.answer(
+            "Выберите день для просмотра:",
+            reply_markup=calendar_days_kb(
+                total_days_state,
+                plan_start_date_state,
+                completed_days,
+                days_info,
+                show_save_button=not from_saved_plan
+            )
+        )
+
+    await callback.answer()
+
+
 @router.callback_query(F.data == "export_gantt")
 async def export_gantt_chart(callback: CallbackQuery, state: FSMContext):
     """

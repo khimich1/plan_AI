@@ -303,6 +303,24 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             'qty_remaining': order.get('qty', 1)  # Сколько плит этого КП осталось назначить
         })
     
+    # #region agent log: order_info_list и demand_2d (H3, H4, H5)
+    _debug_log = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+    import json as _json_opt
+    _key_totals = {k: (demand_2d.get(k, 0), sum(e.get('qty_remaining', 0) for e in order_info_list.get(k, []))) for k in set(list(demand_2d.keys()) + list(order_info_list.keys()))}
+    _kp_breakdown = {}
+    for k, entries in order_info_list.items():
+        for e in entries:
+            _kid = e.get('kp_id')
+            if _kid not in _kp_breakdown:
+                _kp_breakdown[_kid] = []
+            _kp_breakdown[_kid].append({"key": list(k) if isinstance(k, tuple) else k, "plate_name": e.get('plate_name', '')[:40], "qty_remaining": e.get('qty_remaining', 0)})
+    try:
+        with open(_debug_log, 'a', encoding='utf-8') as _f:
+            _f.write(_json_opt.dumps({"hypothesisId": "H3", "location": "optimization.py:order_info_list", "message": "demand_2d vs order_info_list totals", "data": {"key_totals": str(_key_totals)[:500], "kp_breakdown_keys": list(_kp_breakdown.keys()), "orders_2d_len": len(orders_2d)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+    # #endregion
+    
     tolerance_length = 0.01  # ±10мм по длине
     tolerance_width = 20     # ±20мм по ширине
     
@@ -608,6 +626,15 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code для различения плит с разной нагрузкой
     BIG_M = 1e6
     surplus_vars = []
+    # #region agent log: total demand (H_demand)
+    _debug_log = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+    _total_demand = sum(demand_2d.values())
+    try:
+        open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H_demand", "location": "optimization.py:before_demand_loop", "message": "total demand and keys", "data": {"total_demand": _total_demand, "demand_keys_count": len(demand_2d)}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    no_sources_keys = []  # [(key, qty), ...] for H1
     for (target_length, target_width, target_load_code), qty in demand_2d.items():
         sources = []
         
@@ -652,7 +679,14 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             prob += lpSum(sources) == qty + surplus, f"demand_{target_length}m_{target_width}mm_{target_load_code}"
         else:
             # === КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: НЕТ ИСТОЧНИКОВ ДЛЯ СПРОСА ===
-            # Эта плита НЕ МОЖЕТ быть произведена из доступных опций!
+            no_sources_keys.append(((round(target_length, 2), target_width, target_load_code), qty))
+            # #region agent log: no sources (H1) + same L/W other load (H3)
+            _same_lw_other_load = [opt.get('load_code') for opt in primary_options if abs(opt['length'] - target_length) <= tolerance_length and abs(opt.get('main', opt.get('target_width', 0)) - target_width) <= tolerance_width and opt.get('load_code', 800) != target_load_code]
+            try:
+                open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H1", "location": "optimization.py:no_sources", "message": "demand key has no sources", "data": {"target_length": target_length, "target_width": target_width, "target_load_code": target_load_code, "qty": qty, "same_LW_other_load_codes": _same_lw_other_load[:5]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"[OPT_2D] ❌ НЕТ ИСТОЧНИКОВ для плиты: {target_length}м x {target_width}мм (load={target_load_code}) x{qty}шт!")
@@ -663,6 +697,14 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             logger.error(f"[OPT_2D]      - Несовместимый load_code={target_load_code}")
             print(f"[OPT_2D] ⚠️ ВНИМАНИЕ: Плита {target_length}м x {target_width}мм НЕ МОЖЕТ быть произведена!")
     
+    # #region agent log: no_sources summary (H1)
+    if no_sources_keys:
+        _plates_lost = sum(q for _, q in no_sources_keys)
+        try:
+            open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H1", "location": "optimization.py:no_sources_summary", "message": "no_sources summary", "data": {"keys_count": len(no_sources_keys), "total_plates_lost": _plates_lost, "keys": [(list(k), q) for k, q in no_sources_keys]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    # #endregion
     # 5.5 ПРИОРИТЕТНОЕ ОГРАНИЧЕНИЕ: Solid плиты ОБЯЗАТЕЛЬНЫ для полных ширин (1200/1080мм)!
     # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code
     print(f"[OPT_2D] Проверяем приоритетные ограничения для solid-плит: {solid_widths}")
@@ -849,7 +891,15 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 # ИСПРАВЛЕНИЕ: Добавляем load_code в ключ поиска
                 lookup_load_code = opt.get('load_code', 800)
                 plate_info = _get_next_order_info(order_info_list, (opt['length'], lookup_width, lookup_load_code))
-                
+                # #region agent log: primary plate kp_id (H1, H2, H4)
+                if not plate_info and opt.get('kp_id'):
+                    _k = (opt['length'], lookup_width, lookup_load_code)
+                    try:
+                        with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                            _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:primary_emit", "message": "primary plate_info empty", "data": {"key": list(_k), "opt_kp_id": opt.get('kp_id'), "opt_plate_name": (opt.get('plate_name') or '')[:50]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                    except Exception:
+                        pass
+                # #endregion
                 result['primary_cuts'].append({
                     'width': opt['main'],
                     'rest': opt['rest'],
@@ -950,7 +1000,14 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 for _ in range(opt['pieces']):
                     # Получаем информацию о следующем КП
                     plate_info = _get_next_order_info(order_info_list, target_key) if target_key else {}
-                    
+                    # #region agent log: secondary plate kp_id (H2, H5)
+                    if not plate_info and target_key:
+                        try:
+                            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                                _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:secondary_emit", "message": "secondary plate_info empty", "data": {"target_key": list(target_key) if isinstance(target_key, tuple) else target_key, "output_length": opt.get('output_length'), "output_width": opt.get('output_width')}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                        except Exception:
+                            pass
+                    # #endregion
                     result['secondary_cuts'].append({
                         'source': opt['source_rest'],
                         'cuts': [opt['output_width']],
@@ -981,7 +1038,12 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     print(f"[OPT_2D] OK! Готово! Использовано {result['total_plates']} плит")
     print(f"[OPT_2D] Создано {len(result['plate_assignments'])} готовых плит")
     print(f"[OPT_2D] Остатков использовано вторично: {len(result['rests_used'])}")
-    
+    # #region agent log: result counts (H5)
+    try:
+        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H5", "location": "optimization.py:result_built", "message": "plate_assignments count", "data": {"len_plate_assignments": len(result['plate_assignments']), "total_plates": result.get('total_plates', 0), "demand_sum": _total_demand}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     return result
 
 

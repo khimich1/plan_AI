@@ -27,6 +27,9 @@ def init_database():
     """Проверяет наличие базы данных"""
     try:
         db_path = DB_PATH_STR
+        # Путь к plita.db (КП и плиты) — именно этот файл открывать в DB Browser
+        plita_db_path = str(PROJECT_ROOT / "plita.db")
+        logger.info(f"📂 База КП (plita.db): {plita_db_path}")
         
         if not os.path.exists(db_path):
             logger.warning(f"⚠️ База данных {db_path} не найдена!")
@@ -35,9 +38,9 @@ def init_database():
         else:
             logger.info(f"✅ База данных {db_path} найдена")
             
-            # Автоматически восстанавливаем застрявшие плиты при старте
+            # Автоматически восстанавливаем застрявшие плиты при старте (используем plita.db)
             try:
-                recovered = kp_db.recover_stuck_plates(db_path)
+                recovered = kp_db.recover_stuck_plates(plita_db_path)
                 if recovered > 0:
                     logger.info(f"🔧 При старте восстановлено {recovered} застрявших плит")
             except Exception as e:

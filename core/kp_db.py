@@ -873,15 +873,34 @@ def move_plates_to_completed(
         completed_date = datetime.now().strftime('%d.%m.%Y')
         
         # Целевые подстроки для логов (плиты, которые не списались у пользователя)
-        _target_substrings = ('61,1-12-10', '36,6-6,65', '64,8-12-12,5', '78,1-12-10', '78,1-12-12,5')
+        _target_substrings = (
+            '61,1-12-10',
+            '36,6-6,65',
+            '64,8-12-12,5',
+            '78,1-12-10',
+            '78,1-12-12,5',
+            # Дополнительные плиты из текущего кейса пользователя
+            '25,4-12-8п',
+            '43-12-8п',
+            '63,9-12-8п',
+        )
         _is_target = lambda n: any(s in (n or '') for s in _target_substrings)
 
         def find_one_row(plate_name, length_m, width_m, load_class, prefer_kp_id):
             """Находит одну строку в kp_plates для списания (id, kp_id, plate_name, width_m, qty)."""
+            # ИСПРАВЛЕНИЕ: Подготовка фильтра по ширине для шагов 4-7
+            # Предотвращает списание вторичных резов (с другой шириной)
+            # из заказанных плит с совпадающей длиной
+            _w_clause = 'AND ABS(width_m - ?) < 0.05' if (width_m and width_m > 0) else ''
+            _w_params = (width_m,) if (width_m and width_m > 0) else ()
+            # ИСПРАВЛЕНИЕ 2: Ищем и 'в плане', и 'в производстве'
+            # При разбиении записи assign_plates_to_plan, часть плит может
+            # остаться со status='в производстве', но всё равно быть в треках
+            _status_filter = "status IN ('в плане', 'в производстве')"
             # 1) По kp_id + plate_name
-            cur.execute('''
+            cur.execute(f'''
                 SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
-                WHERE kp_id = ? AND plate_name = ? AND qty > 0 AND status = 'в плане'
+                WHERE kp_id = ? AND plate_name = ? AND qty > 0 AND {_status_filter}
                 LIMIT 1
             ''', (prefer_kp_id, plate_name))
             row = cur.fetchone()
@@ -890,9 +909,9 @@ def move_plates_to_completed(
             # 2) Нормализованное имя
             normalized_name = _normalize_plate_name(plate_name)
             if normalized_name and normalized_name != plate_name:
-                cur.execute('''
+                cur.execute(f'''
                     SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
-                    WHERE kp_id = ? AND plate_name = ? AND qty > 0 AND status = 'в плане'
+                    WHERE kp_id = ? AND plate_name = ? AND qty > 0 AND {_status_filter}
                     LIMIT 1
                 ''', (prefer_kp_id, normalized_name))
                 row = cur.fetchone()
@@ -900,50 +919,89 @@ def move_plates_to_completed(
                     return row
             # 3) По размерам в prefer_kp_id
             if length_m and width_m:
-                cur.execute('''
+                cur.execute(f'''
                     SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
-                    WHERE kp_id = ? AND status = 'в плане' AND qty > 0
+                    WHERE kp_id = ? AND {_status_filter} AND qty > 0
                       AND ABS(length_m - ?) < 0.02 AND ABS(width_m - ?) < 0.01 AND load_class = ?
                     LIMIT 1
                 ''', (prefer_kp_id, length_m, width_m, load_class))
                 row = cur.fetchone()
                 if row:
                     return row
-            # 4) По длине + нагрузке в prefer_kp_id
+            # 4) По длине + ширине + нагрузке в prefer_kp_id
             if length_m:
-                cur.execute('''
+                cur.execute(f'''
                     SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
-                    WHERE kp_id = ? AND status = 'в плане' AND qty > 0
-                      AND ABS(length_m - ?) < 0.02 AND load_class = ?
+                    WHERE kp_id = ? AND {_status_filter} AND qty > 0
+                      AND ABS(length_m - ?) < 0.02 {_w_clause} AND load_class = ?
                     LIMIT 1
-                ''', (prefer_kp_id, length_m, load_class))
+                ''', (prefer_kp_id, length_m, *_w_params, load_class))
                 row = cur.fetchone()
                 if row:
                     return row
-            # 5) По plan_ids
+            # 5) По plan_ids + длина + ширина + нагрузка
             if length_m and plan_ids:
                 placeholders = ','.join('?' * len(plan_ids))
                 cur.execute(f'''
                     SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
-                    WHERE plan_id IN ({placeholders}) AND status = 'в плане' AND qty > 0
-                      AND ABS(length_m - ?) < 0.02 AND load_class = ?
+                    WHERE plan_id IN ({placeholders}) AND {_status_filter} AND qty > 0
+                      AND ABS(length_m - ?) < 0.02 {_w_clause} AND load_class = ?
                     ORDER BY CASE WHEN kp_id = ? THEN 0 ELSE 1 END, id
                     LIMIT 1
-                ''', (*plan_ids, length_m, load_class, prefer_kp_id))
+                ''', (*plan_ids, length_m, *_w_params, load_class, prefer_kp_id))
                 row = cur.fetchone()
                 if row:
                     return row
-            # 6) По длине + нагрузке в любом КП
+            # 6) По длине + ширине + нагрузке в любом КП
             if length_m:
-                cur.execute('''
+                cur.execute(f'''
                     SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
-                    WHERE status = 'в плане' AND qty > 0
-                      AND ABS(length_m - ?) < 0.02 AND load_class = ?
+                    WHERE {_status_filter} AND qty > 0
+                      AND ABS(length_m - ?) < 0.02 {_w_clause} AND load_class = ?
                     ORDER BY CASE WHEN kp_id = ? THEN 0 ELSE 1 END, id
                     LIMIT 1
-                ''', (length_m, load_class, prefer_kp_id))
+                ''', (length_m, *_w_params, load_class, prefer_kp_id))
                 row = cur.fetchone()
                 if row:
+                    return row
+            # 7) ФОЛБЭК: по длине + ширине + нагрузке + КП
+            if length_m:
+                cur.execute(f'''
+                    SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                    WHERE qty > 0 AND {_status_filter}
+                      AND ABS(length_m - ?) < 0.02 {_w_clause} AND load_class = ?
+                      AND kp_id = ?
+                    ORDER BY id
+                    LIMIT 1
+                ''', (length_m, *_w_params, load_class, prefer_kp_id))
+                row = cur.fetchone()
+                if row:
+                    # #region agent log: сработал фолбэк по длине без статуса
+                    try:
+                        with open(_debug_log4, 'a', encoding='utf-8') as _f4:
+                            _f4.write(_json4.dumps({
+                                "hypothesisId": "H10",
+                                "location": "kp_db:move_plates_to_completed",
+                                "message": "Фолбэк: найдена плита без фильтра по статусу",
+                                "data": {
+                                    "requested_plate_name": plate_name,
+                                    "length_m": length_m,
+                                    "width_m": width_m,
+                                    "load_class": load_class,
+                                    "prefer_kp_id": prefer_kp_id,
+                                    "row": {
+                                        "id": row[0],
+                                        "kp_id": row[1],
+                                        "plate_name": row[2],
+                                        "width_m": row[3],
+                                        "qty": row[4],
+                                    },
+                                },
+                                "timestamp": __import__('time').time(),
+                            }, ensure_ascii=False) + '\n')
+                    except Exception:
+                        pass
+                    # #endregion
                     return row
             return None
 
@@ -959,8 +1017,8 @@ def move_plates_to_completed(
 
             # #region agent log: целевые плиты на входе в списание
             if _is_target(plate_name):
-                cur.execute('SELECT plate_name, length_m, width_m, load_class, qty FROM kp_plates WHERE kp_id = ? AND status = ? AND qty > 0 LIMIT 10', (kp_id, 'в плане'))
-                _rows_in_db = [dict(zip(('plate_name', 'length_m', 'width_m', 'load_class', 'qty'), r)) for r in cur.fetchall()]
+                cur.execute("SELECT plate_name, length_m, width_m, load_class, qty, status FROM kp_plates WHERE kp_id = ? AND status IN ('в плане', 'в производстве') AND qty > 0 LIMIT 10", (kp_id,))
+                _rows_in_db = [dict(zip(('plate_name', 'length_m', 'width_m', 'load_class', 'qty', 'status'), r)) for r in cur.fetchall()]
                 with open(_debug_log4, 'a', encoding='utf-8') as _f4:
                     _f4.write(_json4.dumps({"hypothesisId": "H5", "location": "kp_db:move_plates_to_completed", "message": "Целевая плита на входе", "data": {"kp_id": kp_id, "plate_name": plate_name, "length_m": length_m, "width_m": width_m, "load_class": load_class, "qty": qty_remaining, "rows_in_db_for_kp": _rows_in_db}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
             # #endregion
@@ -985,17 +1043,23 @@ def move_plates_to_completed(
                         qty, completed_date, production_day
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (row_kp_id, row_plate_name, length_m, row_width_m, load_class, deduct, completed_date, production_day))
+                # #region agent log: успешное списание
+                try:
+                    with open(_debug_log4, 'a', encoding='utf-8') as _f4:
+                        _f4.write(_json4.dumps({"hypothesisId": "H_postfix", "location": "kp_db:move_plates_to_completed:success", "message": "Плита списана", "data": {"kp_id": row_kp_id, "plate_name": row_plate_name, "length_m": length_m, "width_m": row_width_m, "load_class": load_class, "deduct": deduct, "requested_width": width_m}, "timestamp": __import__('time').time(), "runId": "post-fix"}, ensure_ascii=False) + '\n')
+                except Exception:
+                    pass
+                # #endregion
                 if deduct > 0 and (row_kp_id != kp_id):
                     print(f"[DB] ⚠️ Плита списана из КП #{row_kp_id}: {row_plate_name} (qty={deduct})")
 
             if qty_remaining > 0:
-                print(f"[DB] ⚠️ Не найдена плита для списания: КП #{kp_id}, {current_plate_name} (осталось qty={qty_remaining})")
-                # #region agent log H5: плита не найдена в БД
-                if _is_target(current_plate_name) or current_width_m in [0.46, 0.5, 0.53, 0.665] or '4,6' in current_plate_name or '5,3' in current_plate_name or '6,65' in current_plate_name or '51,8-5' in current_plate_name:
-                    cur.execute('SELECT plate_name, length_m, width_m, load_class, qty FROM kp_plates WHERE kp_id = ? AND status = ? AND qty > 0 LIMIT 10', (kp_id, 'в плане'))
-                    _rows_in_db = [dict(zip(('plate_name', 'length_m', 'width_m', 'load_class', 'qty'), r)) for r in cur.fetchall()]
-                    with open(_debug_log4, 'a', encoding='utf-8') as _f4:
-                        _f4.write(_json4.dumps({"hypothesisId": "H5", "location": "kp_db:move_plates_to_completed", "message": "Плита НЕ НАЙДЕНА в БД", "data": {"kp_id": kp_id, "plate_name": current_plate_name, "length_m": length_m, "width_m": current_width_m, "load_class": load_class, "qty": qty_remaining, "rows_in_db_for_kp": _rows_in_db}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                print(f"[DB] ⚠️ Не найдена плита для списания: КП #{kp_id}, {current_plate_name} (width={current_width_m}, осталось qty={qty_remaining})")
+                # #region agent log: плита не найдена в БД (всегда логируем для отладки)
+                cur.execute("SELECT plate_name, length_m, width_m, load_class, qty, status FROM kp_plates WHERE kp_id = ? AND status IN ('в плане', 'в производстве') AND qty > 0 LIMIT 10", (kp_id,))
+                _rows_in_db = [dict(zip(('plate_name', 'length_m', 'width_m', 'load_class', 'qty', 'status'), r)) for r in cur.fetchall()]
+                with open(_debug_log4, 'a', encoding='utf-8') as _f4:
+                    _f4.write(_json4.dumps({"hypothesisId": "H_postfix", "location": "kp_db:move_plates_to_completed", "message": "Плита НЕ НАЙДЕНА в БД (width-check)", "data": {"kp_id": kp_id, "plate_name": current_plate_name, "length_m": length_m, "width_m": current_width_m, "load_class": load_class, "qty": qty_remaining, "rows_in_db_for_kp": _rows_in_db}, "timestamp": __import__('time').time(), "runId": "post-fix"}, ensure_ascii=False) + '\n')
                 # #endregion
         
         # Удаляем записи с qty <= 0

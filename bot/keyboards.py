@@ -127,7 +127,15 @@ def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     """
     buttons = []
     
-    # Кнопка "Диаграмма Ганта" вверху
+    # Кнопки диаграмм вверху:
+    # - текущий план (из памяти, без сохранения)
+    # - суммарная по всем сохранённым планам
+    buttons.append([
+        InlineKeyboardButton(
+            text="📈 Диаграмма этого плана",
+            callback_data="export_gantt_current"
+        )
+    ])
     buttons.append([
         InlineKeyboardButton(
             text="📊 Диаграмма Ганта",
@@ -228,7 +236,15 @@ def calendar_days_kb(
     
     buttons = []
     
-    # Кнопка "Диаграмма Ганта" вверху
+    # Кнопки диаграмм вверху:
+    # - текущий план (из памяти, без сохранения)
+    # - суммарная по всем сохранённым планам
+    buttons.append([
+        InlineKeyboardButton(
+            text="📈 Диаграмма этого плана",
+            callback_data="export_gantt_current"
+        )
+    ])
     buttons.append([
         InlineKeyboardButton(
             text="📊 Диаграмма Ганта",

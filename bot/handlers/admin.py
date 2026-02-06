@@ -9,7 +9,6 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 
 # Добавляем корень проекта в sys.path
 BOT_DIR = Path(__file__).parent.parent
@@ -18,14 +17,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import kp_db
 from ..keyboards import main_menu_kb, db_management_kb, db_clear_confirm_kb
+from ..states import AdminStates
 
 router = Router()
-
-
-# Состояния для подтверждения удаления
-class AdminStates(StatesGroup):
-    waiting_delete_confirmation = State()
-    waiting_clear_all_confirmation = State()
 
 
 @router.message(Command("delete_kp"))

@@ -363,6 +363,34 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 'kp_id': plate_data.get('kp_id')
             })
         
+        # #region agent log: отслеживаем конкретные плиты пользователя перед оптимизацией
+        try:
+            _target_names = ('25,4-12-8п', '43-12-8п', '63,9-12-8п')
+            _targets = [
+                {
+                    'plate_name': p.get('plate_name'),
+                    'length': p.get('length'),
+                    'width': p.get('width'),
+                    'qty': p.get('qty'),
+                    'kp_id': p.get('kp_id'),
+                }
+                for p in orders_2d
+                if any(s in (p.get('plate_name') or '') for s in _target_names)
+            ]
+            if _targets:
+                open(_dl, 'a', encoding='utf-8').write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H9",
+                    "location": "production_execution.py:before_optimizer_targets",
+                    "message": "Целевые плиты перед оптимизацией",
+                    "data": {"targets": _targets},
+                    "timestamp": __import__("time").time() * 1000
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
         # ✅ НОВОЕ: Логируем все плиты ДО оптимизации
         logger.info(f"[TRACE] ===== ШАГ 1: ПЛИТЫ ДО ОПТИМИЗАЦИИ =====")
         logger.info(f"[TRACE] Всего плит: {sum(p['qty'] for p in orders_2d)}")
@@ -422,8 +450,24 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             optimize_with_cascading_longitudinal_cuts,
             orders_2d=orders_2d
         )
-        # #region agent log
-        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H3", "location": "production_execution.py:after_optimizer", "message": "after_optimizer", "data": {"has_result": bool(optimization_result), "total_plates": optimization_result.get("total_plates", 0) if optimization_result else 0}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        # #region agent log: сводка плит по kp_id после оптимизации (H1, H3, H5)
+        _pa = optimization_result.get("plate_assignments", []) if optimization_result else []
+        _by_kp = {}
+        for p in _pa:
+            _kid = p.get("kp_id")
+            _by_kp[_kid] = _by_kp.get(_kid, 0) + 1
+        _sample_by_kp = {}
+        for p in _pa:
+            _kid = p.get("kp_id")
+            if _kid not in _sample_by_kp:
+                _sample_by_kp[_kid] = []
+            if len(_sample_by_kp[_kid]) < 3:
+                _sample_by_kp[_kid].append({"plate_name": (p.get("plate_name") or "")[:50], "length": p.get("length"), "width": p.get("width"), "source": p.get("source")})
+        _orders_by_kp = {}
+        for o in orders_2d:
+            _kid = o.get("kp_id")
+            _orders_by_kp[_kid] = _orders_by_kp.get(_kid, 0) + o.get("qty", 0)
+        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H3", "location": "production_execution.py:after_optimizer", "message": "plates_by_kp vs orders_by_kp", "data": {"has_result": bool(optimization_result), "total_plates": optimization_result.get("total_plates", 0) if optimization_result else 0, "plates_by_kp": _by_kp, "sample_by_kp": _sample_by_kp, "orders_by_kp": _orders_by_kp, "input_plates": sum(p["qty"] for p in orders_2d), "output_plates": len(_pa)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
         # #endregion
         if not optimization_result or optimization_result.get('total_plates', 0) == 0:
             await message.answer(
@@ -745,9 +789,13 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             f"  • Потребуется дней: {total_days}\n\n"
             f"💡 Что дальше?\n"
             f"1️⃣ Просмотрите дни ниже 👇\n"
-            f"2️⃣ Нажмите «💾 Сохранить план» когда всё готово\n\n"
+            f"2️⃣ Чтобы посмотреть диаграмму ДО сохранения — нажмите «📈 Диаграмма этого плана»\n"
+            f"3️⃣ Нажмите «💾 Сохранить план» когда всё готово\n\n"
             f"⚠️ ВАЖНО: План сохраняется только после нажатия кнопки!\n"
-            f"Без сохранения он останется только в памяти."
+            f"Без сохранения он останется только в памяти.\n\n"
+            f"Разница кнопок:\n"
+            f"• «📈 Диаграмма этого плана» — по текущему расчёту (даже без сохранения)\n"
+            f"• «📊 Диаграмма Ганта» — суммарно по ВСЕМ сохранённым планам"
         )
         
         # Рассчитываем days_info с глобальной загруженностью для новых дат

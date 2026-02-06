@@ -325,27 +325,27 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                         entry['qty_remaining'] -= 1
                         return entry.copy()
         
-            return {
-                'kp_id': None,
-                'kp_date': 'неизвестно',
-                'customer': 'неизвестно',
-                'plate_name': '',
-                'reinforcement': 0
-            }
-        
-        for track_idx_in_file, track in enumerate(tracks_in_current_file):
+        return {
+            'kp_id': None,
+            'kp_date': 'неизвестно',
+            'customer': 'неизвестно',
+            'plate_name': '',
+            'reinforcement': 0
+        }
+    
+    for track_idx_in_file, track in enumerate(tracks_in_current_file):
         track_number = start_index + track_idx_in_file + 1
         track_items = track.get('items', [])
-            
+        
         if not track_items:
             continue
-            
+        
         plates_info = []
         for item in track_items:
             if item is None:
                 continue
             length = item.get('length')
-                
+            
             # Определяем ширину в зависимости от режима плиты
             mode = item.get('mode', 'solid')
             if mode == 'transverse' and item.get('width'):
@@ -354,12 +354,12 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                 width = round(item['main_w'] * 1000)  # round для корректного округления
             else:
                 width = 1200  # solid или дефолт
-                
+            
             if not length:
                 continue
-                
+            
             plate_info = get_plate_info_smart(length, width)
-                
+            
             found = False
             for existing in plates_info:
                 if (round(existing['length'], 2) == round(length, 2) and
@@ -372,7 +372,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     existing['qty'] += 1
                     found = True
                     break
-                
+            
             if not found:
                 plates_info.append({
                     'length': length,
@@ -384,20 +384,20 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     'kp_id': plate_info.get('kp_id'),
                     'plate_name': plate_info.get('plate_name', '')
                 })
-                
+            
             # НОВОЕ: Обрабатываем плиты из вторичных резов (остатков)
             secondary_cuts = item.get('secondary_cuts', []) if item else []
             for sec_cut in (secondary_cuts or []):
                 sec_width_m = sec_cut.get('width', 0)
                 if sec_width_m <= 0:
                     continue
-                    
+                
                 sec_width = round(sec_width_m * 1000)  # round для корректного округления float
                 # Длина: если есть target_length (поперечный рез), иначе длина родительской плиты
                 sec_length = sec_cut.get('target_length') or length
-                    
+                
                 sec_plate_info = get_plate_info_smart(sec_length, sec_width)
-                    
+                
                 # Добавляем в plates_info (аналогично основной плите)
                 sec_found = False
                 for existing in plates_info:
@@ -409,14 +409,14 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                         existing['qty'] += 1
                         sec_found = True
                         break
-                    
+                
                 if not sec_found:
                     # Формируем имя плиты из label (если есть)
                     sec_plate_name = sec_plate_info.get('plate_name', '')
                     if not sec_plate_name and sec_cut.get('label'):
                         # Убираем префикс "О " из label
                         sec_plate_name = sec_cut['label'].replace('О ', '').strip()
-                        
+                    
                     plates_info.append({
                         'length': sec_length,
                         'width': sec_width,
@@ -427,25 +427,25 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                         'kp_id': sec_plate_info.get('kp_id'),
                         'plate_name': sec_plate_name
                     })
-            
+        
         if plates_info:
             # Получаем максимальное армирование дорожки
             max_reinforcement = track.get('max_reinforcement', 0)
             logger.debug(
                 f"[FORMOVKA] Дорожка {track_number}: {len(plates_info)} плит, макс. арм. {max_reinforcement}"
             )
-                
+            
             # Формируем заголовок с армированием дорожки
             if max_reinforcement > 0:
                 track_message = f"📋 Дорожка {track_number} (макс. арм. {max_reinforcement:.1f}):\n\n"
             else:
                 track_message = f"📋 Дорожка {track_number}:\n\n"
-                
+            
             plates_info.sort(key=lambda x: x['length'], reverse=True)
-                
+            
             for plate in plates_info:
                 plate_name = plate.get('plate_name', '')
-                    
+                
                 # Если есть готовое имя плиты из КП - используем его
                 if plate_name:
                     plate_str = f"{plate_name}"
@@ -453,7 +453,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     # Формируем имя плиты самостоятельно
                     length_dm = int(round(plate['length'] * 10))
                     width_mm = int(plate['width'])
-                        
+                    
                     # Определяем нагрузку (по умолчанию 8п)
                     load_code = 8
                     if plate.get('reinforcement', 0) > 0:
@@ -467,7 +467,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                             load_code = 10
                         else:
                             load_code = 12
-                        
+                    
                     # Форматируем ширину
                     if width_mm == 1200:
                         width_str = "12"
@@ -477,11 +477,11 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                             width_str = str(int(width_dm))
                         else:
                             width_str = str(width_dm).replace('.', ',')
-                        
+                    
                     plate_str = f"ПБ {length_dm}-{width_str}-{load_code}п"
                     # Сохраняем сформированное имя обратно в plate_name для использования в Excel
                     plate['plate_name'] = plate_str
-                    
+                
                 track_message += (
                     f"  🔹 {plate_str} × {plate['qty']} шт "
                     f"(срок {plate['kp_date']}, заказчик: {plate['customer']})\n"
@@ -490,14 +490,14 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
             if len(track_message) > 4000:
                 lines = track_message.split('\n')
                 current_part = lines[0] + '\n\n'
-                    
+                
                 for line in lines[2:]:
                     if len(current_part + line + '\n') > 3900:
                         await callback.message.answer(current_part)
                         current_part = line + '\n'
                     else:
                         current_part += line + '\n'
-                    
+                
                 if current_part.strip():
                     await callback.message.answer(current_part)
             else:

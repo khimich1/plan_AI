@@ -386,7 +386,23 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                 with open(_d8, 'a', encoding='utf-8') as _f8:
                     _f8.write(_j8.dumps({"hypothesisId": "H8", "location": "production_completion:secondary_cuts_check", "message": "secondary_cuts в item", "data": {"item_plate_name": item.get('plate_name', ''), "item_mode": item.get('mode', ''), "sec_cuts_count": len(secondary_cuts), "sec_cuts_sample": str(secondary_cuts)[:300], "day": day_number}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
             # #endregion
+            # #region agent log H12: RELOAD_CHECK — маркер что новый код загружен
+            try:
+                with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f12:
+                    import json as _j12
+                    _f12.write(_j12.dumps({"hypothesisId": "H12", "location": "production_completion:before_sec_loop", "message": "RELOAD_CHECK_2026_02_06_v2", "data": {"secondary_cuts_len": len(secondary_cuts) if secondary_cuts else 0, "secondary_cuts_type": str(type(secondary_cuts).__name__), "secondary_cuts_truthy": bool(secondary_cuts), "item_plate_name": item.get('plate_name', ''), "day": day_number}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+            except Exception:
+                pass
+            # #endregion
             for sec_cut in (secondary_cuts or []):
+                # #region agent log H11: вход в цикл secondary_cut (ПЕРЕД sec_width_m)
+                try:
+                    with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f11:
+                        import json as _j11
+                        _f11.write(_j11.dumps({"hypothesisId": "H11", "location": "production_completion:sec_cut_loop_entry", "message": "Вход в цикл sec_cut", "data": {"sec_cut_keys": list(sec_cut.keys()) if isinstance(sec_cut, dict) else str(type(sec_cut)), "sec_cut_repr": str(sec_cut)[:200], "day": day_number}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                except Exception:
+                    pass
+                # #endregion
                 sec_width_m = sec_cut.get('width', 0)
                 if sec_width_m <= 0:
                     continue
@@ -397,7 +413,13 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                 
                 # ИСПРАВЛЕНИЕ: Для вторичных резов ищем по ВСЕМ КП, без ограничения
                 # Сначала пробуем найти с expected_kp_id (если родительский КП совпадает)
-                sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=item_kp_id, load_code=item_load_code)
+                try:
+                    sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=item_kp_id, load_code=item_load_code)
+                except Exception as _exc11:
+                    with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f11e:
+                        import json as _j11e
+                        _f11e.write(_j11e.dumps({"hypothesisId": "H11_ERR", "location": "production_completion:get_plate_info_smart_error", "message": str(_exc11), "data": {"sec_length": sec_length, "sec_width": sec_width, "day": day_number, "label": sec_cut.get('label', '')}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                    sec_plate_info = {'kp_date': 'неизвестно', 'customer': 'неизвестно', 'plate_name': '', 'kp_id': None}
                 sec_kp_id = sec_plate_info.get('kp_id')
                 
                 # Если не нашли с ограничением — ищем по ВСЕМ КП
@@ -430,6 +452,13 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                         existing['qty'] += 1
                         sec_found = True
                         break
+                # #region agent log H10: все вторичные резы (для диагностики пропущенных)
+                if sec_width_m < 0.5 or '40,3' in sec_plate_name or '42,2' in sec_plate_name or '51-3,2' in sec_plate_name:
+                    _d10 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+                    import json as _j10
+                    with open(_d10, 'a', encoding='utf-8') as _f10:
+                        _f10.write(_j10.dumps({"hypothesisId": "H10", "location": "production_completion:secondary_cut_trace", "message": "Вторичный рез обработан", "data": {"sec_plate_name": sec_plate_name, "sec_kp_id": sec_kp_id, "sec_length": sec_length, "sec_width_m": sec_width_m, "sec_width_mm": sec_width, "day": day_number, "merged": sec_found, "item_kp_id": item_kp_id, "parent_plate": item.get('plate_name', ''), "label": sec_cut.get('label', ''), "plate_info_kp_id": sec_plate_info.get('kp_id'), "plate_info_name": sec_plate_info.get('plate_name', '')}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                # #endregion
                 # #region agent log H7: secondary cuts 51,8-5 / 58,5-5,3
                 if '51,8-5' in sec_plate_name or '58,5-5,3' in sec_plate_name:
                     _d7 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
@@ -447,7 +476,8 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                         'kp_id': sec_kp_id,
                         'kp_date': sec_kp_date,
                         'customer': sec_customer,
-                        'is_secondary': True  # Флаг: это вторичный рез
+                        'is_secondary': True,  # Флаг: это вторичный рез
+                        'parent_kp_id': item_kp_id  # КП родительской плиты (для сохранения остатка)
                     })
         
         if track_plates:
@@ -764,10 +794,29 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     # #region agent log H7: сводка по completed_plates (в т.ч. 5 типов, которые не списались)
     _d7 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
     import json as _j7
-    _key_substrings = ('51,8-5', '58,5-5,3', '61,1-12-10', '36,6-6,65', '64,8-12-12,5', '78,1-12-10', '78,1-12-12,5')
+    _key_substrings = (
+        '51,8-5',
+        '58,5-5,3',
+        '61,1-12-10',
+        '36,6-6,65',
+        '64,8-12-12,5',
+        '78,1-12-10',
+        '78,1-12-12,5',
+        # Плиты из текущего кейса пользователя
+        '25,4-12-8п',
+        '43-12-8п',
+        '63,9-12-8п',
+    )
     _targets = [p for p in completed_plates if any(s in p.get('plate_name', '') for s in _key_substrings)]
     with open(_d7, 'a', encoding='utf-8') as _f7:
         _f7.write(_j7.dumps({"hypothesisId": "H7", "location": "production_completion:completed_plates_summary", "message": "Целевые плиты в completed_plates", "data": {"day": day_number, "target_count": len(_targets), "targets": [{"name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "length_m": p.get("length_m"), "load_class": p.get("load_class")} for p in _targets], "total_plates": len(completed_plates)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    # #endregion
+    # #region agent log H15: ВСЕ вторичные резы в confirm_day_completion
+    _sec_plates = [p for p in completed_plates if p.get('is_secondary')]
+    _sec_total_qty = sum(p.get('qty', 1) for p in _sec_plates)
+    _no_kp = [p for p in _sec_plates if not p.get('kp_id')]
+    with open(_d7, 'a', encoding='utf-8') as _f15:
+        _f15.write(_j7.dumps({"hypothesisId": "H15", "location": "production_completion:secondary_in_confirm", "message": "Вторичные резы в confirm", "data": {"day": day_number, "secondary_positions": len(_sec_plates), "secondary_qty": _sec_total_qty, "without_kp": len(_no_kp), "total_plates": len(completed_plates), "secondary_names": [{"name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "width_m": p.get("width_m")} for p in _sec_plates[:20]]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
     # #endregion
     for plate in completed_plates:
         kp_id = plate.get('kp_id')
@@ -807,7 +856,12 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
                     if kp_id not in completed_kps:
                         completed_kps.append(kp_id)
     
+    # НОВОЕ: Счётчик плит, сохранённых как остатки (вторичные резы без заказа)
+    secondary_as_rests = 0
+    
     # Переносим плиты С kp_id (стандартная логика, исключая плиты из остатков)
+    # Вторичные резы с kp_id тоже отправляются на списание — они могут быть заказанными плитами
+    # (узкие плиты из того же трека). Width-check в find_one_row не даст списать чужие.
     for kp_id, plates in plates_by_kp.items():
         # Фильтруем плиты из остатков (они уже обработаны выше)
         plates_not_from_rests = [p for p in plates if not p.get('from_rest')]
@@ -826,10 +880,12 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     # Эти плиты не были найдены в lookup-таблицах (возможно из-за изменения ширины после реза).
     # Ищем их в БД по длине И по классу нагрузки (load_class), иначе находили плиту 8п вместо 10п/12,5п
     # и move_plates_to_completed не списывал — там везде фильтр по load_class.
+    
     for plate in plates_without_kp:
         length_m = plate.get('length_m', 0)
         plate_name = plate.get('plate_name', '')
         load_class = plate.get('load_class', 800)
+        is_secondary = plate.get('is_secondary', False)
         
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
@@ -863,7 +919,29 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
                 if found_kp_id not in completed_kps:
                     completed_kps.append(found_kp_id)
         else:
-            logger.warning(f"[COMPLETION] Плита не найдена в БД: {plate_name} ({length_m}м, load_class={load_class})")
+            # ИСПРАВЛЕНИЕ: Если это вторичный рез (is_secondary=True) и его нет в БД,
+            # сохраняем как остаток, а не выдаём предупреждение
+            if is_secondary:
+                # Это плита из вторичного реза (остатка), которую не заказывали в КП
+                # Сохраняем её как остаток для будущего использования
+                width_m = plate.get('width_m', 0)
+                width_mm = int(width_m * 1000)
+                
+                # Берём kp_id родительской плиты (если есть в данных)
+                parent_kp_id = plate.get('parent_kp_id') or 1  # fallback на КП #1
+                
+                kp_db.create_plate_rest(
+                    kp_id=parent_kp_id,
+                    source_plate_name=f"Вторичный рез: {plate_name}",
+                    rest_width_mm=width_mm,
+                    length_m=length_m,
+                    production_day=day_number,
+                    db_path=db_path
+                )
+                secondary_as_rests += 1
+                logger.info(f"[COMPLETION] Вторичный рез сохранён как остаток: {plate_name} ({length_m}м × {width_mm}мм)")
+            else:
+                logger.warning(f"[COMPLETION] Плита не найдена в БД: {plate_name} ({length_m}м, load_class={load_class})")
     # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
     
     # ========== ВОЗВРАТ БРАКОВАННЫХ ПЛИТ В ПРОИЗВОДСТВО ==========
@@ -947,6 +1025,10 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     # Информация о плитах из остатков
     if rests_used_count > 0:
         report += f"💰 Из остатков: {rests_used_count} шт (чистая прибыль!)\n"
+    
+    # Информация о вторичных резах, сохранённых как остатки
+    if secondary_as_rests > 0:
+        report += f"🔄 Вторичные резы (сохранены как остатки): {secondary_as_rests} шт\n"
     
     if rejected_plates:
         rejected_qty = sum(p['qty'] for p in rejected_plates)

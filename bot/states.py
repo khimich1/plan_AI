@@ -27,6 +27,7 @@ class CompareStates(StatesGroup):
 class AdminStates(StatesGroup):
     """Состояния для административных команд"""
     waiting_delete_confirmation = State()
+    waiting_clear_all_confirmation = State()
 
 
 class ProductionStates(StatesGroup):
