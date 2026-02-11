@@ -165,10 +165,6 @@ async def load_and_plan_production(message: Message, state: FSMContext):
     
     # === ДАЛЬШЕ ВСЯ ТЕКУЩАЯ ЛОГИКА ===
     try:
-        # #region agent log
-        _dl = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
-        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H1", "location": "production_execution.py:try_start", "message": "planning_try_start", "data": {"filter_method": filter_method, "len_kp_list": len(kp_list)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        # #endregion
         # === ШАГ 2: СОБИРАЕМ ПЛИТЫ ===
         plates_by_date_and_reinforcement = defaultdict(lambda: defaultdict(list))
         
@@ -256,9 +252,6 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         plates_for_optimizer = []
         
         plita_db_path = str(PROJECT_ROOT / 'plita.db')
-        # #region agent log
-        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H2", "location": "production_execution.py:before_rests", "message": "before_find_matching_rests", "data": {"len_selected_plates": len(selected_plates), "plita_db_exists": __import__("os").path.exists(plita_db_path)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        # #endregion
         for plate_data in selected_plates:
             length_m = plate_data['length']
             width_mm = plate_data['width']
@@ -343,9 +336,6 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             return
         
         selected_plates = plates_for_optimizer
-        # #region agent log
-        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H3", "location": "production_execution.py:before_optimizer", "message": "before_optimizer", "data": {"len_plates_for_optimizer": len(plates_for_optimizer)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        # #endregion
         await message.answer("⏳ Запускаю оптимизацию раскроя...")
         
         # === ШАГ 4: ОПТИМИЗАЦИЯ ===
@@ -363,46 +353,18 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 'kp_id': plate_data.get('kp_id')
             })
         
-        # #region agent log: отслеживаем конкретные плиты пользователя перед оптимизацией
-        try:
-            _target_names = ('25,4-12-8п', '43-12-8п', '63,9-12-8п')
-            _targets = [
-                {
-                    'plate_name': p.get('plate_name'),
-                    'length': p.get('length'),
-                    'width': p.get('width'),
-                    'qty': p.get('qty'),
-                    'kp_id': p.get('kp_id'),
-                }
-                for p in orders_2d
-                if any(s in (p.get('plate_name') or '') for s in _target_names)
-            ]
-            if _targets:
-                open(_dl, 'a', encoding='utf-8').write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "H9",
-                    "location": "production_execution.py:before_optimizer_targets",
-                    "message": "Целевые плиты перед оптимизацией",
-                    "data": {"targets": _targets},
-                    "timestamp": __import__("time").time() * 1000
-                }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
-
         # ✅ НОВОЕ: Логируем все плиты ДО оптимизации
         logger.info(f"[TRACE] ===== ШАГ 1: ПЛИТЫ ДО ОПТИМИЗАЦИИ =====")
         logger.info(f"[TRACE] Всего плит: {sum(p['qty'] for p in orders_2d)}")
         for p in orders_2d:
             logger.info(f"[TRACE]   {p['plate_name']} × {p['qty']} (длина={p['length']:.2f}м, ширина={p['width']}мм, КП #{p.get('kp_id', '?')})")
         
-        # Lookup-таблицы
+        # Lookup-таблицы: ключ строго (length, width), без слияния длин (5.7 и 5.71 — разные ключи).
         plate_lookup_exact = {}
         plate_lookup_by_length = {}
-        
         for order in orders_2d:
-            key = (round(order['length'], 2), order['width'])
+            L = round(order['length'], 2)
+            W = order['width']
             entry = {
                 'kp_date': order.get('kp_date', 'неизвестно'),
                 'customer': order.get('customer', 'неизвестно'),
@@ -412,11 +374,12 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 'qty_remaining': order.get('qty', 1),
                 'kp_id': order.get('kp_id'),
             }
-            
+            key = (L, W)
             if key not in plate_lookup_exact:
                 plate_lookup_exact[key] = []
             plate_lookup_exact[key].append(entry)
-            
+        
+        for order in orders_2d:
             length_key = round(order['length'], 2)
             length_entry = {
                 'kp_date': order.get('kp_date', 'неизвестно'),
@@ -450,25 +413,6 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             optimize_with_cascading_longitudinal_cuts,
             orders_2d=orders_2d
         )
-        # #region agent log: сводка плит по kp_id после оптимизации (H1, H3, H5)
-        _pa = optimization_result.get("plate_assignments", []) if optimization_result else []
-        _by_kp = {}
-        for p in _pa:
-            _kid = p.get("kp_id")
-            _by_kp[_kid] = _by_kp.get(_kid, 0) + 1
-        _sample_by_kp = {}
-        for p in _pa:
-            _kid = p.get("kp_id")
-            if _kid not in _sample_by_kp:
-                _sample_by_kp[_kid] = []
-            if len(_sample_by_kp[_kid]) < 3:
-                _sample_by_kp[_kid].append({"plate_name": (p.get("plate_name") or "")[:50], "length": p.get("length"), "width": p.get("width"), "source": p.get("source")})
-        _orders_by_kp = {}
-        for o in orders_2d:
-            _kid = o.get("kp_id")
-            _orders_by_kp[_kid] = _orders_by_kp.get(_kid, 0) + o.get("qty", 0)
-        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H3", "location": "production_execution.py:after_optimizer", "message": "plates_by_kp vs orders_by_kp", "data": {"has_result": bool(optimization_result), "total_plates": optimization_result.get("total_plates", 0) if optimization_result else 0, "plates_by_kp": _by_kp, "sample_by_kp": _sample_by_kp, "orders_by_kp": _orders_by_kp, "input_plates": sum(p["qty"] for p in orders_2d), "output_plates": len(_pa)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        # #endregion
         if not optimization_result or optimization_result.get('total_plates', 0) == 0:
             await message.answer(
                 "❌ Оптимизация не дала результатов.",
@@ -632,17 +576,36 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         
         from viz_modules.layout_sequence import build_layout_sequence
         from core.visualization import split_sequence_into_tracks
-        # #region agent log
-        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H4", "location": "production_execution.py:before_build_layout", "message": "before_build_layout", "data": {}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        # #endregion
         seq = build_layout_sequence()
         all_tracks_list = split_sequence_into_tracks(seq)
-        # #region agent log
-        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H4", "location": "production_execution.py:after_split_tracks", "message": "after_split_tracks", "data": {"tracks_count": len(all_tracks_list)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        # #endregion
 
         # === ШАГ 6.5: ЗАЩИТА ОТ ПОТЕРИ ПЛИТ (РЕСКЬЮ) ===
-        def _count_tracks_for_rescue(tracks_list):
+        # Приводим ключ дорожки к ключу заказа: допуск 0.02 м (3.79→3.8 из БД). 5.71 не уходит в 5.7 — выбирается ближайший ключ.
+        def _normalize_key_to_orders(key, order_keys, order_counts, tol_len=0.02, tol_w=10):
+            length, width_mm, load_code = key
+            len_r = round(length, 2)
+            w_int = int(round(width_mm))  # канонизация: int для сравнения с ключами заказа
+            candidates = [ok for ok in order_keys
+                          if abs(round(ok[0], 2) - len_r) <= tol_len and abs(int(round(ok[1])) - w_int) <= tol_w]
+            if not candidates:
+                return key
+            same_load = [ok for ok in candidates if ok[2] == load_code]
+            pool = same_load if same_load else candidates
+            # В пределах tol_len считаем длины "одними": предпочитаем ключ с бОльшим спросом,
+            # чтобы треки 3.79 шли в (3.8, 6 шт), а не в (3.79, 1 шт) — тогда РЕСКЬЮ не добавит лишнее.
+            def _rank(ok):
+                dist = abs(ok[0] - length)
+                in_tol = 0 if dist <= tol_len else dist
+                return (in_tol, -order_counts.get(ok, 0))
+            return min(pool, key=_rank)
+
+        def _to_width_mm(w, default_m=1.2):
+            """Ширина в мм: если < 20 — считаем метры (×1000), иначе уже мм (layout даёт метры, на всякий случай проверяем)."""
+            if w is None:
+                w = default_m
+            return round(float(w) * 1000) if float(w) < 20 else round(float(w))
+
+        def _count_tracks_for_rescue(tracks_list, order_keys, order_counts):
             counts = {}
             for track in tracks_list:
                 for item in track.get('items', []):
@@ -652,29 +615,75 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                     load_code = cfg.normalize_load_code(item.get('load_code', 8))
                     mode = item.get('mode', 'solid')
                     if mode == 'split':
-                        width_mm = round(item.get('main_w', 1.2) * 1000)
+                        width_mm = _to_width_mm(item.get('main_w', 1.2))
                     elif mode == 'transverse':
-                        width_mm = round(item.get('width', 1.2) * 1000)
+                        width_mm = _to_width_mm(item.get('width', 1.2))
                     else:
-                        width_mm = round(item.get('width', 1.2) * 1000)
+                        width_mm = _to_width_mm(item.get('width', 1.2))
                     key = (length, width_mm, load_code)
-                    counts[key] = counts.get(key, 0) + 1
+                    norm_key = _normalize_key_to_orders(key, order_keys, order_counts)
+                    # #region agent log: проследить плиты 37,9-12 и 57-12 при подсчёте + кандидаты (типы)
+                    if (abs(length - 3.79) <= 0.01 and width_mm == 1200) or (abs(length - 5.71) <= 0.01 and width_mm == 1200):
+                        try:
+                            # Лог с кандидатами: откуда key и куда привязался norm_key
+                            len_r = round(length, 2)
+                            w_int = int(round(width_mm))
+                            cands = [ok for ok in order_keys if abs(round(ok[0], 2) - len_r) <= 0.02 and abs(int(round(ok[1])) - w_int) <= 10]
+                            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(json.dumps({
+                                "hypothesisId": "rescue_1200_count",
+                                "location": "production_execution:_count_tracks_for_rescue",
+                                "message": "item 3.79/5.71 x 1200",
+                                "data": {
+                                    "key": list(key), "norm_key": list(norm_key),
+                                    "key_repr": [repr(key[0]), repr(key[1])],
+                                    "norm_key_repr": [repr(norm_key[0]), repr(norm_key[1])] if norm_key else None,
+                                    "candidates_count": len(cands),
+                                    "candidates_sample": [list(ok) for ok in cands[:3]],
+                                    "track_label": track.get("label", "")
+                                },
+                                "timestamp": __import__("time").time() * 1000
+                            }, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                    # #endregion
+                    counts[norm_key] = counts.get(norm_key, 0) + 1
                     for sec_cut in item.get('secondary_cuts', []) or []:
-                        sec_width_mm = round(sec_cut.get('width', 0) * 1000)
+                        sec_width_mm = _to_width_mm(sec_cut.get('width', 0), default_m=0)
                         sec_length = sec_cut.get('target_length') or length
                         if sec_width_mm > 0:
                             sec_key = (round(sec_length, 2), sec_width_mm, load_code)
-                            counts[sec_key] = counts.get(sec_key, 0) + 1
+                            sec_norm = _normalize_key_to_orders(sec_key, order_keys, order_counts)
+                            counts[sec_norm] = counts.get(sec_norm, 0) + 1
             return counts
 
-        def _build_order_info_map(orders_list):
+        def _merge_to_canonical_order_keys(raw_order_counts, tol_len=0.02):
+            """Объединяет ключи заказов: длины в пределах tol_len считаются одним ключом (минимум по длине).
+            Чтобы плиты из БД (3.8) и из раскладки (3.79) не дублировались в РЕСКЬЮ и все списывались."""
+            if not raw_order_counts:
+                return {}, lambda k: k
+            keys_list = list(raw_order_counts.keys())
+            def canonical_key(key):
+                L, W, LC = key
+                best_L = L
+                for (L2, W2, LC2) in keys_list:
+                    if W2 == W and LC2 == LC and abs(L2 - L) <= tol_len and L2 < best_L:
+                        best_L = L2
+                return (best_L, W, LC)
+            merged = {}
+            for k, qty in raw_order_counts.items():
+                ck = canonical_key(k)
+                merged[ck] = merged.get(ck, 0) + qty
+            return merged, canonical_key
+
+        def _build_order_info_map(orders_list, canonical_key_fn=None):
             info_map = {}
             for order in orders_list:
-                key = (
-                    round(order.get('length', 0), 2),
-                    order.get('width', 1200),
-                    cfg.normalize_load_code(order.get('load_code', 8))
-                )
+                L = round(float(order.get('length', 0)), 2)
+                W = order.get('width', 1200)
+                W_canon = int(round(float(W))) if W is not None else 1200
+                key = (L, W_canon, cfg.normalize_load_code(order.get('load_code', 8)))
+                if canonical_key_fn:
+                    key = canonical_key_fn(key)
                 if key not in info_map:
                     info_map[key] = []
                 info_map[key].append({
@@ -739,25 +748,80 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             _flush_track()
             return rescue_tracks
 
-        # Считаем потери
-        order_counts = {}
+        # Ключи заказа без слияния по длине: 5.7 и 5.71 — разные позиции (ПБ 57 и ПБ 57,1).
+        # Канонизация: длина round(.,2), ширина int — чтобы не было расхождения float/int в dict.
+        raw_order_counts = {}
         for order in orders_2d:
-            key = (
-                round(order.get('length', 0), 2),
-                order.get('width', 1200),
-                cfg.normalize_load_code(order.get('load_code', 8))
-            )
-            order_counts[key] = order_counts.get(key, 0) + order.get('qty', 1)
-
-        track_counts = _count_tracks_for_rescue(all_tracks_list)
+            L = round(float(order.get('length', 0)), 2)
+            W = order.get('width', 1200)
+            W_canon = int(round(float(W))) if W is not None else 1200
+            key = (L, W_canon, cfg.normalize_load_code(order.get('load_code', 8)))
+            raw_order_counts[key] = raw_order_counts.get(key, 0) + order.get('qty', 1)
+        order_counts, canonical_key_fn = _merge_to_canonical_order_keys(raw_order_counts, tol_len=0)
+        order_keys = list(order_counts.keys())
+        track_counts = _count_tracks_for_rescue(all_tracks_list, order_keys, order_counts)
+        # Лог для отладки РЕСКЬЮ: типы ключей и совпадение с track_counts
+        try:
+            _order_1200 = [(list(k), type(k[0]).__name__, type(k[1]).__name__, order_counts[k]) for k in order_keys if (k[1] == 1200 or abs(k[1] - 1200) < 1)]
+            _track_1200 = [(list(k), type(k[0]).__name__, type(k[1]).__name__, track_counts.get(k, 0)) for k in order_keys if (k[1] == 1200 or abs(k[1] - 1200) < 1)]
+            _key_38 = next((k for k in order_keys if abs(k[0] - 3.8) <= 0.02 and (k[1] == 1200 or abs(k[1] - 1200) < 1)), None)
+            _key_57 = next((k for k in order_keys if abs(k[0] - 5.7) <= 0.02 and (k[1] == 1200 or abs(k[1] - 1200) < 1)), None)
+            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(json.dumps({
+                "hypothesisId": "rescue_keys_debug",
+                "location": "production_execution:order_vs_track_counts",
+                "message": "order_keys(1200) and track_counts",
+                "data": {
+                    "order_keys_1200": _order_1200[:10],
+                    "track_counts_for_1200": _track_1200[:10],
+                    "key_3.8_in_track_counts": _key_38 in track_counts if _key_38 else None,
+                    "key_3.8_track_val": track_counts.get(_key_38, 0) if _key_38 else None,
+                    "key_5.7_in_track_counts": _key_57 in track_counts if _key_57 else None,
+                    "key_5.7_track_val": track_counts.get(_key_57, 0) if _key_57 else None,
+                    "repr_key_38": repr(_key_38) if _key_38 else None,
+                    "repr_key_57": repr(_key_57) if _key_57 else None,
+                },
+                "timestamp": __import__("time").time() * 1000
+            }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
         missing_counts = {}
         for key, qty_need in order_counts.items():
             qty_have = track_counts.get(key, 0)
             if qty_have < qty_need:
                 missing_counts[key] = qty_need - qty_have
-
+        # Для проверки допуска 10 мм: смотри в logs/bot.log — покрытие заказа дорожками и недостаток
+        logger.info(
+            f"[CHECK] РЕСКЬЮ: позиций в заказе {len(order_counts)}, "
+            f"в плане покрыто {sum(track_counts.values())} плит, недостаёт {sum(missing_counts.values())} (непокрытых позиций: {len(missing_counts)})"
+        )
+        # #region agent log: почему ключи попадают в РЕСКЬЮ — сравнение формата ключей заказа и дорожек
         if missing_counts:
-            info_map = _build_order_info_map(orders_2d)
+            _missing_sample = [[list(k), order_counts[k], track_counts.get(k, 0)] for k in list(missing_counts.keys())[:8]]
+            _order_sample = [list(k) for k in list(order_counts.keys())[:5]]
+            _track_sample = [list(k) for k in list(track_counts.keys())[:15]]
+            _first_key = list(missing_counts.keys())[0]
+            _example_item = None
+            for _t in (all_tracks_list or []):
+                if _example_item is not None:
+                    break
+                for _it in (_t.get("items") or []):
+                    if not _it:
+                        continue
+                    _len = round(_it.get("length", 0), 2)
+                    _w = _it.get("width", 0) or _it.get("main_w", 0)
+                    _w_mm = round((_w if _w else 1.2) * 1000) if _w < 20 else round(_w)
+                    if abs(_len - _first_key[0]) <= 0.01 and abs(_w_mm - _first_key[1]) <= 10:
+                        _example_item = {"length": _it.get("length"), "width": _it.get("width"), "main_w": _it.get("main_w"), "load_code": _it.get("load_code"), "mode": _it.get("mode")}
+                        break
+            try:
+                open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(
+                    json.dumps({"hypothesisId": "rescue_key_mismatch", "location": "production_execution:rescue_counts_debug", "message": "missing vs order vs track keys", "data": {"missing_sample": _missing_sample, "order_keys_sample": _order_sample, "track_keys_sample": _track_sample, "example_item_for_first_missing": _example_item}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n"
+                )
+            except Exception:
+                pass
+        # #endregion
+        if missing_counts:
+            info_map = _build_order_info_map(orders_2d, canonical_key_fn=canonical_key_fn)
             rescue_tracks = _create_rescue_tracks(missing_counts, info_map)
             all_tracks_list.extend(rescue_tracks)
             logger.warning(
@@ -799,9 +863,6 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         )
         
         # Рассчитываем days_info с глобальной загруженностью для новых дат
-        # #region agent log
-        open(_dl, 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H5", "location": "production_execution.py:before_global_occupancy", "message": "before_global_occupancy", "data": {"total_days": total_days}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        # #endregion
         global_occupancy = get_global_day_occupancy()
         
         # Создаём days_info для каждого дня нового плана
@@ -892,9 +953,6 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         await state.set_state(ProductionStates.waiting_day_selection)
         
     except Exception as e:
-        # #region agent log
-        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H_exc", "location": "production_execution.py:except", "message": "planning_exception", "data": {"exc_type": type(e).__name__, "exc_msg": str(e)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        # #endregion
         logger.exception(f"Ошибка при планировании производства: {e}")
         await message.answer(
             "❌ Ошибка при планировании производства.\n\n"

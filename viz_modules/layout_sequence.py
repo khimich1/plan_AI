@@ -47,12 +47,22 @@ def _choose_best_separator(solid_list, next_group, reinforcement_map):
     return best['index']
 
 
+def _canonical_load_code(load_code):
+    """Единый ключ нагрузки для карты: 12.5 и 13 дают 13 (как в БД pb_reinforcement_series)."""
+    if load_code is None:
+        return None
+    try:
+        return int(float(load_code) + 0.5)
+    except Exception:
+        return None
+
+
 def _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code=None):
     """
     Получает армирование из карты по (length, width_mm, load_code).
     
-    Карта имеет ключи (length, width_mm, load_code).
-    Если load_code указан - ищет точное совпадение.
+    Карта имеет ключи (length, width_mm, canonical_load_code).
+    Если load_code указан - ищет по каноническому коду (12.5 и 13 → один ключ).
     Если load_code=None - ищет первое совпадение по (length, width_mm).
     
     Args:
@@ -65,9 +75,22 @@ def _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code=N
         reinforcement или None
     """
     if load_code is not None:
-        # Точный поиск по всем трём параметрам
-        return reinforcement_map.get((length, width_mm, load_code))
-    
+        canonical = _canonical_load_code(load_code)
+        if canonical is not None:
+            # Точный поиск по каноническому коду (12.5 и 13 оба дают 13)
+            result = reinforcement_map.get((length, width_mm, canonical))
+            # В БД 12,5п = нагрузка 13; при "12п" в заказе приходит 12 — если по 12 не нашли, берём по 13
+            if result is None and canonical == 12:
+                result = reinforcement_map.get((length, width_mm, 13))
+            # #region agent log
+            if abs(length - 7.1) < 0.05 and canonical in (12, 13):
+                try:
+                    keys_71 = [(k[0], k[1], k[2]) for k in list(reinforcement_map.keys())[:50] if abs(k[0] - 7.1) < 0.05]
+                    open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71lookup", "location": "layout_sequence:_get_reinforcement_from_map", "message": "71-12п поиск в карте", "data": {"length": length, "width_mm": width_mm, "load_code": load_code, "canonical": canonical, "key": (round(length, 3), width_mm, canonical), "result": result, "keys_71_in_map": keys_71[:10]}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            # #endregion
+            return result
     # Поиск по (length, width_mm) - возвращаем первое найденное
     for (l, w, lc), reinforcement in reinforcement_map.items():
         if abs(l - length) < 0.01 and w == width_mm:
@@ -146,46 +169,95 @@ def build_layout_sequence():
     # Создаём глобальную карту армирования из PLATE_LOAD_DETAILS
     # Ключ включает load_code для точного определения армирования
     reinforcement_map = {}  # {(length, width_mm, load_code): reinforcement}
-    
+    db_path = Path(__file__).parent.parent / "pb.db"
     if cfg.PLATE_LOAD_DETAILS:
-        db_path = Path(__file__).parent.parent / "pb.db"
         print(f"[VISUAL] Начинаем создание карты армирования из {len(cfg.PLATE_LOAD_DETAILS)} записей")
         for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
             width_mm = int(round(width_m * 1000))
             reinforcement = get_reinforcement(
                 length_m=length,
                 load_code=load_code,
-                source='series',
+                source="series",
                 db_path=db_path,
-                allow_fallback=True
+                allow_fallback=True,
             )
-            key = (length, width_mm, load_code)  # Теперь включает load_code!
+            # Канонический ключ: 12.5 и 13 → один и тот же ключ 13 (как в БД)
+            lc_canonical = _canonical_load_code(load_code) or 8
+            # В БД 12,5п = нагрузка 13; при "12п" приходит 12 — подставляем значение из 13
+            if reinforcement is None and lc_canonical == 12:
+                reinforcement = get_reinforcement(
+                    length_m=length,
+                    load_code=13,
+                    source="series",
+                    db_path=db_path,
+                    allow_fallback=True,
+                )
+            key = (length, width_mm, lc_canonical)
             if reinforcement and reinforcement < 999:
                 reinforcement_map[key] = reinforcement
-                print(f"[VISUAL]   Добавлено: ({length}м, {width_mm}мм, нагрузка {load_code}) → армирование {reinforcement:.1f}")
+                print(f"[VISUAL]   Добавлено: ({length}м, {width_mm}мм, нагрузка {lc_canonical}) → армирование {reinforcement:.1f}")
+    
+    # Дополняем карту по плитам из плана (primary_cuts), чтобы 71-12,5п и др. всегда имели армирование из БД
+    def _supplement_reinforcement_map_from_plan(reinforcement_map, plan, db_path):
+        added = 0
+        for cut in plan.get("primary_cuts", []):
+            length = cut["lengths"][0] if cut.get("lengths") else 6.0
+            width_mm = cut["width"]
+            load_code = cfg.normalize_load_code(cut.get("load_code", 8))
+            lc_canonical = _canonical_load_code(load_code) or 8
+            key = (length, width_mm, lc_canonical)
+            if key not in reinforcement_map:
+                reinforcement = get_reinforcement(
+                    length_m=length,
+                    load_code=load_code,
+                    source="series",
+                    db_path=db_path,
+                    allow_fallback=True,
+                )
+                # В БД армирование для 12,5п хранится под нагрузкой 13; для "12п" в заказе приходит load_code=12 — подставляем значение из 13
+                if reinforcement is None and lc_canonical == 12:
+                    reinforcement = get_reinforcement(
+                        length_m=length,
+                        load_code=13,
+                        source="series",
+                        db_path=db_path,
+                        allow_fallback=True,
+                    )
+                if reinforcement is not None and reinforcement < 999:
+                    reinforcement_map[key] = reinforcement
+                    added += 1
+                    print(f"[VISUAL]   Дополнено из плана: ({length}м, {width_mm}мм, нагрузка {lc_canonical}) → армирование {reinforcement:.1f}")
+                    # #region agent log
+                    if abs(length - 7.1) < 0.05 and lc_canonical in (12, 13):
+                        try:
+                            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71supp", "location": "layout_sequence:_supplement", "message": "71-12п дополнение карты", "data": {"length": length, "width_mm": width_mm, "lc_canonical": lc_canonical, "reinforcement": reinforcement, "raw_load_code": load_code}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                    # #endregion
+        return added
+    if OPT_CASCADING_PLAN_BY_LOAD:
+        for plan in OPT_CASCADING_PLAN_BY_LOAD.values():
+            _supplement_reinforcement_map_from_plan(reinforcement_map, plan, db_path)
+    elif OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get("primary_cuts"):
+        _supplement_reinforcement_map_from_plan(reinforcement_map, OPT_CASCADING_PLAN, db_path)
     
     print(f"[VISUAL] Создана карта армирования: {len(reinforcement_map)} записей")
     sequence = []
 
-    def plate_label(L: float, W: float) -> str:
+    def plate_label(L: float, W: float, load_code: int = None) -> str:
         """
-        Создает метку плиты с правильной нагрузкой из данных заказа.
-        Пытается определить load_code из PLATE_LOAD_DETAILS или использует get_load_code_for_plate.
+        Создает метку плиты с правильной нагрузкой.
+        Если передан load_code — используется он; иначе ищется в PLATE_LOAD_DETAILS или get_load_code_for_plate.
         """
-        # Пытаемся найти точную нагрузку в PLATE_LOAD_DETAILS
-        load_code = None
-        if cfg.PLATE_LOAD_DETAILS:
+        resolved_load = load_code
+        if resolved_load is None and cfg.PLATE_LOAD_DETAILS:
             for (plate_L, plate_W, plate_load), qty in cfg.PLATE_LOAD_DETAILS.items():
                 if abs(plate_L - L) < 0.05 and abs(plate_W - W) < 0.01:
-                    load_code = plate_load
+                    resolved_load = plate_load
                     break
-        
-        # Если не нашли в PLATE_LOAD_DETAILS, используем get_load_code_for_plate
-        if load_code is None:
-            load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else 8))
-        
-        # Используем готовую функцию для формирования имени
-        return cfg.make_plate_name(L, W, load_code=load_code)
+        if resolved_load is None:
+            resolved_load = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else 8))
+        return cfg.make_plate_name(L, W, load_code=resolved_load)
     
     # ✅ НОВЫЙ ПРИОРИТЕТ 0: OPT_CASCADING_PLAN_BY_LOAD (группировка по нагрузкам)
     print(f"[VISUAL] Проверяем OPT_CASCADING_PLAN_BY_LOAD: {bool(OPT_CASCADING_PLAN_BY_LOAD)}")
@@ -332,7 +404,8 @@ def build_layout_sequence():
         for cut in solid_cuts:
             length = cut['lengths'][0] if cut.get('lengths') else 6.0
             width_mm = cut['width']
-            cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
+            lc = cfg.normalize_load_code(cut.get('load_code', 8))
+            cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm, lc) or 999.0
         solid_cuts.sort(key=lambda x: (x.get('reinforcement', 999.0), -x['lengths'][0] if x.get('lengths') else 0))
         
         # Плиты с резом - вычисляем армирование для группировки
@@ -342,7 +415,8 @@ def build_layout_sequence():
         for cut in cut_with_rest_raw:
             length = cut['lengths'][0] if cut.get('lengths') else 6.0
             width_mm = cut['width']
-            cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
+            lc = cfg.normalize_load_code(cut.get('load_code', 8))
+            cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm, lc) or 999.0
         
         # Сортируем плиты с резом по армированию (мин. первый), потом по типу реза
         cut_with_rest = sorted(
@@ -478,6 +552,21 @@ def build_layout_sequence():
             is_sep = " [РАЗДЕЛИТЕЛЬ]" if cut.get('is_separator') else ""
             logger.info(f"[TRACE]   #{i+1}: width={cut['width']}мм, rest={cut['rest']}мм, qty={cut['qty']}, reinf={cut.get('reinforcement', '?'):.1f}{is_sep}")
         
+        # Диагностика: предупреждение при отсутствии армирования в карте (один раз на ключ)
+        _missing_reinf_logged = set()
+        import logging as _logging
+        _log_build = _logging.getLogger(__name__)
+        def _warn_missing_reinforcement(length, width_mm, load_code_from_cut):
+            if load_code_from_cut is None:
+                return
+            key = (round(length, 3), width_mm, load_code_from_cut)
+            if key in _missing_reinf_logged:
+                return
+            _missing_reinf_logged.add(key)
+            _log_build.warning(
+                "[ВИЗУАЛИЗАЦИЯ] Нет армирования в карте для (length=%s, width_mm=%s, load_code=%s)",
+                length, width_mm, load_code_from_cut,
+            )
         # 1. Первичные резы с вторичными резами внутри остатков
         # ОБРАБАТЫВАЕМ В НОВОМ ПОРЯДКЕ: целая → группа резов → целая → группа резов
         for cut in ordered_cuts:
@@ -528,7 +617,8 @@ def build_layout_sequence():
                     # Получаем армирование из карты (с учётом load_code)
                     load_code_from_cut = cfg.normalize_load_code(cut.get('load_code', 8))
                     reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code_from_cut)
-                    
+                    if reinforcement is None:
+                        _warn_missing_reinforcement(length, width_mm, load_code_from_cut)
                     sequence.append({
                         'length': length,  # Исходная длина плиты
                         'mode': 'transverse',
@@ -536,7 +626,7 @@ def build_layout_sequence():
                         'remainder': remainder,
                         'width': width_m,
                         'load_code': load_code_from_cut,  # ИСПРАВЛЕНИЕ: добавляем load_code
-                        'label_target': plate_label(target_length, width_m),
+                        'label_target': plate_label(target_length, width_m, load_code_from_cut),
                         'label_remainder': f'Остаток {remainder:.2f}м'.replace('.', ',') if remainder > 0.1 else '',
                         'reinforcement': reinforcement,
                         'kp_id': kp_id,
@@ -564,6 +654,15 @@ def build_layout_sequence():
                         # Получаем армирование из карты (с учётом load_code)
                         load_code_from_cut = cfg.normalize_load_code(cut.get('load_code', 8))
                         reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code_from_cut)
+                        if reinforcement is None:
+                            _warn_missing_reinforcement(length, width_mm, load_code_from_cut)
+                        # #region agent log
+                        if abs(length - 7.1) < 0.05 and load_code_from_cut in (12, 12.5, 13):
+                            try:
+                                open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71item", "location": "layout_sequence:sequence_append_solid", "message": "71-12п item в sequence", "data": {"length": length, "width_mm": width_mm, "load_code_from_cut": load_code_from_cut, "reinforcement": reinforcement}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                            except Exception:
+                                pass
+                        # #endregion
                         # МЯГКОЕ РЕЗЕРВИРОВАНИЕ: передаём флаг is_separator
                         is_separator = cut.get('is_separator', False)
                         sequence.append({
@@ -571,7 +670,7 @@ def build_layout_sequence():
                             'mode': 'solid',
                             'width': main_w,  # ИСПРАВЛЕНИЕ: сохраняем реальную ширину для корректного учёта
                             'load_code': load_code_from_cut,  # ИСПРАВЛЕНИЕ: добавляем load_code для различения плит
-                            'label': plate_label(length, main_w),
+                            'label': plate_label(length, main_w, load_code_from_cut),
                             'reinforcement': reinforcement,
                             'is_separator': is_separator,  # Для приоритета при разбиении на дорожки
                             'kp_id': kp_id,
@@ -581,6 +680,7 @@ def build_layout_sequence():
                         })
                     else:
                         # Плиты С резом
+                        load_code_from_cut = cfg.normalize_load_code(cut.get('load_code', 8))
                         # Проверяем, нужны ли вторичные резы для ЭТОЙ плиты
                         secondary_cuts_for_plate = None
                         chosen_variant = None
@@ -602,7 +702,7 @@ def build_layout_sequence():
                                     # Вторичная плита с поперечным резом
                                     secondary_cuts_for_plate.append({
                                         'width': sec_width,
-                                        'label': f'[2] {plate_label(sec_transverse["target_length"], sec_width)}',
+                                        'label': f'[2] {plate_label(sec_transverse["target_length"], sec_width, load_code_from_cut)}',
                                         'transverse_cut': True,
                                         'target_length': sec_transverse['target_length'],
                                         'remainder': sec_transverse['remainder']
@@ -618,7 +718,7 @@ def build_layout_sequence():
                                         # Метка показывает результат ОБОИХ резов
                                         secondary_cuts_for_plate.append({
                                             'width': sec_width,
-                                            'label': f'О {plate_label(target_length, sec_width)}',  # О = Остаток
+                                            'label': f'О {plate_label(target_length, sec_width, load_code_from_cut)}',  # О = Остаток
                                             'has_transverse': True,  # Флаг для отрисовки красной линии
                                             'target_length': target_length  # Длина результата (для правильной отрисовки)
                                         })
@@ -626,7 +726,7 @@ def build_layout_sequence():
                                         # Обычный вторичный рез (включая narrowing)
                                         result_width = sec_cut_template['width']
                                         source_width = sec_cut_template.get('source_width_mm', result_width * 1000) / 1000.0
-                                        label_text = plate_label(length, result_width)
+                                        label_text = plate_label(length, result_width, load_code_from_cut)
                                         if abs(result_width - source_width) > 1e-6:
                                             label_text = f'О {label_text}'  # помечаем, что получено из остатка
                                         secondary_cuts_for_plate.append({
@@ -636,15 +736,16 @@ def build_layout_sequence():
                             chosen_variant['used'] += 1
                         
                         # Получаем армирование из карты (с учётом load_code)
-                        load_code_from_cut = cfg.normalize_load_code(cut.get('load_code', 8))
                         reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code_from_cut)
+                        if reinforcement is None:
+                            _warn_missing_reinforcement(length, width_mm, load_code_from_cut)
                         sequence.append({
                             'length': length,
                             'mode': 'split',
                             'main_w': main_w,
                             'rest_w': rest_w,
                             'load_code': load_code_from_cut,  # ИСПРАВЛЕНИЕ: добавляем load_code
-                            'label_main': plate_label(length, main_w),
+                            'label_main': plate_label(length, main_w, load_code_from_cut),
                             'label_rest': (
                                 '+0,12' if fake_rest_override else
                                 (f'+{rest_w:.2f}'.replace('.', ',') if not secondary_cuts_for_plate else None)
@@ -796,14 +897,28 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
         reinforcement_map = {}
     
     sequence = []
-    
+    _missing_reinf_logged = set()
+    import logging
+    _log = logging.getLogger(__name__)
+
+    def _warn_missing_reinforcement(length, width_mm, load_code_from_cut):
+        if load_code_from_cut is None:
+            return
+        key = (round(length, 3), width_mm, load_code_from_cut)
+        if key in _missing_reinf_logged:
+            return
+        _missing_reinf_logged.add(key)
+        _log.warning(
+            "[ВИЗУАЛИЗАЦИЯ] Нет армирования в карте для (length=%s, width_mm=%s, load_code=%s)",
+            length, width_mm, load_code_from_cut,
+        )
+
     # Проверяем, есть ли 2D данные (plate_assignments)
     use_2d_data = 'plate_assignments' in plan and plan['plate_assignments']
     
     if not use_2d_data:
         print("[VISUAL] ⚠️ 2D данных нет, используем приближение")
-        # Собираем все плиты с их длинами из cfg
-        import core.config_and_data as cfg
+        # Собираем все плиты с их длинами из cfg (модуль уже импортирован в начале файла)
         all_plates_with_lengths = []
         for plates, width_mm in [
             (cfg.PLATES_1_2, 1200), (cfg.PLATES_1_08, 1080),
@@ -879,7 +994,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     for cut in solid_cuts:
         length = cut['lengths'][0] if cut.get('lengths') else 6.0
         width_mm = cut['width']
-        cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
+        lc = cfg.normalize_load_code(cut.get('load_code', 8))
+        cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm, lc) or 999.0
     solid_cuts.sort(key=lambda x: (x.get('reinforcement', 999.0), -x['lengths'][0] if x.get('lengths') else 0))
     
     # Плиты с резом - вычисляем армирование для группировки
@@ -889,7 +1005,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     for cut in cut_with_rest_raw:
         length = cut['lengths'][0] if cut.get('lengths') else 6.0
         width_mm = cut['width']
-        cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
+        lc = cfg.normalize_load_code(cut.get('load_code', 8))
+        cut['reinforcement'] = _get_reinforcement_from_map(reinforcement_map, length, width_mm, lc) or 999.0
     
     # Сортируем плиты с резом по армированию (мин. первый), потом по типу реза
     cut_with_rest = sorted(
@@ -1025,8 +1142,10 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 # Поперечный рез
                 width_m = width_mm / 1000.0
                 # Получаем армирование из карты (с учётом load_code)
-                load_code_from_cut = cut.get('load_code', 800)
+                load_code_from_cut = cfg.normalize_load_code(cut.get('load_code', 800))
                 reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code_from_cut)
+                if reinforcement is None:
+                    _warn_missing_reinforcement(length, width_mm, load_code_from_cut)
                 sequence.append({
                     'length': length,
                     'mode': 'transverse',
@@ -1034,7 +1153,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     'remainder': transverse_cut_info['remainder'],
                     'width': width_m,
                     'load_code': load_code_from_cut,  # ИСПРАВЛЕНИЕ: добавляем load_code
-                    'label_target': plate_label_func(transverse_cut_info['target_length'], width_m),
+                    'label_target': plate_label_func(transverse_cut_info['target_length'], width_m, load_code_from_cut),
                     'label_remainder': f'Остаток {transverse_cut_info["remainder"]:.2f}м'.replace('.', ',') if transverse_cut_info['remainder'] > 0.1 else '',
                     'reinforcement': reinforcement,
                     'kp_id': kp_id,
@@ -1057,8 +1176,17 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 if rest_mm == 0:
                     # Плита без реза
                     # Получаем армирование из карты по (length, width_mm, load_code)
-                    load_code_from_cut = cut.get('load_code', 800)
+                    load_code_from_cut = cfg.normalize_load_code(cut.get('load_code', 800))
                     reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code_from_cut)
+                    if reinforcement is None:
+                        _warn_missing_reinforcement(length, width_mm, load_code_from_cut)
+                    # #region agent log
+                    if abs(length - 7.1) < 0.05 and load_code_from_cut in (12, 12.5, 13):
+                        try:
+                            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71item2d", "location": "layout_sequence:sequence_append_solid_2d", "message": "71-12п item в sequence (2d)", "data": {"length": length, "width_mm": width_mm, "load_code_from_cut": load_code_from_cut, "reinforcement": reinforcement}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                    # #endregion
                     if not reinforcement:
                         print(f"[VISUAL] ⚠️ Армирование не найдено для целой плиты: {length}м x {width_mm}мм (load_code={load_code_from_cut})")
                         print(f"[VISUAL]    Доступные ключи в карте: {list(reinforcement_map.keys())[:5]}")
@@ -1071,7 +1199,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'mode': 'solid',
                         'width': main_w,  # ИСПРАВЛЕНИЕ: сохраняем реальную ширину для корректного учёта
                         'load_code': load_code_from_cut,  # ИСПРАВЛЕНИЕ: добавляем load_code для различения плит
-                        'label': plate_label_func(length, main_w),
+                        'label': plate_label_func(length, main_w, load_code_from_cut),
                         'reinforcement': reinforcement,
                         'is_separator': is_separator,  # Для приоритета при разбиении на дорожки
                         'kp_id': kp_id,
@@ -1081,6 +1209,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     })
                 else:
                     # Плита с резом
+                    load_code_from_cut = cfg.normalize_load_code(cut.get('load_code', 800))
                     secondary_cuts_for_plate = None
                     chosen_variant = None
                     for variant in sec_variants:
@@ -1099,7 +1228,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                             if sec_transverse:
                                 secondary_cuts_for_plate.append({
                                     'width': sec_width,
-                                    'label': f'[2] {plate_label_func(sec_transverse["target_length"], sec_width)}',
+                                    'label': f'[2] {plate_label_func(sec_transverse["target_length"], sec_width, load_code_from_cut)}',
                                     'transverse_cut': True,
                                     'target_length': sec_transverse['target_length'],
                                     'remainder': sec_transverse['remainder']
@@ -1109,14 +1238,14 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                                 if target_length:
                                     secondary_cuts_for_plate.append({
                                         'width': sec_width,
-                                        'label': f'О {plate_label_func(target_length, sec_width)}',
+                                        'label': f'О {plate_label_func(target_length, sec_width, load_code_from_cut)}',
                                         'has_transverse': True,
                                         'target_length': target_length
                                     })
                                 else:
                                     result_width = sec_cut_template['width']
                                     source_width = sec_cut_template.get('source_width_mm', result_width * 1000) / 1000.0
-                                    label_text = plate_label_func(length, result_width)
+                                    label_text = plate_label_func(length, result_width, load_code_from_cut)
                                     if abs(result_width - source_width) > 1e-6:
                                         label_text = f'О {label_text}'
                                     secondary_cuts_for_plate.append({
@@ -1126,8 +1255,9 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         chosen_variant['used'] += 1
                     
                     # Получаем армирование из карты (с учётом load_code)
-                    load_code_from_cut = cut.get('load_code', 800)
                     reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code_from_cut)
+                    if reinforcement is None:
+                        _warn_missing_reinforcement(length, width_mm, load_code_from_cut)
                     if reinforcement:
                         print(f"[VISUAL] ✓ Армирование найдено для плиты с резом: {length}м x {width_mm}мм = {reinforcement:.1f}")
                     sequence.append({
@@ -1136,7 +1266,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'main_w': main_w,
                         'rest_w': rest_w,
                         'load_code': load_code_from_cut,  # ИСПРАВЛЕНИЕ: добавляем load_code
-                        'label_main': plate_label_func(length, main_w),
+                        'label_main': plate_label_func(length, main_w, load_code_from_cut),
                         'label_rest': (
                             '+0,12' if fake_rest_override else
                             (f'+{rest_w:.2f}'.replace('.', ',') if not secondary_cuts_for_plate else None)

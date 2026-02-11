@@ -76,6 +76,23 @@ def split_sequence_into_tracks(
     Returns:
         list[dict]: Список дорожек [{'items': [...], 'length': float, 'load_code': int, 'label': str, 'max_reinforcement': float}, ...]
     """
+    def _label_from_track_items(items, fallback):
+        """Подпись дорожки по фактическим нагрузкам плит в ней (чтобы при группе 'all' не было везде 8п)."""
+        load_codes = set()
+        for item in items:
+            lc = item.get('load_code')
+            if lc is not None:
+                try:
+                    n = cfg.normalize_load_code(lc)
+                    if n is not None:
+                        load_codes.add(n)
+                except Exception:
+                    pass
+        if not load_codes:
+            return fallback
+        disp = [cfg.format_reinforcement_from_load_code(lc) for lc in sorted(load_codes)]
+        return 'Нагрузка ' + ', '.join(disp) if len(disp) > 1 else f'Нагрузка {disp[0]}'
+
     tracks = []
     
     # Проверяем формат данных (с группировкой по нагрузке или без)
@@ -165,6 +182,12 @@ def split_sequence_into_tracks(
                         continue
                     else:
                         logger.warning("[SPLIT_TRACKS] ВНИМАНИЕ: целой плиты для начала дорожки не найдено!")
+                        # #region agent log
+                        try:
+                            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(__import__('json').dumps({"hypothesisId": "H4", "location": "visualization.py:split_tracks_no_solid", "message": "no solid plate for track start", "data": {"group_label": group_label, "i": i, "item_length": item_length, "current_track_len": len(current_track)}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                        # #endregion
                 
                 # Проверяем: добавление плиты превысит максимум?
                 will_exceed_max = (current_track_length + item_length > max_track_length and current_track)
@@ -226,11 +249,12 @@ def split_sequence_into_tracks(
                     logger.info(
                         f"[SPLIT_TRACKS] Закрываем дорожку на {current_track_length:.1f}м (макс. {max_track_length}м)"
                     )
+                    track_label = _label_from_track_items(current_track, group_label)
                     tracks.append({
                         'items': current_track,
                         'length': current_track_length,
                         'load_code': load_code,
-                        'label': group_label,
+                        'label': track_label,
                         'max_reinforcement': max_reinforcement_in_track
                     })
                     current_track = []
@@ -249,11 +273,12 @@ def split_sequence_into_tracks(
             
             # Сохраняем последнюю дорожку группы
             if current_track:
+                track_label = _label_from_track_items(current_track, group_label)
                 tracks.append({
                     'items': current_track,
                     'length': current_track_length,
                     'load_code': load_code,
-                    'label': group_label,
+                    'label': track_label,
                     'max_reinforcement': max_reinforcement_in_track
                 })
     

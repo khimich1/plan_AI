@@ -238,6 +238,15 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             return best_match.copy()
         
         logger.warning(f"[TRACE]   ❌ НЕ НАЙДЕНО совпадение для: длина={length:.2f}м, ширина={width}мм, load_code={load_code}")
+        # #region agent log H12: целевые размеры не найдены в lookup
+        _target_keys = [(6.39, 1200), (2.54, 1200), (4.3, 1200), (4.5, 700), (6.0, 665)]
+        if any(abs(rounded_length - L) < 0.02 and abs(width - W) < 25 for L, W in _target_keys):
+            _d12 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+            import json as _j12
+            _sample = list(completion_lookup_exact.keys())[:15]
+            with open(_d12, 'a', encoding='utf-8') as _f12:
+                _f12.write(_j12.dumps({"hypothesisId": "H12", "location": "production_completion:get_plate_info_smart", "message": "Целевой размер не в lookup", "data": {"key": [rounded_length, width], "sample_keys": _sample, "by_length_sample": list(completion_lookup_by_length.keys())[:10]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+        # #endregion
         return {
             'kp_date': 'неизвестно',
             'customer': 'неизвестно',
@@ -806,10 +815,12 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
         '25,4-12-8п',
         '43-12-8п',
         '63,9-12-8п',
+        '45-7-6п',
+        '60-6,65-8п',
     )
     _targets = [p for p in completed_plates if any(s in p.get('plate_name', '') for s in _key_substrings)]
     with open(_d7, 'a', encoding='utf-8') as _f7:
-        _f7.write(_j7.dumps({"hypothesisId": "H7", "location": "production_completion:completed_plates_summary", "message": "Целевые плиты в completed_plates", "data": {"day": day_number, "target_count": len(_targets), "targets": [{"name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "length_m": p.get("length_m"), "load_class": p.get("load_class")} for p in _targets], "total_plates": len(completed_plates)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+        _f7.write(_j7.dumps({"hypothesisId": "H7", "location": "production_completion:completed_plates_summary", "message": "Целевые плиты в completed_plates", "data": {"day": day_number, "target_count": len(_targets), "targets": [{"name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "length_m": p.get("length_m"), "width_m": p.get("width_m"), "load_class": p.get("load_class")} for p in _targets], "total_plates": len(completed_plates)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
     # #endregion
     # #region agent log H15: ВСЕ вторичные резы в confirm_day_completion
     _sec_plates = [p for p in completed_plates if p.get('is_secondary')]
@@ -944,7 +955,24 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
                 logger.warning(f"[COMPLETION] Плита не найдена в БД: {plate_name} ({length_m}м, load_class={load_class})")
     # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
     
+    # #region agent log: списано за день (цепочка визуализация → списание)
+    try:
+        import json as _j_chain
+        with open(_d7, 'a', encoding='utf-8') as _f_chain:
+            _f_chain.write(_j_chain.dumps({"hypothesisId": "chain", "location": "production_completion:written_off_per_day", "message": "Списано за день", "data": {"day": day_number, "total_moved": total_moved}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+    # #endregion
     # ========== ВОЗВРАТ БРАКОВАННЫХ ПЛИТ В ПРОИЗВОДСТВО ==========
+    # #region agent log: бракованные плиты (что помечено, что возвращено)
+    try:
+        import json as _j_rej
+        _rej_data = {"day": day_number, "rejected_positions": len(rejected_plates), "rejected_total_qty": sum(p.get("qty", 1) for p in rejected_plates), "rejected_list": [{"plate_name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty", 1)} for p in rejected_plates[:50]]}
+        with open(_d7, 'a', encoding='utf-8') as _f_rej:
+            _f_rej.write(_j_rej.dumps({"hypothesisId": "reject", "location": "production_completion:rejected_before_return", "message": "Бракованные плиты (помечены пользователем)", "data": _rej_data, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+    # #endregion
     # Бракованные плиты возвращаются в статус 'в производстве',
     # чтобы попасть в следующее планирование
     rejected_returned = 0
@@ -964,6 +992,14 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
                 rejected_returned += 1
                 logger.info(f"[COMPLETION] Брак: {plate_name} x{qty} возвращена в производство (КП #{kp_id})")
     
+    # #region agent log: сколько брака возвращено в производство
+    try:
+        import json as _j_rej2
+        with open(_d7, 'a', encoding='utf-8') as _f_rej2:
+            _f_rej2.write(_j_rej2.dumps({"hypothesisId": "reject", "location": "production_completion:rejected_returned", "message": "Брак возвращён в производство", "data": {"day": day_number, "rejected_returned": rejected_returned, "rejected_total_positions": len(rejected_plates)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+    # #endregion
     if rejected_returned > 0:
         logger.info(f"[COMPLETION] Всего возвращено в производство: {rejected_returned} позиций (брак)")
     # ========== КОНЕЦ ВОЗВРАТА БРАКА ==========

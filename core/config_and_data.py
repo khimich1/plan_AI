@@ -587,11 +587,15 @@ def make_plate_name(
 
 
 def parse_name_to_sizes(name: str) -> tuple:
-    """Достаёт (length_m, width_m) из строки прайса."""
-    m = re.search(r'(\d+)-(\d+)', name.replace(',', '.'))
+    """Достаёт (length_m, width_m) из строки прайса.
+    Поддерживает дробные дециметры: '57,1-12' → 5.71 м, 1.2 м; '57-12' → 5.7 м, 1.2 м."""
+    s = name.replace(',', '.')
+    m = re.search(r'(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)', s)
     if not m:
         return None, None
-    return float(m.group(1)) / 10.0, float(m.group(2)) / 10.0
+    length_dm = float(m.group(1))
+    width_dm = float(m.group(2))
+    return length_dm / 10.0, width_dm / 10.0
 
 
 def parse_load_code_from_name(name: str, default: int = 8) -> int:

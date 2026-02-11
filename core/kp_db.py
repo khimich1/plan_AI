@@ -310,6 +310,7 @@ def save_kp_to_db(
             weight = item.get('weight', 0.0)
             unit_weight = weight / qty if qty > 0 else 0.0
             
+            # Длина из КП сохраняется как есть (точность не хуже 0.01 м); не округлять до одного знака.
             cur.execute('''
                 INSERT INTO kp_plates (
                     kp_id, position_number, plate_name,
@@ -883,6 +884,8 @@ def move_plates_to_completed(
             '25,4-12-8п',
             '43-12-8п',
             '63,9-12-8п',
+            '45-7-6п',
+            '60-6,65-8п',
         )
         _is_target = lambda n: any(s in (n or '') for s in _target_substrings)
 
@@ -1769,10 +1772,28 @@ def return_plates_to_production(
                 remaining_to_return -= current_qty
                 processed_count += current_qty
             else:
-                # Частичный возврат: возвращаем только нужное количество
-                # Остаток остается в плане
-                print(f"[DB] ⚠️ Частичный возврат пока не реализован для записи #{plate_id}")
-                # TODO: При необходимости можно добавить разбиение записи
+                # Частичный возврат: уменьшаем qty в плане, создаём новую запись «в производстве»
+                new_qty_in_plan = current_qty - remaining_to_return
+                cur.execute('''
+                    UPDATE kp_plates
+                    SET qty = ?
+                    WHERE id = ?
+                ''', (new_qty_in_plan, plate_id))
+                cur.execute('''
+                    INSERT INTO kp_plates (
+                        kp_id, position_number, plate_name, length_m, width_m,
+                        load_class, qty, unit_weight, total_weight, discounted_price,
+                        status, plan_id
+                    )
+                    SELECT
+                        kp_id, position_number, plate_name, length_m, width_m,
+                        load_class, ?, unit_weight, total_weight, discounted_price,
+                        'в производстве', NULL
+                    FROM kp_plates WHERE id = ?
+                ''', (remaining_to_return, plate_id))
+                print(f"[DB] ✅ Частичный возврат: {plate_name} x{remaining_to_return} в производство (осталось в плане: {new_qty_in_plan}, запись #{plate_id})")
+                processed_count += remaining_to_return
+                remaining_to_return = 0
                 break
         
         conn.commit()

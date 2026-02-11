@@ -303,27 +303,10 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             'qty_remaining': order.get('qty', 1)  # Сколько плит этого КП осталось назначить
         })
     
-    # #region agent log: order_info_list и demand_2d (H3, H4, H5)
-    _debug_log = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
-    import json as _json_opt
-    _key_totals = {k: (demand_2d.get(k, 0), sum(e.get('qty_remaining', 0) for e in order_info_list.get(k, []))) for k in set(list(demand_2d.keys()) + list(order_info_list.keys()))}
-    _kp_breakdown = {}
-    for k, entries in order_info_list.items():
-        for e in entries:
-            _kid = e.get('kp_id')
-            if _kid not in _kp_breakdown:
-                _kp_breakdown[_kid] = []
-            _kp_breakdown[_kid].append({"key": list(k) if isinstance(k, tuple) else k, "plate_name": e.get('plate_name', '')[:40], "qty_remaining": e.get('qty_remaining', 0)})
-    try:
-        with open(_debug_log, 'a', encoding='utf-8') as _f:
-            _f.write(_json_opt.dumps({"hypothesisId": "H3", "location": "optimization.py:order_info_list", "message": "demand_2d vs order_info_list totals", "data": {"key_totals": str(_key_totals)[:500], "kp_breakdown_keys": list(_kp_breakdown.keys()), "orders_2d_len": len(orders_2d)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
-    except Exception:
-        pass
-    # #endregion
-    
     tolerance_length = 0.01  # ±10мм по длине
-    tolerance_width = 20     # ±20мм по ширине
-    
+    tolerance_width = 20     # ±20мм по ширине (генерация опций, напр. поперечный рез остаток→цель)
+    demand_tolerance_width = 10  # ±10мм при сопоставлении спроса с источником (по письму: допуск реза при работе)
+
     # 2. ГЕНЕРАЦИЯ ОПЦИЙ ПЕРВИЧНЫХ РЕЗОВ (с длинами!)
     primary_options = []
     option_id = 0
@@ -643,7 +626,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         # ИСПРАВЛЕНИЕ: Проверяем также load_code
         for opt in primary_options:
             if (abs(opt['length'] - target_length) <= tolerance_length and 
-                abs(opt['main'] - target_width) <= tolerance_width and
+                abs(opt['main'] - target_width) <= demand_tolerance_width and
                 opt.get('type') in ['direct', 'solid'] and
                 opt.get('load_code', 800) == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
                 sources.append(x_prim[opt['id']])
@@ -654,7 +637,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         for opt in primary_options:
             if (abs(opt['length'] - target_length) <= tolerance_length and
                 opt.get('type') == 'indirect' and
-                abs(opt.get('target_width', 0) - target_width) <= tolerance_width and
+                abs(opt.get('target_width', 0) - target_width) <= demand_tolerance_width and
                 opt.get('load_code', 800) == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
                 # Непрямой рез: остаток автоматически сужается до целевой ширины
                 sources.append(x_prim[opt['id']])
@@ -668,7 +651,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             else:
                 opt_target_load = 800  # Обратная совместимость
             if (abs(opt['output_length'] - target_length) <= tolerance_length and 
-                abs(opt['output_width'] - target_width) <= tolerance_width and
+                abs(opt['output_width'] - target_width) <= demand_tolerance_width and
                 opt_target_load == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
                 sources.append(x_sec[opt['id']] * opt['pieces'])
         
@@ -681,7 +664,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             # === КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: НЕТ ИСТОЧНИКОВ ДЛЯ СПРОСА ===
             no_sources_keys.append(((round(target_length, 2), target_width, target_load_code), qty))
             # #region agent log: no sources (H1) + same L/W other load (H3)
-            _same_lw_other_load = [opt.get('load_code') for opt in primary_options if abs(opt['length'] - target_length) <= tolerance_length and abs(opt.get('main', opt.get('target_width', 0)) - target_width) <= tolerance_width and opt.get('load_code', 800) != target_load_code]
+            _same_lw_other_load = [opt.get('load_code') for opt in primary_options if abs(opt['length'] - target_length) <= tolerance_length and abs(opt.get('main', opt.get('target_width', 0)) - target_width) <= demand_tolerance_width and opt.get('load_code', 800) != target_load_code]
             try:
                 open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H1", "location": "optimization.py:no_sources", "message": "demand key has no sources", "data": {"target_length": target_length, "target_width": target_width, "target_load_code": target_load_code, "qty": qty, "same_LW_other_load_codes": _same_lw_other_load[:5]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
             except Exception:
