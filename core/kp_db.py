@@ -203,6 +203,32 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
         # Создаём индекс для plan_id (после того, как колонка точно существует)
         cur.execute('CREATE INDEX IF NOT EXISTS idx_plates_plan_id ON kp_plates(plan_id)')
         
+        if 'length_dm_raw' not in columns:
+            print("[DB] Миграция: добавляем колонку length_dm_raw в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN length_dm_raw TEXT")
+            print("[DB] ✅ Колонка length_dm_raw добавлена")
+        
+        # Обратная засылка length_dm_raw из plate_name для существующих строк (один раз после ADD COLUMN)
+        cur.execute("SELECT id, plate_name, length_m FROM kp_plates WHERE length_dm_raw IS NULL OR length_dm_raw = ''")
+        rows = cur.fetchall()
+        if rows:
+            from core import config_and_data as cfg
+            for row in rows:
+                rid, plate_name, length_m = row
+                raw = cfg.extract_length_dm_raw_from_plate_name(plate_name or "")
+                if raw:
+                    cur.execute("UPDATE kp_plates SET length_dm_raw = ? WHERE id = ?", (raw, rid))
+                elif length_m is not None:
+                    # Fallback: из length_m (5.98 -> "59,8", 6.12 -> "61,2")
+                    dm = float(length_m) * 10
+                    if abs(dm - round(dm)) < 0.01:
+                        raw_fb = str(int(round(dm)))
+                    else:
+                        raw_fb = f"{dm:.1f}".rstrip('0').rstrip('.').replace('.', ',')
+                    cur.execute("UPDATE kp_plates SET length_dm_raw = ? WHERE id = ?", (raw_fb, rid))
+            if rows:
+                print(f"[DB] ✅ Обратная засылка length_dm_raw: обновлено {len(rows)} строк")
+        
         # === МИГРАЦИЯ: Добавляем колонку status в kp_meta если её нет ===
         # Это нужно для существующих баз данных, где таблица уже создана без этого поля
         cur.execute("PRAGMA table_info(kp_meta)")
@@ -310,17 +336,19 @@ def save_kp_to_db(
             weight = item.get('weight', 0.0)
             unit_weight = weight / qty if qty > 0 else 0.0
             
-            # Длина из КП сохраняется как есть (точность не хуже 0.01 м); не округлять до одного знака.
+            # Длина из КП сохраняется как есть; length_dm_raw — исходная строка из марки для поиска при списании.
             cur.execute('''
                 INSERT INTO kp_plates (
                     kp_id, position_number, plate_name,
                     length_m, width_m, load_class,
-                    qty, unit_weight, total_weight, discounted_price
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    qty, unit_weight, total_weight, discounted_price,
+                    length_dm_raw
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 kp_id, idx, item.get('name', ''),
                 item.get('length_m', 0), item.get('width_m', 0), item.get('load_class', 800),
-                qty, unit_weight, weight, discounted_price
+                qty, unit_weight, weight, discounted_price,
+                item.get('length_dm_raw', '') or ''
             ))
         
         # Сохраняем файл XLSX (если указан путь)
@@ -841,7 +869,8 @@ def move_plates_to_completed(
     plates_to_complete: List[Dict],
     production_day: int,
     db_path: str = DEFAULT_DB,
-    plan_ids: Optional[List[str]] = None
+    plan_ids: Optional[List[str]] = None,
+    allow_cross_kp: bool = False
 ) -> int:
     """
     Переносит плиты из kp_plates в completed_plates.
@@ -876,6 +905,7 @@ def move_plates_to_completed(
         # Целевые подстроки для логов (плиты, которые не списались у пользователя)
         _target_substrings = (
             '61,1-12-10',
+            '61,2-12-8п',
             '36,6-6,65',
             '64,8-12-12,5',
             '78,1-12-10',
@@ -886,10 +916,11 @@ def move_plates_to_completed(
             '63,9-12-8п',
             '45-7-6п',
             '60-6,65-8п',
+            '59,8-12-8п',
         )
         _is_target = lambda n: any(s in (n or '') for s in _target_substrings)
 
-        def find_one_row(plate_name, length_m, width_m, load_class, prefer_kp_id):
+        def find_one_row(plate_name, length_m, width_m, load_class, prefer_kp_id, length_dm_raw=None):
             """Находит одну строку в kp_plates для списания (id, kp_id, plate_name, width_m, qty)."""
             # ИСПРАВЛЕНИЕ: Подготовка фильтра по ширине для шагов 4-7
             # Предотвращает списание вторичных резов (с другой шириной)
@@ -900,6 +931,17 @@ def move_plates_to_completed(
             # При разбиении записи assign_plates_to_plan, часть плит может
             # остаться со status='в производстве', но всё равно быть в треках
             _status_filter = "status IN ('в плане', 'в производстве')"
+            # 0) По kp_id + length_dm_raw (точное совпадение марки — 59,81 не путается с 59,84)
+            if length_dm_raw and str(length_dm_raw).strip():
+                _ldr = str(length_dm_raw).strip()
+                cur.execute(f'''
+                    SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                    WHERE kp_id = ? AND length_dm_raw = ? AND qty > 0 AND {_status_filter} {_w_clause}
+                    LIMIT 1
+                '''.replace('  ', ' '), (prefer_kp_id, _ldr) + _w_params)
+                row = cur.fetchone()
+                if row:
+                    return row
             # 1) По kp_id + plate_name
             cur.execute(f'''
                 SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
@@ -919,6 +961,79 @@ def move_plates_to_completed(
                 ''', (prefer_kp_id, normalized_name))
                 row = cur.fetchone()
                 if row:
+                    return row
+            # 2.5) Эквивалентные имена: оптимизатор подставляет 59,9 вместо 59,8, 61,1 вместо 61,2
+            _equiv = []
+            if plate_name and '59,9-12' in plate_name:
+                _equiv.append(plate_name.replace('59,9-12', '59,8-12'))
+            if plate_name and '59,8-12' in plate_name:
+                _equiv.append(plate_name.replace('59,8-12', '59,9-12'))
+            if plate_name and '61,1-12' in plate_name:
+                _equiv.append(plate_name.replace('61,1-12', '61,2-12'))
+            if plate_name and '61,2-12' in plate_name:
+                _equiv.append(plate_name.replace('61,2-12', '61,1-12'))
+            for eq in _equiv:
+                if eq and eq != plate_name:
+                    cur.execute(f'''
+                        SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                        WHERE kp_id = ? AND plate_name = ? AND qty > 0 AND {_status_filter}
+                        LIMIT 1
+                    ''', (prefer_kp_id, eq))
+                    row = cur.fetchone()
+                    if row:
+                        return row
+            # 2.55) 61,1/61,2-12: в предпочитаемом КП не нашли — ищем по длине 6.11±0.02 в любом КП
+            # (в БД может быть 61,2-12-8п в другом КП, а в плане ушли 61,1 из-за оптимизатора)
+            if length_m and (5.9 <= length_m <= 6.2) and (plate_name or '').strip():
+                if '61,1-12' in plate_name or '61,2-12' in plate_name:
+                    cur.execute(f'''
+                        SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                        WHERE {_status_filter} AND qty > 0
+                          AND ABS(length_m - ?) < 0.02 {_w_clause} AND load_class = ?
+                        ORDER BY CASE WHEN kp_id = ? THEN 0 ELSE 1 END, id
+                        LIMIT 1
+                    ''', (length_m, *_w_params, load_class, prefer_kp_id))
+                    row = cur.fetchone()
+                    if row:
+                        try:
+                            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                                _f.write(__import__('json').dumps({
+                                    "hypothesisId": "H_61_cross_kp",
+                                    "location": "kp_db:find_one_row:step_2.55",
+                                    "message": "61,1/61,2 найдена в другом КП по длине",
+                                    "data": {"requested_plate_name": plate_name, "requested_length": length_m, "prefer_kp_id": prefer_kp_id, "found_kp_id": row[1], "found_plate_name": row[2]},
+                                    "timestamp": __import__('time').time()
+                                }, ensure_ascii=False) + '\n')
+                        except Exception:
+                            pass
+                        return row
+            # 2.6) Общий допуск по длине (±0.02м) для любых плит (этап 5 плана)
+            if length_m:
+                length_tolerance = 0.02
+                cur.execute(f'''
+                    SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
+                    WHERE kp_id = ? AND {_status_filter} AND qty > 0
+                      AND ABS(length_m - ?) < ? {_w_clause} AND load_class = ?
+                    LIMIT 1
+                ''', (prefer_kp_id, length_m, length_tolerance, *_w_params, load_class))
+                row = cur.fetchone()
+                if row:
+                    try:
+                        with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                            _f.write(__import__('json').dumps({
+                                "hypothesisId": "H_length_tolerance",
+                                "location": "kp_db:find_one_row:step_2.6",
+                                "message": "найдена плита по допуску длины",
+                                "data": {
+                                    "requested_length": length_m,
+                                    "found_plate_name": row[2],
+                                    "found_kp_id": row[1],
+                                    "prefer_kp_id": prefer_kp_id
+                                },
+                                "timestamp": __import__('time').time()
+                            }, ensure_ascii=False) + '\n')
+                    except Exception:
+                        pass
                     return row
             # 3) По размерам в prefer_kp_id
             if length_m and width_m:
@@ -942,8 +1057,8 @@ def move_plates_to_completed(
                 row = cur.fetchone()
                 if row:
                     return row
-            # 5) По plan_ids + длина + ширина + нагрузка
-            if length_m and plan_ids:
+            # 5) По plan_ids + длина + ширина + нагрузка (только если разрешено списание с другого КП)
+            if allow_cross_kp and length_m and plan_ids:
                 placeholders = ','.join('?' * len(plan_ids))
                 cur.execute(f'''
                     SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
@@ -955,8 +1070,8 @@ def move_plates_to_completed(
                 row = cur.fetchone()
                 if row:
                     return row
-            # 6) По длине + ширине + нагрузке в любом КП
-            if length_m:
+            # 6) По длине + ширине + нагрузке в любом КП (только если разрешено)
+            if allow_cross_kp and length_m:
                 cur.execute(f'''
                     SELECT id, kp_id, plate_name, width_m, qty FROM kp_plates
                     WHERE {_status_filter} AND qty > 0
@@ -1014,6 +1129,7 @@ def move_plates_to_completed(
             length_m = plate.get('length_m', 0)
             width_m = plate.get('width_m', 0)
             load_class = plate.get('load_class', 800)
+            length_dm_raw = plate.get('length_dm_raw') or ''
             
             if not plate_name:
                 continue
@@ -1025,12 +1141,28 @@ def move_plates_to_completed(
                 with open(_debug_log4, 'a', encoding='utf-8') as _f4:
                     _f4.write(_json4.dumps({"hypothesisId": "H5", "location": "kp_db:move_plates_to_completed", "message": "Целевая плита на входе", "data": {"kp_id": kp_id, "plate_name": plate_name, "length_m": length_m, "width_m": width_m, "load_class": load_class, "qty": qty_remaining, "rows_in_db_for_kp": _rows_in_db}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
             # #endregion
+            # #region agent log H_59_8_request: запрос на списание 59,8
+            if '59,8-12-8п' in (plate_name or ''):
+                try:
+                    with open(_debug_log4, 'a', encoding='utf-8') as _f59:
+                        _f59.write(_json4.dumps({"hypothesisId": "H_59_8_request", "location": "kp_db:move_plates_to_completed", "message": "Запрос списания 59,8-12-8п", "data": {"kp_id": kp_id, "qty_requested": qty_remaining, "length_m": length_m, "width_m": width_m}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                except Exception:
+                    pass
+            # #endregion
+            # #region agent log H_61_2_request: запрос на списание 61,2
+            if '61,2-12-8п' in (plate_name or '') or '61,1-12-8п' in (plate_name or ''):
+                try:
+                    with open(_debug_log4, 'a', encoding='utf-8') as _f61:
+                        _f61.write(_json4.dumps({"hypothesisId": "H_61_2_request", "location": "kp_db:move_plates_to_completed", "message": "Запрос списания 61,2/61,1-12-8п", "data": {"kp_id": kp_id, "plate_name": plate_name, "qty_requested": qty_remaining, "length_m": length_m, "width_m": width_m}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                except Exception:
+                    pass
+            # #endregion
 
             # Списываем по одной строке за раз, чтобы добирать остаток из других КП (не оставлять 1 шт «в плане»)
             current_plate_name = plate_name
             current_width_m = width_m
             while qty_remaining > 0:
-                row = find_one_row(current_plate_name, length_m, current_width_m, load_class, kp_id)
+                row = find_one_row(current_plate_name, length_m, current_width_m, load_class, kp_id, length_dm_raw=length_dm_raw)
                 if not row:
                     break
                 row_id, row_kp_id, row_plate_name, row_width_m, row_qty = row
@@ -1063,6 +1195,16 @@ def move_plates_to_completed(
                 _rows_in_db = [dict(zip(('plate_name', 'length_m', 'width_m', 'load_class', 'qty', 'status'), r)) for r in cur.fetchall()]
                 with open(_debug_log4, 'a', encoding='utf-8') as _f4:
                     _f4.write(_json4.dumps({"hypothesisId": "H_postfix", "location": "kp_db:move_plates_to_completed", "message": "Плита НЕ НАЙДЕНА в БД (width-check)", "data": {"kp_id": kp_id, "plate_name": current_plate_name, "length_m": length_m, "width_m": current_width_m, "load_class": load_class, "qty": qty_remaining, "rows_in_db_for_kp": _rows_in_db}, "timestamp": __import__('time').time(), "runId": "post-fix"}, ensure_ascii=False) + '\n')
+                # #endregion
+                # #region agent log H_59_8: для 59,8 — ищем ВСЕ строки в БД (любой kp_id)
+                if '59,8-12-8п' in (current_plate_name or ''):
+                    cur.execute("SELECT id, kp_id, plate_name, length_m, width_m, qty, status FROM kp_plates WHERE (plate_name LIKE '%59,8-12%' OR plate_name LIKE '%59,9-12%') AND status IN ('в плане', 'в производстве') AND qty > 0")
+                    _all_59 = [{"id": r[0], "kp_id": r[1], "plate_name": r[2], "length_m": r[3], "width_m": r[4], "qty": r[5], "status": r[6]} for r in cur.fetchall()]
+                    try:
+                        with open(_debug_log4, 'a', encoding='utf-8') as _f59:
+                            _f59.write(_json4.dumps({"hypothesisId": "H_59_8_remain", "location": "kp_db:move_plates_to_completed:qty_remain", "message": "59,8 не списано: остаток qty, все строки в БД", "data": {"requested_kp_id": kp_id, "qty_remaining": qty_remaining, "all_rows_59x12_in_db": _all_59}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                    except Exception:
+                        pass
                 # #endregion
         
         # Удаляем записи с qty <= 0

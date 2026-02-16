@@ -22,7 +22,7 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config_and_data import set_plate_lists_from_text
+from core.config_and_data import set_plate_lists_from_text, get_current_plate_order, PlateOrder, length_dm_to_m
 import core.config_and_data as cfg
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
@@ -396,6 +396,9 @@ async def generate_all_documents(message: Message, state: FSMContext):
             await state.clear()
             return
         
+        order = get_current_plate_order()
+        await state.update_data(plate_order=order.to_dict())
+        
         if unparsed_lines:
             # Показываем только первые 5 нераспознанных строк, чтобы не спамить
             warn_text = "⚠️ Некоторые строки не распознаны:\n"
@@ -414,20 +417,20 @@ async def generate_all_documents(message: Message, state: FSMContext):
         # ✅ ЗАПУСКАЕМ ОПТИМИЗАЦИЮ (упрощённая версия, без разделения по армированию)
         await message.answer("🔄 Оптимизирую раскрой плит для минимизации стоимости...")
         
-        # Собираем все плиты в один список orders_2d (без группировки по армированию)
-        orders_2d = []
-        
-        if cfg.PLATE_LOAD_DETAILS:
-            logger.info("[COMMERCIAL] Используем PLATE_LOAD_DETAILS (с нагрузками)")
-            for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
-                width_mm = int(round(width_m * 1000))
-                
-                orders_2d.append({
-                    'length': length,
-                    'width': width_mm,
-                    'qty': qty,
-                    'load_code': load_code
-                })
+        # Собираем все плиты в один список orders_2d из заказа (изоляция по пользователю)
+        orders_2d = order.to_orders_2d()
+        # #region agent log
+        try:
+            _tq = sum(o['qty'] for o in orders_2d) if orders_2d else 0
+            _sample = [(round(o.get('length', 0), 3), o.get('width'), o.get('qty')) for o in (orders_2d or [])[:5]]
+            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(
+                __import__("json").dumps({"hypothesisId": "H1", "location": "commercial:orders_2d_after_parse", "message": "KP creation orders_2d", "data": {"total_qty": _tq, "types": len(orders_2d or []), "sample": _sample}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n"
+            )
+        except Exception:
+            pass
+        # #endregion
+        if orders_2d:
+            logger.info("[COMMERCIAL] Используем PlateOrder (с нагрузками)")
         
         if orders_2d:
             logger.info(
@@ -470,7 +473,14 @@ async def generate_all_documents(message: Message, state: FSMContext):
                     
                     total_plates = optimization_result.get('total_plates', 0)
                     total_cost = optimization_result.get('total_cost', 0)
-                    
+                    # #region agent log
+                    try:
+                        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(
+                            __import__("json").dumps({"hypothesisId": "H1", "location": "commercial:after_optimization", "message": "total_plates from optimizer", "data": {"total_plates": total_plates, "input_qty": sum(o['qty'] for o in orders_2d)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n"
+                        )
+                    except Exception:
+                        pass
+                    # #endregion
                     logger.info(
                         f"[COMMERCIAL] Оптимизация завершена: {total_plates} плит, {total_cost:,} ₽".replace(",", " ")
                     )
@@ -481,7 +491,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 # Продолжаем без оптимизации (цены будут посчитаны по старой логике)
         
         # Используем build_price_rows для получения правильных цен
-        from viz_modules.procurement import build_price_rows, build_component_breakdown
+        from viz_modules.procurement import build_price_rows, build_component_breakdown, build_procurement_items
         from viz_modules.price_utils import load_price_table_from_xlsx
         
         # Загружаем таблицу цен
@@ -501,50 +511,73 @@ async def generate_all_documents(message: Message, state: FSMContext):
             price_rows
         )
         
-        # Формируем order_data
+        # Формируем order_data из того же источника, что и смета (build_procurement_items), чтобы не терять плиты
         order_data = []
-        for row in price_rows:
-            if len(row) < 8:
-                continue
-            
-            name = row[1]
-            qty = row[2]
-            weight_str = row[6]
-            price_str = row[7]
-            
-            try:
-                unit_price = float(price_str.replace(' ', '').replace(',', '.'))
-            except (ValueError, AttributeError):
+        procurement_items = build_procurement_items()
+        for item in procurement_items:
+            length_m = item['length']
+            width_m = item['width']
+            qty = item['qty']
+            load_code = item.get('load_code')
+            if load_code is None:
+                load_code = cfg.get_load_code_for_plate(length_m, width_m, default=(6 if width_m < 1.0 else 8))
+            matching_row = None
+            for row in price_rows:
+                if len(row) < 8:
+                    continue
+                row_name = row[1]
+                row_qty = row[2]
+                parsed_length, parsed_width = cfg.parse_name_to_sizes(row_name)
+                if parsed_length is None or parsed_width is None:
+                    continue
+                parsed_load = cfg.parse_load_code_from_name(row_name)
+                if (abs(parsed_length - length_m) < 0.01
+                        and abs(parsed_width - width_m) < 0.01
+                        and cfg.normalize_load_code(parsed_load) == cfg.normalize_load_code(load_code)):
+                    matching_row = row
+                    break
+            if matching_row:
+                name = matching_row[1]
+                weight_str = matching_row[6]
+                price_str = matching_row[7]
+                try:
+                    unit_price = float(price_str.replace(' ', '').replace(',', '.'))
+                except (ValueError, AttributeError):
+                    unit_price = 0.0
+                try:
+                    weight = float(str(weight_str).replace(' ', '').replace(',', '.'))
+                except (ValueError, AttributeError):
+                    weight = 0.0
+                match = re.search(r'ПБ\s+([\d,]+)-', name)
+                length_dm_raw = match.group(1).strip() if match else ''
+            else:
+                name = cfg.make_plate_name(length_m, width_m, load_code=load_code)
                 unit_price = 0.0
-            
-            try:
-                weight = float(str(weight_str).replace(' ', '').replace(',', '.'))
-            except (ValueError, AttributeError):
                 weight = 0.0
-            
-            # Парсим name (поддержка дробных дециметров: "59,8" или "60")
-            match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-(\d+)', name)
-            if match:
-                length_dm = float(match.group(1).replace(',', '.'))
-                length_m = length_dm / 10.0
-                
-                width_str_parsed = match.group(2).replace(',', '.')
-                width_m = float(width_str_parsed)
-                if width_m > 2:
-                    width_m = width_m / 10.0
-                
-                load_code = int(match.group(3))
-                
-                order_data.append({
-                    "name": name,
-                    "length_m": length_m,
-                    "width_m": width_m,
-                    "qty": qty,
-                    "load_class": load_code * 100,
-                    "unit_price": unit_price,
-                    "weight": weight
-                })
-        
+                length_dm_raw = f'{length_m * 10:.1f}'.rstrip('0').rstrip('.').replace('.', ',') if length_m else ''
+            order_data.append({
+                "name": name,
+                "length_m": length_m,
+                "length_dm_raw": length_dm_raw,
+                "width_m": width_m,
+                "qty": qty,
+                "load_class": (cfg.normalize_load_code(load_code) or 8) * 100 if load_code is not None else 800,
+                "unit_price": unit_price,
+                "weight": weight
+            })
+        total_order_data = sum(i['qty'] for i in order_data)
+        total_orders_2d = sum(o['qty'] for o in orders_2d) if orders_2d else 0
+        if total_orders_2d and total_order_data != total_orders_2d:
+            logger.error(f"[КП] ПОТЕРЯ ПЛИТ: order_data={total_order_data}, orders_2d={total_orders_2d}")
+            await message.answer(
+                "⚠️ ВНИМАНИЕ: Обнаружено расхождение в количестве плит!\n"
+                f"Заказано: {total_orders_2d} шт\n"
+                f"В смете: {total_order_data} шт\n\n"
+                "Пожалуйста, проверьте данные и попробуйте заново.",
+                reply_markup=main_menu_kb()
+            )
+            await state.clear()
+            return
         if not order_data:
             await message.answer(
                 "❌ Не удалось распознать ни одной плиты в вашем сообщении.\n"
@@ -554,6 +587,16 @@ async def generate_all_documents(message: Message, state: FSMContext):
             await state.clear()
             return
         
+        # #region agent log
+        try:
+            _od_total = sum(i.get('qty', 0) for i in order_data)
+            _od_sample = [(i.get('name', '')[:30], round(i.get('length_m', 0), 3), i.get('qty')) for i in order_data[:3]]
+            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(
+                __import__("json").dumps({"hypothesisId": "H3", "location": "commercial:order_data_from_price_rows", "message": "order_data after build_price_rows", "data": {"len_order_data": len(order_data), "total_qty": _od_total, "sample": _od_sample}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n"
+            )
+        except Exception:
+            pass
+        # #endregion
         # Сохраняем заказ в кэш
         ORDER_CACHE[message.from_user.id] = order_data
         
@@ -678,6 +721,9 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             await state.clear()
             return
 
+        order = get_current_plate_order()
+        await state.update_data(plate_order=order.to_dict())
+
         if unparsed_lines:
             # Показываем только первые 5 нераспознанных строк
             warn_text = "⚠️ Некоторые строки не распознаны:\n"
@@ -700,9 +746,9 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         orders_by_reinforcement = defaultdict(list)
         db_path = Path(__file__).parent.parent / "pb.db"
         
-        if cfg.PLATE_LOAD_DETAILS:
-            logger.info("[COMMERCIAL] Используем PLATE_LOAD_DETAILS (с нагрузками)")
-            for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
+        if order.plate_load_details:
+            logger.info("[COMMERCIAL] Используем PlateOrder (с нагрузками)")
+            for (length, width_m, load_code), qty in order.plate_load_details.items():
                 width_mm = int(round(width_m * 1000))
                 
                 # Получаем армирование из БД по (длина, нагрузка)
@@ -791,7 +837,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 await message.answer("✅ Оптимизация завершена! Формирую документы...")
         
         # 🔥 ТЕПЕРЬ build_price_rows получит ОПТИМИЗИРОВАННЫЕ данные из OPT_CASCADING_PLAN_BY_LOAD!
-        from viz_modules.procurement import build_price_rows, build_component_breakdown
+        from viz_modules.procurement import build_price_rows, build_component_breakdown, build_procurement_items, get_orders_from_opt_plan
         from viz_modules.price_utils import load_price_table_from_xlsx
         
         # Загружаем таблицу цен для расчётов
@@ -811,55 +857,74 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             price_rows
         )
         
-        # Формируем order_data из price_rows с правильными ценами
+        # Формируем order_data из того же источника, что и смета (build_procurement_items)
         order_data = []
-        for row in price_rows:
-            # row: [idx, name, qty, 'шт', week, contractor, weight, price_str, sum_str]
-            if len(row) < 8:
-                continue
-                
-            name = row[1]
-            qty = row[2]
-            weight_str = row[6]
-            price_str = row[7]  # Строка вида "1 234,56"
-            
-            # Парсим цену обратно в число
-            try:
-                unit_price = float(price_str.replace(' ', '').replace(',', '.'))
-            except (ValueError, AttributeError):
+        procurement_items = build_procurement_items()
+        for item in procurement_items:
+            length_m = item['length']
+            width_m = item['width']
+            qty = item['qty']
+            load_code = item.get('load_code')
+            if load_code is None:
+                load_code = cfg.get_load_code_for_plate(length_m, width_m, default=(6 if width_m < 1.0 else 8))
+            matching_row = None
+            for row in price_rows:
+                if len(row) < 8:
+                    continue
+                row_name = row[1]
+                row_qty = row[2]
+                parsed_length, parsed_width = cfg.parse_name_to_sizes(row_name)
+                if parsed_length is None or parsed_width is None:
+                    continue
+                parsed_load = cfg.parse_load_code_from_name(row_name)
+                if (abs(parsed_length - length_m) < 0.01
+                        and abs(parsed_width - width_m) < 0.01
+                        and cfg.normalize_load_code(parsed_load) == cfg.normalize_load_code(load_code)):
+                    matching_row = row
+                    break
+            if matching_row:
+                name = matching_row[1]
+                weight_str = matching_row[6]
+                price_str = matching_row[7]
+                try:
+                    unit_price = float(price_str.replace(' ', '').replace(',', '.'))
+                except (ValueError, AttributeError):
+                    unit_price = 0.0
+                try:
+                    weight = float(str(weight_str).replace(' ', '').replace(',', '.'))
+                except (ValueError, AttributeError):
+                    weight = 0.0
+                match = re.search(r'ПБ\s+([\d,]+)-', name)
+                length_dm_raw = match.group(1).strip() if match else ''
+            else:
+                name = cfg.make_plate_name(length_m, width_m, load_code=load_code)
                 unit_price = 0.0
-            
-            # Парсим weight
-            try:
-                weight = float(str(weight_str).replace(' ', '').replace(',', '.'))
-            except (ValueError, AttributeError):
                 weight = 0.0
-            
-            # Парсим name для получения длины, ширины и нагрузки
-            # Формат: "Плиты ПБ 59,8-12-8п" или "ПБ 38-3,2-8п" (поддержка дробных дециметров)
-            match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-(\d+)', name)
-            if match:
-                length_dm = float(match.group(1).replace(',', '.'))
-                length_m = length_dm / 10.0
-                
-                width_str_parsed = match.group(2).replace(',', '.')
-                width_m = float(width_str_parsed)
-                # Если ширина больше 2, значит она указана в дециметрах (например, 12 вместо 1.2)
-                if width_m > 2:
-                    width_m = width_m / 10.0
-                
-                load_code = int(match.group(3))
-                
-                order_data.append({
-                    "name": name,
-                    "length_m": length_m,
-                    "width_m": width_m,
-                    "qty": qty,
-                    "load_class": load_code * 100,  # 8 → 800
-                    "unit_price": unit_price,  # 🔥 Цена С УЧЁТОМ РЕЗОВ, ОТХОДОВ И ОСТАТКОВ!
-                    "weight": weight
-                })
-        
+                length_dm_raw = f'{length_m * 10:.1f}'.rstrip('0').rstrip('.').replace('.', ',') if length_m else ''
+            order_data.append({
+                "name": name,
+                "length_m": length_m,
+                "length_dm_raw": length_dm_raw,
+                "width_m": width_m,
+                "qty": qty,
+                "load_class": (cfg.normalize_load_code(load_code) or 8) * 100 if load_code is not None else 800,
+                "unit_price": unit_price,
+                "weight": weight
+            })
+        total_order_data = sum(i['qty'] for i in order_data)
+        plan_orders = get_orders_from_opt_plan() or []
+        total_plan = sum(o['qty'] for o in plan_orders)
+        if total_plan and total_order_data != total_plan:
+            logger.error(f"[КП] ПОТЕРЯ ПЛИТ: order_data={total_order_data}, plan={total_plan}")
+            await message.answer(
+                "⚠️ ВНИМАНИЕ: Обнаружено расхождение в количестве плит!\n"
+                f"В плане: {total_plan} шт\n"
+                f"В смете: {total_order_data} шт\n\n"
+                "Пожалуйста, проверьте данные и попробуйте заново.",
+                reply_markup=main_menu_kb()
+            )
+            await state.clear()
+            return
         if not order_data:
             await message.answer(
                 "❌ Не удалось распознать ни одной плиты в вашем сообщении.\n"
@@ -868,7 +933,6 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             )
             await state.clear()
             return
-        
         # Сохраняем заказ в кэш
         ORDER_CACHE[message.from_user.id] = order_data
         

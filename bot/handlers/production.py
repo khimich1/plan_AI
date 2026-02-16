@@ -24,6 +24,7 @@ from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core.optimization import optimize_with_cascading_longitudinal_cuts
 import core.config_and_data as cfg
+from core.config_and_data import PlateOrder
 import core.optimization as optimization
 
 from ..keyboards import main_menu_kb, production_days_kb
@@ -143,6 +144,7 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
         # === ШАГ 1-3: ЗАГРУЗКА И ПОДГОТОВКА ДАННЫХ ===
         db_path = PROJECT_ROOT / "plita.db"
         pb_db_path = BOT_DIR / "pb.db"
+        kp_db.init_schema(str(db_path))
         
         import sqlite3
         conn = sqlite3.connect(db_path)
@@ -194,13 +196,18 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             kp_date = kp_info['date']
             
             cur.execute("""
-                SELECT plate_name, length_m, width_m, load_class, qty
+                SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
                 FROM kp_plates
                 WHERE kp_id = ? AND status = 'в производстве'
             """, (kp_id,))
             
             for row in cur.fetchall():
-                plate_name, length_m, width_m, load_class, qty = row
+                plate_name = row[0]
+                length_m = row[1]
+                width_m = row[2]
+                load_class = row[3]
+                qty = row[4]
+                length_dm_raw = (row[5] or '') if len(row) > 5 else ''
                 load_code = load_class // 100
                 reinforcement_value = get_reinforcement(
                     length_m=length_m,
@@ -222,7 +229,8 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                     'reinforcement': reinforcement_value,
                     'kp_id': kp_id,
                     'kp_date': kp_date.strftime('%d.%m.%Y'),
-                    'customer': kp_info['customer']
+                    'customer': kp_info['customer'],
+                    'length_dm_raw': length_dm_raw,
                 })
         
         # Создаём lookup-таблицы
@@ -282,7 +290,8 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
                 'kp_date': plate_data.get('kp_date', 'неизвестно'),
                 'customer': plate_data.get('customer', 'неизвестно'),
                 'plate_name': plate_data.get('plate_name', ''),
-                'kp_id': plate_data.get('kp_id')  # ИСПРАВЛЕНИЕ: добавлено kp_id для корректной пометки плит
+                'kp_id': plate_data.get('kp_id'),
+                'length_dm_raw': plate_data.get('length_dm_raw', '') or '',
             })
         
         # Lookup-таблицы (ИСПРАВЛЕНО: теперь хранят СПИСОК записей для каждого ключа)
@@ -343,23 +352,7 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
             load_code: ['all'] for load_code in all_loads
         }
         
-        cfg.PLATES_1_2 = []
-        cfg.PLATE_LOAD_DETAILS = {}
-        
-        for plate_data in orders_2d:
-            length = plate_data['length']
-            width_m = plate_data['width'] / 1000.0
-            load_code = plate_data['load_code']
-            
-            key = (length, width_m, load_code)
-            if key in cfg.PLATE_LOAD_DETAILS:
-                cfg.PLATE_LOAD_DETAILS[key] += plate_data['qty']
-            else:
-                cfg.PLATE_LOAD_DETAILS[key] = plate_data['qty']
-            
-            if abs(width_m - 1.2) < 0.01:
-                for _ in range(plate_data['qty']):
-                    cfg.PLATES_1_2.append(length)
+        PlateOrder.from_orders_2d(orders_2d).apply_to_globals()
         
         # === ШАГ 6: ПОДСЧЕТ ДОРОЖЕК ===
         await message.answer("⏳ Подсчитываю дорожки...")
@@ -446,23 +439,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
         load_code: ['all'] for load_code in all_loads
     }
     
-    cfg.PLATES_1_2 = []
-    cfg.PLATE_LOAD_DETAILS = {}
-    
-    for plate_data in orders_2d:
-        length = plate_data['length']
-        width_m = plate_data['width'] / 1000.0
-        load_code = plate_data['load_code']
-        
-        key = (length, width_m, load_code)
-        if key in cfg.PLATE_LOAD_DETAILS:
-            cfg.PLATE_LOAD_DETAILS[key] += plate_data['qty']
-        else:
-            cfg.PLATE_LOAD_DETAILS[key] = plate_data['qty']
-        
-        if abs(width_m - 1.2) < 0.01:
-            for _ in range(plate_data['qty']):
-                cfg.PLATES_1_2.append(length)
+    PlateOrder.from_orders_2d(orders_2d).apply_to_globals()
     
     # Вычисляем индексы
     start_index = (day_number - 1) * tracks_count

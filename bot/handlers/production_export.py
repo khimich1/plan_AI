@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
+from typing import Tuple
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -88,112 +89,129 @@ def _count_plates_in_tracks(all_tracks_list: list) -> dict:
                 logger.debug(f"[COUNT_TRACKS] Плита: {plate_name}, длина={length}, ширина={width}, load_code={load_code}, mode={mode}")
             
             # НОВОЕ: Плиты из вторичных резов (secondary_cuts)
-            # Эти плиты получены из остатков primary плит и тоже должны учитываться
-            # Примечание: secondary_cuts наследуют load_code от родительской плиты
+            # Эти плиты получены из остатков primary плит; load_code берём из sec_cut (целевой заказ), иначе из родителя
             for sec_cut in item.get('secondary_cuts', []) or []:
                 sec_width = round(sec_cut.get('width', 0) * 1000)  # round для корректного округления
                 # Длина: если есть target_length (поперечный рез), иначе длина родительской плиты
                 sec_length = sec_cut.get('target_length') or length
                 if sec_width > 0:
-                    sec_key = (round(sec_length, 2), sec_width, load_code)  # наследуем load_code
+                    sec_load_code = cfg.normalize_load_code(sec_cut.get('load_code', item.get('load_code', 8)))
+                    sec_key = (round(sec_length, 2), sec_width, sec_load_code)
                     counts[sec_key] = counts.get(sec_key, 0) + 1
                     # #region agent log H6: ВСЕ вторичные резы (не только 460/530/665)
                     with open(_debug_log, 'a', encoding='utf-8') as _f:
-                        _f.write(_json.dumps({"hypothesisId": "H6", "location": "production_export:_count_plates_in_tracks:secondary", "message": "Вторичный рез", "data": {"parent_plate": plate_name, "sec_length": sec_length, "sec_width": sec_width, "load_code": load_code, "sec_key": str(sec_key), "sec_cut_raw": str(sec_cut)[:200]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                        _f.write(_json.dumps({"hypothesisId": "H6", "location": "production_export:_count_plates_in_tracks:secondary", "message": "Вторичный рез", "data": {"parent_plate": plate_name, "sec_length": sec_length, "sec_width": sec_width, "load_code": sec_load_code, "sec_key": str(sec_key), "sec_cut_raw": str(sec_cut)[:200]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
                     # #endregion
     
+    # #region agent log H_tracks: ключи в треках для длин 5.98, 5.99, 6.11, 6.12 и load 8
+    _target_lengths = (5.98, 5.99, 6.11, 6.12)
+    _keys_61_59 = [(k, counts.get(k, 0)) for k in counts if len(k) >= 2 and round(k[0], 2) in _target_lengths and (len(k) == 2 or cfg.normalize_load_code(k[2] if len(k) > 2 else 8) == 8)]
+    if _keys_61_59:
+        try:
+            with open(_debug_log, 'a', encoding='utf-8') as _f:
+                _f.write(_json.dumps({"hypothesisId": "H_tracks", "location": "production_export:_count_plates_in_tracks", "message": "Ключи в треках для 5.98/5.99/6.11/6.12 load 8", "data": {"keys_with_qty": [list(k) + [v] for k, v in _keys_61_59]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+    # #endregion
     return counts
 
 
-def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float = 0.03) -> list:
+def _get_qty_found_for_order(order: dict, plates_in_tracks: dict, tracks_used: dict, tolerance: float) -> int:
+    """
+    Подсчитывает, сколько плит данного заказа реально попало в tracks.
+    Обновляет tracks_used «на месте».
+    """
+    length = round(order.get('length', 0), 2)
+    width = order.get('width', 1200)
+    load_code = cfg.normalize_load_code(order.get('load_code', 8))
+    qty_ordered = order.get('qty', 1)
+    qty_found = 0
+
+    for track_key, t_qty in plates_in_tracks.items():
+        if len(track_key) == 3:
+            t_len, t_width, t_load_code = track_key
+        else:
+            t_len, t_width = track_key
+            t_load_code = 8
+        t_load_code = cfg.normalize_load_code(t_load_code)
+        if t_load_code != load_code:
+            continue
+        if abs(t_width - width) > 20:
+            continue
+        if abs(t_len - length) > tolerance:
+            continue
+        already_used = tracks_used.get(track_key, 0)
+        available = t_qty - already_used
+        if available <= 0:
+            continue
+        take = min(available, qty_ordered - qty_found)
+        qty_found += take
+        tracks_used[track_key] = already_used + take
+        if qty_found >= qty_ordered:
+            break
+    return qty_found
+
+
+def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float = 0.03) -> Tuple[list, list]:
     """
     Находит плиты из orders_2d, которые не попали в tracks.
     
-    Простыми словами:
-    - Для каждого заказа проверяет, сколько плит попало в tracks
-    - Если попало меньше, чем заказано — плиты "потеряны"
-    - Возвращает список потерянных плит для возврата в производство
-    
-    ИСПРАВЛЕНИЕ: Теперь учитывает load_code для различения плит с разной нагрузкой:
-    - Плиты с одинаковыми размерами, но разным load_code (8п vs 16п) учитываются отдельно
-    - Плита 33,8-12-16п НЕ может быть использована для выполнения заказа 33,8-12-8п
-    
-    Аргументы:
-        orders_2d: список заказов [{'length', 'width', 'qty', 'load_code', 'kp_id', 'plate_name'}, ...]
-        plates_in_tracks: словарь {(length, width, load_code): qty} — что попало в tracks
-        tolerance: допуск по длине (метры) для fuzzy-поиска
-    
     Возвращает:
-        список потерянных плит [{'kp_id', 'plate_name', 'qty_lost'}, ...]
+        - lost: список потерянных плит [{'kp_id', 'plate_name', 'qty_lost'}, ...]
+        - orders_with_qty: список (order, qty_to_mark) для каждого заказа
+                         qty_to_mark = сколько плит реально в tracks (для пометки «в плане»)
+    
+    ИСПРАВЛЕНИЕ: Теперь возвращает qty_to_mark для каждого заказа отдельно.
+    При нескольких заказах с одним (kp_id, plate_name) qty_lost применяется к правильному заказу.
     """
     lost = []
-    tracks_used = {}  # Отслеживаем, сколько плит уже "использовали" из tracks
-    # #region agent log
+    orders_with_qty = []  # [(order, qty_to_mark), ...]
+    tracks_used = {}
+
     import json as _json2
     _debug_log2 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
-    # #endregion
-    
+
     for order in orders_2d:
+        qty_ordered = order.get('qty', 1)
+        qty_found = _get_qty_found_for_order(order, plates_in_tracks, tracks_used, tolerance)
+        qty_to_mark = qty_found
+        orders_with_qty.append((order, qty_to_mark))
+
         length = round(order.get('length', 0), 2)
         width = order.get('width', 1200)
-        load_code = cfg.normalize_load_code(order.get('load_code', 8))  # ИСПРАВЛЕНИЕ: получаем load_code
-        qty_ordered = order.get('qty', 1)
+        load_code = cfg.normalize_load_code(order.get('load_code', 8))
         kp_id = order.get('kp_id')
         plate_name = order.get('plate_name', '')
-        
-        # Ищем в tracks с fuzzy по длине И точным совпадением по load_code
-        qty_found = 0
-        
-        for track_key, t_qty in plates_in_tracks.items():
-            # Распаковываем ключ (может быть 2 или 3 элемента для обратной совместимости)
-            if len(track_key) == 3:
-                t_len, t_width, t_load_code = track_key
-            else:
-                t_len, t_width = track_key
-                t_load_code = 8  # значение по умолчанию для старых данных
-            t_load_code = cfg.normalize_load_code(t_load_code)
-            
-            # ИСПРАВЛЕНИЕ: Проверяем совпадение по load_code
-            load_code_matches = (t_load_code == load_code)
-            
-            # Проверяем совпадение по ширине с tolerance 20мм
-            width_matches = abs(t_width - width) <= 20
-            
-            if load_code_matches and width_matches and abs(t_len - length) <= tolerance:
-                already_used = tracks_used.get(track_key, 0)
-                available = t_qty - already_used
-                
-                if available > 0:
-                    take = min(available, qty_ordered - qty_found)
-                    qty_found += take
-                    tracks_used[track_key] = already_used + take
-                    
-                    if qty_found >= qty_ordered:
-                        break
-        
-        # #region agent log H2: результат поиска для плит 460, 530, 665
+
         if width in [460, 530, 665] or '4,6' in plate_name or '5,3' in plate_name or '6,65' in plate_name:
-            with open(_debug_log2, 'a', encoding='utf-8') as _f2:
-                _f2.write(_json2.dumps({"hypothesisId": "H2", "location": "production_export:_find_lost_plates", "message": "Поиск плиты в tracks", "data": {"plate_name": plate_name, "kp_id": kp_id, "length": length, "width": width, "load_code": load_code, "qty_ordered": qty_ordered, "qty_found": qty_found, "is_lost": qty_found < qty_ordered}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+            try:
+                with open(_debug_log2, 'a', encoding='utf-8') as _f2:
+                    _f2.write(_json2.dumps({"hypothesisId": "H2", "location": "production_export:_find_lost_plates", "message": "Поиск плиты в tracks", "data": {"plate_name": plate_name, "kp_id": kp_id, "length": length, "width": width, "load_code": load_code, "qty_ordered": qty_ordered, "qty_found": qty_found, "is_lost": qty_found < qty_ordered}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+            except Exception:
+                pass
+        # #region agent log H_save: для 61,2 и 59,8 — qty в треках vs заказ
+        if '61,2' in (plate_name or '') or '59,8' in (plate_name or ''):
+            try:
+                with open(_debug_log2, 'a', encoding='utf-8') as _f2:
+                    _f2.write(_json2.dumps({"hypothesisId": "H_save", "location": "production_export:_find_lost_plates", "message": "61,2/59,8: найдено в треках vs заказ", "data": {"plate_name": plate_name, "kp_id": kp_id, "length": length, "width": width, "qty_ordered": qty_ordered, "qty_found": qty_found, "qty_to_mark": qty_to_mark, "is_lost": qty_found < qty_ordered}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+            except Exception:
+                pass
         # #endregion
-        
-        # Если нашли меньше, чем заказано — плиты потеряны
+
         if qty_found < qty_ordered:
             logger.warning(f"[LOST_PLATE] Потеряна: {plate_name} x{qty_ordered - qty_found} "
                           f"(заказ: длина={length}, ширина={width}, load_code={load_code}, qty={qty_ordered}, найдено={qty_found})")
-            # Логируем доступные ключи с похожей длиной
-            similar_keys = [(k, v) for k, v in plates_in_tracks.items() 
-                           if abs(k[0] - length) <= tolerance * 2]
+            similar_keys = [(k, v) for k, v in plates_in_tracks.items() if abs(k[0] - length) <= tolerance * 2]
             if similar_keys:
                 logger.warning(f"[LOST_PLATE]   Похожие в tracks: {similar_keys[:5]}")
             lost.append({
                 'kp_id': kp_id,
                 'plate_name': plate_name,
                 'qty_lost': qty_ordered - qty_found,
-                'load_code': load_code  # ИСПРАВЛЕНИЕ: сохраняем load_code для отладки
+                'load_code': load_code
             })
-    
-    return lost
+
+    return lost, orders_with_qty
 
 
 @router.callback_query(F.data == "export_gantt_current")
@@ -533,59 +551,58 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
         db_path = str(PROJECT_ROOT / "plita.db")
         plan_id = updated_plan['id']
         
-        # === ИСПРАВЛЕНО: СНАЧАЛА ОПРЕДЕЛЯЕМ ПОТЕРЯННЫЕ ПЛИТЫ ===
+        # === ИСПРАВЛЕНО: СНАЧАЛА ОПРЕДЕЛЯЕМ ПОТЕРЯННЫЕ ПЛИТЫ И QTY_TO_MARK ===
         # Подсчитываем, сколько плит реально попало в tracks ПЕРЕД пометкой
+        # ИСПРАВЛЕНИЕ: Используем qty_to_mark (qty_found) для КАЖДОГО заказа отдельно.
+        # При нескольких заказах с одним (kp_id, plate_name) старый код ошибочно
+        # вычитал qty_lost из всех — теперь помечаем только то, что реально в треках.
         plates_in_tracks = _count_plates_in_tracks(all_tracks_list)
-        lost_plates = _find_lost_plates(orders_2d, plates_in_tracks, tolerance=0.03)
+        # #region agent log H_viz: плиты 61,2/61,1/59,8/59,9 в треках (что пойдёт в визуализацию)
+        import json as _jviz
+        _viz_61_59 = []
+        for tr in all_tracks_list:
+            for it in tr.get('items', []) or []:
+                n = (it.get('plate_name') or '')
+                if any(x in n for x in ('61,2', '61,1', '59,8', '59,9')):
+                    _viz_61_59.append({"plate_name": n, "length": it.get("length"), "width": it.get("width"), "kp_id": it.get("kp_id")})
+        try:
+            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8") as _fv:
+                _fv.write(_jviz.dumps({"hypothesisId": "H_viz", "location": "production_export:save_plan", "message": "Плиты 61,2/61,1/59,8/59,9 в треках (визуализация)", "data": {"count": len(_viz_61_59), "entries": _viz_61_59[:50]}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        lost_plates, orders_with_qty = _find_lost_plates(orders_2d, plates_in_tracks, tolerance=0.03)
         
-        # Создаём множество потерянных плит для быстрой проверки
-        lost_plates_set = set()
         if lost_plates:
-            for lp in lost_plates:
-                # Ключ: (kp_id, plate_name) для идентификации потерянной плиты
-                lost_plates_set.add((lp.get('kp_id'), lp.get('plate_name')))
             lost_info = ", ".join([f"{lp['plate_name']} x{lp['qty_lost']}" for lp in lost_plates[:3]])
             if len(lost_plates) > 3:
                 lost_info += f" и ещё {len(lost_plates) - 3}..."
             logger.warning(f"[SAVE_PLAN] Обнаружены потерянные плиты (НЕ будут помечены как 'в плане'): {lost_info}")
         
-        # === ТЕПЕРЬ ПОМЕЧАЕМ ТОЛЬКО ПЛИТЫ, КОТОРЫЕ В ПЛАНЕ ===
-        # НЕ помечаем потерянные плиты - они остаются "в производстве"
+        # === ПОМЕЧАЕМ ТОЛЬКО ПЛИТЫ, КОТОРЫЕ РЕАЛЬНО В ТРЕКАХ ===
         plates_marked = 0
         plates_failed = 0
-        plates_skipped = 0  # Пропущенные (потерянные)
+        plates_skipped = 0
         
-        for order in orders_2d:
+        for order, qty_to_mark in orders_with_qty:
             kp_id = order.get('kp_id')
             plate_name = order.get('plate_name')
-            qty = order.get('qty', 1)
+            qty_ordered = order.get('qty', 1)
             
-            # Проверяем, не потеряна ли эта плита
-            order_key = (kp_id, plate_name)
-            
-            if order_key in lost_plates_set:
-                # Находим, сколько плит потеряно для этого заказа
-                qty_lost = 0
-                for lp in lost_plates:
-                    if lp.get('kp_id') == kp_id and lp.get('plate_name') == plate_name:
-                        qty_lost = lp.get('qty_lost', qty)
-                        break
-                
-                qty_to_mark = qty - qty_lost
-                if qty_to_mark <= 0:
+            if qty_to_mark <= 0:
+                if qty_ordered > 0:
                     plates_skipped += 1
-                    logger.info(f"[SAVE_PLAN] Пропускаем потерянную плиту: КП #{kp_id}, {plate_name} x{qty} (вся потеряна)")
-                    continue
-                else:
-                    # Частичная потеря - помечаем только то, что попало в план
-                    logger.info(f"[SAVE_PLAN] Частичная потеря: КП #{kp_id}, {plate_name} - помечаем {qty_to_mark} из {qty}")
-                    qty = qty_to_mark
+                    logger.info(f"[SAVE_PLAN] Пропускаем потерянную плиту: КП #{kp_id}, {plate_name} x{qty_ordered} (вся потеряна)")
+                continue
             
-            if kp_id and plate_name and qty > 0:
+            if qty_to_mark < qty_ordered:
+                logger.info(f"[SAVE_PLAN] Частичная потеря: КП #{kp_id}, {plate_name} - помечаем {qty_to_mark} из {qty_ordered}")
+            
+            if kp_id and plate_name and qty_to_mark > 0:
                 success = kp_db.mark_plates_as_planned(
                     kp_id=kp_id,
                     plate_name=plate_name,
-                    qty_to_plan=qty,
+                    qty_to_plan=qty_to_mark,
                     plan_id=plan_id,
                     db_path=db_path
                 )
@@ -593,7 +610,7 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                     plates_marked += 1
                 else:
                     plates_failed += 1
-                    logger.warning(f"[SAVE_PLAN] Не удалось пометить плиту: КП #{kp_id}, {plate_name} x{qty}")
+                    logger.warning(f"[SAVE_PLAN] Не удалось пометить плиту: КП #{kp_id}, {plate_name} x{qty_to_mark}")
         
         logger.info(f"[SAVE_PLAN] Помечено {plates_marked} позиций плит как 'в плане' для плана {plan_id}")
         if plates_skipped > 0:

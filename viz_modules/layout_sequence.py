@@ -352,6 +352,9 @@ def build_layout_sequence():
                 source_lengths_list = sec_cut.get('source_lengths', [])
                 # Результирующие длины (ПОСЛЕ поперечного реза)
                 target_lengths_list = sec_cut.get('lengths', [])
+                # Целевой load_code заказа (для корректного учёта в дорожках и РЕСКЬЮ)
+                target_order_key = sec_cut.get('target_order_key')
+                target_load_code = cfg.normalize_load_code(target_order_key[2]) if (target_order_key and len(target_order_key) > 2) else None
                 
                 # Создаём шаблон вторичных резов для ОДНОГО остатка
                 pattern = []
@@ -365,7 +368,8 @@ def build_layout_sequence():
                             'width_mm': target_width_mm,  # Ширина РЕЗУЛЬТАТА вторичного реза
                             'source_width_mm': source_mm,  # Ширина ОСТАТКА (для правильной метки)
                             'label': None,  # Метка будет создана позже с реальной длиной плиты
-                            'target_length': target_lengths_list[0] if target_lengths_list else None  # Для поперечных резов
+                            'target_length': target_lengths_list[0] if target_lengths_list else None,  # Для поперечных резов
+                            'target_load_code': target_load_code
                         })
                 
                 # ИСПРАВЛЕНИЕ: Создаём запись для КАЖДОЙ ИСХОДНОЙ длины отдельно
@@ -694,7 +698,8 @@ def build_layout_sequence():
                             for sec_cut_template in chosen_variant['pattern']:
                                 sec_width = sec_cut_template['width']
                                 sec_width_mm = sec_cut_template['width_mm']
-                                
+                                lc = sec_cut_template.get('target_load_code')
+                                lc = cfg.normalize_load_code(lc) if lc is not None else load_code_from_cut
                                 # ВАЖНО: Проверяем поперечные резы для ВТОРИЧНЫХ плит!
                                 sec_transverse = transverse_cut_map.get((length, sec_width_mm))
                                 
@@ -702,10 +707,11 @@ def build_layout_sequence():
                                     # Вторичная плита с поперечным резом
                                     secondary_cuts_for_plate.append({
                                         'width': sec_width,
-                                        'label': f'[2] {plate_label(sec_transverse["target_length"], sec_width, load_code_from_cut)}',
+                                        'label': f'[2] {plate_label(sec_transverse["target_length"], sec_width, lc)}',
                                         'transverse_cut': True,
                                         'target_length': sec_transverse['target_length'],
-                                        'remainder': sec_transverse['remainder']
+                                        'remainder': sec_transverse['remainder'],
+                                        'load_code': lc
                                     })
                                     print(f"[VISUAL] Вторичный рез С поперечным: {length}м x {sec_width_mm}мм -> {sec_transverse['target_length']}м")
                                 else:
@@ -718,20 +724,22 @@ def build_layout_sequence():
                                         # Метка показывает результат ОБОИХ резов
                                         secondary_cuts_for_plate.append({
                                             'width': sec_width,
-                                            'label': f'О {plate_label(target_length, sec_width, load_code_from_cut)}',  # О = Остаток
+                                            'label': f'О {plate_label(target_length, sec_width, lc)}',  # О = Остаток
                                             'has_transverse': True,  # Флаг для отрисовки красной линии
-                                            'target_length': target_length  # Длина результата (для правильной отрисовки)
+                                            'target_length': target_length,  # Длина результата (для правильной отрисовки)
+                                            'load_code': lc
                                         })
                                     else:
                                         # Обычный вторичный рез (включая narrowing)
                                         result_width = sec_cut_template['width']
                                         source_width = sec_cut_template.get('source_width_mm', result_width * 1000) / 1000.0
-                                        label_text = plate_label(length, result_width, load_code_from_cut)
+                                        label_text = plate_label(length, result_width, lc)
                                         if abs(result_width - source_width) > 1e-6:
                                             label_text = f'О {label_text}'  # помечаем, что получено из остатка
                                         secondary_cuts_for_plate.append({
                                             'width': result_width,
-                                            'label': label_text
+                                            'label': label_text,
+                                            'load_code': lc
                                         })
                             chosen_variant['used'] += 1
                         
@@ -952,6 +960,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
             
             source_lengths_list = sec_cut.get('source_lengths', [])
             target_lengths_list = sec_cut.get('lengths', [])
+            target_order_key = sec_cut.get('target_order_key')
+            target_load_code = cfg.normalize_load_code(target_order_key[2]) if (target_order_key and len(target_order_key) > 2) else None
             
             pattern = []
             if cuts_list:
@@ -962,7 +972,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'width_mm': target_width_mm,
                         'source_width_mm': source_mm,
                         'label': None,
-                        'target_length': target_lengths_list[0] if target_lengths_list else None
+                        'target_length': target_lengths_list[0] if target_lengths_list else None,
+                        'target_load_code': target_load_code
                     })
             
             for i in range(qty):
@@ -1222,35 +1233,40 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         for sec_cut_template in chosen_variant['pattern']:
                             sec_width = sec_cut_template['width']
                             sec_width_mm = sec_cut_template['width_mm']
+                            lc = sec_cut_template.get('target_load_code')
+                            lc = cfg.normalize_load_code(lc) if lc is not None else load_code_from_cut
                             
                             sec_transverse = transverse_cut_map.get((length, sec_width_mm))
                             
                             if sec_transverse:
                                 secondary_cuts_for_plate.append({
                                     'width': sec_width,
-                                    'label': f'[2] {plate_label_func(sec_transverse["target_length"], sec_width, load_code_from_cut)}',
+                                    'label': f'[2] {plate_label_func(sec_transverse["target_length"], sec_width, lc)}',
                                     'transverse_cut': True,
                                     'target_length': sec_transverse['target_length'],
-                                    'remainder': sec_transverse['remainder']
+                                    'remainder': sec_transverse['remainder'],
+                                    'load_code': lc
                                 })
                             else:
                                 target_length = sec_cut_template.get('target_length')
                                 if target_length:
                                     secondary_cuts_for_plate.append({
                                         'width': sec_width,
-                                        'label': f'О {plate_label_func(target_length, sec_width, load_code_from_cut)}',
+                                        'label': f'О {plate_label_func(target_length, sec_width, lc)}',
                                         'has_transverse': True,
-                                        'target_length': target_length
+                                        'target_length': target_length,
+                                        'load_code': lc
                                     })
                                 else:
                                     result_width = sec_cut_template['width']
                                     source_width = sec_cut_template.get('source_width_mm', result_width * 1000) / 1000.0
-                                    label_text = plate_label_func(length, result_width, load_code_from_cut)
+                                    label_text = plate_label_func(length, result_width, lc)
                                     if abs(result_width - source_width) > 1e-6:
                                         label_text = f'О {label_text}'
                                     secondary_cuts_for_plate.append({
                                         'width': result_width,
-                                        'label': label_text
+                                        'label': label_text,
+                                        'load_code': lc
                                     })
                         chosen_variant['used'] += 1
                     

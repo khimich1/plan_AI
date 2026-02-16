@@ -907,8 +907,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                     #   ПБ 73-12-8п → длина 73дм=7.3м, ширина 12дм=1.2м
                     match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-', name)
                     if match:
-                        length_dm = float(match.group(1).replace(',', '.'))
-                        length = length_dm / 10.0  # Дециметры → метры
+                        length = cfg.length_dm_to_m(match.group(1))  # Единое правило: номинал−20мм или дм/10
                         
                         width_str = match.group(2).replace(',', '.').replace(' ', '')
                         width_dm = float(width_str)  # ← ШИРИНА ТОЖЕ В ДЕЦИМЕТРАХ!
@@ -1406,9 +1405,7 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
                         # Парсим имя (поддержка дробных дециметров: "59,8" или "60")
                         match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-', name)
                         if match:
-                            length_dm = float(match.group(1).replace(',', '.'))
-                            length = length_dm / 10.0
-                            
+                            length = cfg.length_dm_to_m(match.group(1))
                             width_str = match.group(2).replace(',', '.').replace(' ', '')
                             width_dm = float(width_str)
                             width_mm = int(round(width_dm * 100))

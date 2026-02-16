@@ -21,6 +21,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core.visualization import visualize_plan
 from core.formovka_excel import create_formovka_files_for_tracks
 import core.config_and_data as cfg
+from core.config_and_data import PlateOrder
 import core.optimization as optimization
 
 from ..keyboards import production_day_actions_kb, day_documents_menu_kb
@@ -68,23 +69,7 @@ async def _restore_optimization_data(state: FSMContext, day_number: int):
         load_code: ['all'] for load_code in all_loads
     }
     
-    cfg.PLATES_1_2 = []
-    cfg.PLATE_LOAD_DETAILS = {}
-    
-    for plate_data in orders_2d:
-        length = plate_data['length']
-        width_m = plate_data['width'] / 1000.0
-        load_code = plate_data['load_code']
-        
-        key = (length, width_m, load_code)
-        if key in cfg.PLATE_LOAD_DETAILS:
-            cfg.PLATE_LOAD_DETAILS[key] += plate_data['qty']
-        else:
-            cfg.PLATE_LOAD_DETAILS[key] = plate_data['qty']
-        
-        if abs(width_m - 1.2) < 0.01:
-            for _ in range(plate_data['qty']):
-                cfg.PLATES_1_2.append(length)
+    PlateOrder.from_orders_2d(orders_2d).apply_to_globals()
     
     # Вычисляем индексы дорожек
     start_index = (day_number - 1) * tracks_count
@@ -127,23 +112,7 @@ def _restore_optimization_globals(orders_2d: list, optimization_result: dict):
         load_code: ['all'] for load_code in all_loads
     }
     
-    cfg.PLATES_1_2 = []
-    cfg.PLATE_LOAD_DETAILS = {}
-    
-    for plate_data in orders_2d:
-        length = plate_data['length']
-        width_m = plate_data['width'] / 1000.0
-        load_code = plate_data['load_code']
-        
-        key = (length, width_m, load_code)
-        if key in cfg.PLATE_LOAD_DETAILS:
-            cfg.PLATE_LOAD_DETAILS[key] += plate_data['qty']
-        else:
-            cfg.PLATE_LOAD_DETAILS[key] = plate_data['qty']
-        
-        if abs(width_m - 1.2) < 0.01:
-            for _ in range(plate_data['qty']):
-                cfg.PLATES_1_2.append(length)
+    PlateOrder.from_orders_2d(orders_2d).apply_to_globals()
     
     logger.debug(f"[RESTORE_GLOBALS] Восстановлено глобальных переменных: "
                 f"loads={len(all_loads)}, PLATE_LOAD_DETAILS={len(cfg.PLATE_LOAD_DETAILS)}, "

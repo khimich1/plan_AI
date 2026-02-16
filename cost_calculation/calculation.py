@@ -63,16 +63,18 @@ def parse_plate_name(plate_name: str) -> Optional[Dict]:
         return None
     
     try:
-        length_dm = float(match.group(1))
         width_dm = float(match.group(2))
     except (ValueError, IndexError):
         return None
     
+    # Длина по единому правилу: номинал−20 мм или дм/10 (через length_dm_to_m)
+    length_m = cfg.length_dm_to_m(match.group(1))
+    length_dm = float(match.group(1).replace(',', '.'))  # для возврата в return (исходное значение в дм)
+    
     # Парсим нагрузку (поддерживает "8п", "12,5п" и т.д.)
     load_code = parse_load_code_from_name(plate_name, default=8)
     
-    # Переводим в метры
-    length_m = length_dm / 10.0
+    # Ширина в метрах
     width_m = width_dm / 10.0
     
     # Формируем width_dm для БД запросов (может быть целым или дробным)

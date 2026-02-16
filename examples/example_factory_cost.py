@@ -101,7 +101,7 @@ def example_4_order():
     
     print(f"\nЗаказ:{order_text}")
     
-    # Парсим заказ (это загрузит PLATE_LOAD_MAP для определения нагрузок)
+    # Парсим заказ (загружает PLATE_LOAD_DETAILS для определения нагрузок)
     set_plate_lists_from_text(order_text)
     
     # Расчёт себестоимости

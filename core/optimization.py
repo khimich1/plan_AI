@@ -200,6 +200,63 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
                 'load_code': entry.get('load_code'),
                 'reinforcement': entry.get('reinforcement')
             }
+    # Fallback по (length, width) без load_code — ищем любой ключ с теми же длиной и шириной
+    if len(key) == 3:
+        length, width, load_code = key
+        for candidate_key, candidate_entries in order_info_list.items():
+            if len(candidate_key) >= 2 and candidate_key[0] == length and candidate_key[1] == width:
+                for entry in candidate_entries:
+                    if entry.get('qty_remaining', 0) > 0:
+                        entry['qty_remaining'] -= 1
+                        try:
+                            _req_lc = key[2] if len(key) >= 3 else None
+                            _found_lc = candidate_key[2] if len(candidate_key) >= 3 else None
+                            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                                _f.write(__import__('json').dumps({
+                                    "hypothesisId": "H2_fallback",
+                                    "location": "optimization.py:_get_next_order_info",
+                                    "message": "fallback used (length, width)",
+                                    "data": {
+                                        "requested_key": list(key),
+                                        "found_key": list(candidate_key),
+                                        "fallback_reason": "load_code_mismatch",
+                                        "requested_load_code": _req_lc,
+                                        "found_load_code": _found_lc,
+                                        "kp_id": entry.get('kp_id'),
+                                        "plate_name": (entry.get('plate_name') or '')[:50]
+                                    },
+                                    "timestamp": __import__('time').time()
+                                }, ensure_ascii=False) + '\n')
+                        except Exception:
+                            pass
+                        return {
+                            'kp_id': entry.get('kp_id'),
+                            'customer': entry.get('customer'),
+                            'kp_date': entry.get('kp_date'),
+                            'plate_name': entry.get('plate_name'),
+                            'load_code': entry.get('load_code'),
+                            'reinforcement': entry.get('reinforcement')
+                        }
+        # Fallback по «соседней» длине (±0.02 м), та же ширина и load_code (61,2↔61,1; 59,8↔59,9)
+        # Иначе при конкурирующих длинах решатель даёт общий объём, список по точной длине кончается —
+        # плиты получают kp_id из opt (первый КП), а в БД они в другом КП и не списываются.
+        LEN_TOL = 0.02
+        for candidate_key, candidate_entries in order_info_list.items():
+            if len(candidate_key) < 3:
+                continue
+            c_len, c_width, c_lc = candidate_key[0], candidate_key[1], candidate_key[2]
+            if abs(c_len - length) <= LEN_TOL and c_width == width and c_lc == load_code:
+                for entry in candidate_entries:
+                    if entry.get('qty_remaining', 0) > 0:
+                        entry['qty_remaining'] -= 1
+                        return {
+                            'kp_id': entry.get('kp_id'),
+                            'customer': entry.get('customer'),
+                            'kp_date': entry.get('kp_date'),
+                            'plate_name': entry.get('plate_name'),
+                            'load_code': entry.get('load_code'),
+                            'reinforcement': entry.get('reinforcement')
+                        }
     return {}
 
 
@@ -228,6 +285,21 @@ def _peek_order_info(order_info_list: dict, key: tuple) -> dict:
                 'load_code': entry.get('load_code'),
                 'reinforcement': entry.get('reinforcement')
             }
+    # Fallback по (length, width) без load_code
+    if len(key) == 3:
+        length, width, _ = key
+        for candidate_key, candidate_entries in order_info_list.items():
+            if len(candidate_key) >= 2 and candidate_key[0] == length and candidate_key[1] == width:
+                for entry in candidate_entries:
+                    if entry.get('qty_remaining', 0) > 0:
+                        return {
+                            'kp_id': entry.get('kp_id'),
+                            'customer': entry.get('customer'),
+                            'kp_date': entry.get('kp_date'),
+                            'plate_name': entry.get('plate_name'),
+                            'load_code': entry.get('load_code'),
+                            'reinforcement': entry.get('reinforcement')
+                        }
     return {}
 
 
@@ -283,7 +355,14 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         load_code = order.get('load_code', 800)
         key = (order['length'], order['width'], load_code)
         demand_2d[key] = demand_2d.get(key, 0) + order['qty']
-    
+    # #region agent log: demand keys 59/10 (H3,H4)
+    _demand_59_10 = [(list(k), v) for k, v in demand_2d.items() if abs(k[0] - 5.99) < 0.02 and (k[2] == 10 or abs(float(k[2]) - 10) < 0.01)]
+    if _demand_59_10:
+        try:
+            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H_59_10_demand", "location": "optimization.py:demand_2d_built", "message": "demand_2d: ключи 5.99м 10п (length, width, load_code)", "data": {"keys": _demand_59_10}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    # #endregion
     # 1.5 НОВОЕ: Создаём маппинг (length, width, load_code) -> СПИСОК информации о КП
     # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code для различения плит с разной нагрузкой
     order_info_list = {}  # {(length, width, load_code): [список записей для каждого КП]}
@@ -303,7 +382,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             'qty_remaining': order.get('qty', 1)  # Сколько плит этого КП осталось назначить
         })
     
-    tolerance_length = 0.01  # ±10мм по длине
+    tolerance_length = 0  # Строгое совпадение длины (после правок length_dm_to_m)
     tolerance_width = 20     # ±20мм по ширине (генерация опций, напр. поперечный рез остаток→цель)
     demand_tolerance_width = 10  # ±10мм при сопоставлении спроса с источником (по письму: допуск реза при работе)
 
@@ -420,7 +499,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             has_direct = any(
                 o['type'] == 'direct' and 
                 o['main'] == target_w and
-                abs(o['length'] - opt['length']) <= 0.01
+                abs(o['length'] - opt['length']) <= tolerance_length
                 for o in primary_options
             )
             if has_direct:
@@ -613,53 +692,59 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     _debug_log = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
     _total_demand = sum(demand_2d.values())
     try:
-        open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H_demand", "location": "optimization.py:before_demand_loop", "message": "total demand and keys", "data": {"total_demand": _total_demand, "demand_keys_count": len(demand_2d)}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+        open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H_demand", "location": "optimization.py:before_demand_loop", "message": "total demand and keys", "data": {"total_demand": _total_demand, "demand_keys_count": len(demand_2d), "demand_keys": [(round(k[0], 2), k[1], k[2], v) for k, v in demand_2d.items()]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
     except Exception:
         pass
     # #endregion
     no_sources_keys = []  # [(key, qty), ...] for H1
+    opt_to_demands = {}  # opt_id -> [(demand_key, qty), ...] — какой спрос использует этот opt
+    # Группируем спросы по множеству источников: один constraint на группу (lpSum >= sum(qty)),
+    # чтобы 4.78+4.79 производили 25 плит, а не max(17,8)=17.
+    sources_to_demands = {}  # (frozenset(prim_ids), frozenset(sec_id_pieces)) -> (sources_list, [(dk, qty), ...])
     for (target_length, target_width, target_load_code), qty in demand_2d.items():
         sources = []
+        prim_ids = set()
+        sec_id_pieces = set()  # (opt_id, pieces)
+        dk = (round(target_length, 2), target_width, target_load_code)
         
         # Источник 1a: Первичные резы ПРЯМЫЕ (type='direct' или 'solid')
-        # Эти резы дают целевую ширину напрямую (main == target_width)
-        # ИСПРАВЛЕНИЕ: Проверяем также load_code
         for opt in primary_options:
             if (abs(opt['length'] - target_length) <= tolerance_length and 
                 abs(opt['main'] - target_width) <= demand_tolerance_width and
                 opt.get('type') in ['direct', 'solid'] and
-                opt.get('load_code', 800) == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
+                opt.get('load_code', 800) == target_load_code):
                 sources.append(x_prim[opt['id']])
+                prim_ids.add(opt['id'])
+                opt_to_demands.setdefault(opt['id'], []).append((dk, qty))
         
         # Источник 1b: Первичные резы НЕПРЯМЫЕ (type='indirect', через narrowing)
-        # Эти резы дают целевую ширину через сужение остатка
-        # ИСПРАВЛЕНИЕ: Проверяем также load_code
         for opt in primary_options:
             if (abs(opt['length'] - target_length) <= tolerance_length and
                 opt.get('type') == 'indirect' and
                 abs(opt.get('target_width', 0) - target_width) <= demand_tolerance_width and
-                opt.get('load_code', 800) == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
-                # Непрямой рез: остаток автоматически сужается до целевой ширины
+                opt.get('load_code', 800) == target_load_code):
                 sources.append(x_prim[opt['id']])
+                prim_ids.add(opt['id'])
+                opt_to_demands.setdefault(opt['id'], []).append((dk, qty))
         
         # Источник 2: Вторичные резы
-        # ИСПРАВЛЕНИЕ: Для secondary резов проверяем target_order_key который включает load_code
         for opt in secondary_options:
             opt_target_key = opt.get('target_order_key', (0, 0, 800))
             if len(opt_target_key) == 3:
                 opt_target_load = opt_target_key[2]
             else:
-                opt_target_load = 800  # Обратная совместимость
+                opt_target_load = 800
             if (abs(opt['output_length'] - target_length) <= tolerance_length and 
                 abs(opt['output_width'] - target_width) <= demand_tolerance_width and
-                opt_target_load == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
+                opt_target_load == target_load_code):
                 sources.append(x_sec[opt['id']] * opt['pieces'])
+                sec_id_pieces.add((opt['id'], opt['pieces']))
         
         if sources:
-            length_label = str(target_length).replace('.', '_')
-            surplus = LpVariable(f"surplus_{length_label}_{target_width}_{target_load_code}", lowBound=0, cat=LpInteger)
-            surplus_vars.append(surplus)
-            prob += lpSum(sources) == qty + surplus, f"demand_{target_length}m_{target_width}mm_{target_load_code}"
+            key = (frozenset(prim_ids), frozenset(sec_id_pieces))
+            if key not in sources_to_demands:
+                sources_to_demands[key] = (list(sources), [])
+            sources_to_demands[key][1].append((dk, qty))
         else:
             # === КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: НЕТ ИСТОЧНИКОВ ДЛЯ СПРОСА ===
             no_sources_keys.append(((round(target_length, 2), target_width, target_load_code), qty))
@@ -680,11 +765,32 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             logger.error(f"[OPT_2D]      - Несовместимый load_code={target_load_code}")
             print(f"[OPT_2D] ⚠️ ВНИМАНИЕ: Плита {target_length}м x {target_width}мм НЕ МОЖЕТ быть произведена!")
     
+    # Ограничения по группам: lpSum(sources) >= sum(qty) для всех спросов с одинаковыми источниками
+    for grp_idx, (key, (sources_list, demands_list)) in enumerate(sources_to_demands.items()):
+        total_qty = sum(q for _, q in demands_list)
+        surplus = LpVariable(f"surplus_grp_{grp_idx}", lowBound=0, cat=LpInteger)
+        surplus_vars.append(surplus)
+        prob += lpSum(sources_list) == total_qty + surplus, f"demand_grp_{grp_idx}"
+    
     # #region agent log: no_sources summary (H1)
     if no_sources_keys:
         _plates_lost = sum(q for _, q in no_sources_keys)
         try:
             open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H1", "location": "optimization.py:no_sources_summary", "message": "no_sources summary", "data": {"keys_count": len(no_sources_keys), "total_plates_lost": _plates_lost, "keys": [(list(k), q) for k, q in no_sources_keys]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    # #endregion
+    # #region agent log: competing demand keys (share same primary opts)
+    _competing_opts = []
+    for opt_id, demands in opt_to_demands.items():
+        lengths = set(d[0][0] for d in demands)
+        if len(lengths) > 1:
+            opt_info = next((o for o in primary_options if o['id'] == opt_id), None)
+            _competing_opts.append({"opt_id": opt_id, "opt_length": opt_info['length'] if opt_info else None,
+                                    "demands": [(list(d[0]), d[1]) for d in demands]})
+    if _competing_opts:
+        try:
+            open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H_opt_competing", "location": "optimization.py:competing_demands", "message": "primary opt used by multiple demand keys (different lengths)", "data": {"competing_opts": _competing_opts}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
         except Exception:
             pass
     # #endregion
@@ -862,6 +968,9 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # ИСПРАВЛЕНИЕ: Для каждой плиты получаем свой kp_id из order_info_list!
     # Раньше все плиты с одинаковыми (length, width) получали kp_id первого КП.
     # Теперь каждая плита создаётся отдельно со своим kp_id.
+    # #region agent log: summary empty plate_info (H2)
+    _empty_primary_keys = []
+    # #endregion
     for opt in primary_options:
         qty = int(round(value(x_prim[opt['id']])))
         if qty > 0:
@@ -877,6 +986,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 # #region agent log: primary plate kp_id (H1, H2, H4)
                 if not plate_info and opt.get('kp_id'):
                     _k = (opt['length'], lookup_width, lookup_load_code)
+                    _empty_primary_keys.append(_k)
                     try:
                         with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
                             _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:primary_emit", "message": "primary plate_info empty", "data": {"key": list(_k), "opt_kp_id": opt.get('kp_id'), "opt_plate_name": (opt.get('plate_name') or '')[:50]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
@@ -907,6 +1017,18 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     'kp_date': plate_info.get('kp_date') if plate_info else opt.get('kp_date'),
                     'plate_name': plate_info.get('plate_name') if plate_info else opt.get('plate_name')
                 })
+    
+    # #region agent log: summary empty plate_info (H2)
+    if _empty_primary_keys:
+        try:
+            from collections import Counter
+            _c = Counter(_empty_primary_keys)
+            _summary = [{"key": list(k), "count": _c[k]} for k in sorted(_c.keys())]
+            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:primary_emit_summary", "message": "plan keys with empty plate_info (summary)", "data": {"by_key": _summary, "total_plates_empty": len(_empty_primary_keys), "unique_keys": len(_c)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+    # #endregion
     
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
     # Требования завода:
@@ -939,6 +1061,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     print(f"[OPT_2D] ✓ Плит с резом (сгруппировано): {len(cut_plates)}")
     
     # Пересоздаём plate_assignments в правильном порядке
+    # ИСПРАВЛЕНИЕ: добавляем load_code, иначе в треках подставляется 8п и списание ищет 8п вместо 10п
     result['plate_assignments'] = []
     for cut in result['primary_cuts']:
         for length in cut['lengths']:
@@ -950,7 +1073,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'kp_id': cut.get('kp_id'),
                 'customer': cut.get('customer'),
                 'kp_date': cut.get('kp_date'),
-                'plate_name': cut.get('plate_name')
+                'plate_name': cut.get('plate_name'),
+                'load_code': cut.get('load_code', 800),
             })
             
             # Сохраняем информацию об остатке для отслеживания
@@ -1007,6 +1131,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                         'plate_name': plate_info.get('plate_name') if plate_info else None
                     })
                     
+                    _sec_load = (target_key[2] if isinstance(target_key, (list, tuple)) and len(target_key) > 2 else 800)
                     result['plate_assignments'].append({
                         'length': opt['output_length'],
                         'width': opt['output_width'],
@@ -1015,15 +1140,38 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                         'kp_id': plate_info.get('kp_id') if plate_info else None,
                         'customer': plate_info.get('customer') if plate_info else None,
                         'kp_date': plate_info.get('kp_date') if plate_info else None,
-                        'plate_name': plate_info.get('plate_name') if plate_info else None
+                        'plate_name': plate_info.get('plate_name') if plate_info else None,
+                        'load_code': _sec_load,
                     })
     
     print(f"[OPT_2D] OK! Готово! Использовано {result['total_plates']} плит")
     print(f"[OPT_2D] Создано {len(result['plate_assignments'])} готовых плит")
     print(f"[OPT_2D] Остатков использовано вторично: {len(result['rests_used'])}")
-    # #region agent log: result counts (H5)
+    # #region agent log: result counts (H5) + plates by key (H_rescue_trace)
     try:
         open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H5", "location": "optimization.py:result_built", "message": "plate_assignments count", "data": {"len_plate_assignments": len(result['plate_assignments']), "total_plates": result.get('total_plates', 0), "demand_sum": _total_demand}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # Лог по ключам (length, width, load_code) — для сравнения с дорожками и РЕСКЬЮ (любые размеры).
+    try:
+        _norm_lc = getattr(cfg, 'normalize_load_code', lambda x: int(x) if x is not None else 8)
+        _by_key = {}
+        for cut in result.get('primary_cuts', []):
+            lc = _norm_lc(cut.get('load_code', 8))
+            for L in cut.get('lengths', []):
+                k = (round(float(L), 2), int(cut.get('width', 0)), lc)
+                _by_key[k] = _by_key.get(k, 0) + 1
+        for cut in result.get('secondary_cuts', []):
+            lengths = cut.get('lengths', [])
+            widths = cut.get('cuts', [])
+            tk = cut.get('target_order_key')
+            lc = _norm_lc(tk[2] if isinstance(tk, (tuple, list)) and len(tk) > 2 else 8)
+            L = float(lengths[0]) if lengths else 0
+            W = int(widths[0]) if widths else (int(tk[1]) if isinstance(tk, (tuple, list)) and len(tk) > 1 else 0)
+            if L and W:
+                k = (round(L, 2), W, lc)
+                _by_key[k] = _by_key.get(k, 0) + 1
+        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(__import__('json').dumps({"hypothesisId": "H_opt_plates_by_key", "location": "optimization.py:result_built", "message": "optimizer output plates by (length, width, load_code)", "data": {"plates_by_key": {str(list(k)): v for k, v in _by_key.items()}, "total": sum(_by_key.values())}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
     except Exception:
         pass
     # #endregion

@@ -27,7 +27,8 @@ from ..states import ProductionStates
 # Импорт менеджера планов
 from .plan_manager import (
     get_active_plan_id, mark_day_completed, get_tracks_for_date_from_all_plans,
-    get_all_active_plan_ids
+    get_all_active_plan_ids, get_plan_days_for_plate, get_plan_day_to_date_mapping,
+    load_plan
 )
 
 router = Router()
@@ -130,6 +131,52 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
         tracks_for_day = all_tracks_list[start_index:end_index]
         
         logger.info(f"[COMPLETION] День {day_number}: используем данные из нового плана ({len(tracks_for_day)} дорожек)")
+    
+    logger.info(
+        f"[COMPLETION] День {day_number}: источник треков = "
+        f"{'предзагруженные' if current_day_tracks else ('мультиплан' if from_saved_plan else 'новый план')}, "
+        f"дорожек: {len(tracks_for_day)}"
+    )
+    if not tracks_for_day:
+        logger.error(f"[COMPLETION] День {day_number}: tracks_for_day пустой!")
+    
+    # #region agent log H_LOST_tracks: целевые плиты в загруженных треках
+    _target_lengths = (5.98, 5.99, 6.11, 6.12)
+    _target_names = ('59,8-12-8п', '61,2-12-8п')
+    _lost_tracks = []
+    _plan_start = data.get('plan_start_date')
+    _sel_date = None
+    _cur_day_date = data.get('current_day_date')
+    if _plan_start:
+        try:
+            _sd = datetime.strptime(_plan_start, '%Y-%m-%d') + timedelta(days=day_number - 1)
+            _sel_date = _sd.strftime('%Y-%m-%d')
+        except Exception:
+            pass
+    for _ti, _tr in enumerate(tracks_for_day):
+        for _ii, _it in enumerate(_tr.get('items', []) or []):
+            if not _it:
+                continue
+            _len = _it.get('length') or _it.get('target_length')
+            _w = _it.get('width') if _it.get('width') is not None else (_it.get('main_w') if _it.get('main_w') is not None else 1.2)
+            _w = float(_w) if _w is not None else 1.2
+            _name = (_it.get('plate_name') or _it.get('label') or '') or ''
+            _match = False
+            if _len is not None:
+                _l = float(_len)
+                if abs(_w - 1.2) < 0.05 and any(abs(_l - t) < 0.02 for t in _target_lengths):
+                    _match = True
+            if not _match and any(s in _name for s in _target_names):
+                _match = True
+            if _match:
+                _lost_tracks.append({"plate_name": _name[:50], "length": _len, "width": _w, "kp_id": _it.get('kp_id'), "track_idx": _ti, "item_idx": _ii})
+    try:
+        with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _fl:
+            import json as _jl
+            _fl.write(_jl.dumps({"hypothesisId": "H_LOST_tracks", "location": "production_completion:start_day_completion", "message": "Целевые плиты в треках загруженного дня", "data": {"day_number": day_number, "plan_start_date": _plan_start, "selected_date": _sel_date, "current_day_date_from_state": _cur_day_date, "source": "current_day_tracks" if current_day_tracks else ("from_all_plans" if from_saved_plan else "all_tracks_list"), "source_plans": source_plans if source_plans else [], "tracks_count": len(tracks_for_day), "target_plates_in_tracks": _lost_tracks, "target_count": len(_lost_tracks)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+    # #endregion
     
     # Создаем КОПИЮ lookup для завершения дня (чтобы не влиять на оригинал в state)
     completion_lookup_exact = copy.deepcopy(plate_lookup_exact)
@@ -285,10 +332,15 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
         for item in track.get('items', []):
             if item is None:
                 continue
-            length = item.get('length', 0)
+            mode = item.get('mode', 'solid')
+            # Поперечный рез: списываем целевую плиту (target_length), а не заготовку (length).
+            # Иначе в БД ищется длина заготовки (6.0) и не находится строка с length_m=2.98 (ПБ 29,8).
+            if mode == 'transverse' and item.get('target_length') is not None:
+                length = round(float(item.get('target_length') or 0), 2)
+            else:
+                length = item.get('length', 0)
             
             # Определяем ширину в зависимости от режима плиты
-            mode = item.get('mode', 'solid')
             if mode == 'transverse' and item.get('width'):
                 width = round(item['width'] * 1000)  # round для корректного округления float
             elif mode == 'split' and item.get('main_w'):
@@ -307,6 +359,18 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             plate_info = get_plate_info_smart(length, width, expected_kp_id=item_kp_id, load_code=item_load_code)
             plate_name = plate_info.get('plate_name', '') or (item_plate_name or '')
             kp_id = plate_info.get('kp_id') or item_kp_id
+            
+            # #region agent log H_LOST_lookup: lookup для целевых плит
+            _lt = float(length) if length is not None else 0
+            _is_target = (item_plate_name and ('59,8-12-8п' in item_plate_name or '61,2-12-8п' in item_plate_name)) or (any(abs(_lt - t) < 0.02 for t in (5.98, 5.99, 6.11, 6.12)) and width and abs(width / 1000 - 1.2) < 0.05)
+            if _is_target:
+                try:
+                    with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _fll:
+                        import json as _jll
+                        _fll.write(_jll.dumps({"hypothesisId": "H_LOST_lookup", "location": "production_completion:get_plate_info_smart_result", "message": "Lookup для целевой плиты", "data": {"day_number": day_number, "item_plate_name": item_plate_name, "length": length, "width": width, "item_kp_id": item_kp_id, "lookup_returned": bool(plate_info), "plate_name_used": plate_name[:50] if plate_name else None, "kp_id_used": kp_id}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                except Exception:
+                    pass
+            # #endregion
             
             # Если нет имени плиты — формируем его
             if not plate_name and kp_id:
@@ -352,7 +416,10 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                         pass
 
             if not plate_name:
-                plate_name = cfg.make_plate_name(length, width / 1000.0, load_code=item_load_code)
+                plate_name = cfg.make_plate_name(
+                    length, width / 1000.0, load_code=item_load_code,
+                    length_dm_raw=item.get('length_dm_raw') or None
+                )
             
             # Получаем дату и заказчика для группировки
             kp_date = plate_info.get('kp_date', 'неизвестно') or item.get('kp_date', 'неизвестно')
@@ -383,8 +450,13 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                     'kp_id': kp_id,
                     'kp_date': kp_date,
                     'customer': customer,
-                    'is_secondary': False  # Флаг: это основная плита
+                    'is_secondary': False,  # Флаг: это основная плита
+                    'length_dm_raw': (item.get('length_dm_raw') or '').strip(),
                 })
+                if not kp_id:
+                    logger.warning(
+                        f"[COMPLETION] Плита без kp_id: {plate_name} (длина={length:.2f}м)"
+                    )
             
             # НОВОЕ: Обрабатываем плиты из вторичных резов (остатков)
             secondary_cuts = item.get('secondary_cuts', []) if item else []
@@ -419,11 +491,13 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                 sec_width = round(sec_width_m * 1000)  # round для корректного округления float
                 # Длина: если есть target_length (поперечный рез), иначе длина родительской плиты
                 sec_length = sec_cut.get('target_length') or length
+                # Целевой класс нагрузки вторичного реза (8п, 10п, 12,5п) — ищем в lookup и списываем по нему
+                sec_load_code = cfg.normalize_load_code(sec_cut.get('load_code', item_load_code))
                 
                 # ИСПРАВЛЕНИЕ: Для вторичных резов ищем по ВСЕМ КП, без ограничения
                 # Сначала пробуем найти с expected_kp_id (если родительский КП совпадает)
                 try:
-                    sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=item_kp_id, load_code=item_load_code)
+                    sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=item_kp_id, load_code=sec_load_code)
                 except Exception as _exc11:
                     with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f11e:
                         import json as _j11e
@@ -433,7 +507,7 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                 
                 # Если не нашли с ограничением — ищем по ВСЕМ КП
                 if not sec_kp_id:
-                    sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=None, load_code=item_load_code)
+                    sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=None, load_code=sec_load_code)
                     sec_kp_id = sec_plate_info.get('kp_id')
                 
                 sec_plate_name = sec_plate_info.get('plate_name', '') or (sec_cut.get('label', '') or '').replace('О ', '').strip()
@@ -441,9 +515,9 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                 if not sec_kp_id:
                     sec_kp_id = item_kp_id
                 
-                # Если нет имени плиты — берём из label
+                # Если нет имени плиты — берём из label (по целевому классу нагрузки)
                 if not sec_plate_name:
-                    sec_plate_name = cfg.make_plate_name(sec_length, sec_width / 1000.0, load_code=item_load_code)
+                    sec_plate_name = cfg.make_plate_name(sec_length, sec_width / 1000.0, load_code=sec_load_code)
                 
                 sec_kp_date = sec_plate_info.get('kp_date', 'неизвестно') or item.get('kp_date', 'неизвестно')
                 sec_customer = sec_plate_info.get('customer', 'неизвестно') or item.get('customer', 'неизвестно')
@@ -480,7 +554,7 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                         'plate_name': sec_plate_name,
                         'length_m': sec_length,
                         'width_m': sec_width_m,
-                        'load_class': int(cfg.normalize_load_code(item_load_code) * 100),
+                        'load_class': int(sec_load_code * 100),
                         'qty': 1,
                         'kp_id': sec_kp_id,
                         'kp_date': sec_kp_date,
@@ -551,6 +625,16 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     
     # Подсчитываем общее количество позиций
     total_positions = sum(len(track['plates']) for track in day_plates_by_track)
+    
+    # #region agent log H_LOST_day_plates: целевые плиты в day_plates_by_track
+    _dpb_target = [p for t in day_plates_by_track for p in t.get('plates', []) if '59,8-12-8п' in (p.get('plate_name') or '') or '61,2-12-8п' in (p.get('plate_name') or '')]
+    try:
+        with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _fl2:
+            import json as _jl2
+            _fl2.write(_jl2.dumps({"hypothesisId": "H_LOST_day_plates", "location": "production_completion:day_plates_built", "message": "Целевые плиты в day_plates_by_track (список на списание)", "data": {"day_number": day_number, "target_plates_in_result": [{"plate_name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "width_m": p.get("width_m")} for p in _dpb_target], "target_count": len(_dpb_target), "total_plates_in_day": total_qty}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+    # #endregion
     
     # ✅ НОВОЕ: Логируем результаты формирования списка для списания
     logger.info(f"[TRACE] ===== ШАГ 8: ПЛИТЫ ДЛЯ СПИСАНИЯ (day_plates_by_track) =====")
@@ -821,6 +905,24 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     _targets = [p for p in completed_plates if any(s in p.get('plate_name', '') for s in _key_substrings)]
     with open(_d7, 'a', encoding='utf-8') as _f7:
         _f7.write(_j7.dumps({"hypothesisId": "H7", "location": "production_completion:completed_plates_summary", "message": "Целевые плиты в completed_plates", "data": {"day": day_number, "target_count": len(_targets), "targets": [{"name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "length_m": p.get("length_m"), "width_m": p.get("width_m"), "load_class": p.get("load_class")} for p in _targets], "total_plates": len(completed_plates)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    # Диагностика: на каких днях плана есть плита 59,8-12-8п (если её нет в текущем дне — подсказка)
+    _check_name = "59,8-12-8п"
+    _in_today = any(_check_name in (p.get("plate_name") or "") for p in completed_plates)
+    if not _in_today and plan_ids:
+        _first_plan = plan_ids[0] if isinstance(plan_ids, (list, tuple)) else plan_ids
+        _days_with = get_plan_days_for_plate(_first_plan, _check_name)
+        _day_to_date = get_plan_day_to_date_mapping(_first_plan)
+        _dates_for_days = {d: _day_to_date.get(d) for d in _days_with}
+        _plan_start = data.get('plan_start_date')
+        _expected_date = None
+        if _plan_start:
+            try:
+                _ed = datetime.strptime(_plan_start, '%Y-%m-%d') + timedelta(days=day_number - 1)
+                _expected_date = _ed.strftime('%Y-%m-%d')
+            except Exception:
+                pass
+        with open(_d7, 'a', encoding='utf-8') as _f7b:
+            _f7b.write(_j7.dumps({"hypothesisId": "H7b", "location": "production_completion:plate_day_hint", "message": "Плита 59,8-12-8п не в этом дне; в плане она в днях", "data": {"day_confirmed": day_number, "days_with_plate": _days_with, "day_to_date_in_plan": _dates_for_days, "plan_start_date": _plan_start, "expected_date_for_this_day": _expected_date, "hint": "Подтвердите один из дней, где плита в треках" if _days_with else "В треках плана не найдена"}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
     # #endregion
     # #region agent log H15: ВСЕ вторичные резы в confirm_day_completion
     _sec_plates = [p for p in completed_plates if p.get('is_secondary')]
@@ -828,6 +930,11 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     _no_kp = [p for p in _sec_plates if not p.get('kp_id')]
     with open(_d7, 'a', encoding='utf-8') as _f15:
         _f15.write(_j7.dumps({"hypothesisId": "H15", "location": "production_completion:secondary_in_confirm", "message": "Вторичные резы в confirm", "data": {"day": day_number, "secondary_positions": len(_sec_plates), "secondary_qty": _sec_total_qty, "without_kp": len(_no_kp), "total_plates": len(completed_plates), "secondary_names": [{"name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "width_m": p.get("width_m")} for p in _sec_plates[:20]]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+    # #endregion
+    # #region agent log H_completion: плиты 61,2 / 61,1 / 59,8 / 59,9 в completed_plates при подтверждении дня
+    _plates_61_59 = [{"plate_name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty", 1), "length_m": p.get("length_m"), "width_m": p.get("width_m")} for p in completed_plates if any(x in (p.get("plate_name") or "") for x in ("61,2", "61,1", "59,8", "59,9"))]
+    with open(_d7, 'a', encoding='utf-8') as _fc:
+        _fc.write(_j7.dumps({"hypothesisId": "H_completion", "location": "production_completion:confirm_day_completion", "message": "Плиты 61,2/61,1/59,8/59,9 в completed_plates", "data": {"day": day_number, "count": len(_plates_61_59), "entries": _plates_61_59, "total_completed": len(completed_plates)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
     # #endregion
     for plate in completed_plates:
         kp_id = plate.get('kp_id')
@@ -959,10 +1066,44 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     try:
         import json as _j_chain
         with open(_d7, 'a', encoding='utf-8') as _f_chain:
-            _f_chain.write(_j_chain.dumps({"hypothesisId": "chain", "location": "production_completion:written_off_per_day", "message": "Списано за день", "data": {"day": day_number, "total_moved": total_moved}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+            _f_chain.write(_j_chain.dumps({"hypothesisId": "chain", "location": "production_completion:written_off_per_day", "message": "Списано за день", "data": {"day": day_number, "total_moved": total_moved, "completed_kps": completed_kps, "rests_used_count": rests_used_count, "secondary_as_rests": secondary_as_rests}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
     except Exception:
         pass
     # #endregion
+    # Проверка: остались ли несписанные плиты (этап 6) — по КП дня и по всем КП плана
+    kp_ids_in_day = set(p.get('kp_id') for track in day_plates_by_track for p in track.get('plates', []) if p.get('kp_id'))
+    kp_ids_to_check = set(kp_ids_in_day)
+    if plan_ids:
+        try:
+            with kp_db._connect(kp_db.DEFAULT_DB) as conn:
+                cur = conn.cursor()
+                ph = ','.join('?' * len(plan_ids))
+                cur.execute(f"SELECT DISTINCT kp_id FROM kp_plates WHERE plan_id IN ({ph})", tuple(plan_ids))
+                kp_ids_to_check |= set(r[0] for r in cur.fetchall())
+        except Exception:
+            pass
+    if kp_ids_to_check:
+        try:
+            with kp_db._connect(kp_db.DEFAULT_DB) as conn:
+                cur = conn.cursor()
+                placeholders = ','.join('?' * len(kp_ids_to_check))
+                cur.execute(f"""
+                    SELECT kp_id, plate_name, length_m, width_m, load_class, qty
+                    FROM kp_plates
+                    WHERE kp_id IN ({placeholders})
+                    AND status IN ('в производстве', 'в плане')
+                    AND qty > 0
+                """, tuple(kp_ids_to_check))
+                remaining = cur.fetchall()
+                if remaining:
+                    logger.warning(f"[СПИСАНИЕ] После завершения дня {day_number} остались несписанные плиты:")
+                    for row in remaining:
+                        kp_id, name, length_m, width_m, load_class, qty = row
+                        logger.warning(
+                            f"  КП#{kp_id}: {name} × {qty} (длина={length_m:.2f}м, ширина={width_m:.2f}м, нагр={load_class})"
+                        )
+        except Exception as e:
+            logger.exception(f"[СПИСАНИЕ] Проверка остатков: {e}")
     # ========== ВОЗВРАТ БРАКОВАННЫХ ПЛИТ В ПРОИЗВОДСТВО ==========
     # #region agent log: бракованные плиты (что помечено, что возвращено)
     try:
@@ -1114,18 +1255,36 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     source_plans = data.get('current_day_source_plans', [])
     
     # Если есть список планов-источников (мультиплан), отмечаем день во всех планах
-    if source_plans:
-        for plan_id in source_plans:
+    plans_to_check = source_plans if source_plans else ([active_plan_id] if active_plan_id else [])
+    if plans_to_check:
+        for plan_id in plans_to_check:
             if mark_day_completed(plan_id, current_day_date):
                 logger.info(f"День {current_day_date} отмечен как завершённый в плане {plan_id}")
             else:
                 logger.warning(f"Не удалось отметить день {current_day_date} как завершённый в плане {plan_id}")
-    elif active_plan_id and current_day_date:
-        # Если работаем с одним активным планом
-        if mark_day_completed(active_plan_id, current_day_date):
-            logger.info(f"День {current_day_date} отмечен как завершённый в плане {active_plan_id}")
-        else:
-            logger.warning(f"Не удалось отметить день {current_day_date} как завершённый")
+            # Если все дни плана завершены — возвращаем оставшиеся «в плане» плиты в производство
+            # (плиты, не попавшие в треки и потому не запрошенные на списание)
+            plan = load_plan(plan_id) if plan_id else None
+            if plan and plan.get('days'):
+                completed = plan.get('completed_days', [])
+                total = len(plan['days'])
+                try:
+                    import json as _jrc
+                    with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _frc:
+                        _frc.write(_jrc.dumps({"hypothesisId": "H_return_remaining", "location": "production_completion:after_mark_day", "message": "Проверка возврата остатков", "data": {"plan_id": plan_id, "completed_count": len(completed), "total_days": total, "will_return": len(completed) >= total}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                except Exception:
+                    pass
+                if len(completed) >= total:
+                    db_path = str(PROJECT_ROOT / "plita.db")
+                    returned = kp_db.return_plan_plates_to_production(plan_id, db_path)
+                    try:
+                        import json as _jrc2
+                        with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _frc2:
+                            _frc2.write(_jrc2.dumps({"hypothesisId": "H_return_done", "location": "production_completion:return_plan_plates", "message": "Возврат остатков выполнен", "data": {"plan_id": plan_id, "returned": returned}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+                    except Exception:
+                        pass
+                    if returned > 0:
+                        logger.info(f"[COMPLETION] План {plan_id} полностью выполнен: возвращено {returned} остаточных плит «в плане» в производство")
     
     # Обновляем completed_days в state
     if day_number not in completed_days:

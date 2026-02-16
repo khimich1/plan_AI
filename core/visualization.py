@@ -203,44 +203,69 @@ def split_sequence_into_tracks(
                         max_reinforcement_in_track = max(max_reinforcement_in_track, item_reinforcement)
                         i += 1
                     elif not is_solid:
-                        # Текущая плита с резом - НЕ добавляем её
-                        # Ищем целую плиту для завершения дорожки
+                        # Плита с резом не влезает: не теряем её — переносим в следующую дорожку.
+                        # Ищем целую плиту: используем её как ПЕРВУЮ в новой дорожке, плиту с резом — второй.
+                        split_plate = item
                         found_solid_idx = None
                         fallback_separator_idx = None
                         
                         for j in range(i + 1, len(items)):
                             candidate = items[j]
                             if candidate.get('mode') == 'solid':
-                                cand_length = candidate['length']
                                 cand_reinf = candidate.get('reinforcement', 0) or 0
-                                
-                                # Проверяем: влезет И армирование <= макс. в дорожке?
-                                if cand_length <= remaining_space:
-                                    if max_reinforcement_in_track == 0 or cand_reinf <= max_reinforcement_in_track:
-                                        if not candidate.get('is_separator', False):
-                                            found_solid_idx = j
-                                            break
-                                        elif fallback_separator_idx is None:
-                                            fallback_separator_idx = j
+                                if max_reinforcement_in_track == 0 or cand_reinf <= max_reinforcement_in_track:
+                                    if not candidate.get('is_separator', False):
+                                        found_solid_idx = j
+                                        break
+                                    elif fallback_separator_idx is None:
+                                        fallback_separator_idx = j
                         
                         if found_solid_idx is None and fallback_separator_idx is not None:
                             found_solid_idx = fallback_separator_idx
-                            logger.warning("[SPLIT_TRACKS] Используем разделитель для завершения дорожки (не идеально)")
+                            logger.warning("[SPLIT_TRACKS] Используем разделитель для начала следующей дорожки (не идеально)")
                         
                         if found_solid_idx is not None:
-                            candidate = items[found_solid_idx]
-                            is_sep = candidate.get('is_separator', False)
+                            candidate = items.pop(found_solid_idx)
+                            # Закрываем текущую дорожку БЕЗ добавления candidate (он пойдёт в новую).
+                            # После закрытия: новая дорожка = candidate + split_plate.
                             logger.info(
-                                f"[SPLIT_TRACKS] Найдена целая плита для завершения: {candidate['length']:.2f}м, "
-                                f"арм.={candidate.get('reinforcement', 0):.1f} (разделитель={is_sep})"
+                                f"[SPLIT_TRACKS] Плита с резом {split_plate['length']:.2f}м переносится в следующую дорожку, "
+                                f"первой — целая {candidate['length']:.2f}м"
                             )
-                            current_track.append(candidate)
-                            current_track_length += candidate['length']
-                            items.pop(found_solid_idx)
+                            # Удаляем split_plate из items (индекс сдвинулся, если found_solid_idx < i)
+                            split_idx = i if found_solid_idx > i else i - 1
+                            items.pop(split_idx)
+                            if found_solid_idx < i:
+                                i -= 2  # убрали два элемента до текущего; следующий к обработке теперь на i-2
+                            # Закрываем дорожку ниже; затем current_track = [candidate, split_plate]
+                            track_label = _label_from_track_items(current_track, group_label)
+                            tracks.append({
+                                'items': current_track,
+                                'length': current_track_length,
+                                'load_code': load_code,
+                                'label': track_label,
+                                'max_reinforcement': max_reinforcement_in_track
+                            })
+                            current_track = [candidate, split_plate]
+                            current_track_length = candidate['length'] + split_plate['length']
+                            max_reinforcement_in_track = max(max_reinforcement_in_track, candidate.get('reinforcement', 0) or 0, split_plate.get('reinforcement', 0) or 0)
+                            continue
                         else:
-                            logger.warning("[SPLIT_TRACKS] Целой плиты для завершения не найдено, закрываем как есть")
-                        
-                        # Текущая плита с резом НЕ добавляется
+                            logger.warning("[SPLIT_TRACKS] Целой плиты для начала следующей дорожки не найдено, закрываем как есть и добавляем плиту с резом в новую")
+                            # Закрываем как есть; новую дорожку начинаем с плиты с резом (fallback).
+                            track_label = _label_from_track_items(current_track, group_label)
+                            tracks.append({
+                                'items': current_track,
+                                'length': current_track_length,
+                                'load_code': load_code,
+                                'label': track_label,
+                                'max_reinforcement': max_reinforcement_in_track
+                            })
+                            current_track = [split_plate]
+                            current_track_length = split_plate['length']
+                            max_reinforcement_in_track = max(max_reinforcement_in_track, split_plate.get('reinforcement', 0) or 0)
+                            items.pop(i)
+                            continue
                     else:
                         # Целая плита, но не влезает
                         pass

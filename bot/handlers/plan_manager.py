@@ -264,7 +264,10 @@ def get_all_active_plan_ids() -> List[str]:
         list: Список plan_id из metadata (может быть пуст)
     """
     metadata = load_plans_metadata()
-    return list(metadata.get('plans', {}).keys())
+    plans = metadata.get('plans', [])
+    if isinstance(plans, dict):
+        return list(plans.keys())
+    return [p.get('id') for p in plans if isinstance(p, dict) and p.get('id')]
 
 
 def distribute_tracks_by_days(
@@ -542,6 +545,63 @@ def get_plan_days_info(plan: dict) -> Dict[str, dict]:
         }
     
     return result
+
+
+def get_plan_days_for_plate(plan_id: str, plate_name_substring: str) -> List[int]:
+    """
+    Возвращает номера дней плана, в треках которых встречается плита с именем,
+    содержащим plate_name_substring (или длина 5.98 и ширина 1.2 для «59,8-12»).
+    Нужно для диагностики: «плита X не списалась — она в плане в днях Y, Z».
+    """
+    plan = load_plan(plan_id)
+    if not plan or not plan.get('days'):
+        return []
+    days_with_plate = []
+    for _date, day_data in sorted(plan.get('days', {}).items(), key=lambda x: x[0]):
+        day_number = day_data.get('day_number')
+        if day_number is None:
+            continue
+        for track in day_data.get('tracks', []):
+            for item in track.get('items', []) or []:
+                if not item:
+                    continue
+                name = (item.get('plate_name') or item.get('label') or '')
+                if plate_name_substring in name:
+                    days_with_plate.append(day_number)
+                    break
+                # Проверка по длине/ширине: 5.98 или 5.99 м и 1.2 м → 59,8-12 / 59,9-12 (списание по допуску)
+                length = item.get('length') or item.get('target_length')
+                width_m = item.get('width') if item.get('width') is not None else (item.get('main_w') if item.get('main_w') is not None else 1.2)
+                width_m = float(width_m) if width_m is not None else 1.2
+                if length is not None:
+                    L = float(length)
+                    if abs(L - 5.98) < 0.02 or abs(L - 5.99) < 0.02:
+                        if abs(width_m - 1.2) < 0.05:
+                            days_with_plate.append(day_number)
+                            break
+                for sec in (item.get('secondary_cuts') or []):
+                    tl = sec.get('target_length')
+                    if tl is not None:
+                        L = float(tl)
+                        if abs(L - 5.98) < 0.02 or abs(L - 5.99) < 0.02:
+                            days_with_plate.append(day_number)
+                            break
+    return sorted(set(days_with_plate))
+
+
+def get_plan_day_to_date_mapping(plan_id: str) -> dict:
+    """
+    Возвращает маппинг day_number → date для плана.
+    Нужно для диагностики: при подтверждении дня N какую дату мы загружаем и совпадает ли с планом.
+    """
+    plan = load_plan(plan_id)
+    if not plan or not plan.get('days'):
+        return {}
+    return {
+        day_data.get('day_number'): _date
+        for _date, day_data in plan.get('days', {}).items()
+        if day_data.get('day_number') is not None
+    }
 
 
 def get_all_tracks_from_plan(plan: dict) -> list:
