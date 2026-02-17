@@ -43,6 +43,8 @@ class ProductionStates(StatesGroup):
     viewing_calendar = State()        # НОВОЕ: просмотр календарного плана
     viewing_plans_list = State()      # Просмотр списка планов
     confirming_plan_delete = State()  # Подтверждение удаления плана
+    selecting_kps = State()           # Выбор КП кнопками (мультивыбор + Подтвердить)
+    selecting_plates_in_kp = State()  # Выбор плит внутри одного КП
 
 
 class PBInfoStates(StatesGroup):

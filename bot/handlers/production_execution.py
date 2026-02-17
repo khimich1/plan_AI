@@ -190,6 +190,15 @@ async def load_and_plan_production(message: Message, state: FSMContext):
     
     await message.answer(f"✅ Найдено КП: {len(kp_list)}\nЗагружаю плиты...")
     
+    # Опциональный фильтр по id плит (при выборе «По КП» с выбором плит)
+    kp_plate_ids_raw = data.get('kp_plate_ids') or {}
+    kp_plate_ids = {}
+    if isinstance(kp_plate_ids_raw, dict):
+        for k, v in kp_plate_ids_raw.items():
+            sk = str(k)
+            if v is not None and not isinstance(v, list):
+                v = list(v) if hasattr(v, '__iter__') and not isinstance(v, str) else []
+            kp_plate_ids[sk] = v
     # === ДАЛЬШЕ ВСЯ ТЕКУЩАЯ ЛОГИКА ===
     try:
         # === ШАГ 2: СОБИРАЕМ ПЛИТЫ ===
@@ -198,12 +207,23 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         for kp_info in kp_list:
             kp_id = kp_info['kp_id']
             kp_date = kp_info['date']
-            
-            cur.execute("""
-                SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
-                FROM kp_plates
-                WHERE kp_id = ? AND status = 'в производстве'
-            """, (kp_id,))
+            plate_ids_for_kp = kp_plate_ids.get(str(kp_id)) if kp_plate_ids else None
+            if plate_ids_for_kp is not None and len(plate_ids_for_kp) == 0:
+                continue
+            if plate_ids_for_kp and len(plate_ids_for_kp) > 0:
+                placeholders = ','.join('?' * len(plate_ids_for_kp))
+                cur.execute(f"""
+                    SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
+                    FROM kp_plates
+                    WHERE kp_id = ? AND status = 'в производстве' AND id IN ({placeholders})
+                    ORDER BY position_number, id
+                """, (kp_id,) + tuple(plate_ids_for_kp))
+            else:
+                cur.execute("""
+                    SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
+                    FROM kp_plates
+                    WHERE kp_id = ? AND status = 'в производстве'
+                """, (kp_id,))
             
             for row in cur.fetchall():
                 # length_dm_raw может отсутствовать в старых БД — берём по индексу
@@ -238,11 +258,22 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         plate_to_kp_info = {}
         for kp_info in kp_list:
             kp_id = kp_info['kp_id']
-            cur.execute("""
-                SELECT plate_name, length_m, width_m
-                FROM kp_plates
-                WHERE kp_id = ? AND status = 'в производстве'
-            """, (kp_id,))
+            plate_ids_for_kp = kp_plate_ids.get(str(kp_id)) if kp_plate_ids else None
+            if plate_ids_for_kp is not None and len(plate_ids_for_kp) == 0:
+                continue
+            if plate_ids_for_kp and len(plate_ids_for_kp) > 0:
+                placeholders = ','.join('?' * len(plate_ids_for_kp))
+                cur.execute(f"""
+                    SELECT plate_name, length_m, width_m
+                    FROM kp_plates
+                    WHERE kp_id = ? AND status = 'в производстве' AND id IN ({placeholders})
+                """, (kp_id,) + tuple(plate_ids_for_kp))
+            else:
+                cur.execute("""
+                    SELECT plate_name, length_m, width_m
+                    FROM kp_plates
+                    WHERE kp_id = ? AND status = 'в производстве'
+                """, (kp_id,))
             for row in cur.fetchall():
                 plate_name, length_m, width_m = row
                 key = (round(length_m, 2), round(width_m * 1000))  # round для корректного округления
@@ -276,7 +307,6 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             )
             await state.clear()
             return
-        
         # === ШАГ 3.5: ПРОВЕРКА ОСТАТКОВ НА СКЛАДЕ ===
         plates_from_rests = []
         plates_for_optimizer = []

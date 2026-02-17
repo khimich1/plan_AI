@@ -16,6 +16,7 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from core import kp_db
 from ..keyboards import (
     cancel_process_kb, production_filter_kb, main_menu_kb, tracks_choice_kb
 )
@@ -213,20 +214,264 @@ async def filter_by_date(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "filter_by_kp", ProductionStates.waiting_filter_method)
-async def filter_by_kp(callback: CallbackQuery, state: FSMContext):
-    """Выбор по номерам КП"""
-    await state.update_data(filter_method='kp')
-    await state.set_state(ProductionStates.waiting_kp_numbers)
-    await callback.message.answer(
-        "Шаг 3 из 3: Введите номера КП\n\n"
-        "Поддерживаемые форматы:\n"
-        "• 15 (один номер)\n"
-        "• 15, 18, 22 (несколько через запятую)\n"
-        "• 15-22 (диапазон)\n\n"
-        "Введите номера:",
-        reply_markup=cancel_process_kb()
+def _build_kp_selection_message_and_kb(production_kp: list, selected_kp_ids: set, db_path: str):
+    """Формирует текст и клавиатуру для экрана выбора КП (toggle + Плиты + Подтвердить + Назад)."""
+    text = (
+        "Нажмите на КП для выделения. Под списком — Подтвердить. "
+        "Рядом с КП — кнопка «Плиты» для выбора плит по КП."
     )
+    buttons = []
+    for kp in production_kp:
+        kp_id = kp['kp_id']
+        customer = kp.get('customer_name', 'Без имени')
+        execution_terms = kp.get('execution_terms', '')
+        completion_info = kp_db.get_kp_completion_percentage(kp_id, db_path)
+        percentage = completion_info['percentage']
+        customer_short = customer[:20] + '...' if len(customer) > 20 else customer
+        prefix = "✓ " if kp_id in selected_kp_ids else ""
+        btn_text = f"{prefix}КП №{kp_id} | {customer_short} | {percentage:.0f}%"
+        if execution_terms:
+            btn_text += f" | ⏰ {execution_terms}"
+        row = [
+            InlineKeyboardButton(text=btn_text, callback_data=f"plan_kp_toggle_{kp_id}"),
+            InlineKeyboardButton(text="▶ Плиты", callback_data=f"plan_kp_plates_{kp_id}"),
+        ]
+        buttons.append(row)
+    buttons.append([
+        InlineKeyboardButton(text="✅ Подтвердить", callback_data="plan_kp_confirm"),
+        InlineKeyboardButton(text="◀️ Назад", callback_data="plan_kp_back"),
+    ])
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@router.callback_query(F.data == "filter_by_kp_buttons", ProductionStates.waiting_filter_method)
+async def filter_by_kp_buttons(callback: CallbackQuery, state: FSMContext):
+    """Выбор по КП: показываем список КП кнопками (мультивыбор + Плиты)."""
+    await state.update_data(filter_method='kp', selected_kp_ids=[], kp_plate_ids={})
+    await state.set_state(ProductionStates.selecting_kps)
+    db_path = str(PROJECT_ROOT / "plita.db")
+    all_kp = kp_db.get_all_kp_list(db_path)
+    production_kp = all_kp.get('in_production', [])
+    if not production_kp:
+        await callback.message.answer(
+            "❌ Нет КП в работе.\n\nВыберите другой способ или добавьте КП в производство.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="plan_kp_back")]
+            ])
+        )
+        await state.set_state(ProductionStates.waiting_filter_method)
+        await callback.answer()
+        return
+    selected_kp_ids = set()
+    text, kb = _build_kp_selection_message_and_kb(production_kp, selected_kp_ids, db_path)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("plan_kp_toggle_"), ProductionStates.selecting_kps)
+async def plan_kp_toggle(callback: CallbackQuery, state: FSMContext):
+    """Toggle выбора КП: добавляем/убираем из selected_kp_ids и обновляем сообщение."""
+    kp_id = int(callback.data.replace("plan_kp_toggle_", ""))
+    data = await state.get_data()
+    selected = data.get('selected_kp_ids', [])
+    selected_set = set(selected) if isinstance(selected, list) else set(selected)
+    if kp_id in selected_set:
+        selected_set.discard(kp_id)
+    else:
+        selected_set.add(kp_id)
+    await state.update_data(selected_kp_ids=list(selected_set))
+    db_path = str(PROJECT_ROOT / "plita.db")
+    all_kp = kp_db.get_all_kp_list(db_path)
+    production_kp = all_kp.get('in_production', [])
+    if not production_kp:
+        await callback.answer()
+        return
+    text, kb = _build_kp_selection_message_and_kb(production_kp, selected_set, db_path)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "plan_kp_back", ProductionStates.selecting_kps)
+async def plan_kp_back(callback: CallbackQuery, state: FSMContext):
+    """Назад из списка КП — возврат к шагу 3 (выбор способа фильтрации)."""
+    await state.set_state(ProductionStates.waiting_filter_method)
+    data = await state.get_data()
+    tracks_count = data.get('tracks_count', 1)
+    await callback.message.edit_text(
+        f"✅ Дорожек: {tracks_count}\n\n"
+        "📋 Шаг 3 из 3: Как выбрать плиты для производства?\n\n"
+        "Выберите способ:",
+        reply_markup=production_filter_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "plan_kp_confirm", ProductionStates.selecting_kps)
+async def plan_kp_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтвердить выбор КП и запустить планирование."""
+    data = await state.get_data()
+    selected = data.get('selected_kp_ids', [])
+    selected_set = set(selected) if isinstance(selected, list) else set(selected)
+    if not selected_set:
+        await callback.answer("Выберите хотя бы одно КП", show_alert=True)
+        return
+    kp_plate_ids = data.get('kp_plate_ids', {})
+    if not isinstance(kp_plate_ids, dict):
+        kp_plate_ids = {}
+    await state.update_data(kp_ids=list(selected_set), kp_plate_ids=kp_plate_ids)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(f"✅ Выбрано КП: {', '.join(map(str, sorted(selected_set)))}\n\n⏳ Загружаю плиты...")
+    from .production_execution import load_and_plan_production
+    await load_and_plan_production(callback.message, state)
+    await callback.answer()
+
+
+def _build_plates_selection_message_and_kb(kp_id: int, plates: list, selected_plate_ids: set):
+    """Формирует текст и клавиатуру для выбора плит внутри КП."""
+    text = f"КП №{kp_id}: выберите плиты для плана (нажмите для выделения)."
+    buttons = []
+    for p in plates:
+        pid = p['id']
+        name = (p.get('plate_name') or '')[:25]
+        if len(p.get('plate_name') or '') > 25:
+            name += '…'
+        qty = p.get('qty', 1)
+        prefix = "✓ " if pid in selected_plate_ids else ""
+        btn_text = f"{prefix}{name} ×{qty}"
+        buttons.append([
+            InlineKeyboardButton(text=btn_text, callback_data=f"plan_plate_toggle_{pid}")
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="✅ Подтвердить", callback_data="plan_plates_confirm"),
+        InlineKeyboardButton(text="◀️ Назад к списку КП", callback_data="plan_plates_back"),
+    ])
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@router.callback_query(F.data.startswith("plan_kp_plates_"), ProductionStates.selecting_kps)
+async def plan_kp_plates_open(callback: CallbackQuery, state: FSMContext):
+    """Открыть экран выбора плит для одного КП."""
+    kp_id = int(callback.data.replace("plan_kp_plates_", ""))
+    db_path = str(PROJECT_ROOT / "plita.db")
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, plate_name, length_m, width_m, qty
+        FROM kp_plates
+        WHERE kp_id = ? AND status = 'в производстве'
+        ORDER BY position_number, id
+    """, (kp_id,))
+    rows = cur.fetchall()
+    conn.close()
+    plates = [{'id': r[0], 'plate_name': r[1], 'length_m': r[2], 'width_m': r[3], 'qty': r[4]} for r in rows]
+    if not plates:
+        await callback.answer("В этом КП нет плит в производстве", show_alert=True)
+        return
+    data = await state.get_data()
+    kp_plate_ids = data.get('kp_plate_ids', {}) or {}
+    if not isinstance(kp_plate_ids, dict):
+        kp_plate_ids = {}
+    sk = str(kp_id)
+    if sk in kp_plate_ids and kp_plate_ids[sk] is not None:
+        selected_plate_ids = set(kp_plate_ids[sk])
+    else:
+        selected_plate_ids = set(p['id'] for p in plates)
+    await state.set_state(ProductionStates.selecting_plates_in_kp)
+    await state.update_data(
+        current_kp_plates_kp_id=kp_id,
+        selected_plate_ids_for_current_kp=list(selected_plate_ids),
+    )
+    text, kb = _build_plates_selection_message_and_kb(kp_id, plates, selected_plate_ids)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("plan_plate_toggle_"), ProductionStates.selecting_plates_in_kp)
+async def plan_plate_toggle(callback: CallbackQuery, state: FSMContext):
+    """Toggle выбора плиты внутри КП."""
+    plate_id = int(callback.data.replace("plan_plate_toggle_", ""))
+    data = await state.get_data()
+    kp_id = data.get('current_kp_plates_kp_id')
+    selected = data.get('selected_plate_ids_for_current_kp', [])
+    selected_set = set(selected) if isinstance(selected, list) else set(selected)
+    if plate_id in selected_set:
+        selected_set.discard(plate_id)
+    else:
+        selected_set.add(plate_id)
+    await state.update_data(selected_plate_ids_for_current_kp=list(selected_set))
+    db_path = str(PROJECT_ROOT / "plita.db")
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, plate_name, length_m, width_m, qty
+        FROM kp_plates
+        WHERE kp_id = ? AND status = 'в производстве'
+        ORDER BY position_number, id
+    """, (kp_id,))
+    rows = cur.fetchall()
+    conn.close()
+    plates = [{'id': r[0], 'plate_name': r[1], 'length_m': r[2], 'width_m': r[3], 'qty': r[4]} for r in rows]
+    text, kb = _build_plates_selection_message_and_kb(kp_id, plates, selected_set)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
+
+
+async def _redraw_kp_list(callback: CallbackQuery, state: FSMContext):
+    """Возврат на экран выбора КП и обновление сообщения."""
+    await state.set_state(ProductionStates.selecting_kps)
+    data = await state.get_data()
+    selected = data.get('selected_kp_ids', [])
+    selected_set = set(selected) if isinstance(selected, list) else set(selected)
+    db_path = str(PROJECT_ROOT / "plita.db")
+    all_kp = kp_db.get_all_kp_list(db_path)
+    production_kp = all_kp.get('in_production', [])
+    if not production_kp:
+        await callback.message.edit_text(
+            "❌ Нет КП в работе.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="plan_kp_back")]
+            ])
+        )
+        return
+    text, kb = _build_kp_selection_message_and_kb(production_kp, selected_set, db_path)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "plan_plates_confirm", ProductionStates.selecting_plates_in_kp)
+async def plan_plates_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтвердить выбор плит по КП и вернуться к списку КП."""
+    data = await state.get_data()
+    kp_id = data.get('current_kp_plates_kp_id')
+    selected = data.get('selected_plate_ids_for_current_kp', [])
+    selected_set = set(selected) if isinstance(selected, list) else set(selected)
+    kp_plate_ids = data.get('kp_plate_ids', {}) or {}
+    if not isinstance(kp_plate_ids, dict):
+        kp_plate_ids = {}
+    kp_plate_ids[str(kp_id)] = list(selected_set) if selected_set else []
+    await state.update_data(kp_plate_ids=kp_plate_ids)
+    await _redraw_kp_list(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "plan_plates_back", ProductionStates.selecting_plates_in_kp)
+async def plan_plates_back(callback: CallbackQuery, state: FSMContext):
+    """Назад из выбора плит — вернуться к списку КП без сохранения."""
+    await _redraw_kp_list(callback, state)
     await callback.answer()
 
 
@@ -301,66 +546,7 @@ async def receive_customer_selection(callback: CallbackQuery, state: FSMContext)
     await callback.answer()
 
 
-# === ОБРАБОТЧИКИ ВВОДА НОМЕРОВ КП ===
-
-@router.message(ProductionStates.waiting_kp_numbers)
-async def receive_kp_numbers(message: Message, state: FSMContext):
-    """Парсим номера КП и запускаем планирование"""
-    user_input = message.text.strip()
-    
-    kp_ids = []
-    
-    try:
-        # Формат 1: Диапазон "15-22"
-        if '-' in user_input and user_input.count('-') == 1:
-            parts = user_input.split('-')
-            start_str = parts[0].strip()
-            end_str = parts[1].strip()
-            
-            # Проверка что это не дата (не содержит точки)
-            if '.' not in start_str and '.' not in end_str:
-                start_num = int(start_str)
-                end_num = int(end_str)
-                if start_num > end_num:
-                    raise ValueError("Начало диапазона больше конца")
-                kp_ids = list(range(start_num, end_num + 1))
-            else:
-                raise ValueError("Формат не распознан как диапазон номеров КП")
-        
-        # Формат 2: Список "15, 18, 22"
-        elif ',' in user_input:
-            kp_ids = [int(x.strip()) for x in user_input.split(',')]
-        
-        # Формат 3: Одно число "15"
-        else:
-            kp_ids = [int(user_input)]
-        
-        if not kp_ids:
-            raise ValueError("Не указаны номера КП")
-        
-    except ValueError as e:
-        await message.answer(
-            f"❌ Неверный формат: {e}\n\n"
-            "Попробуйте снова:\n"
-            "• 15 (один номер)\n"
-            "• 15, 18, 22 (список)\n"
-            "• 15-22 (диапазон)"
-        )
-        await message.answer(
-            "Или нажмите кнопку ниже для отмены:",
-            reply_markup=cancel_process_kb()
-        )
-        return
-    
-    # Сохраняем номера КП
-    await state.update_data(kp_ids=kp_ids)
-    
-    await message.answer(f"✅ Выбрано КП: {', '.join(map(str, kp_ids))}\n\n⏳ Загружаю плиты...")
-    
-    # Импортируем здесь, чтобы избежать циклических импортов
-    from .production_execution import load_and_plan_production
-    await load_and_plan_production(message, state)
-
+# === ОБРАБОТЧИКИ ВВОДА ДАТЫ (шаг 3 — по дате) ===
 
 @router.message(ProductionStates.waiting_date_number)
 async def receive_date_number_and_plan(message: Message, state: FSMContext):

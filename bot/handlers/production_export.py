@@ -572,7 +572,6 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
             pass
         # #endregion
         lost_plates, orders_with_qty = _find_lost_plates(orders_2d, plates_in_tracks, tolerance=0.03)
-        
         if lost_plates:
             lost_info = ", ".join([f"{lp['plate_name']} x{lp['qty_lost']}" for lp in lost_plates[:3]])
             if len(lost_plates) > 3:

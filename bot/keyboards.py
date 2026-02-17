@@ -642,7 +642,7 @@ def production_filter_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📅 По дате", callback_data="filter_by_date")],
-            [InlineKeyboardButton(text="📋 По номерам КП", callback_data="filter_by_kp")],
+            [InlineKeyboardButton(text="📋 По КП", callback_data="filter_by_kp_buttons")],
             [InlineKeyboardButton(text="📦 Все КП в работе", callback_data="filter_all")],
             [InlineKeyboardButton(text="👤 По заказчику", callback_data="filter_by_customer")],
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
