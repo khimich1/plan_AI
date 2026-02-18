@@ -37,14 +37,6 @@ def init_database():
             logger.info("💡 Бот продолжит работу, но некоторые функции могут быть недоступны")
         else:
             logger.info(f"✅ База данных {db_path} найдена")
-            
-            # Автоматически восстанавливаем застрявшие плиты при старте (используем plita.db)
-            try:
-                recovered = kp_db.recover_stuck_plates(plita_db_path)
-                if recovered > 0:
-                    logger.info(f"🔧 При старте восстановлено {recovered} застрявших плит")
-            except Exception as e:
-                logger.warning(f"⚠️ Не удалось проверить застрявшие плиты: {e}")
     except Exception as e:
         logger.error(f"❌ Ошибка проверки БД: {e}")
         # Не прерываем работу - база может быть создана позже

@@ -2838,6 +2838,46 @@ def get_kp_completion_percentage(kp_id: int, db_path: str = DEFAULT_DB) -> Dict:
         conn.close()
 
 
+def get_kp_plates_in_plan_percentage(kp_id: int, db_path: str = DEFAULT_DB) -> Dict:
+    """
+    Подсчитывает, какой процент плит КП уже в плане производства.
+
+    Считает сумму qty по kp_plates со статусом 'в производстве' или 'в плане' (база),
+    и сумму qty со статусом 'в плане'; возвращает процент (in_plan / total * 100).
+
+    Args:
+        kp_id: номер КП
+        db_path: путь к базе данных
+
+    Returns:
+        Словарь: 'total_plates', 'in_plan', 'percentage' (0-100)
+    """
+    init_schema(db_path)
+    conn = _connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT COALESCE(SUM(qty), 0) as total
+            FROM kp_plates
+            WHERE kp_id = ? AND status IN ('в производстве', 'в плане')
+        ''', (kp_id,))
+        total = cur.fetchone()[0]
+        cur.execute('''
+            SELECT COALESCE(SUM(qty), 0) as in_plan
+            FROM kp_plates
+            WHERE kp_id = ? AND status = 'в плане'
+        ''', (kp_id,))
+        in_plan = cur.fetchone()[0]
+        percentage = (in_plan / total * 100) if total > 0 else 0.0
+        return {
+            'total_plates': total,
+            'in_plan': in_plan,
+            'percentage': round(percentage, 1)
+        }
+    finally:
+        conn.close()
+
+
 def update_kp_execution_date(kp_id: int, new_date: str, db_path: str = DEFAULT_DB) -> bool:
     """
     Обновляет дату выполнения для КП.

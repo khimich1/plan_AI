@@ -307,6 +307,14 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             )
             await state.clear()
             return
+        # #region agent log H_366_loaded: плиты КП 2 после загрузки (до остатков)
+        _sel_kp2 = [{"plate_name": p.get("plate_name"), "kp_id": p.get("kp_id"), "length": p.get("length"), "width": p.get("width"), "qty": p.get("qty")} for p in selected_plates if p.get("kp_id") == 2]
+        try:
+            with open(_DEBUG_LOG, "a", encoding="utf-8") as _fl:
+                _fl.write(json.dumps({"hypothesisId": "H_366_loaded", "location": "production_execution:after_load_plates", "message": "Плиты КП №2 в selected_plates до остатков", "data": {"kp2_plates": _sel_kp2, "filter_method": filter_method, "kp_plate_ids_keys": list((kp_plate_ids or {}).keys())}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # === ШАГ 3.5: ПРОВЕРКА ОСТАТКОВ НА СКЛАДЕ ===
         plates_from_rests = []
         plates_for_optimizer = []
@@ -413,7 +421,15 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 'kp_id': plate_data.get('kp_id'),
                 'length_dm_raw': plate_data.get('length_dm_raw', '') or '',
             })
-        
+        # #region agent log H_366: плита 36,6-6,65 в orders_2d при загрузке плана
+        _log_366 = [{"plate_name": o.get("plate_name"), "kp_id": o.get("kp_id"), "length": o.get("length"), "width": o.get("width"), "qty": o.get("qty", 1)} for o in orders_2d if o.get("kp_id") == 2 and ("36,6" in (o.get("plate_name") or "") or "6,65" in (o.get("plate_name") or "") or (abs(float(o.get("length", 0)) - 3.66) < 0.01 and o.get("width") == 665))]
+        if _log_366 or any(o.get("kp_id") == 2 for o in orders_2d):
+            try:
+                with open(_DEBUG_LOG, "a", encoding="utf-8") as _f366:
+                    _f366.write(json.dumps({"hypothesisId": "H_366", "location": "production_execution:orders_2d_after_build", "message": "КП №2 и/или плита 36,6-6,65 в orders_2d", "data": {"kp2_orders": _log_366, "all_kp2_count": sum(1 for o in orders_2d if o.get("kp_id") == 2), "total_orders": len(orders_2d)}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+        # #endregion
         # Логируем уникальные load_code в orders_2d (план: этап 2.3)
         unique_loads = set(o['load_code'] for o in orders_2d)
         logger.info(f"[DEMAND] Уникальные load_code в orders_2d: {sorted(unique_loads)}")
@@ -1026,9 +1042,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             f"3️⃣ Нажмите «💾 Сохранить план» когда всё готово\n\n"
             f"⚠️ ВАЖНО: План сохраняется только после нажатия кнопки!\n"
             f"Без сохранения он останется только в памяти.\n\n"
-            f"Разница кнопок:\n"
-            f"• «📈 Диаграмма этого плана» — по текущему расчёту (даже без сохранения)\n"
-            f"• «📊 Диаграмма Ганта» — суммарно по ВСЕМ сохранённым планам"
+            f"«📈 Диаграмма этого плана» — по текущему расчёту (даже без сохранения)."
         )
         
         # Рассчитываем days_info с глобальной загруженностью для новых дат

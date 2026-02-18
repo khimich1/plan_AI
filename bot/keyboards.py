@@ -127,19 +127,11 @@ def production_days_kb(total_days: int) -> InlineKeyboardMarkup:
     """
     buttons = []
     
-    # Кнопки диаграмм вверху:
-    # - текущий план (из памяти, без сохранения)
-    # - суммарная по всем сохранённым планам
+    # Кнопка диаграммы текущего плана (этап сохранения — только «этого плана»)
     buttons.append([
         InlineKeyboardButton(
             text="📈 Диаграмма этого плана",
             callback_data="export_gantt_current"
-        )
-    ])
-    buttons.append([
-        InlineKeyboardButton(
-            text="📊 Диаграмма Ганта",
-            callback_data="export_gantt"
         )
     ])
     
@@ -203,7 +195,8 @@ def calendar_days_kb(
             "2026-01-22": {"occupied": 3, "max": 5, "completed": False, "day_number": 1},
             ...
         }
-        show_save_button: показывать кнопку "Сохранить план" (по умолчанию True)
+        show_save_button: показывать кнопку "Сохранить план" (по умолчанию True).
+            При True показывается только «Диаграмма этого плана», при False — только «Диаграмма Ганта» (все планы).
         
     Returns:
         InlineKeyboardMarkup с кнопками-датами
@@ -236,21 +229,21 @@ def calendar_days_kb(
     
     buttons = []
     
-    # Кнопки диаграмм вверху:
-    # - текущий план (из памяти, без сохранения)
-    # - суммарная по всем сохранённым планам
-    buttons.append([
-        InlineKeyboardButton(
-            text="📈 Диаграмма этого плана",
-            callback_data="export_gantt_current"
-        )
-    ])
-    buttons.append([
-        InlineKeyboardButton(
-            text="📊 Диаграмма Ганта",
-            callback_data="export_gantt"
-        )
-    ])
+    # Одна кнопка диаграммы: на этапе сохранения — «этого плана», в календаре — «Ганта» (все планы)
+    if show_save_button:
+        buttons.append([
+            InlineKeyboardButton(
+                text="📈 Диаграмма этого плана",
+                callback_data="export_gantt_current"
+            )
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton(
+                text="📊 Диаграмма Ганта",
+                callback_data="export_gantt"
+            )
+        ])
     
     # Получаем текущую дату для фильтрации прошедших дней
     today = datetime.now().date()
@@ -630,10 +623,9 @@ def tracks_choice_kb() -> InlineKeyboardMarkup:
     for i in range(1, 6):
         row.append(InlineKeyboardButton(text=str(i), callback_data=f"tracks_{i}"))
     buttons.append(row)
-    
-    # Кнопка отмены
+    # Шаг назад (на шаг 1) + Назад в меню
+    buttons.append([InlineKeyboardButton(text="◀️ Шаг назад", callback_data="plan_step_back_to_1")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")])
-    
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -645,6 +637,7 @@ def production_filter_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📋 По КП", callback_data="filter_by_kp_buttons")],
             [InlineKeyboardButton(text="📦 Все КП в работе", callback_data="filter_all")],
             [InlineKeyboardButton(text="👤 По заказчику", callback_data="filter_by_customer")],
+            [InlineKeyboardButton(text="◀️ Шаг назад", callback_data="plan_step_back_to_2")],
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
         ]
     )

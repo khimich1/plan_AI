@@ -22,7 +22,7 @@ from core.gantt_excel import create_gantt_excel
 from core import kp_db
 import core.config_and_data as cfg
 
-from ..keyboards import main_menu_kb, calendar_days_kb
+from ..keyboards import main_menu_kb, calendar_days_kb, production_menu_kb
 from ..bot_config import OUTPUTS_DIR_STR
 
 # Импорт менеджера планов
@@ -557,6 +557,17 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
         # При нескольких заказах с одним (kp_id, plate_name) старый код ошибочно
         # вычитал qty_lost из всех — теперь помечаем только то, что реально в треках.
         plates_in_tracks = _count_plates_in_tracks(all_tracks_list)
+        # #region agent log H_366_save: есть ли ключ (3.66, 665, 8) в треках и что в orders_2d для КП 2
+        import json as _j366
+        _k366 = (3.66, 665, 8)
+        _in_tracks_366 = plates_in_tracks.get(_k366, 0)
+        _orders_kp2 = [{"plate_name": o.get("plate_name"), "kp_id": o.get("kp_id"), "length": o.get("length"), "width": o.get("width"), "qty": o.get("qty", 1)} for o in orders_2d if o.get("kp_id") == 2]
+        try:
+            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8") as _f366:
+                _f366.write(_j366.dumps({"hypothesisId": "H_366_save", "location": "production_export:save_plan", "message": "Перед _find_lost_plates: треки и orders_2d для КП 2", "data": {"key_366_665_8_in_tracks": _in_tracks_366, "orders_2d_kp2": _orders_kp2, "orders_2d_len": len(orders_2d)}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # #region agent log H_viz: плиты 61,2/61,1/59,8/59,9 в треках (что пойдёт в визуализацию)
         import json as _jviz
         _viz_61_59 = []
@@ -572,6 +583,14 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
             pass
         # #endregion
         lost_plates, orders_with_qty = _find_lost_plates(orders_2d, plates_in_tracks, tolerance=0.03)
+        # #region agent log H_366_qty: qty_to_mark для плит КП 2 (36,6-6,65)
+        _with_qty_kp2 = [(o.get("plate_name"), q) for o, q in orders_with_qty if o.get("kp_id") == 2]
+        try:
+            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8") as _fq:
+                _fq.write(_j366.dumps({"hypothesisId": "H_366_qty", "location": "production_export:save_plan", "message": "orders_with_qty для КП 2", "data": {"orders_with_qty_kp2": _with_qty_kp2}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         if lost_plates:
             lost_info = ", ".join([f"{lp['plate_name']} x{lp['qty_lost']}" for lp in lost_plates[:3]])
             if len(lost_plates) > 3:
@@ -690,20 +709,12 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
         
         await callback.message.answer(success_message)
         
-        # Получаем информацию о днях с ГЛОБАЛЬНОЙ загруженностью
-        days_info = get_global_days_info(updated_plan)
-        completed_days = updated_plan.get('completed_days', [])
-        
-        # Показываем обновлённый календарь (план уже сохранён, кнопка не нужна)
+        # Выходим в меню планирования производства
+        await state.clear()
         await callback.message.answer(
-            "📅 Обновлённый календарь:",
-            reply_markup=calendar_days_kb(
-                total_days, 
-                plan_start_date, 
-                completed_days, 
-                days_info,
-                show_save_button=False  # План только что сохранён
-            )
+            "📋 Планирование производства плит\n\n"
+            "Выберите действие:",
+            reply_markup=production_menu_kb()
         )
         
     except Exception as e:

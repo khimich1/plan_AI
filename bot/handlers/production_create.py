@@ -23,7 +23,7 @@ from ..keyboards import (
 from ..states import ProductionStates
 
 # Импорт менеджера планов
-from .plan_manager import load_plans_metadata
+from .plan_manager import load_plans_metadata, get_global_day_occupancy
 
 router = Router()
 
@@ -42,9 +42,28 @@ async def start_new_planning(callback: CallbackQuery, state: FSMContext):
     await state.update_data(active_plan_id=None)
     
     await state.set_state(ProductionStates.waiting_start_date)
+
+    # Показываем, на какие дни уже есть планы и сколько в них дорожек
+    occupancy = get_global_day_occupancy()
+    if occupancy:
+        sorted_dates = sorted(occupancy.keys())
+        lines = ["📊 Дни с планами (дорожек в день):"]
+        for date_key in sorted_dates:
+            count = occupancy[date_key]
+            try:
+                dt = datetime.strptime(date_key, "%Y-%m-%d")
+                label = dt.strftime("%d.%m")
+            except ValueError:
+                label = date_key
+            lines.append(f"  • {label} — {count} дор.")
+        occupancy_text = "\n".join(lines) + "\n\n"
+    else:
+        occupancy_text = "📊 Пока нет сохранённых планов по дням.\n\n"
+
     await callback.message.answer(
         "📅 Шаг 1 из 3: С какого числа начинается ваш план?\n\n"
-        "Поддерживаемые форматы:\n"
+        + occupancy_text
+        + "Поддерживаемые форматы:\n"
         "• 22 (число текущего месяца)\n"
         "• 22.01.2026 (полная дата)\n"
         "• 2026-01-22 (ISO формат)\n\n"
@@ -178,12 +197,12 @@ async def receive_tracks_count(message: Message, state: FSMContext):
 async def process_tracks_choice(callback: CallbackQuery, state: FSMContext):
     """Обработчик нажатия на кнопку с количеством дорожек"""
     tracks_count = int(callback.data.split("_")[1])
-    
+
     await state.update_data(tracks_count=tracks_count)
-    
+
     # Убираем кнопки у текущего сообщения
     await callback.message.edit_reply_markup(reply_markup=None)
-    
+
     # Переходим к выбору способа фильтрации
     await state.set_state(ProductionStates.waiting_filter_method)
     await callback.message.answer(
@@ -191,6 +210,61 @@ async def process_tracks_choice(callback: CallbackQuery, state: FSMContext):
         "📋 Шаг 3 из 3: Как выбрать плиты для производства?\n\n"
         "Выберите способ:",
         reply_markup=production_filter_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "plan_step_back_to_1", ProductionStates.waiting_tracks_count)
+async def plan_step_back_to_1(callback: CallbackQuery, state: FSMContext):
+    """Шаг назад: с шага 2 (дорожки) на шаг 1 (дата начала)."""
+    await state.set_state(ProductionStates.waiting_start_date)
+    occupancy = get_global_day_occupancy()
+    if occupancy:
+        sorted_dates = sorted(occupancy.keys())
+        lines = ["📊 Дни с планами (дорожек в день):"]
+        for date_key in sorted_dates:
+            count = occupancy[date_key]
+            try:
+                dt = datetime.strptime(date_key, "%Y-%m-%d")
+                label = dt.strftime("%d.%m")
+            except ValueError:
+                label = date_key
+            lines.append(f"  • {label} — {count} дор.")
+        occupancy_text = "\n".join(lines) + "\n\n"
+    else:
+        occupancy_text = "📊 Пока нет сохранённых планов по дням.\n\n"
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer(
+        "📅 Шаг 1 из 3: С какого числа начинается ваш план?\n\n"
+        + occupancy_text
+        + "Поддерживаемые форматы:\n"
+        "• 22 (число текущего месяца)\n"
+        "• 22.01.2026 (полная дата)\n"
+        "• 2026-01-22 (ISO формат)\n\n"
+        "Или оставьте пустым для сегодняшней даты:",
+        reply_markup=cancel_process_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "plan_step_back_to_2", ProductionStates.waiting_filter_method)
+async def plan_step_back_to_2(callback: CallbackQuery, state: FSMContext):
+    """Шаг назад: с шага 3 (способ фильтрации) на шаг 2 (количество дорожек)."""
+    await state.set_state(ProductionStates.waiting_tracks_count)
+    data = await state.get_data()
+    date_description = data.get("plan_start_description", "")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer(
+        f"✅ Дата начала плана: {date_description}\n\n"
+        "📋 Шаг 2 из 3: Сколько дорожек нужно загрузить в день?\n"
+        "(Выберите число или введите вручную)",
+        reply_markup=tracks_choice_kb()
     )
     await callback.answer()
 
@@ -218,25 +292,42 @@ def _build_kp_selection_message_and_kb(production_kp: list, selected_kp_ids: set
     """Формирует текст и клавиатуру для экрана выбора КП (toggle + Плиты + Подтвердить + Назад)."""
     text = (
         "Нажмите на КП для выделения. Под списком — Подтвердить. "
-        "Рядом с КП — кнопка «Плиты» для выбора плит по КП."
+        "Рядом с КП — кнопка «Плиты» для выбора плит по КП. "
+        "В кнопке: первый % — выполнение КП, второй — плит в плане."
     )
     buttons = []
     for kp in production_kp:
         kp_id = kp['kp_id']
-        customer = kp.get('customer_name', 'Без имени')
-        execution_terms = kp.get('execution_terms', '')
+        plan_info = kp_db.get_kp_plates_in_plan_percentage(kp_id, db_path)
+        in_plan_pct = plan_info['percentage']
         completion_info = kp_db.get_kp_completion_percentage(kp_id, db_path)
-        percentage = completion_info['percentage']
-        customer_short = customer[:20] + '...' if len(customer) > 20 else customer
+        completion_pct = completion_info['percentage']
+        # Если КП полностью выполнен, в kp_plates не остаётся записей → 0% пл. Считаем это как 100% (всё было в плане и списано).
+        in_plan_display = 100.0 if completion_pct >= 100 else in_plan_pct
+        if in_plan_display >= 100:
+            continue
+        customer = kp.get('customer_name', 'Без имени')
+        customer_short = customer[:12] + '…' if len(customer) > 12 else customer
+        execution_terms = (kp.get('execution_terms') or '').strip()
+        if len(execution_terms) > 10:
+            execution_terms = execution_terms[:10].rstrip()
         prefix = "✓ " if kp_id in selected_kp_ids else ""
-        btn_text = f"{prefix}КП №{kp_id} | {customer_short} | {percentage:.0f}%"
+        btn_text = f"{prefix}КП №{kp_id} | {customer_short} | {completion_pct:.0f}% вып. · {in_plan_display:.0f}% пл."
         if execution_terms:
             btn_text += f" | ⏰ {execution_terms}"
-        row = [
+        buttons.append([
             InlineKeyboardButton(text=btn_text, callback_data=f"plan_kp_toggle_{kp_id}"),
+        ])
+        buttons.append([
             InlineKeyboardButton(text="▶ Плиты", callback_data=f"plan_kp_plates_{kp_id}"),
-        ]
-        buttons.append(row)
+        ])
+    if not buttons:
+        return (
+            "Все КП уже полностью в плане. Выберите другой способ фильтрации.",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="plan_kp_back")]
+            ]),
+        )
     buttons.append([
         InlineKeyboardButton(text="✅ Подтвердить", callback_data="plan_kp_confirm"),
         InlineKeyboardButton(text="◀️ Назад", callback_data="plan_kp_back"),
