@@ -779,6 +779,13 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H1", "location": "optimization.py:no_sources_summary", "message": "no_sources summary", "data": {"keys_count": len(no_sources_keys), "total_plates_lost": _plates_lost, "keys": [(list(k), q) for k, q in no_sources_keys]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
         except Exception:
             pass
+        # #region agent log (session 73b708) H_A: потери на этапе оптимизатора
+        try:
+            _agent_log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73b708.log"
+            open(_agent_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_A", "location": "optimization.py:no_sources_summary", "message": "Plates lost at optimizer (no sources)", "data": {"keys_count": len(no_sources_keys), "total_plates_lost": _plates_lost, "keys": [(list(k), q) for k, q in no_sources_keys]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
     # #endregion
     # #region agent log: competing demand keys (share same primary opts)
     _competing_opts = []

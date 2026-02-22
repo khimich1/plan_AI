@@ -98,7 +98,7 @@ def split_sequence_into_tracks(
     # Проверяем формат данных (с группировкой по нагрузке или без)
     if isinstance(sequence, list) and sequence and isinstance(sequence[0], dict) and 'load_code' in sequence[0]:
         logger.info(f"[SPLIT_TRACKS] Обнаружена группировка по нагрузкам. Групп: {len(sequence)}")
-        
+        input_count = sum(len(g['sequence']) for g in sequence)
         # Каждая группа нагрузки = отдельные дорожки
         for group in sequence:
             load_code = group['load_code']
@@ -236,7 +236,7 @@ def split_sequence_into_tracks(
                             split_idx = i if found_solid_idx > i else i - 1
                             items.pop(split_idx)
                             if found_solid_idx < i:
-                                i -= 2  # убрали два элемента до текущего; следующий к обработке теперь на i-2
+                                i -= 1  # После двух pop следующий к обработке элемент теперь на позиции i-1
                             # Закрываем дорожку ниже; затем current_track = [candidate, split_plate]
                             track_label = _label_from_track_items(current_track, group_label)
                             tracks.append({
@@ -310,7 +310,7 @@ def split_sequence_into_tracks(
     else:
         # СТАРЫЙ ФОРМАТ (без группировки по нагрузке)
         logger.info("[SPLIT_TRACKS] Используем старый формат (без группировки)")
-        
+        input_count = len(sequence) if sequence else 0
         items = list(sequence)  # Копия для возможной модификации
         current_track = []
         current_track_length = 0.0
@@ -456,6 +456,20 @@ def split_sequence_into_tracks(
                 'max_reinforcement': max_reinforcement_in_track
             })
     
+    output_count = sum(len(t['items']) for t in tracks)
+    if input_count != output_count:
+        logger.warning(
+            "[SPLIT_TRACKS] Потеря плит при разбиении: было %s, в дорожках %s, разница %s",
+            input_count, output_count, input_count - output_count
+        )
+    # #region agent log (73b708) H_SPLIT_IO: целостность на выходе split_sequence_into_tracks
+    try:
+        _log_path = Path(__file__).resolve().parent.parent / "debug-73b708.log"
+        with open(_log_path, 'a', encoding='utf-8') as _lf:
+            _lf.write(__import__('json').dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_SPLIT_IO", "location": "visualization:split_sequence_into_tracks:exit", "message": "Input vs output item count", "data": {"input_count": input_count, "output_count": output_count, "diff": input_count - output_count}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     logger.info(f"[SPLIT_TRACKS] Плиты разбиты на {len(tracks)} дорожек")
     return tracks
 

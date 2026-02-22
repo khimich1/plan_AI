@@ -22,6 +22,26 @@ from typing import List, Dict, Optional, Tuple
 
 # Путь к базе данных (в корне проекта)
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'plita.db')
+_DEBUG_SESSION_LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-d7e22e.log')
+
+
+def _debug_session_write(run_id: str, hypothesis_id: str, location: str, message: str, data: Dict) -> None:
+    """Пишет NDJSON в debug-d7e22e.log для Debug Mode."""
+    try:
+        import json
+        line = json.dumps({
+            "sessionId": "d7e22e",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(__import__("time").time() * 1000),
+        }, ensure_ascii=False) + "\n"
+        with open(_DEBUG_SESSION_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -1776,6 +1796,22 @@ def mark_plates_as_planned(
         ''', (kp_id, plate_name))
         
         rows = cur.fetchall()
+        # #region agent log
+        if any(_k in (plate_name or "") for _k in ("59,8-12-8п", "50,8-5,3-8п", "50,8-3,2-8п", "63,9-12-8п")):
+            _debug_session_write(
+                "run1",
+                "H4",
+                "kp_db:mark_plates_as_planned:rows_loaded",
+                "Rows selected for marking as planned",
+                {
+                    "kp_id": kp_id,
+                    "plate_name": plate_name,
+                    "qty_to_plan_requested": qty_to_plan,
+                    "rows_count": len(rows),
+                    "rows": [{"id": r[0], "qty": r[1], "length_m": r[3], "width_m": r[4], "load_class": r[5]} for r in rows],
+                },
+            )
+        # #endregion
         if not rows:
             print(f"[DB] ⚠️ Плита не найдена: КП #{kp_id}, {plate_name} (статус 'в производстве')")
             return False
@@ -1833,6 +1869,22 @@ def mark_plates_as_planned(
                 processed_count += qty_for_plan
         
         print(f"[DB] ✅ Итого помечено {processed_count} плит '{plate_name}' как 'в плане' (план {plan_id})")
+        # #region agent log
+        if any(_k in (plate_name or "") for _k in ("59,8-12-8п", "50,8-5,3-8п", "50,8-3,2-8п", "63,9-12-8п")):
+            _debug_session_write(
+                "run1",
+                "H4",
+                "kp_db:mark_plates_as_planned:done",
+                "Mark as planned result for target plate",
+                {
+                    "kp_id": kp_id,
+                    "plate_name": plate_name,
+                    "processed_count": processed_count,
+                    "remaining_to_plan": remaining_to_plan,
+                    "plan_id": plan_id,
+                },
+            )
+        # #endregion
         conn.commit()
         return True
         

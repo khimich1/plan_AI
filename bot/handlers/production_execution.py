@@ -43,6 +43,7 @@ RESCUE_EXHAUSTED_RANK = 999999
 
 # Путь к NDJSON-логу для отладки плит/ключей
 _DEBUG_LOG = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+_DEBUG_SESSION_LOG = r"c:\Users\Роман\Desktop\Шишов\debug-d7e22e.log"
 
 
 def _debug_write(hypothesis_id, location, message, data):
@@ -57,6 +58,24 @@ def _debug_write(hypothesis_id, location, message, data):
             "timestamp": time.time() * 1000
         }, ensure_ascii=False) + "\n"
         with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
+def _debug_session_write(run_id, hypothesis_id, location, message, data):
+    """Пишет NDJSON в debug-d7e22e.log для Debug Mode."""
+    try:
+        line = json.dumps({
+            "sessionId": "d7e22e",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(__import__("time").time() * 1000),
+        }, ensure_ascii=False) + "\n"
+        with open(_DEBUG_SESSION_LOG, "a", encoding="utf-8") as f:
             f.write(line)
     except Exception:
         pass
@@ -230,6 +249,10 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 plate_name, length_m, width_m, load_class, qty = row[0], row[1], row[2], row[3], row[4]
                 length_dm_raw = (row[5] or '') if len(row) > 5 else ''
                 load_code = cfg.normalize_load_code(load_class // 100)
+                # Коррекция ширины по названию: "-12-8п" / "-12-" = 12 дм = 1200 мм; если в БД ошибочно 0.665 — подставляем 1200
+                width_mm = round((width_m or 0) * 1000)
+                if (plate_name and ("-12-8п" in plate_name or "-12-" in plate_name)) and (width_m is None or width_m < 0.9 or width_m > 1.5):
+                    width_mm = 1200
                 reinforcement_value = get_reinforcement(
                     length_m=length_m,
                     load_code=load_code,
@@ -244,7 +267,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 plates_by_date_and_reinforcement[kp_date][reinforcement_value].append({
                     'plate_name': plate_name,
                     'length': length_m,
-                    'width': round(width_m * 1000),  # round вместо int для корректного округления
+                    'width': width_mm,  # с учётом коррекции по названию для -12-8п
                     'load_code': load_code,
                     'qty': qty,
                     'reinforcement': reinforcement_value,
@@ -421,6 +444,31 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 'kp_id': plate_data.get('kp_id'),
                 'length_dm_raw': plate_data.get('length_dm_raw', '') or '',
             })
+        # #region agent log
+        _targets = []
+        for _o in orders_2d:
+            _n = (_o.get("plate_name") or "")
+            if any(_k in _n for _k in ("59,8-12-8п", "50,8-5,3-8п", "50,8-3,2-8п")):
+                _targets.append({
+                    "plate_name": _n,
+                    "length": _o.get("length"),
+                    "width": _o.get("width"),
+                    "load_code": _o.get("load_code"),
+                    "qty": _o.get("qty", 1),
+                    "kp_id": _o.get("kp_id"),
+                })
+        _debug_session_write(
+            "run1",
+            "H1",
+            "production_execution:orders_2d_built",
+            "Target plates after parsing and loading",
+            {
+                "targets_count": len(_targets),
+                "targets": _targets,
+                "orders_total_qty": sum(int(x.get("qty", 0) or 0) for x in orders_2d),
+            },
+        )
+        # #endregion
         # #region agent log H_366: плита 36,6-6,65 в orders_2d при загрузке плана
         _log_366 = [{"plate_name": o.get("plate_name"), "kp_id": o.get("kp_id"), "length": o.get("length"), "width": o.get("width"), "qty": o.get("qty", 1)} for o in orders_2d if o.get("kp_id") == 2 and ("36,6" in (o.get("plate_name") or "") or "6,65" in (o.get("plate_name") or "") or (abs(float(o.get("length", 0)) - 3.66) < 0.01 and o.get("width") == 665))]
         if _log_366 or any(o.get("kp_id") == 2 for o in orders_2d):
@@ -579,6 +627,27 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         else:
             logger.info(f"[OPT_CHECK] ✅ Совпадение: запрошено {input_plates} плит, получено {output_plates}")
         
+        # #region agent log (73b708) H_WHERE_OPT: сколько плит по целевым ключам вышло из оптимизатора
+        try:
+            _target_keys = [(5.08, 320, 8), (5.98, 665, 8)]
+            _pa = optimization_result.get('plate_assignments', []) or []
+            _opt_counts = {}
+            for _k in _target_keys:
+                _opt_counts[str(_k)] = 0
+            for _p in _pa:
+                _pl = round(float(_p.get('length', 0)), 2)
+                _pw = int(round(float(_p.get('width', 0))))
+                _plc = cfg.normalize_load_code(_p.get('load_code', 8))
+                for _tk in _target_keys:
+                    if abs(_pl - _tk[0]) < 0.02 and _pw == _tk[1] and _plc == _tk[2]:
+                        _opt_counts[str(_tk)] = _opt_counts.get(str(_tk), 0) + 1
+                        break
+            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            with open(_agent_log, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_OPT", "location": "production_execution:after_optimizer", "message": "Plates by key at optimizer output", "data": {"target_keys": _target_keys, "counts": _opt_counts, "total_plate_assignments": len(_pa)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # === ШАГ 4.5: ДОПОЛНЕНИЕ LOOKUP ДЛЯ ВТОРИЧНЫХ РЕЗОВ ===
         if optimization_result.get('secondary_cuts'):
             orders_dict = {}
@@ -673,8 +742,70 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         from viz_modules.layout_sequence import build_layout_sequence
         from core.visualization import split_sequence_into_tracks
         seq = build_layout_sequence()
+        # #region agent log (73b708) H_LAYOUT_IN: целостность после build_layout_sequence
+        try:
+            _pa_count = len(optimization_result.get('plate_assignments', []) or [])
+            if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
+                _seq_total = sum(len(g.get('sequence', [])) for g in seq)
+                _format = "grouped"
+            else:
+                _seq_total = len(seq) if seq else 0
+                _format = "flat"
+            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            with open(_agent_log, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_LAYOUT_IN", "location": "production_execution:after_build_layout_sequence", "message": "Sequence vs plate_assignments count", "data": {"sequence_total": _seq_total, "plate_assignments_count": _pa_count, "format": _format, "diff": _seq_total - _pa_count}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         all_tracks_list = split_sequence_into_tracks(seq)
-
+        # #region agent log (73b708) H_WHERE_TRACKS: сколько плит по целевым ключам в треках после split_sequence_into_tracks
+        try:
+            _target_keys = [(5.08, 320, 8), (5.98, 665, 8)]
+            def _w_mm(w, default=1.2):
+                if w is None:
+                    return round(default * 1000)
+                try:
+                    f = float(w)
+                    return round(f * 1000) if f < 20 else round(f)
+                except (TypeError, ValueError):
+                    return round(default * 1000)
+            _track_counts = {str(_k): 0 for _k in _target_keys}
+            for _tr in all_tracks_list:
+                for _it in _tr.get('items', []) or []:
+                    if not _it:
+                        continue
+                    _mode = _it.get('mode', 'solid')
+                    _lc = cfg.normalize_load_code(_it.get('load_code', 8))
+                    if _mode == 'split':
+                        _wm = _w_mm(_it.get('main_w', 1.2))
+                    else:
+                        _wm = _w_mm(_it.get('width', 1.2))
+                    if _mode == 'transverse' and _it.get('target_length') is not None:
+                        _ln = round(float(_it.get('target_length') or 0), 2)
+                    else:
+                        _ln = round(float(_it.get('length', 0) or 0), 2)
+                    if _ln <= 0:
+                        continue
+                    for _tk in _target_keys:
+                        if abs(_ln - _tk[0]) < 0.02 and _wm == _tk[1] and _lc == _tk[2]:
+                            _track_counts[str(_tk)] = _track_counts.get(str(_tk), 0) + 1
+                            break
+                    for _sc in _it.get('secondary_cuts', []) or []:
+                        _sw = _w_mm(_sc.get('width', 0), 0)
+                        _sl = round(float(_sc.get('target_length') or _ln), 2)
+                        if _sw <= 0:
+                            continue
+                        _slc = cfg.normalize_load_code(_sc.get('load_code', _it.get('load_code', 8)))
+                        for _tk in _target_keys:
+                            if abs(_sl - _tk[0]) < 0.02 and _sw == _tk[1] and _slc == _tk[2]:
+                                _track_counts[str(_tk)] = _track_counts.get(str(_tk), 0) + 1
+                                break
+            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            with open(_agent_log, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_TRACKS", "location": "production_execution:after_split_tracks", "message": "Plates by key in all_tracks_list", "data": {"target_keys": _target_keys, "counts": _track_counts}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # === ШАГ 6.5: ЗАЩИТА ОТ ПОТЕРИ ПЛИТ (РЕСКЬЮ) ===
         # Приводим ключ дорожки к ключу заказа. С учётом remaining заполняем сначала позиции с меньшим спросом (3.79→1 шт).
         def _normalize_key_to_orders(key, order_keys, order_counts, tol_len=RESCUE_TOL_LEN_M, tol_w=RESCUE_TOL_W_MM, remaining=None):
@@ -950,6 +1081,46 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             qty_have = track_counts.get(key, 0)
             if qty_have < qty_need:
                 missing_counts[key] = qty_need - qty_have
+        # #region agent log (73b708) H_WHERE_RESCUE: need / have (normalized) / raw для целевых ключей перед rescue
+        try:
+            _trace_keys = [(5.08, 320, 8), (5.98, 665, 8)]
+            _rescue_trace = []
+            for _tk in _trace_keys:
+                _rescue_trace.append({
+                    "key": list(_tk),
+                    "need": order_counts.get(_tk, 0),
+                    "have_normalized": track_counts.get(_tk, 0),
+                    "raw_in_tracks": raw_track_by_key.get(_tk, 0),
+                    "missing": missing_counts.get(_tk, 0),
+                })
+            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            with open(_agent_log, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_RESCUE", "location": "production_execution:before_rescue", "message": "Need vs have vs raw for target keys", "data": {"trace": _rescue_trace}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # #region agent log
+        _target_keys = {(5.98, 1200, 8), (5.08, 530, 8), (5.08, 320, 8)}
+        _target_missing = []
+        for _k in _target_keys:
+            _target_missing.append({
+                "key": list(_k),
+                "need": int(order_counts.get(_k, 0) or 0),
+                "have": int(track_counts.get(_k, 0) or 0),
+                "missing": int(missing_counts.get(_k, 0) or 0),
+                "raw_track_this_key": int(raw_track_by_key.get(_k, 0) or 0),
+            })
+        _debug_session_write(
+            "run1",
+            "H2",
+            "production_execution:missing_counts",
+            "Need/have/missing for target keys before RESCUE",
+            {
+                "target_missing": _target_missing,
+                "total_missing_all_keys": int(sum(missing_counts.values()) if missing_counts else 0),
+            },
+        )
+        # #endregion
         interesting_missing = {str(list(k)): (order_counts.get(k, 0), track_counts.get(k, 0), v)
                               for k, v in missing_counts.items() if _is_interesting_length(k[0])}
         _debug_write("H_rescue_result", "production_execution:after_count", "need/have/missing for interesting keys",
@@ -974,15 +1145,64 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             f"[CHECK] РЕСКЬЮ: позиций в заказе {len(order_counts)}, "
             f"в плане покрыто {sum(track_counts.values())} плит, недостаёт {sum(missing_counts.values())} (непокрытых позиций: {len(missing_counts)})"
         )
+        rescue_tracks_added = 0
         if missing_counts:
             info_map = _build_order_info_map(orders_2d, canonical_key_fn=canonical_key_fn)
             rescue_tracks = _create_rescue_tracks(missing_counts, info_map)
             all_tracks_list.extend(rescue_tracks)
+            rescue_tracks_added = len(rescue_tracks)
+            # #region agent log
+            _rescue_targets = []
+            for _tr in rescue_tracks:
+                for _it in _tr.get("items", []) or []:
+                    _n = (_it.get("plate_name") or _it.get("label") or "")
+                    if any(_k in _n for _k in ("59,8-12-8п", "50,8-5,3-8п", "50,8-3,2-8п")):
+                        _rescue_targets.append({
+                            "plate_name": _n,
+                            "length": _it.get("length"),
+                            "width": _it.get("width"),
+                            "load_code": _it.get("load_code"),
+                            "kp_id": _it.get("kp_id"),
+                        })
+            _debug_session_write(
+                "run1",
+                "H3",
+                "production_execution:rescue_tracks_created",
+                "Target plates present in generated RESCUE tracks",
+                {
+                    "rescue_tracks_count": len(rescue_tracks),
+                    "target_rescue_entries": _rescue_targets,
+                    "target_rescue_count": len(_rescue_targets),
+                },
+            )
+            # #endregion
             logger.warning(
                 f"[RESCUE] Добавлены дополнительные дорожки: {len(rescue_tracks)}. "
                 f"Потеряно плит: {sum(missing_counts.values())}"
             )
-        
+        # #region agent log (session 73b708) H_E: резюме недостачи и рескью + какие заказы дали недостающие ключи
+        try:
+            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            _total_missing = sum(missing_counts.values()) if missing_counts else 0
+            _missing_sample = [list(k) + [v] for k, v in list(missing_counts.items())[:10]] if missing_counts else []
+            _missing_to_orders = []
+            _log_err = None
+            if missing_counts:
+                try:
+                    for mk in missing_counts.keys():
+                        _ml, _mw, _mlc = mk
+                        _orders_for_key = [{"plate_name": str(o.get("plate_name") or ""), "length": float(o.get("length", 0)), "width": int(round(float(o.get("width", 1200)))), "qty": int(o.get("qty", 1))} for o in orders_2d if abs(round(float(o.get("length", 0)), 2) - _ml) < 0.02 and int(round(float(o.get("width", 1200)))) == _mw and cfg.normalize_load_code(o.get("load_code", 8)) == _mlc]
+                        _missing_to_orders.append({"key": list(mk), "orders": _orders_for_key[:5]})
+                except Exception as _e:
+                    _log_err = str(_e)
+            _payload = {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_E", "location": "production_execution:rescue_summary", "message": "Rescue/missing summary", "data": {"total_missing": _total_missing, "missing_keys_count": len(missing_counts) if missing_counts else 0, "missing_sample": _missing_sample, "rescue_tracks_added": rescue_tracks_added, "missing_key_to_orders": _missing_to_orders}, "timestamp": __import__('time').time()}
+            if _log_err:
+                _payload["data"]["missing_key_to_orders_error"] = _log_err
+            with open(_agent_log, 'a', encoding='utf-8') as _fe:
+                _fe.write(json.dumps(_payload, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         total_tracks_count = len(all_tracks_list)
         total_days = math.ceil(total_tracks_count / tracks_count)
         

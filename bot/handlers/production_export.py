@@ -7,6 +7,7 @@ from typing import Tuple
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+_DEBUG_SESSION_LOG = r"c:\Users\Роман\Desktop\Шишов\debug-d7e22e.log"
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, FSInputFile
@@ -34,6 +35,24 @@ from .plan_manager import (
 )
 
 router = Router()
+
+
+def _debug_session_write(run_id, hypothesis_id, location, message, data):
+    """Пишет NDJSON в debug-d7e22e.log для Debug Mode."""
+    try:
+        line = __import__("json").dumps({
+            "sessionId": "d7e22e",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(__import__("time").time() * 1000),
+        }, ensure_ascii=False) + "\n"
+        with open(_DEBUG_SESSION_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
 
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ЗАЩИТЫ ОТ ПОТЕРИ ПЛИТ ===
@@ -170,6 +189,14 @@ def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float 
 
     import json as _json2
     _debug_log2 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+    _agent_log = PROJECT_ROOT / "debug-73b708.log"
+    # #region agent log (session 73b708) H_B: вход в _find_lost_plates
+    try:
+        with open(_agent_log, 'a', encoding='utf-8') as _fa:
+            _fa.write(_json2.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_B", "location": "production_export:_find_lost_plates:entry", "message": "find_lost_plates entry", "data": {"orders_count": len(orders_2d), "tracks_keys_count": len(plates_in_tracks), "tracks_total_plates": sum(plates_in_tracks.values()) if plates_in_tracks else 0}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     for order in orders_2d:
         qty_ordered = order.get('qty', 1)
@@ -210,7 +237,21 @@ def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float 
                 'qty_lost': qty_ordered - qty_found,
                 'load_code': load_code
             })
+            # #region agent log (session 73b708) H_B: одна потерянная плита
+            try:
+                with open(_agent_log, 'a', encoding='utf-8') as _fa:
+                    _fa.write(_json2.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_B", "location": "production_export:_find_lost_plates:lost", "message": "Lost plate", "data": {"plate_name": plate_name, "kp_id": kp_id, "length": length, "width": width, "load_code": load_code, "qty_ordered": qty_ordered, "qty_found": qty_found, "qty_lost": qty_ordered - qty_found}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
 
+    # #region agent log (session 73b708) H_B: выход из _find_lost_plates
+    try:
+        with open(_agent_log, 'a', encoding='utf-8') as _fa:
+            _fa.write(_json2.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_B", "location": "production_export:_find_lost_plates:exit", "message": "find_lost_plates exit", "data": {"lost_count": len(lost), "lost_list": [{"plate_name": x.get("plate_name"), "qty_lost": x.get("qty_lost")} for x in lost]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     return lost, orders_with_qty
 
 
@@ -583,6 +624,34 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
             pass
         # #endregion
         lost_plates, orders_with_qty = _find_lost_plates(orders_2d, plates_in_tracks, tolerance=0.03)
+        # #region agent log
+        _targets = []
+        for _order, _qty_to_mark in orders_with_qty:
+            _name = (_order.get("plate_name") or "")
+            if any(_k in _name for _k in ("59,8-12-8п", "50,8-5,3-8п", "50,8-3,2-8п", "63,9-12-8п")):
+                _targets.append({
+                    "plate_name": _name,
+                    "kp_id": _order.get("kp_id"),
+                    "length": _order.get("length"),
+                    "width": _order.get("width"),
+                    "qty_ordered": _order.get("qty", 1),
+                    "qty_to_mark": _qty_to_mark,
+                })
+        _debug_session_write(
+            "run1",
+            "H4",
+            "production_export:save_plan_after_find_lost",
+            "Target plates qty_to_mark after tracks matching",
+            {
+                "targets": _targets,
+                "targets_count": len(_targets),
+                "lost_targets": [
+                    x for x in lost_plates
+                    if any(_k in (x.get("plate_name") or "") for _k in ("59,8-12-8п", "50,8-5,3-8п", "50,8-3,2-8п", "63,9-12-8п"))
+                ],
+            },
+        )
+        # #endregion
         # #region agent log H_366_qty: qty_to_mark для плит КП 2 (36,6-6,65)
         _with_qty_kp2 = [(o.get("plate_name"), q) for o, q in orders_with_qty if o.get("kp_id") == 2]
         try:
