@@ -24,9 +24,10 @@ try:
 except Exception:
     pd = None
 
-# База по умолчанию — из папки bot (по запросу пользователя)
+from core.db_config import PB_DB_PATH
+
 BASE_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_DB = BASE_DIR / "bot" / "pb.db"
+DEFAULT_DB = PB_DB_PATH
 DEFAULT_XLSX = BASE_DIR / "банк знаний" / "армирование_нагрузки_таблица.xlsx"
 
 

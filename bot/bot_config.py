@@ -18,10 +18,12 @@ load_dotenv(BOT_DIR / "bot.env", override=False)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Пути к данным (BASE_DIR указывает на корень проекта, на уровень выше bot/)
+from core.db_config import PB_DB_PATH, PLITA_DB_PATH
+
 BASE_DIR = PROJECT_ROOT
 OUTPUTS_DIR = BASE_DIR / "Визуализация_Раскладки"
 PRICES_DIR = BASE_DIR / "банк знаний"
-DB_PATH = BASE_DIR / "pb.db"
+DB_PATH = PB_DB_PATH
 
 # Создаём папку результатов если её нет
 OUTPUTS_DIR.mkdir(exist_ok=True)

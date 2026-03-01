@@ -21,6 +21,7 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import kp_db
+from core.db_config import PB_DB_PATH, PLITA_DB_PATH
 from core.reinforcement_db import get_reinforcement
 from core.optimization import optimize_with_cascading_longitudinal_cuts
 import core.config_and_data as cfg
@@ -93,8 +94,8 @@ async def load_and_plan_production(message: Message, state: FSMContext):
     filter_method = data.get('filter_method', 'date')
     
     # === ЗАГРУЗКА КП В ЗАВИСИМОСТИ ОТ ФИЛЬТРА ===
-    db_path = PROJECT_ROOT / "plita.db"
-    pb_db_path = BOT_DIR / "pb.db"
+    db_path = PLITA_DB_PATH
+    pb_db_path = PB_DB_PATH
     kp_db.init_schema(str(db_path))
     
     conn = sqlite3.connect(db_path)

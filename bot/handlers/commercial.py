@@ -26,6 +26,7 @@ from core.config_and_data import set_plate_lists_from_text, get_current_plate_or
 import core.config_and_data as cfg
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
+from core.db_config import PB_DB_PATH
 from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core import kp_db
@@ -748,7 +749,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         
         # Группируем плиты по армированию (из БД)
         orders_by_reinforcement = defaultdict(list)
-        db_path = Path(__file__).parent.parent / "pb.db"
+        db_path = PB_DB_PATH
         
         if order.plate_load_details:
             logger.info("[COMMERCIAL] Используем PlateOrder (с нагрузками)")
