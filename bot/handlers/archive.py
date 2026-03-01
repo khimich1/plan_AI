@@ -1,6 +1,7 @@
 """Обработчики для архива коммерческих предложений"""
 import os
 import json
+import tempfile
 from pathlib import Path
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
@@ -362,8 +363,9 @@ async def download_xlsx(callback: CallbackQuery):
     xlsx_data = kp_db.get_xlsx_file(kp_id)
     
     if xlsx_data:
-        # Сохраняем во временный файл и отправляем
-        temp_path = f"/tmp/КП_{kp_id}.xlsx"
+        # Сохраняем во временный файл (кроссплатформенно: Windows/Linux)
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"КП_{kp_id}.xlsx")
         with open(temp_path, 'wb') as f:
             f.write(xlsx_data)
         
@@ -375,7 +377,7 @@ async def download_xlsx(callback: CallbackQuery):
         # Удаляем временный файл
         try:
             os.remove(temp_path)
-        except:
+        except Exception:
             pass
     else:
         await callback.message.answer(

@@ -178,7 +178,18 @@ def split_sequence_into_tracks(
                         current_track_length += solid_plate['length']
                         solid_reinf = solid_plate.get('reinforcement', 0) or 0
                         max_reinforcement_in_track = max(max_reinforcement_in_track, solid_reinf)
-                        # НЕ увеличиваем i - текущая плита с резом будет добавлена следующей итерацией
+                        # Если целая была ДО текущей — после pop текущая плита с резом сдвинулась на i-1; чтобы её обработать, уменьшаем i
+                        if found_solid_idx < i:
+                            i -= 1
+                            # #region agent log (95694e)
+                            try:
+                                _p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+                                with open(_p, 'a', encoding='utf-8') as _f:
+                                    _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_solid_before_i", "location": "visualization:split_tracks:empty_track", "message": "solid before cut: i-=1", "data": {"found_solid_idx": found_solid_idx, "i_before": i + 1, "group_label": group_label}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+                            except Exception:
+                                pass
+                            # #endregion
+                        # НЕ увеличиваем i иначе — текущая плита с резом будет добавлена следующей итерацией
                         continue
                     else:
                         logger.warning("[SPLIT_TRACKS] ВНИМАНИЕ: целой плиты для начала дорожки не найдено!")
@@ -236,7 +247,16 @@ def split_sequence_into_tracks(
                             split_idx = i if found_solid_idx > i else i - 1
                             items.pop(split_idx)
                             if found_solid_idx < i:
-                                i -= 1  # После двух pop следующий к обработке элемент теперь на позиции i-1
+                                _i_before = i
+                                i = found_solid_idx  # Следующей обрабатываем первый из "середины группы", плиты не теряются
+                                # #region agent log (95694e)
+                                try:
+                                    _p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+                                    with open(_p, 'a', encoding='utf-8') as _f:
+                                        _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_solid_before_i", "location": "visualization:split_tracks:will_exceed", "message": "solid before cut: i=found_solid_idx", "data": {"found_solid_idx": found_solid_idx, "i_before": _i_before, "group_label": group_label}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+                                except Exception:
+                                    pass
+                                # #endregion
                             # Закрываем дорожку ниже; затем current_track = [candidate, split_plate]
                             track_label = _label_from_track_items(current_track, group_label)
                             tracks.append({
@@ -374,6 +394,9 @@ def split_sequence_into_tracks(
                     current_track_length += solid_plate['length']
                     solid_reinf = solid_plate.get('reinforcement', 0) or 0
                     max_reinforcement_in_track = max(max_reinforcement_in_track, solid_reinf)
+                    # Если целая была ДО текущей — после pop текущая плита с резом сдвинулась на i-1
+                    if found_solid_idx < i:
+                        i -= 1
                     continue
                 else:
                     logger.warning("[SPLIT_TRACKS] ВНИМАНИЕ: целой плиты для начала дорожки не найдено!")
@@ -586,7 +609,42 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     # Стандартная логика: генерируем последовательность и разбиваем на дорожки (только если нет готовых дорожек)
     if not existing_tracks:
         seq = build_layout_sequence()
+        # #region agent log (95694e) количество 5.98/665 в seq до split (путь visualize_plan)
+        try:
+            def _c598665(s):
+                n = 0
+                if isinstance(s, list) and s and isinstance(s[0], dict) and s[0].get('load_code') is not None:
+                    for g in s:
+                        for it in g.get('sequence', []):
+                            L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
+                            w = it.get('width') or it.get('main_w') or 1.2
+                            w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
+                            if abs(L - 5.98) < 0.02 and w_mm == 665:
+                                n += 1
+                return n
+            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_seq_598665", "location": "visualization:visualize_plan:after_build_layout", "message": "count 5.98/665 in sequence before split", "data": {"count_598_665": _c598665(seq)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         tracks = split_sequence_into_tracks(seq, MAX_TRACK_LENGTH, MIN_TRACK_LENGTH)
+        # #region agent log (95694e) количество 5.98/665 в дорожках после split (путь visualize_plan)
+        try:
+            _nt = 0
+            for tr in (tracks or []):
+                for it in tr.get('items', []) or []:
+                    L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
+                    w = it.get('width') or it.get('main_w') or 1.2
+                    w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
+                    if abs(L - 5.98) < 0.02 and w_mm == 665:
+                        _nt += 1
+            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_598665", "location": "visualization:visualize_plan:after_split", "message": "count 5.98/665 in tracks after split", "data": {"count_598_665": _nt}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         total_length = sum(t['length'] for t in tracks)
     
     num_tracks_total = len(tracks)

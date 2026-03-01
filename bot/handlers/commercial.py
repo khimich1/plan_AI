@@ -531,9 +531,13 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 if parsed_length is None or parsed_width is None:
                     continue
                 parsed_load = cfg.parse_load_code_from_name(row_name)
-                if (abs(parsed_length - length_m) < 0.01
+                # Сопоставление по length_dm (как в get_price), иначе для номиналов 39/40
+                # parsed_length=3.88/3.98 не совпадает с length_m=3.9/4.0 при допуске 0.01
+                # Для 12,5п: из имени парсится 13, в заказе 12.5 — сравниваем через load_code_for_price_match
+                length_dm_match = (int(round(parsed_length * 10)) == int(round(length_m * 10)))
+                if (length_dm_match
                         and abs(parsed_width - width_m) < 0.01
-                        and cfg.normalize_load_code(parsed_load) == cfg.normalize_load_code(load_code)):
+                        and cfg.load_code_for_price_match(parsed_load) == cfg.load_code_for_price_match(load_code)):
                     matching_row = row
                     break
             if matching_row:
@@ -877,9 +881,12 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 if parsed_length is None or parsed_width is None:
                     continue
                 parsed_load = cfg.parse_load_code_from_name(row_name)
-                if (abs(parsed_length - length_m) < 0.01
+                # Сопоставление по length_dm (как в get_price), иначе для номиналов 39/40 не совпадает
+                # Для 12,5п: из имени парсится 13, в заказе 12.5 — сравниваем через load_code_for_price_match
+                length_dm_match = (int(round(parsed_length * 10)) == int(round(length_m * 10)))
+                if (length_dm_match
                         and abs(parsed_width - width_m) < 0.01
-                        and cfg.normalize_load_code(parsed_load) == cfg.normalize_load_code(load_code)):
+                        and cfg.load_code_for_price_match(parsed_load) == cfg.load_code_for_price_match(load_code)):
                     matching_row = row
                     break
             if matching_row:

@@ -6,6 +6,7 @@
 - Работа с базой цен SQLite
 - Поиск цен по параметрам
 """
+import math
 import os
 import re
 import sqlite3
@@ -209,15 +210,32 @@ def find_price_from_db(length_m: float, load_code: float | int = 8, db_path: str
         conn.close()
 
 
-def find_price_for_plate(price_table: dict, length_m: float, load_code: int = 8) -> float:
-    """Возвращает цену по длине и нагрузке."""
-    key = int(round(length_m*10))
-    if key in price_table and load_code in price_table[key]:
-        return price_table[key][load_code]
-    for Ldm, loads in price_table.items():
-        if abs(Ldm - key) <= 1 and load_code in loads:
-            return loads[load_code]
-    return None
+def find_price_for_plate(price_table: dict, length_m: float, load_code: int | float = 8) -> float | None:
+    """Возвращает цену по длине и нагрузке. Для нагрузки 12,5 используется цена из колонки 12 (целая часть)."""
+    key = int(round(length_m * 10))
+    try:
+        load_code_int = int(math.floor(load_code)) if load_code is not None else 8
+    except (TypeError, ValueError):
+        load_code_int = 8
+    if key in price_table and load_code_int in price_table[key]:
+        result = price_table[key][load_code_int]
+    else:
+        result = None
+        for Ldm, loads in price_table.items():
+            if abs(Ldm - key) <= 1 and load_code_int in loads:
+                result = loads[load_code_int]
+                break
+    # #region agent log
+    import json
+    import time
+    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-db7a51.log')
+    try:
+        with open(_log_path, 'a', encoding='utf-8') as _f:
+            _f.write(json.dumps({"sessionId": "db7a51", "hypothesisId": "find_price_for_plate", "location": "price_utils.py:find_price_for_plate", "message": "find_price_for_plate lookup", "data": {"length_m": length_m, "load_code": load_code, "load_code_int": load_code_int, "key": key, "result": result, "key_in_table": key in price_table, "loads_keys": list(price_table.get(key, {}).keys())}, "timestamp": int(time.time() * 1000)}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    return result
 
 
 def load_cut_price_from_docx(path: str) -> float:

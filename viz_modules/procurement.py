@@ -337,8 +337,21 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         if it.get('warning'):
             name += " (нагрузка?)"
         db_price = get_price(L, load_code, cfg.PRICE_DB_PATH)
-        base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, L, load_code) or 0.0)
-        
+        use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
+        find_price = find_price_for_plate(price_table, L, load_code) if use_fallback else None
+        base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
+        # #region agent log
+        import json
+        import os
+        import time
+        if base_price_1_2m == 0.0:
+            _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-db7a51.log')
+            try:
+                with open(_log_path, 'a', encoding='utf-8') as _f:
+                    _f.write(json.dumps({"sessionId": "db7a51", "hypothesisId": "build_price_rows", "location": "procurement.py:build_price_rows", "message": "price chain", "data": {"name": name, "L": L, "W": W, "load_code": load_code, "db_price": db_price, "find_price": find_price, "base_price_1_2m": base_price_1_2m}, "timestamp": int(time.time() * 1000)}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+        # #endregion
         if base_price_1_2m > 0:
             width_factor = W / 1.2
             base_price = base_price_1_2m * width_factor
@@ -625,7 +638,9 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8):
         else:
             # Fallback: если нет в БД, используем старый метод
             db_price = get_price(L, load_code, cfg.PRICE_DB_PATH)
-            base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, L, load_code) or 0.0)
+            use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
+            find_price = find_price_for_plate(price_table, L, load_code) if use_fallback else None
+            base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
             if base_price_1_2m > 0:
                 width_factor = W / 1.2
                 base_price = base_price_1_2m * width_factor
@@ -965,7 +980,9 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         if warning_flag:
             name += " (нагрузка?)"
         db_price = get_price(length, load_code, cfg.PRICE_DB_PATH)
-        base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, length, load_code) or 0.0)
+        use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
+        find_price = find_price_for_plate(price_table, length, load_code) if use_fallback else None
+        base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
         
         # Базовая цена с учетом ширины
         if base_price_1_2m > 0:
@@ -1491,7 +1508,9 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
         else:
             # Fallback
             db_price = get_price(length, load_code, cfg.PRICE_DB_PATH)
-            base_price_1_2m = db_price if db_price is not None else (find_price_for_plate(price_table, length, load_code) or 0.0)
+            use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
+            find_price = find_price_for_plate(price_table, length, load_code) if use_fallback else None
+            base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
             if base_price_1_2m > 0:
                 width_factor = width_m / 1.2
                 base_price = base_price_1_2m * width_factor

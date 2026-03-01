@@ -1,14 +1,14 @@
 {
   "plans": [
     {
-      "id": "plan_20260222_173501",
-      "name": "План с 22.02.2026",
-      "created_at": "2026-02-22 17:35:01",
-      "start_date": "2026-02-22",
-      "total_days": 7,
-      "tracks_count": 5,
-      "total_tracks": 33
+      "id": "plan_20260226_135820",
+      "name": "План с 26.02.2026",
+      "created_at": "2026-02-26 13:58:20",
+      "start_date": "2026-02-26",
+      "total_days": 29,
+      "tracks_count": 1,
+      "total_tracks": 29
     }
   ],
-  "active_plan_id": "plan_20260222_173501"
+  "active_plan_id": "plan_20260226_135820"
 }

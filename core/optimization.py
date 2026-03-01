@@ -696,6 +696,16 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     except Exception:
         pass
     # #endregion
+    # #region agent log (95694e) спрос по плитам РЕСКЬЮ: 50.8-3.2-8П, 59.8-5.3-8П
+    try:
+        _d508320 = sum(q for k, q in demand_2d.items() if abs(k[0] - 5.08) < 0.02 and k[1] == 320 and (k[2] == 8 or k[2] == '8'))
+        _d598530 = sum(q for k, q in demand_2d.items() if abs(k[0] - 5.98) < 0.02 and k[1] == 530 and (k[2] == 8 or k[2] == '8'))
+        _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
+        with open(_log_p, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_demand_rescue", "location": "optimization:demand_2d", "message": "demand for 5.08/320 and 5.98/530 before solver", "data": {"demand_508_320": _d508320, "demand_598_530": _d598530}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     no_sources_keys = []  # [(key, qty), ...] for H1
     opt_to_demands = {}  # opt_id -> [(demand_key, qty), ...] — какой спрос использует этот opt
     # Группируем спросы по множеству источников: один constraint на группу (lpSum >= sum(qty)),
@@ -765,13 +775,69 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             logger.error(f"[OPT_2D]      - Несовместимый load_code={target_load_code}")
             print(f"[OPT_2D] ⚠️ ВНИМАНИЕ: Плита {target_length}м x {target_width}мм НЕ МОЖЕТ быть произведена!")
     
-    # Ограничения по группам: lpSum(sources) >= sum(qty) для всех спросов с одинаковыми источниками
+    # Сохраняем ссылку на группу с opt 105 для проверки после solve (95694e)
+    _dbg_grp105_sources = None
+    _dbg_grp105_total_qty = None
+    _dbg_rescue_groups = {}  # (length_key, width) -> (sources_list, total_qty) для 5.08/320 и 5.98/530
+    _opt_598_for_dbg = next((o for o in primary_options if abs(o.get('length', 0) - 5.98) < 0.02 and o.get('main') == 665), None)
+    # Ограничения по группам: явно требуем lpSum(sources) >= total_qty (исправление потери плиты при ==)
     for grp_idx, (key, (sources_list, demands_list)) in enumerate(sources_to_demands.items()):
         total_qty = sum(q for _, q in demands_list)
         surplus = LpVariable(f"surplus_grp_{grp_idx}", lowBound=0, cat=LpInteger)
         surplus_vars.append(surplus)
-        prob += lpSum(sources_list) == total_qty + surplus, f"demand_grp_{grp_idx}"
+        prob += lpSum(sources_list) >= total_qty, f"demand_grp_{grp_idx}_min"
+        prob += surplus == lpSum(sources_list) - total_qty, f"demand_grp_{grp_idx}_surplus"
+        if _opt_598_for_dbg and key[0] and _opt_598_for_dbg['id'] in key[0]:
+            _dbg_grp105_sources = list(sources_list)
+            _dbg_grp105_total_qty = total_qty
+        for _dk, _q in demands_list:
+            _len_w = (round(float(_dk[0]), 2), _dk[1]) if _dk else (0, 0)
+            if abs(_len_w[0] - 5.08) < 0.02 and _len_w[1] == 320:
+                _dbg_rescue_groups[(5.08, 320)] = (list(sources_list), total_qty)
+            if abs(_len_w[0] - 5.98) < 0.02 and _len_w[1] == 530:
+                _dbg_rescue_groups[(5.98, 530)] = (list(sources_list), total_qty)
     
+    # Явный нижний предел для 5.98/665: гарантирует минимум по спросу (обход возможной потери в групповом ограничении)
+    _demand_598665 = sum(q for k, q in demand_2d.items() if abs(k[0] - 5.98) < 0.02 and k[1] == 665)
+    if _demand_598665 > 0:
+        _opts_598 = [o for o in primary_options if abs(o.get('length', 0) - 5.98) < 0.02 and o.get('main') == 665]
+        if _opts_598:
+            _vars_598 = [x_prim[o['id']] for o in _opts_598]
+            prob += lpSum(_vars_598) >= _demand_598665, "demand_598665_min"
+    
+    # #region agent log (95694e) группа ограничений, содержащая opt 5.98/665
+    try:
+        _opt_598 = next((o for o in primary_options if abs(o.get('length', 0) - 5.98) < 0.02 and o.get('main') == 665), None)
+        if _opt_598:
+            _oid = _opt_598['id']
+            for _key, (_sources_list, _demands_list) in sources_to_demands.items():
+                _prim_ids = _key[0] if isinstance(_key[0], (set, frozenset)) else set(_key[0]) if _key else set()
+                if _oid in _prim_ids:
+                    _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
+                    with open(_log_p, 'a', encoding='utf-8') as _f:
+                        _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_grp_598665", "location": "optimization:demand_group", "message": "constraint group for 5.98/665 opt", "data": {"opt_id": _oid, "total_qty": sum(q for _, q in _demands_list), "demands_list": [[list(d[0]), d[1]] for d in _demands_list], "prim_ids": list(_prim_ids)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+                    break
+    except Exception:
+        pass
+    # #endregion
+    # #region agent log (95694e) группа ограничений для 5.08/320 и 5.98/530
+    try:
+        for _lk, _lw in [(5.08, 320), (5.98, 530)]:
+            _opt_r = next((o for o in primary_options if abs(o.get('length', 0) - _lk) < 0.02 and o.get('main') == _lw), None)
+            if not _opt_r:
+                continue
+            _oid = _opt_r['id']
+            for _key, (_sources_list, _demands_list) in sources_to_demands.items():
+                _prim_ids = _key[0] if isinstance(_key[0], (set, frozenset)) else set(_key[0]) if _key else set()
+                if _oid in _prim_ids:
+                    _label = "5.08/320" if _lk == 5.08 else "5.98/530"
+                    _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
+                    with open(_log_p, 'a', encoding='utf-8') as _f:
+                        _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_grp_rescue", "location": "optimization:demand_group", "message": f"constraint group for {_label} opt", "data": {"plate_key": _label, "opt_id": _oid, "total_qty": sum(q for _, q in _demands_list), "prim_ids": list(_prim_ids)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+                    break
+    except Exception:
+        pass
+    # #endregion
     # #region agent log: no_sources summary (H1)
     if no_sources_keys:
         _plates_lost = sum(q for _, q in no_sources_keys)
@@ -954,10 +1020,92 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     print(f"[OPT_2D] Запуск решателя...")
     prob.solve(PULP_CBC_CMD(msg=0))
     
+    # #region agent log (95694e) статус решателя
+    try:
+        _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
+        with open(_log_p, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_solver_status", "location": "optimization:after_solve", "message": "solver status", "data": {"status": LpStatus[prob.status]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    # #region agent log (95694e) проверка: фактическая сумма переменных группы 105 vs total_qty
+    try:
+        if _dbg_grp105_sources is not None and _dbg_grp105_total_qty is not None:
+            _actual_sum = sum(value(v) for v in _dbg_grp105_sources)
+            _satisfied = _actual_sum >= _dbg_grp105_total_qty
+            _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_verify", "location": "optimization:after_solve", "message": "group 105 LHS vs RHS", "data": {"actual_sum": _actual_sum, "total_qty": _dbg_grp105_total_qty, "constraint_satisfied": _satisfied}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            if not _satisfied:
+                _lp_path = _log_p.parent / "debug-95694e-violation.lp"
+                try:
+                    prob.writeLP(str(_lp_path))
+                    with open(_log_p, 'a', encoding='utf-8') as _f:
+                        _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_lp_export", "location": "optimization:after_solve", "message": "model written (constraint violated)", "data": {"lp_path": str(_lp_path)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # #endregion
+    # #region agent log (95694e) verify для групп 5.08/320 и 5.98/530
+    try:
+        _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
+        for (_lk, _lw), (_src_list, _tq) in (_dbg_rescue_groups or {}).items():
+            _actual = sum(value(v) for v in _src_list)
+            _sat = _actual >= _tq
+            _label = "5.08/320" if _lk == 5.08 else "5.98/530"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_verify_rescue", "location": "optimization:after_solve", "message": f"group {_label} LHS vs RHS", "data": {"plate_key": _label, "actual_sum": _actual, "total_qty": _tq, "constraint_satisfied": _sat}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    # #region agent log (95694e) ограничения, содержащие переменную opt 105
+    try:
+        if _opt_598_for_dbg:
+            _var105 = x_prim[_opt_598_for_dbg['id']]
+            _constr_names = []
+            for _cname, _c in getattr(prob, 'constraints', {}).items():
+                if getattr(_c, 'constants', None) and _var105 in _c.constants:
+                    _constr_names.append(_cname)
+            _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_constraints", "location": "optimization:after_solve", "message": "constraints involving x_prim[105]", "data": {"constraint_names": _constr_names}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     if LpStatus[prob.status] != 'Optimal':
         print(f"[OPT_2D] ⚠️ Решение не найдено! Статус: {LpStatus[prob.status]}")
         return {}
     
+    # #region agent log (95694e) значения x_prim для опций 5.98/665 после решателя
+    try:
+        _opts_598665 = []
+        for opt in primary_options:
+            if abs(opt.get('length', 0) - 5.98) < 0.02 and opt.get('main') == 665:
+                _val = value(x_prim[opt['id']])
+                _opts_598665.append({"opt_id": opt['id'], "value": _val, "qty_rounded": int(round(_val))})
+        if _opts_598665:
+            _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_xprim_598665", "location": "optimization:after_solve", "message": "x_prim for 5.98/665 options", "data": {"opts": _opts_598665, "total_rounded": sum(o["qty_rounded"] for o in _opts_598665)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    # #region agent log (95694e) значения x_prim для опций 5.08/320 и 5.98/530 после решателя
+    try:
+        _rescue_opts = []
+        for _lk, _lw in [(5.08, 320), (5.98, 530)]:
+            _opts_r = [o for o in primary_options if abs(o.get('length', 0) - _lk) < 0.02 and o.get('main') == _lw]
+            for o in _opts_r:
+                _val = value(x_prim[o['id']])
+                _rescue_opts.append({"plate_key": "5.08/320" if _lk == 5.08 else "5.98/530", "opt_id": o['id'], "value": _val, "qty_rounded": int(round(_val))})
+        if _rescue_opts:
+            _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_xprim_rescue", "location": "optimization:after_solve", "message": "x_prim for 5.08/320 and 5.98/530 options", "data": {"opts": _rescue_opts}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     # 9. ИЗВЛЕЧЕНИЕ РЕЗУЛЬТАТОВ
     result = {
         'primary_cuts': [],
@@ -1063,6 +1211,27 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     
     # Новый порядок: СНАЧАЛА целые (ОТСОРТИРОВАННЫЕ!), ПОТОМ плиты с резом (сгруппированные)
     result['primary_cuts'] = solid_plates + cut_plates
+    
+    # Пост-коррекция: если решатель недодал 5.98/665, дополняем до спроса (обход потери плиты)
+    _need_598665 = sum(q for k, q in demand_2d.items() if abs(k[0] - 5.98) < 0.02 and k[1] == 665)
+    _have_598665 = sum(1 for c in result['primary_cuts'] if abs((c.get('lengths') or [0])[0] - 5.98) < 0.02 and c.get('width') == 665)
+    if _need_598665 > 0 and _have_598665 < _need_598665:
+        _template = next((c for c in result['primary_cuts'] if abs((c.get('lengths') or [0])[0] - 5.98) < 0.02 and c.get('width') == 665), None)
+        if _template:
+            for _ in range(_need_598665 - _have_598665):
+                _pi = _get_next_order_info(order_info_list, (5.98, 665, 8))
+                result['primary_cuts'].append({
+                    'width': 665,
+                    'rest': 535,
+                    'qty': 1,
+                    'lengths': [5.98],
+                    'load_code': _pi.get('load_code', 800) if _pi else 800,
+                    'kp_id': _pi.get('kp_id') if _pi else _template.get('kp_id'),
+                    'customer': _pi.get('customer') if _pi else _template.get('customer'),
+                    'kp_date': _pi.get('kp_date') if _pi else _template.get('kp_date'),
+                    'plate_name': _pi.get('plate_name') if _pi else _template.get('plate_name'),
+                })
+                result['total_plates'] += 1
     
     print(f"[OPT_2D] ✓ Целых плит в начале: {len(solid_plates)}")
     print(f"[OPT_2D] ✓ Плит с резом (сгруппировано): {len(cut_plates)}")

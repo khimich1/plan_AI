@@ -736,6 +736,36 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         
         PlateOrder.from_orders_2d(orders_2d).apply_to_globals()
         
+        # #region agent log (95694e) количество 5.98/665 в результате оптимизации (primary_cuts)
+        try:
+            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _n_opt = 0
+            for _c in optimization_result.get('primary_cuts', []) or []:
+                _L = round(float((_c.get('lengths') or [6.0])[0]), 2)
+                _w = _c.get('width') or 1200
+                if abs(_L - 5.98) < 0.02 and _w == 665:
+                    _n_opt += _c.get('qty', 1)
+            with open(_log_95694e, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_opt_598665", "location": "production_execution:after_optimization", "message": "count 5.98/665 in optimization_result primary_cuts", "data": {"count_598_665": _n_opt}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # #region agent log (95694e) количество 5.08/320 и 5.98/530 в primary_cuts
+        try:
+            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _n_508320 = _n_598530 = 0
+            for _c in optimization_result.get('primary_cuts', []) or []:
+                _L = round(float((_c.get('lengths') or [6.0])[0]), 2)
+                _w = _c.get('width') or 1200
+                if abs(_L - 5.08) < 0.02 and _w == 320:
+                    _n_508320 += _c.get('qty', 1)
+                if abs(_L - 5.98) < 0.02 and _w == 530:
+                    _n_598530 += _c.get('qty', 1)
+            with open(_log_95694e, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_opt_rescue", "location": "production_execution:after_optimization", "message": "count 5.08/320 and 5.98/530 in primary_cuts", "data": {"count_508_320": _n_508320, "count_598_530": _n_598530}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # === ШАГ 6: ПОДСЧЕТ ДОРОЖЕК ===
         await message.answer("⏳ Подсчитываю дорожки...")
         
@@ -757,7 +787,80 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         except Exception:
             pass
         # #endregion
+        # #region agent log (95694e) количество 5.98/665 в последовательности до split
+        try:
+            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            def _count_598_665_in_seq(s):
+                n = 0
+                if isinstance(s, list) and s and isinstance(s[0], dict) and s[0].get('load_code') is not None:
+                    for g in s:
+                        for it in g.get('sequence', []):
+                            L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
+                            w = it.get('width') or it.get('main_w') or 1.2
+                            w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
+                            if abs(L - 5.98) < 0.02 and w_mm == 665:
+                                n += 1
+                return n
+            _n_seq = _count_598_665_in_seq(seq)
+            with open(_log_95694e, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_seq_598665", "location": "production_execution:after_build_layout", "message": "count 5.98/665 in sequence before split", "data": {"count_598_665": _n_seq}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # #region agent log (95694e) количество 5.08/320 и 5.98/530 в последовательности до split
+        try:
+            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _n508, _n598 = 0, 0
+            if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
+                for g in seq:
+                    for it in g.get('sequence', []):
+                        L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
+                        w = it.get('width') or it.get('main_w') or 1.2
+                        w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
+                        if abs(L - 5.08) < 0.02 and w_mm == 320:
+                            _n508 += 1
+                        if abs(L - 5.98) < 0.02 and w_mm == 530:
+                            _n598 += 1
+            with open(_log_95694e, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_seq_rescue", "location": "production_execution:after_build_layout", "message": "count 5.08/320 and 5.98/530 in sequence before split", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         all_tracks_list = split_sequence_into_tracks(seq)
+        # #region agent log (95694e) количество 5.98/665 в дорожках после split
+        try:
+            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _n_tracks = 0
+            for tr in (all_tracks_list or []):
+                for it in tr.get('items', []) or []:
+                    L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
+                    w = it.get('width') or it.get('main_w') or 1.2
+                    w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
+                    if abs(L - 5.98) < 0.02 and w_mm == 665:
+                        _n_tracks += 1
+            with open(_log_95694e, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_598665", "location": "production_execution:after_split", "message": "count 5.98/665 in tracks after split", "data": {"count_598_665": _n_tracks}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # #region agent log (95694e) количество 5.08/320 и 5.98/530 в дорожках после split
+        try:
+            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _n508, _n598 = 0, 0
+            for tr in (all_tracks_list or []):
+                for it in tr.get('items', []) or []:
+                    L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
+                    w = it.get('width') or it.get('main_w') or 1.2
+                    w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
+                    if abs(L - 5.08) < 0.02 and w_mm == 320:
+                        _n508 += 1
+                    if abs(L - 5.98) < 0.02 and w_mm == 530:
+                        _n598 += 1
+            with open(_log_95694e, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_rescue", "location": "production_execution:after_split", "message": "count 5.08/320 and 5.98/530 in tracks after split", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # #region agent log (73b708) H_WHERE_TRACKS: сколько плит по целевым ключам в треках после split_sequence_into_tracks
         try:
             _target_keys = [(5.08, 320, 8), (5.98, 665, 8)]

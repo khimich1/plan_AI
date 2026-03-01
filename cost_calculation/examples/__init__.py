@@ -1,2 +1,0 @@
-# Examples for cost calculation
-

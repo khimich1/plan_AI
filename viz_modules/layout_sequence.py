@@ -263,7 +263,40 @@ def build_layout_sequence():
     print(f"[VISUAL] Проверяем OPT_CASCADING_PLAN_BY_LOAD: {bool(OPT_CASCADING_PLAN_BY_LOAD)}")
     if OPT_CASCADING_PLAN_BY_LOAD:
         print(f"[VISUAL] ✅ Используем группировку по нагрузкам! Групп: {len(OPT_CASCADING_PLAN_BY_LOAD)}")
-        
+        # #region agent log (95694e) сколько 5.98/665 в планах по нагрузкам (вход в layout)
+        try:
+            _n_598665 = 0
+            for _lg in sorted(OPT_CASCADING_PLAN_BY_LOAD.keys()):
+                _p = OPT_CASCADING_PLAN_BY_LOAD[_lg]
+                for _c in _p.get('primary_cuts', []):
+                    _L = round(float((_c.get('lengths') or [6.0])[0]), 2)
+                    _w = _c.get('width') or 1200
+                    if abs(_L - 5.98) < 0.02 and _w == 665:
+                        _n_598665 += _c.get('qty', 1)
+            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_plan_598665", "location": "layout_sequence:build_layout_sequence:plans_in", "message": "count 5.98/665 in primary_cuts across all load plans", "data": {"count_598_665": _n_598665}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # #region agent log (95694e) сколько 5.08/320 и 5.98/530 в планах по нагрузкам (вход в layout)
+        try:
+            _n_508320 = _n_598530 = 0
+            for _lg in sorted(OPT_CASCADING_PLAN_BY_LOAD.keys()):
+                _p = OPT_CASCADING_PLAN_BY_LOAD[_lg]
+                for _c in _p.get('primary_cuts', []):
+                    _L = round(float((_c.get('lengths') or [6.0])[0]), 2)
+                    _w = _c.get('width') or 1200
+                    if abs(_L - 5.08) < 0.02 and _w == 320:
+                        _n_508320 += _c.get('qty', 1)
+                    if abs(_L - 5.98) < 0.02 and _w == 530:
+                        _n_598530 += _c.get('qty', 1)
+            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_plan_rescue", "location": "layout_sequence:build_layout_sequence:plans_in", "message": "count 5.08/320 and 5.98/530 in primary_cuts across all load plans", "data": {"count_508_320": _n_508320, "count_598_530": _n_598530}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         all_sequences = []
         
         for load_group in sorted(OPT_CASCADING_PLAN_BY_LOAD.keys()):
@@ -294,6 +327,40 @@ def build_layout_sequence():
             
             print(f"[VISUAL]   → {len(group_sequence)} плит в группе")
         
+        # #region agent log (95694e) сколько 5.98/665 в последовательностях после _build_sequence_from_plan
+        try:
+            _n_out = 0
+            for _gr in all_sequences:
+                for _it in _gr.get('sequence', []) or []:
+                    _L = round(float(_it.get('length', 0) or _it.get('target_length', 0)), 2)
+                    _w = _it.get('width') or _it.get('main_w') or 1.2
+                    _w_mm = round(float(_w) * 1000) if float(_w) < 20 else round(float(_w))
+                    if abs(_L - 5.98) < 0.02 and _w_mm == 665:
+                        _n_out += 1
+            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_layout_out_598665", "location": "layout_sequence:build_layout_sequence:plans_out", "message": "count 5.98/665 in sequences after _build_sequence_from_plan", "data": {"count_598_665": _n_out}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # #region agent log (95694e) сколько 5.08/320 и 5.98/530 в последовательностях после _build_sequence_from_plan
+        try:
+            _n508, _n598 = 0, 0
+            for _gr in all_sequences:
+                for _it in _gr.get('sequence', []) or []:
+                    _L = round(float(_it.get('length', 0) or _it.get('target_length', 0)), 2)
+                    _w = _it.get('width') or _it.get('main_w') or 1.2
+                    _w_mm = round(float(_w) * 1000) if float(_w) < 20 else round(float(_w))
+                    if abs(_L - 5.08) < 0.02 and _w_mm == 320:
+                        _n508 += 1
+                    if abs(_L - 5.98) < 0.02 and _w_mm == 530:
+                        _n598 += 1
+            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            with open(_log_p, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_layout_out_rescue", "location": "layout_sequence:build_layout_sequence:plans_out", "message": "count 5.08/320 and 5.98/530 in sequences after _build_sequence_from_plan", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # НОВЫЙ ФОРМАТ ВОЗВРАТА: список групп по нагрузкам
         return all_sequences
     

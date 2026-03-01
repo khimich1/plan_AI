@@ -6,6 +6,7 @@
 - Глобальные списки плит
 - Парсинг текста пользователя
 """
+import math
 import os
 import re
 import logging
@@ -878,14 +879,19 @@ def make_plate_name(
 def parse_name_to_sizes(name: str) -> tuple:
     """Достаёт (length_m, width_m) из строки прайса.
     Длина — по правилу length_dm_to_m (целое → номинал−20мм; с запятой/точкой → дм/10).
-    Ширина — всегда дм/10. Примеры: '39-12' → (3.88, 1.2); '38,9-12' → (3.89, 1.2)."""
+    Ширина: для лент 0.2 м и 0.3 м в марке записаны метры ('0.2'/'0.3'); для остальных — дециметры, делим на 10.
+    Примеры: '39-12' → (3.88, 1.2); '38,9-12' → (3.89, 1.2); '25,4-0.3-8п' → (2.54, 0.3)."""
     s = name.replace(',', '.')
     m = re.search(r'(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)', s)
     if not m:
         return None, None
     length_m = length_dm_to_m(m.group(1))
-    width_dm = float(m.group(2))
-    return length_m, width_dm / 10.0
+    width_raw = float(m.group(2))
+    if abs(width_raw - 0.3) < 1e-6 or abs(width_raw - 0.2) < 1e-6:
+        width_m = width_raw  # ленты 0.3 м / 0.2 м в марке уже в метрах
+    else:
+        width_m = width_raw / 10.0
+    return length_m, width_m
 
 
 def parse_load_code_from_name(name: str, default: int = 8) -> int:
@@ -964,6 +970,23 @@ def normalize_load_code(value, default: int = 8):
     
     # Оставляем дробный код (например, 12.5)
     return round(val, 1)
+
+
+def load_code_for_price_match(value, default: int = 8) -> int:
+    """
+    Код нагрузки для сопоставления при подборе цены в КП.
+    Для 12.5 и 13 возвращает 12 (в БД и прайсе только 12), для остальных — floor(normalize_load_code).
+    """
+    n = normalize_load_code(value, default=default)
+    if n is None:
+        return default
+    try:
+        v = float(n)
+    except (TypeError, ValueError):
+        return default
+    if abs(v - 12.5) < 1e-6 or abs(v - 13) < 1e-6:
+        return 12
+    return int(math.floor(v))
 
 
 def get_load_code_for_plate(length_m: float, width_m: float, default: int = 8) -> int:
