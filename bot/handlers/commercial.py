@@ -420,16 +420,6 @@ async def generate_all_documents(message: Message, state: FSMContext):
         
         # Собираем все плиты в один список orders_2d из заказа (изоляция по пользователю)
         orders_2d = order.to_orders_2d()
-        # #region agent log
-        try:
-            _tq = sum(o['qty'] for o in orders_2d) if orders_2d else 0
-            _sample = [(round(o.get('length', 0), 3), o.get('width'), o.get('qty')) for o in (orders_2d or [])[:5]]
-            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(
-                __import__("json").dumps({"hypothesisId": "H1", "location": "commercial:orders_2d_after_parse", "message": "KP creation orders_2d", "data": {"total_qty": _tq, "types": len(orders_2d or []), "sample": _sample}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n"
-            )
-        except Exception:
-            pass
-        # #endregion
         if orders_2d:
             logger.info("[COMMERCIAL] Используем PlateOrder (с нагрузками)")
         
@@ -474,14 +464,6 @@ async def generate_all_documents(message: Message, state: FSMContext):
                     
                     total_plates = optimization_result.get('total_plates', 0)
                     total_cost = optimization_result.get('total_cost', 0)
-                    # #region agent log
-                    try:
-                        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(
-                            __import__("json").dumps({"hypothesisId": "H1", "location": "commercial:after_optimization", "message": "total_plates from optimizer", "data": {"total_plates": total_plates, "input_qty": sum(o['qty'] for o in orders_2d)}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n"
-                        )
-                    except Exception:
-                        pass
-                    # #endregion
                     logger.info(
                         f"[COMMERCIAL] Оптимизация завершена: {total_plates} плит, {total_cost:,} ₽".replace(",", " ")
                     )
@@ -532,11 +514,11 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 if parsed_length is None or parsed_width is None:
                     continue
                 parsed_load = cfg.parse_load_code_from_name(row_name)
-                # Сопоставление по length_dm (как в get_price), иначе для номиналов 39/40
-                # parsed_length=3.88/3.98 не совпадает с length_m=3.9/4.0 при допуске 0.01
+                # Сопоставление по длине с допуском 0.01 м: различаем 6.35 и 6.37 (не склеиваем в один round(63.5)=64).
+                # Раньше int(round(parsed_length*10))==int(round(length_m*10)) давало одну строку сметы на 6.35 и 6.37.
                 # Для 12,5п: из имени парсится 13, в заказе 12.5 — сравниваем через load_code_for_price_match
-                length_dm_match = (int(round(parsed_length * 10)) == int(round(length_m * 10)))
-                if (length_dm_match
+                length_match = abs(parsed_length - length_m) < 0.01
+                if (length_match
                         and abs(parsed_width - width_m) < 0.01
                         and cfg.load_code_for_price_match(parsed_load) == cfg.load_code_for_price_match(load_code)):
                     matching_row = row
@@ -555,12 +537,57 @@ async def generate_all_documents(message: Message, state: FSMContext):
                     weight = 0.0
                 match = re.search(r'ПБ\s+([\d,]+)-', name)
                 length_dm_raw = match.group(1).strip() if match else ''
+                # Не подменять имя/длину, если у позиции явно задан length_dm_raw и он отличается от подстроки в строке сметы (57 vs 57,1)
+                item_ldr = item.get('length_dm_raw')
+                if item_ldr and length_dm_raw and length_dm_raw != item_ldr:
+                    name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
+                    length_dm_raw = item_ldr
             else:
-                name = cfg.make_plate_name(length_m, width_m, load_code=load_code)
+                # #region agent log
+                try:
+                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-b59370.log')
+                    with open(_log_path, 'a', encoding='utf-8') as _f:
+                        _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+                # length_dm_raw из item прокинут из build_procurement_items (57,1 не теряется)
+                item_ldr = item.get('length_dm_raw') or None
+                name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
                 unit_price = 0.0
                 weight = 0.0
-                length_dm_raw = f'{length_m * 10:.1f}'.rstrip('0').rstrip('.').replace('.', ',') if length_m else ''
-            order_data.append({
+                length_dm_raw = item_ldr or (
+                    f'{length_m * 10:.1f}'.rstrip('0').rstrip('.').replace('.', ',') if length_m else ''
+                )
+            # Если кэш номенклатуры уже содержит canonical_name для этой позиции —
+            # используем его вместо имени из сметы/make_plate_name, а nomenclature_id
+            # подставляем сразу, чтобы enrich не делал повторный поиск по БД.
+            cache_name = item.get('canonical_name')
+            cache_nid = item.get('nomenclature_id')
+            if cache_name:
+                name = cache_name
+                _raw_match = re.search(r'ПБ\s+([\d,]+)-', name)
+                length_dm_raw = _raw_match.group(1).strip() if _raw_match else length_dm_raw
+            # #region agent log (57/57,1: итоговое имя в order_data)
+            if 5.69 <= length_m <= 5.73:
+                try:
+                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-8e9428.log')
+                    with open(_log_path, 'a', encoding='utf-8') as _f:
+                        _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_order_data", "location": "commercial:order_data_loop", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            # #endregion
+            # #region agent log (a9176e: 57/57,1 — order_data: matching_row + итоговое имя)
+            if 5.69 <= length_m <= 5.73:
+                try:
+                    _parsed = (cfg.parse_name_to_sizes(matching_row[1]) if matching_row and len(matching_row) > 1 else (None, None))
+                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-a9176e.log')
+                    with open(_log_path, 'a', encoding='utf-8') as _f:
+                        _f.write(__import__('json').dumps({"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            # #endregion
+            entry = {
                 "name": name,
                 "length_m": length_m,
                 "length_dm_raw": length_dm_raw,
@@ -568,8 +595,11 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 "qty": qty,
                 "load_class": (cfg.normalize_load_code(load_code) or 8) * 100 if load_code is not None else 800,
                 "unit_price": unit_price,
-                "weight": weight
-            })
+                "weight": weight,
+            }
+            if cache_nid is not None:
+                entry['nomenclature_id'] = cache_nid
+            order_data.append(entry)
         total_order_data = sum(i['qty'] for i in order_data)
         total_orders_2d = sum(o['qty'] for o in orders_2d) if orders_2d else 0
         if total_orders_2d and total_order_data != total_orders_2d:
@@ -592,6 +622,10 @@ async def generate_all_documents(message: Message, state: FSMContext):
             await state.clear()
             return
         
+        # 🆕 Обогащаем order_data точными названиями из prays_plity
+        from core.kp_db import enrich_order_data_with_nomenclature
+        order_data = await asyncio.to_thread(enrich_order_data_with_nomenclature, order_data)
+
         # #region agent log
         try:
             _od_total = sum(i.get('qty', 0) for i in order_data)
@@ -753,9 +787,11 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         
         if order.plate_load_details:
             logger.info("[COMMERCIAL] Используем PlateOrder (с нагрузками)")
-            for (length, width_m, load_code), qty in order.plate_load_details.items():
+            for key, qty in order.plate_load_details.items():
+                length, width_m, load_code = key[0], key[1], key[2]
+                ldr = key[3] if len(key) > 3 else order.plate_length_dm_raw.get(key, '')
                 width_mm = int(round(width_m * 1000))
-                
+
                 # Получаем армирование из БД по (длина, нагрузка)
                 reinforcement_value = get_reinforcement(
                     length_m=length,
@@ -764,19 +800,20 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                     db_path=db_path,
                     allow_fallback=True
                 )
-                
+
                 # Если не нашли в БД - используем fallback (группируем по нагрузке)
                 if reinforcement_value is None:
                     reinforcement_key = f"load_{math.floor(load_code)}"
                 else:
                     reinforcement_key = round(reinforcement_value, 1)
-                
+
                 orders_by_reinforcement[reinforcement_key].append({
                     'length': length,
                     'width': width_mm,
                     'qty': qty,
                     'load_code': load_code,
-                    'reinforcement': reinforcement_value
+                    'reinforcement': reinforcement_value,
+                    'length_dm_raw': ldr,
                 })
         
         # Запускаем оптимизацию для каждой группы армирования
@@ -882,10 +919,10 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 if parsed_length is None or parsed_width is None:
                     continue
                 parsed_load = cfg.parse_load_code_from_name(row_name)
-                # Сопоставление по length_dm (как в get_price), иначе для номиналов 39/40 не совпадает
+                # Сопоставление по длине с допуском 0.01 м: различаем 6.35 и 6.37 (не склеиваем в один round).
                 # Для 12,5п: из имени парсится 13, в заказе 12.5 — сравниваем через load_code_for_price_match
-                length_dm_match = (int(round(parsed_length * 10)) == int(round(length_m * 10)))
-                if (length_dm_match
+                length_match = abs(parsed_length - length_m) < 0.01
+                if (length_match
                         and abs(parsed_width - width_m) < 0.01
                         and cfg.load_code_for_price_match(parsed_load) == cfg.load_code_for_price_match(load_code)):
                     matching_row = row
@@ -904,12 +941,57 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                     weight = 0.0
                 match = re.search(r'ПБ\s+([\d,]+)-', name)
                 length_dm_raw = match.group(1).strip() if match else ''
+                # Не подменять имя/длину, если у позиции явно задан length_dm_raw и он отличается от подстроки в строке сметы (57 vs 57,1)
+                item_ldr = item.get('length_dm_raw')
+                if item_ldr and length_dm_raw and length_dm_raw != item_ldr:
+                    name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
+                    length_dm_raw = item_ldr
             else:
-                name = cfg.make_plate_name(length_m, width_m, load_code=load_code)
+                # #region agent log
+                try:
+                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-b59370.log')
+                    with open(_log_path, 'a', encoding='utf-8') as _f:
+                        _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+                # length_dm_raw из item прокинут из build_procurement_items (57,1 не теряется)
+                item_ldr = item.get('length_dm_raw') or None
+                name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
                 unit_price = 0.0
                 weight = 0.0
-                length_dm_raw = f'{length_m * 10:.1f}'.rstrip('0').rstrip('.').replace('.', ',') if length_m else ''
-            order_data.append({
+                length_dm_raw = item_ldr or (
+                    f'{length_m * 10:.1f}'.rstrip('0').rstrip('.').replace('.', ',') if length_m else ''
+                )
+            # Если кэш номенклатуры уже содержит canonical_name для этой позиции —
+            # используем его вместо имени из сметы/make_plate_name, а nomenclature_id
+            # подставляем сразу, чтобы enrich не делал повторный поиск по БД.
+            cache_name = item.get('canonical_name')
+            cache_nid = item.get('nomenclature_id')
+            if cache_name:
+                name = cache_name
+                _raw_match = re.search(r'ПБ\s+([\d,]+)-', name)
+                length_dm_raw = _raw_match.group(1).strip() if _raw_match else length_dm_raw
+            # #region agent log (57/57,1: итоговое имя в order_data, альт. поток)
+            if 5.69 <= length_m <= 5.73:
+                try:
+                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-8e9428.log')
+                    with open(_log_path, 'a', encoding='utf-8') as _f:
+                        _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_order_data_alt", "location": "commercial:order_data_loop_alt", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            # #endregion
+            # #region agent log (a9176e: 57/57,1 — order_data alt flow)
+            if 5.69 <= length_m <= 5.73:
+                try:
+                    _parsed = (cfg.parse_name_to_sizes(matching_row[1]) if matching_row and len(matching_row) > 1 else (None, None))
+                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-a9176e.log')
+                    with open(_log_path, 'a', encoding='utf-8') as _f:
+                        _f.write(__import__('json').dumps({"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop_alt", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            # #endregion
+            entry = {
                 "name": name,
                 "length_m": length_m,
                 "length_dm_raw": length_dm_raw,
@@ -917,8 +999,11 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 "qty": qty,
                 "load_class": (cfg.normalize_load_code(load_code) or 8) * 100 if load_code is not None else 800,
                 "unit_price": unit_price,
-                "weight": weight
-            })
+                "weight": weight,
+            }
+            if cache_nid is not None:
+                entry['nomenclature_id'] = cache_nid
+            order_data.append(entry)
         total_order_data = sum(i['qty'] for i in order_data)
         plan_orders = get_orders_from_opt_plan() or []
         total_plan = sum(o['qty'] for o in plan_orders)

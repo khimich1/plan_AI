@@ -172,7 +172,8 @@ def build_layout_sequence():
     db_path = Path(__file__).parent.parent / "pb.db"
     if cfg.PLATE_LOAD_DETAILS:
         print(f"[VISUAL] Начинаем создание карты армирования из {len(cfg.PLATE_LOAD_DETAILS)} записей")
-        for (length, width_m, load_code), qty in cfg.PLATE_LOAD_DETAILS.items():
+        for key, qty in cfg.PLATE_LOAD_DETAILS.items():
+            length, width_m, load_code = key[0], key[1], key[2]
             width_mm = int(round(width_m * 1000))
             reinforcement = get_reinforcement(
                 length_m=length,
@@ -251,7 +252,8 @@ def build_layout_sequence():
         """
         resolved_load = load_code
         if resolved_load is None and cfg.PLATE_LOAD_DETAILS:
-            for (plate_L, plate_W, plate_load), qty in cfg.PLATE_LOAD_DETAILS.items():
+            for key, qty in cfg.PLATE_LOAD_DETAILS.items():
+                plate_L, plate_W, plate_load = key[0], key[1], key[2]
                 if abs(plate_L - L) < 0.05 and abs(plate_W - W) < 0.01:
                     resolved_load = plate_load
                     break

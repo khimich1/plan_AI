@@ -40,7 +40,7 @@ def test_procurement_with_different_loads():
     
     print("\nPLATE_LOAD_DETAILS:")
     for key, qty in sorted(cfg.PLATE_LOAD_DETAILS.items()):
-        length, width, load = key
+        length, width, load = key[0], key[1], key[2]
         print(f"  {qty}x {length}m x {width}m with load {load}p")
     
     # Получаем items закупки

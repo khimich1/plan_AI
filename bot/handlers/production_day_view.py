@@ -419,8 +419,13 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                 if plate_name:
                     plate_str = f"{plate_name}"
                 else:
-                    # Формируем имя плиты самостоятельно
-                    length_dm = int(round(plate['length'] * 10))
+                    # Формируем имя плиты самостоятельно (логика длины как в make_plate_name — 57 vs 57,1)
+                    length_m = plate['length']
+                    length_dm_val = length_m * 10
+                    if abs(length_dm_val - round(length_dm_val)) < 0.01:
+                        length_str = str(int(round(length_dm_val)))
+                    else:
+                        length_str = f'{length_dm_val:.1f}'.rstrip('0').rstrip('.').replace('.', ',')
                     width_mm = int(plate['width'])
                     
                     # Определяем нагрузку (по умолчанию 8п)
@@ -447,9 +452,18 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                         else:
                             width_str = str(width_dm).replace('.', ',')
                     
-                    plate_str = f"ПБ {length_dm}-{width_str}-{load_code}п"
+                    plate_str = f"ПБ {length_str}-{width_str}-{load_code}п"
                     # Сохраняем сформированное имя обратно в plate_name для использования в Excel
                     plate['plate_name'] = plate_str
+                    # #region agent log (57/57,1: post-fix verification)
+                    if 5.69 <= plate.get('length', 0) <= 5.73:
+                        try:
+                            _log_path = os.path.join(PROJECT_ROOT, 'debug-8e9428.log')
+                            with open(_log_path, 'a', encoding='utf-8') as _f:
+                                _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_prod_view_track", "location": "production_day_view:track_plate_str", "message": "57/57,1: plate_str (post-fix)", "data": {"plate_length": plate['length'], "length_str": length_str, "plate_str": plate_str}, "timestamp": __import__("time").time() * 1000, "runId": "post-fix"}, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                    # #endregion
                 
                 track_message += (
                     f"  🔹 {plate_str} × {plate['qty']} шт "
@@ -871,7 +885,13 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                 # Форматируем имена плит если нужно
                 for plate in plates_info:
                     if not plate.get('plate_name'):
-                        length_dm = int(round(plate['length'] * 10))
+                        # Логика длины как в make_plate_name — 57 vs 57,1
+                        length_m = plate['length']
+                        length_dm_val = length_m * 10
+                        if abs(length_dm_val - round(length_dm_val)) < 0.01:
+                            length_str = str(int(round(length_dm_val)))
+                        else:
+                            length_str = f'{length_dm_val:.1f}'.rstrip('0').rstrip('.').replace('.', ',')
                         width_mm = int(plate['width'])
                         
                         load_code = 8
@@ -895,7 +915,17 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                             else:
                                 width_str = str(width_dm).replace('.', ',')
                         
-                        plate['plate_name'] = f"ПБ {length_dm}-{width_str}-{load_code}п"
+                        plate_str_val = f"ПБ {length_str}-{width_str}-{load_code}п"
+                        plate['plate_name'] = plate_str_val
+                        # #region agent log (57/57,1: post-fix verification)
+                        if 5.69 <= plate['length'] <= 5.73:
+                            try:
+                                _log_path = os.path.join(PROJECT_ROOT, 'debug-8e9428.log')
+                                with open(_log_path, 'a', encoding='utf-8') as _f:
+                                    _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_prod_view", "location": "production_day_view:formovka_plate_name", "message": "57/57,1: plate_name (post-fix)", "data": {"plate_length": plate['length'], "length_str": length_str, "plate_name": plate_str_val}, "timestamp": __import__("time").time() * 1000, "runId": "post-fix"}, ensure_ascii=False) + "\n")
+                            except Exception:
+                                pass
+                        # #endregion
                 
                 # Сохраняем данные для файла формовки
                 formovka_tracks_data.append({

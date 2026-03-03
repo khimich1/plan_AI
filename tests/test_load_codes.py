@@ -44,7 +44,7 @@ def test_load_codes_and_widths():
     # Проверяем PLATE_LOAD_DETAILS
     print("\nPLATE_LOAD_DETAILS (new format with load codes):")
     for key, qty in sorted(cfg.PLATE_LOAD_DETAILS.items()):
-        length, width, load = key
+        length, width, load = key[0], key[1], key[2]
         print(f"  {qty}x plate {length}m x {width}m with load {load}п ({int(width*1000)}mm)")
     
     # Тест 1: Разные нагрузки для одинаковых размеров
@@ -53,8 +53,9 @@ def test_load_codes_and_widths():
     print("=" * 70)
     
     # Плиты 7.3м × 1.2м: 93 с нагрузкой 8п + 4 с нагрузкой 10п
-    qty_8p = cfg.PLATE_LOAD_DETAILS.get((7.3, 1.2, 8), 0)
-    qty_10p = cfg.PLATE_LOAD_DETAILS.get((7.3, 1.2, 10), 0)
+    # Ключ 4-кортеж: (length, width, load_code, length_dm_raw_normalized)
+    qty_8p = sum(qty for key, qty in cfg.PLATE_LOAD_DETAILS.items() if abs(key[0] - 7.3) < 0.01 and abs(key[1] - 1.2) < 0.01 and key[2] == 8)
+    qty_10p = sum(qty for key, qty in cfg.PLATE_LOAD_DETAILS.items() if abs(key[0] - 7.3) < 0.01 and abs(key[1] - 1.2) < 0.01 and key[2] == 10)
     
     print(f"  Plates 7.3m x 1.2m with 8п: {qty_8p} pcs (expected: 93)")
     print(f"  Plates 7.3m x 1.2m with 10п: {qty_10p} pcs (expected: 4)")
@@ -68,11 +69,12 @@ def test_load_codes_and_widths():
     print("TEST 2: Load code 12,5п (should be rounded to 13)")
     print("=" * 70)
     
-    qty_12_5p = cfg.PLATE_LOAD_DETAILS.get((5.5, 1.2, 13), 0)  # 12.5 округляется до 13
-    print(f"  Plates 5.5m x 1.2m with 13п (12,5п): {qty_12_5p} pcs (expected: 6)")
-    
-    assert qty_12_5p == 6, f"Expected 6 plates with 13п, got {qty_12_5p}"
-    print("  OK! Load code 12,5п correctly parsed and rounded to 13")
+    # load_code хранится как float 12.5 (без округления) — floor применяется при использовании
+    qty_12_5p = sum(qty for key, qty in cfg.PLATE_LOAD_DETAILS.items() if abs(key[0] - 5.5) < 0.01 and abs(key[1] - 1.2) < 0.01 and abs(key[2] - 12.5) < 0.01)
+    print(f"  Plates 5.5m x 1.2m with 12,5п: {qty_12_5p} pcs (expected: 6)")
+
+    assert qty_12_5p == 6, f"Expected 6 plates with 12,5п, got {qty_12_5p}"
+    print("  OK! Load code 12,5п correctly parsed and stored as 12.5")
     
     # Тест 3: Точная ширина 6,65 (не должна округляться до 6,7)
     print("\n" + "=" * 70)
@@ -97,11 +99,11 @@ def test_load_codes_and_widths():
     assert load_73_12 == 8, f"Expected 8п (most common), got {load_73_12}п"
     print("  OK! Returns most common load code (8п) for 7.3m x 1.2m")
     
-    # Для плит 5.5м × 1.2м должна вернуться нагрузка 13п
+    # Для плит 5.5м × 1.2м должна вернуться нагрузка 12.5п (хранится как float, floor применяется при использовании)
     load_55_12 = cfg.get_load_code_for_plate(5.5, 1.2, default=8)
-    print(f"  Load for 5.5m x 1.2m: {load_55_12}п (expected: 13п)")
-    assert load_55_12 == 13, f"Expected 13п, got {load_55_12}п"
-    print("  OK! Returns correct load code (13п) for 5.5m x 1.2m")
+    print(f"  Load for 5.5m x 1.2m: {load_55_12}п (expected: 12.5п)")
+    assert abs(load_55_12 - 12.5) < 0.1, f"Expected 12.5п, got {load_55_12}п"
+    print("  OK! Returns correct load code (12.5п) for 5.5m x 1.2m")
     
     print("\n" + "=" * 70)
     print("ALL TESTS PASSED!")
