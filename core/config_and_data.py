@@ -509,8 +509,23 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
         )
     
     _clear_all_plate_lists()
+
+    # Нормализация: конвертация каталожных марок (ПБ 59.12-8Вр1400-25 → ПБ 59-12-8п)
+    # и других нестандартных вариантов записи перед основным парсингом.
+    _processing_text = user_text
+    try:
+        from .plate_text_normalizer import normalize_order_text
+        _norm = normalize_order_text(user_text)
+        if _norm.warnings:
+            for _w in _norm.warnings[:10]:
+                logger.info("Нормализатор: %s", _w)
+        if _norm.normalized_text.strip():
+            _processing_text = _norm.normalized_text
+    except Exception as _norm_err:
+        logger.warning("Ошибка нормализатора, используем исходный текст: %s", _norm_err)
+
     # Нормализация: единый символ умножения, неразрывные пробелы как обычные
-    text = (user_text or '').replace('\u00d7', 'x').replace('×', 'x')
+    text = (_processing_text or '').replace('\u00d7', 'x').replace('×', 'x')
     text = text.replace('\u00a0', ' ')
     lines = [re.sub(r'\s+', ' ', l).strip() for l in re.split(r'[\n;]+', text) if l.strip()]
     
