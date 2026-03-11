@@ -493,6 +493,14 @@ def split_sequence_into_tracks(
     except Exception:
         pass
     # #endregion
+    # #region agent log (2d5c43) H4: split input vs output
+    try:
+        _log_2d5c43 = Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        with open(_log_2d5c43, 'a', encoding='utf-8') as _lf:
+            _lf.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H4", "location": "visualization:split_sequence_into_tracks:exit", "message": "split input vs output item count", "data": {"input_count": input_count, "output_count": output_count, "diff": input_count - output_count, "tracks_count": len(tracks)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     logger.info(f"[SPLIT_TRACKS] Плиты разбиты на {len(tracks)} дорожек")
     return tracks
 

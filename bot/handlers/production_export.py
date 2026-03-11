@@ -139,6 +139,7 @@ def _get_qty_found_for_order(order: dict, plates_in_tracks: dict, tracks_used: d
     """
     Подсчитывает, сколько плит данного заказа реально попало в tracks.
     Обновляет tracks_used «на месте».
+    .. deprecated:: Используйте _distribute_tracks_to_orders для сохранения плана (пропорциональное распределение).
     """
     length = round(order.get('length', 0), 2)
     width = order.get('width', 1200)
@@ -171,8 +172,120 @@ def _get_qty_found_for_order(order: dict, plates_in_tracks: dict, tracks_used: d
     return qty_found
 
 
+def _find_matching_track_key(order: dict, plates_in_tracks: dict, tolerance: float) -> tuple | None:
+    """
+    Возвращает первый ключ из plates_in_tracks, подходящий под заказ
+    (длина в tolerance, ширина ±20, load_code совпадает), или None.
+    """
+    length = round(order.get('length', 0), 2)
+    width = order.get('width', 1200)
+    load_code = cfg.normalize_load_code(order.get('load_code', 8))
+    for track_key in plates_in_tracks:
+        if len(track_key) == 3:
+            t_len, t_width, t_load_code = track_key
+        else:
+            t_len, t_width = track_key
+            t_load_code = 8
+        t_load_code = cfg.normalize_load_code(t_load_code)
+        if t_load_code != load_code:
+            continue
+        if abs(t_width - width) > 20:
+            continue
+        if abs(t_len - length) > tolerance:
+            continue
+        return track_key
+    return None
+
+
+def _distribute_tracks_to_orders(orders_2d: list, plates_in_tracks: dict, tolerance: float = 0.03) -> Tuple[list, list]:
+    """
+    Распределяет плиты из треков по заказам пропорционально, без зависимости от порядка строк в orders_2d.
+    Возвращает (lost, orders_with_qty) — тот же контракт, что и _find_lost_plates.
+    """
+    from collections import defaultdict
+
+    # Шаг 1: для каждого заказа найти совпадающий ключ трека; сгруппировать заказы по ключу
+    key_to_orders: dict = defaultdict(list)  # track_key -> [(order, index_in_orders_2d), ...]
+    no_match_indices: list[int] = []  # индексы заказов без совпадения
+
+    for idx, order in enumerate(orders_2d):
+        track_key = _find_matching_track_key(order, plates_in_tracks, tolerance)
+        if track_key is None:
+            no_match_indices.append(idx)
+        else:
+            key_to_orders[track_key].append((order, idx))
+
+    # Предварительно каждому заказу ставим qty_to_mark = 0; потом заполним по группам
+    n = len(orders_2d)
+    qty_to_mark_by_index: list[int] = [0] * n
+
+    for track_key, group in key_to_orders.items():
+        available = plates_in_tracks.get(track_key, 0)
+        if available <= 0:
+            continue
+        orders_in_group = [o for o, _ in group]
+        total_need = sum(o.get('qty', 1) for o in orders_in_group)
+
+        if available >= total_need:
+            for order, idx in group:
+                qty_to_mark_by_index[idx] = order.get('qty', 1)
+        else:
+            # Пропорциональное распределение: share_i = floor(available * qty_i / total_need)
+            # Остаток раздаём по +1 заказам с наибольшим qty (по убыванию)
+            qty_list = [o.get('qty', 1) for o in orders_in_group]
+            total_need = sum(qty_list)
+            shares = []
+            for q in qty_list:
+                s = int(available * q / total_need) if total_need else 0
+                shares.append(s)
+            remainder = available - sum(shares)
+            # Индексы в group по убыванию qty
+            sorted_indices = sorted(range(len(orders_in_group)), key=lambda i: -qty_list[i])
+            for i in sorted_indices:
+                if remainder <= 0:
+                    break
+                add = min(remainder, qty_list[i] - shares[i])
+                if add > 0:
+                    shares[i] += add
+                    remainder -= add
+            for (_, idx), share in zip(group, shares):
+                qty_to_mark_by_index[idx] = share
+
+    # Шаг 3: собрать lost и orders_with_qty в том же порядке, что orders_2d
+    lost = []
+    orders_with_qty = []
+
+    for idx, order in enumerate(orders_2d):
+        qty_ordered = order.get('qty', 1)
+        qty_to_mark = qty_to_mark_by_index[idx]
+        orders_with_qty.append((order, qty_to_mark))
+
+        if qty_to_mark < qty_ordered:
+            length = round(order.get('length', 0), 2)
+            width = order.get('width', 1200)
+            load_code = cfg.normalize_load_code(order.get('load_code', 8))
+            kp_id = order.get('kp_id')
+            plate_name = order.get('plate_name', '')
+            logger.warning(
+                f"[LOST_PLATE] Потеряна: {plate_name} x{qty_ordered - qty_to_mark} "
+                f"(заказ: длина={length}, ширина={width}, load_code={load_code}, qty={qty_ordered}, найдено={qty_to_mark})"
+            )
+            similar_keys = [(k, v) for k, v in plates_in_tracks.items() if abs(k[0] - length) <= tolerance * 2]
+            if similar_keys:
+                logger.warning(f"[LOST_PLATE]   Похожие в tracks: {similar_keys[:5]}")
+            lost.append({
+                'kp_id': kp_id,
+                'plate_name': plate_name,
+                'qty_lost': qty_ordered - qty_to_mark,
+                'load_code': load_code
+            })
+
+    return lost, orders_with_qty
+
+
 def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float = 0.03) -> Tuple[list, list]:
     """
+    .. deprecated:: Используйте _distribute_tracks_to_orders (пропорциональное распределение по ключу).
     Находит плиты из orders_2d, которые не попали в tracks.
     
     Возвращает:
@@ -623,7 +736,7 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
         except Exception:
             pass
         # #endregion
-        lost_plates, orders_with_qty = _find_lost_plates(orders_2d, plates_in_tracks, tolerance=0.03)
+        lost_plates, orders_with_qty = _distribute_tracks_to_orders(orders_2d, plates_in_tracks, tolerance=0.03)
         # #region agent log
         _targets = []
         for _order, _qty_to_mark in orders_with_qty:

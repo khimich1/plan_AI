@@ -1,23 +1,23 @@
 {
   "plans": [
     {
-      "id": "plan_20260303_193047",
-      "name": "План с 03.03.2026",
-      "created_at": "2026-03-03 19:30:47",
-      "start_date": "2026-03-03",
-      "total_days": 7,
+      "id": "plan_20260311_163756",
+      "name": "План с 11.03.2026",
+      "created_at": "2026-03-11 16:37:56",
+      "start_date": "2026-03-11",
+      "total_days": 11,
       "tracks_count": 5,
-      "total_tracks": 31
+      "total_tracks": 52
     },
     {
-      "id": "plan_20260303_195401",
-      "name": "План с 10.03.2026",
-      "created_at": "2026-03-03 19:54:01",
-      "start_date": "2026-03-10",
-      "total_days": 5,
+      "id": "plan_20260311_170314",
+      "name": "План с 22.03.2026",
+      "created_at": "2026-03-11 17:03:14",
+      "start_date": "2026-03-22",
+      "total_days": 1,
       "tracks_count": 5,
-      "total_tracks": 25
+      "total_tracks": 2
     }
   ],
-  "active_plan_id": "plan_20260303_195401"
+  "active_plan_id": "plan_20260311_170314"
 }

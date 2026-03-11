@@ -328,6 +328,9 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                 continue
             
             plate_info = get_plate_info_smart(length, width)
+            # Для РЕСКЬЮ используем имя из элемента, чтобы совпадало с визуализацией и списком потерянных
+            if track.get('label') == 'РЕСКЬЮ' and (item.get('plate_name') or item.get('label')):
+                plate_info = {**plate_info, 'plate_name': item.get('plate_name') or item.get('label', '')}
             
             found = False
             for existing in plates_info:
@@ -811,6 +814,9 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                     continue
                 
                 plate_info = get_plate_info_smart(length, width)
+                # Для РЕСКЬЮ используем имя из элемента, чтобы совпадало с визуализацией и списком потерянных
+                if track.get('label') == 'РЕСКЬЮ' and (item.get('plate_name') or item.get('label')):
+                    plate_info = {**plate_info, 'plate_name': item.get('plate_name') or item.get('label', '')}
                 # Номер КП: из lookup или из элемента дорожки (item)
                 kp_id = plate_info.get('kp_id') or item.get('kp_id')
                 

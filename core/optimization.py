@@ -260,6 +260,66 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
     return {}
 
 
+def _build_proportional_slot_lists(
+    orders_2d: list,
+    demand_2d: dict,
+) -> tuple:
+    """
+    Строит пропорциональные слоты атрибуции по ключу (length, width, load_code).
+    Возвращает (slot_lists, slot_cursors).
+    slot_lists[key] — список из demand_2d[key] атрибуций, пропорционально qty заказов
+    (floor + остаток по убыванию qty). Курсоры инициализированы в 0.
+    """
+    groups: dict = {}
+    for order in orders_2d:
+        key = (order['length'], order['width'], order.get('load_code', 800))
+        groups.setdefault(key, []).append(order)
+
+    slot_lists: dict = {}
+    for key, need in demand_2d.items():
+        entries = groups.get(key, [])
+        total_qty = sum(o.get('qty', 1) for o in entries)
+        if total_qty == 0:
+            slot_lists[key] = []
+            continue
+        shares = [int(need * o.get('qty', 1) / total_qty) for o in entries]
+        remainder = need - sum(shares)
+        for idx in sorted(range(len(entries)), key=lambda i: -entries[i].get('qty', 1)):
+            if remainder <= 0:
+                break
+            shares[idx] += 1
+            remainder -= 1
+        slots = []
+        for entry, share in zip(entries, shares):
+            info = {
+                k: entry.get(k)
+                for k in ('kp_id', 'customer', 'kp_date', 'plate_name', 'load_code', 'reinforcement')
+            }
+            slots.extend([info] * share)
+        slot_lists[key] = slots
+
+    cursors = {key: 0 for key in slot_lists}
+    return slot_lists, cursors
+
+
+def _next_slot_info(
+    slot_lists: dict,
+    slot_cursors: dict,
+    key: tuple,
+) -> dict:
+    """
+    Возвращает следующую атрибуцию по ключу из предрасчитанных слотов и сдвигает курсор.
+    При исчерпании слотов (LP over-deliver) возвращает последний слот.
+    """
+    slots = slot_lists.get(key, [])
+    if not slots:
+        return {}
+    idx = slot_cursors.get(key, 0)
+    entry = slots[min(idx, len(slots) - 1)]
+    slot_cursors[key] = idx + 1
+    return entry
+
+
 def _peek_order_info(order_info_list: dict, key: tuple) -> dict:
     """
     Возвращает информацию о первом КП с qty_remaining > 0 БЕЗ уменьшения счётчика.
@@ -381,7 +441,9 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             'reinforcement': order.get('reinforcement', 0),
             'qty_remaining': order.get('qty', 1)  # Сколько плит этого КП осталось назначить
         })
-    
+
+    slot_lists, slot_cursors = _build_proportional_slot_lists(orders_2d, demand_2d)
+
     tolerance_length = 0  # Строгое совпадение длины (после правок length_dm_to_m)
     tolerance_width = 20     # ±20мм по ширине (генерация опций, напр. поперечный рез остаток→цель)
     demand_tolerance_width = 10  # ±10мм при сопоставлении спроса с источником (по письму: допуск реза при работе)
@@ -486,7 +548,16 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                         option_id += 1
     
     print(f"[OPT_2D] Опций первичных резов (до фильтрации): {len(primary_options)}")
-    
+    # #region agent log (2d5c43) Plan B: опции для 5.1/320 и 6/530 до фильтра
+    try:
+        _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        _opts_320 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type'), "load_code": o.get('load_code')} for o in primary_options if o.get('main') == 320 or o.get('target_width') == 320]
+        _opts_530 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type'), "load_code": o.get('load_code')} for o in primary_options if o.get('main') == 530 or o.get('target_width') == 530]
+        with open(_log, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H_opt_gen", "location": "optimization:primary_options_after_build", "message": "options for 320 and 530 before filter", "data": {"opts_320": _opts_320, "opts_530": _opts_530, "solid_widths": solid_widths}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     # 2.5 ФИЛЬТРАЦИЯ ПЕРВИЧНЫХ ОПЦИЙ (Улучшение 4: убираем заведомо невыгодные)
     filtered_primary = []
     for opt in primary_options:
@@ -509,7 +580,16 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     
     primary_options = filtered_primary
     print(f"[OPT_2D] После фильтрации осталось: {len(primary_options)} первичных опций")
-    
+    # #region agent log (2d5c43) Plan B: опции для 320/530 после фильтра
+    try:
+        _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        _opts_320 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type')} for o in primary_options if o.get('main') == 320 or o.get('target_width') == 320]
+        _opts_530 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type')} for o in primary_options if o.get('main') == 530 or o.get('target_width') == 530]
+        with open(_log, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H_opt_filter", "location": "optimization:primary_options_after_filter", "message": "options for 320 and 530 after filter", "data": {"opts_320": _opts_320, "opts_530": _opts_530}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     # 3. ГЕНЕРАЦИЯ ОПЦИЙ ВТОРИЧНЫХ РЕЗОВ (2D: длина + ширина!)
     secondary_options = []
     
@@ -775,6 +855,15 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             logger.error(f"[OPT_2D]      - Несовместимый load_code={target_load_code}")
             print(f"[OPT_2D] ⚠️ ВНИМАНИЕ: Плита {target_length}м x {target_width}мм НЕ МОЖЕТ быть произведена!")
     
+    # #region agent log (2d5c43) Plan B: ключи без источников (no_sources_keys)
+    try:
+        _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        _no_src_ser = [[list(k), q] for k, q in no_sources_keys]
+        with open(_log, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H_no_sources", "location": "optimization:after_demand_loop", "message": "demand keys with no sources in model", "data": {"no_sources_keys": _no_src_ser, "count": len(no_sources_keys)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     # Сохраняем ссылку на группу с opt 105 для проверки после solve (95694e)
     _dbg_grp105_sources = None
     _dbg_grp105_total_qty = None
@@ -1106,6 +1195,23 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     except Exception:
         pass
     # #endregion
+    # #region agent log (2d5c43) Plan B: значения x_prim для опций 320 и 530 после решателя
+    try:
+        _opts_320 = []
+        _opts_530 = []
+        for opt in primary_options:
+            if opt.get('main') == 320 or opt.get('target_width') == 320:
+                _v = value(x_prim[opt['id']])
+                _opts_320.append({"opt_id": opt['id'], "length": opt['length'], "main": opt['main'], "type": opt.get('type'), "value": _v, "qty_rounded": int(round(_v))})
+            if opt.get('main') == 530 or opt.get('target_width') == 530:
+                _v = value(x_prim[opt['id']])
+                _opts_530.append({"opt_id": opt['id'], "length": opt['length'], "main": opt['main'], "type": opt.get('type'), "value": _v, "qty_rounded": int(round(_v))})
+        _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        with open(_log, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H_solver_val", "location": "optimization:after_solve", "message": "x_prim values for 320 and 530 options", "data": {"opts_320": _opts_320, "opts_530": _opts_530, "sum_320": sum(o["qty_rounded"] for o in _opts_320), "sum_530": sum(o["qty_rounded"] for o in _opts_530)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     # 9. ИЗВЛЕЧЕНИЕ РЕЗУЛЬТАТОВ
     result = {
         'primary_cuts': [],
@@ -1137,7 +1243,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 lookup_width = opt.get('target_width', opt['main']) if opt.get('type') == 'indirect' else opt['main']
                 # ИСПРАВЛЕНИЕ: Добавляем load_code в ключ поиска
                 lookup_load_code = opt.get('load_code', 800)
-                plate_info = _get_next_order_info(order_info_list, (opt['length'], lookup_width, lookup_load_code))
+                plate_info = _next_slot_info(slot_lists, slot_cursors, (opt['length'], lookup_width, lookup_load_code))
                 # #region agent log: primary plate kp_id (H1, H2, H4)
                 if not plate_info and opt.get('kp_id'):
                     _k = (opt['length'], lookup_width, lookup_load_code)
@@ -1150,6 +1256,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 # #endregion
                 result['primary_cuts'].append({
                     'width': opt['main'],
+                    'demand_width': lookup_width,
                     'rest': opt['rest'],
                     'qty': 1,  # Каждая плита отдельно!
                     'lengths': [opt['length']],
@@ -1212,27 +1319,68 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # Новый порядок: СНАЧАЛА целые (ОТСОРТИРОВАННЫЕ!), ПОТОМ плиты с резом (сгруппированные)
     result['primary_cuts'] = solid_plates + cut_plates
     
-    # Пост-коррекция: если решатель недодал 5.98/665, дополняем до спроса (обход потери плиты)
-    _need_598665 = sum(q for k, q in demand_2d.items() if abs(k[0] - 5.98) < 0.02 and k[1] == 665)
-    _have_598665 = sum(1 for c in result['primary_cuts'] if abs((c.get('lengths') or [0])[0] - 5.98) < 0.02 and c.get('width') == 665)
-    if _need_598665 > 0 and _have_598665 < _need_598665:
-        _template = next((c for c in result['primary_cuts'] if abs((c.get('lengths') or [0])[0] - 5.98) < 0.02 and c.get('width') == 665), None)
-        if _template:
-            for _ in range(_need_598665 - _have_598665):
-                _pi = _get_next_order_info(order_info_list, (5.98, 665, 8))
-                result['primary_cuts'].append({
-                    'width': 665,
-                    'rest': 535,
-                    'qty': 1,
-                    'lengths': [5.98],
-                    'load_code': _pi.get('load_code', 800) if _pi else 800,
-                    'kp_id': _pi.get('kp_id') if _pi else _template.get('kp_id'),
-                    'customer': _pi.get('customer') if _pi else _template.get('customer'),
-                    'kp_date': _pi.get('kp_date') if _pi else _template.get('kp_date'),
-                    'plate_name': _pi.get('plate_name') if _pi else _template.get('plate_name'),
-                })
-                result['total_plates'] += 1
+    # Универсальная пост-коррекция: для каждого ключа (L, W, lc) из demand_2d
+    # добираем плиты, которые LP-решатель недодал.
+    # Снимок делается ДО цикла, чтобы только что добавленные плиты не влияли на подсчёт have.
+    _existing_cuts_snapshot = list(result['primary_cuts'])
+    for (L, W, lc), need in demand_2d.items():
+        have = sum(
+            1 for c in _existing_cuts_snapshot
+            if abs((c.get('lengths') or [0])[0] - L) < 0.02
+            and c.get('demand_width', c.get('width')) == W
+            and (c.get('load_code') == lc or str(c.get('load_code')) == str(lc))
+        )
+        if have >= need:
+            continue
+        rest = (plate_width - W) if W < plate_width else 0
+        for _ in range(need - have):
+            pi = _next_slot_info(slot_lists, slot_cursors, (L, W, lc))
+            result['primary_cuts'].append({
+                'width': W,
+                'demand_width': W,
+                'rest': rest,
+                'qty': 1,
+                'lengths': [L],
+                'load_code': pi.get('load_code', lc) if pi else lc,
+                'kp_id': pi.get('kp_id') if pi else None,
+                'customer': pi.get('customer') if pi else None,
+                'kp_date': pi.get('kp_date') if pi else None,
+                'plate_name': pi.get('plate_name') if pi else None,
+            })
+            result['total_plates'] += 1
     
+    # #region agent log (2d5c43) H1,H2,H5: demand vs primary_cuts, 6m 530/1200
+    try:
+        from pathlib import Path as _Path
+        _log_2d5c43 = _Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        _demand_total = sum(demand_2d.values())
+        _target_keys = [(6.0, 1200, 8), (6.0, 530, 8), (5.1, 320, 8)]
+        _demand_by_key = {}
+        for k, q in demand_2d.items():
+            for tk in _target_keys:
+                if abs(round(k[0], 2) - round(tk[0], 2)) <= 0.02 and k[1] == tk[1] and (k[2] == tk[2] or k[2] == '8'):
+                    _demand_by_key[tuple(tk)] = _demand_by_key.get(tuple(tk), 0) + q
+                    break
+        _prim_total = len(result['primary_cuts'])
+        _prim_by_key = {tk: 0 for tk in _target_keys}
+        _prim_6_530_1200 = []
+        for c in result['primary_cuts']:
+            L = round((c.get('lengths') or [0])[0], 2)
+            W = c.get('width', 0)
+            lc = c.get('load_code', 8)
+            for tk in _target_keys:
+                if abs(L - tk[0]) <= 0.02 and W == tk[1] and (lc == tk[2] or lc == '8'):
+                    _prim_by_key[tk] = _prim_by_key.get(tk, 0) + 1
+                    break
+            if 5.98 <= L <= 6.02 and W in (530, 1200) and len(_prim_6_530_1200) < 25:
+                _prim_6_530_1200.append({"length": L, "width": W, "rest": c.get('rest', 0), "plate_name": (c.get('plate_name') or "")[:60]})
+        _demand_by_key_ser = [list(k) + [v] for k, v in _demand_by_key.items()]
+        _prim_by_key_ser = [list(k) + [v] for k, v in _prim_by_key.items()]
+        with open(_log_2d5c43, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H1_H2_H5", "location": "optimization:_optimize_2d:primary_cuts_done", "message": "demand vs primary_cuts", "data": {"demand_total": _demand_total, "demand_by_key": _demand_by_key_ser, "primary_total": _prim_total, "primary_by_key": _prim_by_key_ser, "primary_6m_530_1200_sample": _prim_6_530_1200}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     print(f"[OPT_2D] ✓ Целых плит в начале: {len(solid_plates)}")
     print(f"[OPT_2D] ✓ Плит с резом (сгруппировано): {len(cut_plates)}")
     

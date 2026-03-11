@@ -363,6 +363,43 @@ def build_layout_sequence():
         except Exception:
             pass
         # #endregion
+        # #region agent log (2d5c43) H3 grouped path: sequence totals and by key before return
+        try:
+            from pathlib import Path as _Path
+            _log_2d5c43 = _Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+            _target_keys = [(6.0, 1200, 8), (6.0, 530, 8), (5.1, 320, 8)]
+            _seq_by_key = {tuple(tk): 0 for tk in _target_keys}
+            _total_in_sequence = 0
+            for _gr in all_sequences:
+                for s in _gr.get('sequence', []) or []:
+                    _total_in_sequence += 1
+                    L = round(float(s.get('length', 0) or s.get('target_length', 0)), 2)
+                    w = s.get('width') or s.get('main_w') or 1.2
+                    w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
+                    lc = s.get('load_code', 8)
+                    try:
+                        lc = int(lc) if lc is not None else 8
+                    except (TypeError, ValueError):
+                        lc = 8
+                    for tk in _target_keys:
+                        if abs(L - tk[0]) <= 0.02 and w_mm == tk[1] and lc == tk[2]:
+                            _seq_by_key[tuple(tk)] = _seq_by_key.get(tuple(tk), 0) + 1
+                            break
+                    for sec in s.get('secondary_cuts', []):
+                        sw = sec.get('width', 0)
+                        sw_mm = round(float(sw) * 1000) if float(sw) < 20 else round(float(sw))
+                        sl = round(float(sec.get('target_length') or L), 2)
+                        for tk in _target_keys:
+                            if abs(sl - tk[0]) <= 0.02 and sw_mm == tk[1]:
+                                _seq_by_key[tuple(tk)] = _seq_by_key.get(tuple(tk), 0) + 1
+                                break
+            _prim_total = sum(len(p.get('primary_cuts', [])) for p in OPT_CASCADING_PLAN_BY_LOAD.values())
+            _seq_by_key_ser = [list(k) + [v] for k, v in _seq_by_key.items()]
+            with open(_log_2d5c43, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H3", "location": "layout_sequence:build_layout_sequence:grouped_return", "message": "grouped path: sequence total and by key vs primary_cuts total", "data": {"total_from_primary": _prim_total, "total_in_sequence": _total_in_sequence, "sequence_by_key": _seq_by_key_ser}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # НОВЫЙ ФОРМАТ ВОЗВРАТА: список групп по нагрузкам
         return all_sequences
     
@@ -891,7 +928,41 @@ def build_layout_sequence():
                         logger.error(f"[CRITICAL]   Ширина {w}мм: запрошено {req}, получено {res}, ПОТЕРЯ: {diff}")
             else:
                 logger.info(f"[TRACE] ✓ Проверка пройдена: все {total_from_primary} плит в sequence")
-            
+            # #region agent log (2d5c43) H3: sequence total vs primary, counts by key
+            try:
+                from pathlib import Path as _P
+                _log_2d5c43 = _P(__file__).resolve().parent.parent / "debug-2d5c43.log"
+                _target_keys = [(6.0, 1200, 8), (6.0, 530, 8), (5.1, 320, 8)]
+                _seq_by_key = {tuple(tk): 0 for tk in _target_keys}
+                _seq_6_530_1200 = []
+                for s in sequence:
+                    L = round(float(s.get('length', 0) or s.get('target_length', 0)), 2)
+                    w = s.get('width') or s.get('main_w') or 1.2
+                    w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
+                    lc = s.get('load_code', 8)
+                    try:
+                        lc = int(lc) if lc is not None else 8
+                    except (TypeError, ValueError):
+                        lc = 8
+                    for tk in _target_keys:
+                        if abs(L - tk[0]) <= 0.02 and w_mm == tk[1] and lc == tk[2]:
+                            _seq_by_key[tuple(tk)] = _seq_by_key.get(tuple(tk), 0) + 1
+                            break
+                    if 5.98 <= L <= 6.02 and w_mm in (530, 1200) and len(_seq_6_530_1200) < 25:
+                        _seq_6_530_1200.append({"length": L, "width_mm": w_mm, "mode": s.get('mode'), "label": (s.get('label') or '')[:50]})
+                    for sec in s.get('secondary_cuts', []):
+                        sw = sec.get('width', 0)
+                        sw_mm = round(float(sw) * 1000) if float(sw) < 20 else round(float(sw))
+                        sl = round(float(sec.get('target_length') or L), 2)
+                        for tk in _target_keys:
+                            if abs(sl - tk[0]) <= 0.02 and sw_mm == tk[1]:
+                                _seq_by_key[tuple(tk)] = _seq_by_key.get(tuple(tk), 0) + 1
+                                break
+                with open(_log_2d5c43, 'a', encoding='utf-8') as _f:
+                    _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H3", "location": "layout_sequence:build_layout_sequence:before_return_sequence", "message": "sequence vs primary totals and by key", "data": {"total_from_primary": total_from_primary, "total_in_sequence": len(sequence), "sequence_by_key": dict(_seq_by_key), "sequence_6m_530_1200_sample": _seq_6_530_1200}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
             return sequence
     else:
         print("[VISUAL] ВНИМАНИЕ: OPT_CASCADING_PLAN не найден или пуст, используем старый метод")

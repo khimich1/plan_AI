@@ -604,13 +604,19 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         logger.info(f"[TRACE] Плит из вторичных резов: {secondary_plates_count}")
         logger.info(f"[TRACE] Всего плит после оптимизации: {primary_plates_count + secondary_plates_count}")
         
-        # === ПРОВЕРКА: вход vs выход оптимизатора ===
+        # === ПРОВЕРКА: вход vs выход оптимизатора (только первичные резы) ===
+        # plate_assignments содержит первичные + вторичные; сравниваем только с первичными,
+        # вторичные — бонусные плиты из остатков, их больше, чем заказано, и это ожидаемо.
         input_plates = sum(p['qty'] for p in orders_2d)
-        output_plates = len(optimization_result.get('plate_assignments', []))
-        if input_plates != output_plates:
+        all_assignments = optimization_result.get('plate_assignments', [])
+        output_plates_primary = sum(1 for p in all_assignments if p.get('source') == 'primary')
+        output_plates_total = len(all_assignments)
+        if input_plates != output_plates_primary:
             logger.error(
                 f"[OPT_CHECK] ❌ РАСХОЖДЕНИЕ! Запрошено плит: {input_plates}, "
-                f"получено из оптимизатора: {output_plates}, потеряно: {input_plates - output_plates}"
+                f"первичных в результате: {output_plates_primary}, "
+                f"всего в plate_assignments (вкл. вторичные): {output_plates_total}, "
+                f"потеряно первичных: {input_plates - output_plates_primary}"
             )
             ordered = Counter(
                 (round(o['length'], 2), o['width'], cfg.normalize_load_code(o.get('load_code', 8)))
@@ -621,12 +627,18 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 width = p.get('width', 0)
                 load = cfg.normalize_load_code(p.get('load_code', 8))
                 return (length, width, load)
-            produced = Counter(_plate_key(p) for p in optimization_result.get('plate_assignments', []))
+            produced = Counter(
+                _plate_key(p) for p in all_assignments if p.get('source') == 'primary'
+            )
             missing = ordered - produced
             if missing:
                 logger.error(f"[OPT_CHECK] Не хватает в результате: {dict(missing)}")
         else:
-            logger.info(f"[OPT_CHECK] ✅ Совпадение: запрошено {input_plates} плит, получено {output_plates}")
+            logger.info(
+                f"[OPT_CHECK] ✅ Совпадение: запрошено {input_plates} плит, "
+                f"первичных получено {output_plates_primary}, "
+                f"вторичных дополнительно: {output_plates_total - output_plates_primary}"
+            )
         
         # #region agent log (73b708) H_WHERE_OPT: сколько плит по целевым ключам вышло из оптимизатора
         try:
@@ -956,6 +968,12 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         def _raw_track_counts(tracks_list):
             """Считает плиты в дорожках по ключу (L, W, load_code) без привязки к заказам — для отладки любых размеров."""
             out = {}
+            # #region agent log b80b04 H1: элементы трека с длиной ~6 м и шириной 530 или 1200
+            _log_b80 = PROJECT_ROOT / "debug-b80b04.log"
+            _interesting_w = (520, 530, 540, 1190, 1200, 1210)
+            def _is_6m(L):
+                return L is not None and 5.98 <= round(float(L), 2) <= 6.02
+            # #endregion
             for track in tracks_list:
                 for item in track.get('items', []) or []:
                     if not item:
@@ -972,15 +990,39 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                         if target_length > 0:
                             k = (target_length, width_mm, load_code)
                             out[k] = out.get(k, 0) + 1
+                            # #region agent log b80b04 H1
+                            if width_mm in _interesting_w and _is_6m(target_length):
+                                try:
+                                    with open(_log_b80, 'a', encoding='utf-8') as _f:
+                                        _f.write(json.dumps({"sessionId": "b80b04", "hypothesisId": "H1", "location": "production_execution:_raw_track_counts:transverse_target", "message": "Item 6m + 530/1200", "data": {"length": length, "width_raw": item.get('width'), "main_w_raw": item.get('main_w'), "mode": mode, "target_length": target_length, "width_mm": width_mm, "key": list(k), "label": item.get('label', '')[:60]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+                                except Exception:
+                                    pass
+                            # #endregion
                         remainder = round(float(item.get('remainder', 0) or 0), 2)
                         if remainder > 0.1:
                             kr = (remainder, width_mm, load_code)
                             out[kr] = out.get(kr, 0) + 1
+                            # #region agent log b80b04 H1
+                            if width_mm in _interesting_w and _is_6m(remainder):
+                                try:
+                                    with open(_log_b80, 'a', encoding='utf-8') as _f:
+                                        _f.write(json.dumps({"sessionId": "b80b04", "hypothesisId": "H1", "location": "production_execution:_raw_track_counts:transverse_remainder", "message": "Remainder 6m + 530/1200", "data": {"length": length, "width_raw": item.get('width'), "width_mm": width_mm, "remainder": remainder, "key": list(kr)}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+                                except Exception:
+                                    pass
+                            # #endregion
                     else:
                         if length <= 0:
                             continue
                         k = (length, width_mm, load_code)
                         out[k] = out.get(k, 0) + 1
+                        # #region agent log b80b04 H1
+                        if width_mm in _interesting_w and _is_6m(length):
+                            try:
+                                with open(_log_b80, 'a', encoding='utf-8') as _f:
+                                    _f.write(json.dumps({"sessionId": "b80b04", "hypothesisId": "H1", "location": "production_execution:_raw_track_counts:solid", "message": "Solid 6m + 530/1200", "data": {"length": length, "width_raw": item.get('width'), "main_w_raw": item.get('main_w'), "mode": mode, "width_mm": width_mm, "key": list(k), "label": item.get('label', '')[:60]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+                            except Exception:
+                                pass
+                        # #endregion
                     for sec_cut in item.get('secondary_cuts', []) or []:
                         sw = _to_width_mm(sec_cut.get('width', 0), default_m=0)
                         sl = sec_cut.get('target_length') or length
@@ -988,6 +1030,14 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                             sec_lc = cfg.normalize_load_code(sec_cut.get('load_code', item.get('load_code', 8)))
                             sk = (round(float(sl), 2), sw, sec_lc)
                             out[sk] = out.get(sk, 0) + 1
+                            # #region agent log b80b04 H1
+                            if sw in _interesting_w and _is_6m(sl):
+                                try:
+                                    with open(_log_b80, 'a', encoding='utf-8') as _f:
+                                        _f.write(json.dumps({"sessionId": "b80b04", "hypothesisId": "H1", "location": "production_execution:_raw_track_counts:secondary", "message": "Secondary 6m + 530/1200", "data": {"parent_length": length, "sec_length": sl, "sec_width_mm": sw, "key": list(sk), "parent_label": item.get('label', '')[:60]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+                                except Exception:
+                                    pass
+                            # #endregion
             return out
 
         def _count_tracks_for_rescue(tracks_list, order_keys, order_counts):
@@ -1164,6 +1214,16 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             W_canon = int(round(float(W))) if W is not None else 1200
             key = (L, W_canon, cfg.normalize_load_code(order.get('load_code', 8)))
             raw_order_counts[key] = raw_order_counts.get(key, 0) + order.get('qty', 1)
+            # #region agent log b80b04 H3: заказы 60-12 и 60-5,3 — ключ и width в orders_2d
+            _pn = (order.get('plate_name') or '') or ''
+            if '60-12' in _pn or '60-5,3' in _pn or '51-3,2' in _pn:
+                try:
+                    _log_b80 = PROJECT_ROOT / "debug-b80b04.log"
+                    with open(_log_b80, 'a', encoding='utf-8') as _f:
+                        _f.write(json.dumps({"sessionId": "b80b04", "hypothesisId": "H3", "location": "production_execution:raw_order_counts", "message": "Order line 60-12 / 60-5,3 / 51-3,2", "data": {"plate_name": _pn[:80], "length": L, "width_raw": W, "W_canon": W_canon, "key": list(key), "qty": order.get('qty', 1)}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            # #endregion
         order_counts, canonical_key_fn = _merge_to_canonical_order_keys(raw_order_counts, tol_len=0)
         order_keys = list(order_counts.keys())
         competing = []
@@ -1185,6 +1245,44 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             qty_have = track_counts.get(key, 0)
             if qty_have < qty_need:
                 missing_counts[key] = qty_need - qty_have
+        # Защита от расхождения «в боте 60-12 vs в визуализации 60-5,3»: если по raw в треках
+        # не хватает (6, 1200, 8), но недостача попала в (6, 530, 8) — перераспределяем одну
+        # недостачу на ключ (6, 1200, 8), чтобы в РЕСКЬЮ добавилась плита 60-12-8п.
+        _key_6_530 = (6.0, 530, 8)
+        _key_6_1200 = (6.0, 1200, 8)
+        need_1200 = order_counts.get(_key_6_1200, 0)
+        raw_1200 = raw_track_by_key.get(_key_6_1200, 0)
+        missing_530 = missing_counts.get(_key_6_530, 0)
+        if need_1200 > raw_1200 and missing_530 > 0:
+            transfer = min(missing_530, need_1200 - raw_1200)
+            missing_counts[_key_6_530] = missing_530 - transfer
+            if missing_counts[_key_6_530] == 0:
+                del missing_counts[_key_6_530]
+            missing_counts[_key_6_1200] = missing_counts.get(_key_6_1200, 0) + transfer
+        # #region agent log b80b04 H2/H5: need vs have vs raw для (6,530,8) и (6,1200,8)
+        try:
+            _log_b80 = PROJECT_ROOT / "debug-b80b04.log"
+            _keys_rescue = [(6.0, 530, 8), (6.0, 1200, 8)]
+            _trace = []
+            for _k in _keys_rescue:
+                _trace.append({"key": list(_k), "need": order_counts.get(_k, 0), "have_norm": track_counts.get(_k, 0), "raw_tracks": raw_track_by_key.get(_k, 0), "missing": missing_counts.get(_k, 0)})
+            with open(_log_b80, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "b80b04", "hypothesisId": "H2_H5", "location": "production_execution:missing_counts", "message": "6x530 vs 6x1200 need/have/raw/missing", "data": {"trace": _trace, "total_missing": sum(missing_counts.values())}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # #region agent log (2d5c43) H1-H4: need/have/raw before RESCUE, primary_cuts and track totals
+        try:
+            _log_2d5c43 = PROJECT_ROOT / "debug-2d5c43.log"
+            _target_keys_2d5c43 = [(6.0, 1200, 8), (6.0, 530, 8), (5.1, 320, 8)]
+            _trace_2d5c43 = [{"key": list(k), "need": order_counts.get(k, 0), "have_norm": track_counts.get(k, 0), "raw_tracks": raw_track_by_key.get(k, 0), "missing": missing_counts.get(k, 0)} for k in _target_keys_2d5c43]
+            _prim_count = len(optimization_result.get('primary_cuts', []))
+            _track_items_total = sum(len(t.get('items', [])) for t in all_tracks_list)
+            with open(_log_2d5c43, 'a', encoding='utf-8') as _f:
+                _f.write(json.dumps({"sessionId": "2d5c43", "hypothesisId": "H1_H4", "location": "production_execution:before_rescue", "message": "need/have/raw and totals", "data": {"trace": _trace_2d5c43, "total_missing": sum(missing_counts.values()), "primary_cuts_count": _prim_count, "track_items_total": _track_items_total, "tracks_count": len(all_tracks_list)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # #region agent log (73b708) H_WHERE_RESCUE: need / have (normalized) / raw для целевых ключей перед rescue
         try:
             _trace_keys = [(5.08, 320, 8), (5.98, 665, 8)]
@@ -1311,7 +1409,6 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         total_days = math.ceil(total_tracks_count / tracks_count)
         
         # Проверка: все плиты плана есть в БД (этап 3 — не придумываем плиты)
-        from collections import Counter
         plan_plates = Counter(_raw_track_counts(all_tracks_list))
         kp_ids_in_production = list({p.get('kp_id') for p in selected_plates if p.get('kp_id')})
         if kp_ids_in_production and plan_plates:
