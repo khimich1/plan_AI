@@ -674,32 +674,35 @@ def archive_sections_kb() -> InlineKeyboardMarkup:
     )
 
 
-def kp_details_kb(kp_id: int, total_amount: float = 0) -> InlineKeyboardMarkup:
+def kp_details_kb(kp_id: int, total_amount: float = 0, status: str | None = None) -> InlineKeyboardMarkup:
     """
     Клавиатура действий для конкретного КП.
-    
+
     Показывает кнопки:
     - PDF / XLSX с суммой в подписи (если total_amount > 0)
     - Изменить скидку
     - Удалить КП
+    - В производство (только если status == "в архиве")
     - Назад к списку
-    
+
     Args:
         kp_id: номер КП для формирования callback_data
         total_amount: итоговая сумма с НДС для отображения в кнопках PDF/XLSX
+        status: статус КП; при "в архиве" добавляется кнопка "В производство"
     """
     amount_str = f"{total_amount:,.0f} ₽".replace(",", " ") if total_amount else ""
     pdf_text = f"📄 PDF · {amount_str}" if amount_str else "📄 PDF"
     xlsx_text = f"📊 XLSX · {amount_str}" if amount_str else "📊 XLSX"
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=pdf_text, callback_data=f"download_pdf_{kp_id}")],
-            [InlineKeyboardButton(text=xlsx_text, callback_data=f"download_xlsx_{kp_id}")],
-            [InlineKeyboardButton(text="✏️ Изменить скидку", callback_data=f"change_discount_{kp_id}")],
-            [InlineKeyboardButton(text="🗑️ Удалить КП", callback_data=f"delete_kp_{kp_id}")],
-            [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="archive_back_to_sections")],
-        ]
-    )
+    rows = [
+        [InlineKeyboardButton(text=pdf_text, callback_data=f"download_pdf_{kp_id}")],
+        [InlineKeyboardButton(text=xlsx_text, callback_data=f"download_xlsx_{kp_id}")],
+        [InlineKeyboardButton(text="✏️ Изменить скидку", callback_data=f"change_discount_{kp_id}")],
+        [InlineKeyboardButton(text="🗑️ Удалить КП", callback_data=f"delete_kp_{kp_id}")],
+    ]
+    if status == "в архиве":
+        rows.append([InlineKeyboardButton(text="🏭 В производство", callback_data=f"move_kp_to_production_{kp_id}")])
+    rows.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data="archive_back_to_sections")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def kp_production_details_kb(kp_id: int) -> InlineKeyboardMarkup:
