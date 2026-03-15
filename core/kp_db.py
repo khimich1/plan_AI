@@ -2117,7 +2117,7 @@ def mark_plates_as_planned(
     qty_to_plan: int,
     plan_id: str,
     db_path: str = DEFAULT_DB
-) -> bool:
+) -> Dict[str, object]:
     """
     Помечает плиты как 'в плане' при сохранении плана.
     
@@ -2140,10 +2140,11 @@ def mark_plates_as_planned(
         db_path: путь к базе данных
     
     Возвращает:
-        True если успешно, False при ошибке
+        Dict с подробным результатом пометки.
     """
     init_schema(db_path)
     conn = _connect(db_path)
+    requested_qty = max(int(qty_to_plan or 0), 0)
     
     try:
         conn.execute('PRAGMA foreign_keys = ON')
@@ -2177,7 +2178,16 @@ def mark_plates_as_planned(
         # #endregion
         if not rows:
             print(f"[DB] ⚠️ Плита не найдена: КП #{kp_id}, {plate_name} (статус 'в производстве')")
-            return False
+            return {
+                'success': False,
+                'requested_qty': requested_qty,
+                'available_qty': 0,
+                'processed_count': 0,
+                'remaining_unplanned': requested_qty,
+                'split_count': 0,
+                'updated_ids': [],
+                'error': "plate_not_found",
+            }
         
         # Подсчитываем общее доступное количество
         total_available = sum(row[1] for row in rows)
@@ -2189,6 +2199,8 @@ def mark_plates_as_planned(
         # Обрабатываем записи по очереди
         remaining_to_plan = qty_to_plan
         processed_count = 0
+        split_count = 0
+        updated_ids: List[int] = []
         
         for row in rows:
             if remaining_to_plan <= 0:
@@ -2206,6 +2218,7 @@ def mark_plates_as_planned(
                 print(f"[DB] ✅ Плита {plate_name} x{current_qty} помечена как 'в плане' (запись #{plate_id})")
                 remaining_to_plan -= current_qty
                 processed_count += current_qty
+                updated_ids.append(plate_id)
             else:
                 # Частичная обработка: разбиваем запись
                 qty_for_plan = remaining_to_plan
@@ -2230,6 +2243,8 @@ def mark_plates_as_planned(
                 print(f"[DB] ✅ Плита {plate_name} разбита: {qty_for_plan} в план, {remaining_in_production} осталось (запись #{plate_id})")
                 remaining_to_plan = 0
                 processed_count += qty_for_plan
+                split_count += 1
+                updated_ids.append(plate_id)
         
         print(f"[DB] ✅ Итого помечено {processed_count} плит '{plate_name}' как 'в плане' (план {plan_id})")
         # #region agent log
@@ -2249,12 +2264,30 @@ def mark_plates_as_planned(
             )
         # #endregion
         conn.commit()
-        return True
+        return {
+            'success': True,
+            'requested_qty': requested_qty,
+            'available_qty': total_available,
+            'processed_count': processed_count,
+            'remaining_unplanned': max(requested_qty - processed_count, 0),
+            'split_count': split_count,
+            'updated_ids': updated_ids,
+            'error': None,
+        }
         
     except Exception as e:
         print(f"[DB] ❌ Ошибка при пометке плиты как 'в плане': {e}")
         conn.rollback()
-        return False
+        return {
+            'success': False,
+            'requested_qty': requested_qty,
+            'available_qty': 0,
+            'processed_count': 0,
+            'remaining_unplanned': requested_qty,
+            'split_count': 0,
+            'updated_ids': [],
+            'error': str(e),
+        }
     
     finally:
         conn.close()
@@ -3289,6 +3322,25 @@ def get_kp_plates_in_plan_percentage(kp_id: int, db_path: str = DEFAULT_DB) -> D
             'in_plan': in_plan,
             'percentage': round(percentage, 1)
         }
+    finally:
+        conn.close()
+
+
+def get_kp_total_length(kp_id: int, db_path: str = DEFAULT_DB) -> float:
+    """
+    Суммарная длина плит КП в метрах: SUM(COALESCE(length_m, 0) * qty)
+    по строкам kp_plates со статусом 'в производстве' или 'в плане'.
+    """
+    init_schema(db_path)
+    conn = _connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT COALESCE(SUM(COALESCE(length_m, 0) * qty), 0.0)
+            FROM kp_plates
+            WHERE kp_id = ? AND status IN ('в производстве', 'в плане')
+        ''', (kp_id,))
+        return float(cur.fetchone()[0])
     finally:
         conn.close()
 

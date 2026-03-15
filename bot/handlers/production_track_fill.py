@@ -573,15 +573,23 @@ async def handle_fill_confirm_apply(callback: CallbackQuery, state: FSMContext):
         kp_id = it.get('_kp_id')
         plate_name = it.get('_plate_name')
         if kp_id and plate_name:
-            ok = kp_db.mark_plates_as_planned(
+            result = kp_db.mark_plates_as_planned(
                 kp_id=kp_id,
                 plate_name=plate_name,
                 qty_to_plan=1,
                 plan_id=plan_id,
                 db_path=DEFAULT_DB,
             )
-            if ok:
+            if result.get('success') and int(result.get('processed_count', 0) or 0) == 1:
                 marked += 1
+            else:
+                logger.warning(
+                    "[FILL_TRACK] Не удалось корректно пометить плиту при дозаполнении: "
+                    "kp_id=%s, plate_name=%s, result=%s",
+                    kp_id,
+                    plate_name,
+                    result,
+                )
 
     logger.info(f"[FILL_TRACK] План {plan_id}, день {date_key}, дорожка {track_idx}: добавлено {len(selected)} плит, в БД помечено {marked}")
 

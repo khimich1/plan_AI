@@ -2,8 +2,9 @@
 import asyncio
 import logging
 import os
+from collections import Counter
 from datetime import datetime, timedelta
-from typing import Tuple
+from typing import Any, Tuple
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -281,6 +282,155 @@ def _distribute_tracks_to_orders(orders_2d: list, plates_in_tracks: dict, tolera
             })
 
     return lost, orders_with_qty
+
+
+def _make_order_identity(order: dict[str, Any]) -> tuple[int | None, str]:
+    """Возвращает идентификатор позиции заказа в терминах БД."""
+    return order.get('kp_id'), str(order.get('plate_name') or '')
+
+
+def _count_assigned_plates_for_save(
+    optimization_result: dict[str, Any],
+    all_tracks_list: list[dict[str, Any]],
+) -> tuple[dict[str, dict[tuple[int | None, str], int]], dict[str, list[dict[str, Any]]]]:
+    """
+    Подсчитывает плиты для сохранения по точной идентичности заказа `(kp_id, plate_name)`.
+
+    Почему так:
+    - `mark_plates_as_planned()` обновляет БД именно по `kp_id + plate_name`
+    - `plate_assignments` уже содержит целевой `kp_id/plate_name` и для primary, и для secondary плит
+    - RESCUE-дорожки добавляются после оптимизации, поэтому их учитываем отдельно из `all_tracks_list`
+    """
+    assigned_counts_by_source: dict[str, Counter[tuple[int | None, str]]] = {
+        'primary': Counter(),
+        'secondary': Counter(),
+        'rescue': Counter(),
+    }
+    unmapped_assignments_by_source: dict[str, list[dict[str, Any]]] = {
+        'primary': [],
+        'secondary': [],
+        'rescue': [],
+    }
+
+    for assignment in optimization_result.get('plate_assignments', []) or []:
+        source = str(assignment.get('source') or 'unknown')
+        if source not in assigned_counts_by_source:
+            assigned_counts_by_source[source] = Counter()
+            unmapped_assignments_by_source[source] = []
+        identity = _make_order_identity(assignment)
+        if identity[0] and identity[1]:
+            assigned_counts_by_source[source][identity] += 1
+        else:
+            unmapped_assignments_by_source[source].append({
+                'source': assignment.get('source', 'unknown'),
+                'length': round(float(assignment.get('length', 0) or 0), 2),
+                'width': assignment.get('width'),
+                'load_code': assignment.get('load_code'),
+                'kp_id': assignment.get('kp_id'),
+                'plate_name': assignment.get('plate_name'),
+                'identity_match_type': assignment.get('identity_match_type'),
+            })
+
+    for track in all_tracks_list:
+        if track.get('label') != 'РЕСКЬЮ':
+            continue
+
+        for item in track.get('items', []) or []:
+            if not item:
+                continue
+
+            identity = _make_order_identity(item)
+            if identity[0] and identity[1]:
+                assigned_counts_by_source['rescue'][identity] += 1
+            else:
+                unmapped_assignments_by_source['rescue'].append({
+                    'source': 'rescue',
+                    'length': round(float(item.get('length', 0) or 0), 2),
+                    'width': item.get('width'),
+                    'load_code': item.get('load_code'),
+                    'kp_id': item.get('kp_id'),
+                    'plate_name': item.get('plate_name'),
+                    'rescue_order_missing': item.get('rescue_order_missing', False),
+                })
+
+    return (
+        {source: dict(counter) for source, counter in assigned_counts_by_source.items()},
+        unmapped_assignments_by_source,
+    )
+
+
+def _allocate_assigned_counts_to_orders(
+    orders_2d: list[dict[str, Any]],
+    source_counts: dict[tuple[int | None, str], int],
+    qty_to_mark_by_index: list[int] | None = None,
+) -> tuple[list[int], dict[tuple[int | None, str], int]]:
+    """
+    Добавляет количество плит из одного источника (`primary`/`secondary`/`rescue`)
+    только в ещё не закрытый спрос по строкам `orders_2d`.
+    """
+    if qty_to_mark_by_index is None:
+        qty_to_mark_by_index = [0] * len(orders_2d)
+
+    remaining_by_identity: Counter[tuple[int | None, str]] = Counter(source_counts)
+
+    for idx, order in enumerate(orders_2d):
+        identity = _make_order_identity(order)
+        qty_ordered = int(order.get('qty', 1) or 0)
+        qty_missing = max(qty_ordered - qty_to_mark_by_index[idx], 0)
+        if qty_missing <= 0:
+            continue
+
+        qty_available = remaining_by_identity.get(identity, 0)
+        if qty_available <= 0:
+            continue
+
+        take = min(qty_missing, qty_available)
+        qty_to_mark_by_index[idx] += take
+        remaining_by_identity[identity] -= take
+
+    leftovers = {key: qty for key, qty in remaining_by_identity.items() if qty > 0}
+    return qty_to_mark_by_index, leftovers
+
+
+def _distribute_assigned_plates_to_orders(
+    orders_2d: list[dict[str, Any]],
+    assigned_counts_by_source: dict[str, dict[tuple[int | None, str], int]],
+) -> tuple[list[dict[str, Any]], list[tuple[dict[str, Any], int]], dict[str, dict[tuple[int | None, str], int]]]:
+    """
+    Распределяет уже сопоставленные плиты по строкам orders_2d.
+
+    В отличие от `_distribute_tracks_to_orders`, здесь нет догадок по размерам:
+    используем точный ключ `(kp_id, plate_name)`, совпадающий с логикой записи в БД.
+    """
+    qty_to_mark_by_index: list[int] = [0] * len(orders_2d)
+    leftovers_by_source: dict[str, dict[tuple[int | None, str], int]] = {}
+
+    for source in ('primary', 'secondary', 'rescue'):
+        source_counts = assigned_counts_by_source.get(source) or {}
+        qty_to_mark_by_index, leftovers = _allocate_assigned_counts_to_orders(
+            orders_2d,
+            source_counts,
+            qty_to_mark_by_index,
+        )
+        leftovers_by_source[source] = leftovers
+
+    lost: list[dict[str, Any]] = []
+    orders_with_qty: list[tuple[dict[str, Any], int]] = []
+
+    for idx, order in enumerate(orders_2d):
+        qty_ordered = int(order.get('qty', 1) or 0)
+        qty_to_mark = qty_to_mark_by_index[idx]
+        orders_with_qty.append((order, qty_to_mark))
+
+        if qty_to_mark < qty_ordered:
+            lost.append({
+                'kp_id': order.get('kp_id'),
+                'plate_name': order.get('plate_name', ''),
+                'qty_lost': qty_ordered - qty_to_mark,
+                'load_code': cfg.normalize_load_code(order.get('load_code', 8)),
+            })
+
+    return lost, orders_with_qty, leftovers_by_source
 
 
 def _find_lost_plates(orders_2d: list, plates_in_tracks: dict, tolerance: float = 0.03) -> Tuple[list, list]:
@@ -616,6 +766,16 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
     # Дополнительные данные для плана
     orders_2d = data.get('orders_2d', [])
     optimization_result = data.get('optimization_result', {})
+    # #region agent log (session 5b5324) save_plan: входные данные из state
+    try:
+        _log_path = PROJECT_ROOT / "debug-5b5324.log"
+        _pa = optimization_result.get('plate_assignments') or []
+        __import__('pathlib').Path(_log_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(_log_path, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "5b5324", "runId": "run1", "hypothesisId": "H_save_input", "location": "production_export:save_plan:after_get_data", "message": "state data for save", "data": {"orders_2d_len": len(orders_2d), "plate_assignments_len": len(_pa), "all_tracks_list_len": len(all_tracks_list), "has_all_tracks": bool(all_tracks_list)}, "timestamp": int(__import__('time').time() * 1000)}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     
     if not all_tracks_list:
         await callback.message.answer(
@@ -705,38 +865,48 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
         db_path = str(PROJECT_ROOT / "plita.db")
         plan_id = updated_plan['id']
         
-        # === ИСПРАВЛЕНО: СНАЧАЛА ОПРЕДЕЛЯЕМ ПОТЕРЯННЫЕ ПЛИТЫ И QTY_TO_MARK ===
-        # Подсчитываем, сколько плит реально попало в tracks ПЕРЕД пометкой
-        # ИСПРАВЛЕНИЕ: Используем qty_to_mark (qty_found) для КАЖДОГО заказа отдельно.
-        # При нескольких заказах с одним (kp_id, plate_name) старый код ошибочно
-        # вычитал qty_lost из всех — теперь помечаем только то, что реально в треках.
-        plates_in_tracks = _count_plates_in_tracks(all_tracks_list)
-        # #region agent log H_366_save: есть ли ключ (3.66, 665, 8) в треках и что в orders_2d для КП 2
-        import json as _j366
-        _k366 = (3.66, 665, 8)
-        _in_tracks_366 = plates_in_tracks.get(_k366, 0)
-        _orders_kp2 = [{"plate_name": o.get("plate_name"), "kp_id": o.get("kp_id"), "length": o.get("length"), "width": o.get("width"), "qty": o.get("qty", 1)} for o in orders_2d if o.get("kp_id") == 2]
+        assigned_counts_by_source, unmapped_assignments_by_source = _count_assigned_plates_for_save(
+            optimization_result=optimization_result,
+            all_tracks_list=all_tracks_list,
+        )
+        # #region agent log (session 5b5324) после _count_assigned_plates_for_save
         try:
-            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8") as _f366:
-                _f366.write(_j366.dumps({"hypothesisId": "H_366_save", "location": "production_export:save_plan", "message": "Перед _find_lost_plates: треки и orders_2d для КП 2", "data": {"key_366_665_8_in_tracks": _in_tracks_366, "orders_2d_kp2": _orders_kp2, "orders_2d_len": len(orders_2d)}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            _log_path = PROJECT_ROOT / "debug-5b5324.log"
+            _by_src = {s: sum(c.values()) for s, c in assigned_counts_by_source.items() if c}
+            _unmapped_counts = {s: len(u) for s, u in unmapped_assignments_by_source.items() if u}
+            _unmapped_sample = {s: (u[:5] if u else []) for s, u in unmapped_assignments_by_source.items()}
+            _identity_sample = {}
+            for s, cnt in assigned_counts_by_source.items():
+                if cnt:
+                    _identity_sample[s] = [list(k) + [v] for k, v in list(cnt.items())[:5]]
+            with open(_log_path, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "5b5324", "runId": "run1", "hypothesisId": "H_count", "location": "production_export:after_count_assigned", "message": "counts and unmapped by source", "data": {"assigned_totals_by_source": _by_src, "unmapped_counts": _unmapped_counts, "unmapped_sample": _unmapped_sample, "identity_sample": _identity_sample}, "timestamp": int(__import__('time').time() * 1000)}, ensure_ascii=False) + "\n")
         except Exception:
             pass
         # #endregion
-        # #region agent log H_viz: плиты 61,2/61,1/59,8/59,9 в треках (что пойдёт в визуализацию)
-        import json as _jviz
-        _viz_61_59 = []
-        for tr in all_tracks_list:
-            for it in tr.get('items', []) or []:
-                n = (it.get('plate_name') or '')
-                if any(x in n for x in ('61,2', '61,1', '59,8', '59,9')):
-                    _viz_61_59.append({"plate_name": n, "length": it.get("length"), "width": it.get("width"), "kp_id": it.get("kp_id")})
+        lost_plates, orders_with_qty, leftovers_by_source = _distribute_assigned_plates_to_orders(
+            orders_2d,
+            assigned_counts_by_source,
+        )
+        # #region agent log (session 5b5324) после _distribute_assigned_plates_to_orders
         try:
-            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8") as _fv:
-                _fv.write(_jviz.dumps({"hypothesisId": "H_viz", "location": "production_export:save_plan", "message": "Плиты 61,2/61,1/59,8/59,9 в треках (визуализация)", "data": {"count": len(_viz_61_59), "entries": _viz_61_59[:50]}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            _log_path = PROJECT_ROOT / "debug-5b5324.log"
+            _left_prim = leftovers_by_source.get('primary') or {}
+            _left_sec = leftovers_by_source.get('secondary') or {}
+            _left_ser = [list(k) + [v] for k, v in list(_left_prim.items())[:15]] if _left_prim else []
+            _left_sec_ser = [list(k) + [v] for k, v in list(_left_sec.items())[:15]] if _left_sec else []
+            with open(_log_path, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "5b5324", "runId": "run1", "hypothesisId": "H_distribute", "location": "production_export:after_distribute", "message": "leftovers by source", "data": {"leftovers_primary_serialized": _left_ser, "leftovers_secondary_serialized": _left_sec_ser, "leftovers_primary_len": len(_left_prim), "leftovers_secondary_len": len(_left_sec)}, "timestamp": int(__import__('time').time() * 1000)}, ensure_ascii=False) + "\n")
         except Exception:
             pass
         # #endregion
-        lost_plates, orders_with_qty = _distribute_tracks_to_orders(orders_2d, plates_in_tracks, tolerance=0.03)
+        source_totals = {
+            source: sum(counts.values())
+            for source, counts in assigned_counts_by_source.items()
+            if counts
+        }
+        if source_totals:
+            logger.info("[SAVE_PLAN] Источники exact identity перед пометкой: %s", source_totals)
         # #region agent log
         _targets = []
         for _order, _qty_to_mark in orders_with_qty:
@@ -765,24 +935,84 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
             },
         )
         # #endregion
-        # #region agent log H_366_qty: qty_to_mark для плит КП 2 (36,6-6,65)
-        _with_qty_kp2 = [(o.get("plate_name"), q) for o, q in orders_with_qty if o.get("kp_id") == 2]
-        try:
-            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8") as _fq:
-                _fq.write(_j366.dumps({"hypothesisId": "H_366_qty", "location": "production_export:save_plan", "message": "orders_with_qty для КП 2", "data": {"orders_with_qty_kp2": _with_qty_kp2}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
         if lost_plates:
             lost_info = ", ".join([f"{lp['plate_name']} x{lp['qty_lost']}" for lp in lost_plates[:3]])
             if len(lost_plates) > 3:
                 lost_info += f" и ещё {len(lost_plates) - 3}..."
             logger.warning(f"[SAVE_PLAN] Обнаружены потерянные плиты (НЕ будут помечены как 'в плане'): {lost_info}")
+
+        optimizer_unmapped = (
+            (unmapped_assignments_by_source.get('primary') or [])
+            + (unmapped_assignments_by_source.get('secondary') or [])
+        )
+        rescue_unmapped = unmapped_assignments_by_source.get('rescue') or []
+        # #region agent log (session 5b5324) перед проверками unmapped/leftovers
+        try:
+            _log_path = PROJECT_ROOT / "debug-5b5324.log"
+            _opt_extra = {s: (leftovers_by_source.get(s) or {}) for s in ('primary', 'secondary') if (leftovers_by_source.get(s) or {})}
+            with open(_log_path, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"sessionId": "5b5324", "runId": "run1", "hypothesisId": "H_checks", "location": "production_export:before_checks", "message": "optimizer_unmapped and optimizer_extra", "data": {"optimizer_unmapped_len": len(optimizer_unmapped), "optimizer_unmapped_full": optimizer_unmapped[:30], "optimizer_extra": _opt_extra}, "timestamp": int(__import__('time').time() * 1000)}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
+        if optimizer_unmapped:
+            # #region agent log (session 5b5324) какая проверка упала
+            try:
+                with open(PROJECT_ROOT / "debug-5b5324.log", 'a', encoding='utf-8') as _f:
+                    _f.write(__import__('json').dumps({"sessionId": "5b5324", "runId": "run1", "hypothesisId": "H_checks", "location": "production_export:raise_reason", "message": "raise: optimizer_unmapped", "data": {"reason": "optimizer_unmapped"}, "timestamp": int(__import__('time').time() * 1000)}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            logger.error(
+                "[SAVE_PLAN] Найдены optimizer-плиты без точной привязки к заказу: %s",
+                optimizer_unmapped[:10],
+            )
+            raise Exception("Не удалось сопоставить часть плит с конкретными заказами")
+
+        if rescue_unmapped:
+            logger.warning(
+                "[SAVE_PLAN] RESCUE-плиты без exact identity не будут участвовать в пометке БД: %s",
+                rescue_unmapped[:10],
+            )
+
+        optimizer_leftovers = {
+            'primary': leftovers_by_source.get('primary') or {},
+            'secondary': leftovers_by_source.get('secondary') or {},
+        }
+        rescue_leftovers = leftovers_by_source.get('rescue') or {}
+        optimizer_extra = {
+            source: leftovers
+            for source, leftovers in optimizer_leftovers.items()
+            if leftovers
+        }
+
+        if optimizer_extra:
+            # #region agent log (session 5b5324) какая проверка упала
+            try:
+                _extra_ser = {s: [list(k) + [v] for k, v in d.items()] for s, d in optimizer_extra.items()}
+                with open(PROJECT_ROOT / "debug-5b5324.log", 'a', encoding='utf-8') as _f:
+                    _f.write(__import__('json').dumps({"sessionId": "5b5324", "runId": "run1", "hypothesisId": "H_checks", "location": "production_export:raise_reason", "message": "raise: optimizer_extra (leftovers)", "data": {"reason": "optimizer_extra", "optimizer_extra": _extra_ser}, "timestamp": int(__import__('time').time() * 1000)}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            logger.error(
+                "[SAVE_PLAN] После распределения остались optimizer-плиты без заказа: %s",
+                optimizer_extra,
+            )
+            raise Exception("В плане обнаружены плиты, не сопоставленные с заказами")
+
+        if rescue_leftovers:
+            logger.warning(
+                "[SAVE_PLAN] RESCUE-плиты сверх уже покрытого спроса игнорируются при пометке БД: %s",
+                rescue_leftovers,
+            )
         
         # === ПОМЕЧАЕМ ТОЛЬКО ПЛИТЫ, КОТОРЫЕ РЕАЛЬНО В ТРЕКАХ ===
         plates_marked = 0
         plates_failed = 0
         plates_skipped = 0
+        plates_mismatched = 0
         
         for order, qty_to_mark in orders_with_qty:
             kp_id = order.get('kp_id')
@@ -799,28 +1029,48 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                 logger.info(f"[SAVE_PLAN] Частичная потеря: КП #{kp_id}, {plate_name} - помечаем {qty_to_mark} из {qty_ordered}")
             
             if kp_id and plate_name and qty_to_mark > 0:
-                success = kp_db.mark_plates_as_planned(
+                mark_result = kp_db.mark_plates_as_planned(
                     kp_id=kp_id,
                     plate_name=plate_name,
                     qty_to_plan=qty_to_mark,
                     plan_id=plan_id,
                     db_path=db_path
                 )
-                if success:
-                    plates_marked += 1
+                if mark_result.get('success'):
+                    processed_count = int(mark_result.get('processed_count', 0) or 0)
+                    plates_marked += processed_count
+                    if processed_count != qty_to_mark:
+                        plates_mismatched += 1
+                        logger.error(
+                            "[SAVE_PLAN] Расхождение при пометке плиты: КП #%s, %s. "
+                            "Ожидалось %s, фактически помечено %s. Детали: %s",
+                            kp_id,
+                            plate_name,
+                            qty_to_mark,
+                            processed_count,
+                            mark_result,
+                        )
                 else:
                     plates_failed += 1
-                    logger.warning(f"[SAVE_PLAN] Не удалось пометить плиту: КП #{kp_id}, {plate_name} x{qty_to_mark}")
+                    logger.warning(
+                        f"[SAVE_PLAN] Не удалось пометить плиту: КП #{kp_id}, {plate_name} x{qty_to_mark}. "
+                        f"Детали: {mark_result}"
+                    )
         
-        logger.info(f"[SAVE_PLAN] Помечено {plates_marked} позиций плит как 'в плане' для плана {plan_id}")
+        logger.info(f"[SAVE_PLAN] Помечено {plates_marked} плит как 'в плане' для плана {plan_id}")
         if plates_skipped > 0:
             logger.info(f"[SAVE_PLAN] Пропущено {plates_skipped} потерянных плит (остаются 'в производстве')")
         
         # Если не удалось пометить плиты - откатываем и не сохраняем план
-        if plates_failed > 0:
-            logger.error(f"[SAVE_PLAN] Не удалось пометить {plates_failed} плит. Откатываю помеченные плиты...")
+        if plates_failed > 0 or plates_mismatched > 0:
+            logger.error(
+                f"[SAVE_PLAN] Ошибки при пометке плит. "
+                f"failed={plates_failed}, mismatched={plates_mismatched}. Откатываю помеченные плиты..."
+            )
             kp_db.return_plan_plates_to_production(plan_id, db_path)
-            raise Exception(f"Не удалось пометить {plates_failed} плит в БД")
+            raise Exception(
+                f"Не удалось корректно пометить плиты в БД: failed={plates_failed}, mismatched={plates_mismatched}"
+            )
         
         # === ТЕПЕРЬ СОХРАНЯЕМ ПЛАН НА ДИСК ===
         # Плиты уже помечены в БД, теперь можно безопасно сохранить план

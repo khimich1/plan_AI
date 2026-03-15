@@ -12,9 +12,12 @@
 - ПОПЕРЕЧНЫЙ РЕЗ: режет поперёк, уменьшает ДЛИНУ (6.0м → 3.0м + 3.0м)
 """
 # Относительные импорты внутри core/
+from pathlib import Path as _Path
 from . import config_and_data as cfg
 from .price_db import get_price
 from dataclasses import dataclass
+
+_DEBUG_LOG_5b5324 = _Path(__file__).resolve().parent.parent / "debug-5b5324.log"
 
 
 # ==================== КОНФИГУРАЦИЯ ОПТИМИЗАЦИИ ====================
@@ -187,19 +190,34 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
     Returns:
         dict: информация о КП (kp_id, customer, kp_date, plate_name, load_code) или пустой словарь
     """
+    # #region agent log (session 5b5324) _get_next_order_info entry
+    try:
+        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:entry", "message": "key requested", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     entries = order_info_list.get(key, [])
     for entry in entries:
         if entry.get('qty_remaining', 0) > 0:
             entry['qty_remaining'] -= 1
-            # Возвращаем копию без qty_remaining (он служебный)
-            return {
+            out = {
                 'kp_id': entry.get('kp_id'),
                 'customer': entry.get('customer'),
                 'kp_date': entry.get('kp_date'),
                 'plate_name': entry.get('plate_name'),
                 'load_code': entry.get('load_code'),
-                'reinforcement': entry.get('reinforcement')
+                'reinforcement': entry.get('reinforcement'),
+                'identity_match_type': 'exact'
             }
+            # #region agent log (session 5b5324) _get_next_order_info return exact
+            try:
+                with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+                    _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "exact match", "data": {"match_type": "exact", "kp_id": out.get("kp_id"), "plate_name": (out.get("plate_name") or "")[:60]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            return out
     # Fallback по (length, width) без load_code — ищем любой ключ с теми же длиной и шириной
     if len(key) == 3:
         length, width, load_code = key
@@ -229,14 +247,23 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
                                 }, ensure_ascii=False) + '\n')
                         except Exception:
                             pass
-                        return {
+                        out_fb = {
                             'kp_id': entry.get('kp_id'),
                             'customer': entry.get('customer'),
                             'kp_date': entry.get('kp_date'),
                             'plate_name': entry.get('plate_name'),
                             'load_code': entry.get('load_code'),
-                            'reinforcement': entry.get('reinforcement')
+                            'reinforcement': entry.get('reinforcement'),
+                            'identity_match_type': 'fallback_same_length_width'
                         }
+                        # #region agent log (session 5b5324) fallback_same_length_width
+                        try:
+                            with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+                                _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_same_length_width", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_fb.get("kp_id"), "plate_name": (out_fb.get("plate_name") or "")[:60]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                        # #endregion
+                        return out_fb
         # Fallback по «соседней» длине (±0.02 м), та же ширина и load_code (61,2↔61,1; 59,8↔59,9)
         # Иначе при конкурирующих длинах решатель даёт общий объём, список по точной длине кончается —
         # плиты получают kp_id из opt (первый КП), а в БД они в другом КП и не списываются.
@@ -249,14 +276,30 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
                 for entry in candidate_entries:
                     if entry.get('qty_remaining', 0) > 0:
                         entry['qty_remaining'] -= 1
-                        return {
+                        out_n = {
                             'kp_id': entry.get('kp_id'),
                             'customer': entry.get('customer'),
                             'kp_date': entry.get('kp_date'),
                             'plate_name': entry.get('plate_name'),
                             'load_code': entry.get('load_code'),
-                            'reinforcement': entry.get('reinforcement')
+                            'reinforcement': entry.get('reinforcement'),
+                            'identity_match_type': 'fallback_neighbor_length'
                         }
+                        # #region agent log (session 5b5324) fallback_neighbor_length
+                        try:
+                            with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+                                _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_neighbor_length", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_n.get("kp_id"), "plate_name": (out_n.get("plate_name") or "")[:60]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                        # #endregion
+                        return out_n
+    # #region agent log (session 5b5324) _get_next_order_info return empty
+    try:
+        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "empty", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     return {}
 
 
@@ -309,13 +352,14 @@ def _next_slot_info(
 ) -> dict:
     """
     Возвращает следующую атрибуцию по ключу из предрасчитанных слотов и сдвигает курсор.
-    При исчерпании слотов (LP over-deliver) возвращает последний слот.
+    При исчерпании слотов возвращает пустой dict, чтобы не дублировать identity.
     """
     slots = slot_lists.get(key, [])
-    if not slots:
-        return {}
     idx = slot_cursors.get(key, 0)
-    entry = slots[min(idx, len(slots) - 1)]
+    if not slots or idx >= len(slots):
+        return {}
+    entry = dict(slots[idx])
+    entry['identity_match_type'] = 'slot_proportional'
     slot_cursors[key] = idx + 1
     return entry
 
@@ -443,6 +487,18 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         })
 
     slot_lists, slot_cursors = _build_proportional_slot_lists(orders_2d, demand_2d)
+    # #region agent log (session 5b5324) после построения slot_lists
+    try:
+        _slot_summary = [(list(k), len(slots)) for k, slots in list(slot_lists.items())[:20]]
+        _sample_slot = []
+        for k, slots in list(slot_lists.items())[:3]:
+            if slots:
+                _sample_slot.append({"key": list(k), "first_identity": [slots[0].get("kp_id"), (slots[0].get("plate_name") or "")[:50]]})
+        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_slots", "location": "optimization:after_build_slot_lists", "message": "slot_lists summary", "data": {"slot_summary": _slot_summary, "sample_slot_identity": _sample_slot}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     tolerance_length = 0  # Строгое совпадение длины (после правок length_dm_to_m)
     tolerance_width = 20     # ±20мм по ширине (генерация опций, напр. поперечный рез остаток→цель)
@@ -1224,74 +1280,29 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         'rests_created': [],  # Остатки, созданные при первичных резах
         'rests_used': []      # Остатки, использованные во вторичных резах
     }
-    
-    # Первичные резы
-    # ИСПРАВЛЕНИЕ: Для каждой плиты получаем свой kp_id из order_info_list!
-    # Раньше все плиты с одинаковыми (length, width) получали kp_id первого КП.
-    # Теперь каждая плита создаётся отдельно со своим kp_id.
-    # #region agent log: summary empty plate_info (H2)
-    _empty_primary_keys = []
-    # #endregion
+
+    planned_primary_cuts = []
+    planned_secondary_cuts = []
+
+    # Первичные резы: сначала собираем все output без exact identity.
+    # Identity будет выдаваться позже из одного общего ledger спроса.
     for opt in primary_options:
         qty = int(round(value(x_prim[opt['id']])))
         if qty > 0:
-            # Создаём ОТДЕЛЬНУЮ запись для КАЖДОЙ плиты
             for _ in range(qty):
-                # Получаем информацию о следующем КП с уменьшением счётчика
-                # ИСПРАВЛЕНИЕ: Для indirect типа используем target_width (заказанная ширина),
-                # для direct/solid — main (они совпадают с заказом)
                 lookup_width = opt.get('target_width', opt['main']) if opt.get('type') == 'indirect' else opt['main']
-                # ИСПРАВЛЕНИЕ: Добавляем load_code в ключ поиска
                 lookup_load_code = opt.get('load_code', 800)
-                plate_info = _next_slot_info(slot_lists, slot_cursors, (opt['length'], lookup_width, lookup_load_code))
-                # #region agent log: primary plate kp_id (H1, H2, H4)
-                if not plate_info and opt.get('kp_id'):
-                    _k = (opt['length'], lookup_width, lookup_load_code)
-                    _empty_primary_keys.append(_k)
-                    try:
-                        with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
-                            _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:primary_emit", "message": "primary plate_info empty", "data": {"key": list(_k), "opt_kp_id": opt.get('kp_id'), "opt_plate_name": (opt.get('plate_name') or '')[:50]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
-                    except Exception:
-                        pass
-                # #endregion
-                result['primary_cuts'].append({
+                planned_primary_cuts.append({
                     'width': opt['main'],
                     'demand_width': lookup_width,
                     'rest': opt['rest'],
                     'qty': 1,  # Каждая плита отдельно!
                     'lengths': [opt['length']],
-                    'load_code': plate_info.get('load_code', 800) if plate_info else opt.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
-                    'kp_id': plate_info.get('kp_id') if plate_info else opt.get('kp_id'),
-                    'customer': plate_info.get('customer') if plate_info else opt.get('customer'),
-                    'kp_date': plate_info.get('kp_date') if plate_info else opt.get('kp_date'),
-                    'plate_name': plate_info.get('plate_name') if plate_info else opt.get('plate_name')
+                    'load_code': lookup_load_code,
+                    'assignment_key': (opt['length'], lookup_width, lookup_load_code),
                 })
                 result['total_plates'] += 1
-                
-                result['plate_assignments'].append({
-                    'length': opt['length'],
-                    'width': opt['main'],
-                    'source': 'primary',
-                    'rest_width': opt['rest'],
-                    'load_code': plate_info.get('load_code', 800) if plate_info else opt.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
-                    'kp_id': plate_info.get('kp_id') if plate_info else opt.get('kp_id'),
-                    'customer': plate_info.get('customer') if plate_info else opt.get('customer'),
-                    'kp_date': plate_info.get('kp_date') if plate_info else opt.get('kp_date'),
-                    'plate_name': plate_info.get('plate_name') if plate_info else opt.get('plate_name')
-                })
-    
-    # #region agent log: summary empty plate_info (H2)
-    if _empty_primary_keys:
-        try:
-            from collections import Counter
-            _c = Counter(_empty_primary_keys)
-            _summary = [{"key": list(k), "count": _c[k]} for k in sorted(_c.keys())]
-            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:primary_emit_summary", "message": "plan keys with empty plate_info (summary)", "data": {"by_key": _summary, "total_plates_empty": len(_empty_primary_keys), "unique_keys": len(_c)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
-        except Exception:
-            pass
-    # #endregion
-    
+
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
     # Требования завода:
     # 1. Первая плита ДОЛЖНА быть целой (без реза, rest=0)
@@ -1302,7 +1313,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     solid_plates = []    # Целые плиты (rest=0)
     cut_plates = []      # Плиты с резом (rest>0)
     
-    for cut in result['primary_cuts']:
+    for cut in planned_primary_cuts:
         if cut['rest'] == 0:
             solid_plates.append(cut)
         else:
@@ -1318,34 +1329,65 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     
     # Новый порядок: СНАЧАЛА целые (ОТСОРТИРОВАННЫЕ!), ПОТОМ плиты с резом (сгруппированные)
     result['primary_cuts'] = solid_plates + cut_plates
-    
-    # Универсальная пост-коррекция: для каждого ключа (L, W, lc) из demand_2d
-    # добираем плиты, которые LP-решатель недодал.
-    # Снимок делается ДО цикла, чтобы только что добавленные плиты не влияли на подсчёт have.
-    _existing_cuts_snapshot = list(result['primary_cuts'])
+
+    # Вторичные резы: тоже сначала собираем output без identity.
+    for opt in secondary_options:
+        qty = int(round(value(x_sec[opt['id']])))
+        if qty > 0:
+            target_key = opt.get('target_order_key')
+            sec_load_code = target_key[2] if isinstance(target_key, (list, tuple)) and len(target_key) > 2 else 800
+
+            for _ in range(qty):
+                result['rests_used'].append({
+                    'source_length': opt['source_length'],
+                    'source_rest_mm': opt['source_rest']
+                })
+
+                for _ in range(opt['pieces']):
+                    planned_secondary_cuts.append({
+                        'source': opt['source_rest'],
+                        'cuts': [opt['output_width']],
+                        'qty': 1,
+                        'pieces': 1,
+                        'waste': opt.get('waste', 0),
+                        'type': opt['type'],
+                        'source_lengths': [opt['source_length']],
+                        'lengths': [opt['output_length']],
+                        'target_order_key': target_key,
+                        'load_code': sec_load_code,
+                    })
+
+    result['secondary_cuts'] = planned_secondary_cuts
+
+    # Универсальная пост-коррекция: считаем уже покрытый спрос по ОБОИМ источникам,
+    # а добираем только реально unmet demand.
+    planned_coverage_by_key: Counter[tuple] = Counter()
+    for cut in result['primary_cuts']:
+        assignment_key = cut.get('assignment_key')
+        if assignment_key:
+            planned_coverage_by_key[assignment_key] += 1
+    for cut in result['secondary_cuts']:
+        target_key = cut.get('target_order_key')
+        if target_key:
+            planned_coverage_by_key[target_key] += 1
+
     for (L, W, lc), need in demand_2d.items():
-        have = sum(
-            1 for c in _existing_cuts_snapshot
-            if abs((c.get('lengths') or [0])[0] - L) < 0.02
-            and c.get('demand_width', c.get('width')) == W
-            and (c.get('load_code') == lc or str(c.get('load_code')) == str(lc))
-        )
+        have = planned_coverage_by_key.get((L, W, lc), 0)
         if have >= need:
+            continue
+        if W > plate_width:
             continue
         rest = (plate_width - W) if W < plate_width else 0
         for _ in range(need - have):
-            pi = _next_slot_info(slot_lists, slot_cursors, (L, W, lc))
             result['primary_cuts'].append({
                 'width': W,
                 'demand_width': W,
                 'rest': rest,
                 'qty': 1,
                 'lengths': [L],
-                'load_code': pi.get('load_code', lc) if pi else lc,
-                'kp_id': pi.get('kp_id') if pi else None,
-                'customer': pi.get('customer') if pi else None,
-                'kp_date': pi.get('kp_date') if pi else None,
-                'plate_name': pi.get('plate_name') if pi else None,
+                'load_code': lc,
+                'assignment_key': (L, W, lc),
+                'identity_match_type': 'post_correction_pending',
             })
             result['total_plates'] += 1
     
@@ -1366,7 +1408,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         _prim_6_530_1200 = []
         for c in result['primary_cuts']:
             L = round((c.get('lengths') or [0])[0], 2)
-            W = c.get('width', 0)
+            W = c.get('demand_width', c.get('width', 0))
             lc = c.get('load_code', 8)
             for tk in _target_keys:
                 if abs(L - tk[0]) <= 0.02 and W == tk[1] and (lc == tk[2] or lc == '8'):
@@ -1383,11 +1425,30 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # #endregion
     print(f"[OPT_2D] ✓ Целых плит в начале: {len(solid_plates)}")
     print(f"[OPT_2D] ✓ Плит с резом (сгруппировано): {len(cut_plates)}")
-    
+
+    # Финальная атрибуция primary: теперь расходуем общий slot-ledger строго по demand key.
+    _empty_primary_keys = []
+
     # Пересоздаём plate_assignments в правильном порядке
     # ИСПРАВЛЕНИЕ: добавляем load_code, иначе в треках подставляется 8п и списание ищет 8п вместо 10п
     result['plate_assignments'] = []
     for cut in result['primary_cuts']:
+        assignment_key = cut.get('assignment_key') or (
+            (cut.get('lengths') or [0])[0],
+            cut.get('demand_width', cut.get('width')),
+            cut.get('load_code', 800),
+        )
+        plate_info = _next_slot_info(slot_lists, slot_cursors, assignment_key)
+        if not plate_info:
+            _empty_primary_keys.append(assignment_key)
+
+        cut['load_code'] = plate_info.get('load_code', cut.get('load_code', 800)) if plate_info else cut.get('load_code', 800)
+        cut['kp_id'] = plate_info.get('kp_id') if plate_info else None
+        cut['customer'] = plate_info.get('customer') if plate_info else None
+        cut['kp_date'] = plate_info.get('kp_date') if plate_info else None
+        cut['plate_name'] = plate_info.get('plate_name') if plate_info else None
+        cut['identity_match_type'] = plate_info.get('identity_match_type') if plate_info else 'slot_exhausted'
+
         for length in cut['lengths']:
             result['plate_assignments'].append({
                 'length': length,
@@ -1399,6 +1460,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'kp_date': cut.get('kp_date'),
                 'plate_name': cut.get('plate_name'),
                 'load_code': cut.get('load_code', 800),
+                'identity_match_type': cut.get('identity_match_type'),
             })
             
             # Сохраняем информацию об остатке для отслеживания
@@ -1408,65 +1470,75 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     'rest_width_mm': cut['rest'],
                     'source_width_mm': cut['width']
                 })
+    # #region agent log: summary empty plate_info (H2)
+    if _empty_primary_keys:
+        try:
+            _c = Counter(_empty_primary_keys)
+            _summary = [{"key": list(k), "count": _c[k]} for k in sorted(_c.keys())]
+            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:primary_emit_summary", "message": "plan keys with empty plate_info (summary)", "data": {"by_key": _summary, "total_plates_empty": len(_empty_primary_keys), "unique_keys": len(_c)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+    # #endregion
+
+    # #region agent log (session 5b5324) после пересборки primary plate_assignments
+    try:
+        _prim_sample = [{"kp_id": p.get("kp_id"), "plate_name": (p.get("plate_name") or "")[:50], "identity_match_type": p.get("identity_match_type")} for p in result['plate_assignments'][:5]]
+        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_primary_pa", "location": "optimization:plate_assignments_after_primary", "message": "primary plate_assignments count and sample", "data": {"primary_plate_assignments_count": len(result['plate_assignments']), "sample": _prim_sample}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     
     print(f"[OPT_2D] ✓ Создано остатков: {len(result['rests_created'])}")
     # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
-    
-    # Вторичные резы
-    # ИСПРАВЛЕНИЕ: Для каждой плиты из вторичного реза получаем свой kp_id!
-    for opt in secondary_options:
-        qty = int(round(value(x_sec[opt['id']])))
-        if qty > 0:
-            target_key = opt.get('target_order_key')
-            
-            # Добавляем каждый вторичный рез ОТДЕЛЬНО со своим kp_id
-            for _ in range(qty):
-                # Отмечаем использованный остаток
-                result['rests_used'].append({
-                    'source_length': opt['source_length'],
-                    'source_rest_mm': opt['source_rest']
-                })
-                
-                # Для каждой плиты (pieces) из этого реза получаем свой kp_id
-                for _ in range(opt['pieces']):
-                    # Получаем информацию о следующем КП
-                    plate_info = _get_next_order_info(order_info_list, target_key) if target_key else {}
-                    # #region agent log: secondary plate kp_id (H2, H5)
-                    if not plate_info and target_key:
-                        try:
-                            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
-                                _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:secondary_emit", "message": "secondary plate_info empty", "data": {"target_key": list(target_key) if isinstance(target_key, tuple) else target_key, "output_length": opt.get('output_length'), "output_width": opt.get('output_width')}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
-                        except Exception:
-                            pass
-                    # #endregion
-                    result['secondary_cuts'].append({
-                        'source': opt['source_rest'],
-                        'cuts': [opt['output_width']],
-                        'qty': 1,  # Каждая плита отдельно!
-                        'pieces': 1,
-                        'waste': opt.get('waste', 0),
-                        'type': opt['type'],
-                        'source_lengths': [opt['source_length']],
-                        'lengths': [opt['output_length']],
-                        'target_order_key': target_key,
-                        'kp_id': plate_info.get('kp_id') if plate_info else None,
-                        'customer': plate_info.get('customer') if plate_info else None,
-                        'kp_date': plate_info.get('kp_date') if plate_info else None,
-                        'plate_name': plate_info.get('plate_name') if plate_info else None
-                    })
-                    
-                    _sec_load = (target_key[2] if isinstance(target_key, (list, tuple)) and len(target_key) > 2 else 800)
-                    result['plate_assignments'].append({
-                        'length': opt['output_length'],
-                        'width': opt['output_width'],
-                        'source': 'secondary',
-                        'source_rest': opt['source_rest'],
-                        'kp_id': plate_info.get('kp_id') if plate_info else None,
-                        'customer': plate_info.get('customer') if plate_info else None,
-                        'kp_date': plate_info.get('kp_date') if plate_info else None,
-                        'plate_name': plate_info.get('plate_name') if plate_info else None,
-                        'load_code': _sec_load,
-                    })
+
+    # Вторичные резы: получаем identity из того же общего slot-ledger.
+    _secondary_attribution_log = []  # (target_key, kp_id, plate_name, match_type) для лога 5b5324
+    for cut in result['secondary_cuts']:
+        target_key = cut.get('target_order_key')
+        plate_info = _next_slot_info(slot_lists, slot_cursors, target_key) if target_key else {}
+        if len(_secondary_attribution_log) < 50:
+            _secondary_attribution_log.append({
+                "target_key": list(target_key) if isinstance(target_key, tuple) else target_key,
+                "kp_id": plate_info.get('kp_id') if plate_info else None,
+                "plate_name": (plate_info.get('plate_name') or '')[:50] if plate_info else None,
+                "match_type": plate_info.get('identity_match_type') if plate_info else 'empty',
+            })
+        # #region agent log: secondary plate kp_id (H2, H5)
+        if not plate_info and target_key:
+            try:
+                with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                    _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:secondary_emit", "message": "secondary plate_info empty", "data": {"target_key": list(target_key) if isinstance(target_key, tuple) else target_key, "output_length": cut.get('lengths', [None])[0], "output_width": cut.get('cuts', [None])[0]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
+            except Exception:
+                pass
+        # #endregion
+        cut['kp_id'] = plate_info.get('kp_id') if plate_info else None
+        cut['customer'] = plate_info.get('customer') if plate_info else None
+        cut['kp_date'] = plate_info.get('kp_date') if plate_info else None
+        cut['plate_name'] = plate_info.get('plate_name') if plate_info else None
+        cut['identity_match_type'] = plate_info.get('identity_match_type') if plate_info else 'secondary_unmapped'
+
+        result['plate_assignments'].append({
+            'length': cut['lengths'][0],
+            'width': cut['cuts'][0],
+            'source': 'secondary',
+            'source_rest': cut['source'],
+            'kp_id': cut.get('kp_id'),
+            'customer': cut.get('customer'),
+            'kp_date': cut.get('kp_date'),
+            'plate_name': cut.get('plate_name'),
+            'load_code': cut.get('load_code', 800),
+            'identity_match_type': cut.get('identity_match_type'),
+        })
+    # #region agent log (session 5b5324) после вторичных резов
+    try:
+        _sec_count = sum(1 for p in result['plate_assignments'] if p.get('source') == 'secondary')
+        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_secondary", "location": "optimization:after_secondary", "message": "secondary attributions and plate_assignments", "data": {"secondary_attribution_sample": _secondary_attribution_log[:40], "plate_assignments_total": len(result['plate_assignments']), "secondary_count": _sec_count}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     
     print(f"[OPT_2D] OK! Готово! Использовано {result['total_plates']} плит")
     print(f"[OPT_2D] Создано {len(result['plate_assignments'])} готовых плит")

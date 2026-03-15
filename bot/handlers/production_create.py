@@ -1,5 +1,6 @@
 """Создание нового плана производства и фильтрация КП"""
 import logging
+import math
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import kp_db
+from core.config_and_data import TRACK_LENGTH_M
 from ..keyboards import (
     cancel_process_kb, production_filter_kb, main_menu_kb, tracks_choice_kb
 )
@@ -288,7 +290,9 @@ async def filter_by_date(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-def _build_kp_selection_message_and_kb(production_kp: list, selected_kp_ids: set, db_path: str):
+def _build_kp_selection_message_and_kb(
+    production_kp: list, selected_kp_ids: set, db_path: str, tracks_count: int = 1
+):
     """Формирует текст и клавиатуру для экрана выбора КП (toggle + Плиты + Подтвердить + Назад)."""
     text = (
         "Нажмите на КП для выделения. Под списком — Подтвердить. "
@@ -306,13 +310,16 @@ def _build_kp_selection_message_and_kb(production_kp: list, selected_kp_ids: set
         in_plan_display = 100.0 if completion_pct >= 100 else in_plan_pct
         if in_plan_display >= 100:
             continue
+        total_length = kp_db.get_kp_total_length(kp_id, db_path)
+        estimated_tracks = max(1, round(total_length / TRACK_LENGTH_M))
+        estimated_days = max(1, math.ceil(estimated_tracks / tracks_count))
         customer = kp.get('customer_name', 'Без имени')
         customer_short = customer[:12] + '…' if len(customer) > 12 else customer
         execution_terms = (kp.get('execution_terms') or '').strip()
         if len(execution_terms) > 10:
             execution_terms = execution_terms[:10].rstrip()
         prefix = "✓ " if kp_id in selected_kp_ids else ""
-        btn_text = f"{prefix}КП №{kp_id} | {customer_short} | {completion_pct:.0f}% вып. · {in_plan_display:.0f}% пл."
+        btn_text = f"{prefix}КП №{kp_id} | {customer_short} | {completion_pct:.0f}% вып. · {in_plan_display:.0f}% пл. | ≈ {estimated_days} дн."
         if execution_terms:
             btn_text += f" | ⏰ {execution_terms}"
         buttons.append([
@@ -353,8 +360,10 @@ async def filter_by_kp_buttons(callback: CallbackQuery, state: FSMContext):
         await state.set_state(ProductionStates.waiting_filter_method)
         await callback.answer()
         return
+    data = await state.get_data()
+    tracks_count = data.get('tracks_count', 1)
     selected_kp_ids = set()
-    text, kb = _build_kp_selection_message_and_kb(production_kp, selected_kp_ids, db_path)
+    text, kb = _build_kp_selection_message_and_kb(production_kp, selected_kp_ids, db_path, tracks_count=tracks_count)
     try:
         await callback.message.edit_text(text, reply_markup=kb)
     except Exception:
@@ -380,7 +389,8 @@ async def plan_kp_toggle(callback: CallbackQuery, state: FSMContext):
     if not production_kp:
         await callback.answer()
         return
-    text, kb = _build_kp_selection_message_and_kb(production_kp, selected_set, db_path)
+    tracks_count = data.get('tracks_count', 1)
+    text, kb = _build_kp_selection_message_and_kb(production_kp, selected_set, db_path, tracks_count=tracks_count)
     try:
         await callback.message.edit_text(text, reply_markup=kb)
     except Exception:
@@ -536,7 +546,8 @@ async def _redraw_kp_list(callback: CallbackQuery, state: FSMContext):
             ])
         )
         return
-    text, kb = _build_kp_selection_message_and_kb(production_kp, selected_set, db_path)
+    tracks_count = data.get('tracks_count', 1)
+    text, kb = _build_kp_selection_message_and_kb(production_kp, selected_set, db_path, tracks_count=tracks_count)
     try:
         await callback.message.edit_text(text, reply_markup=kb)
     except Exception:

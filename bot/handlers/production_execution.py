@@ -1181,25 +1181,35 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                             entry['qty_remaining'] -= 1
                             order_info = entry
                             break
-                    plate_name = ''
                     if order_info and order_info.get('plate_name'):
                         plate_name = order_info['plate_name']
+                        display_name = plate_name
+                        rescue_order_missing = False
                     else:
-                        plate_name = cfg.make_plate_name(
+                        display_name = cfg.make_plate_name(
                             length, width_m, load_code=load_code,
                             length_dm_raw=order_info.get('length_dm_raw') if order_info else None
+                        )
+                        plate_name = None
+                        rescue_order_missing = True
+                        logger.warning(
+                            "[RESCUE] Не найден exact order_info для ключа %s. "
+                            "Создаю rescue-элемент только для визуализации с label=%s",
+                            key,
+                            display_name,
                         )
                     current_track.append({
                         'length': length,
                         'mode': 'solid',
                         'width': width_m,
                         'load_code': load_code,
-                        'label': plate_name,
+                        'label': display_name,
                         'reinforcement': 0,
                         'kp_id': order_info.get('kp_id') if order_info else None,
                         'customer': order_info.get('customer') if order_info else None,
                         'kp_date': order_info.get('kp_date') if order_info else None,
-                        'plate_name': plate_name
+                        'plate_name': plate_name,
+                        'rescue_order_missing': rescue_order_missing,
                     })
                     current_len += length
             _flush_track()
