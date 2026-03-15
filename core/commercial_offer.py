@@ -453,13 +453,10 @@ def generate_commercial_offer_pdf(
         except Exception as exc:
             print(f"Ошибка загрузки логотипа: {exc}")
     
-    # 1. Название компании
-    story.append(Paragraph(COMPANY_NAME, style_company_name))
-    
-    # 2. Адрес (отдельной строкой)
+    # 1. Адрес (отдельной строкой)
     story.append(Paragraph(COMPANY_ADDRESS, style_header_info))
     
-    # 3. Контакты менеджера (отдельной строкой)
+    # 2. Контакты менеджера (отдельной строкой)
     if manager_phone and manager_email:
         contacts_text = f"Тел.: {format_phone(manager_phone)}, email: {manager_email}"
     elif manager_phone:
@@ -473,7 +470,7 @@ def generate_commercial_offer_pdf(
     story.append(Paragraph(contacts_text, style_header_info))
     story.append(Spacer(1, 3 * mm))
     
-    # 4. Номер КП
+    # 3. Номер КП
     if kp_db_id:
         doc_number_text = f"КП № {kp_db_id} от {offer_date}"
     else:
@@ -481,7 +478,7 @@ def generate_commercial_offer_pdf(
     
     story.append(Paragraph(doc_number_text, style_doc_number))
     
-    # 5. Срок действия коммерческого предложения (без отступа перед ним)
+    # 4. Срок действия коммерческого предложения (без отступа перед ним)
     story.append(Paragraph(
         "Срок действия коммерческого предложения 3 дня",
         style_header_info
@@ -618,19 +615,6 @@ def generate_commercial_offer_pdf(
     subtotal_str = f"{totals['subtotal']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     total_with_vat_str = f"{totals['total_with_vat']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     vat_str = f"{totals['vat_amount']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-    
-    # Если есть скидка, добавляем информацию о ней
-    if discount_percent > 0:
-        discount_style = ParagraphStyle(
-            'DiscountInfo',
-            parent=styles['Normal'],
-            fontName=FONT_BOLD,
-            fontSize=11,
-            leading=14,
-            textColor=colors.HexColor('#006100'),  # Зелёный цвет
-            spaceAfter=2 * mm
-        )
-        story.append(Paragraph(f"Скидка {discount_percent}%", discount_style))
     
     # Основная итоговая строка
     summary_text = (

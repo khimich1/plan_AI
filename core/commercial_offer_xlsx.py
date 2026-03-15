@@ -238,7 +238,6 @@ def generate_commercial_offer_xlsx(
         contacts_line = f"Тел.: {COMPANY_PHONE}, Email: {COMPANY_EMAIL}"
     
     header_data.extend([
-        [COMPANY_NAME],
         [f"{COMPANY_ADDRESS}"],
         [contacts_line],  # 🆕 КОНТАКТЫ МЕНЕДЖЕРА (не компании!)
         [""],
@@ -459,17 +458,6 @@ def generate_commercial_offer_xlsx(
         
         # Добавляем итоговые строки
         summary_row = table_header_row + len(order_data) + 2
-        
-        # Если есть скидка, добавляем строку с информацией о скидке
-        if discount_percent > 0:
-            discount_row = summary_row
-            summary_row = discount_row + 1  # Сдвигаем итоги на одну строку вниз
-            
-            worksheet.merge_cells(f'A{discount_row}:F{discount_row}')
-            discount_cell = worksheet[f'A{discount_row}']
-            discount_cell.value = f"Скидка {discount_percent}%"
-            discount_cell.font = Font(name='Tahoma', size=11, bold=True, color='FF006100')  # Зелёный цвет для скидки
-            discount_cell.alignment = left_align
         
         # Итоговая сумма (уже с НДС, так как unit_price включает НДС)
         subtotal_row = summary_row

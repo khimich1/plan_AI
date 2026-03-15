@@ -237,9 +237,10 @@ def get_wide_plate_lines(text: str) -> List[Tuple[str, int]]:
     """
     Возвращает строки из текста заказа, у которых ширина в дм > 12.
 
-    Поддерживает два формата:
+    Поддерживает форматы:
     - Каталожная/стандартная марка: ПБ L-W-Nп, ПБ L.W-load и т.п.
       (разбор через parse_catalog_mark по нормализованной строке)
+    - Канонический/OCR: ПБ L-W-N [qty] без «п» (например, вывод OCR/GPT)
     - Размерный формат W×L в метрах: «1.5×6.3 — 2 шт», «0.32×4.0 3»
       (ширина 1.5 м = 15 дм > 12)
 
@@ -262,9 +263,9 @@ def get_wide_plate_lines(text: str) -> List[Tuple[str, int]]:
     )
     # Regex для количества в конце строки
     _QTY_END_RE = re.compile(r"(\d+)\s*(?:шт\.?|штук)?\s*$", re.IGNORECASE)
-    # Канонический формат после нормализации: ПБ L-W-Nп [qty] (дефис между L и W, не точка)
+    # Канонический формат: ПБ L-W-N[п] [qty] (дефис между L и W; «п» опциональна для OCR)
     _CANONICAL_L_W_RE = re.compile(
-        r"(?i)\bп[бк]\s*(\d+)\s*-\s*(\d{1,2})\s*-\s*\d+(?:[,.]\d+)?п(?:\s+(\d+))?\s*$",
+        r"(?i)\bп[бк]\s*(\d+)\s*-\s*(\d{1,2})\s*-\s*\d+(?:[,.]\d+)?п?(?:\s+(\d+))?\s*$",
         re.UNICODE,
     )
 
@@ -280,7 +281,7 @@ def get_wide_plate_lines(text: str) -> List[Tuple[str, int]]:
                 result.append((raw, qty))
             continue
 
-        # 2) Канонический формат ПБ L-W-Nп [qty] (нормализованные строки)
+        # 2) Канонический формат ПБ L-W-N[п] [qty] (нормализованные строки и OCR)
         m_can = _CANONICAL_L_W_RE.match(cleaned)
         if m_can:
             W_dm = int(m_can.group(2))

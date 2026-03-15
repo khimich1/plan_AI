@@ -283,6 +283,51 @@ def _build_discount_request_text() -> str:
     )
 
 
+def _build_wide_plates_replacement_example(wide_plate_lines: list[str]) -> str:
+    """
+    Формирует пример замены для плит шириной >12 дм:
+    ПБ L-15-8п 2 -> ПБ L-12-8п 2 + ПБ L-3,0-8п 2.
+    """
+    pb_line_re = re.compile(
+        r"(?i)\b(?P<prefix>п[бк])\s*"
+        r"(?P<length>[\d,.]+)\s*-\s*"
+        r"(?P<width>[\d,.]+)\s*-\s*"
+        r"(?P<load>[\d,.]+)\s*п?\s*"
+        r"(?P<qty>\d+)?\s*(?:шт\.?|штук)?\s*$"
+    )
+
+    example_blocks: list[str] = []
+    for raw_line in wide_plate_lines:
+        line = raw_line.strip()
+        match = pb_line_re.search(line)
+        if not match:
+            continue
+
+        prefix = match.group("prefix").upper()
+        length_part = match.group("length").replace(".", ",")
+        load_part = match.group("load").replace(".", ",")
+        qty = (match.group("qty") or "").strip()
+        qty_suffix = f" {qty}" if qty else ""
+
+        example_blocks.append(
+            f"• {prefix} {length_part}-12-{load_part}п{qty_suffix}\n"
+            f"• {prefix} {length_part}-3,0-{load_part}п{qty_suffix}"
+        )
+
+    if not example_blocks:
+        return "Пришлите список плит, на которые их нужно заменить."
+
+    examples_block = "\n\n".join(example_blocks)
+    return (
+        "ПРИМЕР\n"
+        "Пришлите список плит, на которые их нужно заменить.\n"
+        "_____________________________________________________\n"
+        "Пример из ваших плит:\n\n"
+        f"{examples_block}\n"
+        "КОНЕЦ ПРИМЕРА"
+    )
+
+
 @router.callback_query(F.data == "confirm_plates_list", KPStates.waiting_plates_confirm)
 async def confirm_plates_list_callback(callback: CallbackQuery, state: FSMContext):
     """Обработчик нажатия «Подтвердить» для списка плит"""
@@ -308,10 +353,11 @@ async def confirm_plates_list_callback(callback: CallbackQuery, state: FSMContex
 
     # Есть плиты с шириной > 12 дм — запрашиваем замену
     wide_list_text = "\n".join(f"• {line}" for line in wide_plate_lines)
+    example_text = _build_wide_plates_replacement_example(wide_plate_lines)
     await state.set_state(KPStates.waiting_wide_plates_replacement)
     await callback.message.answer(
         f"⚠️ В списке есть плиты шириной больше 12 дм:\n{wide_list_text}\n\n"
-        "Пришлите список плит, на которые их нужно заменить."
+        f"{example_text}"
     )
     await callback.message.answer(
         "Или нажмите кнопку ниже для отмены:",
