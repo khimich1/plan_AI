@@ -58,3 +58,4 @@ class PBInfoStates(StatesGroup):
 class ArchiveStates(StatesGroup):
     """Состояния для раздела «Архив» (поиск по номеру КП)."""
     waiting_kp_number = State()
+    waiting_discount = State()

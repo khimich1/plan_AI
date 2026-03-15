@@ -674,23 +674,28 @@ def archive_sections_kb() -> InlineKeyboardMarkup:
     )
 
 
-def kp_details_kb(kp_id: int) -> InlineKeyboardMarkup:
+def kp_details_kb(kp_id: int, total_amount: float = 0) -> InlineKeyboardMarkup:
     """
     Клавиатура действий для конкретного КП.
     
     Показывает кнопки:
-    - Скачать PDF
-    - Скачать XLSX
+    - PDF / XLSX с суммой в подписи (если total_amount > 0)
+    - Изменить скидку
     - Удалить КП
     - Назад к списку
     
     Args:
         kp_id: номер КП для формирования callback_data
+        total_amount: итоговая сумма с НДС для отображения в кнопках PDF/XLSX
     """
+    amount_str = f"{total_amount:,.0f} ₽".replace(",", " ") if total_amount else ""
+    pdf_text = f"📄 PDF · {amount_str}" if amount_str else "📄 PDF"
+    xlsx_text = f"📊 XLSX · {amount_str}" if amount_str else "📊 XLSX"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📄 Скачать PDF", callback_data=f"download_pdf_{kp_id}")],
-            [InlineKeyboardButton(text="📊 Скачать XLSX", callback_data=f"download_xlsx_{kp_id}")],
+            [InlineKeyboardButton(text=pdf_text, callback_data=f"download_pdf_{kp_id}")],
+            [InlineKeyboardButton(text=xlsx_text, callback_data=f"download_xlsx_{kp_id}")],
+            [InlineKeyboardButton(text="✏️ Изменить скидку", callback_data=f"change_discount_{kp_id}")],
             [InlineKeyboardButton(text="🗑️ Удалить КП", callback_data=f"delete_kp_{kp_id}")],
             [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="archive_back_to_sections")],
         ]

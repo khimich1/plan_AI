@@ -114,6 +114,13 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
             )
         ''')
         
+        # Миграция: колонка unit_price для пересчёта скидки и генерации документов из архива
+        try:
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN unit_price REAL")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # колонка уже существует
+        
         # Таблица 3: kp_files - Файлы XLSX
         # kp_id - связь с KP_offers
         # xlsx_file - сам файл как BLOB (двоичные данные)
@@ -598,13 +605,13 @@ def save_kp_to_db(
                 INSERT INTO kp_plates (
                     kp_id, position_number, plate_name,
                     length_m, width_m, load_class,
-                    qty, unit_weight, total_weight, discounted_price,
+                    qty, unit_weight, total_weight, discounted_price, unit_price,
                     length_dm_raw, nomenclature_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 kp_id, idx, plate_name,
                 item.get('length_m', 0), item.get('width_m', 0), item.get('load_class', 800),
-                qty, unit_weight, weight, discounted_price,
+                qty, unit_weight, weight, discounted_price, unit_price,
                 item.get('length_dm_raw', '') or '', nomenclature_id
             ))
             
@@ -633,6 +640,97 @@ def save_kp_to_db(
         conn.commit()
         return kp_id
     
+    finally:
+        conn.close()
+
+
+def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_DB) -> bool:
+    """
+    Обновляет процент скидки для КП, пересчитывает итоги и discounted_price по плитам.
+    
+    Простыми словами:
+    - Берёт unit_price из kp_plates (или восстанавливает из discounted_price и текущей скидки)
+    - Считает новые subtotal/vat/total через calculate_total_cost
+    - Обновляет KP_offers и discounted_price (и при необходимости unit_price) в kp_plates
+    """
+    if not (0 <= new_discount <= 100):
+        return False
+    init_schema(db_path)
+    try:
+        from core.commercial_offer_xlsx import calculate_total_cost
+    except ImportError:
+        return False
+    
+    conn = _connect(db_path)
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        
+        cur.execute('SELECT discount_percent FROM KP_offers WHERE kp_id = ?', (kp_id,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        current_discount = row[0] or 0.0
+        
+        cur.execute(
+            'SELECT id, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price FROM kp_plates WHERE kp_id = ? ORDER BY position_number',
+            (kp_id,)
+        )
+        plates = cur.fetchall()
+        if not plates:
+            return False
+        
+        order_data = []
+        for p in plates:
+            pid, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price_col = p
+            if unit_price_col is not None and unit_price_col > 0:
+                unit_price = float(unit_price_col)
+            else:
+                # Восстанавливаем из discounted_price и текущей скидки
+                factor = 1.0 - (current_discount / 100.0)
+                if factor <= 0:
+                    factor = 1.0
+                unit_price = (discounted_price or 0) / factor
+            weight = total_weight if total_weight is not None and total_weight > 0 else (unit_weight or 0) * (qty or 0)
+            order_data.append({
+                'name': plate_name or '',
+                'length_m': length_m or 0,
+                'width_m': width_m or 0,
+                'qty': qty or 0,
+                'load_class': load_class or 800,
+                'unit_price': unit_price,
+                'weight': weight,
+            })
+        
+        totals = calculate_total_cost(order_data, new_discount)
+        subtotal = totals['subtotal']
+        vat_amount = totals['vat_amount']
+        total_amount = totals['total_with_vat']
+        
+        cur.execute('''
+            UPDATE KP_offers SET discount_percent = ?, subtotal = ?, vat_amount = ?, total_amount = ?
+            WHERE kp_id = ?
+        ''', (new_discount, subtotal, vat_amount, total_amount, kp_id))
+        
+        for p in plates:
+            pid, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price_col = p
+            if unit_price_col is not None and unit_price_col > 0:
+                up = float(unit_price_col)
+            else:
+                factor = 1.0 - (current_discount / 100.0)
+                if factor <= 0:
+                    factor = 1.0
+                up = (discounted_price or 0) / factor
+            new_disc_price = up * (1.0 - new_discount / 100.0)
+            cur.execute(
+                'UPDATE kp_plates SET discounted_price = ?, unit_price = ? WHERE id = ?',
+                (new_disc_price, up, pid)
+            )
+        
+        conn.commit()
+        return True
+    except Exception:
+        return False
     finally:
         conn.close()
 

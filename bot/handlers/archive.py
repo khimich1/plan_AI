@@ -1,13 +1,17 @@
 """Обработчики для архива коммерческих предложений"""
+import asyncio
 import os
 import json
 import tempfile
 from pathlib import Path
+from datetime import datetime
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
 from core import kp_db
+from core.commercial_offer import generate_commercial_offer_pdf
+from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from ..keyboards import main_menu_kb, archive_sections_kb, kp_details_kb
 from ..states import ArchiveStates
 
@@ -16,6 +20,35 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 
 router = Router()
+
+
+def _order_data_from_kp_info(kp_info: dict) -> list:
+    """Собирает order_data для генераторов из kp_info['plates'] (unit_price из колонки или из discounted_price и скидки)."""
+    plates = kp_info.get("plates") or []
+    discount = kp_info.get("discount_percent") or 0
+    factor = 1.0 - (discount / 100.0)
+    if factor <= 0:
+        factor = 1.0
+    order_data = []
+    for p in plates:
+        unit_price = p.get("unit_price")
+        if unit_price is None or (isinstance(unit_price, (int, float)) and unit_price <= 0):
+            discounted_price = p.get("discounted_price") or 0
+            unit_price = discounted_price / factor
+        qty = p.get("qty") or 0
+        total_weight = p.get("total_weight")
+        unit_weight = p.get("unit_weight")
+        weight = total_weight if total_weight is not None and total_weight > 0 else (unit_weight or 0) * qty
+        order_data.append({
+            "name": p.get("plate_name") or "",
+            "length_m": p.get("length_m") or 0,
+            "width_m": p.get("width_m") or 0,
+            "qty": qty,
+            "load_class": p.get("load_class") or 800,
+            "unit_price": float(unit_price),
+            "weight": weight or 0,
+        })
+    return order_data
 
 
 @router.message(F.text == "📁 Архив")
@@ -354,87 +387,164 @@ async def view_kp_details(callback: CallbackQuery):
     
     await callback.message.edit_text(
         text,
-        reply_markup=kp_details_kb(kp_id)
+        reply_markup=kp_details_kb(kp_id, kp_info.get("total_amount") or 0)
     )
 
 
 @router.callback_query(F.data.startswith("download_pdf_"))
 async def download_pdf(callback: CallbackQuery):
     """
-    Скачать PDF файл КП.
-    
-    Простыми словами:
-    - Ищет PDF файл КП на диске или в БД
-    - Отправляет его пользователю
+    Генерирует PDF КП на лету из данных БД (как при создании КП) и отправляет пользователю.
     """
     await callback.answer("⏳ Подготавливаю PDF...")
-    
     kp_id = int(callback.data.split("_")[-1])
     kp_info = kp_db.get_kp_by_id(kp_id)
-    
-    if not kp_info or 'file' not in kp_info:
-        await callback.message.answer("❌ Информация о файлах не найдена")
+    if not kp_info:
+        await callback.message.answer("❌ КП не найдено в базе данных")
         return
-    
-    # Пытаемся найти PDF файл
-    file_path = kp_info['file'].get('file_path')
-    
-    if file_path:
-        # Конвертируем путь XLSX в PDF (меняем расширение)
-        pdf_path = file_path.replace('.xlsx', '.pdf')
-        
-        if os.path.exists(pdf_path):
-            await callback.message.answer_document(
-                FSInputFile(pdf_path),
-                caption=f"📄 КП № {kp_id} (PDF)"
-            )
-        else:
-            await callback.message.answer(
-                f"❌ PDF файл не найден по пути:\n{pdf_path}\n\n"
-                "Возможно, файл был удалён с диска."
-            )
-    else:
-        await callback.message.answer("❌ Путь к файлу не сохранён в БД")
+    order_data = _order_data_from_kp_info(kp_info)
+    if not order_data:
+        await callback.message.answer("❌ В КП нет позиций для формирования документа")
+        return
+    offer_number = str(kp_id)
+    offer_date = kp_info.get("creation_date") or datetime.now().strftime("%d.%m.%Y")
+    customer_name = kp_info.get("customer_name")
+    manager_name = kp_info.get("manager_name")
+    discount_percent = kp_info.get("discount_percent") or 0
+    try:
+        pdf_buffer = await asyncio.to_thread(
+            generate_commercial_offer_pdf,
+            order_data,
+            offer_number,
+            offer_date,
+            customer_name=customer_name,
+            manager_name=manager_name,
+            manager_phone=None,
+            manager_email=None,
+            discount_percent=discount_percent,
+            kp_db_id=kp_id,
+        )
+        await callback.message.answer_document(
+            BufferedInputFile(pdf_buffer.getvalue(), filename=f"КП_{kp_id}.pdf"),
+            caption=f"📄 КП № {kp_id} (PDF)",
+        )
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка генерации PDF: {e}")
 
 
 @router.callback_query(F.data.startswith("download_xlsx_"))
 async def download_xlsx(callback: CallbackQuery):
     """
-    Скачать XLSX файл КП.
-    
-    Простыми словами:
-    - Извлекает XLSX файл из БД (BLOB)
-    - Отправляет его пользователю
+    Генерирует XLSX КП на лету из данных БД (как при создании КП) и отправляет пользователю.
     """
     await callback.answer("⏳ Подготавливаю XLSX...")
-    
     kp_id = int(callback.data.split("_")[-1])
-    
-    # Извлекаем XLSX из БД
-    xlsx_data = kp_db.get_xlsx_file(kp_id)
-    
-    if xlsx_data:
-        # Сохраняем во временный файл (кроссплатформенно: Windows/Linux)
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"КП_{kp_id}.xlsx")
-        with open(temp_path, 'wb') as f:
-            f.write(xlsx_data)
-        
+    kp_info = kp_db.get_kp_by_id(kp_id)
+    if not kp_info:
+        await callback.message.answer("❌ КП не найдено в базе данных")
+        return
+    order_data = _order_data_from_kp_info(kp_info)
+    if not order_data:
+        await callback.message.answer("❌ В КП нет позиций для формирования документа")
+        return
+    offer_number = str(kp_id)
+    offer_date = kp_info.get("creation_date") or datetime.now().strftime("%d.%m.%Y")
+    customer_name = kp_info.get("customer_name")
+    manager_name = kp_info.get("manager_name")
+    discount_percent = kp_info.get("discount_percent") or 0
+    delivery_conditions = kp_info.get("delivery_conditions")
+    payment_conditions = kp_info.get("payment_conditions")
+    try:
+        xlsx_buffer = await asyncio.to_thread(
+            generate_commercial_offer_xlsx,
+            order_data,
+            offer_number,
+            offer_date,
+            customer_name=customer_name,
+            manager_name=manager_name,
+            manager_phone=None,
+            manager_email=None,
+            discount_percent=discount_percent,
+            delivery_conditions=delivery_conditions,
+            payment_conditions=payment_conditions,
+            kp_db_id=kp_id,
+        )
         await callback.message.answer_document(
-            FSInputFile(temp_path),
-            caption=f"📊 КП № {kp_id} (XLSX с формулами)"
+            BufferedInputFile(xlsx_buffer.getvalue(), filename=f"КП_{kp_id}.xlsx"),
+            caption=f"📊 КП № {kp_id} (XLSX с формулами)",
         )
-        
-        # Удаляем временный файл
-        try:
-            os.remove(temp_path)
-        except Exception:
-            pass
-    else:
-        await callback.message.answer(
-            "❌ XLSX файл не найден в базе данных\n\n"
-            "Возможно, файл не был сохранён при создании КП."
-        )
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка генерации XLSX: {e}")
+
+
+def _format_kp_details_text(kp_info: dict) -> str:
+    """Формирует текст карточки КП для отображения в деталях и после смены скидки."""
+    kp_id = kp_info.get("kp_id", 0)
+    text = f"📋 Коммерческое предложение № {kp_id}\n\n"
+    text += f"👤 Клиент: {kp_info.get('customer_name', 'Не указан')}\n"
+    text += f"👨‍💼 Менеджер: {kp_info.get('manager_name', 'Не указан')}\n"
+    text += f"📅 Дата создания: {kp_info.get('creation_date', 'Не указана')}\n"
+    status = kp_info.get("status", "Неизвестен")
+    status_emoji = {"в архиве": "📦", "в работе": "🏭", "выполнено": "✅", "отклонено": "❌"}.get(status, "❓")
+    text += f"📊 Статус: {status_emoji} {status}\n"
+    if kp_info.get("execution_terms"):
+        text += f"⏰ Срок выполнения: {kp_info['execution_terms']}\n"
+    text += f"\n💰 Финансы:\n"
+    text += f"  • Сумма без НДС: {kp_info.get('subtotal', 0):,.2f} ₽\n"
+    text += f"  • НДС (22%): {kp_info.get('vat_amount', 0):,.2f} ₽\n"
+    text += f"  • Итого с НДС: {kp_info.get('total_amount', 0):,.2f} ₽\n"
+    if kp_info.get("discount_percent", 0) > 0:
+        text += f"  • Скидка: {kp_info['discount_percent']}%\n"
+    plates = kp_info.get("plates", [])
+    text += f"\n📦 Состав заказа ({len(plates)} позиций):\n"
+    for i, plate in enumerate(plates[:10], 1):
+        text += f"  {i}. {plate.get('plate_name', '')} — {plate.get('qty', 0)} шт\n"
+    if len(plates) > 10:
+        text += f"  ... и ещё {len(plates) - 10} позиций\n"
+    return text
+
+
+@router.callback_query(F.data.startswith("change_discount_"))
+async def ask_new_discount(callback: CallbackQuery, state: FSMContext):
+    """Запрос нового процента скидки для КП."""
+    await callback.answer()
+    kp_id = int(callback.data.split("_")[-1])
+    await state.update_data(discount_kp_id=kp_id)
+    await state.set_state(ArchiveStates.waiting_discount)
+    await callback.message.answer("Введите новый процент скидки (0–100):")
+
+
+@router.message(ArchiveStates.waiting_discount, F.text)
+async def apply_new_discount(message: Message, state: FSMContext):
+    """Применяет введённый процент скидки и обновляет карточку КП."""
+    data = await state.get_data()
+    kp_id = data.get("discount_kp_id")
+    if kp_id is None:
+        await state.clear()
+        await message.answer("Сессия сброшена. Выберите КП снова из архива.")
+        return
+    try:
+        value = float(message.text.strip().replace(",", "."))
+    except ValueError:
+        await message.answer("Введите число от 0 до 100 (например: 5 или 10).")
+        return
+    if not (0 <= value <= 100):
+        await message.answer("Процент скидки должен быть от 0 до 100.")
+        return
+    success = kp_db.update_kp_discount(kp_id, value)
+    await state.clear()
+    if not success:
+        await message.answer("❌ Не удалось обновить скидку. Проверьте, что КП существует и в нём есть позиции.")
+        return
+    kp_info = kp_db.get_kp_by_id(kp_id)
+    if not kp_info:
+        await message.answer("КП не найдено.")
+        return
+    text = _format_kp_details_text(kp_info)
+    await message.answer(
+        f"✅ Скидка обновлена до {value}%.\n\n{text}",
+        reply_markup=kp_details_kb(kp_id, kp_info.get("total_amount") or 0),
+    )
 
 
 @router.callback_query(F.data.startswith("delete_kp_"))
