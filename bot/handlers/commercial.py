@@ -35,11 +35,14 @@ from core.exceptions import PlateParseError, FileGenerationError
 # Настройка логирования
 logger = logging.getLogger(__name__)
 
-from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, save_to_db_with_files_kb, cancel_process_kb, managers_selection_kb
+from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, save_to_db_with_files_kb, cancel_process_kb, managers_selection_kb, confirm_plates_list_kb
 from ..states import KPStates
 from ..bot_config import OUTPUTS_DIR_STR
 
 router = Router()
+
+# Лимит длины сообщения Telegram
+MAX_MESSAGE_LEN = 4096
 
 # Кэш заказов пользователей
 ORDER_CACHE: Dict[int, list] = {}
@@ -142,41 +145,38 @@ async def receive_client_name(message: Message, state: FSMContext):
 
 @router.message(KPStates.waiting_plates_list)
 async def receive_plates_list(message: Message, state: FSMContext):
-    """Шаг 3: Получаем список плит (текст или фото)"""
-    
-    # === ПРОВЕРЯЕМ, ЧТО ПРИШЛО: ТЕКСТ ИЛИ ФОТО ===
-    
+    """Шаг 3: Получаем список плит (текст или фото), показываем список и кнопку «Подтвердить»"""
+
+    from core.plate_text_normalizer import get_wide_plate_lines, normalize_order_text
+
+    is_photo = False
+
     if message.photo:
-        # 📸 ПРИШЛО ФОТО — используем GPT сразу
+        is_photo = True
         await message.answer("📸 Фото получено! Распознаю через GPT-4o...")
-        
-        # Скачиваем фото (берём самое большое разрешение)
+
         photo = message.photo[-1]
         user_id = message.from_user.id
         os.makedirs("tmp", exist_ok=True)
         photo_path = os.path.join("tmp", f"{user_id}_commercial_photo.jpg")
-        
+
         try:
-            # Скачиваем фото
             await message.bot.download(photo, destination=photo_path)
-            
-            # 🔥 РАСПОЗНАВАНИЕ ЧЕРЕЗ GPT (force_gpt=True пропускает EasyOCR)
+
             from core.ocr_gpt import recognize_text_smart
             result = await recognize_text_smart(photo_path, force_gpt=True, show_cost=True)
-            
+
             if result and result.get('text'):
                 plates_text = result['text']
                 cost = result.get('cost_usd', 0)
-                
-                # Показываем результат распознавания
-                preview = plates_text[:200] + ('...' if len(plates_text) > 200 else '')
-                info_msg = f"✅ Распознано через GPT-4o Vision\n\n📋 Найденные плиты:\n{preview}"
-                
+                recognized_count = sum(p.get('qty', 1) for p in result.get('plates', []))
+
+                cost_note = ""
                 if cost > 0:
-                    rub_cost = cost * 75  # Примерный курс
-                    info_msg += f"\n\n💰 Стоимость: ${cost:.4f} (~{rub_cost:.2f}₽)"
-                
-                await message.answer(info_msg)
+                    rub_cost = cost * 75
+                    cost_note = f"\n\n💰 Стоимость распознавания: ${cost:.4f} (~{rub_cost:.2f}₽)"
+
+                await message.answer(f"✅ Распознано через GPT-4o Vision{cost_note}")
             else:
                 await message.answer(
                     "❌ Не удалось распознать текст на фото.\n"
@@ -186,7 +186,7 @@ async def receive_plates_list(message: Message, state: FSMContext):
                     "• Использовать формат 'ПБ XX-XX-Xп количество'"
                 )
                 return
-                
+
         except Exception as e:
             logger.exception(f"[COMMERCIAL] Ошибка распознавания фото: {e}")
             await message.answer(
@@ -194,13 +194,32 @@ async def receive_plates_list(message: Message, state: FSMContext):
                 "Попробуйте прислать список текстом."
             )
             return
-    
+
     elif message.text:
-        # 📝 ПРИШЁЛ ТЕКСТ — используем как раньше
         plates_text = message.text.strip()
-    
+        recognized_count = 0
+
+        # Парсим текст для подсчёта количества и проверки широких плит
+        try:
+            set_plate_lists_from_text(plates_text)
+            recognized_count = sum(get_current_plate_order().plate_load_details.values())
+        except PlateParseError as e:
+            logger.warning(f"[COMMERCIAL] Ошибка парсинга списка плит от пользователя {message.from_user.id}: {e}")
+            await message.answer(
+                f"❌ Не удалось распознать список плит:\n{e}\n\n"
+                "💡 Проверьте формат:\n"
+                "• ПБ 78-12-8п 5 шт\n"
+                "• 1.2×3.39 — 2\n"
+                "• 0,32x6,63 - 4",
+                reply_markup=main_menu_kb()
+            )
+            await message.answer(
+                "Или нажмите кнопку ниже для отмены:",
+                reply_markup=cancel_process_kb()
+            )
+            return
+
     else:
-        # ❌ НЕ ТЕКСТ И НЕ ФОТО
         await message.answer(
             "❌ Пришлите список плит текстом или фото таблицы.\n\n"
             "Примеры форматов текста:\n"
@@ -212,22 +231,196 @@ async def receive_plates_list(message: Message, state: FSMContext):
             reply_markup=cancel_process_kb()
         )
         return
-    
-    # Сохраняем список плит в состояние
-    await state.update_data(plates_text=plates_text)
-    
-    # Переходим к следующему шагу - запрашиваем процент скидки
-    await state.set_state(KPStates.waiting_discount)
-    await message.answer(
-        "✅ Список плит получен\n\n"
-        "Шаг 4 из 5: Введите процент скидки\n"
-        "(Просто число, например: 0, 5, 10, 15)\n"
-        "0 = без скидки",
-        reply_markup=main_menu_kb()
+
+    # Нормализуем к каноническому виду (как парсим) для отображения и хранения
+    norm = normalize_order_text(plates_text)
+    plates_text_to_store = norm.normalized_text.strip() if norm.normalized_text.strip() else plates_text
+
+    # Проверяем наличие плит с шириной > 12 дм (по нормализованному тексту)
+    wide_lines = get_wide_plate_lines(plates_text_to_store)
+    wide_plate_lines: list[str] = [line for line, _qty in wide_lines]
+
+    # Формируем текст для отображения — показываем список в том виде, как мы его парсим
+    display_limit = MAX_MESSAGE_LEN - 200
+    if len(plates_text_to_store) > display_limit:
+        display_text = plates_text_to_store[:display_limit] + f"\n… (полный список сохранён, всего {len(plates_text_to_store)} символов)"
+    else:
+        display_text = plates_text_to_store
+
+    # Формируем сообщение со списком
+    if is_photo:
+        count_note = f"\n\nРаспознано позиций: {recognized_count} шт." if recognized_count > 0 else ""
+        list_msg = f"📋 Распознанный список плит:\n\n{display_text}{count_note}"
+    else:
+        list_msg = (
+            f"📋 Список плит:\n\n{display_text}\n\n"
+            f"Количество в заказе: {recognized_count}. "
+            f"Распознано: {recognized_count}. Одинаковое: да."
+        )
+
+    # Сохраняем данные в state (нормализованный текст — как мы парсим)
+    await state.update_data(
+        plates_text=plates_text_to_store,
+        recognized_count=recognized_count,
+        wide_plate_lines=wide_plate_lines,
+        replacement_done=False,
+        is_photo=is_photo,
     )
+    await state.set_state(KPStates.waiting_plates_confirm)
+
+    await message.answer(list_msg, reply_markup=confirm_plates_list_kb())
     await message.answer(
         "Или нажмите кнопку ниже для отмены:",
         reply_markup=cancel_process_kb()
+    )
+
+
+def _build_discount_request_text() -> str:
+    return (
+        "Шаг 4 из 5: Введите процент скидки\n"
+        "(Просто число, например: 0, 5, 10, 15)\n"
+        "0 = без скидки"
+    )
+
+
+@router.callback_query(F.data == "confirm_plates_list", KPStates.waiting_plates_confirm)
+async def confirm_plates_list_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработчик нажатия «Подтвердить» для списка плит"""
+    data = await state.get_data()
+    wide_plate_lines: list[str] = data.get("wide_plate_lines", [])
+    replacement_done: bool = data.get("replacement_done", False)
+
+    await callback.answer()
+
+    if replacement_done or not wide_plate_lines:
+        # Переходим к скидке
+        await state.update_data(wide_plate_lines=[], replacement_done=False)
+        await state.set_state(KPStates.waiting_discount)
+        await callback.message.answer(
+            _build_discount_request_text(),
+            reply_markup=main_menu_kb()
+        )
+        await callback.message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
+        )
+        return
+
+    # Есть плиты с шириной > 12 дм — запрашиваем замену
+    wide_list_text = "\n".join(f"• {line}" for line in wide_plate_lines)
+    await state.set_state(KPStates.waiting_wide_plates_replacement)
+    await callback.message.answer(
+        f"⚠️ В списке есть плиты шириной больше 12 дм:\n{wide_list_text}\n\n"
+        "Пришлите список плит, на которые их нужно заменить."
+    )
+    await callback.message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
+    )
+
+
+@router.message(KPStates.waiting_wide_plates_replacement)
+async def receive_wide_plates_replacement(message: Message, state: FSMContext):
+    """Получаем список замен для плит шириной > 12 дм и формируем итоговый список"""
+    import re as _re
+
+    from core.plate_text_normalizer import get_wide_plate_lines, normalize_order_text
+
+    if not message.text:
+        await message.answer(
+            "❌ Пришлите список замен текстом.",
+            reply_markup=cancel_process_kb()
+        )
+        return
+
+    replacement_text = message.text.strip()
+
+    # Валидируем список замен через парсер
+    try:
+        set_plate_lists_from_text(replacement_text)
+    except PlateParseError as e:
+        logger.warning(f"[COMMERCIAL] Ошибка парсинга списка замен: {e}")
+        await message.answer(
+            f"❌ Не удалось распознать список замен:\n{e}\n\n"
+            "💡 Проверьте формат:\n"
+            "• ПБ 78-12-8п 5 шт\n"
+            "• 1.2×3.39 — 2\n\n"
+            "Пришлите исправленный список:"
+        )
+        return
+
+    data = await state.get_data()
+    original_plates_text: str = data.get("plates_text", "")
+    wide_plate_lines: list[str] = data.get("wide_plate_lines", [])
+
+    # Нормализуем список замен к каноническому виду
+    norm_rep = normalize_order_text(replacement_text)
+    replacement_lines = norm_rep.normalized_lines if norm_rep.normalized_lines else [l.strip() for l in _re.split(r"[\n;]+", replacement_text) if l.strip()]
+
+    # Слияние: заменяем строки с шириной > 12 дм на строки из списка замен по порядку
+    original_lines = [l.strip() for l in _re.split(r"[\n;]+", original_plates_text) if l.strip()]
+
+    wide_set = set(wide_plate_lines)
+    replacement_index = 0
+    merged_lines: list[str] = []
+
+    for line in original_lines:
+        if line in wide_set and replacement_index < len(replacement_lines):
+            merged_lines.append(replacement_lines[replacement_index])
+            replacement_index += 1
+        else:
+            merged_lines.append(line)
+
+    # Если замен прислали больше, чем широких строк — добавляем остаток в конец
+    while replacement_index < len(replacement_lines):
+        merged_lines.append(replacement_lines[replacement_index])
+        replacement_index += 1
+
+    final_plates_text_raw = "\n".join(merged_lines)
+    # Итоговый список в каноническом виде
+    norm_final = normalize_order_text(final_plates_text_raw)
+    final_plates_text = norm_final.normalized_text.strip() if norm_final.normalized_text.strip() else final_plates_text_raw
+
+    # Считаем количество по итоговому списку
+    try:
+        set_plate_lists_from_text(final_plates_text)
+        final_count = sum(get_current_plate_order().plate_load_details.values())
+    except PlateParseError:
+        final_count = 0
+
+    # Формируем текст для отображения (учитываем лимит)
+    display_limit = MAX_MESSAGE_LEN - 200
+    if len(final_plates_text) > display_limit:
+        display_text = final_plates_text[:display_limit] + f"\n… (полный список сохранён, всего {len(final_plates_text)} символов)"
+    else:
+        display_text = final_plates_text
+
+    count_note = (
+        f"\n\nКоличество в заказе: {final_count}. "
+        f"Распознано: {final_count}. Одинаковое: да."
+    ) if final_count > 0 else ""
+
+    list_msg = f"📋 Итоговый список плит (с заменами):\n\n{display_text}{count_note}"
+
+    await state.update_data(
+        plates_text=final_plates_text,
+        wide_plate_lines=[],
+        replacement_done=True,
+    )
+    await state.set_state(KPStates.waiting_plates_confirm)
+
+    await message.answer(list_msg, reply_markup=confirm_plates_list_kb())
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
+    )
+
+
+@router.message(KPStates.waiting_plates_confirm)
+async def plates_confirm_unexpected_text(message: Message, state: FSMContext):
+    """Подсказка пользователю нажать кнопку «Подтвердить»"""
+    await message.answer(
+        "Нажмите «✅ Подтвердить» под списком плит или «◀️ Назад в меню» для отмены."
     )
 
 

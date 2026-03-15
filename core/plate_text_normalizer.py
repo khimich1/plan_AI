@@ -233,6 +233,91 @@ def canonicalize_plate_line(line: str) -> Tuple[str, Optional[str]]:
     return cleaned, None
 
 
+def get_wide_plate_lines(text: str) -> List[Tuple[str, int]]:
+    """
+    Возвращает строки из текста заказа, у которых ширина в дм > 12.
+
+    Поддерживает два формата:
+    - Каталожная/стандартная марка: ПБ L-W-Nп, ПБ L.W-load и т.п.
+      (разбор через parse_catalog_mark по нормализованной строке)
+    - Размерный формат W×L в метрах: «1.5×6.3 — 2 шт», «0.32×4.0 3»
+      (ширина 1.5 м = 15 дм > 12)
+
+    Args:
+        text: исходный текст заказа.
+
+    Returns:
+        Список пар (исходная_строка, qty) для каждой строки с шириной > 12 дм.
+    """
+    if not text or not text.strip():
+        return []
+
+    raw_lines = [l.strip() for l in re.split(r"[\n;]+", text) if l.strip()]
+    result: List[Tuple[str, int]] = []
+
+    # Regex для формата WxL (метры): два числа с разделителем x/х/×
+    _DIM_RE = re.compile(
+        r"(\d+(?:[.,]\d+)?)\s*[xхх×]\s*(\d+(?:[.,]\d+)?)",
+        re.IGNORECASE | re.UNICODE,
+    )
+    # Regex для количества в конце строки
+    _QTY_END_RE = re.compile(r"(\d+)\s*(?:шт\.?|штук)?\s*$", re.IGNORECASE)
+    # Канонический формат после нормализации: ПБ L-W-Nп [qty] (дефис между L и W, не точка)
+    _CANONICAL_L_W_RE = re.compile(
+        r"(?i)\bп[бк]\s*(\d+)\s*-\s*(\d{1,2})\s*-\s*\d+(?:[,.]\d+)?п(?:\s+(\d+))?\s*$",
+        re.UNICODE,
+    )
+
+    for raw in raw_lines:
+        cleaned = basic_text_cleanup(raw)
+        cleaned = normalize_plate_prefixes(cleaned)
+
+        # 1) Попробовать каталожную марку ПБ L.W-load (с точкой)
+        parsed = parse_catalog_mark(cleaned)
+        if parsed is not None:
+            _prefix, _L, W_dm, _load, qty = parsed
+            if W_dm > 12:
+                result.append((raw, qty))
+            continue
+
+        # 2) Канонический формат ПБ L-W-Nп [qty] (нормализованные строки)
+        m_can = _CANONICAL_L_W_RE.match(cleaned)
+        if m_can:
+            W_dm = int(m_can.group(2))
+            qty = int(m_can.group(3)) if m_can.group(3) else 1
+            if W_dm > 12:
+                result.append((raw, qty))
+            continue
+
+        # 3) Попробовать размерный формат W×L (значения в метрах или дм)
+        m = _DIM_RE.search(cleaned.replace(",", "."))
+        if m:
+            try:
+                first = float(m.group(1))
+                second = float(m.group(2))
+            except ValueError:
+                continue
+
+            # Определяем ширину: если первое значение <= 2.0 и второе > первого — это W×L
+            # если первое > 2.0 — скорее всего L×W, меняем местами
+            if first > 2.0 and second <= 2.0:
+                width_m = second
+            else:
+                width_m = first
+
+            width_dm = width_m * 10.0
+            if width_dm > 12.0:
+                # Определяем количество из остатка строки
+                qty = 1
+                remainder = cleaned[m.end():]
+                qty_m = _QTY_END_RE.search(remainder)
+                if qty_m:
+                    qty = max(1, int(qty_m.group(1)))
+                result.append((raw, qty))
+
+    return result
+
+
 def normalize_order_text(text: str) -> NormalizeResult:
     """
     Нормализует полный текст заказа плит перед передачей в парсер.

@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 
 from core import kp_db
 from ..keyboards import main_menu_kb, archive_sections_kb, kp_details_kb
+from ..states import ArchiveStates
 
 # Определяем пути к директориям проекта
 BOT_DIR = Path(__file__).parent.parent
@@ -66,25 +67,20 @@ async def show_archived_kp(callback: CallbackQuery):
     
     # Создаём inline кнопки для каждого КП
     buttons = []
-    db_path = PROJECT_ROOT / "plita.db"
     
     for kp in archived_kp:
         kp_id = kp['kp_id']
         customer = kp.get('customer_name', 'Без имени')
         total = kp.get('total_amount', 0)
-        date = kp.get('creation_date', '')
-        
-        # Получаем процент выполнения
-        completion_info = kp_db.get_kp_completion_percentage(kp_id, str(db_path))
-        percentage = completion_info['percentage']
+        discount_percent = kp.get('discount_percent', 0)
         
         # Обрезаем длинные имена клиентов
         customer_short = customer[:20] + '...' if len(customer) > 20 else customer
         
-        # Формируем текст кнопки с процентом выполнения
+        # Формируем текст кнопки с процентом скидки
         buttons.append([
             InlineKeyboardButton(
-                text=f"КП №{kp_id} | {customer_short} | {percentage:.0f}% | {total:,.0f}₽",
+                text=f"КП №{kp_id} | {customer_short} | {discount_percent:.0f}% | {total:,.0f}₽",
                 callback_data=f"view_kp_{kp_id}"
             )
         ])
@@ -96,6 +92,61 @@ async def show_archived_kp(callback: CallbackQuery):
     
     await callback.message.edit_text(
         text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+
+
+@router.callback_query(F.data == "archive_find_by_number")
+async def archive_find_by_number(callback: CallbackQuery, state: FSMContext):
+    """Запрос номера КП для поиска в архиве."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+    await state.set_state(ArchiveStates.waiting_kp_number)
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="archive_back_to_sections")]
+    ])
+    await callback.message.edit_text(
+        "Введите номер КП:\n\nИли нажмите «Назад».",
+        reply_markup=back_kb
+    )
+
+
+@router.message(ArchiveStates.waiting_kp_number)
+async def receive_kp_number_for_search(message: Message, state: FSMContext):
+    """Обработка введённого номера КП при поиске в архиве."""
+    raw = (message.text or "").strip()
+    try:
+        kp_id = int(raw)
+    except ValueError:
+        await message.answer("Введите число — номер КП.")
+        return
+    kp_info = kp_db.get_kp_by_id(kp_id)
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="archive_back_to_sections")]
+    ])
+    if not kp_info:
+        await state.clear()
+        await message.answer(
+            f"КП №{kp_id} не найдено.",
+            reply_markup=back_kb
+        )
+        return
+    customer = kp_info.get('customer_name', 'Без имени')
+    total = kp_info.get('total_amount', 0)
+    discount_percent = kp_info.get('discount_percent', 0)
+    customer_short = customer[:20] + '...' if len(customer) > 20 else customer
+    buttons = [
+        [InlineKeyboardButton(
+            text=f"КП №{kp_id} | {customer_short} | {discount_percent:.0f}% | {total:,.0f}₽",
+            callback_data=f"view_kp_{kp_id}"
+        )],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="archive_back_to_sections")],
+    ]
+    await state.clear()
+    await message.answer(
+        "Найденное КП:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
     )
 
@@ -548,13 +599,13 @@ async def view_current_plan(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "archive_back_to_sections")
-async def back_to_sections(callback: CallbackQuery):
+async def back_to_sections(callback: CallbackQuery, state: FSMContext):
     """Вернуться к выбору раздела архива"""
     try:
         await callback.answer()
-    except:
+    except Exception:
         pass  # Игнорируем ошибку, если callback устарел
-    
+    await state.clear()
     await callback.message.edit_text(
         "📁 Архив коммерческих предложений\n\n"
         "Выберите раздел для просмотра:",

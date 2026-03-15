@@ -10,6 +10,8 @@ class KPStates(StatesGroup):
     waiting_manager_selection = State()
     waiting_client_name = State()
     waiting_plates_list = State()
+    waiting_plates_confirm = State()
+    waiting_wide_plates_replacement = State()
     waiting_discount = State()
     waiting_conditions_choice = State()
     waiting_delivery_conditions = State()
@@ -51,3 +53,8 @@ class PBInfoStates(StatesGroup):
     """Состояния для работы с информацией о КП в производстве"""
     waiting_kp_number = State()      # Ожидание ввода номера КП
     waiting_new_date = State()       # Ожидание ввода новой даты
+
+
+class ArchiveStates(StatesGroup):
+    """Состояния для раздела «Архив» (поиск по номеру КП)."""
+    waiting_kp_number = State()

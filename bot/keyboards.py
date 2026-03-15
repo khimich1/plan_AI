@@ -615,6 +615,15 @@ def cancel_process_kb() -> InlineKeyboardMarkup:
     )
 
 
+def confirm_plates_list_kb() -> InlineKeyboardMarkup:
+    """Кнопка подтверждения списка плит"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_plates_list")]
+        ]
+    )
+
+
 def tracks_choice_kb() -> InlineKeyboardMarkup:
     """Клавиатура выбора количества дорожек (1-5)"""
     buttons = []
@@ -659,6 +668,7 @@ def archive_sections_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏭 В производстве", callback_data="archive_section_production")],
             [InlineKeyboardButton(text="✅ Выполненные КП", callback_data="archive_section_completed")],
             [InlineKeyboardButton(text="📊 Актуальный план", callback_data="view_current_plan")],
+            [InlineKeyboardButton(text="🔍 Найти по номеру КП", callback_data="archive_find_by_number")],
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="archive_back_to_menu")],
         ]
     )
