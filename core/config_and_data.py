@@ -1116,6 +1116,24 @@ def normalize_load_code(value, default: int = 8):
     return round(val, 1)
 
 
+def canonical_plate_key(length, width, load_code) -> tuple:
+    """
+    Единственный способ создать ключ плиты во всём проекте.
+
+    Нормализует длину (round 2 знака), ширину (int мм) и код нагрузки
+    через normalize_load_code, чтобы ключи были сравнимы независимо от источника.
+
+    Примеры:
+    - canonical_plate_key(5.700001, 1200.0, 800) == (5.7, 1200, 8)
+    - canonical_plate_key(5.71, 530, '8')       == (5.71, 530, 8)
+    """
+    return (
+        round(float(length), 2),
+        int(round(float(width))),
+        normalize_load_code(load_code, default=8),
+    )
+
+
 def load_code_for_price_match(value, default: int = 8) -> int:
     """
     Код нагрузки для сопоставления при подборе цены в КП.

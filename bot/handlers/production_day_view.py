@@ -208,22 +208,59 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
         )
     else:
         # === СТАРАЯ ЛОГИКА: Для несохранённых планов используем state ===
-        restored_data = await _restore_optimization_data(state, day_number)
-        
-        start_index = restored_data['start_index']
-        end_index = restored_data['end_index']
-        tracks_for_this_day = restored_data['tracks_for_this_day']
-        all_tracks_list = restored_data['all_tracks_list']
-        plate_lookup_exact = restored_data['plate_lookup_exact']
-        plate_lookup_by_length = restored_data['plate_lookup_by_length']
-        
-        tracks_in_current_file = all_tracks_list[start_index:end_index]
-        
-        await callback.message.answer(
-            f"📋 День {day_number}:\n"
-            f"• Дорожки: {start_index + 1}-{end_index}\n"
-            f"• Количество: {tracks_for_this_day} дорожек"
-        )
+        if data.get('tracks_count') is None:
+            # В state нет данных оптимизации — пробуем взять день из сохранённых планов
+            plan_start_date = data.get('plan_start_date')
+            if plan_start_date:
+                try:
+                    start_dt = datetime.strptime(plan_start_date, '%Y-%m-%d')
+                    selected_date = (start_dt + timedelta(days=day_number - 1)).strftime('%Y-%m-%d')
+                    multi_plan_data = get_tracks_for_date_from_all_plans(selected_date)
+                    if multi_plan_data:
+                        tracks_in_current_file = multi_plan_data['tracks']
+                        tracks_for_this_day = len(tracks_in_current_file)
+                        plate_lookup_exact = multi_plan_data['plate_lookup_exact']
+                        plate_lookup_by_length = multi_plan_data['plate_lookup_by_length']
+                        start_index = 0
+                        end_index = tracks_for_this_day
+                        plans_info = f" (из {multi_plan_data['plans_count']} планов)" if multi_plan_data['plans_count'] > 1 else ""
+                        await callback.message.answer(
+                            f"📋 День {day_number} ({datetime.strptime(selected_date, '%Y-%m-%d').strftime('%d.%m')}):\n"
+                            f"• Дорожки: {start_index + 1}-{end_index}\n"
+                            f"• Количество: {tracks_for_this_day} дорожек{plans_info}"
+                        )
+                    else:
+                        await callback.message.answer(
+                            "Нет данных для просмотра дня. Откройте «Календарный план» из меню планирования и выберите день."
+                        )
+                        await callback.answer()
+                        return
+                except ValueError:
+                    await callback.message.answer(
+                        "Нет данных для просмотра дня. Откройте «Календарный план» из меню планирования и выберите день."
+                    )
+                    await callback.answer()
+                    return
+            else:
+                await callback.message.answer(
+                    "Нет данных для просмотра дня. Откройте «Календарный план» из меню планирования и выберите день."
+                )
+                await callback.answer()
+                return
+        else:
+            restored_data = await _restore_optimization_data(state, day_number)
+            start_index = restored_data['start_index']
+            end_index = restored_data['end_index']
+            tracks_for_this_day = restored_data['tracks_for_this_day']
+            all_tracks_list = restored_data['all_tracks_list']
+            plate_lookup_exact = restored_data['plate_lookup_exact']
+            plate_lookup_by_length = restored_data['plate_lookup_by_length']
+            tracks_in_current_file = all_tracks_list[start_index:end_index]
+            await callback.message.answer(
+                f"📋 День {day_number}:\n"
+                f"• Дорожки: {start_index + 1}-{end_index}\n"
+                f"• Количество: {tracks_for_this_day} дорожек"
+            )
     
     # Создаем КОПИЮ lookup для формовки (чтобы не влиять на оригинал в state)
     formovka_lookup_exact = copy.deepcopy(plate_lookup_exact)

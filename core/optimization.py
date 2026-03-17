@@ -14,6 +14,7 @@
 # Относительные импорты внутри core/
 from pathlib import Path as _Path
 from . import config_and_data as cfg
+from .config_and_data import canonical_plate_key
 from .price_db import get_price
 from dataclasses import dataclass
 
@@ -453,11 +454,10 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         print(f"  {order['qty']}x {order['length']}м x {order['width']}мм")
     
     # 1. ПОДГОТОВКА: Группируем спрос по (length, width, load_code)
-    # ИСПРАВЛЕНИЕ: Добавляем load_code в ключ для различения плит с одинаковыми размерами, но разной нагрузкой
-    demand_2d = {}  # {(length, width, load_code): qty}
+    # Используем canonical_plate_key — единый формат ключей во всём проекте.
+    demand_2d = {}  # {(length_round2, width_int_mm, load_code_norm): qty}
     for order in orders_2d:
-        load_code = order.get('load_code', 800)
-        key = (order['length'], order['width'], load_code)
+        key = canonical_plate_key(order['length'], order['width'], order.get('load_code', 800))
         demand_2d[key] = demand_2d.get(key, 0) + order['qty']
     # #region agent log: demand keys 59/10 (H3,H4)
     _demand_59_10 = [(list(k), v) for k, v in demand_2d.items() if abs(k[0] - 5.99) < 0.02 and (k[2] == 10 or abs(float(k[2]) - 10) < 0.01)]
@@ -468,11 +468,11 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             pass
     # #endregion
     # 1.5 НОВОЕ: Создаём маппинг (length, width, load_code) -> СПИСОК информации о КП
-    # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code для различения плит с разной нагрузкой
-    order_info_list = {}  # {(length, width, load_code): [список записей для каждого КП]}
+    # Используем canonical_plate_key — тот же формат, что в demand_2d.
+    order_info_list = {}  # {(length_round2, width_int_mm, load_code_norm): [список записей]}
     for order in orders_2d:
-        load_code = order.get('load_code', 800)
-        key = (order['length'], order['width'], load_code)
+        load_code = cfg.normalize_load_code(order.get('load_code', 800))
+        key = canonical_plate_key(order['length'], order['width'], load_code)
         if key not in order_info_list:
             order_info_list[key] = []
         # Добавляем запись для КАЖДОГО заказа с qty_remaining
@@ -844,11 +844,15 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # #endregion
     no_sources_keys = []  # [(key, qty), ...] for H1
     opt_to_demands = {}  # opt_id -> [(demand_key, qty), ...] — какой спрос использует этот opt
-    # Группируем спросы по множеству источников: один constraint на группу (lpSum >= sum(qty)),
-    # чтобы 4.78+4.79 производили 25 плит, а не max(17,8)=17.
-    sources_to_demands = {}  # (frozenset(prim_ids), frozenset(sec_id_pieces)) -> (sources_list, [(dk, qty), ...])
+    _dbg_73_targets = {(5.1, 320, 8), (5.8, 320, 8)}
+    _dbg_73_sources = {}
+    _dbg_73_match_details = {}
+    # Группируем спросы по множеству источников. Ограничение: по каждому ключу спроса (dk)
+    # требуем lpSum(sources с этим assignment_key) >= qty, чтобы 5.1 и 5.8 не "делили" одну группу.
+    # sources_with_ak: (var_or_expr, assignment_key) для разбивки ограничений по ключу.
+    sources_to_demands = {}  # (frozenset(prim_ids), frozenset(sec_id_pieces)) -> (sources_with_ak, [(dk, qty), ...])
     for (target_length, target_width, target_load_code), qty in demand_2d.items():
-        sources = []
+        sources_with_ak = []  # [(var_or_expr, assignment_key), ...]
         prim_ids = set()
         sec_id_pieces = set()  # (opt_id, pieces)
         dk = (round(target_length, 2), target_width, target_load_code)
@@ -859,9 +863,19 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 abs(opt['main'] - target_width) <= demand_tolerance_width and
                 opt.get('type') in ['direct', 'solid'] and
                 opt.get('load_code', 800) == target_load_code):
-                sources.append(x_prim[opt['id']])
+                lookup_w = opt.get('target_width', opt['main']) if opt.get('type') == 'indirect' else opt['main']
+                assignment_key = (opt['length'], lookup_w, opt.get('load_code', 800))
+                sources_with_ak.append((x_prim[opt['id']], assignment_key))
                 prim_ids.add(opt['id'])
                 opt_to_demands.setdefault(opt['id'], []).append((dk, qty))
+                if (round(target_length, 2), int(target_width), int(target_load_code)) in _dbg_73_targets:
+                    _dbg_73_match_details.setdefault((round(target_length, 2), int(target_width), int(target_load_code)), []).append({
+                        "source_kind": "primary_direct_or_solid",
+                        "opt_id": int(opt['id']),
+                        "source_width": int(opt.get('main', 0) or 0),
+                        "target_width": int(target_width),
+                        "is_exact_width": bool(int(opt.get('main', 0) or 0) == int(target_width)),
+                    })
         
         # Источник 1b: Первичные резы НЕПРЯМЫЕ (type='indirect', через narrowing)
         for opt in primary_options:
@@ -869,9 +883,19 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 opt.get('type') == 'indirect' and
                 abs(opt.get('target_width', 0) - target_width) <= demand_tolerance_width and
                 opt.get('load_code', 800) == target_load_code):
-                sources.append(x_prim[opt['id']])
+                lookup_w = opt.get('target_width', opt['main'])
+                assignment_key = (opt['length'], lookup_w, opt.get('load_code', 800))
+                sources_with_ak.append((x_prim[opt['id']], assignment_key))
                 prim_ids.add(opt['id'])
                 opt_to_demands.setdefault(opt['id'], []).append((dk, qty))
+                if (round(target_length, 2), int(target_width), int(target_load_code)) in _dbg_73_targets:
+                    _dbg_73_match_details.setdefault((round(target_length, 2), int(target_width), int(target_load_code)), []).append({
+                        "source_kind": "primary_indirect",
+                        "opt_id": int(opt['id']),
+                        "source_width": int(opt.get('target_width', 0) or 0),
+                        "target_width": int(target_width),
+                        "is_exact_width": bool(int(opt.get('target_width', 0) or 0) == int(target_width)),
+                    })
         
         # Источник 2: Вторичные резы
         for opt in secondary_options:
@@ -883,13 +907,35 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             if (abs(opt['output_length'] - target_length) <= tolerance_length and 
                 abs(opt['output_width'] - target_width) <= demand_tolerance_width and
                 opt_target_load == target_load_code):
-                sources.append(x_sec[opt['id']] * opt['pieces'])
+                sec_assignment_key = (opt['output_length'], opt['output_width'], opt_target_load)
+                sources_with_ak.append((x_sec[opt['id']] * opt['pieces'], sec_assignment_key))
                 sec_id_pieces.add((opt['id'], opt['pieces']))
+                if (round(target_length, 2), int(target_width), int(target_load_code)) in _dbg_73_targets:
+                    _dbg_73_match_details.setdefault((round(target_length, 2), int(target_width), int(target_load_code)), []).append({
+                        "source_kind": "secondary",
+                        "opt_id": int(opt['id']),
+                        "pieces": int(opt.get('pieces', 1) or 1),
+                        "source_width": int(opt.get('output_width', 0) or 0),
+                        "target_width": int(target_width),
+                        "is_exact_width": bool(int(opt.get('output_width', 0) or 0) == int(target_width)),
+                    })
+        # #region agent log
+        _k73 = (round(target_length, 2), int(target_width), int(target_load_code))
+        if _k73 in _dbg_73_targets:
+            _dbg_73_sources[_k73] = {
+                "qty": int(qty),
+                "prim_ids": sorted(list(prim_ids)),
+                "sec_id_pieces": [[int(sid), int(pcs)] for sid, pcs in sorted(list(sec_id_pieces))],
+                "sources_count": int(len(sources_with_ak)),
+            }
+        # #endregion
         
-        if sources:
+        if sources_with_ak:
             key = (frozenset(prim_ids), frozenset(sec_id_pieces))
             if key not in sources_to_demands:
-                sources_to_demands[key] = (list(sources), [])
+                sources_to_demands[key] = (list(sources_with_ak), [])
+            else:
+                sources_to_demands[key][0].extend(sources_with_ak)
             sources_to_demands[key][1].append((dk, qty))
         else:
             # === КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: НЕТ ИСТОЧНИКОВ ДЛЯ СПРОСА ===
@@ -920,17 +966,71 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     except Exception:
         pass
     # #endregion
+    # #region agent log
+    try:
+        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
+        _no_sources_73 = [{"key": list(k), "qty": q} for k, q in no_sources_keys if (round(k[0], 2), int(k[1]), int(k[2])) in _dbg_73_targets]
+        with open(_log_73, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({
+                "sessionId": "73ca51",
+                "runId": "run2",
+                "hypothesisId": "H6_sources_for_320",
+                "location": "optimization:after_demand_loop",
+                "message": "Sources for 5.1/320/8 and 5.8/320/8",
+                "data": {
+                    "targets_sources": {str(list(k)): v for k, v in _dbg_73_sources.items()},
+                    "targets_in_no_sources": _no_sources_73,
+                    "target_match_details": {str(list(k)): v for k, v in _dbg_73_match_details.items()},
+                },
+                "timestamp": int(__import__('time').time() * 1000)
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     # Сохраняем ссылку на группу с opt 105 для проверки после solve (95694e)
     _dbg_grp105_sources = None
     _dbg_grp105_total_qty = None
     _dbg_rescue_groups = {}  # (length_key, width) -> (sources_list, total_qty) для 5.08/320 и 5.98/530
+    _dbg_73_groups = {}
     _opt_598_for_dbg = next((o for o in primary_options if abs(o.get('length', 0) - 5.98) < 0.02 and o.get('main') == 665), None)
-    # Ограничения по группам: явно требуем lpSum(sources) >= total_qty (исправление потери плиты при ==)
-    for grp_idx, (key, (sources_list, demands_list)) in enumerate(sources_to_demands.items()):
+
+    def _norm_key(k):
+        if not k or len(k) < 2:
+            return (0, 0, 800)
+        lc = int(k[2]) if len(k) > 2 else 800
+        if lc in (8, 800):
+            lc = 8
+        return (round(float(k[0]), 2), int(k[1]), lc)
+
+    # Ограничения: по каждому ключу спроса (dk) — lpSum(sources с этим assignment_key) >= qty
+    for grp_idx, (key, (sources_with_ak_list, demands_list)) in enumerate(sources_to_demands.items()):
         total_qty = sum(q for _, q in demands_list)
+        # Уникальные переменные группы для surplus (без дубликатов по объекту).
+        # LpAffineExpression (x_sec * pieces) не hashable — дедупликация по id().
+        _seen = set()
+        sources_list = []
+        for v, _ in sources_with_ak_list:
+            vid = id(v)
+            if vid not in _seen:
+                _seen.add(vid)
+                sources_list.append(v)
         surplus = LpVariable(f"surplus_grp_{grp_idx}", lowBound=0, cat=LpInteger)
         surplus_vars.append(surplus)
-        prob += lpSum(sources_list) >= total_qty, f"demand_grp_{grp_idx}_min"
+        _per_dk_added = []
+        for _di, (_dk, _q) in enumerate(demands_list):
+            _dk_norm = _norm_key(_dk)
+            sources_dk = [v for v, ak in sources_with_ak_list if _norm_key(ak) == _dk_norm]
+            if sources_dk:
+                prob += lpSum(sources_dk) >= _q, f"demand_grp_{grp_idx}_dk_{_di}"
+                if (abs(_dk_norm[0] - 5.1) < 0.02 or abs(_dk_norm[0] - 5.8) < 0.02) and _dk_norm[1] == 320:
+                    _per_dk_added.append({"dk": list(_dk_norm), "qty": _q, "sources_dk_len": len(sources_dk)})
+        if _per_dk_added:
+            try:
+                _log_a636 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-a636b6.log"
+                with open(_log_a636, 'a', encoding='utf-8') as _f:
+                    _f.write(__import__('json').dumps({"sessionId": "a636b6", "hypothesisId": "per_dk_constraints_320", "location": "optimization:constraint_loop", "message": "per-dk constraints for 5.1/5.8 320", "data": {"grp_idx": grp_idx, "added": _per_dk_added}, "timestamp": int(__import__('time').time() * 1000)}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
         prob += surplus == lpSum(sources_list) - total_qty, f"demand_grp_{grp_idx}_surplus"
         if _opt_598_for_dbg and key[0] and _opt_598_for_dbg['id'] in key[0]:
             _dbg_grp105_sources = list(sources_list)
@@ -941,6 +1041,14 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 _dbg_rescue_groups[(5.08, 320)] = (list(sources_list), total_qty)
             if abs(_len_w[0] - 5.98) < 0.02 and _len_w[1] == 530:
                 _dbg_rescue_groups[(5.98, 530)] = (list(sources_list), total_qty)
+            _k73 = (round(float(_dk[0]), 2), int(_dk[1]), int(_dk[2])) if _dk and len(_dk) == 3 else None
+            if _k73 in _dbg_73_targets:
+                _dbg_73_groups[_k73] = {
+                    "sources_list": list(sources_list),
+                    "total_qty": int(total_qty),
+                    "demands_list": [(list(dk_item), int(qty_item)) for dk_item, qty_item in demands_list],
+                    "grp_idx": int(grp_idx),
+                }
     
     # Явный нижний предел для 5.98/665: гарантирует минимум по спросу (обход возможной потери в групповом ограничении)
     _demand_598665 = sum(q for k, q in demand_2d.items() if abs(k[0] - 5.98) < 0.02 and k[1] == 665)
@@ -965,6 +1073,30 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     except Exception:
         pass
     # #endregion
+    # #region agent log
+    try:
+        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
+        _groups_ser = {}
+        for _k, _v in (_dbg_73_groups or {}).items():
+            _groups_ser[str(list(_k))] = {
+                "grp_idx": _v.get("grp_idx"),
+                "total_qty": _v.get("total_qty"),
+                "demands_list": _v.get("demands_list"),
+                "sources_count": len(_v.get("sources_list", [])),
+            }
+        with open(_log_73, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({
+                "sessionId": "73ca51",
+                "runId": "run2",
+                "hypothesisId": "H7_group_constraints_320",
+                "location": "optimization:after_group_constraints",
+                "message": "Constraint groups for 5.1/320/8 and 5.8/320/8",
+                "data": {"groups": _groups_ser},
+                "timestamp": int(__import__('time').time() * 1000)
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     # #region agent log (95694e) группа ограничений для 5.08/320 и 5.98/530
     try:
         for _lk, _lw in [(5.08, 320), (5.98, 530)]:
@@ -982,6 +1114,70 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     break
     except Exception:
         pass
+    # #endregion
+    # #region agent log
+    try:
+        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
+        _contrib = {}
+        for _target_key, _src_payload in (_dbg_73_sources or {}).items():
+            _prim_ids = _src_payload.get("prim_ids", []) or []
+            _sec_pairs = _src_payload.get("sec_id_pieces", []) or []
+            _prim_sum = 0.0
+            _sec_sum = 0.0
+            for _pid in _prim_ids:
+                if _pid in x_prim:
+                    _pv = value(x_prim[_pid])
+                    _prim_sum += float(_pv) if _pv is not None else 0.0
+            for _pair in _sec_pairs:
+                if not isinstance(_pair, (list, tuple)) or len(_pair) != 2:
+                    continue
+                _sid, _pcs = int(_pair[0]), int(_pair[1])
+                if _sid in x_sec:
+                    _sv = value(x_sec[_sid])
+                    _sec_sum += (float(_sv) if _sv is not None else 0.0) * _pcs
+            _contrib[str(list(_target_key))] = {
+                "primary_sum": _prim_sum,
+                "secondary_sum_weighted": _sec_sum,
+                "total_contrib": _prim_sum + _sec_sum,
+                "required_qty": int(_src_payload.get("qty", 0) or 0),
+                "covers_required": bool((_prim_sum + _sec_sum) >= int(_src_payload.get("qty", 0) or 0)),
+            }
+        _lhs_rhs = {}
+        for _k, _v in (_dbg_73_groups or {}).items():
+            _src = _v.get("sources_list", [])
+            _actual = sum((value(var) if value(var) is not None else 0.0) for var in _src)
+            _need = int(_v.get("total_qty", 0))
+            _lhs_rhs[str(list(_k))] = {
+                "grp_idx": _v.get("grp_idx"),
+                "lhs_actual_sum": float(_actual),
+                "rhs_total_qty": _need,
+                "constraint_satisfied": bool(_actual >= _need),
+            }
+        with open(_log_73, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({
+                "sessionId": "73ca51",
+                "runId": "run2",
+                "hypothesisId": "H8_group_lhs_rhs_320",
+                "location": "optimization:after_solve",
+                "message": "LHS vs RHS and exact/tolerant contributions for target 320 groups",
+                "data": {"groups_lhs_rhs": _lhs_rhs, "contributions": _contrib},
+                "timestamp": int(__import__('time').time() * 1000)
+            }, ensure_ascii=False) + "\n")
+    except Exception as _e73:
+        try:
+            _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
+            with open(_log_73, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({
+                    "sessionId": "73ca51",
+                    "runId": "run2",
+                    "hypothesisId": "H8_group_lhs_rhs_320_error",
+                    "location": "optimization:after_solve",
+                    "message": "Error during LHS/RHS contribution logging",
+                    "data": {"error": str(_e73)},
+                    "timestamp": int(__import__('time').time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
     # #endregion
     # #region agent log: no_sources summary (H1)
     if no_sources_keys:
@@ -1268,7 +1464,138 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     except Exception:
         pass
     # #endregion
+    # #region agent log
+    try:
+        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
+        _opts_320_target = []
+        for _opt in primary_options:
+            _len = round(float(_opt.get('length', 0)), 2)
+            _main = int(_opt.get('main', 0) or 0)
+            _tw = int(_opt.get('target_width', 0) or 0)
+            _lc = int(_opt.get('load_code', 800) or 800)
+            if _lc != 8:
+                continue
+            if (_main == 320 and _len in (5.1, 5.8)) or (_tw == 320 and _len in (5.1, 5.8)):
+                _val = value(x_prim[_opt['id']])
+                _opts_320_target.append({
+                    "opt_id": int(_opt['id']),
+                    "length": _len,
+                    "main": _main,
+                    "target_width": _tw,
+                    "type": _opt.get('type'),
+                    "value": float(_val),
+                    "qty_rounded": int(round(_val)),
+                })
+        with open(_log_73, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({
+                "sessionId": "73ca51",
+                "runId": "run2",
+                "hypothesisId": "H9_xprim_320_values",
+                "location": "optimization:after_solve",
+                "message": "x_prim values for 5.1/320/8 and 5.8/320/8 options",
+                "data": {"opts": _opts_320_target},
+                "timestamp": int(__import__('time').time() * 1000)
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    # #region agent log H8 POST-SOLVE: LHS групп 5.1/5.8 320 после solve (debug-a636b6)
+    try:
+        _log_a636 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-a636b6.log"
+        _lhs_rhs_post = {}
+        for _k, _v in (_dbg_73_groups or {}).items():
+            _src = _v.get("sources_list", [])
+            _actual = sum((value(var) if value(var) is not None else 0.0) for var in _src)
+            _need = int(_v.get("total_qty", 0))
+            _lhs_rhs_post[str(list(_k))] = {
+                "grp_idx": _v.get("grp_idx"),
+                "lhs_actual_sum": float(_actual),
+                "rhs_total_qty": _need,
+                "constraint_satisfied": bool(_actual >= _need),
+            }
+        with open(_log_a636, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({
+                "sessionId": "a636b6",
+                "hypothesisId": "H8_post_solve",
+                "location": "optimization:after_solve",
+                "message": "LHS vs RHS for 5.1/5.8 320 groups AFTER solve",
+                "data": {"groups_lhs_rhs": _lhs_rhs_post},
+                "timestamp": int(__import__('time').time() * 1000)
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    # #region agent log
+    try:
+        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
+        _postsolve_groups = {}
+        for _k, _v in (_dbg_73_groups or {}).items():
+            _src = _v.get("sources_list", []) or []
+            _lhs = 0.0
+            for _s in _src:
+                _sv = value(_s)
+                _lhs += float(_sv) if _sv is not None else 0.0
+            _need = int(_v.get("total_qty", 0) or 0)
+            _postsolve_groups[str(list(_k))] = {
+                "lhs_after_solve": _lhs,
+                "rhs_total_qty": _need,
+                "constraint_satisfied": bool(_lhs >= _need),
+            }
+        _postsolve_sources = {}
+        for _k, _src_payload in (_dbg_73_sources or {}).items():
+            _prim_sum = 0.0
+            for _pid in (_src_payload.get("prim_ids", []) or []):
+                if _pid in x_prim:
+                    _pv = value(x_prim[_pid])
+                    _prim_sum += float(_pv) if _pv is not None else 0.0
+            _sec_sum = 0.0
+            for _sid, _pcs in (_src_payload.get("sec_id_pieces", []) or []):
+                if _sid in x_sec:
+                    _sv = value(x_sec[_sid])
+                    _sec_sum += (float(_sv) if _sv is not None else 0.0) * int(_pcs)
+            _need = int(_src_payload.get("qty", 0) or 0)
+            _postsolve_sources[str(list(_k))] = {
+                "from_prim_ids_sum": _prim_sum,
+                "from_sec_ids_weighted_sum": _sec_sum,
+                "total_source_sum": _prim_sum + _sec_sum,
+                "required_qty": _need,
+                "covers_required": bool((_prim_sum + _sec_sum) >= _need),
+            }
+        with open(_log_73, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({
+                "sessionId": "73ca51",
+                "runId": "run2",
+                "hypothesisId": "H10_postsolve_balance_320",
+                "location": "optimization:after_solve",
+                "message": "Post-solve balance for 5.1/320/8 and 5.8/320/8",
+                "data": {
+                    "groups_balance": _postsolve_groups,
+                    "sources_balance": _postsolve_sources,
+                },
+                "timestamp": int(__import__('time').time() * 1000)
+            }, ensure_ascii=False) + "\n")
+    except Exception as _e10:
+        try:
+            _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
+            with open(_log_73, 'a', encoding='utf-8') as _f:
+                _f.write(__import__('json').dumps({
+                    "sessionId": "73ca51",
+                    "runId": "run2",
+                    "hypothesisId": "H10_postsolve_balance_320_error",
+                    "location": "optimization:after_solve",
+                    "message": "Error in post-solve balance log",
+                    "data": {"error": str(_e10)},
+                    "timestamp": int(__import__('time').time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    # #endregion
     # 9. ИЗВЛЕЧЕНИЕ РЕЗУЛЬТАТОВ
+    from .plate_audit import PlateAudit as _PlateAudit
+    import logging as _log_mod
+    _audit = _PlateAudit(orders_2d)  # checkpoint "input" создаётся автоматически
+    _audit.checkpoint("demand_2d", demand_2d)
+
     result = {
         'primary_cuts': [],
         'secondary_cuts': [],
@@ -1286,8 +1613,14 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
 
     # Первичные резы: сначала собираем все output без exact identity.
     # Identity будет выдаваться позже из одного общего ledger спроса.
+    # BUG-2 FIX: используем math.ceil вместо round, чтобы дробные значения PuLP
+    # (например, 2.9999) не давали потерю целой плиты при округлении вниз.
+    # Пост-коррекция ниже является финальной страховкой, но лучше не допускать
+    # потерю на этом этапе.
+    import math as _math
     for opt in primary_options:
-        qty = int(round(value(x_prim[opt['id']])))
+        raw_val = value(x_prim[opt['id']]) or 0
+        qty = _math.ceil(raw_val - 1e-6) if raw_val > 1e-6 else 0
         if qty > 0:
             for _ in range(qty):
                 lookup_width = opt.get('target_width', opt['main']) if opt.get('type') == 'indirect' else opt['main']
@@ -1302,6 +1635,27 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     'assignment_key': (opt['length'], lookup_width, lookup_load_code),
                 })
                 result['total_plates'] += 1
+
+    # #region agent log planned_primary_cuts по ключам 5.1/5.8 320 до сортировки (debug-a636b6)
+    try:
+        _cnt_key = __import__('collections').Counter(c.get('assignment_key') for c in planned_primary_cuts if c.get('assignment_key'))
+        _count_51 = sum(c for k, c in _cnt_key.items() if abs(k[0] - 5.1) < 0.02 and k[1] == 320 and k[2] == 8)
+        _count_58 = sum(c for k, c in _cnt_key.items() if abs(k[0] - 5.8) < 0.02 and k[1] == 320 and k[2] == 8)
+        _demand_51 = next((q for (L, W, lc), q in demand_2d.items() if abs(L - 5.1) < 0.02 and W == 320 and lc == 8), 0)
+        _demand_58 = next((q for (L, W, lc), q in demand_2d.items() if abs(L - 5.8) < 0.02 and W == 320 and lc == 8), 0)
+        _log_a636 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-a636b6.log"
+        with open(_log_a636, 'a', encoding='utf-8') as _f:
+            _f.write(__import__('json').dumps({
+                "sessionId": "a636b6",
+                "hypothesisId": "planned_primary_by_key",
+                "location": "optimization:after_build_primary_cuts",
+                "message": "planned_primary_cuts count by assignment_key 5.1/5.8 320 before sort",
+                "data": {"count_5.1_320_8": _count_51, "count_5.8_320_8": _count_58, "demand_51_320_8": _demand_51, "demand_58_320_8": _demand_58},
+                "timestamp": int(__import__('time').time() * 1000)
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
     # Требования завода:
@@ -1359,20 +1713,26 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
 
     result['secondary_cuts'] = planned_secondary_cuts
 
+    # PlateAudit: checkpoint после сбора данных из solver (до пост-коррекции)
+    _audit.checkpoint("solver_output", result['primary_cuts'] + result['secondary_cuts'])
+
     # Универсальная пост-коррекция: считаем уже покрытый спрос по ОБОИМ источникам,
     # а добираем только реально unmet demand.
+    # BUG-3 FIX: нормализуем ключи через _norm_key, чтобы load_code 8/800 не давал
+    # ложный «have=0» и не порождал дубликаты или пропуски.
     planned_coverage_by_key: Counter[tuple] = Counter()
     for cut in result['primary_cuts']:
         assignment_key = cut.get('assignment_key')
         if assignment_key:
-            planned_coverage_by_key[assignment_key] += 1
+            planned_coverage_by_key[_norm_key(assignment_key)] += 1
     for cut in result['secondary_cuts']:
         target_key = cut.get('target_order_key')
         if target_key:
-            planned_coverage_by_key[target_key] += 1
+            planned_coverage_by_key[_norm_key(target_key)] += 1
 
+    _post_correction_added = 0
     for (L, W, lc), need in demand_2d.items():
-        have = planned_coverage_by_key.get((L, W, lc), 0)
+        have = planned_coverage_by_key.get(_norm_key((L, W, lc)), 0)
         if have >= need:
             continue
         if W > plate_width:
@@ -1390,7 +1750,72 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'identity_match_type': 'post_correction_pending',
             })
             result['total_plates'] += 1
-    
+            _post_correction_added += 1
+    if _post_correction_added:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            '[OPT_2D] [POST_CORRECTION] Добавлено %d плит восстановлением покрытия спроса.',
+            _post_correction_added,
+        )
+
+    # BUG-1 FIX: явная страховочная проверка для no_sources_keys.
+    # Плиты без источников в модели должны быть добавлены как «прямой рез»,
+    # если пост-коррекция их не покрыла (например, из-за W > plate_width скипа).
+    if no_sources_keys:
+        import logging as _logging
+        _logger_ns = _logging.getLogger(__name__)
+        # Пересчитываем покрытие с учётом только что добавленных пост-коррекцией
+        _final_coverage: Counter[tuple] = Counter()
+        for _cut in result['primary_cuts']:
+            _ak = _cut.get('assignment_key')
+            if _ak:
+                _final_coverage[_norm_key(_ak)] += 1
+        for _cut in result['secondary_cuts']:
+            _tk = _cut.get('target_order_key')
+            if _tk:
+                _final_coverage[_norm_key(_tk)] += 1
+
+        _force_added = 0
+        for (_key, _qty) in no_sources_keys:
+            _L, _W, _lc = _key
+            _have = _final_coverage.get(_norm_key(_key), 0)
+            if _have >= _qty:
+                continue
+            _shortfall = _qty - _have
+            _rest = max(0, plate_width - _W) if _W <= plate_width else 0
+            for _ in range(_shortfall):
+                result['primary_cuts'].append({
+                    'width': _W,
+                    'demand_width': _W,
+                    'rest': _rest,
+                    'qty': 1,
+                    'lengths': [_L],
+                    'load_code': _lc,
+                    'assignment_key': (_L, _W, _lc),
+                    'identity_match_type': 'force_added_no_sources',
+                })
+                result['total_plates'] += 1
+                _force_added += 1
+                _final_coverage[_norm_key(_key)] += 1
+        if _force_added:
+            _logger_ns.warning(
+                '[OPT_2D] [BUG-1 FIX] Force-added %d плит из no_sources_keys '
+                '(не было источника в оптимизаторе, добавлены как прямой рез).',
+                _force_added,
+            )
+
+    # PlateAudit: checkpoint после пост-коррекции и force-add (финальный срез оптимизатора)
+    _audit.checkpoint("post_correction", result['primary_cuts'] + result['secondary_cuts'])
+    if _audit.has_losses("demand_2d", "post_correction"):
+        import logging as _log_mod2
+        _log_mod2.getLogger(__name__).error(
+            "[AUDIT] Потери плит в оптимизаторе!\n%s", _audit.summary()
+        )
+    else:
+        import logging as _log_mod2
+        _log_mod2.getLogger(__name__).info("[AUDIT] Оптимизатор: потерь нет.\n%s", _audit.summary())
+    result['_plate_audit'] = _audit
+
     # #region agent log (2d5c43) H1,H2,H5: demand vs primary_cuts, 6m 530/1200
     try:
         from pathlib import Path as _Path

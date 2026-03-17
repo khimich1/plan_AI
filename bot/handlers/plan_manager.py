@@ -147,6 +147,18 @@ def load_plan(plan_id: str) -> Optional[dict]:
         return None
 
 
+def _make_plan_json_serializable(plan_data: dict) -> dict:
+    """
+    Строит копию плана без несериализуемых в JSON полей (PlateAudit в optimization_result['_plate_audit']).
+    Исходный plan_data не изменяется.
+    """
+    to_save = dict(plan_data)
+    opt = plan_data.get('optimization_result')
+    if isinstance(opt, dict):
+        to_save['optimization_result'] = {k: v for k, v in opt.items() if k != '_plate_audit'}
+    return to_save
+
+
 def save_plan(plan_data: dict):
     """
     Сохраняет план в файл.
@@ -162,8 +174,9 @@ def save_plan(plan_data: dict):
     
     plan_path = get_plan_path(plan_id)
     try:
+        to_save = _make_plan_json_serializable(plan_data)
         with open(plan_path, 'w', encoding='utf-8') as f:
-            json.dump(plan_data, f, ensure_ascii=False, indent=2)
+            json.dump(to_save, f, ensure_ascii=False, indent=2)
         logger.info(f"План {plan_id} сохранён в {plan_path}")
     except Exception as e:
         logger.exception(f"Ошибка сохранения плана {plan_id}: {e}")

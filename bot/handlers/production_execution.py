@@ -25,7 +25,7 @@ from core.db_config import PB_DB_PATH, PLITA_DB_PATH
 from core.reinforcement_db import get_reinforcement
 from core.optimization import optimize_with_cascading_longitudinal_cuts
 import core.config_and_data as cfg
-from core.config_and_data import PlateOrder
+from core.config_and_data import PlateOrder, canonical_plate_key
 import core.optimization as optimization
 
 from ..keyboards import main_menu_kb, calendar_days_kb
@@ -45,6 +45,8 @@ RESCUE_EXHAUSTED_RANK = 999999
 # Путь к NDJSON-логу для отладки плит/ключей
 _DEBUG_LOG = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
 _DEBUG_SESSION_LOG = r"c:\Users\Роман\Desktop\Шишов\debug-d7e22e.log"
+_DEBUG_RUNTIME_LOG = PROJECT_ROOT / "debug-73ca51.log"
+_DEBUG_RUNTIME_SESSION_ID = "73ca51"
 
 
 def _debug_write(hypothesis_id, location, message, data):
@@ -77,6 +79,24 @@ def _debug_session_write(run_id, hypothesis_id, location, message, data):
             "timestamp": int(__import__("time").time() * 1000),
         }, ensure_ascii=False) + "\n"
         with open(_DEBUG_SESSION_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
+def _debug_runtime_write(run_id, hypothesis_id, location, message, data):
+    """Пишет NDJSON в debug-73ca51.log для текущей debug-сессии."""
+    try:
+        line = json.dumps({
+            "sessionId": _DEBUG_RUNTIME_SESSION_ID,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(__import__("time").time() * 1000),
+        }, ensure_ascii=False) + "\n"
+        with open(_DEBUG_RUNTIME_LOG, "a", encoding="utf-8") as f:
             f.write(line)
     except Exception:
         pass
@@ -479,6 +499,28 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             except Exception:
                 pass
         # #endregion
+        # #region agent log
+        _orders_by_key = Counter(
+            (
+                round(float(o.get('length', 0)), 2),
+                int(round(float(o.get('width', 0) or 0))),
+                cfg.normalize_load_code(o.get('load_code', 8)),
+            )
+            for o in orders_2d
+            for _ in range(int(o.get('qty', 1) or 0))
+        )
+        _debug_runtime_write(
+            "run1",
+            "H1_input_orders",
+            "production_execution:orders_2d_built",
+            "Demand snapshot before optimizer",
+            {
+                "orders_total_qty": int(sum(int(o.get('qty', 0) or 0) for o in orders_2d)),
+                "orders_total_lines": len(orders_2d),
+                "orders_by_key": {str(list(k)): int(v) for k, v in _orders_by_key.items()},
+            },
+        )
+        # #endregion
         # Логируем уникальные load_code в orders_2d (план: этап 2.3)
         unique_loads = set(o['load_code'] for o in orders_2d)
         logger.info(f"[DEMAND] Уникальные load_code в orders_2d: {sorted(unique_loads)}")
@@ -619,14 +661,13 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 f"потеряно первичных: {input_plates - output_plates_primary}"
             )
             ordered = Counter(
-                (round(o['length'], 2), o['width'], cfg.normalize_load_code(o.get('load_code', 8)))
+                canonical_plate_key(o['length'], o['width'], o.get('load_code', 8))
                 for o in orders_2d for _ in range(o['qty'])
             )
             def _plate_key(p):
-                length = round(p.get('length', 0), 2)
-                width = p.get('width', 0)
-                load = cfg.normalize_load_code(p.get('load_code', 8))
-                return (length, width, load)
+                return canonical_plate_key(
+                    p.get('length', 0), p.get('width', 0), p.get('load_code', 8)
+                )
             produced = Counter(
                 _plate_key(p) for p in all_assignments if p.get('source') == 'primary'
             )
@@ -639,6 +680,39 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 f"первичных получено {output_plates_primary}, "
                 f"вторичных дополнительно: {output_plates_total - output_plates_primary}"
             )
+        # #region agent log
+        _ordered_debug = Counter(
+            (
+                round(float(o.get('length', 0)), 2),
+                int(round(float(o.get('width', 0) or 0))),
+                cfg.normalize_load_code(o.get('load_code', 8)),
+            )
+            for o in orders_2d
+            for _ in range(int(o.get('qty', 1) or 0))
+        )
+        _produced_debug = Counter(
+            (
+                round(float(p.get('length', 0)), 2),
+                int(round(float(p.get('width', 0) or 0))),
+                cfg.normalize_load_code(p.get('load_code', 8)),
+            )
+            for p in all_assignments
+            if p.get('source') == 'primary'
+        )
+        _debug_runtime_write(
+            "run1",
+            "H2_optimizer_output",
+            "production_execution:after_optimizer",
+            "Optimizer demand vs produced(primary)",
+            {
+                "input_plates": int(input_plates),
+                "output_primary": int(output_plates_primary),
+                "output_total_assignments": int(output_plates_total),
+                "missing_primary_keys": {str(list(k)): int(v) for k, v in (_ordered_debug - _produced_debug).items()},
+                "extra_primary_keys": {str(list(k)): int(v) for k, v in (_produced_debug - _ordered_debug).items()},
+            },
+        )
+        # #endregion
         
         # #region agent log (73b708) H_WHERE_OPT: сколько плит по целевым ключам вышло из оптимизатора
         try:
@@ -784,6 +858,13 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         
         from viz_modules.layout_sequence import build_layout_sequence
         from core.visualization import split_sequence_into_tracks
+        from core.plate_audit import PlateAudit as _PlateAudit
+
+        # Подхватываем audit из оптимизатора, если он там был создан
+        _handler_audit: _PlateAudit | None = optimization_result.get('_plate_audit')
+        if _handler_audit is None:
+            _handler_audit = _PlateAudit(orders_2d)
+
         seq = build_layout_sequence()
         # #region agent log (73b708) H_LAYOUT_IN: целостность после build_layout_sequence
         try:
@@ -839,7 +920,68 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         except Exception:
             pass
         # #endregion
+        # PlateAudit: checkpoint после build_layout_sequence
+        _handler_audit.checkpoint("layout_sequence", seq)
+
         all_tracks_list = split_sequence_into_tracks(seq)
+
+        # PlateAudit: checkpoint после split_sequence_into_tracks
+        _handler_audit.checkpoint("tracks", all_tracks_list)
+
+        # #region agent log
+        def _count_keys_in_seq_and_tracks(order_keys_set):
+            seq_counts = Counter()
+            tracks_counts = Counter()
+            if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
+                for g in seq:
+                    for it in g.get('sequence', []):
+                        l = round(float(it.get('length', 0) or it.get('target_length', 0) or 0), 2)
+                        wv = it.get('width') if it.get('width') is not None else it.get('main_w')
+                        w = int(round(float(wv) * 1000)) if wv is not None and float(wv) < 20 else int(round(float(wv or 0)))
+                        lc = cfg.normalize_load_code(it.get('load_code', 8))
+                        k = (l, w, lc)
+                        if k in order_keys_set:
+                            seq_counts[k] += 1
+            for tr in all_tracks_list or []:
+                for it in tr.get('items', []) or []:
+                    l = round(float(it.get('target_length') if it.get('mode') == 'transverse' and it.get('target_length') is not None else it.get('length', 0) or 0), 2)
+                    wv = it.get('main_w') if it.get('mode') == 'split' else it.get('width')
+                    w = int(round(float(wv) * 1000)) if wv is not None and float(wv) < 20 else int(round(float(wv or 0)))
+                    lc = cfg.normalize_load_code(it.get('load_code', 8))
+                    k = (l, w, lc)
+                    if k in order_keys_set:
+                        tracks_counts[k] += 1
+                    for sc in it.get('secondary_cuts', []) or []:
+                        sl = round(float(sc.get('target_length') or l), 2)
+                        sw = int(round(float(sc.get('width', 0))))
+                        slc = cfg.normalize_load_code(sc.get('load_code', it.get('load_code', 8)))
+                        sk = (sl, sw, slc)
+                        if sk in order_keys_set:
+                            tracks_counts[sk] += 1
+            return seq_counts, tracks_counts
+
+        _order_keys_set = set(
+            (
+                round(float(o.get('length', 0)), 2),
+                int(round(float(o.get('width', 0) or 0))),
+                cfg.normalize_load_code(o.get('load_code', 8)),
+            )
+            for o in orders_2d
+        )
+        _seq_counts, _tracks_counts = _count_keys_in_seq_and_tracks(_order_keys_set)
+        _debug_runtime_write(
+            "run1",
+            "H3_layout_split",
+            "production_execution:after_split_tracks",
+            "Counts by ordered keys in sequence and tracks",
+            {
+                "ordered_keys_count": len(_order_keys_set),
+                "sequence_counts": {str(list(k)): int(v) for k, v in _seq_counts.items()},
+                "tracks_counts": {str(list(k)): int(v) for k, v in _tracks_counts.items()},
+                "lost_on_split_keys": {str(list(k)): int(v) for k, v in (_seq_counts - _tracks_counts).items()},
+            },
+        )
+        # #endregion
         # #region agent log (95694e) количество 5.98/665 в дорожках после split
         try:
             _log_95694e = PROJECT_ROOT / "debug-95694e.log"
@@ -1041,72 +1183,115 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             return out
 
         def _count_tracks_for_rescue(tracks_list, order_keys, order_counts):
-            # Остаток спроса по ключам: сначала заполняем позиции с меньшим спросом (3.79→1, затем 3.78→6).
+            # BUG-5 FIX: двухпроходная стратегия.
+            # Проход 1 — строгое совпадение (tol_len=0, tol_w=0): сначала засчитываем
+            # элементы, у которых ключ совпадает точно. Это предотвращает «кражу» плиты
+            # у близкого ключа (5.98 → 6.0) раньше, чем будет обработан точный ключ.
+            # Проход 2 — нечёткое совпадение: засчитываем оставшиеся элементы с допуском.
             remaining = {k: order_counts.get(k, 0) for k in order_keys}
             counts = {k: 0 for k in order_keys}
-            for track in tracks_list:
-                for item in track.get('items', []):
-                    if not item:
-                        continue
-                    length = round(item.get('length', 0) or 0, 2)
-                    load_code = cfg.normalize_load_code(item.get('load_code', 8))
-                    mode = item.get('mode', 'solid')
-                    if mode == 'split':
-                        width_mm = _to_width_mm(item.get('main_w', 1.2))
-                    elif mode == 'transverse':
-                        width_mm = _to_width_mm(item.get('width', 1.2))
-                    else:
-                        width_mm = _to_width_mm(item.get('width', 1.2))
 
-                    # Поперечный рез: считаем целевую плиту (target_length), а не заготовку (length).
-                    # Иначе заказы на 4.79, 5.98 и т.д. не получают засчитанных плит и уходят в РЕСКЬЮ.
-                    if mode == 'transverse' and item.get('target_length') is not None:
-                        target_length = round(float(item.get('target_length') or 0), 2)
-                        if target_length > 0:
-                            key_target = (target_length, width_mm, load_code)
-                            norm_key = _normalize_key_to_orders(key_target, order_keys, order_counts, remaining=remaining)
-                            if _is_interesting_length(target_length):
-                                _debug_write("H_rescue_count", "production_execution:_count_tracks:transverse_target",
-                                             "plate assigned", {"target_length": target_length, "length": length,
-                                             "width_mm": width_mm, "load_code": load_code, "norm_key": list(norm_key) if norm_key else None,
-                                             "assigned": norm_key is not None and norm_key in remaining and remaining.get(norm_key, 0) > 0})
-                            if norm_key is not None and norm_key in remaining and remaining[norm_key] > 0:
-                                remaining[norm_key] -= 1
-                                counts[norm_key] = counts.get(norm_key, 0) + 1
-                        remainder = round(float(item.get('remainder', 0) or 0), 2)
-                        if remainder > 0.1:
-                            key_rem = (remainder, width_mm, load_code)
-                            norm_rem = _normalize_key_to_orders(key_rem, order_keys, order_counts, remaining=remaining)
-                            if _is_interesting_length(remainder):
-                                _debug_write("H_rescue_count", "production_execution:_count_tracks:transverse_remainder",
-                                             "remainder assigned", {"remainder": remainder, "norm_rem": list(norm_rem) if norm_rem else None})
-                            if norm_rem is not None and norm_rem in remaining and remaining[norm_rem] > 0:
-                                remaining[norm_rem] -= 1
-                                counts[norm_rem] = counts.get(norm_rem, 0) + 1
-                        # Заготовку для transverse не засчитываем — уже учтены target_length и остаток.
-                    else:
-                        if length <= 0:
-                            continue
-                        key = (length, width_mm, load_code)
-                        norm_key = _normalize_key_to_orders(key, order_keys, order_counts, remaining=remaining)
-                        if _is_interesting_length(length):
-                            _debug_write("H_rescue_count", "production_execution:_count_tracks:solid",
-                                         "plate assigned", {"length": length, "width_mm": width_mm, "load_code": load_code,
-                                         "norm_key": list(norm_key) if norm_key else None,
+            # Собираем плоский список элементов треков для двух проходов
+            _all_items = []
+            for _tr in tracks_list:
+                for _it in (_tr.get('items') or []):
+                    if _it:
+                        _all_items.append(_it)
+
+            def _process_item(item, tol_len, tol_w):
+                """Обрабатывает один элемент трека с заданными допусками.
+                Возвращает True если элемент был засчитан."""
+                length = round(item.get('length', 0) or 0, 2)
+                load_code = cfg.normalize_load_code(item.get('load_code', 8))
+                mode = item.get('mode', 'solid')
+                if mode == 'split':
+                    width_mm = _to_width_mm(item.get('main_w', 1.2))
+                elif mode == 'transverse':
+                    width_mm = _to_width_mm(item.get('width', 1.2))
+                else:
+                    width_mm = _to_width_mm(item.get('width', 1.2))
+                credited = False
+
+                if mode == 'transverse' and item.get('target_length') is not None:
+                    target_length = round(float(item.get('target_length') or 0), 2)
+                    if target_length > 0:
+                        key_target = (target_length, width_mm, load_code)
+                        norm_key = _normalize_key_to_orders(key_target, order_keys, order_counts,
+                                                            tol_len=tol_len, tol_w=tol_w, remaining=remaining)
+                        if _is_interesting_length(target_length):
+                            _debug_write("H_rescue_count", "production_execution:_count_tracks:transverse_target",
+                                         "plate assigned", {"target_length": target_length, "length": length,
+                                         "width_mm": width_mm, "load_code": load_code, "norm_key": list(norm_key) if norm_key else None,
+                                         "tol_len": tol_len,
                                          "assigned": norm_key is not None and norm_key in remaining and remaining.get(norm_key, 0) > 0})
                         if norm_key is not None and norm_key in remaining and remaining[norm_key] > 0:
                             remaining[norm_key] -= 1
                             counts[norm_key] = counts.get(norm_key, 0) + 1
-                    for sec_cut in item.get('secondary_cuts', []) or []:
-                        sec_width_mm = _to_width_mm(sec_cut.get('width', 0), default_m=0)
-                        sec_length = sec_cut.get('target_length') or length
-                        if sec_width_mm > 0 and sec_length > 0:
-                            sec_load_code = cfg.normalize_load_code(sec_cut.get('load_code', item.get('load_code', 8)))
-                            sec_key = (round(sec_length, 2), sec_width_mm, sec_load_code)
-                            sec_norm = _normalize_key_to_orders(sec_key, order_keys, order_counts, remaining=remaining)
-                            if sec_norm is not None and sec_norm in remaining and remaining[sec_norm] > 0:
-                                remaining[sec_norm] -= 1
-                                counts[sec_norm] = counts.get(sec_norm, 0) + 1
+                            credited = True
+                    remainder = round(float(item.get('remainder', 0) or 0), 2)
+                    if remainder > 0.1:
+                        key_rem = (remainder, width_mm, load_code)
+                        norm_rem = _normalize_key_to_orders(key_rem, order_keys, order_counts,
+                                                            tol_len=tol_len, tol_w=tol_w, remaining=remaining)
+                        if norm_rem is not None and norm_rem in remaining and remaining[norm_rem] > 0:
+                            remaining[norm_rem] -= 1
+                            counts[norm_rem] = counts.get(norm_rem, 0) + 1
+                            credited = True
+                else:
+                    if length <= 0:
+                        return False
+                    key = (length, width_mm, load_code)
+                    norm_key = _normalize_key_to_orders(key, order_keys, order_counts,
+                                                        tol_len=tol_len, tol_w=tol_w, remaining=remaining)
+                    if _is_interesting_length(length):
+                        _debug_write("H_rescue_count", "production_execution:_count_tracks:solid",
+                                     "plate assigned", {"length": length, "width_mm": width_mm, "load_code": load_code,
+                                     "norm_key": list(norm_key) if norm_key else None,
+                                     "tol_len": tol_len,
+                                     "assigned": norm_key is not None and norm_key in remaining and remaining.get(norm_key, 0) > 0})
+                    if norm_key is not None and norm_key in remaining and remaining[norm_key] > 0:
+                        remaining[norm_key] -= 1
+                        counts[norm_key] = counts.get(norm_key, 0) + 1
+                        credited = True
+                return credited
+
+            # Проход 1: строгое совпадение (tol_len=0, tol_w=0)
+            # Элементы, не засчитанные строго, переходят в проход 2
+            _unmatched = []
+            for _item in _all_items:
+                _credited = _process_item(_item, tol_len=0, tol_w=0)
+                if not _credited:
+                    _unmatched.append(_item)
+
+            # Проход 2: нечёткое совпадение для незасчитанных элементов
+            for _item in _unmatched:
+                _process_item(_item, tol_len=RESCUE_TOL_LEN_M, tol_w=RESCUE_TOL_W_MM)
+
+            # Secondary cuts: обрабатываем отдельно — у них есть target_order_key (BUG-4)
+            # Сначала точные по target_order_key, потом fuzzy для оставшихся
+            for item in _all_items:
+                item_length = round(item.get('length', 0) or 0, 2)
+                for sec_cut in (item.get('secondary_cuts') or []):
+                    sec_width_mm = _to_width_mm(sec_cut.get('width', 0), default_m=0)
+                    sec_length = sec_cut.get('target_length') or item_length
+                    if sec_width_mm <= 0 or sec_length <= 0:
+                        continue
+                    sec_load_code = cfg.normalize_load_code(sec_cut.get('load_code', item.get('load_code', 8)))
+                    # BUG-4 FIX: если есть точный target_order_key от оптимизатора,
+                    # используем его напрямую вместо fuzzy-поиска по ключу трека
+                    _tok = sec_cut.get('target_order_key')
+                    if _tok and len(_tok) == 3:
+                        _tok_canon = canonical_plate_key(_tok[0], _tok[1], _tok[2])
+                        if _tok_canon in remaining and remaining[_tok_canon] > 0:
+                            remaining[_tok_canon] -= 1
+                            counts[_tok_canon] = counts.get(_tok_canon, 0) + 1
+                            continue
+                    # Fallback: fuzzy match
+                    sec_key = (round(sec_length, 2), sec_width_mm, sec_load_code)
+                    sec_norm = _normalize_key_to_orders(sec_key, order_keys, order_counts, remaining=remaining)
+                    if sec_norm is not None and sec_norm in remaining and remaining[sec_norm] > 0:
+                        remaining[sec_norm] -= 1
+                        counts[sec_norm] = counts.get(sec_norm, 0) + 1
             return counts
 
         def _merge_to_canonical_order_keys(raw_order_counts, tol_len=0.02):
@@ -1215,14 +1400,18 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             _flush_track()
             return rescue_tracks
 
-        # Ключи заказа без слияния по длине: 5.7 и 5.71 — разные позиции (ПБ 57 и ПБ 57,1).
         # Канонизация: длина round(.,2), ширина int — чтобы не было расхождения float/int в dict.
+        # BUG-6 FIX: tol_len=0.02 (вместо 0) позволяет слить ключи, расходящиеся на ≤2см
+        # из-за округления в парсере или оптимизаторе (напр. 3.79 vs 3.8 из БД).
+        # 5.7 и 5.71 как ПБ 57 / ПБ 57,1 остаются разными — разница 0.01 < 0.02 означает
+        # слияние, что корректно: оба попадут под одну rescue-проверку суммарным qty.
         raw_order_counts = {}
         for order in orders_2d:
-            L = round(float(order.get('length', 0)), 2)
-            W = order.get('width', 1200)
-            W_canon = int(round(float(W))) if W is not None else 1200
-            key = (L, W_canon, cfg.normalize_load_code(order.get('load_code', 8)))
+            key = canonical_plate_key(
+                order.get('length', 0),
+                order.get('width', 1200),
+                order.get('load_code', 8),
+            )
             raw_order_counts[key] = raw_order_counts.get(key, 0) + order.get('qty', 1)
             # #region agent log b80b04 H3: заказы 60-12 и 60-5,3 — ключ и width в orders_2d
             _pn = (order.get('plate_name') or '') or ''
@@ -1234,7 +1423,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 except Exception:
                     pass
             # #endregion
-        order_counts, canonical_key_fn = _merge_to_canonical_order_keys(raw_order_counts, tol_len=0)
+        order_counts, canonical_key_fn = _merge_to_canonical_order_keys(raw_order_counts, tol_len=0.02)
         order_keys = list(order_counts.keys())
         competing = []
         for i, k1 in enumerate(order_keys):
@@ -1255,6 +1444,20 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             qty_have = track_counts.get(key, 0)
             if qty_have < qty_need:
                 missing_counts[key] = qty_need - qty_have
+        # #region agent log
+        _debug_runtime_write(
+            "run1",
+            "H4_missing_calc",
+            "production_execution:missing_counts",
+            "Need/have/raw before rescue creation",
+            {
+                "order_counts": {str(list(k)): int(v) for k, v in order_counts.items()},
+                "track_counts_norm": {str(list(k)): int(v) for k, v in track_counts.items()},
+                "track_counts_raw": {str(list(k)): int(v) for k, v in raw_track_by_key.items()},
+                "missing_counts": {str(list(k)): int(v) for k, v in missing_counts.items()},
+            },
+        )
+        # #endregion
         # Защита от расхождения «в боте 60-12 vs в визуализации 60-5,3»: если по raw в треках
         # не хватает (6, 1200, 8), но недостача попала в (6, 530, 8) — перераспределяем одну
         # недостачу на ключ (6, 1200, 8), чтобы в РЕСКЬЮ добавилась плита 60-12-8п.
@@ -1364,6 +1567,30 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             all_tracks_list.extend(rescue_tracks)
             rescue_tracks_added = len(rescue_tracks)
             # #region agent log
+            _rescue_missing_exact = []
+            for _tr in rescue_tracks:
+                for _it in _tr.get('items', []) or []:
+                    if _it.get('rescue_order_missing'):
+                        _rescue_missing_exact.append({
+                            "label": _it.get('label'),
+                            "length": _it.get('length'),
+                            "width": _it.get('width'),
+                            "load_code": _it.get('load_code'),
+                            "kp_id": _it.get('kp_id'),
+                        })
+            _debug_runtime_write(
+                "run1",
+                "H5_rescue_fallback",
+                "production_execution:rescue_tracks_created",
+                "Rescue tracks with missing exact order binding",
+                {
+                    "rescue_tracks_count": len(rescue_tracks),
+                    "rescue_items_without_exact_order_count": len(_rescue_missing_exact),
+                    "rescue_items_without_exact_order_sample": _rescue_missing_exact[:30],
+                },
+            )
+            # #endregion
+            # #region agent log
             _rescue_targets = []
             for _tr in rescue_tracks:
                 for _it in _tr.get("items", []) or []:
@@ -1392,6 +1619,14 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 f"[RESCUE] Добавлены дополнительные дорожки: {len(rescue_tracks)}. "
                 f"Потеряно плит: {sum(missing_counts.values())}"
             )
+
+        # PlateAudit: финальный checkpoint после rescue
+        _handler_audit.checkpoint("final", all_tracks_list)
+        if _handler_audit.has_losses("input", "final"):
+            logger.error("[AUDIT] Итоговые потери плит:\n%s", _handler_audit.summary())
+        else:
+            logger.info("[AUDIT] Все плиты учтены:\n%s", _handler_audit.summary())
+
         # #region agent log (session 73b708) H_E: резюме недостачи и рескью + какие заказы дали недостающие ключи
         try:
             _agent_log = PROJECT_ROOT / "debug-73b708.log"

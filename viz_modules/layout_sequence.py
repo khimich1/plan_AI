@@ -489,7 +489,9 @@ def build_layout_sequence():
                     secondary_cuts_info[key].append({
                         'pattern': [segment.copy() for segment in pattern],
                         'qty': 1,
-                        'used': 0
+                        'used': 0,
+                        # BUG-4 FIX: сохраняем canonical ключ заказа для точного match в rescue
+                        'target_order_key': target_order_key,
                     })
         
         print(f"[VISUAL] Создано {len(secondary_cuts_info)} вариантов вторичных резов:")
@@ -801,6 +803,9 @@ def build_layout_sequence():
 
                         if chosen_variant:
                             secondary_cuts_for_plate = []
+                            # BUG-4 FIX: сохраняем target_order_key из варианта для точного
+                            # match в _count_tracks_for_rescue без fuzzy-поиска
+                            _sec_tok = chosen_variant.get('target_order_key')
                             for sec_cut_template in chosen_variant['pattern']:
                                 sec_width = sec_cut_template['width']
                                 sec_width_mm = sec_cut_template['width_mm']
@@ -817,7 +822,8 @@ def build_layout_sequence():
                                         'transverse_cut': True,
                                         'target_length': sec_transverse['target_length'],
                                         'remainder': sec_transverse['remainder'],
-                                        'load_code': lc
+                                        'load_code': lc,
+                                        'target_order_key': _sec_tok,
                                     })
                                     print(f"[VISUAL] Вторичный рез С поперечным: {length}м x {sec_width_mm}мм -> {sec_transverse['target_length']}м")
                                 else:
@@ -833,7 +839,8 @@ def build_layout_sequence():
                                             'label': f'О {plate_label(target_length, sec_width, lc)}',  # О = Остаток
                                             'has_transverse': True,  # Флаг для отрисовки красной линии
                                             'target_length': target_length,  # Длина результата (для правильной отрисовки)
-                                            'load_code': lc
+                                            'load_code': lc,
+                                            'target_order_key': _sec_tok,
                                         })
                                     else:
                                         # Обычный вторичный рез (включая narrowing)
@@ -845,7 +852,8 @@ def build_layout_sequence():
                                         secondary_cuts_for_plate.append({
                                             'width': result_width,
                                             'label': label_text,
-                                            'load_code': lc
+                                            'load_code': lc,
+                                            'target_order_key': _sec_tok,
                                         })
                             chosen_variant['used'] += 1
                         
@@ -1126,7 +1134,9 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 secondary_cuts_info[key].append({
                     'pattern': [segment.copy() for segment in pattern],
                     'qty': 1,
-                    'used': 0
+                    'used': 0,
+                    # BUG-4 FIX: canonical ключ заказа для точного match в rescue
+                    'target_order_key': target_order_key,
                 })
     
     # ========== НОВАЯ ЛОГИКА: РАЗДЕЛИТЕЛИ МЕЖДУ ГРУППАМИ РЕЗОВ ==========
@@ -1370,6 +1380,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     
                     if chosen_variant:
                         secondary_cuts_for_plate = []
+                        # BUG-4 FIX: canonical ключ заказа из оптимизатора для точного match
+                        _sec_tok_plan = chosen_variant.get('target_order_key')
                         for sec_cut_template in chosen_variant['pattern']:
                             sec_width = sec_cut_template['width']
                             sec_width_mm = sec_cut_template['width_mm']
@@ -1385,7 +1397,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                                     'transverse_cut': True,
                                     'target_length': sec_transverse['target_length'],
                                     'remainder': sec_transverse['remainder'],
-                                    'load_code': lc
+                                    'load_code': lc,
+                                    'target_order_key': _sec_tok_plan,
                                 })
                             else:
                                 target_length = sec_cut_template.get('target_length')
@@ -1395,7 +1408,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                                         'label': f'О {plate_label_func(target_length, sec_width, lc)}',
                                         'has_transverse': True,
                                         'target_length': target_length,
-                                        'load_code': lc
+                                        'load_code': lc,
+                                        'target_order_key': _sec_tok_plan,
                                     })
                                 else:
                                     result_width = sec_cut_template['width']
@@ -1406,7 +1420,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                                     secondary_cuts_for_plate.append({
                                         'width': result_width,
                                         'label': label_text,
-                                        'load_code': lc
+                                        'load_code': lc,
+                                        'target_order_key': _sec_tok_plan,
                                     })
                         chosen_variant['used'] += 1
                     
