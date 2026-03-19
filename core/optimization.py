@@ -19,6 +19,39 @@ from .price_db import get_price
 from dataclasses import dataclass
 
 _DEBUG_LOG_5b5324 = _Path(__file__).resolve().parent.parent / "debug-5b5324.log"
+_DEBUG_RUNTIME_LOG_648532 = _Path(__file__).resolve().parent.parent / "debug-648532.log"
+_DEBUG_RUNTIME_SESSION_ID_648532 = "648532"
+
+
+def _debug_runtime_write_648532(
+    run_id: str,
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict,
+) -> None:
+    try:
+        import json as _json
+        import time as _time
+
+        with open(_DEBUG_RUNTIME_LOG_648532, "a", encoding="utf-8") as _f:
+            _f.write(
+                _json.dumps(
+                    {
+                        "sessionId": _DEBUG_RUNTIME_SESSION_ID_648532,
+                        "runId": run_id,
+                        "hypothesisId": hypothesis_id,
+                        "location": location,
+                        "message": message,
+                        "data": data,
+                        "timestamp": int(_time.time() * 1000),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
 
 
 # ==================== КОНФИГУРАЦИЯ ОПТИМИЗАЦИИ ====================
@@ -496,6 +529,33 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 _sample_slot.append({"key": list(k), "first_identity": [slots[0].get("kp_id"), (slots[0].get("plate_name") or "")[:50]]})
         with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
             _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_slots", "location": "optimization:after_build_slot_lists", "message": "slot_lists summary", "data": {"slot_summary": _slot_summary, "sample_slot_identity": _sample_slot}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    # #region agent log
+    try:
+        _slot_mismatch = []
+        _slot_empty = []
+        for _k, _need in demand_2d.items():
+            _slots_len = len(slot_lists.get(_k, []))
+            if _slots_len == 0 and _need > 0:
+                _slot_empty.append({"key": list(_k), "need": int(_need)})
+            if _slots_len < _need:
+                _slot_mismatch.append({"key": list(_k), "need": int(_need), "slots": int(_slots_len)})
+        _debug_runtime_write_648532(
+            "run1",
+            "H1_slot_key_alignment",
+            "optimization:after_build_slot_lists",
+            "Demand keys versus proportional slot capacity",
+            {
+                "demand_total": int(sum(demand_2d.values())),
+                "slot_total": int(sum(len(v) for v in slot_lists.values())),
+                "demand_keys": int(len(demand_2d)),
+                "slot_keys": int(len(slot_lists)),
+                "empty_slot_keys": _slot_empty[:50],
+                "short_slot_keys": _slot_mismatch[:50],
+            },
+        )
     except Exception:
         pass
     # #endregion
@@ -1814,6 +1874,28 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     else:
         import logging as _log_mod2
         _log_mod2.getLogger(__name__).info("[AUDIT] Оптимизатор: потерь нет.\n%s", _audit.summary())
+    # #region agent log
+    try:
+        _missing_after_post = {}
+        for (_L, _W, _lc), _need in demand_2d.items():
+            _have = planned_coverage_by_key.get(_norm_key((_L, _W, _lc)), 0)
+            if _have < _need:
+                _missing_after_post[str([_L, _W, _lc])] = int(_need - _have)
+        _debug_runtime_write_648532(
+            "run1",
+            "H3_post_correction_balance",
+            "optimization:after_post_correction",
+            "Demand minus planned coverage after post-correction",
+            {
+                "demand_total": int(sum(demand_2d.values())),
+                "planned_coverage_total": int(sum(planned_coverage_by_key.values())),
+                "missing_keys_after_post": _missing_after_post,
+                "missing_total_after_post": int(sum(_missing_after_post.values())),
+            },
+        )
+    except Exception:
+        pass
+    # #endregion
     result['_plate_audit'] = _audit
 
     # #region agent log (2d5c43) H1,H2,H5: demand vs primary_cuts, 6m 530/1200
@@ -1920,9 +2002,12 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
 
     # Вторичные резы: получаем identity из того же общего slot-ledger.
     _secondary_attribution_log = []  # (target_key, kp_id, plate_name, match_type) для лога 5b5324
+    _empty_secondary_keys = []
     for cut in result['secondary_cuts']:
         target_key = cut.get('target_order_key')
         plate_info = _next_slot_info(slot_lists, slot_cursors, target_key) if target_key else {}
+        if target_key and not plate_info:
+            _empty_secondary_keys.append(target_key)
         if len(_secondary_attribution_log) < 50:
             _secondary_attribution_log.append({
                 "target_key": list(target_key) if isinstance(target_key, tuple) else target_key,
@@ -1961,6 +2046,38 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         _sec_count = sum(1 for p in result['plate_assignments'] if p.get('source') == 'secondary')
         with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
             _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_secondary", "location": "optimization:after_secondary", "message": "secondary attributions and plate_assignments", "data": {"secondary_attribution_sample": _secondary_attribution_log[:40], "plate_assignments_total": len(result['plate_assignments']), "secondary_count": _sec_count}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    # #region agent log
+    try:
+        _slot_exhausted_by_key = {}
+        if _empty_primary_keys:
+            _slot_exhausted_by_key["primary"] = {str(list(k)): int(v) for k, v in Counter(_empty_primary_keys).items()}
+        if _empty_secondary_keys:
+            _slot_exhausted_by_key["secondary"] = {str(list(k)): int(v) for k, v in Counter(_empty_secondary_keys).items()}
+        _slot_cursor_overview = []
+        for _k in list(slot_lists.keys())[:80]:
+            _slot_cursor_overview.append(
+                {
+                    "key": list(_k),
+                    "cursor": int(slot_cursors.get(_k, 0)),
+                    "slots": int(len(slot_lists.get(_k, []))),
+                }
+            )
+        _debug_runtime_write_648532(
+            "run1",
+            "H2_slot_exhaustion",
+            "optimization:after_slot_attribution",
+            "Slot consumption and exhausted attribution keys",
+            {
+                "plate_assignments_total": int(len(result.get("plate_assignments", []))),
+                "empty_primary_count": int(len(_empty_primary_keys)),
+                "empty_secondary_count": int(len(_empty_secondary_keys)),
+                "slot_exhausted_by_key": _slot_exhausted_by_key,
+                "slot_cursor_overview": _slot_cursor_overview,
+            },
+        )
     except Exception:
         pass
     # #endregion

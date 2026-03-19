@@ -45,8 +45,8 @@ RESCUE_EXHAUSTED_RANK = 999999
 # Путь к NDJSON-логу для отладки плит/ключей
 _DEBUG_LOG = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
 _DEBUG_SESSION_LOG = r"c:\Users\Роман\Desktop\Шишов\debug-d7e22e.log"
-_DEBUG_RUNTIME_LOG = PROJECT_ROOT / "debug-73ca51.log"
-_DEBUG_RUNTIME_SESSION_ID = "73ca51"
+_DEBUG_RUNTIME_LOG = PROJECT_ROOT / "debug-648532.log"
+_DEBUG_RUNTIME_SESSION_ID = "648532"
 
 
 def _debug_write(hypothesis_id, location, message, data):
@@ -521,6 +521,17 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             },
         )
         # #endregion
+        # #region agent log
+        try:
+            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
+            _n51 = _orders_by_key.get(_tk51, 0)
+            _n58 = _orders_by_key.get(_tk58, 0)
+            with open(_log_476b25, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_orders", "location": "production_execution:orders_2d_built", "message": "Chain step 1: demand for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "orders_2d"}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # Логируем уникальные load_code в orders_2d (план: этап 2.3)
         unique_loads = set(o['load_code'] for o in orders_2d)
         logger.info(f"[DEMAND] Уникальные load_code в orders_2d: {sorted(unique_loads)}")
@@ -735,6 +746,18 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         except Exception:
             pass
         # #endregion
+        # #region agent log
+        try:
+            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
+            _pa = optimization_result.get('plate_assignments', []) or []
+            _n51 = sum(1 for p in _pa if p.get('source') == 'primary' and abs(round(float(p.get('length', 0)), 2) - 5.1) < 0.02 and int(round(float(p.get('width', 0)))) == 320 and cfg.normalize_load_code(p.get('load_code', 8)) == 8)
+            _n58 = sum(1 for p in _pa if p.get('source') == 'primary' and abs(round(float(p.get('length', 0)), 2) - 5.8) < 0.02 and int(round(float(p.get('width', 0)))) == 320 and cfg.normalize_load_code(p.get('load_code', 8)) == 8)
+            with open(_log_476b25, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_opt", "location": "production_execution:after_optimizer", "message": "Chain step 2: plate_assignments primary for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "plate_assignments_primary", "total_primary": sum(1 for p in _pa if p.get('source') == 'primary')}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # === ШАГ 4.5: ДОПОЛНЕНИЕ LOOKUP ДЛЯ ВТОРИЧНЫХ РЕЗОВ ===
         if optimization_result.get('secondary_cuts'):
             orders_dict = {}
@@ -922,12 +945,73 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         # #endregion
         # PlateAudit: checkpoint после build_layout_sequence
         _handler_audit.checkpoint("layout_sequence", seq)
+        # #region agent log
+        try:
+            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
+            _n51, _n58 = 0, 0
+            if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
+                for g in seq:
+                    for it in g.get('sequence', []):
+                        L = round(float(it.get('length', 0) or it.get('target_length', 0) or 0), 2)
+                        w = it.get('width') if it.get('width') is not None else it.get('main_w') or 1.2
+                        w_mm = int(round(float(w) * 1000)) if float(w) < 20 else int(round(float(w)))
+                        lc = cfg.normalize_load_code(it.get('load_code', 8))
+                        if abs(L - 5.1) < 0.02 and w_mm == 320 and lc == 8:
+                            _n51 += 1
+                        if abs(L - 5.8) < 0.02 and w_mm == 320 and lc == 8:
+                            _n58 += 1
+            with open(_log_476b25, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_seq", "location": "production_execution:after_build_layout_sequence", "message": "Chain step 3: items in sequence for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "layout_sequence"}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
 
         all_tracks_list = split_sequence_into_tracks(seq)
 
         # PlateAudit: checkpoint после split_sequence_into_tracks
         _handler_audit.checkpoint("tracks", all_tracks_list)
-
+        # #region agent log
+        try:
+            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
+            _n51, _n58 = 0, 0
+            for tr in all_tracks_list or []:
+                for it in tr.get('items', []) or []:
+                    wv = it.get('main_w') if it.get('mode') == 'split' else it.get('width')
+                    w_mm = int(round(float(wv) * 1000)) if wv is not None and float(wv) < 20 else int(round(float(wv or 0)))
+                    lc = cfg.normalize_load_code(it.get('load_code', 8))
+                    if it.get('mode') == 'transverse' and it.get('target_length') is not None:
+                        L = round(float(it.get('target_length', 0)), 2)
+                        if abs(L - 5.1) < 0.02 and w_mm == 320 and lc == 8:
+                            _n51 += 1
+                        if abs(L - 5.8) < 0.02 and w_mm == 320 and lc == 8:
+                            _n58 += 1
+                        rem = round(float(it.get('remainder', 0) or 0), 2)
+                        if rem > 0.1:
+                            if abs(rem - 5.1) < 0.02 and w_mm == 320 and lc == 8:
+                                _n51 += 1
+                            if abs(rem - 5.8) < 0.02 and w_mm == 320 and lc == 8:
+                                _n58 += 1
+                    else:
+                        L = round(float(it.get('length', 0) or 0), 2)
+                        if abs(L - 5.1) < 0.02 and w_mm == 320 and lc == 8:
+                            _n51 += 1
+                        if abs(L - 5.8) < 0.02 and w_mm == 320 and lc == 8:
+                            _n58 += 1
+                    for sc in it.get('secondary_cuts', []) or []:
+                        sL = round(float(sc.get('target_length') or L), 2)
+                        sw = int(round(float(sc.get('width', 0))))
+                        slc = cfg.normalize_load_code(sc.get('load_code', it.get('load_code', 8)))
+                        if abs(sL - 5.1) < 0.02 and sw == 320 and slc == 8:
+                            _n51 += 1
+                        if abs(sL - 5.8) < 0.02 and sw == 320 and slc == 8:
+                            _n58 += 1
+            with open(_log_476b25, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_tracks", "location": "production_execution:after_split_tracks", "message": "Chain step 4: items in tracks for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "all_tracks_list"}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         # #region agent log
         def _count_keys_in_seq_and_tracks(order_keys_set):
             seq_counts = Counter()
@@ -1182,7 +1266,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                             # #endregion
             return out
 
-        def _count_tracks_for_rescue(tracks_list, order_keys, order_counts):
+        def _count_tracks_for_rescue(tracks_list, order_keys, order_counts, canonical_key_fn=None):
             # BUG-5 FIX: двухпроходная стратегия.
             # Проход 1 — строгое совпадение (tol_len=0, tol_w=0): сначала засчитываем
             # элементы, у которых ключ совпадает точно. Это предотвращает «кражу» плиты
@@ -1190,6 +1274,15 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             # Проход 2 — нечёткое совпадение: засчитываем оставшиеся элементы с допуском.
             remaining = {k: order_counts.get(k, 0) for k in order_keys}
             counts = {k: 0 for k in order_keys}
+            _sec_exact_hit = 0
+            _sec_exact_miss = 0
+            _sec_fuzzy_hit = 0
+            _sec_fuzzy_miss = 0
+            _sec_exact_miss_reason = {
+                "invalid_target_order_key": 0,
+                "not_in_order_keys_after_merge": 0,
+                "remaining_exhausted": 0,
+            }
 
             # Собираем плоский список элементов треков для двух проходов
             _all_items = []
@@ -1282,16 +1375,64 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                     _tok = sec_cut.get('target_order_key')
                     if _tok and len(_tok) == 3:
                         _tok_canon = canonical_plate_key(_tok[0], _tok[1], _tok[2])
-                        if _tok_canon in remaining and remaining[_tok_canon] > 0:
-                            remaining[_tok_canon] -= 1
-                            counts[_tok_canon] = counts.get(_tok_canon, 0) + 1
+                        if canonical_key_fn is not None:
+                            _tok_canon = canonical_key_fn(_tok_canon)
+                        # Если merge-канонизация не дала ключ из order_keys (пример: 5.08 -> 5.1),
+                        # подбираем ближайший заказной ключ в пределах rescue-допуска по длине.
+                        _tok_match = _tok_canon
+                        if _tok_match not in remaining:
+                            _tok_candidates = [
+                                ok for ok in order_keys
+                                if ok[1] == _tok_canon[1]
+                                and ok[2] == _tok_canon[2]
+                                and abs(ok[0] - _tok_canon[0]) <= RESCUE_TOL_LEN_M
+                            ]
+                            if _tok_candidates:
+                                _tok_match = min(
+                                    _tok_candidates,
+                                    key=lambda ok: (abs(ok[0] - _tok_canon[0]), ok[0], ok[1], ok[2]),
+                                )
+                        if _tok_match in remaining and remaining[_tok_match] > 0:
+                            remaining[_tok_match] -= 1
+                            counts[_tok_match] = counts.get(_tok_match, 0) + 1
+                            _sec_exact_hit += 1
                             continue
+                        _sec_exact_miss += 1
+                        if _tok_match not in remaining:
+                            _sec_exact_miss_reason["not_in_order_keys_after_merge"] += 1
+                        else:
+                            _sec_exact_miss_reason["remaining_exhausted"] += 1
+                    elif _tok:
+                        _sec_exact_miss_reason["invalid_target_order_key"] += 1
                     # Fallback: fuzzy match
                     sec_key = (round(sec_length, 2), sec_width_mm, sec_load_code)
                     sec_norm = _normalize_key_to_orders(sec_key, order_keys, order_counts, remaining=remaining)
                     if sec_norm is not None and sec_norm in remaining and remaining[sec_norm] > 0:
                         remaining[sec_norm] -= 1
                         counts[sec_norm] = counts.get(sec_norm, 0) + 1
+                        _sec_fuzzy_hit += 1
+                    else:
+                        _sec_fuzzy_miss += 1
+            # #region agent log
+            try:
+                _debug_runtime_write(
+                    "run1",
+                    "H4_secondary_rescue_binding",
+                    "production_execution:_count_tracks_for_rescue",
+                    "Secondary rescue binding paths",
+                    {
+                        "secondary_exact_hit": int(_sec_exact_hit),
+                        "secondary_exact_miss": int(_sec_exact_miss),
+                        "secondary_exact_miss_reason": {k: int(v) for k, v in _sec_exact_miss_reason.items()},
+                        "secondary_fuzzy_hit": int(_sec_fuzzy_hit),
+                        "secondary_fuzzy_miss": int(_sec_fuzzy_miss),
+                        "remaining_total_after_count": int(sum(remaining.values())),
+                        "credited_total_after_count": int(sum(counts.values())),
+                    },
+                )
+            except Exception:
+                pass
+            # #endregion
             return counts
 
         def _merge_to_canonical_order_keys(raw_order_counts, tol_len=0.02):
@@ -1425,6 +1566,17 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             # #endregion
         order_counts, canonical_key_fn = _merge_to_canonical_order_keys(raw_order_counts, tol_len=0.02)
         order_keys = list(order_counts.keys())
+        # #region agent log
+        try:
+            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
+            _raw_320_8 = {str(list(k)): v for k, v in raw_order_counts.items() if k[1] == 320 and k[2] == 8 and 5.0 <= k[0] <= 5.25}
+            _raw_58_320_8 = {str(list(k)): v for k, v in raw_order_counts.items() if k[1] == 320 and k[2] == 8 and 5.7 <= k[0] <= 5.95}
+            with open(_log_476b25, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H1_H3_order", "location": "production_execution:after_merge_order_keys", "message": "NEED and raw order keys for 5.1/5.8 x 320 x 8", "data": {"order_counts_5.1_320_8": order_counts.get(_tk51, 0), "order_counts_5.8_320_8": order_counts.get(_tk58, 0), "raw_order_keys_near_5.1": _raw_320_8, "raw_order_keys_near_5.8": _raw_58_320_8}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         competing = []
         for i, k1 in enumerate(order_keys):
             for k2 in order_keys[i+1:]:
@@ -1435,8 +1587,43 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                       "order_keys": [list(k) for k in order_keys],
                       "order_counts": {str(list(k)): v for k, v in order_counts.items()},
                       "competing_keys": competing})
-        track_counts = _count_tracks_for_rescue(all_tracks_list, order_keys, order_counts)
+        track_counts_norm = _count_tracks_for_rescue(
+            all_tracks_list, order_keys, order_counts, canonical_key_fn=canonical_key_fn
+        )
         raw_track_by_key = _raw_track_counts(all_tracks_list)
+        track_counts = {k: 0 for k in order_keys}
+        _raw_to_canon_320 = []
+        for raw_key, raw_qty in raw_track_by_key.items():
+            key_canon = canonical_key_fn(raw_key)
+            if key_canon not in track_counts:
+                raw_candidates = [
+                    ok for ok in order_keys
+                    if ok[1] == key_canon[1]
+                    and ok[2] == key_canon[2]
+                    and abs(ok[0] - key_canon[0]) <= RESCUE_TOL_LEN_M
+                ]
+                if raw_candidates:
+                    key_canon = min(
+                        raw_candidates,
+                        key=lambda ok: (abs(ok[0] - key_canon[0]), ok[0], ok[1], ok[2]),
+                    )
+            if raw_key[1] == 320 and raw_key[2] == 8 and (5.0 <= raw_key[0] <= 5.25 or 5.7 <= raw_key[0] <= 5.95):
+                _raw_to_canon_320.append({"raw_key": list(raw_key), "key_canon": list(key_canon), "qty": int(raw_qty)})
+            if key_canon in track_counts:
+                track_counts[key_canon] = track_counts.get(key_canon, 0) + int(raw_qty)
+        # #region agent log
+        try:
+            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
+            _raw_exact_51 = raw_track_by_key.get(_tk51, 0)
+            _raw_exact_58 = raw_track_by_key.get(_tk58, 0)
+            _raw_near_51 = sum(v for k, v in raw_track_by_key.items() if k[1] == 320 and k[2] == 8 and 5.06 <= k[0] <= 5.14)
+            _raw_near_58 = sum(v for k, v in raw_track_by_key.items() if k[1] == 320 and k[2] == 8 and 5.76 <= k[0] <= 5.84)
+            with open(_log_476b25, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H1_H5_raw_mapping", "location": "production_execution:after_raw_to_canon", "message": "Raw track counts and raw->canon mapping for 5.1/5.8 x 320", "data": {"raw_exact_5.1_320_8": _raw_exact_51, "raw_exact_5.8_320_8": _raw_exact_58, "raw_near_5.1_320_8": _raw_near_51, "raw_near_5.8_320_8": _raw_near_58, "track_counts_5.1_320_8": track_counts.get(_tk51, 0), "track_counts_5.8_320_8": track_counts.get(_tk58, 0), "track_counts_norm_5.1_320_8": track_counts_norm.get(_tk51, 0), "track_counts_norm_5.8_320_8": track_counts_norm.get(_tk58, 0), "raw_to_canon_320": _raw_to_canon_320}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         _debug_write("H_rescue_tracks_raw", "production_execution:after_count", "track items by (length, width, load_code) before normalization",
                      {"raw_by_key": {str(list(k)): v for k, v in raw_track_by_key.items()}, "total": sum(raw_track_by_key.values())})
         missing_counts = {}
@@ -1452,11 +1639,21 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             "Need/have/raw before rescue creation",
             {
                 "order_counts": {str(list(k)): int(v) for k, v in order_counts.items()},
-                "track_counts_norm": {str(list(k)): int(v) for k, v in track_counts.items()},
+                "track_counts_norm": {str(list(k)): int(v) for k, v in track_counts_norm.items()},
+                "track_counts_canonical_from_raw": {str(list(k)): int(v) for k, v in track_counts.items()},
                 "track_counts_raw": {str(list(k)): int(v) for k, v in raw_track_by_key.items()},
                 "missing_counts": {str(list(k)): int(v) for k, v in missing_counts.items()},
             },
         )
+        # #endregion
+        # #region agent log
+        try:
+            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
+            with open(_log_476b25, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_summary_51_58", "location": "production_execution:missing_counts", "message": "Summary need/have/missing for 5.1 and 5.8 x 320 x 8", "data": {"key_5.1_320_8": {"need": order_counts.get(_tk51, 0), "have": track_counts.get(_tk51, 0), "missing": missing_counts.get(_tk51, 0), "raw": raw_track_by_key.get(_tk51, 0)}, "key_5.8_320_8": {"need": order_counts.get(_tk58, 0), "have": track_counts.get(_tk58, 0), "missing": missing_counts.get(_tk58, 0), "raw": raw_track_by_key.get(_tk58, 0)}}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
         # #endregion
         # Защита от расхождения «в боте 60-12 vs в визуализации 60-5,3»: если по raw в треках
         # не хватает (6, 1200, 8), но недостача попала в (6, 530, 8) — перераспределяем одну

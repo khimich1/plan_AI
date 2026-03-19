@@ -22,15 +22,11 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 
-# Импортируем функцию расчёта веса
+# Единый расчёт веса строки КП (plate_weights → approximate)
 try:
-    from config_and_data import approximate_weight_kg
+    from .kp_plate_weight import resolve_kp_line_weight_kg
 except ImportError:
-    # Если не удалось импортировать, используем локальную функцию
-    def approximate_weight_kg(length_m: float, width_m: float, thickness_m: float = 0.22) -> float:
-        """Примерный расчёт веса плиты в килограммах"""
-        volume = length_m * width_m * thickness_m
-        return round(volume * 2400, 2)
+    from kp_plate_weight import resolve_kp_line_weight_kg
 
 
 # ==================== КОНСТАНТЫ ====================
@@ -532,13 +528,8 @@ def generate_commercial_offer_pdf(
         discounted_price = unit_price * (1 - discount_percent / 100)
         item_sum = discounted_price * qty
         
-        # Вес: если уже передан в item, используем его, иначе рассчитываем
-        if 'weight' in item and item['weight'] is not None:
-            total_item_weight = item['weight']
-        else:
-            unit_weight = approximate_weight_kg(length_m, width_m)
-            total_item_weight = unit_weight * qty
-        
+        # Вес: plate_weights по размерам (нагрузка не учитывается), иначе approximate; как в XLSX
+        _, total_item_weight = resolve_kp_line_weight_kg(item)
         total_weight += total_item_weight
         
         weight_str = f"{total_item_weight:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')

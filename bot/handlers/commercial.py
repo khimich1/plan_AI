@@ -26,6 +26,7 @@ from core.config_and_data import set_plate_lists_from_text, get_current_plate_or
 import core.config_and_data as cfg
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
+from core.kp_plate_weight import resolve_kp_line_weight_kg
 from core.db_config import PB_DB_PATH
 from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
@@ -764,16 +765,11 @@ async def generate_all_documents(message: Message, state: FSMContext):
                     break
             if matching_row:
                 name = matching_row[1]
-                weight_str = matching_row[6]
                 price_str = matching_row[7]
                 try:
                     unit_price = float(price_str.replace(' ', '').replace(',', '.'))
                 except (ValueError, AttributeError):
                     unit_price = 0.0
-                try:
-                    weight = float(str(weight_str).replace(' ', '').replace(',', '.'))
-                except (ValueError, AttributeError):
-                    weight = 0.0
                 match = re.search(r'ПБ\s+([\d,]+)-', name)
                 length_dm_raw = match.group(1).strip() if match else ''
                 # Не подменять имя/длину, если у позиции явно задан length_dm_raw и он отличается от подстроки в строке сметы (57 vs 57,1)
@@ -794,7 +790,6 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 item_ldr = item.get('length_dm_raw') or None
                 name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
                 unit_price = 0.0
-                weight = 0.0
                 length_dm_raw = item_ldr or (
                     f'{length_m * 10:.1f}'.rstrip('0').rstrip('.').replace('.', ',') if length_m else ''
                 )
@@ -807,6 +802,12 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 name = cache_name
                 _raw_match = re.search(r'ПБ\s+([\d,]+)-', name)
                 length_dm_raw = _raw_match.group(1).strip() if _raw_match else length_dm_raw
+            # Вес КП: plate_weights по размерам (сумма на строку — для save_kp_to_db)
+            _, total_weight_kg = resolve_kp_line_weight_kg({
+                "length_m": length_m,
+                "width_m": width_m,
+                "qty": qty,
+            })
             # #region agent log (57/57,1: итоговое имя в order_data)
             if 5.69 <= length_m <= 5.73:
                 try:
@@ -834,7 +835,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 "qty": qty,
                 "load_class": (cfg.normalize_load_code(load_code) or 8) * 100 if load_code is not None else 800,
                 "unit_price": unit_price,
-                "weight": weight,
+                "weight": total_weight_kg,
             }
             if cache_nid is not None:
                 entry['nomenclature_id'] = cache_nid
@@ -1168,16 +1169,11 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                     break
             if matching_row:
                 name = matching_row[1]
-                weight_str = matching_row[6]
                 price_str = matching_row[7]
                 try:
                     unit_price = float(price_str.replace(' ', '').replace(',', '.'))
                 except (ValueError, AttributeError):
                     unit_price = 0.0
-                try:
-                    weight = float(str(weight_str).replace(' ', '').replace(',', '.'))
-                except (ValueError, AttributeError):
-                    weight = 0.0
                 match = re.search(r'ПБ\s+([\d,]+)-', name)
                 length_dm_raw = match.group(1).strip() if match else ''
                 # Не подменять имя/длину, если у позиции явно задан length_dm_raw и он отличается от подстроки в строке сметы (57 vs 57,1)
@@ -1198,7 +1194,6 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 item_ldr = item.get('length_dm_raw') or None
                 name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
                 unit_price = 0.0
-                weight = 0.0
                 length_dm_raw = item_ldr or (
                     f'{length_m * 10:.1f}'.rstrip('0').rstrip('.').replace('.', ',') if length_m else ''
                 )
@@ -1211,6 +1206,12 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 name = cache_name
                 _raw_match = re.search(r'ПБ\s+([\d,]+)-', name)
                 length_dm_raw = _raw_match.group(1).strip() if _raw_match else length_dm_raw
+            # Вес КП: plate_weights по размерам (сумма на строку — для save_kp_to_db)
+            _, total_weight_kg = resolve_kp_line_weight_kg({
+                "length_m": length_m,
+                "width_m": width_m,
+                "qty": qty,
+            })
             # #region agent log (57/57,1: итоговое имя в order_data, альт. поток)
             if 5.69 <= length_m <= 5.73:
                 try:
@@ -1238,7 +1239,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 "qty": qty,
                 "load_class": (cfg.normalize_load_code(load_code) or 8) * 100 if load_code is not None else 800,
                 "unit_price": unit_price,
-                "weight": weight,
+                "weight": total_weight_kg,
             }
             if cache_nid is not None:
                 entry['nomenclature_id'] = cache_nid

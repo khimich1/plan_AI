@@ -20,15 +20,11 @@ except ImportError:
     XLImage = None
     print("ВНИМАНИЕ: pandas или openpyxl не установлены. Генерация XLSX будет недоступна.")
 
-# Импортируем функцию расчёта веса
+# Единый расчёт веса строки КП (plate_weights → approximate)
 try:
-    from config_and_data import approximate_weight_kg
+    from .kp_plate_weight import resolve_kp_line_weight_kg
 except ImportError:
-    # Если не удалось импортировать, используем локальную функцию
-    def approximate_weight_kg(length_m: float, width_m: float, thickness_m: float = 0.22) -> float:
-        """Примерный расчёт веса плиты в килограммах"""
-        volume = length_m * width_m * thickness_m
-        return round(volume * 2400, 2)
+    from kp_plate_weight import resolve_kp_line_weight_kg
 
 
 # ==================== КОНСТАНТЫ ====================
@@ -281,13 +277,8 @@ def generate_commercial_offer_xlsx(
             
             unit_price = get_plate_price(length_m, width_m, load_class)
         
-        # Вес: если уже передан в item, используем его, иначе рассчитываем
-        if 'weight' in item and item['weight'] is not None:
-            unit_weight = item['weight'] / qty  # Общий вес делим на количество
-        else:
-            unit_weight = approximate_weight_kg(length_m, width_m)
-        
-        total_item_weight = unit_weight * qty
+        # Вес: plate_weights по размерам, иначе approximate (как в PDF)
+        _, total_item_weight = resolve_kp_line_weight_kg(item)
         total_weight += total_item_weight
         
         # Применяем скидку к цене (если указана)
