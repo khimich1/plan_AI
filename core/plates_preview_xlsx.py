@@ -254,8 +254,8 @@ def build_plates_reconciliation_preview_xlsx(
     contribution_rows: list[dict[str, object]] = []
     no_match_rows: list[tuple[int, str]] = []
 
-    # Физические строки: (col_a, name_b, qty_c_str, kp_name, kp_qty_int)
-    physical: list[tuple[str, str, str, str, int]] = []
+    # Физические строки: (col_a, name_b, qty_c, kp_name, kp_qty_int)
+    physical: list[tuple[str, str, int | None, str, int]] = []
     for i in range(n):
         user_cell = (
             initial_user_plate_lines[i]
@@ -297,11 +297,11 @@ def build_plates_reconciliation_preview_xlsx(
             a = str(row["user_cell"])
             b = str(row["name"])
             q_line = int(row["q_line"])
-            c_str = "" if q_line <= 0 else str(q_line)
+            c_val = None if q_line <= 0 else q_line
             if idx == 0:
-                physical.append((a, b, c_str, kp_name, kp_qty))
+                physical.append((a, b, c_val, kp_name, kp_qty))
             else:
-                physical.append((a, b, c_str, "", 0))
+                physical.append((a, b, c_val, "", 0))
 
     # Нераспознанные/пустые строки без вкладов сохраняем в хвосте, чтобы не терять связь с вводом.
     for _line_idx, user_cell in no_match_rows:
@@ -330,7 +330,7 @@ def build_plates_reconciliation_preview_xlsx(
         ws.cell(row=r, column=3, value=c).alignment = _WRAP
 
         d_val = kp_name if kp_name else ""
-        e_val = "" if kp_qty <= 0 else str(kp_qty)
+        e_val = None if kp_qty <= 0 else kp_qty
 
         ws.cell(row=r, column=4, value=d_val).alignment = _WRAP
         ws.cell(row=r, column=5, value=e_val).alignment = _WRAP

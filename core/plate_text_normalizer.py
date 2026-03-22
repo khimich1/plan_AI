@@ -264,10 +264,30 @@ def get_wide_plate_lines(text: str) -> List[Tuple[str, int]]:
     # Regex для количества в конце строки
     _QTY_END_RE = re.compile(r"(\d+)\s*(?:шт\.?|штук)?\s*$", re.IGNORECASE)
     # Канонический формат: ПБ L-W-N[п] [qty] (дефис между L и W; «п» опциональна для OCR)
+    # Поддерживает дробные L/W: "68,6-15-8", "68,6-1,5-8", "66,2-6,65-8п".
     _CANONICAL_L_W_RE = re.compile(
-        r"(?i)\bп[бк]\s*(\d+)\s*-\s*(\d{1,2})\s*-\s*\d+(?:[,.]\d+)?п?(?:\s+(\d+))?\s*$",
+        r"(?i)\bп[бк]\s*(\d+(?:[,.]\d+)?)\s*-\s*(\d+(?:[,.]\d+)?)\s*-\s*\d+(?:[,.]\d+)?п?(?:\s+(\d+))?\s*$",
         re.UNICODE,
     )
+
+    def _width_token_to_dm(token: str) -> float:
+        """
+        Приводит ширину из марки ПБ/ПК к дм для проверки >12 дм.
+
+        Поддерживаемые варианты в марке:
+        - "15"   -> 15 дм
+        - "6,65" -> 6.65 дм
+        - "1,5"  -> 15 дм (если ширина записана в метрах)
+        """
+        s = (token or "").strip().replace(",", ".")
+        try:
+            val = float(s)
+        except ValueError:
+            return 0.0
+        # Если число с разделителем и <= 2, трактуем как метры.
+        if "." in s and val <= 2.0:
+            return val * 10.0
+        return val
 
     for raw in raw_lines:
         cleaned = basic_text_cleanup(raw)
@@ -284,7 +304,7 @@ def get_wide_plate_lines(text: str) -> List[Tuple[str, int]]:
         # 2) Канонический формат ПБ L-W-N[п] [qty] (нормализованные строки и OCR)
         m_can = _CANONICAL_L_W_RE.match(cleaned)
         if m_can:
-            W_dm = int(m_can.group(2))
+            W_dm = _width_token_to_dm(m_can.group(2))
             qty = int(m_can.group(3)) if m_can.group(3) else 1
             if W_dm > 12:
                 result.append((raw, qty))

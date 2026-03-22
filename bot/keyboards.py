@@ -627,6 +627,16 @@ def confirm_plates_list_kb() -> InlineKeyboardMarkup:
     )
 
 
+def wide_plates_actions_kb() -> InlineKeyboardMarkup:
+    """Кнопки для шага обработки плит шире 12 дм."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏭️ Пропустить широкие плиты", callback_data="skip_wide_plates")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
+        ]
+    )
+
+
 def tracks_choice_kb() -> InlineKeyboardMarkup:
     """Клавиатура выбора количества дорожек (1-5)"""
     buttons = []
