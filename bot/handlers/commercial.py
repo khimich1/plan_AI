@@ -36,7 +36,7 @@ from core.exceptions import PlateParseError, FileGenerationError
 # Настройка логирования
 logger = logging.getLogger(__name__)
 
-from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, save_to_db_with_files_kb, cancel_process_kb, managers_selection_kb, confirm_plates_list_kb
+from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, save_to_db_with_files_kb, cancel_process_kb, managers_selection_kb, confirm_plates_list_kb, wide_plates_actions_kb
 from ..states import KPStates
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -440,7 +440,7 @@ async def confirm_plates_list_callback(callback: CallbackQuery, state: FSMContex
         )
         await callback.message.answer(
             "Или нажмите кнопку ниже для отмены:",
-            reply_markup=cancel_process_kb()
+            reply_markup=wide_plates_actions_kb()
         )
         return
 
@@ -584,6 +584,83 @@ async def receive_wide_plates_replacement(message: Message, state: FSMContext):
     )
 
     await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=wide_plates_actions_kb()
+    )
+
+
+@router.callback_query(F.data == "skip_wide_plates", KPStates.waiting_wide_plates_replacement)
+async def skip_wide_plates_callback(callback: CallbackQuery, state: FSMContext):
+    """Пропускает все строки с плитами шире 12 дм (исключает их из заказа)."""
+    await callback.answer()
+
+    import re as _re
+    from core.plate_text_normalizer import normalize_order_text
+
+    data = await state.get_data()
+    original_plates_text: str = data.get("plates_text", "")
+    wide_plate_lines: list[str] = list(data.get("wide_plate_lines", []) or [])
+
+    original_lines = [l.strip() for l in _re.split(r"[\n;]+", original_plates_text) if l.strip()]
+    wide_set = set(wide_plate_lines)
+    filtered_lines = [line for line in original_lines if line not in wide_set]
+    skipped_count = len(original_lines) - len(filtered_lines)
+
+    if not filtered_lines:
+        await callback.message.answer(
+            "⚠️ После пропуска широких плит список стал пустым.\n"
+            "Пришлите список замен или нажмите «🔄 Заменить» и введите новый список.",
+            reply_markup=wide_plates_actions_kb(),
+        )
+        return
+
+    final_plates_text_raw = "\n".join(filtered_lines)
+    norm_final = normalize_order_text(final_plates_text_raw)
+    final_plates_text = (
+        norm_final.normalized_text.strip() if norm_final.normalized_text.strip() else final_plates_text_raw
+    )
+
+    try:
+        set_plate_lists_from_text(final_plates_text)
+        final_count = sum(get_current_plate_order().plate_load_details.values())
+    except PlateParseError:
+        final_count = 0
+
+    display_limit = MAX_MESSAGE_LEN - 200
+    if len(final_plates_text) > display_limit:
+        display_text = final_plates_text[:display_limit] + f"\n… (полный список сохранён, всего {len(final_plates_text)} символов)"
+    else:
+        display_text = final_plates_text
+
+    count_note = (
+        f"\n\nКоличество в заказе: {final_count}. "
+        f"Распознано: {final_count}. Одинаковое: да."
+    ) if final_count > 0 else ""
+
+    list_msg = (
+        f"📋 Итоговый список плит (широкие пропущены: {skipped_count}):\n\n"
+        f"{display_text}{count_note}"
+    )
+
+    await state.update_data(
+        plates_text=final_plates_text,
+        wide_plate_lines=[],
+        replacement_done=True,
+        plates_preview_sent=False,
+        raw_plate_lines=filtered_lines,
+    )
+    await state.set_state(KPStates.waiting_plates_confirm)
+
+    await callback.message.answer(list_msg, reply_markup=confirm_plates_list_kb())
+
+    initial_user_plate_lines: list[str] = list(data.get("initial_user_plate_lines") or [])
+    await _send_plates_preview_xlsx(
+        callback.message,
+        plates_text=final_plates_text,
+        initial_user_plate_lines=initial_user_plate_lines,
+    )
+
+    await callback.message.answer(
         "Или нажмите кнопку ниже для отмены:",
         reply_markup=cancel_process_kb()
     )
