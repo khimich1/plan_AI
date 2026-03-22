@@ -585,7 +585,7 @@ async def receive_wide_plates_replacement(message: Message, state: FSMContext):
 
     await message.answer(
         "Или нажмите кнопку ниже для отмены:",
-        reply_markup=wide_plates_actions_kb()
+        reply_markup=cancel_process_kb()
     )
 
 
@@ -610,7 +610,7 @@ async def skip_wide_plates_callback(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(
             "⚠️ После пропуска широких плит список стал пустым.\n"
             "Пришлите список замен или нажмите «🔄 Заменить» и введите новый список.",
-            reply_markup=wide_plates_actions_kb(),
+            reply_markup=cancel_process_kb(),
         )
         return
 
