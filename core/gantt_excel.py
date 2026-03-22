@@ -5,7 +5,8 @@
 
 Показывает план производства по КП:
 - Строки: номера КП с информацией о заказчике и дедлайне
-- Столбцы: даты производства
+- Столбцы: дни недели (верхняя строка), затем даты производства; после последнего
+  дня с планом добавляются пустые столбцы для будущего горизонта
 - Ячейки: закрашены в дни, когда производятся плиты из КП
 
 Цветовая кодировка:
@@ -13,6 +14,7 @@
 - Жёлтый: КП завершается в день дедлайна  
 - Красный: КП завершается после дедлайна (опаздываем!)
 """
+from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
@@ -22,6 +24,13 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
+_WEEKDAYS_RU: tuple[str, ...] = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+
+
+def _weekday_ru(dt: datetime) -> str:
+    """Короткое русское обозначение дня недели (понедельник = 0)."""
+    return _WEEKDAYS_RU[dt.weekday()]
+
 
 def create_gantt_excel(
     all_tracks_list: list,
@@ -29,11 +38,15 @@ def create_gantt_excel(
     plate_lookup_exact: dict,
     plate_lookup_by_length: dict,
     output_dir: str,
-    start_date: datetime = None
+    start_date: datetime | None = None,
+    extra_calendar_days: int = 14,
 ) -> str:
     """
     Создаёт Excel-файл с диаграммой Ганта для планирования производства.
-    
+
+    Сетка: строка 1 — дни недели над датами; строка 2 — заголовки и даты;
+    строка 3 — загруженность дорожек; далее строки КП и итоги.
+
     Args:
         all_tracks_list: список всех дорожек с плитами
         tracks_count: количество дорожек в день
@@ -41,7 +54,9 @@ def create_gantt_excel(
         plate_lookup_by_length: словарь для поиска информации о плитах по длине
         output_dir: директория для сохранения файла
         start_date: дата начала производства (по умолчанию - сегодня)
-        
+        extra_calendar_days: сколько дней добавить после последнего дня с планом
+            (пустые столбцы для будущего планирования)
+
     Returns:
         Путь к созданному Excel-файлу
     """
@@ -277,7 +292,8 @@ def create_gantt_excel(
         }
     
     # === ШАГ 2: Определяем диапазон дней ===
-    total_days = max(info['end_day'] for info in kp_production_info.values())
+    plan_days = max(info['end_day'] for info in kp_production_info.values())
+    total_days = plan_days + max(0, extra_calendar_days)
     
     # === ШАГ 3: Создаём Excel ===
     wb = Workbook()
@@ -322,34 +338,53 @@ def create_gantt_excel(
         date_str = date.strftime("%d.%m")
         headers.append(date_str)
         date_columns.append(date)
-    
-    # Записываем первую строку заголовков (даты)
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=header)
+
+    subheader_gray = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
+
+    # === Строка 1: дни недели над датами ===
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+    cell_a1 = ws.cell(row=1, column=1, value="")
+    cell_a1.font = Font(bold=True, size=10)
+    cell_a1.fill = subheader_gray
+    cell_a1.alignment = center_align
+    cell_a1.border = thin_border
+
+    for day in range(1, total_days + 1):
+        col = 4 + day
+        dt = start_date + timedelta(days=day - 1)
+        cell = ws.cell(row=1, column=col, value=_weekday_ru(dt))
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = center_align
         cell.border = thin_border
-    
-    # === ШАГ 4.5: Вторая строка заголовков (загруженность дорожек) ===
+
+    # === Строка 2: заголовки (КП, …, даты) ===
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=2, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    # === ШАГ 4.5: Строка 3 — загруженность дорожек ===
     # Добавляем информацию о дорожках: "3/5" = 3 дорожки занято из 5 максимум
     MAX_TRACKS = 5  # Максимальное количество дорожек в день
-    
+
     # Первые 4 колонки объединяем (КП, Заказчик, Дедлайн, Плит)
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=4)
-    cell = ws.cell(row=2, column=1, value="Загруженность дорожек")
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=4)
+    cell = ws.cell(row=3, column=1, value="Загруженность дорожек")
     cell.font = Font(bold=True, size=10, italic=True)
-    cell.fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
+    cell.fill = subheader_gray
     cell.alignment = center_align
     cell.border = thin_border
-    
+
     # Для каждого дня показываем загруженность
     for day in range(1, total_days + 1):
         col = 4 + day
         occupied_tracks = tracks_by_day.get(day, 0)
         tracks_info = f"{occupied_tracks}/{MAX_TRACKS}"
-        
-        cell = ws.cell(row=2, column=col, value=tracks_info)
+
+        cell = ws.cell(row=3, column=col, value=tracks_info)
         cell.font = Font(bold=False, size=9)
         cell.alignment = center_align
         cell.border = thin_border
@@ -375,7 +410,7 @@ def create_gantt_excel(
         key=lambda x: _parse_date(x[1]['deadline'])
     )
     
-    row = 3  # Начинаем с 3-й строки (после заголовков и загруженности)
+    row = 4  # После строк: дни недели, заголовки, загруженность
     plates_by_day_total = defaultdict(int)  # Итого плит по дням
     
     for kp_id, info in sorted_kps:
