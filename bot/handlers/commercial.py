@@ -52,29 +52,104 @@ ORDER_CACHE: Dict[int, list] = {}
 OPT_PLAN_CACHE: Dict[int, dict] = {}
 
 
-@router.message(F.text == "📝 Создать КП")
-@router.message(Command("commercial_offer"))
-async def btn_commercial_offer(message: Message, state: FSMContext):
-    """Обработчик запроса на создание коммерческого предложения - ПОШАГОВЫЙ ОПРОС"""
-    # Шаг 1: Запрашиваем выбор менеджера из списка
-    # Получаем список менеджеров из БД
+async def _enter_kp_manager_selection(message: Message, state: FSMContext) -> bool:
+    """
+    Переход к выбору менеджера (шаг 2 из 5).
+    Возвращает True, если список менеджеров отправлен; иначе сообщает об ошибке и очищает state.
+    """
     from core.kp_db import get_all_managers
+
     managers = get_all_managers()
-    
     if not managers:
         await message.answer(
             "⚠️ В базе данных нет менеджеров.\n"
             "Обратитесь к администратору.",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(),
         )
-        return
-    
+        await state.clear()
+        return False
+
     await state.set_state(KPStates.waiting_manager_selection)
     await message.answer(
         "📄 Создание коммерческого предложения\n\n"
-        "Шаг 1 из 5: Выберите менеджера",
-        reply_markup=managers_selection_kb(managers)
+        "Шаг 2 из 5: Выберите менеджера",
+        reply_markup=managers_selection_kb(managers),
     )
+    return True
+
+
+async def _send_plates_preview_xlsx(
+    message: Message,
+    *,
+    plates_text: str,
+    initial_user_plate_lines: list[str],
+) -> bool:
+    """
+    Строит XLSX превью списка плит и отправляет документом.
+    Возвращает True при успехе; при ошибке логирует и возвращает False.
+    """
+    try:
+        from core.plates_preview_xlsx import build_plates_reconciliation_preview_xlsx
+
+        preview_name = (
+            f"Превью_списка_плит_{message.from_user.id}_"
+            f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+        preview_path = os.path.join(OUTPUTS_DIR_STR, preview_name)
+        await asyncio.to_thread(
+            build_plates_reconciliation_preview_xlsx,
+            preview_path,
+            plates_text=plates_text,
+            initial_user_plate_lines=initial_user_plate_lines,
+        )
+        await message.answer_document(
+            FSInputFile(preview_path),
+            caption="📊 Сверка строк: ввод → распознано → как в КП",
+        )
+        return True
+    except Exception as preview_exc:
+        logger.exception(
+            "[COMMERCIAL] Не удалось сформировать XLSX превью списка плит: %s",
+            preview_exc,
+        )
+        return False
+
+
+async def _prompt_kp_step1_plates(message: Message) -> None:
+    """Отправляет пользователю приглашение к шагу 1 (ввод списка плит)."""
+    await message.answer(
+        "📄 Создание коммерческого предложения\n\n"
+        "Шаг 1 из 5: Пришлите список плит в свободной форме\n\n"
+        "Примеры форматов:\n"
+        "• '1.2×3.39 — 2 шт'\n"
+        "• '0.32×6.63 — 4 шт'\n"
+        "• 'ПБ 38-12-8п 2'\n"
+        "• 'ПБ 66-3-8п 4'",
+        reply_markup=main_menu_kb(),
+    )
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb(),
+    )
+
+
+@router.message(F.text == "📝 Создать КП")
+@router.message(Command("commercial_offer"))
+async def btn_commercial_offer(message: Message, state: FSMContext):
+    """Старт сценария КП: шаг 1 — список плит (менеджеры проверяются заранее)."""
+    # Проверяем менеджеров до входа в сценарий (чтобы не пройти плиты и упереться в пустой список)
+    from core.kp_db import get_all_managers
+
+    if not get_all_managers():
+        await message.answer(
+            "⚠️ В базе данных нет менеджеров.\n"
+            "Обратитесь к администратору.",
+            reply_markup=main_menu_kb(),
+        )
+        return
+
+    await state.set_state(KPStates.waiting_plates_list)
+    await _prompt_kp_step1_plates(message)
 
 
 # === ПОШАГОВЫЙ ОПРОС ДЛЯ КОММЕРЧЕСКОГО ПРЕДЛОЖЕНИЯ ===
@@ -102,7 +177,7 @@ async def select_manager_callback(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         f"✅ Менеджер: {manager['fio']}\n\n"
-        "Шаг 2 из 5: Введите имя клиента\n"
+        "Шаг 3 из 5: Введите имя клиента\n"
         "(Для кого создается коммерческое предложение)"
     )
     
@@ -120,37 +195,33 @@ async def select_manager_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.message(KPStates.waiting_client_name)
 async def receive_client_name(message: Message, state: FSMContext):
-    """Шаг 2: Получаем имя клиента"""
+    """Шаг 3: Получаем имя клиента, затем запрос скидки (шаг 4)."""
     client_name = message.text.strip()
-    
-    # Сохраняем имя клиента в состояние
+
     await state.update_data(client_name=client_name)
-    
-    # Переходим к следующему шагу - запрашиваем список плит
-    await state.set_state(KPStates.waiting_plates_list)
+
+    await state.set_state(KPStates.waiting_discount)
     await message.answer(
-        f"✅ Клиент: {client_name}\n\n"
-        "Шаг 3 из 5: Пришлите список плит в свободной форме\n\n"
-        "Примеры форматов:\n"
-        "• '1.2×3.39 — 2 шт'\n"
-        "• '0.32×6.63 — 4 шт'\n"
-        "• 'ПБ 38-12-8п 2'\n"
-        "• 'ПБ 66-3-8п 4'",
-        reply_markup=main_menu_kb()
+        f"✅ Клиент: {client_name}\n\n{_build_discount_request_text()}",
+        reply_markup=main_menu_kb(),
     )
     await message.answer(
         "Или нажмите кнопку ниже для отмены:",
-        reply_markup=cancel_process_kb()
+        reply_markup=cancel_process_kb(),
     )
 
 
 @router.message(KPStates.waiting_plates_list)
 async def receive_plates_list(message: Message, state: FSMContext):
-    """Шаг 3: Получаем список плит (текст или фото), показываем список и кнопку «Подтвердить»"""
+    """Шаг 1: Получаем список плит (текст или фото), показываем список и кнопку «Подтвердить»"""
 
     from core.plate_text_normalizer import get_wide_plate_lines, normalize_order_text
 
     is_photo = False
+    raw_plate_lines: list[str] = []
+    ocr_plates_snapshot: list[dict[str, Any]] = []
+    initial_user_plate_lines: list[str] = []
+    ocr_raw_text: str = ""
 
     if message.photo:
         is_photo = True
@@ -169,6 +240,13 @@ async def receive_plates_list(message: Message, state: FSMContext):
 
             if result and result.get('text'):
                 plates_text = result['text']
+                ocr_raw_text = (result.get("text") or "").strip()
+                initial_user_plate_lines = [
+                    ln.strip()
+                    for ln in re.split(r"[\n;]+", ocr_raw_text)
+                    if ln.strip()
+                ]
+                ocr_plates_snapshot = list(result.get("plates") or [])
                 cost = result.get('cost_usd', 0)
                 recognized_count = sum(p.get('qty', 1) for p in result.get('plates', []))
 
@@ -198,6 +276,8 @@ async def receive_plates_list(message: Message, state: FSMContext):
 
     elif message.text:
         plates_text = message.text.strip()
+        raw_plate_lines = [l.strip() for l in re.split(r"[\n;]+", plates_text) if l.strip()]
+        initial_user_plate_lines = list(raw_plate_lines)
         recognized_count = 0
 
         # Парсим текст для подсчёта количества и проверки широких плит
@@ -265,7 +345,12 @@ async def receive_plates_list(message: Message, state: FSMContext):
         recognized_count=recognized_count,
         wide_plate_lines=wide_plate_lines,
         replacement_done=False,
+        plates_preview_sent=False,
         is_photo=is_photo,
+        raw_plate_lines=raw_plate_lines,
+        ocr_plates_snapshot=ocr_plates_snapshot,
+        initial_user_plate_lines=initial_user_plate_lines,
+        ocr_raw_text=ocr_raw_text,
     )
     await state.set_state(KPStates.waiting_plates_confirm)
 
@@ -335,16 +420,23 @@ async def confirm_plates_list_callback(callback: CallbackQuery, state: FSMContex
     data = await state.get_data()
     wide_plate_lines: list[str] = data.get("wide_plate_lines", [])
     replacement_done: bool = data.get("replacement_done", False)
+    plates_preview_sent: bool = data.get("plates_preview_sent", False)
 
     await callback.answer()
 
-    if replacement_done or not wide_plate_lines:
-        # Переходим к скидке
-        await state.update_data(wide_plate_lines=[], replacement_done=False)
-        await state.set_state(KPStates.waiting_discount)
+    if replacement_done:
+        await state.update_data(wide_plate_lines=[], replacement_done=False, plates_preview_sent=False)
+        await _enter_kp_manager_selection(callback.message, state)
+        return
+
+    if wide_plate_lines:
+        await state.update_data(plates_preview_sent=False)
+        wide_list_text = "\n".join(f"• {line}" for line in wide_plate_lines)
+        example_text = _build_wide_plates_replacement_example(wide_plate_lines)
+        await state.set_state(KPStates.waiting_wide_plates_replacement)
         await callback.message.answer(
-            _build_discount_request_text(),
-            reply_markup=main_menu_kb()
+            f"⚠️ В списке есть плиты шириной больше 12 дм:\n{wide_list_text}\n\n"
+            f"{example_text}"
         )
         await callback.message.answer(
             "Или нажмите кнопку ниже для отмены:",
@@ -352,18 +444,42 @@ async def confirm_plates_list_callback(callback: CallbackQuery, state: FSMContex
         )
         return
 
-    # Есть плиты с шириной > 12 дм — запрашиваем замену
-    wide_list_text = "\n".join(f"• {line}" for line in wide_plate_lines)
-    example_text = _build_wide_plates_replacement_example(wide_plate_lines)
-    await state.set_state(KPStates.waiting_wide_plates_replacement)
-    await callback.message.answer(
-        f"⚠️ В списке есть плиты шириной больше 12 дм:\n{wide_list_text}\n\n"
-        f"{example_text}"
-    )
-    await callback.message.answer(
-        "Или нажмите кнопку ниже для отмены:",
-        reply_markup=cancel_process_kb()
-    )
+    if not plates_preview_sent:
+        plates_text = data.get("plates_text", "")
+        initial_lines = list(data.get("initial_user_plate_lines") or [])
+        preview_ok = await _send_plates_preview_xlsx(
+            callback.message,
+            plates_text=plates_text,
+            initial_user_plate_lines=initial_lines,
+        )
+        await state.update_data(plates_preview_sent=True)
+        if preview_ok:
+            await callback.message.answer(
+                "📊 Проверьте файл сверки. Если всё верно, нажмите «✅ Подтвердить» "
+                "ещё раз для выбора менеджера.\n"
+                "Если нужно изменить список, нажмите «🔄 Заменить».",
+                reply_markup=confirm_plates_list_kb(),
+            )
+        else:
+            await callback.message.answer(
+                "⚠️ Не удалось сформировать XLSX превью. Нажмите «✅ Подтвердить» ещё раз "
+                "для выбора менеджера.\n"
+                "Если нужно изменить список, нажмите «🔄 Заменить».",
+                reply_markup=confirm_plates_list_kb(),
+            )
+        return
+
+    await state.update_data(plates_preview_sent=False)
+    await _enter_kp_manager_selection(callback.message, state)
+
+
+@router.callback_query(F.data == "replace_plates_list", KPStates.waiting_plates_confirm)
+async def replace_plates_list_callback(callback: CallbackQuery, state: FSMContext):
+    """Возврат к шагу ввода списка плит с полным сбросом текущих данных."""
+    await callback.answer()
+    await state.clear()
+    await state.set_state(KPStates.waiting_plates_list)
+    await _prompt_kp_step1_plates(callback.message)
 
 
 @router.message(KPStates.waiting_wide_plates_replacement)
@@ -453,10 +569,20 @@ async def receive_wide_plates_replacement(message: Message, state: FSMContext):
         plates_text=final_plates_text,
         wide_plate_lines=[],
         replacement_done=True,
+        plates_preview_sent=False,
+        raw_plate_lines=merged_lines,
     )
     await state.set_state(KPStates.waiting_plates_confirm)
 
     await message.answer(list_msg, reply_markup=confirm_plates_list_kb())
+
+    initial_user_plate_lines: list[str] = list(data.get("initial_user_plate_lines") or [])
+    await _send_plates_preview_xlsx(
+        message,
+        plates_text=final_plates_text,
+        initial_user_plate_lines=initial_user_plate_lines,
+    )
+
     await message.answer(
         "Или нажмите кнопку ниже для отмены:",
         reply_markup=cancel_process_kb()
@@ -465,15 +591,16 @@ async def receive_wide_plates_replacement(message: Message, state: FSMContext):
 
 @router.message(KPStates.waiting_plates_confirm)
 async def plates_confirm_unexpected_text(message: Message, state: FSMContext):
-    """Подсказка пользователю нажать кнопку «Подтвердить»"""
+    """Подсказка пользователю нажать кнопку «Подтвердить» или «Заменить»."""
     await message.answer(
-        "Нажмите «✅ Подтвердить» под списком плит или «◀️ Назад в меню» для отмены."
+        "Нажмите «✅ Подтвердить» или «🔄 Заменить» под списком плит, "
+        "или «◀️ Назад в меню» для отмены."
     )
 
 
 @router.message(KPStates.waiting_discount)
 async def receive_discount_and_ask_conditions(message: Message, state: FSMContext):
-    """Шаг 4: Получаем процент скидки и переходим к условиям"""
+    """Шаг 4 из 5: получаем процент скидки и переходим к условиям"""
     try:
         # Парсим процент скидки
         discount_text = message.text.strip().replace('%', '').replace(',', '.')
@@ -516,7 +643,7 @@ async def receive_discount_and_ask_conditions(message: Message, state: FSMContex
 
 @router.callback_query(KPStates.waiting_conditions_choice)
 async def receive_conditions_choice(callback: CallbackQuery, state: FSMContext):
-    """Шаг 5: Выбор условий (по умолчанию или добавить свои) - обработка inline-кнопок"""
+    """Шаг 5 из 5: выбор условий (по умолчанию или свои) — inline-кнопки."""
     choice = callback.data
     
     # Убираем "часики" с кнопки
@@ -599,6 +726,8 @@ async def generate_all_documents(message: Message, state: FSMContext):
     manager_email = data.get('manager_email', '')
     client_name = data.get('client_name', 'Не указано')
     plates_text = data.get('plates_text', '')
+    raw_plate_lines: list[str] = list(data.get("raw_plate_lines") or [])
+    is_photo_kp: bool = bool(data.get("is_photo", False))
     discount_percent = data.get('discount_percent', 0)
     delivery_conditions = data.get('delivery_conditions', '')
     payment_conditions = data.get('payment_conditions', '')
@@ -622,7 +751,9 @@ async def generate_all_documents(message: Message, state: FSMContext):
     try:
         # Парсим список пользователя
         try:
-            unparsed_lines = set_plate_lists_from_text(plates_text)
+            unparsed_lines, line_contributions, _line_plate_load_details = set_plate_lists_from_text(
+                plates_text
+            )
         except PlateParseError as e:
             # Ошибка парсинга - показываем понятное сообщение
             logger.warning(f"Ошибка парсинга заказа от пользователя {message.from_user.id}: {e}")
@@ -887,6 +1018,30 @@ async def generate_all_documents(message: Message, state: FSMContext):
         from core.kp_db import get_next_kp_number
         kp_db_id = get_next_kp_number()
         logger.debug(f"Предполагаемый номер КП из БД: {kp_db_id}")
+
+        try:
+            from core.reconciliation_xlsx import build_reconciliation_xlsx
+
+            rec_path = os.path.join(
+                OUTPUTS_DIR_STR,
+                f"Сверка_КП_{offer_number}_{offer_date.replace('.', '')}.xlsx",
+            )
+            await asyncio.to_thread(
+                build_reconciliation_xlsx,
+                rec_path,
+                plates_text=plates_text,
+                raw_plate_lines=raw_plate_lines,
+                unparsed_lines=unparsed_lines,
+                line_contributions=line_contributions,
+                order_data=order_data,
+                is_photo=is_photo_kp,
+            )
+            await message.answer_document(
+                FSInputFile(rec_path),
+                caption="📊 Сверка ввода: как прислали → распознано → как в КП",
+            )
+        except Exception as rec_exc:
+            logger.exception("[COMMERCIAL] Не удалось сформировать XLSX сверки: %s", rec_exc)
         
         # Документы генерируются по нажатию кнопок — показываем кнопки сразу
         # Формируем сводку
@@ -985,7 +1140,9 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         # Парсим список пользователя
         user_text = message.text or ""
         try:
-            unparsed_lines = set_plate_lists_from_text(user_text)
+            unparsed_lines, _line_contributions, _line_plate_load_details = set_plate_lists_from_text(
+                user_text
+            )
         except PlateParseError as e:
             # Ошибка парсинга - показываем понятное сообщение
             logger.warning(f"Ошибка парсинга заказа от пользователя {message.from_user.id}: {e}")

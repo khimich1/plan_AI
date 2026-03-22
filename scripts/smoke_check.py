@@ -69,7 +69,7 @@ def main() -> int:
 
     for i, text in enumerate(examples, 1):
         try:
-            unparsed = set_plate_lists_from_text(text)
+            unparsed, _contributions, _line_loads = set_plate_lists_from_text(text)
             print(f"[OK] Парсер: пример #{i} — ok, нераспознано строк: {len(unparsed)}")
             if unparsed:
                 for line in unparsed[:5]:

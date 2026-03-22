@@ -33,7 +33,7 @@ def test_procurement_with_different_loads():
     print(f"\nTest order:\n{test_order}")
     
     # Парсим заказ
-    unparsed = cfg.set_plate_lists_from_text(test_order)
+    unparsed, _contributions, _line_loads = cfg.set_plate_lists_from_text(test_order)
     
     if unparsed:
         print(f"\nWARNING: Unparsed lines: {unparsed}")
@@ -93,6 +93,45 @@ def test_procurement_with_different_loads():
     print("\n" + "=" * 70)
     print("ALL PROCUREMENT TESTS PASSED!")
     print("=" * 70)
+
+
+def test_width_formats_and_no_plate_loss():
+    """Регрессия: ширины 0.3/0,3 и дробные значения не теряются при парсинге."""
+    order_text = """
+    Плиты ПБ 66-0.3-8п 3
+    Плиты ПБ 64-0,3-8п 1
+    Плиты ПБ 63-6,6-8п 2
+    Плиты ПБ 63-10,65-8п 1
+    Плиты ПБ 63-12-8п 4
+    """
+
+    expected_qty = 3 + 1 + 2 + 1 + 4
+    unparsed, _contributions, _line_loads = cfg.set_plate_lists_from_text(order_text)
+    assert not unparsed, f"Unexpected unparsed lines: {unparsed}"
+
+    order = cfg.get_current_plate_order()
+    parsed_qty = sum(order.plate_load_details.values())
+    assert parsed_qty == expected_qty, f"Expected {expected_qty}, got {parsed_qty}"
+
+    names = [
+        "Плиты ПБ 66-0.3-8п",
+        "Плиты ПБ 64-0,3-8п",
+        "Плиты ПБ 63-6,6-8п",
+        "Плиты ПБ 63-10,65-8п",
+        "Плиты ПБ 63-12-8п",
+    ]
+    parsed_sizes = [cfg.parse_name_to_sizes(name) for name in names]
+    expected_sizes = [
+        (6.6, 0.3),
+        (6.4, 0.3),
+        (6.3, 0.66),
+        (6.3, 1.065),
+        (6.3, 1.2),
+    ]
+
+    for (length, width), (exp_length, exp_width) in zip(parsed_sizes, expected_sizes):
+        assert abs(length - exp_length) < 1e-6
+        assert abs(width - exp_width) < 1e-6
 
 
 if __name__ == '__main__':

@@ -71,6 +71,49 @@ def length_dm_to_m(Ldm_str: str) -> float:
     # Номинал в дм → длина в метрах без вычета 20 мм (69 → 6.9 м)
     return round(nominal_dm / 10.0, 3)
 
+
+def normalize_dimension(value_str: str) -> float:
+    """
+    Нормализует размер из строки в дециметры.
+
+    Примеры:
+    - "5,30" -> 5.3
+    - "530" -> 5.3 (введены мм без разделителя)
+    - "6.65" -> 6.65
+    """
+    clean = value_str.strip().replace(" ", "").replace(",", ".")
+    try:
+        val = float(clean)
+    except ValueError:
+        return 0.0
+
+    # Диапазон значений, которые чаще всего вводят как мм без запятой:
+    # 530 -> 5.30 дм, 665 -> 6.65 дм.
+    if 20.0 < val < 1000.0:
+        val = val / 100.0
+        logger.debug(
+            "normalize_dimension: применили /100 для значения, похожего на мм: %s -> %s",
+            value_str.strip(),
+            val,
+        )
+    return val
+
+
+def parse_pb_width_to_m(width_str: str) -> float:
+    """
+    Парсит ширину из марки ПБ/ПК (часть W в L-W-N) в метры.
+
+    Правила:
+    - 0.2/0.3 (или 0,2/0,3) считаются уже метрами (спец-ленты).
+    - Остальные значения интерпретируются как дециметры и делятся на 10.
+    """
+    width_raw = normalize_dimension(width_str)
+    if width_raw <= 0:
+        return 0.0
+    if abs(width_raw - 0.3) < 1e-6 or abs(width_raw - 0.2) < 1e-6:
+        return round(width_raw, 3)
+    return round(width_raw / 10.0, 3)
+
 # ==================== ГЛОБАЛЬНЫЕ СПИСКИ ПЛИТ ====================
 
 # Данные из согласованного КЗ-плана
@@ -485,7 +528,14 @@ def _recompute_totals_from_lists():
     WASTE_AREA_M2 = round(0.12 * SCRAP_STRIPS_0_12_M_TOTAL, 2)
 
 
-def set_plate_lists_from_text(user_text: str) -> list[str]:
+# Ключ для сопоставления строки ввода с позициями заказа / order_data:
+# длина и ширина в метрах, код нагрузки (или None для размерных строк без марки), сырой фрагмент длины из марки.
+LineContributionKey = Tuple[float, float, Optional[float], str]
+
+
+def set_plate_lists_from_text(
+    user_text: str,
+) -> tuple[list[str], list[list[LineContributionKey]], list[dict[tuple, int]]]:
     """Парсит свободный текст пользователя и заполняет списки PLATES_*.
 
     Поддерживаемые форматы (регистр не важен, пробелы опциональны):
@@ -494,10 +544,12 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
         Длина и ширина в дециметрах (78 => 7.8 м, 12 => 1.2 м), нагрузка — после последнего дефиса (8п, 10п и т.д.)
       - Количество: после марки, опционально «шт» («8п 5», «8п 5 шт», «8п — 5»)
     Неизвестные ширины и нераспознанные строки возвращаются в списке нераспознанных.
-    
+
     Returns:
-        Список нераспознанных строк (для отчёта пользователю).
-    
+        (unparsed_lines, line_contributions, line_plate_load_details): нераспознанные строки;
+        для каждой строки ``lines`` — список ключей вклада; для каждой строки — словарь
+        накопленных количеств по тем же ключам, что ``PLATE_LOAD_DETAILS``, только для этой строки ввода.
+
     Raises:
         PlateParseError: Если текст пустой или после разбивки не осталось валидных строк.
     """
@@ -528,7 +580,16 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
     text = (_processing_text or '').replace('\u00d7', 'x').replace('×', 'x')
     text = text.replace('\u00a0', ' ')
     lines = [re.sub(r'\s+', ' ', l).strip() for l in re.split(r'[\n;]+', text) if l.strip()]
-    
+    line_contributions: list[list[LineContributionKey]] = [[] for _ in lines]
+    line_plate_load_details: list[dict[tuple, int]] = [{} for _ in lines]
+
+    def _record_contribution(line_idx: int, length_m: float, width_m: float, load_code: Optional[float], ldr: str) -> None:
+        if line_idx < 0 or line_idx >= len(line_contributions):
+            return
+        line_contributions[line_idx].append(
+            (round(float(length_m), 3), round(float(width_m), 3), load_code, (ldr or "").strip())
+        )
+
     # Дополнительная проверка после разбивки на строки
     if not lines:
         logger.warning("После разбивки не осталось валидных строк")
@@ -537,32 +598,14 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
             "Проверьте формат ввода."
         )
 
-    def normalize_dimension(value_str: str) -> float:
-        """
-        Нормализует ШИРИНУ плиты из строки (применять только к ширине, не к длине!).
-
-        Пользователи пишут по-разному:
-        - "5,30" (5.30 дм), "530" (забыли запятую — имели в виду 5.30 дм)
-        - "6,65", "665" → 6.65 дм
-
-        Логика:
-        1) Заменяем запятую на точку.
-        2) Только при 20 < val < 1000 считаем, что введены мм без запятой (530 → 5.30 дм).
-           Так 21 дм не превратится в 0.21 м, а 530 и 665 — в 5.30 и 6.65 дм.
-        3) Возвращаем значение в дециметрах.
-        """
-        clean = value_str.strip().replace(' ', '').replace(',', '.')
-        try:
-            val = float(clean)
-        except ValueError:
-            return 0.0
-        # Диапазон «похоже на мм без запятой»: 20 < val < 1000 (не трогаем 21 дм и т.п.)
-        if 20.0 < val < 1000.0:
-            val = val / 100.0
-            logger.debug("normalize_dimension: применили /100 для значения, похожего на мм: %s → %s", value_str.strip(), val)
-        return val
-
-    def add_items(width_m: float, length_m: float, qty: int, load_code: int = None, length_dm_raw: str = None):
+    def add_items(
+        width_m: float,
+        length_m: float,
+        qty: int,
+        load_code: int = None,
+        length_dm_raw: str = None,
+        line_idx: Optional[int] = None,
+    ):
         """
         Добавляет плиты в соответствующий глобальный список по ширине.
 
@@ -577,6 +620,7 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
             qty: количество плит
             load_code: нагрузка (6, 8, 10, 12, 13 и т.д.) - опционально
             length_dm_raw: исходная строка длины из марки (например "59,81") для различения плит
+            line_idx: индекс строки заказа (для line_contributions); None — не писать вклад
         """
         # ЗАЩИТА: Проверяем адекватность размеров
         # Если размеры слишком большие (вероятно, ошибка OCR распознал мм как дм)
@@ -613,12 +657,22 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
                 PLATES_0_32.append(length_rounded)
                 # Сохраняем точную ширину 0.3м (попадает в диапазон 0.26-0.32)
                 PLATE_EXACT_WIDTHS[(length_rounded, 'PLATES_0_32')] = 0.3
+            ldr_norm = (length_dm_raw or "").strip()
             if load_code is not None and load_code > 0:
                 width_rounded = round(width_m, 3)
-                ldr_norm = (length_dm_raw or "").strip()
                 key_new = (length_rounded, width_rounded, load_code, ldr_norm)
                 PLATE_LOAD_DETAILS[key_new] = PLATE_LOAD_DETAILS.get(key_new, 0) + qty
                 PLATE_LENGTH_DM_RAW[key_new] = ldr_norm
+                if line_idx is not None and 0 <= line_idx < len(line_plate_load_details):
+                    _ld = line_plate_load_details[line_idx]
+                    _ld[key_new] = _ld.get(key_new, 0) + qty
+                if line_idx is not None:
+                    lc = float(load_code)
+                    _record_contribution(line_idx, length_rounded, 1.2, lc, ldr_norm)
+                    _record_contribution(line_idx, length_rounded, 0.3, lc, ldr_norm)
+            elif line_idx is not None:
+                _record_contribution(line_idx, length_rounded, 1.2, None, ldr_norm)
+                _record_contribution(line_idx, length_rounded, 0.3, None, ldr_norm)
             return
 
         target = None
@@ -683,7 +737,7 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
             snapped_width = max(candidates)
 
             # Рекурсивный вызов с притянутой шириной, чтобы сработали диапазоны выше.
-            add_items(snapped_width, length_m, qty, load_code, length_dm_raw=length_dm_raw)
+            add_items(snapped_width, length_m, qty, load_code, length_dm_raw=length_dm_raw, line_idx=line_idx)
             return
 
         # Добавляем плиты в список и сохраняем точную ширину (длина с точностью 3 знака)
@@ -697,12 +751,19 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
                 PLATE_EXACT_WIDTHS[key] = round(width_m, 3)
         
         # Сохраняем нагрузку (если указана) в PLATE_LOAD_DETAILS и raw в PLATE_LENGTH_DM_RAW
+        width_rounded = round(width_m, 3)
+        ldr_norm = (length_dm_raw or "").strip()
         if load_code is not None and load_code > 0:
-            width_rounded = round(width_m, 3)
-            ldr_norm = (length_dm_raw or "").strip()
             key_new = (length_rounded, width_rounded, load_code, ldr_norm)
             PLATE_LOAD_DETAILS[key_new] = PLATE_LOAD_DETAILS.get(key_new, 0) + qty
             PLATE_LENGTH_DM_RAW[key_new] = ldr_norm
+            if line_idx is not None and 0 <= line_idx < len(line_plate_load_details):
+                _ld = line_plate_load_details[line_idx]
+                _ld[key_new] = _ld.get(key_new, 0) + qty
+            if line_idx is not None:
+                _record_contribution(line_idx, length_rounded, width_rounded, float(load_code), ldr_norm)
+        elif line_idx is not None:
+            _record_contribution(line_idx, length_rounded, width_rounded, None, ldr_norm)
 
     # Список нераспознанных строк для отчёта пользователю
     unparsed_lines = []
@@ -728,7 +789,7 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
 
         return True, ""
 
-    for raw in lines:
+    for line_idx, raw in enumerate(lines):
         s = raw.lower()
         parsed = False
         
@@ -752,7 +813,7 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
                 unparsed_lines.append(f"{raw} (пропущено: {reason})")
                 continue
 
-            add_items(width_m, length_m, q)
+            add_items(width_m, length_m, q, line_idx=line_idx)
             parsed = True
             continue
         
@@ -770,9 +831,9 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
             # ДЛИНА: целое в строке (нет запятой/точки) → номинал в дм, длина = Ldm/10 м; иначе — точное значение в дм
             L = length_dm_to_m(Ldm_str)
             
-            # ШИРИНУ нормализуем (530 -> 5.30, 665 -> 6.65, 12 -> 12, 6,0 -> 6.0)
-            Wdm = normalize_dimension(Wdm_str)
-            W = round(Wdm / 10.0, 3)
+            # Ширина: единое правило для всех веток парсинга.
+            # 0.2/0.3 считаем метрами, остальные значения - в дм (/10).
+            W = parse_pb_width_to_m(Wdm_str)
             
             if L <= 0 or W <= 0:
                 # Если не удалось распознать размеры, пропускаем строку
@@ -820,7 +881,7 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
                 unparsed_lines.append(f"{raw} (пропущено: {reason})")
                 continue
 
-            add_items(W, L, q, load_code, length_dm_raw=Ldm_str.strip() if Ldm_str else None)
+            add_items(W, L, q, load_code, length_dm_raw=Ldm_str.strip() if Ldm_str else None, line_idx=line_idx)
             parsed = True
             continue
         
@@ -850,7 +911,7 @@ def set_plate_lists_from_text(user_text: str) -> list[str]:
     else:
         logger.info(f"Парсинг завершён успешно. Обработано строк: {len(lines)}")
     
-    return unparsed_lines
+    return unparsed_lines, line_contributions, line_plate_load_details
 
 
 def format_reinforcement_from_load_code(load_code: float | int) -> str:
@@ -949,11 +1010,7 @@ def parse_name_to_sizes(name: str) -> tuple:
     if not m:
         return None, None
     length_m = length_dm_to_m(m.group(1))
-    width_raw = float(m.group(2))
-    if abs(width_raw - 0.3) < 1e-6 or abs(width_raw - 0.2) < 1e-6:
-        width_m = width_raw  # ленты 0.3 м / 0.2 м в марке уже в метрах
-    else:
-        width_m = width_raw / 10.0
+    width_m = parse_pb_width_to_m(m.group(2))
     return length_m, width_m
 
 

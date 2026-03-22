@@ -616,10 +616,13 @@ def cancel_process_kb() -> InlineKeyboardMarkup:
 
 
 def confirm_plates_list_kb() -> InlineKeyboardMarkup:
-    """Кнопка подтверждения списка плит"""
+    """Кнопки подтверждения/замены списка плит"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_plates_list")]
+            [
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_plates_list"),
+                InlineKeyboardButton(text="🔄 Заменить", callback_data="replace_plates_list"),
+            ]
         ]
     )
 

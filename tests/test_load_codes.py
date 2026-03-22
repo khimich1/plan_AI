@@ -34,7 +34,7 @@ def test_load_codes_and_widths():
     print(f"\nTest order:\n{test_order}")
     
     # Парсим заказ
-    unparsed = cfg.set_plate_lists_from_text(test_order)
+    unparsed, _contributions, _line_loads = cfg.set_plate_lists_from_text(test_order)
     
     if unparsed:
         print(f"\nWARNING: Unparsed lines: {unparsed}")
