@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""XLSX превью после замены широких плит: ввод → распознано (имя/кол-во) → как в КП (имя/кол-во).
+"""XLSX превью: ввод → распознано (имя/кол-во) → как в КП (имя/кол-во).
 
-Правила колонок A–E (лист «Превью списка»):
+Двухблочная схема A/B:
 
-- **A — как прислал пользователь:** одна ячейка на логическую строку ввода из
-  ``initial_user_plate_lines``; пустая A — продолжение того же логического блока (раскол ширины,
-  например 1,5 м → 1,2 + 0,3) или строка разбора без соответствующей строки ввода (если строк
-  ввода меньше, чем логических строк после ``plates_text``).
-- **B–C — распознано:** наименование по ключу вклада и построчное количество (вклад этой строки
-  ввода в позицию).
-- **D–E — как в КП:** то же наименование, что в B, и глобальное количество по ключу по всему
-  заказу (снимок ``PLATE_LOAD_DETAILS`` после парсинга ``plates_text``).
-- **Схлопывание D–E:** если подряд совпадает тройка ``(текст A после strip, имя D, количество E)``,
-  ячейки D–E во второй и далее таких строках остаются пустыми (без дубля подряд).
+**Блок A (обычные плиты, ширина <= 12 дм):**
 
-Раскол одной логической строки на несколько физических позиций выводится отдельными строками
-листа; каждая позиция — отдельная строка B–E. Внутри одной логической строки физические строки
-упорядочены по возрастанию длины плиты (``length_m``), при равной длине — по ширине, затем по
-строке ``length_dm_raw`` из ключа вклада.
+- Строки группируются по распознанному имени плиты — дубли идут рядом.
+- Колонки D–E (КП) показываются только в первой строке группы одинаковых плит;
+  последующие дубли получают пустые D и E (схлопывание).
+- Количество КП (колонка E) считается только по Блоку A, без вкладов Блока B.
+
+**Блок B (широкие плиты, ширина > 12 дм):**
+
+- Плиты идут в порядке, присланном пользователем.
+- При разбиении на 2 плиты (напр. 1,5 м → 1,2 + 0,3) колонка A заполняется
+  только в первой строке блока, последующие строки — пустая A.
+- Количество КП считается только по Блоку B, без вкладов Блока A.
+
+**Общее правило:** количества Блока A и Блока B не суммируются в колонке КП (кол-во),
+чтобы избежать дублирования.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
-from collections import OrderedDict
 try:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font
@@ -38,6 +39,7 @@ except ImportError:
 
 import core.config_and_data as cfg
 from core.config_and_data import LineContributionKey, make_plate_name, set_plate_lists_from_text
+from core.plate_text_normalizer import get_wide_plate_lines
 from core.reconciliation_xlsx import split_plate_text_lines
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,52 @@ _WRAP = Alignment(wrap_text=True, vertical="top")
 
 # A + распознано (имя, кол-во) + КП (имя, кол-во)
 _PREVIEW_COLS = 5
+WIDE_WIDTH_M = 1.2
+WIDE_EPS = 1e-6
+
+
+def _is_wide_width(width_m: float, *, threshold_m: float = WIDE_WIDTH_M, eps: float = WIDE_EPS) -> bool:
+    """True для плит шире 12 дм (> 1.2 м)."""
+    return float(width_m) > (threshold_m + eps)
+
+
+def _source_line_is_wide(line: str) -> bool:
+    """
+    Определяет, является ли исходная строка пользователя широкой (>12 дм).
+    Учитывает вариант с префиксом «Плиты ...», который не всегда проходит
+    через get_wide_plate_lines напрямую.
+    """
+    s = (line or "").strip()
+    if not s:
+        return False
+
+    if get_wide_plate_lines(s):
+        return True
+
+    # Fallback: убираем префикс "Плиты " и проверяем ещё раз.
+    without_plates = re.sub(r"(?i)^\s*плиты\s+", "", s).strip()
+    return bool(without_plates and get_wide_plate_lines(without_plates))
+
+
+def _contrib_looks_like_wide_split(keys: list[LineContributionKey]) -> bool:
+    """
+    Fallback-эвристика для wide-строки, если исходная строка A распознана нестабильно.
+    Считаем строку wide, если в одном line_contribution есть пара вкладов по одной длине:
+    1.2 м и 0.3 м (типичное разбиение 1.5 -> 1.2 + 0.3).
+    """
+    pairs: set[tuple[float, int, str]] = set()
+    seen_12: set[tuple[float, int, str]] = set()
+    seen_03: set[tuple[float, int, str]] = set()
+    for lm, wm, lc, ldr in keys:
+        lc_int = int(round(float(lc))) if lc is not None else 0
+        marker = (round(float(lm), 3), lc_int, (ldr or "").strip())
+        pairs.add(marker)
+        if abs(float(wm) - 1.2) <= 1e-6:
+            seen_12.add(marker)
+        if abs(float(wm) - 0.3) <= 1e-6:
+            seen_03.add(marker)
+    return bool((seen_12 & seen_03) & pairs)
+
 
 
 def _ldr_equal(a: str, b: str) -> bool:
@@ -216,6 +264,7 @@ def build_plates_reconciliation_preview_xlsx(
     *,
     plates_text: str,
     initial_user_plate_lines: list[str],
+    forced_wide_line_indexes: list[int] | None = None,
 ) -> None:
     """
     Парсит ``plates_text``, строит лист превью с колонками A–E (см. модульный докстринг).
@@ -250,12 +299,41 @@ def build_plates_reconciliation_preview_xlsx(
             n,
         )
 
-    # Сырые строки вклада (по строкам ввода)
-    contribution_rows: list[dict[str, object]] = []
     no_match_rows: list[tuple[int, str]] = []
 
-    # Физические строки: (col_a, name_b, qty_c, kp_name, kp_qty_int)
-    physical: list[tuple[str, str, int | None, str, int]] = []
+    wide_source_lines = {
+        line.strip()
+        for line in initial_user_plate_lines
+        if _source_line_is_wide(line)
+    }
+    forced_wide_idx: set[int] = {
+        int(i)
+        for i in (forced_wide_line_indexes or [])
+        if isinstance(i, int) and i >= 0
+    }
+
+    # ── Проход 1: классификация строк и сборка блочных plate_load_details ──
+    line_is_wide: list[bool] = []
+    for i in range(n):
+        user_cell = initial_user_plate_lines[i] if i < len(initial_user_plate_lines) else ""
+        contrib = line_contributions[i] if i < len(line_contributions) else []
+        source_wide = (i in forced_wide_idx) or (user_cell.strip() in wide_source_lines)
+        fallback_wide = _contrib_looks_like_wide_split(contrib)
+        line_is_wide.append(source_wide or fallback_wide)
+
+    regular_details: dict[tuple, int] = {}
+    wide_details: dict[tuple, int] = {}
+    for i in range(n):
+        line_det = line_plate_load_details[i] if i < len(line_plate_load_details) else {}
+        target = wide_details if line_is_wide[i] else regular_details
+        for key, qty in line_det.items():
+            target[key] = target.get(key, 0) + qty
+
+    # ── Проход 2: построение блоков с блочными КП-количествами ──
+    # (col_a, name_b, qty_c, kp_name, kp_qty_int, width_m_for_sort, source_is_wide)
+    row_t = tuple[str, str, int | None, str, int, float, bool]
+    regular_blocks: list[list[row_t]] = []
+    wide_blocks: list[list[row_t]] = []
     for i in range(n):
         user_cell = (
             initial_user_plate_lines[i]
@@ -264,48 +342,75 @@ def build_plates_reconciliation_preview_xlsx(
         )
         contrib = line_contributions[i] if i < len(line_contributions) else []
         line_det = line_plate_load_details[i] if i < len(line_plate_load_details) else {}
+        source_is_wide = line_is_wide[i]
+        block_details = wide_details if source_is_wide else regular_details
         keyed_triples = preview_row_keyed_triples_for_contributions(
-            contrib, line_det, details_global
+            contrib, line_det, block_details
         )
         if not keyed_triples:
             no_match_rows.append((i, user_cell))
             continue
 
-        for key, name, q_line, q_global in keyed_triples:
-            contribution_rows.append(
-                {
-                    "line_idx": i,
-                    "user_cell": user_cell,
-                    "key": key,
-                    "name": name,
-                    "q_line": q_line,
-                    "q_global": q_global,
-                }
+        if source_is_wide:
+            keyed_triples = sorted(
+                keyed_triples,
+                key=lambda item: (
+                    -float(item[0][1]),               # width_m desc
+                    float(item[0][0]),                # length_m asc
+                    (item[0][3] or "").strip(),       # length_dm_raw
+                ),
             )
+        block_rows: list[row_t] = []
+        for idx, (key, name, q_line, q_global) in enumerate(keyed_triples):
+            width_m = float(key[1])
+            a_val = user_cell if idx == 0 else ""
+            c_val = None if q_line <= 0 else int(q_line)
+            kp_qty = int(q_global) if int(q_global) > 0 else 0
+            block_rows.append((a_val, name, c_val, name, kp_qty, width_m, source_is_wide))
 
-    # Группируем вклад по позиции КП: D–E показываем один раз в начале группы.
-    grouped: OrderedDict[tuple[LineContributionKey, str, int], list[dict[str, object]]] = OrderedDict()
-    for row in contribution_rows:
-        kp_name = str(row["name"])
-        kp_qty = int(row["q_global"])
-        key = row["key"]
-        group_key = (key, kp_name, kp_qty)
-        grouped.setdefault(group_key, []).append(row)
+        block_is_wide = source_is_wide or any(_is_wide_width(row[5]) for row in block_rows)
+        if block_is_wide:
+            wide_blocks.append(block_rows)
+        else:
+            regular_blocks.append(block_rows)
 
-    for (_k, kp_name, kp_qty), rows in grouped.items():
-        for idx, row in enumerate(rows):
-            a = str(row["user_cell"])
-            b = str(row["name"])
-            q_line = int(row["q_line"])
-            c_val = None if q_line <= 0 else q_line
-            if idx == 0:
-                physical.append((a, b, c_val, kp_name, kp_qty))
+    # ── Группировка Блока A: дубли рядом, схлопывание D-E ──
+    regular_blocks.sort(key=lambda block: block[0][1])
+
+    regular_physical: list[row_t] = []
+    last_kp_name: str | None = None
+    for block in regular_blocks:
+        for row in block:
+            if row[3] == last_kp_name:
+                regular_physical.append((row[0], row[1], row[2], "", 0, row[5], row[6]))
             else:
-                physical.append((a, b, c_val, "", 0))
+                last_kp_name = row[3]
+                regular_physical.append(row)
 
-    # Нераспознанные/пустые строки без вкладов сохраняем в хвосте, чтобы не терять связь с вводом.
-    for _line_idx, user_cell in no_match_rows:
-        physical.append((user_cell, "", "", "", 0))
+    # ── Блок B: порядок пользователя, без схлопывания ──
+    wide_physical: list[row_t] = []
+    for block in wide_blocks:
+        wide_physical.extend(block)
+
+    # Нераспознанные/пустые строки — после распознанных, в том же порядке блоков.
+    regular_no_match: list[row_t] = []
+    wide_no_match: list[row_t] = []
+    for line_idx, user_cell in no_match_rows:
+        source_is_wide = line_is_wide[line_idx] if 0 <= line_idx < len(line_is_wide) else (line_idx in forced_wide_idx)
+        row: row_t = (user_cell, "", None, "", 0, 0.0, source_is_wide)
+        if source_is_wide:
+            wide_no_match.append(row)
+        else:
+            regular_no_match.append(row)
+    regular_physical.extend(regular_no_match)
+    wide_physical.extend(wide_no_match)
+
+    physical: list[row_t] = []
+    physical.extend(regular_physical)
+    if regular_physical and wide_physical:
+        # Явно разделяем блоки regular/wide пустой строкой.
+        physical.append(("", "", None, "", 0, 0.0, False))
+    physical.extend(wide_physical)
 
     wb = Workbook()
     ws = wb.active
@@ -323,7 +428,7 @@ def build_plates_reconciliation_preview_xlsx(
         cell.font = _HEADER_FONT
         cell.alignment = _WRAP
 
-    for idx, (a, b, c, kp_name, kp_qty) in enumerate(physical):
+    for idx, (a, b, c, kp_name, kp_qty, _width_m, _source_is_wide) in enumerate(physical):
         r = idx + 2
         ws.cell(row=r, column=1, value=a).alignment = _WRAP
         ws.cell(row=r, column=2, value=b).alignment = _WRAP
