@@ -14,6 +14,19 @@ from core.optimization import OPT_PLAN
 from core.price_db import get_price
 from .price_utils import find_price_for_plate
 
+WIDE_WIDTH_M = 1.2
+WIDE_EPS = 1e-6
+
+
+def _is_wide_width(width_m: float, *, threshold_m: float = WIDE_WIDTH_M, eps: float = WIDE_EPS) -> bool:
+    """True для плит шире 12 дм (> 1.2 м)."""
+    return float(width_m) > (threshold_m + eps)
+
+
+def _block_ab_key(width_m: float) -> int:
+    """Ключ двухблочной схемы: 0=Блок A (обычные), 1=Блок B (широкие)."""
+    return 1 if _is_wide_width(width_m) else 0
+
 
 def get_orders_from_opt_plan():
     """
@@ -302,7 +315,10 @@ def build_procurement_items():
                               f"В плане {order['qty']}, в деталях {total_found}. Присвоена нагрузка {load_code}п (проверьте!)")
                     order_counter[(length, width_m, load_code, ldr, warning_flag)] += order['qty']
 
-        for (length, width_m, load_code, ldr, warning_flag), qty in sorted(order_counter.items(), key=lambda x: (x[0][1], x[0][0], x[0][2])):
+        for (length, width_m, load_code, ldr, warning_flag), qty in sorted(
+            order_counter.items(),
+            key=lambda x: (_block_ab_key(x[0][1]), x[0][1], x[0][0], x[0][2]),
+        ):
             if abs(width_m - 1.2) < 0.01:
                 long_cuts = 0
             else:
@@ -327,7 +343,10 @@ def build_procurement_items():
     # PLATE_LOAD_DETAILS содержит (длина, ширина, нагрузка) → количество
     if cfg.PLATE_LOAD_DETAILS:
         # Используем PLATE_LOAD_DETAILS напрямую - там уже правильно разделены нагрузки!
-        for key, qty in sorted(cfg.PLATE_LOAD_DETAILS.items(), key=lambda x: (x[0][1], x[0][0], x[0][2])):
+        for key, qty in sorted(
+            cfg.PLATE_LOAD_DETAILS.items(),
+            key=lambda x: (_block_ab_key(x[0][1]), x[0][1], x[0][0], x[0][2]),
+        ):
             length, width_m, load_code = key[0], key[1], key[2]
             ldr = key[3] if len(key) > 3 else cfg.PLATE_LENGTH_DM_RAW.get(key, '')
 
@@ -392,7 +411,10 @@ def build_procurement_items():
             plate_groups[(length, width_m, load_code)] += qty
         
         # Формируем items с учетом нагрузки
-        for (length, width_m, load_code), qty in sorted(plate_groups.items(), key=lambda x: (x[0][1], x[0][0], x[0][2])):
+        for (length, width_m, load_code), qty in sorted(
+            plate_groups.items(),
+            key=lambda x: (_block_ab_key(x[0][1]), x[0][1], x[0][0], x[0][2]),
+        ):
             # Жёсткое правило: плиты 1.2 м считаем целыми, без продольных резов
             if abs(width_m - 1.2) < 0.01:
                 long_cuts = 0
@@ -431,7 +453,10 @@ def build_procurement_items():
             key = (it['length'], it['width'], it['long_cuts'], it['trans_cuts'])
             agg[key] = agg.get(key, 0) + it['qty']
         result = []
-        for (L, W, long_cuts, trans_cuts), qty in sorted(agg.items(), key=lambda x: (x[0][1], x[0][0])):
+        for (L, W, long_cuts, trans_cuts), qty in sorted(
+            agg.items(),
+            key=lambda x: (_block_ab_key(x[0][1]), x[0][1], x[0][0]),
+        ):
             result.append({'length': L, 'width': W, 'qty': qty, 'long_cuts': long_cuts, 'trans_cuts': trans_cuts})
         return result
     
@@ -505,7 +530,10 @@ def build_procurement_items():
         key = (it['length'], it['width'], it['long_cuts'], it['trans_cuts'])
         agg[key] = agg.get(key, 0) + it['qty']
     result = []
-    for (L, W, long_cuts, trans_cuts), qty in sorted(agg.items(), key=lambda x: (x[0][1], x[0][0])):
+    for (L, W, long_cuts, trans_cuts), qty in sorted(
+        agg.items(),
+        key=lambda x: (_block_ab_key(x[0][1]), x[0][1], x[0][0]),
+    ):
         result.append({'length': L, 'width': W, 'qty': qty, 'long_cuts': long_cuts, 'trans_cuts': trans_cuts})
     return result
 

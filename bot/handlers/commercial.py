@@ -85,6 +85,7 @@ async def _send_plates_preview_xlsx(
     *,
     plates_text: str,
     initial_user_plate_lines: list[str],
+    forced_wide_line_indexes: list[int] | None = None,
 ) -> bool:
     """
     Строит XLSX превью списка плит и отправляет документом.
@@ -103,6 +104,7 @@ async def _send_plates_preview_xlsx(
             preview_path,
             plates_text=plates_text,
             initial_user_plate_lines=initial_user_plate_lines,
+            forced_wide_line_indexes=forced_wide_line_indexes,
         )
         await message.answer_document(
             FSInputFile(preview_path),
@@ -378,6 +380,7 @@ async def receive_plates_list(message: Message, state: FSMContext):
         plates_text=plates_text_to_store,
         recognized_count=recognized_count,
         wide_plate_lines=wide_plate_lines,
+        forced_wide_line_indexes=[],
         replacement_done=False,
         plates_preview_sent=False,
         is_photo=is_photo,
@@ -459,7 +462,12 @@ async def confirm_plates_list_callback(callback: CallbackQuery, state: FSMContex
     await callback.answer()
 
     if replacement_done:
-        await state.update_data(wide_plate_lines=[], replacement_done=False, plates_preview_sent=False)
+        await state.update_data(
+            wide_plate_lines=[],
+            forced_wide_line_indexes=[],
+            replacement_done=False,
+            plates_preview_sent=False,
+        )
         await _enter_kp_manager_selection(callback.message, state)
         return
 
@@ -485,6 +493,7 @@ async def confirm_plates_list_callback(callback: CallbackQuery, state: FSMContex
             callback.message,
             plates_text=plates_text,
             initial_user_plate_lines=initial_lines,
+            forced_wide_line_indexes=list(data.get("forced_wide_line_indexes") or []),
         )
         await state.update_data(plates_preview_sent=True)
         if preview_ok:
@@ -616,23 +625,64 @@ async def receive_wide_plates_replacement(message: Message, state: FSMContext):
     norm_rep = normalize_order_text(replacement_text)
     replacement_lines = norm_rep.normalized_lines if norm_rep.normalized_lines else [l.strip() for l in _re.split(r"[\n;]+", replacement_text) if l.strip()]
 
-    # Слияние: заменяем строки с шириной > 12 дм на строки из списка замен по порядку
+    # Слияние: заменяем строки с шириной > 12 дм на строки из списка замен.
+    # Для превью колонки A сохраняем исходную wide-строку только в первой строке
+    # её блока, последующие строки блока оставляем пустыми (через строку).
     original_lines = [l.strip() for l in _re.split(r"[\n;]+", original_plates_text) if l.strip()]
 
     wide_set = set(wide_plate_lines)
-    replacement_index = 0
+    original_wide_lines = [line for line in original_lines if line in wide_set]
+    wide_count = len(original_wide_lines)
+    replacements_by_wide: list[list[str]] = []
+    if wide_count > 0:
+        if len(replacement_lines) >= wide_count:
+            base = len(replacement_lines) // wide_count
+            rem = len(replacement_lines) % wide_count
+            cursor = 0
+            for wide_idx in range(wide_count):
+                take = base + (1 if wide_idx < rem else 0)
+                replacements_by_wide.append(replacement_lines[cursor:cursor + take])
+                cursor += take
+        else:
+            # Замен меньше, чем wide-строк: даём по одной замене по порядку, остальным пусто.
+            for wide_idx in range(wide_count):
+                if wide_idx < len(replacement_lines):
+                    replacements_by_wide.append([replacement_lines[wide_idx]])
+                else:
+                    replacements_by_wide.append([])
+
+    replacement_wide_idx = 0
     merged_lines: list[str] = []
+    merged_is_wide: list[bool] = []
+    preview_user_plate_lines: list[str] = []
 
     for line in original_lines:
-        if line in wide_set and replacement_index < len(replacement_lines):
-            merged_lines.append(replacement_lines[replacement_index])
-            replacement_index += 1
+        if line in wide_set and replacement_wide_idx < len(replacements_by_wide):
+            block_replacements = replacements_by_wide[replacement_wide_idx]
+            replacement_wide_idx += 1
+            if block_replacements:
+                for idx_in_block, rep_line in enumerate(block_replacements):
+                    merged_lines.append(rep_line)
+                    merged_is_wide.append(True)
+                    preview_user_plate_lines.append(line if idx_in_block == 0 else "")
+            else:
+                # Если для wide-строки не прислали замену — сохраняем исходную строку.
+                merged_lines.append(line)
+                merged_is_wide.append(True)
+                preview_user_plate_lines.append(line)
         else:
             merged_lines.append(line)
+            merged_is_wide.append(False)
+            preview_user_plate_lines.append(line)
 
-    # Если замен прислали больше, чем широких строк — добавляем остаток в конец
+    consumed_replacements = sum(len(block) for block in replacements_by_wide)
+    replacement_index = consumed_replacements
+    # Если замен прислали больше, чем wide-строк/распределение — добавляем остаток в конец.
+    # Эти строки считаем частью wide-блока; в A показываем только первую из них.
     while replacement_index < len(replacement_lines):
         merged_lines.append(replacement_lines[replacement_index])
+        merged_is_wide.append(True)
+        preview_user_plate_lines.append("")
         replacement_index += 1
 
     final_plates_text_raw = "\n".join(merged_lines)
@@ -661,22 +711,27 @@ async def receive_wide_plates_replacement(message: Message, state: FSMContext):
 
     list_msg = f"📋 Итоговый список плит (с заменами):\n\n{display_text}{count_note}"
 
+    if not preview_user_plate_lines:
+        preview_user_plate_lines = list(original_lines)
+    forced_wide_line_indexes = [idx for idx, is_wide in enumerate(merged_is_wide) if is_wide]
     await state.update_data(
         plates_text=final_plates_text,
         wide_plate_lines=[],
         replacement_done=True,
         plates_preview_sent=False,
         raw_plate_lines=merged_lines,
+        initial_user_plate_lines=preview_user_plate_lines,
+        forced_wide_line_indexes=forced_wide_line_indexes,
     )
     await state.set_state(KPStates.waiting_plates_confirm)
 
     await message.answer(list_msg, reply_markup=confirm_plates_list_kb())
 
-    initial_user_plate_lines: list[str] = list(data.get("initial_user_plate_lines") or [])
     await _send_plates_preview_xlsx(
         message,
         plates_text=final_plates_text,
-        initial_user_plate_lines=initial_user_plate_lines,
+        initial_user_plate_lines=preview_user_plate_lines,
+        forced_wide_line_indexes=forced_wide_line_indexes,
     )
 
     await message.answer(
@@ -738,22 +793,25 @@ async def skip_wide_plates_callback(callback: CallbackQuery, state: FSMContext):
         f"{display_text}{count_note}"
     )
 
+    updated_user_plate_lines = list(filtered_lines)
     await state.update_data(
         plates_text=final_plates_text,
         wide_plate_lines=[],
         replacement_done=True,
         plates_preview_sent=False,
         raw_plate_lines=filtered_lines,
+        initial_user_plate_lines=updated_user_plate_lines,
+        forced_wide_line_indexes=[],
     )
     await state.set_state(KPStates.waiting_plates_confirm)
 
     await callback.message.answer(list_msg, reply_markup=confirm_plates_list_kb())
 
-    initial_user_plate_lines: list[str] = list(data.get("initial_user_plate_lines") or [])
     await _send_plates_preview_xlsx(
         callback.message,
         plates_text=final_plates_text,
-        initial_user_plate_lines=initial_user_plate_lines,
+        initial_user_plate_lines=updated_user_plate_lines,
+        forced_wide_line_indexes=[],
     )
 
     await callback.message.answer(
