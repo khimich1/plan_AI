@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Импортируем пользовательские исключения
 from .exceptions import PlateParseError
+from .plate_line_parser import parse_line
+from .plate_validation import validate_plate_values
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -34,6 +36,14 @@ PRICE_DB_PATH = BASE_DIR / 'pb.db'
 # Стоимость резов
 LONG_CUT_PRICE_PER_M = 460.0  # Продольный рез, руб/пог.м
 TRANSVERSE_CUT_PRICE = 1200.0  # Поперечный (или скошенный) рез, руб/шт
+
+# Источник веса для КП:
+# - "formula": расчет по формуле (дм * дм * коэффициент)
+# - "plate_weights": legacy-режим через таблицу plate_weights
+WEIGHT_SOURCE = os.getenv("WEIGHT_SOURCE", "formula").strip().lower()
+
+# Вес 1 дм длины при ширине 1 дм, кг.
+WEIGHT_KG_PER_DM2 = 2.83333333
 
 # Длина из марки ПБ: целое без запятой/точки = номинал в дм → длина = номинал / 10 м (без вычета 20 мм)
 def length_dm_to_m(Ldm_str: str) -> float:
@@ -188,6 +198,9 @@ PLATE_NOMENCLATURE_CACHE: Dict[Tuple[float, float, int, str], Dict[str, Any]] = 
 # Формат: (длина, ширина_мм) → максимальное армирование в дорожке, где лежит эта плита
 # Заполняется в visualization.py после формирования дорожек
 PLATE_MAX_REINFORCEMENT_MAP: Dict[Tuple[float, int], float] = {}
+
+# Последняя диагностика распознавания (по строкам) для отладки и UI.
+LAST_PARSE_DIAGNOSTICS: list[dict[str, Any]] = []
 
 
 # ==================== КЛАСС ЗАКАЗА (PlateOrder) ====================
@@ -471,6 +484,11 @@ def get_current_plate_order() -> PlateOrder:
     )
 
 
+def get_last_parse_diagnostics() -> list[dict[str, Any]]:
+    """Возвращает диагностику последнего запуска set_plate_lists_from_text()."""
+    return list(LAST_PARSE_DIAGNOSTICS)
+
+
 # ==================== ФУНКЦИИ ПАРСИНГА ====================
 
 def _clear_all_plate_lists():
@@ -560,7 +578,9 @@ def set_plate_lists_from_text(
             "Пример: ПБ 78-12-8п 5 шт"
         )
     
+    global LAST_PARSE_DIAGNOSTICS
     _clear_all_plate_lists()
+    LAST_PARSE_DIAGNOSTICS = []
 
     # Нормализация: конвертация каталожных марок (ПБ 59.12-8Вр1400-25 → ПБ 59-12-8п)
     # и других нестандартных вариантов записи перед основным парсингом.
@@ -768,126 +788,46 @@ def set_plate_lists_from_text(
     # Список нераспознанных строк для отчёта пользователю
     unparsed_lines = []
 
-    def validate_plate_values(width_m: float, length_m: float, qty: int, raw_line: str) -> tuple[bool, str]:
-        """
-        Простая валидация, чтобы не улетать в странные ошибки глубже по коду.
-
-        Возвращает (ok, reason).
-        """
-        if width_m <= 0 or length_m <= 0:
-            return False, "длина/ширина должны быть больше 0"
-        if qty is None or qty <= 0:
-            return False, "количество должно быть 1 или больше"
-        if qty > 500:
-            return False, "слишком большое количество (макс 500 на строку)"
-
-        # Реалистичные рамки для плит (в метрах)
-        if length_m < 0.5 or length_m > 15.0:
-            return False, f"нереалистичная длина {length_m}м"
-        if width_m < 0.1 or width_m > 2.0:
-            return False, f"нереалистичная ширина {width_m}м"
-
-        return True, ""
-
     for line_idx, raw in enumerate(lines):
-        s = raw.lower()
         parsed = False
-        
-        # 1) формат WxL x qty (поддерживает запятую и точку)
-        s_norm = s.replace(',', '.')
-        m = re.search(r'(\d+(?:\.\d+)?)\s*[xх]\s*(\d+(?:\.\d+)?)\D*(\d+)?', s_norm)
-        if m:
-            first = float(m.group(1).replace(',', '.'))
-            second = float(m.group(2).replace(',', '.'))
-            q = int((m.group(3) or '1').replace(',', '.'))
+        parsed_line = parse_line(raw)
+        diag: dict[str, Any] = {
+            "raw_input": raw,
+            "parse_stage": parsed_line.stage,
+            "recognized_by": "parser",
+        }
 
-            # Пользователи часто пишут "длина × ширина". Если первая цифра
-            # намного больше (в метрах), а вторая похожа на ширину — меняем местами.
-            if first > 2.0 and second <= 1.5:
-                width_m, length_m = second, first
-            else:
-                width_m, length_m = first, second
-
-            ok, reason = validate_plate_values(width_m, length_m, q, raw)
-            if not ok:
-                unparsed_lines.append(f"{raw} (пропущено: {reason})")
-                continue
-
-            add_items(width_m, length_m, q, line_idx=line_idx)
-            parsed = True
+        if not parsed_line.parsed:
+            diag["validation_status"] = "failed"
+            diag["reason_code"] = parsed_line.reason_code or "pattern_not_matched"
+            diag["rejection_reason"] = parsed_line.reason_text or "строка не распознана"
+            LAST_PARSE_DIAGNOSTICS.append(diag)
+            unparsed_lines.append(f"{raw} (пропущено: {diag['rejection_reason']})")
             continue
-        
-        # 2) формат "Плиты ПБ 78,3-3,2-8п 3" или "ПБ 78-12-8п 10"
-        #    а также "Плита ПК 80-12-8 шт 7", "ПК 80-12-8 7"
-        #    (плитА/плитЫ + ПБ или ПК)
-        m2 = re.search(r'плит[аы]?\s*п[бк]\s*([\d\.,]+)\s*-\s*([\d\.,]+)', s)
-        if not m2:
-            # Вариант без слова "плита/плиты": "ПБ 78-12-8п 3" / "ПК 80-12-8 7"
-            m2 = re.search(r'\bп[бк]\s*([\d\.,]+)\s*-\s*([\d\.,]+)', s)
-        if m2:
-            Ldm_str = m2.group(1)
-            Wdm_str = m2.group(2)
-            
-            # ДЛИНА: целое в строке (нет запятой/точки) → номинал в дм, длина = Ldm/10 м; иначе — точное значение в дм
-            L = length_dm_to_m(Ldm_str)
-            
-            # Ширина: единое правило для всех веток парсинга.
-            # 0.2/0.3 считаем метрами, остальные значения - в дм (/10).
-            W = parse_pb_width_to_m(Wdm_str)
-            
-            if L <= 0 or W <= 0:
-                # Если не удалось распознать размеры, пропускаем строку
-                continue
-            q = 1
-            # Количество — число ПОСЛЕ маркировки "8п" (ищем после дефиса с "8п")
-            # Сначала ищем маркировку "-8п" и берём число ПОСЛЕ неё
-            mq = re.search(r'-\d+п\s*[-—–]\s*(\d+)', s)  # "ПБ 66,2-12-8п — 6"
-            if not mq:
-                # Если не нашли с дефисом, ищем просто после "-8п" до конца строки
-                mq = re.search(r'-\d+п\s+(\d+)\s*(шт)?\s*$', s)  # "ПБ 66,2-12-8п 6"
-            if not mq:
-                # Последний вариант: число в конце строки (но НЕ в составе "-8п")
-                # Используем negative lookbehind, чтобы не захватить "8" из "-8п"
-                mq = re.search(r'(?<!-\d)(\d+)\s*(шт)?\s*$', s)
-            if mq:
-                try:
-                    q = int(mq.group(1))
-                except Exception:
-                    q = 1
 
-            # Пытаемся извлечь нагрузку из марки: ...-8п / -10п / -12,5п / -8 (без "п")
-            load_code = None
-            # Сначала пробуем с "п" (приоритет): "-8п", "-10п", "-12,5п"
-            load_match = re.search(r'-\s*([\d\.,]+)\s*п\b', s)
-            if not load_match:
-                # Если не нашли с "п", ищем формат "-8 шт" или "-8" в конце строки
-                # Это третье число после двух дефисов: ПБ 80-12-8 или ПБ 80-6,00-8
-                load_match = re.search(r'п[бк]\s*[\d\.,]+\s*-\s*[\d\.,]+\s*-\s*([\d\.,]+)', s)
-            
-            if load_match:
-                try:
-                    load_val = float(load_match.group(1).replace(',', '.'))
-                    # ВАЖНО: Сохраняем как float, чтобы 12.5 осталось 12.5 (не округляем до 13!)
-                    # При группировке и ценах будем использовать math.floor()
-                    load_code = load_val
-                    if load_code <= 0:
-                        load_code = None
-                except Exception:
-                    load_code = None
-
-            # Передаём нагрузку и исходную строку длины в add_items
-            ok, reason = validate_plate_values(W, L, q, raw)
-            if not ok:
-                unparsed_lines.append(f"{raw} (пропущено: {reason})")
-                continue
-
-            add_items(W, L, q, load_code, length_dm_raw=Ldm_str.strip() if Ldm_str else None, line_idx=line_idx)
-            parsed = True
+        validation = validate_plate_values(parsed_line.width_m, parsed_line.length_m, parsed_line.qty)
+        if not validation.ok:
+            diag["validation_status"] = "failed"
+            diag["reason_code"] = validation.reason_code
+            diag["rejection_reason"] = validation.reason_text
+            LAST_PARSE_DIAGNOSTICS.append(diag)
+            unparsed_lines.append(f"{raw} (пропущено: {validation.reason_text})")
             continue
-        
-        # Если строка не распознана ни одним паттерном, добавляем в список
-        if not parsed:
-            unparsed_lines.append(raw)
+
+        add_items(
+            parsed_line.width_m,
+            parsed_line.length_m,
+            parsed_line.qty,
+            parsed_line.load_code,
+            length_dm_raw=parsed_line.length_dm_raw,
+            line_idx=line_idx,
+        )
+        parsed = True
+        diag["validation_status"] = "ok"
+        diag["normalized_input"] = raw
+        LAST_PARSE_DIAGNOSTICS.append(diag)
+        if parsed:
+            continue
 
     _recompute_totals_from_lists()
 
@@ -1264,9 +1204,16 @@ def get_exact_width(length_m: float, target_list_name: str, default_width: float
 
 
 def approximate_weight_kg(length_m: float, width_m: float, thickness_m: float = 0.22) -> float:
-    """Примерный расчёт веса плиты в килограммах"""
-    volume = length_m * width_m * thickness_m
-    return round(volume * 2400, 1)
+    """
+    Расчет веса плиты в килограммах по формуле в дециметрах.
+
+    Формула: WEIGHT_KG_PER_DM2 * length_dm * width_dm.
+    Аргумент thickness_m оставлен для обратной совместимости сигнатуры.
+    """
+    _ = thickness_m  # совместимость с существующими вызовами
+    length_dm = float(length_m) * 10.0
+    width_dm = float(width_m) * 10.0
+    return round(WEIGHT_KG_PER_DM2 * length_dm * width_dm, 1)
 
 
 def register_plate_metadata(plates: List[Dict[str, Any]]) -> None:

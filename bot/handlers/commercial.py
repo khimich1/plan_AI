@@ -59,6 +59,8 @@ async def _enter_kp_manager_selection(message: Message, state: FSMContext) -> bo
     """
     from core.kp_db import get_all_managers
 
+    await state.update_data(kp_accumulated_plates_text="", kp_accumulated_initial_lines=[])
+
     managers = get_all_managers()
     if not managers:
         await message.answer(
@@ -149,6 +151,7 @@ async def btn_commercial_offer(message: Message, state: FSMContext):
         return
 
     await state.set_state(KPStates.waiting_plates_list)
+    await state.update_data(kp_accumulated_plates_text="", kp_accumulated_initial_lines=[])
     await _prompt_kp_step1_plates(message)
 
 
@@ -236,7 +239,15 @@ async def receive_plates_list(message: Message, state: FSMContext):
             await message.bot.download(photo, destination=photo_path)
 
             from core.ocr_gpt import recognize_text_smart
-            result = await recognize_text_smart(photo_path, force_gpt=True, show_cost=True)
+            recognition_mode = os.getenv("OCR_RECOGNITION_MODE", "full_gpt").strip().lower()
+            if recognition_mode not in {"full_gpt", "hybrid"}:
+                recognition_mode = "full_gpt"
+            result = await recognize_text_smart(
+                photo_path,
+                force_gpt=(recognition_mode == "full_gpt"),
+                show_cost=True,
+                mode=recognition_mode,  # full_gpt (по умолчанию) или hybrid
+            )
 
             if result and result.get('text'):
                 plates_text = result['text']
@@ -316,6 +327,29 @@ async def receive_plates_list(message: Message, state: FSMContext):
     # Нормализуем к каноническому виду (как парсим) для отображения и хранения
     norm = normalize_order_text(plates_text)
     plates_text_to_store = norm.normalized_text.strip() if norm.normalized_text.strip() else plates_text
+
+    data_before_merge = await state.get_data()
+    acc_text = (data_before_merge.get("kp_accumulated_plates_text") or "").strip()
+    acc_lines: list[str] = list(data_before_merge.get("kp_accumulated_initial_lines") or [])
+    if acc_text:
+        merged_raw = acc_text + "\n" + plates_text_to_store
+        norm_merged = normalize_order_text(merged_raw)
+        plates_text_to_store = (
+            norm_merged.normalized_text.strip()
+            if norm_merged.normalized_text.strip()
+            else merged_raw.strip()
+        )
+        initial_user_plate_lines = acc_lines + initial_user_plate_lines
+
+    try:
+        set_plate_lists_from_text(plates_text_to_store)
+        recognized_count = sum(get_current_plate_order().plate_load_details.values())
+    except PlateParseError as merge_parse_exc:
+        logger.warning(
+            "[COMMERCIAL] Парсинг объединённого списка плит: %s",
+            merge_parse_exc,
+        )
+        recognized_count = 0
 
     # Проверяем наличие плит с шириной > 12 дм (по нормализованному тексту)
     wide_lines = get_wide_plate_lines(plates_text_to_store)
@@ -457,20 +491,82 @@ async def confirm_plates_list_callback(callback: CallbackQuery, state: FSMContex
             await callback.message.answer(
                 "📊 Проверьте файл сверки. Если всё верно, нажмите «✅ Подтвердить» "
                 "ещё раз для выбора менеджера.\n"
-                "Если нужно изменить список, нажмите «🔄 Заменить».",
+                "Если нужно изменить список, нажмите «🔄 Заменить».\n"
+                "Чтобы сохранить список и прислать ещё плит отдельным сообщением — «➕ Продолжить КП».",
                 reply_markup=confirm_plates_list_kb(),
             )
         else:
             await callback.message.answer(
                 "⚠️ Не удалось сформировать XLSX превью. Нажмите «✅ Подтвердить» ещё раз "
                 "для выбора менеджера.\n"
-                "Если нужно изменить список, нажмите «🔄 Заменить».",
+                "Если нужно изменить список, нажмите «🔄 Заменить».\n"
+                "Чтобы добавить позиции отдельным вводом — «➕ Продолжить КП».",
                 reply_markup=confirm_plates_list_kb(),
             )
         return
 
     await state.update_data(plates_preview_sent=False)
     await _enter_kp_manager_selection(callback.message, state)
+
+
+@router.callback_query(F.data == "continue_kp_plates", KPStates.waiting_plates_confirm)
+async def continue_kp_plates_callback(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет текущий список для КП и возвращает к шагу 1 для ввода следующей порции плит."""
+    data = await state.get_data()
+    wide_plate_lines: list[str] = data.get("wide_plate_lines", [])
+
+    await callback.answer()
+
+    if wide_plate_lines:
+        await state.update_data(plates_preview_sent=False)
+        wide_list_text = "\n".join(f"• {line}" for line in wide_plate_lines)
+        example_text = _build_wide_plates_replacement_example(wide_plate_lines)
+        await state.set_state(KPStates.waiting_wide_plates_replacement)
+        await callback.message.answer(
+            f"⚠️ В списке есть плиты шириной больше 12 дм:\n{wide_list_text}\n\n"
+            f"{example_text}"
+        )
+        await callback.message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=wide_plates_actions_kb(),
+        )
+        return
+
+    plates_text = (data.get("plates_text") or "").strip()
+    if not plates_text:
+        await callback.message.answer(
+            "❌ Нет списка плит для сохранения. Пришлите список текстом или фото.",
+            reply_markup=cancel_process_kb(),
+        )
+        return
+
+    initial_lines = list(data.get("initial_user_plate_lines") or [])
+    await state.update_data(
+        kp_accumulated_plates_text=plates_text,
+        kp_accumulated_initial_lines=initial_lines,
+        plates_preview_sent=False,
+        replacement_done=False,
+        wide_plate_lines=[],
+        raw_plate_lines=[],
+        ocr_plates_snapshot=[],
+        ocr_raw_text="",
+        plates_text="",
+        initial_user_plate_lines=[],
+        recognized_count=0,
+        is_photo=False,
+    )
+    await state.set_state(KPStates.waiting_plates_list)
+
+    await callback.message.answer(
+        "📌 Текущий список плит сохранён для КП. Пришлите ещё позиции — они будут объединены "
+        "с уже сохранёнными в следующем превью.\n\n"
+        "Шаг 1 из 5: дополнительный список плит (текст или фото):",
+        reply_markup=main_menu_kb(),
+    )
+    await callback.message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb(),
+    )
 
 
 @router.callback_query(F.data == "replace_plates_list", KPStates.waiting_plates_confirm)
@@ -668,9 +764,9 @@ async def skip_wide_plates_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.message(KPStates.waiting_plates_confirm)
 async def plates_confirm_unexpected_text(message: Message, state: FSMContext):
-    """Подсказка пользователю нажать кнопку «Подтвердить» или «Заменить»."""
+    """Подсказка пользователю нажать кнопку под списком плит."""
     await message.answer(
-        "Нажмите «✅ Подтвердить» или «🔄 Заменить» под списком плит, "
+        "Нажмите «✅ Подтвердить», «🔄 Заменить» или «➕ Продолжить КП» под списком плит, "
         "или «◀️ Назад в меню» для отмены."
     )
 

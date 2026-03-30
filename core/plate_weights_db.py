@@ -3,6 +3,7 @@
 """
 Таблица весов плит в pb.db (plate_weights).
 Используется в КП для подстановки паспортной массы вместо расчётной.
+Активируется в legacy-режиме: WEIGHT_SOURCE="plate_weights".
 """
 import re
 import sqlite3

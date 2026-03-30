@@ -103,12 +103,14 @@ def production_menu_kb() -> InlineKeyboardMarkup:
     - Календарный план — просмотр активного плана с датами
     - Начать планирование — создание нового плана
     - Планы — просмотр всех сохранённых планов
+    - Производственный календарь — управление рабочими и нерабочими днями
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📅 Календарный план", callback_data="view_calendar_plan")],
             [InlineKeyboardButton(text="🚀 Начать планирование", callback_data="start_new_planning")],
             [InlineKeyboardButton(text="📋 Планы", callback_data="view_all_plans")],
+            [InlineKeyboardButton(text="🗓️ Производственный календарь", callback_data="manage_work_calendar")],
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
         ]
     )
@@ -201,7 +203,8 @@ def calendar_days_kb(
     Returns:
         InlineKeyboardMarkup с кнопками-датами
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime
+    from core.work_calendar import nth_working_day
     
     # Константа максимума дорожек (импортируем здесь чтобы избежать циклических импортов)
     MAX_TRACKS = 5
@@ -252,7 +255,10 @@ def calendar_days_kb(
     row = []
     for day in range(1, total_days + 1):
         # Вычисляем дату этого дня
-        day_date = parsed_start + timedelta(days=day - 1)
+        day_date = datetime.combine(
+            nth_working_day(parsed_start.date(), day),
+            datetime.min.time(),
+        )
         date_str = day_date.strftime("%d.%m")  # Формат: "22.01"
         date_key = day_date.strftime("%Y-%m-%d")  # Формат: "2026-01-22"
         
@@ -337,7 +343,8 @@ def production_day_actions_kb(
     Returns:
         InlineKeyboardMarkup с кнопками действий
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime
+    from core.work_calendar import nth_working_day
     
     if completed_days is None:
         completed_days = []
@@ -381,7 +388,10 @@ def production_day_actions_kb(
     row = []
     for day in range(1, total_days + 1):
         # Вычисляем дату
-        day_date = parsed_start + timedelta(days=day - 1)
+        day_date = datetime.combine(
+            nth_working_day(parsed_start.date(), day),
+            datetime.min.time(),
+        )
         date_str = day_date.strftime("%d.%m")
         
         # Определяем эмодзи
@@ -616,13 +626,16 @@ def cancel_process_kb() -> InlineKeyboardMarkup:
 
 
 def confirm_plates_list_kb() -> InlineKeyboardMarkup:
-    """Кнопки подтверждения/замены списка плит"""
+    """Кнопки подтверждения/замены списка плит и донажатия позиций"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_plates_list"),
                 InlineKeyboardButton(text="🔄 Заменить", callback_data="replace_plates_list"),
-            ]
+            ],
+            [
+                InlineKeyboardButton(text="➕ Продолжить КП", callback_data="continue_kp_plates"),
+            ],
         ]
     )
 

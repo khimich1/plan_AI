@@ -60,3 +60,9 @@ class ArchiveStates(StatesGroup):
     waiting_kp_number = State()
     waiting_discount = State()
     waiting_execution_terms_for_production = State()
+
+
+class WorkCalendarStates(StatesGroup):
+    """Состояния для управления производственным календарем."""
+    waiting_holiday_date = State()
+    waiting_workday_date = State()

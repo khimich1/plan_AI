@@ -3,7 +3,8 @@ from aiogram import Dispatcher
 from . import (
     main, instructions, kp, comparison, commercial, export, admin, pb_info, archive,
     production_planning, production_plans_list, production_create, production_calendar,
-    production_execution, production_day_view, production_export, production_completion
+    production_execution, production_day_view, production_export, production_completion,
+    work_calendar_manager
 )
 
 
@@ -24,6 +25,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(production_day_view.router)
     dp.include_router(production_export.router)
     dp.include_router(production_completion.router)
+    dp.include_router(work_calendar_manager.router)
     dp.include_router(pb_info.router)
     dp.include_router(export.router)
     dp.include_router(admin.router)

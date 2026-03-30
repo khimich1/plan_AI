@@ -13,7 +13,7 @@ import os
 import base64
 import json
 import re
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any, Literal
 
 try:
     from openai import AsyncOpenAI
@@ -37,7 +37,8 @@ except ImportError:
 async def recognize_text_smart(
     image_path: str, 
     force_gpt: bool = False,
-    show_cost: bool = True
+    show_cost: bool = True,
+    mode: Literal["full_gpt", "hybrid"] = "full_gpt",
 ) -> Optional[Dict]:
     """
     🧠 УМНОЕ РАСПОЗНАВАНИЕ: EasyOCR → GPT fallback
@@ -63,8 +64,12 @@ async def recognize_text_smart(
         или None если не удалось распознать
     """
     
+    # force_gpt сохраняем для обратной совместимости.
+    if force_gpt:
+        mode = "full_gpt"
+
     # ============ ЭТАП 1: Пробуем EasyOCR (бесплатно!) ============
-    if not force_gpt and EASYOCR_AVAILABLE:
+    if mode == "hybrid" and EASYOCR_AVAILABLE:
         try:
             print("[OCR] 🤖 Пробую EasyOCR (бесплатно)...")
             text = recognize_text_from_image(image_path)
@@ -114,8 +119,13 @@ async def recognize_text_smart(
         plates, cost = await recognize_with_gpt_vision(image_path)
         
         if plates:
-            # Конвертируем список плит в текст для парсера
-            text_lines = [f"{p['name']} {p['qty']}" for p in plates]
+            # Конвертируем структурированные элементы в текст для парсера.
+            text_lines = []
+            for p in plates:
+                candidate = (p.get("normalized_candidate") or p.get("raw_name") or "").strip()
+                qty = int(p.get("qty", 1))
+                if candidate:
+                    text_lines.append(f"{candidate} {qty}")
             text = '\n'.join(text_lines)
             
             if show_cost:
@@ -227,18 +237,21 @@ def get_recognition_prompt() -> str:
     
     Чем точнее промпт, тем лучше результат!
     """
-    return """Ты OCR-система для посимвольного копирования таблиц железобетонных плит.
+    return """Ты OCR-система для таблиц железобетонных плит.
 
 🎯 ТВОЯ ЗАДАЧА: Переписать таблицу БЕЗ ИНТЕРПРЕТАЦИИ
 
 Работай как КСЕРОКС - копируй символы точно как видишь, не думай о смысле!
 
-📋 Формат вывода - JSON массив:
+📋 Формат вывода - ТОЛЬКО JSON массив объектов:
 [
-  {"name": "ПБ 66,2-12-8п", "qty": 6},
-  {"name": "ПБ 66,2-10,2-8п", "qty": 1},
-  {"name": "ПБ 61,0-12-8п", "qty": 2},
-  {"name": "ПБ 52,0-7,2-8п", "qty": 1}
+  {
+    "raw_name": "ПБ.19,6-12-10",
+    "normalized_candidate": "ПБ 19,6-12-10",
+    "qty": 7,
+    "confidence": 0.92,
+    "issues": []
+  }
 ]
 
 🔥 КРИТИЧЕСКИ ВАЖНО - ПОСИМВОЛЬНОЕ КОПИРОВАНИЕ:
@@ -246,16 +259,11 @@ def get_recognition_prompt() -> str:
 Представь, что переписываешь таблицу от руки в блокнот.
 Ты НЕ математик, ты НЕ думаешь о числах - ты просто КОПИРУЕШЬ текст!
 
-✅ ПРАВИЛЬНО (копируешь ВСЁ что видишь):
-• Видишь "Плиты ПБ 66,2-12-8п" → name: "ПБ 66,2-12-8п"
-• Видишь "Плиты ПБ 61,0-12-8п" → name: "ПБ 61,0-12-8п"
-• Видишь "Плиты ПБ 52,0-7,2-8п" → name: "ПБ 52,0-7,2-8п"
-• Видишь "Плиты ПБ 21,5-10,2-8п" → name: "ПБ 21,5-10,2-8п"
-• Видишь "Плиты ПБ 38,3-12-8п" → name: "ПБ 38,3-12-8п"
-• Видишь "Плиты ПБ 58,4-12-8п" → name: "ПБ 58,4-12-8п"
-• Видишь "Плиты ПБ 56-10,8-8п" → name: "ПБ 56-10,8-8п"
-• Видишь "ПБ 59.12-8Вр1400-25" → name: "ПБ 59.12-8Вр1400-25" (копируй ДОСЛОВНО с суффиксом!)
-• Видишь "ПБ56.05-10" → name: "ПБ56.05-10" (каталожный формат — копируй как есть)
+✅ ПРАВИЛЬНО:
+• Видишь "Плиты ПБ 66,2-12-8п", qty=6 ->
+  {"raw_name":"ПБ 66,2-12-8п","normalized_candidate":"ПБ 66,2-12-8п","qty":6,"confidence":0.98,"issues":[]}
+• Видишь "ПБ.19,6-12-10", qty=7 ->
+  {"raw_name":"ПБ.19,6-12-10","normalized_candidate":"ПБ 19,6-12-10","qty":7,"confidence":0.92,"issues":["prefix_separator_dot"]}
 
 ❌ НЕПРАВИЛЬНО (думаешь и упрощаешь):
 • "Плиты ПБ 66,2-12-8п" → "ПБ 66-12-8п" (ПОТЕРЯНА ЗАПЯТАЯ И ЦИФРА!)
@@ -277,14 +285,16 @@ def get_recognition_prompt() -> str:
 1. **КАЖДАЯ строка таблицы = отдельный элемент JSON**
    (даже если "ПБ 28-12-8п" повторяется 5 раз - создай 5 элементов!)
 
-2. **Формат name:** убери слово "Плиты" и лишние пробелы:
-   "Плиты ПБ 66,2-12-8п" → "ПБ 66,2-12-8п"
+2. **Формат raw_name:** убери слово "Плиты" и лишние пробелы, но не изменяй цифры.
+3. **Формат normalized_candidate:** мягко нормализуй только префикс/пробелы (`ПБ.19,6` -> `ПБ 19,6`), не округляй числа.
 
-3. **Формат qty:** число из правой колонки (обычно 1-99)
+4. **Формат qty:** число из правой колонки (обычно 1-99)
+5. **Формат confidence:** число 0..1.
+6. **Формат issues:** список строк; пустой список, если проблем нет.
 
-4. **Порядок:** сверху вниз как в таблице
+7. **Порядок:** сверху вниз как в таблице
 
-5. **Пропускай только заголовки:** "Наименование", "Кол-во", "Итого"
+8. **Пропускай только заголовки:** "Наименование", "Кол-во", "Итого"
 
 ❌ КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
 • Упрощать: 66,2 → 66
@@ -299,7 +309,7 @@ def get_recognition_prompt() -> str:
 ✅ Верни ТОЛЬКО JSON массив, без текста до и после!"""
 
 
-def parse_gpt_response(response_text: str) -> List[Dict]:
+def parse_gpt_response(response_text: str) -> List[Dict[str, Any]]:
     """
     Извлекает JSON из ответа GPT.
     
@@ -325,25 +335,41 @@ def parse_gpt_response(response_text: str) -> List[Dict]:
         # Парсим JSON
         plates = json.loads(response_text)
         
-        # Валидация: проверяем структуру каждой плиты
+        # Валидация: принимаем новый и legacy формат.
         validated_plates = []
         for plate in plates:
             if not isinstance(plate, dict):
                 print(f"[GPT] ⚠️ Пропущена плита (не объект): {plate}")
                 continue
-            
-            if 'name' not in plate or 'qty' not in plate:
-                print(f"[GPT] ⚠️ Пропущена плита (нет name/qty): {plate}")
+
+            raw_name = plate.get("raw_name") or plate.get("name")
+            normalized_candidate = plate.get("normalized_candidate") or raw_name
+            if not raw_name or "qty" not in plate:
+                print(f"[GPT] ⚠️ Пропущена плита (нет raw_name/name или qty): {plate}")
                 continue
-            
-            # Приводим qty к целому числу
+
             try:
-                plate['qty'] = int(plate['qty'])
+                qty = int(plate["qty"])
             except (ValueError, TypeError):
                 print(f"[GPT] ⚠️ Пропущена плита (qty не число): {plate}")
                 continue
-            
-            validated_plates.append(plate)
+
+            confidence = plate.get("confidence", 0.95)
+            try:
+                confidence = max(0.0, min(1.0, float(confidence)))
+            except (ValueError, TypeError):
+                confidence = 0.95
+
+            issues = plate.get("issues") if isinstance(plate.get("issues"), list) else []
+            validated_plates.append(
+                {
+                    "raw_name": str(raw_name).strip(),
+                    "normalized_candidate": str(normalized_candidate).strip(),
+                    "qty": qty,
+                    "confidence": confidence,
+                    "issues": issues,
+                }
+            )
         
         return validated_plates
     

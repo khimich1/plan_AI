@@ -23,6 +23,7 @@ PROJECT_ROOT_FOR_IMPORT = BOT_DIR_FOR_IMPORT.parent
 sys.path.insert(0, str(PROJECT_ROOT_FOR_IMPORT))
 
 from core import kp_db
+from core.work_calendar import is_working_day, load_extra_workdays, load_holidays
 
 # Пути к файлам
 BOT_DIR = Path(__file__).parent.parent
@@ -310,6 +311,13 @@ def distribute_tracks_by_days(
         current_date = datetime.strptime(start_date, '%Y-%m-%d')
     except ValueError:
         current_date = datetime.now()
+
+    holidays = load_holidays()
+    extra_workdays = load_extra_workdays()
+
+    # Если стартовая дата нерабочая — переносим на ближайший рабочий день
+    while not is_working_day(current_date.date(), holidays, extra_workdays):
+        current_date += timedelta(days=1)
     
     # Распределяем дорожки по дням
     track_index = 0
@@ -322,6 +330,8 @@ def distribute_tracks_by_days(
         
         track_index += tracks_per_day
         current_date += timedelta(days=1)
+        while not is_working_day(current_date.date(), holidays, extra_workdays):
+            current_date += timedelta(days=1)
     
     return result
 

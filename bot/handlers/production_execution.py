@@ -24,6 +24,7 @@ from core import kp_db
 from core.db_config import PB_DB_PATH, PLITA_DB_PATH
 from core.reinforcement_db import get_reinforcement
 from core.optimization import optimize_with_cascading_longitudinal_cuts
+from core.work_calendar import nth_working_day
 import core.config_and_data as cfg
 from core.config_and_data import PlateOrder, canonical_plate_key
 import core.optimization as optimization
@@ -1922,7 +1923,10 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         overloaded_days = []  # Дни, где будет превышение
         
         for day_num in range(1, total_days + 1):
-            day_date = start_dt + timedelta(days=day_num - 1)
+            day_date = datetime.combine(
+                nth_working_day(start_dt.date(), day_num),
+                datetime.min.time(),
+            )
             date_key = day_date.strftime('%Y-%m-%d')
             date_display = day_date.strftime('%d.%m')
             

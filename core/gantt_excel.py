@@ -17,12 +17,18 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
+from core.work_calendar import (
+    is_working_day,
+    load_extra_workdays,
+    load_holidays,
+    nth_working_day,
+)
 
 _WEEKDAYS_RU: tuple[str, ...] = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
@@ -62,6 +68,13 @@ def create_gantt_excel(
     """
     if start_date is None:
         start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    holidays = load_holidays()
+    extra_workdays = load_extra_workdays()
+
+    def _working_dt(day_number: int) -> datetime:
+        work_date = nth_working_day(start_date.date(), day_number, holidays, extra_workdays)
+        return datetime.combine(work_date, datetime.min.time())
     
     # === ШАГ 1: Собираем информацию о КП из дорожек ===
     kp_production_info = {}  # {kp_id: {'start_day', 'end_day', 'customer', 'deadline', 'plate_count'}}
@@ -334,12 +347,13 @@ def create_gantt_excel(
     # Добавляем даты
     date_columns = []
     for day in range(1, total_days + 1):
-        date = start_date + timedelta(days=day - 1)
+        date = _working_dt(day)
         date_str = date.strftime("%d.%m")
         headers.append(date_str)
         date_columns.append(date)
 
     subheader_gray = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
+    weekend_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
 
     # === Строка 1: дни недели над датами ===
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
@@ -351,10 +365,13 @@ def create_gantt_excel(
 
     for day in range(1, total_days + 1):
         col = 4 + day
-        dt = start_date + timedelta(days=day - 1)
+        dt = _working_dt(day)
         cell = ws.cell(row=1, column=col, value=_weekday_ru(dt))
         cell.font = header_font
-        cell.fill = header_fill
+        if not is_working_day(dt.date(), holidays, extra_workdays):
+            cell.fill = weekend_fill
+        else:
+            cell.fill = header_fill
         cell.alignment = center_align
         cell.border = thin_border
 
@@ -362,7 +379,10 @@ def create_gantt_excel(
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=2, column=col, value=header)
         cell.font = header_font
-        cell.fill = header_fill
+        if col > 4 and not is_working_day(date_columns[col - 5].date(), holidays, extra_workdays):
+            cell.fill = weekend_fill
+        else:
+            cell.fill = header_fill
         cell.alignment = center_align
         cell.border = thin_border
 
@@ -434,7 +454,7 @@ def create_gantt_excel(
         
         # Определяем цвет на основе дедлайна
         deadline_date = _parse_date(info['deadline'])
-        end_production_date = start_date + timedelta(days=info['end_day'] - 1)
+        end_production_date = _working_dt(info['end_day'])
         
         if deadline_date:
             if end_production_date < deadline_date:

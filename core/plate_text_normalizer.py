@@ -102,16 +102,18 @@ def normalize_plate_prefixes(line: str) -> str:
     Исправляет OCR-ошибки в префиксе (ПВ/ПГ → ПБ) и добавляет пробел
     после ПБ/ПК, если он слит с цифрой: «ПБ56» → «ПБ 56».
     """
-    # ПВ/ПГ/ПЕ → ПБ (пробел перед цифрой опционален)
+    # ПВ/ПГ/ПЕ → ПБ (включая варианты с пробелом/точкой/запятой перед цифрой)
     fixed = re.sub(
-        r"\b(пв|пг|пе)(\s*\d)",
-        lambda m: "пб" + m.group(2),
+        r"\b(пв|пг|пе)(?=[\s\.,]*\d)",
+        lambda m: "ПБ" if m.group(1).isupper() else "пб",
         line,
         flags=re.IGNORECASE,
     )
-    # Добавляем пробел: «ПБ56» → «ПБ 56»
-    fixed = re.sub(r"\b(п[бк])(\d)", r"\1 \2", fixed, flags=re.IGNORECASE)
-    return fixed
+    # Унификация разделителя перед цифрой: «ПБ.56», «ПБ,56», «ПБ56» → «ПБ 56»
+    fixed = re.sub(r"\b(п[бк])[\s\.,]*(?=\d)", r"\1 ", fixed, flags=re.IGNORECASE)
+    # Финальная защита от дубля пробелов
+    fixed = re.sub(r"\s{2,}", " ", fixed)
+    return fixed.strip()
 
 
 def parse_catalog_mark(
