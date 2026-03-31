@@ -4,9 +4,9 @@
 Единый источник путей к базам данных проекта.
 Используется всеми модулями для доступа к pb.db и plita.db.
 """
-from pathlib import Path
+from app.core.settings import get_settings
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+settings = get_settings()
 
-PB_DB_PATH = PROJECT_ROOT / "pb.db"
-PLITA_DB_PATH = PROJECT_ROOT / "plita.db"
+PB_DB_PATH = settings.pb_db_path
+PLITA_DB_PATH = settings.plita_db_path

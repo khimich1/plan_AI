@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, save_to_db_with_files_kb, cancel_process_kb, managers_selection_kb, confirm_plates_list_kb, wide_plates_actions_kb
 from ..states import KPStates
 from ..bot_config import OUTPUTS_DIR_STR
+from app.services.commercial_service import CommercialService
+from app.services.optimization_service import OptimizationService
 
 router = Router()
 
@@ -51,17 +53,18 @@ ORDER_CACHE: Dict[int, list] = {}
 # Кеш результата оптимизации по user_id (для отложенной генерации схемы)
 OPT_PLAN_CACHE: Dict[int, dict] = {}
 
+commercial_service = CommercialService()
+optimization_service = OptimizationService()
+
 
 async def _enter_kp_manager_selection(message: Message, state: FSMContext) -> bool:
     """
     Переход к выбору менеджера (шаг 2 из 5).
     Возвращает True, если список менеджеров отправлен; иначе сообщает об ошибке и очищает state.
     """
-    from core.kp_db import get_all_managers
-
     await state.update_data(kp_accumulated_plates_text="", kp_accumulated_initial_lines=[])
 
-    managers = get_all_managers()
+    managers = commercial_service.list_managers()
     if not managers:
         await message.answer(
             "⚠️ В базе данных нет менеджеров.\n"
@@ -142,9 +145,7 @@ async def _prompt_kp_step1_plates(message: Message) -> None:
 async def btn_commercial_offer(message: Message, state: FSMContext):
     """Старт сценария КП: шаг 1 — список плит (менеджеры проверяются заранее)."""
     # Проверяем менеджеров до входа в сценарий (чтобы не пройти плиты и упереться в пустой список)
-    from core.kp_db import get_all_managers
-
-    if not get_all_managers():
+    if not commercial_service.list_managers():
         await message.answer(
             "⚠️ В базе данных нет менеджеров.\n"
             "Обратитесь к администратору.",
@@ -982,9 +983,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
     try:
         # Парсим список пользователя
         try:
-            unparsed_lines, line_contributions, _line_plate_load_details = set_plate_lists_from_text(
-                plates_text
-            )
+            parse_result = commercial_service.parse(plates_text)
         except PlateParseError as e:
             # Ошибка парсинга - показываем понятное сообщение
             logger.warning(f"Ошибка парсинга заказа от пользователя {message.from_user.id}: {e}")
@@ -999,7 +998,9 @@ async def generate_all_documents(message: Message, state: FSMContext):
             await state.clear()
             return
         
-        order = get_current_plate_order()
+        unparsed_lines = parse_result.unparsed_lines
+        line_contributions = parse_result.line_contributions
+        order = parse_result.order
         await state.update_data(plate_order=order.to_dict())
         
         if unparsed_lines:
@@ -1031,46 +1032,22 @@ async def generate_all_documents(message: Message, state: FSMContext):
             )
             
             try:
-                from core.optimization import optimize_with_cascading_longitudinal_cuts
-                import core.optimization as optimization
-                
-                # Запускаем оптимизацию для ВСЕХ плит сразу (без разделения)
-                optimization_result = await asyncio.to_thread(
-                    optimize_with_cascading_longitudinal_cuts,
-                    orders_2d=orders_2d
-                )
-                
+                optimization_context = await asyncio.to_thread(optimization_service.optimize, order)
+                optimization_result = optimization_context.optimization_result
                 if optimization_result and optimization_result.get('total_plates', 0) > 0:
-                    # Сохраняем результат в ОБЩИЙ план (не по нагрузкам)
-                    optimization.OPT_CASCADING_PLAN = optimization_result
-                    
-                    # Также сохраняем в BY_LOAD под общим ключом для совместимости
-                    # Собираем все нагрузки из заказа
-                    all_loads = set(o['load_code'] for o in orders_2d)
-                    optimization_result['loads_in_group'] = sorted(all_loads)
-                    
-                    # Используем специальный ключ 'all' для обозначения, что это общий план
-                    optimization.OPT_CASCADING_PLAN_BY_LOAD = {'all': optimization_result}
-                    
-                    # Создаём маппинг: все нагрузки указывают на общий план
-                    optimization.LOAD_TO_REINFORCEMENT_MAP = {
-                        load_code: ['all'] for load_code in all_loads
-                    }
-                    
-                    # Кешируем для отложенной генерации схемы (по нажатию кнопки)
                     OPT_PLAN_CACHE[message.from_user.id] = {
-                        'plan': optimization_result,
-                        'by_load': optimization.OPT_CASCADING_PLAN_BY_LOAD,
-                        'load_map': dict(optimization.LOAD_TO_REINFORCEMENT_MAP),
+                        'plan': optimization_context.optimization_result,
+                        'by_load': optimization_context.plan_by_load,
+                        'load_map': dict(optimization_context.load_to_reinforcement_map),
                     }
-                    
-                    total_plates = optimization_result.get('total_plates', 0)
-                    total_cost = optimization_result.get('total_cost', 0)
+
+                    total_plates = optimization_context.total_plates
+                    total_cost = optimization_context.total_cost
                     logger.info(
                         f"[COMMERCIAL] Оптимизация завершена: {total_plates} плит, {total_cost:,} ₽".replace(",", " ")
                     )
                     await message.answer(f"✅ Оптимизация завершена! Использовано {total_plates} исходных плит")
-                    
+
             except Exception as e:
                 logger.exception(f"[COMMERCIAL] Ошибка оптимизации: {e}")
                 # Продолжаем без оптимизации (цены будут посчитаны по старой логике)
@@ -1079,26 +1056,48 @@ async def generate_all_documents(message: Message, state: FSMContext):
         from viz_modules.procurement import build_price_rows, build_component_breakdown, build_procurement_items
         from viz_modules.price_utils import load_price_table_from_xlsx
         
+        PlateOrder.from_dict(order.to_dict()).apply_to_globals()
+
         # Загружаем таблицу цен
         price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
         
         # Получаем строки сметы
-        price_rows, total_sum = await asyncio.to_thread(
-            build_price_rows,
-            price_table,
-            reinforcement_code=8
-        )
-        
-        # Получаем детальную разбивку компонентов (для PDF)
-        breakdown_tables = await asyncio.to_thread(
-            build_component_breakdown,
-            price_table,
-            price_rows
-        )
-        
+        if orders_2d and message.from_user.id in OPT_PLAN_CACHE:
+            cached = OPT_PLAN_CACHE[message.from_user.id]
+            from app.domain.models.optimization_context import OptimizationContext
+            optimization_context = OptimizationContext(
+                order=order,
+                optimization_result=cached.get('plan') or {},
+                plan_by_load=cached.get('by_load') or {},
+                load_to_reinforcement_map=cached.get('load_map') or {},
+            )
+            with optimization_service.legacy_runtime(optimization_context):
+                price_rows, total_sum = await asyncio.to_thread(
+                    build_price_rows,
+                    price_table,
+                    reinforcement_code=8
+                )
+                breakdown_tables = await asyncio.to_thread(
+                    build_component_breakdown,
+                    price_table,
+                    price_rows
+                )
+                procurement_items = build_procurement_items()
+        else:
+            price_rows, total_sum = await asyncio.to_thread(
+                build_price_rows,
+                price_table,
+                reinforcement_code=8
+            )
+            breakdown_tables = await asyncio.to_thread(
+                build_component_breakdown,
+                price_table,
+                price_rows
+            )
+            procurement_items = build_procurement_items()
+
         # Формируем order_data из того же источника, что и смета (build_procurement_items), чтобы не терять плиты
         order_data = []
-        procurement_items = build_procurement_items()
         for item in procurement_items:
             length_m = item['length']
             width_m = item['width']
@@ -1371,9 +1370,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         # Парсим список пользователя
         user_text = message.text or ""
         try:
-            unparsed_lines, _line_contributions, _line_plate_load_details = set_plate_lists_from_text(
-                user_text
-            )
+            parse_result = commercial_service.parse(user_text)
         except PlateParseError as e:
             # Ошибка парсинга - показываем понятное сообщение
             logger.warning(f"Ошибка парсинга заказа от пользователя {message.from_user.id}: {e}")
@@ -1388,7 +1385,8 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        order = get_current_plate_order()
+        unparsed_lines = parse_result.unparsed_lines
+        order = parse_result.order
         await state.update_data(plate_order=order.to_dict())
 
         if unparsed_lines:
@@ -1510,6 +1508,8 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
         from viz_modules.procurement import build_price_rows, build_component_breakdown, build_procurement_items, get_orders_from_opt_plan
         from viz_modules.price_utils import load_price_table_from_xlsx
         
+        PlateOrder.from_dict(order.to_dict()).apply_to_globals()
+
         # Загружаем таблицу цен для расчётов
         price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
         

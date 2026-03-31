@@ -23,11 +23,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core import kp_db
 from core.db_config import PB_DB_PATH, PLITA_DB_PATH
 from core.reinforcement_db import get_reinforcement
-from core.optimization import optimize_with_cascading_longitudinal_cuts
 from core.work_calendar import nth_working_day
 import core.config_and_data as cfg
 from core.config_and_data import PlateOrder, canonical_plate_key
 import core.optimization as optimization
+from app.domain.models.plate_order import PlateOrder as AppPlateOrder
+from app.services.optimization_service import OptimizationService
 
 from ..keyboards import main_menu_kb, calendar_days_kb
 from ..states import ProductionStates
@@ -103,6 +104,7 @@ def _debug_runtime_write(run_id, hypothesis_id, location, message, data):
         pass
 
 router = Router()
+optimization_service = OptimizationService()
 
 
 async def load_and_plan_production(message: Message, state: FSMContext):
@@ -624,10 +626,11 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             plate_lookup_by_length[key].sort(key=lambda x: parse_date_for_sort(x.get('kp_date', '')))
         
         # Запуск оптимизации
-        optimization_result = await asyncio.to_thread(
-            optimize_with_cascading_longitudinal_cuts,
-            orders_2d=orders_2d
+        optimization_context = await asyncio.to_thread(
+            optimization_service.optimize,
+            AppPlateOrder.from_orders_2d(orders_2d),
         )
+        optimization_result = optimization_context.optimization_result
         if not optimization_result or optimization_result.get('total_plates', 0) == 0:
             await message.answer(
                 "❌ Оптимизация не дала результатов.",

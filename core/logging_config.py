@@ -36,6 +36,14 @@ def setup_logging(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
+    # Windows console often uses cp1251/cp866, which fails on emoji.
+    # Reconfigure stdout to utf-8 when possible to avoid logging errors.
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
 

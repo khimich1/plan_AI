@@ -23,6 +23,8 @@ from core.formovka_excel import create_formovka_files_for_tracks
 import core.config_and_data as cfg
 from core.config_and_data import PlateOrder
 import core.optimization as optimization
+from app.domain.models.optimization_context import OptimizationContext
+from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 
 from ..keyboards import production_day_actions_kb, day_documents_menu_kb
 from ..bot_config import OUTPUTS_DIR_STR
@@ -59,17 +61,19 @@ async def _restore_optimization_data(state: FSMContext, day_number: int):
     plate_lookup_exact = data['plate_lookup_exact']
     plate_lookup_by_length = data['plate_lookup_by_length']
     
-    # Восстанавливаем данные оптимизации
-    optimization.OPT_CASCADING_PLAN = optimization_result
-    
-    all_loads = set(p['load_code'] for p in orders_2d)
-    optimization_result['loads_in_group'] = sorted(all_loads)
-    optimization.OPT_CASCADING_PLAN_BY_LOAD = {'all': optimization_result}
-    optimization.LOAD_TO_REINFORCEMENT_MAP = {
-        load_code: ['all'] for load_code in all_loads
-    }
-    
-    PlateOrder.from_orders_2d(orders_2d).apply_to_globals()
+    app_order = AppPlateOrder.from_orders_2d(orders_2d)
+    context = OptimizationContext(
+        order=app_order,
+        optimization_result=optimization_result,
+        plan_by_load={"all": optimization_result} if optimization_result else {},
+        load_to_reinforcement_map={
+            load_code: ["all"] for load_code in sorted({p["load_code"] for p in orders_2d})
+        } if orders_2d else {},
+    )
+    optimization.OPT_CASCADING_PLAN = context.optimization_result
+    optimization.OPT_CASCADING_PLAN_BY_LOAD = context.plan_by_load
+    optimization.LOAD_TO_REINFORCEMENT_MAP = context.load_to_reinforcement_map
+    PlateOrder.from_dict(app_order.to_dict()).apply_to_globals()
     
     # Вычисляем индексы дорожек
     start_index = (day_number - 1) * tracks_count
@@ -102,17 +106,19 @@ def _restore_optimization_globals(orders_2d: list, optimization_result: dict):
         orders_2d: Список заказов (плит) для производства
         optimization_result: Результат оптимизации раскладки
     """
-    # Восстанавливаем данные оптимизации
-    optimization.OPT_CASCADING_PLAN = optimization_result
-    
-    all_loads = set(p['load_code'] for p in orders_2d) if orders_2d else {8}
-    optimization_result['loads_in_group'] = sorted(all_loads)
-    optimization.OPT_CASCADING_PLAN_BY_LOAD = {'all': optimization_result}
-    optimization.LOAD_TO_REINFORCEMENT_MAP = {
-        load_code: ['all'] for load_code in all_loads
-    }
-    
-    PlateOrder.from_orders_2d(orders_2d).apply_to_globals()
+    app_order = AppPlateOrder.from_orders_2d(orders_2d)
+    context = OptimizationContext(
+        order=app_order,
+        optimization_result=optimization_result,
+        plan_by_load={"all": optimization_result} if optimization_result else {},
+        load_to_reinforcement_map={
+            load_code: ["all"] for load_code in sorted({p["load_code"] for p in orders_2d})
+        } if orders_2d else {8: ["all"]},
+    )
+    optimization.OPT_CASCADING_PLAN = context.optimization_result
+    optimization.OPT_CASCADING_PLAN_BY_LOAD = context.plan_by_load
+    optimization.LOAD_TO_REINFORCEMENT_MAP = context.load_to_reinforcement_map
+    PlateOrder.from_dict(app_order.to_dict()).apply_to_globals()
     
     logger.debug(f"[RESTORE_GLOBALS] Восстановлено глобальных переменных: "
                 f"loads={len(all_loads)}, PLATE_LOAD_DETAILS={len(cfg.PLATE_LOAD_DETAILS)}, "
