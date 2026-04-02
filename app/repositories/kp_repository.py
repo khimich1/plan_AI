@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Sequence
+from datetime import datetime
 
 from app.core.settings import get_settings
 from core import kp_db
@@ -18,28 +19,26 @@ class KpRepository:
         *,
         customer_name: str,
         manager_name: str,
-        subtotal: float,
-        vat_amount: float,
-        total_amount: float,
+        creation_date: str | None = None,
         discount_percent: float = 0.0,
         delivery_conditions: str = "",
         payment_conditions: str = "",
         execution_terms: str = "",
+        status: str = "в работе",
         order_data: Sequence[dict] | None = None,
         xlsx_path: str | None = None,
     ) -> int:
         return kp_db.save_kp_to_db(
+            creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
+            order_data=list(order_data or []),
+            xlsx_file_path=xlsx_path,
             customer_name=customer_name,
             manager_name=manager_name,
-            subtotal=subtotal,
-            vat_amount=vat_amount,
-            total_amount=total_amount,
+            discount_percent=discount_percent,
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
             execution_terms=execution_terms,
-            order_data=list(order_data or []),
-            discount_percent=discount_percent,
-            xlsx_path=xlsx_path,
+            status=status,
             db_path=self.db_path,
         )
 
