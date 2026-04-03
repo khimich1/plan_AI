@@ -13,6 +13,21 @@
 
 Если `apt update` / `git clone` падают с **Temporary failure resolving** — на сервере не работает DNS.
 
+### Если вы остановили apt через Ctrl+Z
+
+В шелле появится строка вида `[1]+ Stopped apt install ...`. Сначала уберите это:
+
+- в **том же** окне SSH: `fg` и затем **Ctrl+C**, или выполните `kill %1`;
+- если сессия уже закрыта или процесс «висит», на сервере от root:
+
+```bash
+bash deploy/unstick_apt.sh
+```
+
+Скрипт [unstick_apt.sh](unstick_apt.sh) завершает `apt`/`apt-get`, снимает lock-файлы и запускает `dpkg --configure -a`. Без репозитория скопируйте файл с ПК: `scp deploy/unstick_apt.sh root@IP:/root/` → `bash /root/unstick_apt.sh`.
+
+### Починка DNS
+
 **Вариант A** — из уже клонированного репозитория (от root):
 
 ```bash
@@ -27,7 +42,11 @@ scp deploy/fix_dns_ubuntu.sh root@72.56.66.237:/root/
 
 На сервере: `bash /root/fix_dns_ubuntu.sh`
 
-После успешной проверки снова выполните `apt update` и шаги из раздела 2.
+### Порядок после сбоя apt + DNS
+
+1. `unstick_apt.sh` (если был Ctrl+Z или обрыв)
+2. `fix_dns_ubuntu.sh`
+3. `apt update && apt install -y git python3 python3-venv python3-pip`
 
 ## 2. Код и данные на сервере
 
