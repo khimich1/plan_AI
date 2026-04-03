@@ -23,6 +23,9 @@ Thumbs.db
 *.log
 logs/
 
+# Локальные архивы scripts/backup_shishov_data.sh
+backups/
+
 # Бот конфигурация (содержит токен!)
 bot.env
 *.env

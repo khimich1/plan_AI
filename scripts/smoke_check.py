@@ -10,6 +10,9 @@
 - что токен подхватывается из .env / bot/bot.env
 - что базы данных существуют (если нет — предупреждает)
 - что парсер плит работает на паре примеров
+
+Код выхода: 0 — без ошибок [FAIL]; 1 — неверный/отсутствующий BOT_TOKEN или сбой парсера.
+Предупреждения [WARN] по отсутствующим БД на код выхода не влияют.
 """
 
 from __future__ import annotations
@@ -31,6 +34,8 @@ if sys.platform == "win32":
 
 
 def main() -> int:
+    failed = False
+
     print("=" * 70)
     print("SMOKE CHECK")
     print("=" * 70)
@@ -42,6 +47,7 @@ def main() -> int:
     if not BOT_TOKEN or BOT_TOKEN == "your_bot_token_here" or len(BOT_TOKEN) < 20:
         print("[FAIL] BOT_TOKEN НЕ настроен")
         print("   - Открой bot/bot.env или .env в корне и укажи BOT_TOKEN=...")
+        failed = True
     else:
         print("[OK] BOT_TOKEN выглядит настроенным")
 
@@ -76,11 +82,15 @@ def main() -> int:
                     print(f"   - {line}")
         except Exception as e:
             print(f"[FAIL] Парсер: пример #{i} — ошибка: {e}")
+            failed = True
 
     print("=" * 70)
-    print("ГОТОВО")
+    if failed:
+        print("ГОТОВО С ОШИБКАМИ — код выхода 1 (см. [FAIL] выше)")
+    else:
+        print("ГОТОВО")
     print("=" * 70)
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

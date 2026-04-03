@@ -1,0 +1,30 @@
+# Пример unit для systemd (Linux).
+# 1) Замените пути и пользователя.
+# 2) sudo cp deploy/shishov-bot.service.example /etc/systemd/system/shishov-bot.service
+# 3) sudo systemctl daemon-reload
+# 4) sudo systemctl enable --now shishov-bot.service
+#
+# Секреты: либо EnvironmentFile (формат KEY=value, как в dotenv), либо отдельный файл
+# с правами 600, владелец тот же User=.
+
+[Unit]
+Description=Shishov Telegram bot (aiogram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shishov
+Group=shishov
+WorkingDirectory=/opt/shishov
+EnvironmentFile=/opt/shishov/bot/bot.env
+ExecStart=/opt/shishov/.venv/bin/python /opt/shishov/run_bot.py
+Restart=always
+RestartSec=5
+
+# Логи также пишутся в logs/bot.log (см. core/logging_config.py)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
