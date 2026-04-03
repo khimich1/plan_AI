@@ -9,6 +9,26 @@
 - Локально: `python scripts/smoke_check.py` (из корня репозитория; код выхода **1**, если [FAIL] по токену или парсеру; [WARN] по БД не считаются ошибкой)
 - Перед запуском на сервере остановите бота с тем же `BOT_TOKEN` на других машинах
 
+## DNS: ошибка «Temporary failure resolving»
+
+Если `apt update` / `git clone` падают с **Temporary failure resolving** — на сервере не работает DNS.
+
+**Вариант A** — из уже клонированного репозитория (от root):
+
+```bash
+chmod +x deploy/fix_dns_ubuntu.sh && ./deploy/fix_dns_ubuntu.sh
+```
+
+**Вариант B** — репозитория ещё нет: с ПК по IP (SSH не требует работающего DNS на сервере для подключения по IPv4):
+
+```bash
+scp deploy/fix_dns_ubuntu.sh root@72.56.66.237:/root/
+```
+
+На сервере: `bash /root/fix_dns_ubuntu.sh`
+
+После успешной проверки снова выполните `apt update` и шаги из раздела 2.
+
 ## 2. Код и данные на сервере
 
 ```bash
