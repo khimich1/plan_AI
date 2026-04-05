@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Умное распознавание текста с изображений:
-- Сначала пробуем EasyOCR (бесплатно, быстро)
-- Если не получилось — используем GPT-4o Vision (платно, но точно)
-
-Автор: AI Assistant для новичка в Python
-Дата: 2025-11-27
+Распознавание текста с изображений через GPT-4o Vision.
 """
 
 import os
@@ -22,17 +17,6 @@ except ImportError:
     GPT_AVAILABLE = False
     print("[GPT OCR] ⚠️ OpenAI не установлен. Установите: pip install openai")
 
-# Импорт существующего EasyOCR модуля
-try:
-    from .ocr_recognition import (
-        recognize_text_from_image, 
-        clean_recognized_text,
-        EASYOCR_AVAILABLE
-    )
-except ImportError:
-    EASYOCR_AVAILABLE = False
-    print("[GPT OCR] ⚠️ EasyOCR недоступен")
-
 
 async def recognize_text_smart(
     image_path: str, 
@@ -41,75 +25,31 @@ async def recognize_text_smart(
     mode: Literal["full_gpt", "hybrid"] = "full_gpt",
 ) -> Optional[Dict]:
     """
-    🧠 УМНОЕ РАСПОЗНАВАНИЕ: EasyOCR → GPT fallback
-    
-    Как работает:
-    1. Сначала пробуем бесплатный EasyOCR
-    2. Если он нашёл хотя бы 1 плиту — используем его результат
-    3. Если не нашёл или ошибка — подключаем платный GPT-4o
+    🧠 Распознавание через GPT-4o Vision.
     
     Аргументы:
         image_path: путь к файлу изображения (jpg, png)
-        force_gpt: True = сразу использовать GPT (игнорируя EasyOCR)
+        force_gpt: аргумент оставлен для обратной совместимости
         show_cost: показывать стоимость в консоли
+        mode: аргумент оставлен для обратной совместимости
         
     Возвращает:
         {
             'text': str,           # Текст для парсера (в формате "ПБ XX-XX-Xп qty")
-            'plates': list,        # Список плит [{name, qty}] (только для GPT)
-            'method': str,         # 'EasyOCR' или 'GPT-4o'
+            'plates': list,        # Список плит [{name, qty}]
+            'method': str,         # 'GPT-4o'
             'confidence': float,   # Уверенность 0.0-1.0
-            'cost_usd': float      # Стоимость в $ (только для GPT)
+            'cost_usd': float      # Стоимость в $
         }
         или None если не удалось распознать
     """
     
-    # force_gpt сохраняем для обратной совместимости.
-    if force_gpt:
-        mode = "full_gpt"
+    # Аргументы сохраняем ради совместимости со старым API модуля.
+    _ = force_gpt
+    if mode == "hybrid":
+        print("[OCR] ℹ️ Режим hybrid отключен: используется только GPT-4o")
 
-    # ============ ЭТАП 1: Пробуем EasyOCR (бесплатно!) ============
-    if mode == "hybrid" and EASYOCR_AVAILABLE:
-        try:
-            print("[OCR] 🤖 Пробую EasyOCR (бесплатно)...")
-            text = recognize_text_from_image(image_path)
-            
-            if text:
-                cleaned = clean_recognized_text(text)
-                
-                # Проверяем качество: ищем плиты в стандартном или каталожном форматах.
-                # Стандартный: "ПБ 78-12-8п", "ПБ 66,2-12-8п", "ПБ 44-3,2-10п"
-                # Каталожный:  "ПБ 59.12-8Вр1400-25", "ПБ56.05-10"
-                plates_found = re.findall(
-                    r'П[БК]\s*\d+[,\.]?\d*\s*-\s*\d+[,\.]?\d*\s*-\s*\d+[,\.]?\d*п',
-                    cleaned,
-                    re.IGNORECASE
-                )
-                if not plates_found:
-                    # Каталожный формат: ПБ L.W-load (без «п» в конце, L >= 2 символов)
-                    plates_found = re.findall(
-                        r'П[БК]\s*\d{2,}\.\d+\s*-\s*\d+',
-                        cleaned,
-                        re.IGNORECASE
-                    )
-
-                if len(plates_found) >= 1:
-                    print(f"[OCR] ✅ EasyOCR распознал {len(plates_found)} плит(ы)")
-                    return {
-                        'text': cleaned,
-                        'plates': [],  # EasyOCR возвращает просто текст
-                        'method': 'EasyOCR',
-                        'confidence': min(len(plates_found) / 5, 1.0),  # Макс 1.0 при 5+ плитах
-                        'cost_usd': 0.0
-                    }
-                
-                print(f"[OCR] ⚠️ EasyOCR нашёл только {len(plates_found)} плит, пробую GPT...")
-        
-        except Exception as e:
-            print(f"[OCR] ❌ Ошибка EasyOCR: {e}")
-            print("[OCR] Переключаюсь на GPT...")
-    
-    # ============ ЭТАП 2: Используем GPT-4o Vision ============
+    # ============ Используем GPT-4o Vision ============
     if not GPT_AVAILABLE:
         print("[OCR] ❌ GPT недоступен. Установите: pip install openai")
         return None
@@ -390,19 +330,15 @@ def estimate_monthly_cost(photos_per_month: int) -> Dict[str, float]:
         photos_per_month: сколько фото в месяц обрабатываете
         
     Возвращает:
-        {'easyocr': 0, 'gpt_only': X, 'hybrid': Y}
+        {'gpt_only': X, 'hybrid': X, 'photos': N}
     """
     
     # Средняя стоимость одного фото через GPT-4o
     avg_cost_per_photo = 0.002  # $0.002 = ~0.15₽
     
-    # Гибридный подход: 80% решает EasyOCR, 20% — GPT
-    hybrid_ratio = 0.2
-    
     return {
-        'easyocr_only': 0.0,  # Всегда бесплатно
         'gpt_only': photos_per_month * avg_cost_per_photo,
-        'hybrid': photos_per_month * avg_cost_per_photo * hybrid_ratio,
+        'hybrid': photos_per_month * avg_cost_per_photo,
         'photos': photos_per_month
     }
 
@@ -415,7 +351,6 @@ if __name__ == '__main__':
     for count in [100, 500, 1000, 5000]:
         costs = estimate_monthly_cost(count)
         print(f"\n📊 {count} фото в месяц:")
-        print(f"  • EasyOCR: $0 (всегда бесплатно)")
         print(f"  • GPT-4o: ${costs['gpt_only']:.2f} (~{costs['gpt_only']*75:.0f}₽)")
-        print(f"  • Гибрид: ${costs['hybrid']:.2f} (~{costs['hybrid']*75:.0f}₽) ⭐ рекомендую")
+        print(f"  • Гибрид (как GPT-4o): ${costs['hybrid']:.2f} (~{costs['hybrid']*75:.0f}₽)")
 

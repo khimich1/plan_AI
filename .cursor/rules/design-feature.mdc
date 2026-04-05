@@ -1,11 +1,11 @@
 ---
-description: Проектирование новой фичи бота: исследование архитектуры, план реализации. Используй когда добавляешь новый раздел бота, новую команду, новый диалог (FSM) или новый модуль бизнес-логики.
+description: Проектирование новой фичи FastAPI-приложения: исследование архитектуры, план реализации. Используй когда добавляешь новый API-эндпоинт, новый web-маршрут, новую Pydantic-схему или новый модуль бизнес-логики.
 alwaysApply: false
 ---
 
 # Проектирование фичи — Исследование → План → Код
 
-Ты эксперт по Python и aiogram 3.x, проектирующий новую фичу Telegram-бота.
+Ты эксперт по Python и FastAPI, проектирующий новую фичу backend-приложения.
 
 **Главный принцип:** сначала изучи КАК УСТРОЕН ПРОЕКТ, потом проектируй. Код пиши только после понимания архитектуры.
 
@@ -17,12 +17,14 @@ alwaysApply: false
 
 Перед любой работой прочитай эти файлы ПОЛНОСТЬЮ:
 
-- `bot/bot_main.py` — как регистрируются роутеры и запускается бот
-- `bot/handlers/__init__.py` — как подключаются все хендлеры
-- `bot/states.py` — все FSM-состояния диалогов
-- `bot/keyboards.py` — все клавиатуры (reply + inline)
-- `core/config_and_data.py` — константы, структуры данных, парсинг плит
-- `core/exceptions.py` — кастомные исключения проекта
+- `app/main.py` — создание приложения `FastAPI`, `lifespan`, подключение роутеров
+- `app/api/v1/router.py` — как подключаются API-эндпоинты версии v1
+- `app/api/v1/endpoints/*.py` — существующие endpoint-паттерны
+- `app/schemas/*.py` — Pydantic-схемы запросов/ответов
+- `app/services/*.py` — бизнес-логика
+- `app/repositories/*.py` — работа с данными
+- `app/dependencies/*.py` и `app/security/*.py` — авторизация/роли/сессии
+- `app/core/settings.py` — настройки приложения и переменные окружения
 
 ### 0.2 Определить контекст фичи
 
@@ -30,43 +32,45 @@ alwaysApply: false
 
 | Условие | Что создать |
 |---|---|
-| Фича требует диалога с пользователем (несколько шагов) | Новые состояния в `bot/states.py` |
-| Фича работает с данными в БД | Функции в `core/kp_db.py` или новый модуль `core/` |
-| Фича генерирует файлы (PDF / Excel / PNG) | Новый модуль в `viz_modules/` или `core/` |
-| Фича — новая команда бота | Новый файл `bot/handlers/имя.py` + регистрация в `bot/handlers/__init__.py` |
-| Фича требует новых расчётов | Новый модуль в `core/` или `cost_calculation/` |
+| Нужен новый публичный API | Новый endpoint в `app/api/v1/endpoints/` + подключение в `app/api/v1/router.py` |
+| Нужен новый web-раздел | Новый маршрут в `app/web/router.py` |
+| Нужна валидация входа/выхода | Новые модели в `app/schemas/` |
+| Нужна бизнес-логика | Новый/обновленный сервис в `app/services/` |
+| Нужна работа с БД/файлами | Новый/обновленный репозиторий в `app/repositories/` |
+| Нужны права доступа | Обновление зависимостей в `app/dependencies/` и/или `app/security/` |
 
 ---
 
 ## Фаза 1: Исследование (запустить параллельно 2–3 задачи)
 
-Используй подагента `codebase-researcher` (Task tool с `subagent_type: "codebase-researcher"`).
+Для глубокого исследования используй подагента `codebase-researcher` как источник фактов о коде.
 
 ### Задача исследования 1: Анализ архитектуры
 
 Изучи точки входа проекта:
 
-1. `bot/bot_main.py` — как создаётся Bot и Dispatcher, порядок регистрации роутеров
-2. `bot/handlers/__init__.py` — функция `register_all_handlers()`, список всех роутеров
-3. `bot/states.py` — все классы FSM-состояний и их поля
-4. Найти похожий хендлер на новую фичу в `bot/handlers/` — скопировать его структуру
+1. `app/main.py` — как создаётся `FastAPI`, подключаются `api_v1_router` и `web_router`
+2. `app/api/v1/router.py` — порядок подключения endpoint-модулей
+3. Найти похожий endpoint в `app/api/v1/endpoints/` — взять его структуру за основу
+4. Проверить `app/web/router.py` (если фича касается web-части)
 
 Для каждого компонента указать:
 - Структуру файла (классы, функции, декораторы)
-- Паттерн регистрации роутера (`router = Router()`, `@router.message(...)`)
-- Паттерн FSM (`state: FSMContext`, `await state.set_state(...)`, `await state.get_data()`)
-- Паттерн клавиатур (как создаются и передаются)
+- Паттерн роутеров FastAPI (`router = APIRouter()`, `@router.get/post/...`)
+- Паттерн зависимостей (`Depends(...)`, роли, текущий пользователь)
+- Паттерн ответа (dict/`JSONResponse`/Pydantic model)
 
 Сохранить только факты, ссылки в формате `путь/к/файлу.py:строка`.
 
 ### Задача исследования 2: Поиск переиспользуемых паттернов
 
-Найти паттерны в `core/` и `viz_modules/`:
+Найти паттерны в `app/schemas/`, `app/services/`, `app/repositories/`:
 
-1. Похожие функции в `core/kp_db.py` — как сохраняются/читаются данные из SQLite
-2. Переиспользуемые утилиты в `core/config_and_data.py` — константы, парсинг
-3. Паттерны обработки ошибок — `try/except` с кастомными исключениями из `core/exceptions.py`
-4. Паттерны генерации файлов в `viz_modules/` или `core/visualization.py`
+1. Похожие Pydantic-модели в `app/schemas/*.py` — поля, `Field(...)`, ограничения
+2. Похожие методы сервисов в `app/services/*.py` — где размещается бизнес-логика
+3. Похожие методы репозиториев в `app/repositories/*.py` — доступ к БД/данным
+4. Паттерны обработки ошибок и доступа — `app/dependencies/*.py`, `app/security/*.py`
+5. OpenAPI-паттерны — теги, префиксы, `include_in_schema`
 
 ---
 
@@ -87,10 +91,10 @@ feature: {название-фичи}
 
 ## Архитектура
 
-- Точка входа: [как фича будет зарегистрирована — файл:строка]
-- FSM-состояния: [какие уже есть похожие — файл:строка]
-- Паттерн хендлера: [ближайший аналог — файл:строка]
-- Клавиатуры: [какие уже есть похожие — файл:строка]
+- Точка входа: [как фича будет подключена в `app/main.py` — файл:строка]
+- API-роутинг: [где подключается endpoint в `app/api/v1/router.py` — файл:строка]
+- Паттерн endpoint: [ближайший аналог — файл:строка]
+- Pydantic-схемы: [подходящие модели/поля — файл:строка]
 
 ## Переиспользуемые компоненты
 
@@ -102,8 +106,10 @@ feature: {название-фичи}
 
 ## Ключевые файлы
 
-- `bot/handlers/имя.py:строка` — описание
-- `core/модуль.py:строка` — описание
+- `app/api/v1/endpoints/имя.py:строка` — описание
+- `app/schemas/имя.py:строка` — описание
+- `app/services/имя.py:строка` — описание
+- `app/repositories/имя.py:строка` — описание
 ```
 
 ---
@@ -112,11 +118,13 @@ feature: {название-фичи}
 
 После исследования составь план по шагам:
 
-1. Какие FSM-состояния добавить в `bot/states.py`
-2. Какие клавиатуры добавить в `bot/keyboards.py`
-3. Какой файл создать в `bot/handlers/`
-4. Как зарегистрировать роутер в `bot/handlers/__init__.py`
-5. Какие функции добавить в `core/` (если нужна бизнес-логика)
+1. Какой endpoint добавить в `app/api/v1/endpoints/` (метод, путь, теги)
+2. Какие Pydantic-модели добавить/изменить в `app/schemas/`
+3. Какие сервисные функции добавить в `app/services/`
+4. Какие методы репозитория добавить в `app/repositories/`
+5. Как подключить маршрут в `app/api/v1/router.py`
+6. Нужны ли изменения в `app/dependencies/` или `app/security/`
+7. Как фича появится в OpenAPI (или будет скрыта, если web-маршрут)
 
 **Только после согласования плана** — начинай писать код.
 
@@ -126,33 +134,36 @@ feature: {название-фичи}
 
 ### Регистрация роутера
 ```python
-# bot/handlers/имя.py
-router = Router()
+# app/api/v1/endpoints/имя.py
+from fastapi import APIRouter, Depends
 
-@router.message(Command("команда"))
-async def handle_command(message: Message, state: FSMContext):
-    ...
+router = APIRouter(prefix="/example", tags=["example"])
+
+@router.post("/parse")
+def parse_payload(payload: ExampleRequest, user=Depends(get_current_user)):
+    result = ExampleService().parse(payload)
+    return result
 ```
 
-### FSM-диалог
+### Pydantic-схемы
 ```python
-# bot/states.py
-class MyStates(StatesGroup):
-    waiting_for_input = State()
-    waiting_for_confirm = State()
+# app/schemas/example.py
+from pydantic import BaseModel, Field
 
-# в хендлере
-await state.set_state(MyStates.waiting_for_input)
-data = await state.get_data()
-await state.update_data(key=value)
-await state.clear()
+class ExampleRequest(BaseModel):
+    text: str = Field(min_length=1)
+
+class ExampleResponse(BaseModel):
+    status: str
+    items: list[str]
 ```
 
 ### Подключение роутера
 ```python
-# bot/handlers/__init__.py
-from .имя import router as имя_router
+# app/api/v1/router.py
+from fastapi import APIRouter
+from app.api.v1.endpoints import example
 
-def register_all_handlers(dp: Dispatcher):
-    dp.include_router(имя_router)
+router = APIRouter()
+router.include_router(example.router)
 ```

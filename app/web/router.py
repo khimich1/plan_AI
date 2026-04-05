@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from html import escape
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -94,12 +95,621 @@ def dashboard(user: dict = Depends(get_current_user)) -> HTMLResponse:
 
 @router.get("/web/managers", response_class=HTMLResponse)
 def managers_page(user: dict = Depends(require_roles("admin", "manager", "production"))) -> HTMLResponse:
-    items = CommercialService().list_managers()
-    rows = "".join(
-        f"<tr><td>{item.get('id')}</td><td>{escape(item.get('fio', ''))}</td><td>{escape(item.get('contact_number', ''))}</td><td>{escape(item.get('email', ''))}</td></tr>"
-        for item in items
+    role = user.get("role", "")
+    role_json = json.dumps(role)
+    body = (
+        _nav(user)
+        + """
+    <h1>Менеджеры и КП</h1>
+    <div class="card" id="create-offer-card">
+      <h2>Создать КП</h2>
+      <p style="margin-top: 0;">Шаги: список плит -> менеджер -> клиент -> скидка/условия -> превью -> сохранить.</p>
+      <label>Список плит:</label><br>
+      <textarea id="plates-text" rows="7" style="width:100%;"></textarea><br><br>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div>
+          <label>Менеджер:</label><br>
+          <select id="manager-id" style="width:100%;"></select>
+        </div>
+        <div>
+          <label>Клиент:</label><br>
+          <input id="customer-name" type="text" style="width:100%;">
+        </div>
+        <div>
+          <label>Скидка (%):</label><br>
+          <input id="discount-percent" type="number" min="0" max="100" step="0.1" value="0" style="width:100%;">
+        </div>
+        <div>
+          <label>Срок для «в работе»:</label><br>
+          <input id="execution-terms-input" type="text" placeholder="например: 14 дней / 2 недели / 01.05.2026" style="width:100%;">
+        </div>
+      </div>
+      <br>
+      <label>Условия поставки:</label><br>
+      <input id="delivery-conditions" type="text" style="width:100%;"><br><br>
+      <label>Условия оплаты:</label><br>
+      <input id="payment-conditions" type="text" style="width:100%;"><br><br>
+
+      <button id="btn-preview">Сгенерировать превью</button>
+      <button id="btn-recognize-screen">Распознать СКРИН</button>
+      <input id="screen-file-input" type="file" accept="image/*" style="display:none;">
+      <button id="btn-preview-check-xlsx" disabled>XLSX проверка</button>
+      <button id="btn-preview-xlsx" disabled>Скачать превью XLSX</button>
+      <button id="btn-save-work" disabled>Сохранить в БД (в работе)</button>
+      <button id="btn-save-archive" disabled>В архив</button>
+      <p id="create-status"></p>
+      <pre id="recognized-output" style="background:#f4f7ff; padding:10px; white-space:pre-wrap;"></pre>
+      <pre id="preview-output" style="background:#f8f8f8; padding:10px; white-space:pre-wrap;"></pre>
+    </div>
+
+    <div class="card">
+      <h2>Архив КП</h2>
+      <div style="display:flex; gap:8px; flex-wrap: wrap; margin-bottom: 8px;">
+        <button data-status="archived" class="status-btn">В архиве</button>
+        <button data-status="in_production" class="status-btn">В производстве</button>
+        <button data-status="completed" class="status-btn">Выполненные</button>
+        <button data-status="all" class="status-btn">Все</button>
+      </div>
+      <div style="display:flex; gap:8px; margin-bottom: 8px;">
+        <input id="search-kp-id" type="number" min="1" placeholder="Номер КП" style="max-width:160px;">
+        <button id="btn-search-kp">Найти по номеру</button>
+      </div>
+      <p id="archive-status"></p>
+      <table id="offers-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>Дата</th><th>Клиент</th><th>Менеджер</th><th>Статус</th><th>Готовность</th><th>Сумма</th><th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card" id="offer-details-card">
+      <h2>Карточка КП</h2>
+      <p id="details-empty">Выберите КП из таблицы выше.</p>
+      <div id="offer-details"></div>
+    </div>
+    <script>
+    const USER_ROLE = """
+        + role_json
+        + """;
+    const canEdit = USER_ROLE === "admin" || USER_ROLE === "manager";
+    const state = {
+      managers: [],
+      managersById: {},
+      preview: null,
+      recognizedText: "",
+      activeStatus: "archived",
+      selectedOfferId: null
+    };
+
+    const createStatusEl = document.getElementById("create-status");
+    const previewOutputEl = document.getElementById("preview-output");
+    const managerSelectEl = document.getElementById("manager-id");
+    const btnPreviewEl = document.getElementById("btn-preview");
+    const btnRecognizeScreenEl = document.getElementById("btn-recognize-screen");
+    const screenFileInputEl = document.getElementById("screen-file-input");
+    const btnPreviewCheckXlsxEl = document.getElementById("btn-preview-check-xlsx");
+    const btnPreviewXlsxEl = document.getElementById("btn-preview-xlsx");
+    const btnSaveWorkEl = document.getElementById("btn-save-work");
+    const btnSaveArchiveEl = document.getElementById("btn-save-archive");
+    const archiveStatusEl = document.getElementById("archive-status");
+    const offersBodyEl = document.querySelector("#offers-table tbody");
+    const offerDetailsEl = document.getElementById("offer-details");
+    const detailsEmptyEl = document.getElementById("details-empty");
+    const createCardEl = document.getElementById("create-offer-card");
+    const recognizedOutputEl = document.getElementById("recognized-output");
+
+    function toDateRu(value) {
+      const d = value ? new Date(value) : new Date();
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yyyy = String(d.getFullYear());
+      return `${dd}.${mm}.${yyyy}`;
+    }
+
+    function esc(value) {
+      return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    }
+
+    async function api(path, options = {}) {
+      const cfg = {
+        credentials: "include",
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {})
+        }
+      };
+      if (!cfg.body) {
+        delete cfg.headers["Content-Type"];
+      }
+      const res = await fetch(path, cfg);
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (_err) {
+        data = null;
+      }
+      if (!res.ok) {
+        const detail = (data && (data.detail || data.message)) || `HTTP ${res.status}`;
+        throw new Error(detail);
+      }
+      return data;
+    }
+
+    function setCreateStatus(text, isError = false) {
+      createStatusEl.textContent = text;
+      createStatusEl.style.color = isError ? "red" : "inherit";
+    }
+
+    function setArchiveStatus(text, isError = false) {
+      archiveStatusEl.textContent = text;
+      archiveStatusEl.style.color = isError ? "red" : "inherit";
+    }
+
+    function renderManagers() {
+      if (!state.managers.length) {
+        managerSelectEl.innerHTML = "<option value=''>Нет менеджеров</option>";
+        return;
+      }
+      managerSelectEl.innerHTML = state.managers
+        .map((m) => `<option value="${m.id}">${esc(m.fio || "Без имени")}</option>`)
+        .join("");
+    }
+
+    async function loadManagers() {
+      const data = await api("/api/v1/managers");
+      state.managers = data.items || [];
+      state.managersById = {};
+      for (const item of state.managers) {
+        state.managersById[String(item.id)] = item;
+      }
+      renderManagers();
+    }
+
+    function currentCreatePayload() {
+      const managerId = managerSelectEl.value;
+      const manager = state.managersById[String(managerId)];
+      if (!manager) {
+        throw new Error("Выберите менеджера");
+      }
+      const customerName = document.getElementById("customer-name").value.trim();
+      if (!customerName) {
+        throw new Error("Введите клиента");
+      }
+      const discountPercent = Number(document.getElementById("discount-percent").value || 0);
+      if (Number.isNaN(discountPercent) || discountPercent < 0 || discountPercent > 100) {
+        throw new Error("Скидка должна быть от 0 до 100");
+      }
+      const platesText = document.getElementById("plates-text").value.trim();
+      if (!platesText) {
+        throw new Error("Введите список плит");
+      }
+      return {
+        manager,
+        customerName,
+        discountPercent,
+        platesText,
+        deliveryConditions: document.getElementById("delivery-conditions").value.trim(),
+        paymentConditions: document.getElementById("payment-conditions").value.trim(),
+        executionTermsInput: document.getElementById("execution-terms-input").value.trim()
+      };
+    }
+
+    function currentPlatesText() {
+      return document.getElementById("plates-text").value.trim();
+    }
+
+    function renderPreview(data) {
+      const warnings = data.warnings || [];
+      const unparsed = data.unparsed_lines || [];
+      const optimization = data.optimization || {};
+      previewOutputEl.textContent =
+        "Превью готово\\n" +
+        `Плит в расчете: ${optimization.total_plates ?? "-"}\\n` +
+        `Сумма: ${Number(data.total_sum || 0).toLocaleString("ru-RU")} ₽\\n` +
+        `Неразобранные строки: ${unparsed.length}\\n` +
+        `Предупреждения: ${warnings.length}\\n\\n` +
+        (warnings.length ? `Warnings:\\n- ${warnings.join("\\n- ")}\\n\\n` : "") +
+        (unparsed.length ? `Unparsed:\\n- ${unparsed.join("\\n- ")}` : "");
+    }
+
+    async function createPreview() {
+      try {
+        setCreateStatus("Генерирую превью...");
+        const payload = currentCreatePayload();
+        const data = await api("/api/v1/commercial/generate-preview", {
+          method: "POST",
+          body: JSON.stringify({ text: payload.platesText })
+        });
+        state.preview = data;
+        renderPreview(data);
+        btnPreviewXlsxEl.disabled = !canEdit;
+        btnSaveWorkEl.disabled = !canEdit;
+        btnSaveArchiveEl.disabled = !canEdit;
+        setCreateStatus("Превью успешно сгенерировано.");
+      } catch (err) {
+        btnPreviewXlsxEl.disabled = true;
+        setCreateStatus(err.message, true);
+      }
+    }
+
+    function renderRecognizedText(data) {
+      const lines = data.lines || [];
+      const warnings = data.warnings || [];
+      recognizedOutputEl.textContent =
+        "Результат OCR (отдельно, без автоподстановки):\\n" +
+        `Метод: ${data.method || "-"}\\n` +
+        `Уверенность: ${Number(data.confidence || 0).toFixed(2)}\\n` +
+        `Строк: ${lines.length}\\n\\n` +
+        (lines.length ? lines.join("\\n") + "\\n\\n" : "") +
+        (warnings.length ? `Warnings:\\n- ${warnings.join("\\n- ")}` : "");
+    }
+
+    async function recognizeScreenFile(file) {
+      if (!file) return;
+      try {
+        setCreateStatus("Распознаю скрин...");
+        const formData = new FormData();
+        formData.append("image", file);
+        const res = await fetch("/api/v1/commercial/recognize-screen", {
+          method: "POST",
+          credentials: "include",
+          body: formData
+        });
+        let data = null;
+        try {
+          data = await res.json();
+        } catch (_err) {
+          data = null;
+        }
+        if (!res.ok) {
+          const detail = (data && (data.detail || data.message)) || `HTTP ${res.status}`;
+          throw new Error(detail);
+        }
+        state.recognizedText = (data.recognized_text || "").trim();
+        renderRecognizedText(data);
+        btnPreviewCheckXlsxEl.disabled = !(currentPlatesText() && state.recognizedText);
+        setCreateStatus("Скрин распознан. Текст показан отдельно ниже.");
+      } catch (err) {
+        setCreateStatus(err.message, true);
+      } finally {
+        screenFileInputEl.value = "";
+      }
+    }
+
+    async function downloadPreviewCheckXlsx() {
+      try {
+        const platesText = currentPlatesText();
+        if (!platesText) {
+          throw new Error("Сначала заполните поле «Список плит».");
+        }
+        if (!state.recognizedText) {
+          throw new Error("Сначала нажмите «Распознать СКРИН».");
+        }
+        setCreateStatus("Формирую XLSX проверку...");
+        const res = await fetch("/api/v1/commercial/preview-check-xlsx", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plates_text: platesText,
+            recognized_text: state.recognizedText
+          })
+        });
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            detail = data.detail || detail;
+          } catch (_err) {}
+          throw new Error(detail);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `preview_check_${Date.now()}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        setCreateStatus("XLSX проверка скачан.");
+      } catch (err) {
+        setCreateStatus(err.message, true);
+      }
+    }
+
+    async function downloadPreviewXlsx() {
+      try {
+        if (!state.preview || !state.preview.draft_id) {
+          throw new Error("Сначала сгенерируйте превью.");
+        }
+        const payload = currentCreatePayload();
+        setCreateStatus("Готовлю XLSX превью...");
+        const res = await fetch(`/api/v1/commercial/drafts/${state.preview.draft_id}/xlsx`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customer_name: payload.customerName,
+            manager_name: payload.manager.fio || "",
+            manager_phone: payload.manager.contact_number || "",
+            manager_email: payload.manager.email || "",
+            discount_percent: payload.discountPercent,
+            delivery_conditions: payload.deliveryConditions,
+            payment_conditions: payload.paymentConditions
+          })
+        });
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            detail = data.detail || detail;
+          } catch (_err) {}
+          throw new Error(detail);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `KP_preview_${state.preview.draft_id.slice(0, 8)}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        setCreateStatus("XLSX превью скачан.");
+      } catch (err) {
+        setCreateStatus(err.message, true);
+      }
+    }
+
+    async function saveOffer(mode) {
+      try {
+        if (!canEdit) {
+          throw new Error("Недостаточно прав для сохранения.");
+        }
+        if (!state.preview || !state.preview.order_data || !state.preview.order_data.length) {
+          throw new Error("Сначала сгенерируйте превью.");
+        }
+        setCreateStatus("Сохраняю КП...");
+        const payload = currentCreatePayload();
+        const request = {
+          creation_date: toDateRu(new Date()),
+          customer_name: payload.customerName,
+          manager_name: payload.manager.fio || "",
+          manager_phone: payload.manager.contact_number || "",
+          manager_email: payload.manager.email || "",
+          discount_percent: payload.discountPercent,
+          delivery_conditions: payload.deliveryConditions,
+          payment_conditions: payload.paymentConditions,
+          execution_terms_input: payload.executionTermsInput,
+          save_mode: mode,
+          order_data: state.preview.order_data
+        };
+        const result = await api("/api/v1/offers", {
+          method: "POST",
+          body: JSON.stringify(request)
+        });
+        setCreateStatus(`КП сохранено: №${result.kp_id} (${result.status}).`);
+        await loadOffers(mode === "archive" ? "archived" : "in_production");
+      } catch (err) {
+        setCreateStatus(err.message, true);
+      }
+    }
+
+    function statusText(status) {
+      if (status === "в архиве") return "📦 в архиве";
+      if (status === "в работе") return "🏭 в работе";
+      if (status === "выполнено") return "✅ выполнено";
+      return status || "—";
+    }
+
+    function renderOffers(items) {
+      if (!items.length) {
+        offersBodyEl.innerHTML = "<tr><td colspan='8'>Нет данных</td></tr>";
+        return;
+      }
+      offersBodyEl.innerHTML = items
+        .map((item) => `
+          <tr>
+            <td>${item.kp_id}</td>
+            <td>${esc(item.creation_date || "")}</td>
+            <td>${esc(item.customer_name || "")}</td>
+            <td>${esc(item.manager_name || "")}</td>
+            <td>${statusText(item.status)}</td>
+            <td>${Number(item.completion_percentage || 0).toFixed(1)}%</td>
+            <td>${Number(item.total_amount || 0).toLocaleString("ru-RU")} ₽</td>
+            <td><button data-open-offer="${item.kp_id}">Открыть</button></td>
+          </tr>
+        `)
+        .join("");
+    }
+
+    async function loadOffers(status = state.activeStatus) {
+      try {
+        state.activeStatus = status;
+        setArchiveStatus("Загружаю список КП...");
+        const data = await api(`/api/v1/offers?status=${encodeURIComponent(status)}&limit=500`);
+        renderOffers(data.items || []);
+        setArchiveStatus(`Загружено: ${data.count || 0}`);
+      } catch (err) {
+        setArchiveStatus(err.message, true);
+      }
+    }
+
+    function renderDetails(item) {
+      detailsEmptyEl.style.display = "none";
+      const plates = item.plates || [];
+      const canMove = canEdit && item.status === "в архиве";
+      const canDelete = canEdit;
+      const canDiscount = canEdit;
+      offerDetailsEl.innerHTML = `
+        <p><strong>КП №${item.kp_id}</strong></p>
+        <p>Клиент: ${esc(item.customer_name || "—")}<br>
+        Менеджер: ${esc(item.manager_name || "—")}<br>
+        Дата: ${esc(item.creation_date || "—")}<br>
+        Статус: ${statusText(item.status)}<br>
+        Срок: ${esc(item.execution_terms || "—")}<br>
+        Сумма: ${Number(item.total_amount || 0).toLocaleString("ru-RU")} ₽</p>
+        <p><strong>Позиции (${plates.length}):</strong></p>
+        <div style="max-height: 220px; overflow: auto; border: 1px solid #ddd; padding: 8px;">
+          ${plates.slice(0, 20).map((p, idx) =>
+            `${idx + 1}) ${esc(p.plate_name || "")} - ${Number(p.qty || 0)} шт`
+          ).join("<br>")}
+          ${plates.length > 20 ? "<br>... и еще позиции" : ""}
+        </div>
+        <br>
+        <div style="display:flex; gap:8px; flex-wrap: wrap;">
+          <button data-download-pdf="${item.kp_id}">PDF</button>
+          <button data-download-xlsx="${item.kp_id}">XLSX</button>
+          <button data-update-discount="${item.kp_id}" ${canDiscount ? "" : "disabled"}>Изменить скидку</button>
+          <button data-move-production="${item.kp_id}" ${canMove ? "" : "disabled"}>В производство</button>
+          <button data-delete-offer="${item.kp_id}" ${canDelete ? "" : "disabled"}>Удалить</button>
+        </div>
+      `;
+    }
+
+    async function openOffer(kpId) {
+      try {
+        setArchiveStatus(`Открываю КП №${kpId}...`);
+        const item = await api(`/api/v1/offers/${kpId}`);
+        state.selectedOfferId = kpId;
+        renderDetails(item);
+        setArchiveStatus(`Открыто КП №${kpId}`);
+      } catch (err) {
+        setArchiveStatus(err.message, true);
+      }
+    }
+
+    async function searchOffer() {
+      const input = document.getElementById("search-kp-id").value.trim();
+      if (!input) {
+        loadOffers(state.activeStatus);
+        return;
+      }
+      try {
+        setArchiveStatus("Ищу КП...");
+        const data = await api(`/api/v1/offers?kp_id=${encodeURIComponent(input)}`);
+        renderOffers(data.items || []);
+        setArchiveStatus(`Найдено: ${data.count || 0}`);
+      } catch (err) {
+        setArchiveStatus(err.message, true);
+      }
+    }
+
+    async function updateDiscount(kpId) {
+      const raw = prompt("Введите скидку 0-100", "0");
+      if (raw === null) return;
+      try {
+        const value = Number(String(raw).replace(",", "."));
+        if (Number.isNaN(value)) throw new Error("Неверный формат скидки.");
+        await api(`/api/v1/offers/${kpId}/discount`, {
+          method: "PATCH",
+          body: JSON.stringify({ discount_percent: value })
+        });
+        await openOffer(kpId);
+        await loadOffers(state.activeStatus);
+      } catch (err) {
+        setArchiveStatus(err.message, true);
+      }
+    }
+
+    async function moveToProduction(kpId) {
+      const raw = prompt("Введите срок (например: 14 дней / 2 недели / 01.05.2026)", "14 дней");
+      if (raw === null) return;
+      try {
+        await api(`/api/v1/offers/${kpId}/move-to-production`, {
+          method: "PATCH",
+          body: JSON.stringify({ execution_terms_input: raw })
+        });
+        await openOffer(kpId);
+        await loadOffers("in_production");
+      } catch (err) {
+        setArchiveStatus(err.message, true);
+      }
+    }
+
+    async function deleteOffer(kpId) {
+      const ok = confirm(`Удалить КП №${kpId}? Это действие необратимо.`);
+      if (!ok) return;
+      try {
+        await api(`/api/v1/offers/${kpId}`, { method: "DELETE" });
+        offerDetailsEl.innerHTML = "";
+        detailsEmptyEl.style.display = "block";
+        await loadOffers(state.activeStatus);
+      } catch (err) {
+        setArchiveStatus(err.message, true);
+      }
+    }
+
+    btnPreviewEl.addEventListener("click", createPreview);
+    btnRecognizeScreenEl.addEventListener("click", () => screenFileInputEl.click());
+    screenFileInputEl.addEventListener("change", () => {
+      const file = screenFileInputEl.files && screenFileInputEl.files[0];
+      recognizeScreenFile(file);
+    });
+    btnPreviewCheckXlsxEl.addEventListener("click", downloadPreviewCheckXlsx);
+    btnPreviewXlsxEl.addEventListener("click", downloadPreviewXlsx);
+    btnSaveWorkEl.addEventListener("click", () => saveOffer("work"));
+    btnSaveArchiveEl.addEventListener("click", () => saveOffer("archive"));
+    document.getElementById("plates-text").addEventListener("input", () => {
+      btnPreviewCheckXlsxEl.disabled = !(currentPlatesText() && state.recognizedText);
+    });
+    document.getElementById("btn-search-kp").addEventListener("click", searchOffer);
+
+    document.querySelectorAll(".status-btn").forEach((btn) => {
+      btn.addEventListener("click", () => loadOffers(btn.dataset.status || "all"));
+    });
+
+    offersBodyEl.addEventListener("click", (event) => {
+      const btn = event.target.closest("button[data-open-offer]");
+      if (!btn) return;
+      openOffer(btn.dataset.openOffer);
+    });
+
+    document.getElementById("offer-details-card").addEventListener("click", (event) => {
+      const el = event.target;
+      if (!(el instanceof HTMLElement)) return;
+      const pdfId = el.getAttribute("data-download-pdf");
+      const xlsxId = el.getAttribute("data-download-xlsx");
+      const discountId = el.getAttribute("data-update-discount");
+      const moveId = el.getAttribute("data-move-production");
+      const deleteId = el.getAttribute("data-delete-offer");
+      if (pdfId) {
+        window.open(`/api/v1/offers/${pdfId}/pdf`, "_blank");
+      } else if (xlsxId) {
+        window.open(`/api/v1/offers/${xlsxId}/xlsx`, "_blank");
+      } else if (discountId) {
+        updateDiscount(discountId);
+      } else if (moveId) {
+        moveToProduction(moveId);
+      } else if (deleteId) {
+        deleteOffer(deleteId);
+      }
+    });
+
+    async function bootstrap() {
+      if (!canEdit) {
+        createCardEl.style.display = "none";
+      }
+      state.recognizedText = "";
+      recognizedOutputEl.textContent = "Распознанный текст из скрина появится здесь.";
+      btnPreviewCheckXlsxEl.disabled = true;
+      btnPreviewXlsxEl.disabled = true;
+      btnSaveWorkEl.disabled = true;
+      btnSaveArchiveEl.disabled = true;
+      await loadManagers();
+      await loadOffers("archived");
+    }
+
+    bootstrap();
+    </script>
+    """
     )
-    body = _nav(user) + "<h1>Менеджеры</h1>" + f"<table><tr><th>ID</th><th>ФИО</th><th>Телефон</th><th>Email</th></tr>{rows}</table>"
     return _page("Managers", body)
 
 
