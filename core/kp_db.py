@@ -20,6 +20,12 @@ import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
+from core.kp_offer_utils import (
+    append_transport_to_order_data,
+    extract_transport_from_order_data,
+    is_transport_offer_item,
+)
+
 # Путь к базе данных (в корне проекта)
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'plita.db')
 _DEBUG_SESSION_LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-d7e22e.log')
@@ -82,6 +88,8 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
                 subtotal REAL,
                 vat_amount REAL,
                 total_amount REAL,
+                transport_hours REAL,
+                transport_price_per_hour REAL,
                 delivery_conditions TEXT,
                 payment_conditions TEXT,
                 execution_terms TEXT
@@ -260,6 +268,21 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
             if rows:
                 print(f"[DB] ✅ Обратная засылка length_dm_raw: обновлено {len(rows)} строк")
         
+        # === МИГРАЦИЯ: Добавляем колонку status в kp_meta если её нет ===
+        # Это нужно для существующих баз данных, где таблица уже создана без этого поля
+        cur.execute("PRAGMA table_info(KP_offers)")
+        offer_columns = [col[1] for col in cur.fetchall()]
+
+        if 'transport_hours' not in offer_columns:
+            print("[DB] Миграция: добавляем колонку transport_hours в KP_offers...")
+            cur.execute("ALTER TABLE KP_offers ADD COLUMN transport_hours REAL")
+            print("[DB] ✅ Колонка transport_hours добавлена в KP_offers")
+
+        if 'transport_price_per_hour' not in offer_columns:
+            print("[DB] Миграция: добавляем колонку transport_price_per_hour в KP_offers...")
+            cur.execute("ALTER TABLE KP_offers ADD COLUMN transport_price_per_hour REAL")
+            print("[DB] ✅ Колонка transport_price_per_hour добавлена в KP_offers")
+
         # === МИГРАЦИЯ: Добавляем колонку status в kp_meta если её нет ===
         # Это нужно для существующих баз данных, где таблица уже создана без этого поля
         cur.execute("PRAGMA table_info(kp_meta)")
@@ -517,6 +540,8 @@ def save_kp_to_db(
     payment_conditions: Optional[str] = None,
     execution_terms: Optional[str] = None,
     status: str = 'в работе',
+    transport_hours: Optional[float] = None,
+    transport_price_per_hour: Optional[float] = None,
     db_path: str = DEFAULT_DB
 ) -> int:
     """
@@ -544,22 +569,35 @@ def save_kp_to_db(
         Порядковый номер КП (kp_id)
     """
     init_schema(db_path)
+
+    if transport_hours is None or transport_price_per_hour is None:
+        extracted_hours, extracted_price = extract_transport_from_order_data(order_data)
+        if transport_hours is None:
+            transport_hours = extracted_hours
+        if transport_price_per_hour is None:
+            transport_price_per_hour = extracted_price
+
+    normalized_order_data = append_transport_to_order_data(
+        order_data,
+        transport_hours,
+        transport_price_per_hour,
+    )
     
     # 🔥 ИСПРАВЛЕНИЕ: Используем ту же функцию расчета, что и в XLSX
     # Это гарантирует, что суммы в БД и в XLSX файле будут одинаковыми
     try:
         from core.commercial_offer_xlsx import calculate_total_cost
-        totals = calculate_total_cost(order_data, discount_percent)
+        totals = calculate_total_cost(normalized_order_data, discount_percent)
         subtotal = totals['subtotal']
         vat_amount = totals['vat_amount']
         total_amount = totals['total_with_vat']
     except ImportError:
         # Fallback: старая логика, если модуль не найден
         subtotal = 0.0
-        for item in order_data:
+        for item in normalized_order_data:
             qty = item.get('qty', 0)
             unit_price = item.get('unit_price', 0.0)
-            discounted_price = unit_price * (1 - discount_percent / 100)
+            discounted_price = unit_price if item.get('exclude_from_discount') else unit_price * (1 - discount_percent / 100)
             subtotal += discounted_price * qty
         
         vat_amount = round(subtotal * 0.22, 2)
@@ -576,12 +614,12 @@ def save_kp_to_db(
         cur.execute('''
             INSERT INTO KP_offers (
                 creation_date, customer_name, manager_name, discount_percent,
-                subtotal, vat_amount, total_amount,
+                subtotal, vat_amount, total_amount, transport_hours, transport_price_per_hour,
                 delivery_conditions, payment_conditions, execution_terms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             creation_date, customer_name, manager_name, discount_percent,
-            subtotal, vat_amount, total_amount,
+            subtotal, vat_amount, total_amount, transport_hours, transport_price_per_hour,
             delivery_conditions, payment_conditions, execution_terms
         ))
         
@@ -589,7 +627,12 @@ def save_kp_to_db(
         kp_id = cur.lastrowid
         
         # Сохраняем позиции (плиты)
-        for idx, item in enumerate(order_data, start=1):
+        position_number = 0
+        for item in normalized_order_data:
+            if is_transport_offer_item(item):
+                continue
+
+            position_number += 1
             qty = item.get('qty', 0)
             unit_price = item.get('unit_price', 0.0)
             discounted_price = unit_price * (1 - discount_percent / 100)
@@ -609,7 +652,7 @@ def save_kp_to_db(
                     length_dm_raw, nomenclature_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                kp_id, idx, plate_name,
+                kp_id, position_number, plate_name,
                 item.get('length_m', 0), item.get('width_m', 0), item.get('load_class', 800),
                 qty, unit_weight, weight, discounted_price, unit_price,
                 item.get('length_dm_raw', '') or '', nomenclature_id
@@ -666,19 +709,22 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
         conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         
-        cur.execute('SELECT discount_percent FROM KP_offers WHERE kp_id = ?', (kp_id,))
+        cur.execute(
+            'SELECT discount_percent, transport_hours, transport_price_per_hour FROM KP_offers WHERE kp_id = ?',
+            (kp_id,),
+        )
         row = cur.fetchone()
         if not row:
             return False
         current_discount = row[0] or 0.0
+        transport_hours = row[1]
+        transport_price_per_hour = row[2]
         
         cur.execute(
             'SELECT id, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price FROM kp_plates WHERE kp_id = ? ORDER BY position_number',
             (kp_id,)
         )
         plates = cur.fetchall()
-        if not plates:
-            return False
         
         order_data = []
         for p in plates:
@@ -702,7 +748,12 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
                 'weight': weight,
             })
         
-        totals = calculate_total_cost(order_data, new_discount)
+        recalculation_order_data = append_transport_to_order_data(
+            order_data,
+            transport_hours,
+            transport_price_per_hour,
+        )
+        totals = calculate_total_cost(recalculation_order_data, new_discount)
         subtotal = totals['subtotal']
         vat_amount = totals['vat_amount']
         total_amount = totals['total_with_vat']
@@ -729,6 +780,91 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
         
         conn.commit()
         return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def update_kp_transport(
+    kp_id: int,
+    transport_hours: float,
+    transport_price_per_hour: float,
+    db_path: str = DEFAULT_DB,
+) -> bool:
+    """Сохраняет транспортные расходы в шапке КП и пересчитывает итоговые суммы."""
+    if transport_hours <= 0 or transport_price_per_hour <= 0:
+        return False
+
+    init_schema(db_path)
+    try:
+        from core.commercial_offer_xlsx import calculate_total_cost
+    except ImportError:
+        return False
+
+    conn = _connect(db_path)
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+        cur.execute('SELECT discount_percent FROM KP_offers WHERE kp_id = ?', (kp_id,))
+        row = cur.fetchone()
+        if not row:
+            return False
+
+        discount_percent = row[0] or 0.0
+        cur.execute(
+            'SELECT plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, unit_price, discounted_price '
+            'FROM kp_plates WHERE kp_id = ? ORDER BY position_number',
+            (kp_id,),
+        )
+        plates = cur.fetchall()
+
+        order_data = []
+        factor = 1.0 - (discount_percent / 100.0)
+        if factor <= 0:
+            factor = 1.0
+
+        for plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, unit_price_col, discounted_price in plates:
+            if unit_price_col is not None and unit_price_col > 0:
+                unit_price = float(unit_price_col)
+            else:
+                unit_price = (discounted_price or 0) / factor
+
+            weight = total_weight if total_weight is not None and total_weight > 0 else (unit_weight or 0) * (qty or 0)
+            order_data.append({
+                'name': plate_name or '',
+                'length_m': length_m or 0,
+                'width_m': width_m or 0,
+                'qty': qty or 0,
+                'load_class': load_class or 800,
+                'unit_price': unit_price,
+                'weight': weight,
+            })
+
+        recalculation_order_data = append_transport_to_order_data(
+            order_data,
+            transport_hours,
+            transport_price_per_hour,
+        )
+        totals = calculate_total_cost(recalculation_order_data, discount_percent)
+
+        cur.execute(
+            '''
+            UPDATE KP_offers
+            SET transport_hours = ?, transport_price_per_hour = ?, subtotal = ?, vat_amount = ?, total_amount = ?
+            WHERE kp_id = ?
+            ''',
+            (
+                transport_hours,
+                transport_price_per_hour,
+                totals['subtotal'],
+                totals['vat_amount'],
+                totals['total_with_vat'],
+                kp_id,
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     except Exception:
         return False
     finally:

@@ -48,6 +48,17 @@ def conditions_choice_kb() -> InlineKeyboardMarkup:
     )
 
 
+def transport_choice_kb() -> InlineKeyboardMarkup:
+    """Клавиатура выбора: добавлять ли транспортные расходы в КП."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚚 Добавить транспорт", callback_data="transport_add")],
+            [InlineKeyboardButton(text="⏭️ Без транспорта", callback_data="transport_skip")],
+            [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="cancel_process")],
+        ]
+    )
+
+
 def save_to_db_kb() -> InlineKeyboardMarkup:
     """Клавиатура для сохранения КП в БД"""
     return InlineKeyboardMarkup(
@@ -722,6 +733,7 @@ def kp_details_kb(kp_id: int, total_amount: float = 0, status: str | None = None
     rows = [
         [InlineKeyboardButton(text=pdf_text, callback_data=f"download_pdf_{kp_id}")],
         [InlineKeyboardButton(text=xlsx_text, callback_data=f"download_xlsx_{kp_id}")],
+        [InlineKeyboardButton(text="🚚 Транспортные расходы", callback_data=f"transport_kp_{kp_id}")],
         [InlineKeyboardButton(text="✏️ Изменить скидку", callback_data=f"change_discount_{kp_id}")],
         [InlineKeyboardButton(text="🗑️ Удалить КП", callback_data=f"delete_kp_{kp_id}")],
     ]

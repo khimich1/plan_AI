@@ -13,6 +13,9 @@ class KPStates(StatesGroup):
     waiting_plates_confirm = State()
     waiting_wide_plates_replacement = State()
     waiting_discount = State()
+    waiting_transport_choice = State()
+    waiting_transport_hours = State()
+    waiting_transport_price = State()
     waiting_conditions_choice = State()
     waiting_delivery_conditions = State()
     waiting_payment_conditions = State()
@@ -59,6 +62,8 @@ class ArchiveStates(StatesGroup):
     """Состояния для раздела «Архив» (поиск по номеру КП)."""
     waiting_kp_number = State()
     waiting_discount = State()
+    waiting_transport_hours = State()
+    waiting_transport_price = State()
     waiting_execution_terms_for_production = State()
 
 

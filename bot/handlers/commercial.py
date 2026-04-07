@@ -28,6 +28,12 @@ from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.kp_plate_weight import resolve_kp_line_weight_kg
 from core.db_config import PB_DB_PATH
+from core.kp_offer_utils import (
+    append_transport_to_order_data,
+    format_offer_quantity,
+    get_offer_item_unit,
+    is_transport_offer_item,
+)
 from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core import kp_db
@@ -36,7 +42,7 @@ from core.exceptions import PlateParseError, FileGenerationError
 # Настройка логирования
 logger = logging.getLogger(__name__)
 
-from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, save_to_db_with_files_kb, cancel_process_kb, managers_selection_kb, confirm_plates_list_kb, wide_plates_actions_kb
+from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, save_to_db_with_files_kb, cancel_process_kb, managers_selection_kb, confirm_plates_list_kb, wide_plates_actions_kb, transport_choice_kb
 from ..states import KPStates
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -134,6 +140,27 @@ async def _prompt_kp_step1_plates(message: Message) -> None:
     await message.answer(
         "Или нажмите кнопку ниже для отмены:",
         reply_markup=cancel_process_kb(),
+    )
+
+
+async def _prompt_transport_choice(message: Message, state: FSMContext, discount_percent: float) -> None:
+    """Запрашивает, нужно ли добавить транспортные расходы в КП."""
+    await state.set_state(KPStates.waiting_transport_choice)
+    await message.answer(
+        f"✅ Скидка: {discount_percent}%\n\n"
+        "Шаг 5 из 6: Транспортные расходы\n\n"
+        "Добавить транспортные расходы в КП?",
+        reply_markup=transport_choice_kb(),
+    )
+
+
+async def _prompt_conditions_choice(message: Message, state: FSMContext) -> None:
+    """Запрашивает условия поставки и оплаты после ввода транспорта."""
+    await state.set_state(KPStates.waiting_conditions_choice)
+    await message.answer(
+        "Шаг 6 из 6: Условия поставки и оплаты\n\n"
+        "Выберите вариант:",
+        reply_markup=conditions_choice_kb(),
     )
 
 
@@ -831,7 +858,7 @@ async def plates_confirm_unexpected_text(message: Message, state: FSMContext):
 
 @router.message(KPStates.waiting_discount)
 async def receive_discount_and_ask_conditions(message: Message, state: FSMContext):
-    """Шаг 4 из 5: получаем процент скидки и переходим к условиям"""
+    """Шаг 4 из 6: получаем процент скидки и переходим к выбору транспорта."""
     try:
         # Парсим процент скидки
         discount_text = message.text.strip().replace('%', '').replace(',', '.')
@@ -860,21 +887,103 @@ async def receive_discount_and_ask_conditions(message: Message, state: FSMContex
         return
     
     # Сохраняем скидку в состояние
-    await state.update_data(discount_percent=discount_percent)
-    
-    # Переходим к шагу 5 - выбор условий
-    await state.set_state(KPStates.waiting_conditions_choice)
+    await state.update_data(
+        discount_percent=discount_percent,
+        transport_hours=None,
+        transport_price_per_hour=None,
+    )
+    await _prompt_transport_choice(message, state, discount_percent)
+
+
+@router.callback_query(KPStates.waiting_transport_choice, F.data.in_(["transport_add", "transport_skip"]))
+async def receive_transport_choice(callback: CallbackQuery, state: FSMContext):
+    """Шаг 5 из 6: выбор, добавлять ли транспорт в КП."""
+    choice = callback.data
+    await callback.answer()
+
+    if choice == "transport_add":
+        await callback.message.edit_text("✅ Выбрано: Добавить транспорт")
+        await state.set_state(KPStates.waiting_transport_hours)
+        await callback.message.answer(
+            "Введите количество часов транспортных услуг.\n"
+            "Пример: 2 или 2,5",
+            reply_markup=main_menu_kb()
+        )
+        await callback.message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
+        )
+        return
+
+    if choice == "transport_skip":
+        await state.update_data(transport_hours=None, transport_price_per_hour=None)
+        await callback.message.edit_text("✅ Выбрано: Без транспорта")
+        await _prompt_conditions_choice(callback.message, state)
+
+
+@router.message(KPStates.waiting_transport_hours)
+async def receive_transport_hours(message: Message, state: FSMContext):
+    """Шаг 5 из 6: получаем количество часов транспорта."""
+    try:
+        transport_hours = float(message.text.strip().replace(',', '.'))
+        if transport_hours <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer(
+            "❌ Введите число больше 0. Например: 2 или 2,5.",
+            reply_markup=main_menu_kb()
+        )
+        await message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
+        )
+        return
+
+    await state.update_data(transport_hours=transport_hours)
+    await state.set_state(KPStates.waiting_transport_price)
     await message.answer(
-        f"✅ Скидка: {discount_percent}%\n\n"
-        "Шаг 5 из 5: Условия поставки и оплаты\n\n"
-        "Выберите вариант:",
-        reply_markup=conditions_choice_kb()
+        f"✅ Часы транспорта: {format_offer_quantity(transport_hours)}\n\n"
+        "Теперь введите цену транспортных услуг за 1 час.",
+        reply_markup=main_menu_kb()
+    )
+    await message.answer(
+        "Или нажмите кнопку ниже для отмены:",
+        reply_markup=cancel_process_kb()
     )
 
 
-@router.callback_query(KPStates.waiting_conditions_choice)
+@router.message(KPStates.waiting_transport_price)
+async def receive_transport_price_and_ask_conditions(message: Message, state: FSMContext):
+    """Шаг 5 из 6: получаем цену транспорта и переходим к условиям."""
+    try:
+        transport_price_per_hour = float(message.text.strip().replace(',', '.'))
+        if transport_price_per_hour <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer(
+            "❌ Введите цену за час числом больше 0. Например: 9800 или 9800,50.",
+            reply_markup=main_menu_kb()
+        )
+        await message.answer(
+            "Или нажмите кнопку ниже для отмены:",
+            reply_markup=cancel_process_kb()
+        )
+        return
+
+    data = await state.get_data()
+    transport_hours = data.get("transport_hours")
+    await state.update_data(transport_price_per_hour=transport_price_per_hour)
+    await message.answer(
+        f"✅ Транспорт: {format_offer_quantity(transport_hours)} час. × "
+        f"{transport_price_per_hour:,.2f} ₽",
+        reply_markup=main_menu_kb()
+    )
+    await _prompt_conditions_choice(message, state)
+
+
+@router.callback_query(KPStates.waiting_conditions_choice, F.data.in_(["conditions_default", "conditions_custom"]))
 async def receive_conditions_choice(callback: CallbackQuery, state: FSMContext):
-    """Шаг 5 из 5: выбор условий (по умолчанию или свои) — inline-кнопки."""
+    """Шаг 6 из 6: выбор условий (по умолчанию или свои) — inline-кнопки."""
     choice = callback.data
     
     # Убираем "часики" с кнопки
@@ -960,6 +1069,8 @@ async def generate_all_documents(message: Message, state: FSMContext):
     raw_plate_lines: list[str] = list(data.get("raw_plate_lines") or [])
     is_photo_kp: bool = bool(data.get("is_photo", False))
     discount_percent = data.get('discount_percent', 0)
+    transport_hours = data.get('transport_hours')
+    transport_price_per_hour = data.get('transport_price_per_hour')
     delivery_conditions = data.get('delivery_conditions', '')
     payment_conditions = data.get('payment_conditions', '')
     
@@ -970,6 +1081,12 @@ async def generate_all_documents(message: Message, state: FSMContext):
         f"• Клиент: {client_name}\n"
         f"• Скидка: {discount_percent}%\n"
     )
+    if transport_hours and transport_price_per_hour:
+        transport_total = float(transport_hours) * float(transport_price_per_hour)
+        summary_text += (
+            f"• Транспорт: {format_offer_quantity(transport_hours)} час. × "
+            f"{float(transport_price_per_hour):,.2f} ₽ = {transport_total:,.2f} ₽\n"
+        )
     if delivery_conditions:
         summary_text += f"• Условия поставки: {delivery_conditions}\n"
     if payment_conditions:
@@ -1227,6 +1344,11 @@ async def generate_all_documents(message: Message, state: FSMContext):
         # 🆕 Обогащаем order_data точными названиями из prays_plity
         from core.kp_db import enrich_order_data_with_nomenclature
         order_data = await asyncio.to_thread(enrich_order_data_with_nomenclature, order_data)
+        order_data = append_transport_to_order_data(
+            order_data,
+            transport_hours,
+            transport_price_per_hour,
+        )
 
         # #region agent log
         try:
@@ -1276,11 +1398,15 @@ async def generate_all_documents(message: Message, state: FSMContext):
         
         # Документы генерируются по нажатию кнопок — показываем кнопки сразу
         # Формируем сводку
-        total_qty = sum(item['qty'] for item in order_data)
+        plate_items = [item for item in order_data if not is_transport_offer_item(item)]
+        total_qty = sum(item['qty'] for item in plate_items)
         summary = f"✅ Коммерческое предложение готово!\n\n"
         summary += f"📋 Заказ:\n"
         for item in order_data:
-            summary += f"  • {item['name']} — {item['qty']} шт\n"
+            summary += (
+                f"  • {item['name']} — {format_offer_quantity(item['qty'])} "
+                f"{get_offer_item_unit(item)}\n"
+            )
         summary += f"\n📊 Всего позиций: {len(order_data)}\n"
         summary += f"📦 Всего плит: {total_qty} шт\n\n"
         summary += "✨ Документы содержат:\n"
@@ -1311,6 +1437,8 @@ async def generate_all_documents(message: Message, state: FSMContext):
             kp_manager_phone=manager_phone,
             kp_manager_email=manager_email,
             kp_discount_percent=discount_percent,
+            kp_transport_hours=transport_hours,
+            kp_transport_price_per_hour=transport_price_per_hour,
             kp_delivery_conditions=delivery_conditions,
             kp_payment_conditions=payment_conditions,
         )
@@ -2008,6 +2136,8 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     manager_phone = data.get('kp_manager_phone', '')
     manager_email = data.get('kp_manager_email', '')
     discount_percent = data.get('kp_discount_percent', 0)
+    transport_hours = data.get('kp_transport_hours')
+    transport_price_per_hour = data.get('kp_transport_price_per_hour')
     delivery_conditions = data.get('kp_delivery_conditions')
     payment_conditions = data.get('kp_payment_conditions')
     offer_date = data.get('kp_offer_date')
@@ -2061,7 +2191,9 @@ async def receive_execution_terms(message: Message, state: FSMContext):
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
             execution_terms=execution_terms,  # Теперь это дата в формате ДД.ММ.ГГГГ
-            status='в работе'
+            status='в работе',
+            transport_hours=transport_hours,
+            transport_price_per_hour=transport_price_per_hour,
         )
         
         # 🔥 ИСПРАВЛЕНИЕ: Используем ту же функцию расчета, что и в XLSX и в save_kp_to_db
@@ -2151,6 +2283,8 @@ async def callback_save_kp_to_archive(callback: CallbackQuery, state: FSMContext
     manager_phone = data.get('kp_manager_phone', '')
     manager_email = data.get('kp_manager_email', '')
     discount_percent = data.get('kp_discount_percent', 0)
+    transport_hours = data.get('kp_transport_hours')
+    transport_price_per_hour = data.get('kp_transport_price_per_hour')
     delivery_conditions = data.get('kp_delivery_conditions')
     payment_conditions = data.get('kp_payment_conditions')
     offer_date = data.get('kp_offer_date')
@@ -2204,7 +2338,9 @@ async def callback_save_kp_to_archive(callback: CallbackQuery, state: FSMContext
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
             execution_terms=None,  # БЕЗ СРОКОВ!
-            status='в архиве'  # СТАТУС АРХИВА!
+            status='в архиве',  # СТАТУС АРХИВА!
+            transport_hours=transport_hours,
+            transport_price_per_hour=transport_price_per_hour,
         )
         
         # Получаем итоговую сумму из сохраненного КП

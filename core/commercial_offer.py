@@ -28,6 +28,23 @@ try:
 except ImportError:
     from kp_plate_weight import resolve_kp_line_weight_kg
 
+try:
+    from .kp_offer_utils import (
+        calculate_offer_totals,
+        format_offer_quantity,
+        get_offer_item_price_with_discount,
+        get_offer_item_unit,
+        is_weightless_offer_item,
+    )
+except ImportError:
+    from kp_offer_utils import (
+        calculate_offer_totals,
+        format_offer_quantity,
+        get_offer_item_price_with_discount,
+        get_offer_item_unit,
+        is_weightless_offer_item,
+    )
+
 
 # ==================== КОНСТАНТЫ ====================
 
@@ -224,43 +241,11 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) ->
     Returns:
         Словарь с итоговыми суммами
     """
-    total_qty = 0
-    total_cost_with_vat = 0.0  # Сумма с НДС (unit_price уже включает НДС)
-    
-    for item in order_data:
-        qty = item.get('qty', 0)
-
-        # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
-        if 'unit_price' in item and item['unit_price'] is not None:
-            unit_price = item['unit_price']  # Цена УЖЕ включает НДС
-        else:
-            # Fallback: старая логика (только базовая цена из БД)
-            length_m = item.get('length_m', 0)
-            width_m = item.get('width_m', 0)
-            load_class = item.get('load_class', 800)
-            unit_price = get_plate_price(length_m, width_m, load_class)
-
-        # Применяем скидку к цене (если указана)
-        discounted_price = unit_price * (1 - discount_percent / 100)
-
-        # Считаем сумму по позиции (это уже с НДС)
-        item_cost = discounted_price * qty
-        
-        total_qty += qty
-        total_cost_with_vat += item_cost
-    
-    # 🔥 ИСПРАВЛЕНИЕ: unit_price уже включает НДС, поэтому нужно вычесть НДС
-    # Сумма без НДС = сумма с НДС / 1.22
-    subtotal = round(total_cost_with_vat / 1.22, 2)
-    vat_amount = round(total_cost_with_vat - subtotal, 2)
-    total_with_vat = round(total_cost_with_vat, 2)
-    
-    return {
-        'total_qty': total_qty,
-        'subtotal': subtotal,
-        'vat_amount': vat_amount,
-        'total_with_vat': total_with_vat
-    }
+    return calculate_offer_totals(
+        order_data,
+        discount_percent=discount_percent,
+        fallback_price_getter=get_plate_price,
+    )
 
 
 def format_phone(phone: str) -> str:
@@ -502,45 +487,29 @@ def generate_commercial_offer_pdf(
         name_raw = item.get('name', 'Плиты ПБ')
         name = escape(name_raw)
         qty = item.get('qty', 0)
-        length_m = item.get('length_m', 0)
-        width_m = item.get('width_m', 0)
-        load_class = item.get('load_class')
-
-        # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
-        if 'unit_price' in item and item['unit_price'] is not None:
-            unit_price = item['unit_price']
-        else:
-            # Fallback: старая логика (только базовая цена из БД)
-            # Если класс нагрузки явно не передан, пробуем вытащить его из имени плиты.
-            # Формат имени: "Плиты ПБ 71-12-10п", "ПБ 69-12-12,5п" и т.п.
-            if load_class is None:
-                try:
-                    from config_and_data import parse_load_code_from_name
-                except ImportError:
-                    load_class = 800
-                else:
-                    load_code = parse_load_code_from_name(name_raw, default=8)
-                    load_class = max(1, load_code) * 100  # 8 -> 800, 10 -> 1000 и т.п.
-            
-            unit_price = get_plate_price(length_m, width_m, load_class)
-        
-        # Применяем скидку к цене (если указана)
-        discounted_price = unit_price * (1 - discount_percent / 100)
+        discounted_price = get_offer_item_price_with_discount(
+            item,
+            discount_percent=discount_percent,
+            fallback_price_getter=get_plate_price,
+        )
         item_sum = discounted_price * qty
-        
-        # Вес: plate_weights по размерам (нагрузка не учитывается), иначе approximate; как в XLSX
-        _, total_item_weight = resolve_kp_line_weight_kg(item)
-        total_weight += total_item_weight
-        
-        weight_str = f"{total_item_weight:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+
+        if is_weightless_offer_item(item):
+            total_item_weight = 0.0
+            weight_str = ""
+        else:
+            _, total_item_weight = resolve_kp_line_weight_kg(item)
+            total_weight += total_item_weight
+            weight_str = f"{total_item_weight:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+
         price_str = f"{discounted_price:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
         sum_str = f"{item_sum:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-        
+
         table_data.append([
             str(idx),
             Paragraph(name, style_table_text),
-            str(qty),
-            'шт',
+            format_offer_quantity(qty),
+            get_offer_item_unit(item),
             weight_str,
             price_str,
             sum_str

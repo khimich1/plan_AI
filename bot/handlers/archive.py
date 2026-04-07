@@ -15,6 +15,7 @@ from core import kp_db
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.gantt_excel import create_gantt_excel
+from core.kp_offer_utils import append_transport_to_order_data, format_offer_quantity
 from ..bot_config import OUTPUTS_DIR_STR
 from ..keyboards import main_menu_kb, archive_sections_kb, kp_details_kb
 from ..states import ArchiveStates
@@ -55,7 +56,18 @@ def _order_data_from_kp_info(kp_info: dict) -> list:
             "unit_price": float(unit_price),
             "weight": weight or 0,
         })
-    return order_data
+    return append_transport_to_order_data(
+        order_data,
+        kp_info.get("transport_hours"),
+        kp_info.get("transport_price_per_hour"),
+    )
+
+
+def _parse_positive_number(raw_value: str) -> float:
+    value = float((raw_value or "").strip().replace(",", "."))
+    if value <= 0:
+        raise ValueError
+    return value
 
 
 @router.message(F.text == "📁 Архив")
@@ -355,45 +367,8 @@ async def view_kp_details(callback: CallbackQuery):
         )
         return
     
-    # Формируем детальное описание
-    text = f"📋 Коммерческое предложение № {kp_id}\n\n"
-    text += f"👤 Клиент: {kp_info.get('customer_name', 'Не указан')}\n"
-    text += f"👨‍💼 Менеджер: {kp_info.get('manager_name', 'Не указан')}\n"
-    text += f"📅 Дата создания: {kp_info.get('creation_date', 'Не указана')}\n"
-    
-    # Статус с эмодзи
-    status = kp_info.get('status', 'Неизвестен')
-    status_emoji = {
-        'в архиве': '📦',
-        'в работе': '🏭',
-        'выполнено': '✅',
-        'отклонено': '❌'
-    }.get(status, '❓')
-    text += f"📊 Статус: {status_emoji} {status}\n"
-    
-    if kp_info.get('execution_terms'):
-        text += f"⏰ Срок выполнения: {kp_info['execution_terms']}\n"
-    
-    text += f"\n💰 Финансы:\n"
-    text += f"  • Сумма без НДС: {kp_info.get('subtotal', 0):,.2f} ₽\n"
-    text += f"  • НДС (22%): {kp_info.get('vat_amount', 0):,.2f} ₽\n"
-    text += f"  • Итого с НДС: {kp_info.get('total_amount', 0):,.2f} ₽\n"
-    
-    if kp_info.get('discount_percent', 0) > 0:
-        text += f"  • Скидка: {kp_info['discount_percent']}%\n"
-    
-    text += f"\n📦 Состав заказа ({len(kp_info.get('plates', []))} позиций):\n"
-    
-    # Список плит (ограничиваем до 10 позиций, чтобы не переполнить сообщение)
-    plates = kp_info.get('plates', [])
-    for i, plate in enumerate(plates[:10], 1):
-        text += f"  {i}. {plate['plate_name']} — {plate['qty']} шт\n"
-    
-    if len(plates) > 10:
-        text += f"  ... и ещё {len(plates) - 10} позиций\n"
-    
     await callback.message.edit_text(
-        text,
+        _format_kp_details_text(kp_info),
         reply_markup=kp_details_kb(kp_id, kp_info.get("total_amount") or 0, kp_info.get("status"))
     )
 
@@ -502,6 +477,14 @@ def _format_kp_details_text(kp_info: dict) -> str:
     text += f"  • Итого с НДС: {kp_info.get('total_amount', 0):,.2f} ₽\n"
     if kp_info.get("discount_percent", 0) > 0:
         text += f"  • Скидка: {kp_info['discount_percent']}%\n"
+    transport_hours = kp_info.get("transport_hours")
+    transport_price_per_hour = kp_info.get("transport_price_per_hour")
+    if transport_hours and transport_price_per_hour:
+        transport_total = float(transport_hours) * float(transport_price_per_hour)
+        text += (
+            f"  • Транспорт: {format_offer_quantity(transport_hours)} {('час' if float(transport_hours) == 1 else 'час.')}"
+            f" × {float(transport_price_per_hour):,.2f} ₽ = {transport_total:,.2f} ₽\n"
+        )
     plates = kp_info.get("plates", [])
     text += f"\n📦 Состав заказа ({len(plates)} позиций):\n"
     for i, plate in enumerate(plates[:10], 1):
@@ -509,6 +492,89 @@ def _format_kp_details_text(kp_info: dict) -> str:
     if len(plates) > 10:
         text += f"  ... и ещё {len(plates) - 10} позиций\n"
     return text
+
+
+@router.callback_query(F.data.startswith("transport_kp_"))
+async def ask_transport_costs(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает количество часов транспортных расходов для выбранного КП."""
+    await callback.answer()
+    kp_id = int(callback.data.split("_")[-1])
+    kp_info = kp_db.get_kp_by_id(kp_id)
+    if not kp_info:
+        await callback.message.answer("❌ КП не найдено в базе данных.")
+        return
+
+    await state.update_data(transport_kp_id=kp_id)
+    await state.set_state(ArchiveStates.waiting_transport_hours)
+
+    existing_hours = kp_info.get("transport_hours")
+    existing_price = kp_info.get("transport_price_per_hour")
+    existing_text = ""
+    if existing_hours and existing_price:
+        existing_text = (
+            "\nТекущие значения:\n"
+            f"• Часы: {format_offer_quantity(existing_hours)}\n"
+            f"• Цена за час: {float(existing_price):,.2f} ₽\n"
+        )
+
+    await callback.message.answer(
+        "🚚 Транспортные расходы\n\n"
+        "Введите количество часов транспортных услуг."
+        f"{existing_text}\n"
+        "Пример: 2 или 2,5"
+    )
+
+
+@router.message(ArchiveStates.waiting_transport_hours, F.text)
+async def receive_transport_hours(message: Message, state: FSMContext):
+    """Сохраняет часы транспорта и переходит к запросу цены за час."""
+    try:
+        transport_hours = _parse_positive_number(message.text)
+    except ValueError:
+        await message.answer("Введите число больше 0. Например: 2 или 2,5.")
+        return
+
+    await state.update_data(transport_hours=transport_hours)
+    await state.set_state(ArchiveStates.waiting_transport_price)
+    await message.answer(
+        f"✅ Часы транспорта: {format_offer_quantity(transport_hours)}\n\n"
+        "Теперь введите цену транспортных услуг за 1 час."
+    )
+
+
+@router.message(ArchiveStates.waiting_transport_price, F.text)
+async def receive_transport_price(message: Message, state: FSMContext):
+    """Сохраняет транспортные расходы в КП и обновляет карточку."""
+    data = await state.get_data()
+    kp_id = data.get("transport_kp_id")
+    transport_hours = data.get("transport_hours")
+    if kp_id is None or transport_hours is None:
+        await state.clear()
+        await message.answer("Сессия сброшена. Откройте КП снова и повторите ввод.")
+        return
+
+    try:
+        transport_price_per_hour = _parse_positive_number(message.text)
+    except ValueError:
+        await message.answer("Введите цену за час числом больше 0. Например: 9800 или 9800,50.")
+        return
+
+    success = kp_db.update_kp_transport(kp_id, transport_hours, transport_price_per_hour)
+    await state.clear()
+    if not success:
+        await message.answer("❌ Не удалось сохранить транспортные расходы.")
+        return
+
+    kp_info = kp_db.get_kp_by_id(kp_id)
+    if not kp_info:
+        await message.answer("КП не найдено.")
+        return
+
+    text = _format_kp_details_text(kp_info)
+    await message.answer(
+        f"✅ Транспортные расходы сохранены.\n\n{text}",
+        reply_markup=kp_details_kb(kp_id, kp_info.get("total_amount") or 0, kp_info.get("status")),
+    )
 
 
 @router.callback_query(F.data.startswith("change_discount_"))

@@ -16,6 +16,7 @@ import logging
 from typing import Any, Mapping
 
 from .config_and_data import WEIGHT_SOURCE, approximate_weight_kg
+from .kp_offer_utils import is_weightless_offer_item
 from .plate_weights_db import get_plate_weight_kg_by_dimensions
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ def resolve_kp_line_weight_kg(item: Mapping[str, Any]) -> tuple[float, float]:
     - formula (default): approximate_weight_kg
     - plate_weights (legacy): get_plate_weight_kg_by_dimensions -> fallback approximate_weight_kg
     """
+    if is_weightless_offer_item(item):
+        return (0.0, 0.0)
+
     try:
         qty = float(item.get("qty") or 0)
     except (TypeError, ValueError):
