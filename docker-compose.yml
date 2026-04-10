@@ -40,6 +40,8 @@ services:
       # Том web_data не равен каталогу проекта на хосте. Сиды: docker/seed/*.db до build
       # или bind mount ./data:/data с готовыми файлами (см. docker/seed/README.txt).
       - web_data:/data
+      # Кириллица в PDF: положите .ttf в core/fonts на хосте (см. core/commercial_offer.py)
+      - ./core/fonts:/app/core/fonts:ro
       # Раскомментируйте, если каталог «банк знаний» есть на хосте:
       # - ./банк знаний:/knowledge:ro
     restart: unless-stopped
