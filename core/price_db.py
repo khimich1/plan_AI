@@ -123,7 +123,12 @@ def import_from_xlsx(xlsx_path: str, db_path: str = DEFAULT_DB, preferred_sheet:
         conn.close()
 
 
-def get_price(length_m: float, load_code: float | int = 8, db_path: str = DEFAULT_DB) -> Optional[float]:
+def get_price(
+    length_m: float,
+    load_code: float | int = 8,
+    db_path: str = DEFAULT_DB,
+    round_up: bool = False,
+) -> Optional[float]:
     """
     Получает цену плиты из базы данных.
     
@@ -135,7 +140,8 @@ def get_price(length_m: float, load_code: float | int = 8, db_path: str = DEFAUL
     import time
 
     init_schema(db_path)
-    length_dm = int(round(length_m * 10))
+    raw_length_dm = length_m * 10
+    length_dm = int(math.ceil(raw_length_dm - 1e-9)) if round_up else int(round(raw_length_dm))
     
     # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: округляем нагрузку вниз (12.5 → 12)
     # В базе цен нет 12.5, используем цену 12

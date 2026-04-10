@@ -589,7 +589,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         # #endregion
         if it.get('warning'):
             name += " (нагрузка?)"
-        db_price = get_price(L, load_code, cfg.PRICE_DB_PATH)
+        db_price = get_price(L, load_code, cfg.PRICE_DB_PATH, round_up=True)
         use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
         find_price = find_price_for_plate(price_table, L, load_code) if use_fallback else None
         base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
@@ -760,7 +760,7 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8):
             print(f'[PRODUCTION PRICING] {name}: базовая цена из БД ({base_name_1_2m_short}: {base_price_1_2m:.2f}) × {width_factor:.3f} = {base_price:.2f} руб')
         else:
             # Fallback: если нет в БД, используем старый метод
-            db_price = get_price(L, load_code, cfg.PRICE_DB_PATH)
+            db_price = get_price(L, load_code, cfg.PRICE_DB_PATH, round_up=True)
             use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
             find_price = find_price_for_plate(price_table, L, load_code) if use_fallback else None
             base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
@@ -1104,7 +1104,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         name = cfg.make_plate_name(length, width_m, load_code=load_code, length_dm_raw=ldr or None)
         if warning_flag:
             name += " (нагрузка?)"
-        db_price = get_price(length, load_code, cfg.PRICE_DB_PATH)
+        db_price = get_price(length, load_code, cfg.PRICE_DB_PATH, round_up=True)
         use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
         find_price = find_price_for_plate(price_table, length, load_code) if use_fallback else None
         base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
@@ -1495,7 +1495,7 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
             print(f'[PRODUCTION BREAKDOWN] {name}: базовая цена из БД ({base_name_1_2m_short}: {base_price_1_2m:.2f}) × {width_factor:.3f} = {base_price:.2f} руб')
         else:
             # Fallback
-            db_price = get_price(length, load_code, cfg.PRICE_DB_PATH)
+            db_price = get_price(length, load_code, cfg.PRICE_DB_PATH, round_up=True)
             use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
             find_price = find_price_for_plate(price_table, length, load_code) if use_fallback else None
             base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
