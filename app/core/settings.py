@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,11 @@ class Settings(BaseSettings):
         default="change-this-secret-key-in-env",
         alias="APP_SECRET_KEY",
     )
+    # Строка из .env: pydantic-settings иначе пытается json.loads для list[str] до field_validator.
+    cors_allowed_origins_raw: str = Field(
+        default="http://localhost:5173",
+        alias="BACKEND_CORS_ALLOWED_ORIGINS",
+    )
 
     bot_token: str | None = Field(default=None, alias="BOT_TOKEN")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -50,13 +56,36 @@ class Settings(BaseSettings):
     work_calendar_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "work_calendar.json")
     logs_dir: Path = Field(default=PROJECT_ROOT / "logs")
     drafts_dir: Path = Field(default=PROJECT_ROOT / ".app_data" / "drafts")
+    frontend_dist_dir: Path = Field(default=PROJECT_ROOT / "frontend" / "dist")
 
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
 
-    bootstrap_admin_username: str | None = Field(default=None, alias="APP_ADMIN_USERNAME")
-    bootstrap_admin_password: str | None = Field(default=None, alias="APP_ADMIN_PASSWORD")
-    bootstrap_admin_role: str = Field(default="admin", alias="APP_ADMIN_ROLE")
+    @field_validator("cors_allowed_origins_raw", mode="before")
+    @classmethod
+    def parse_cors_allowed_origins_raw(cls, value: object) -> str:
+        if value is None:
+            return "http://localhost:5173"
+        return str(value).strip() or "http://localhost:5173"
+
+    @staticmethod
+    def _split_cors_origins(raw: str) -> list[str]:
+        normalized = raw.strip()
+        if not normalized:
+            return []
+        if normalized.startswith("["):
+            try:
+                parsed = json.loads(normalized)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        return [item.strip() for item in normalized.split(",") if item.strip()]
+
+    @computed_field
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        return self._split_cors_origins(self.cors_allowed_origins_raw)
 
     def ensure_directories(self) -> None:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)

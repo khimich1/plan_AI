@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from html import escape
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
+from app.core.settings import get_settings
 from app.dependencies.auth import get_current_user, require_roles
 from app.repositories.auth_repository import AuthRepository
 from app.security.session import create_session_token
@@ -35,6 +37,28 @@ def _page(title: str, body: str) -> HTMLResponse:
     </html>
     """
     return HTMLResponse(html)
+
+
+def _render_frontend_shell() -> HTMLResponse:
+    settings = get_settings()
+    index_path = settings.frontend_dist_dir / "index.html"
+    if not index_path.exists():
+        body = """
+        <h1>Frontend build не найден</h1>
+        <p>Соберите React-приложение в директорию <code>frontend/dist</code>, затем откройте страницу снова.</p>
+        <p>Для локальной разработки используйте Vite dev server из директории <code>frontend/</code>.</p>
+        """
+        return _page("Frontend build missing", body)
+    return HTMLResponse(index_path.read_text(encoding="utf-8"))
+
+
+def _resolve_frontend_asset(asset_path: str) -> Path | None:
+    settings = get_settings()
+    assets_dir = (settings.frontend_dist_dir / "assets").resolve()
+    candidate = (assets_dir / asset_path).resolve()
+    if assets_dir not in candidate.parents or not candidate.exists():
+        return None
+    return candidate
 
 
 def _nav(user: dict) -> str:
@@ -216,7 +240,7 @@ def offers_page(user: dict = Depends(require_roles("admin", "manager"))) -> HTML
     body = (
         _nav(user)
         + "<h1>Коммерческие предложения</h1>"
-        + '<div class="card"><a href="/web/offers/new">Создать КП</a></div>'
+        + '<div class="card"><a href="/commercial-offer/new">Создать КП</a></div>'
         + f"<table><tr><th>ID</th><th>Дата</th><th>Клиент</th><th>Менеджер</th><th>Статус</th><th>Сумма</th></tr>{rows}</table>"
     )
     return _page("Offers", body)
@@ -224,8 +248,8 @@ def offers_page(user: dict = Depends(require_roles("admin", "manager"))) -> HTML
 
 @router.get("/web/offers/new", response_class=HTMLResponse)
 def new_offer_page(user: dict = Depends(require_roles("admin", "manager"))) -> HTMLResponse:
-    managers = CommercialService().list_managers()
-    return _render_offer_form(user=user, managers=managers)
+    _ = user
+    return RedirectResponse("/commercial-offer/new", status_code=303)
 
 
 @router.post("/web/offers/new", response_model=None)
@@ -337,4 +361,28 @@ def production_page(user: dict = Depends(require_roles("admin", "production"))) 
     )
     body = _nav(user) + "<h1>Планы производства</h1>" + f"<table><tr><th>ID</th><th>Название</th><th>Старт</th><th>Дней</th><th>Дорожек</th></tr>{rows}</table>"
     return _page("Production", body)
+
+
+@router.get("/commercial-offer")
+def commercial_offer_root(user: dict = Depends(require_roles("admin", "manager"))) -> RedirectResponse:
+    _ = user
+    return RedirectResponse("/commercial-offer/new", status_code=303)
+
+
+@router.get("/commercial-offer/new", response_class=HTMLResponse)
+def commercial_offer_spa(user: dict = Depends(require_roles("admin", "manager"))) -> HTMLResponse:
+    _ = user
+    return _render_frontend_shell()
+
+
+@router.get("/commercial-offer/assets/{asset_path:path}")
+def commercial_offer_assets(
+    asset_path: str,
+    user: dict = Depends(require_roles("admin", "manager")),
+) -> FileResponse:
+    _ = user
+    target = _resolve_frontend_asset(asset_path)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Frontend asset not found.")
+    return FileResponse(path=target)
 

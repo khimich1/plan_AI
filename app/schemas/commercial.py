@@ -4,6 +4,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+CommercialFileKind = Literal["pdf", "xlsx", "breakdown", "schema"]
+CommercialSourceType = Literal["text", "image"]
+CommercialConditionsMode = Literal["standard", "custom"]
+CommercialPlateUpdateMode = Literal["append", "replace"]
+CommercialWidePlateAction = Literal["confirm", "exclude", "replace"]
+CommercialSaveMode = Literal["database", "archive", "skip"]
+
 
 class CommercialParseRequest(BaseModel):
     text: str = Field(min_length=1)
@@ -14,34 +21,69 @@ class CommercialPreviewRequest(BaseModel):
 
 
 class CommercialGeneratedFile(BaseModel):
-    kind: Literal["pdf", "xlsx", "breakdown", "schema"]
+    kind: CommercialFileKind
     filename: str
     display_name: str
     download_url: str
 
 
+class CommercialWidePlateLine(BaseModel):
+    line: str
+    qty: int = 1
+
+
+class CommercialPlateBatch(BaseModel):
+    source_type: CommercialSourceType
+    original_text: str = ""
+    normalized_text: str = ""
+    ocr_text: str = ""
+    filename: str = ""
+
+
+class CommercialOfferIdentity(BaseModel):
+    offer_number: str
+    offer_date: str
+    file_stem: str
+
+
+class CommercialSavedOffer(BaseModel):
+    kp_id: int | None = None
+    status: str
+    mode: CommercialSaveMode
+    execution_terms: str = ""
+    saved_at: str = ""
+
+
 class CommercialDraftMetadata(BaseModel):
-    source_type: Literal["text", "image"] | None = None
+    source_type: CommercialSourceType | None = None
     original_text: str = ""
     ocr_text: str = ""
     input_text: str = ""
+    accumulated_text: str = ""
     manager_id: int | None = None
     manager_name: str = ""
     manager_phone: str = ""
     manager_email: str = ""
     client_name: str = ""
     discount_percent: float = 0.0
+    conditions_mode: CommercialConditionsMode = "standard"
     delivery_conditions: str = ""
     payment_conditions: str = ""
     warnings: list[str] = Field(default_factory=list)
     unparsed_lines: list[str] = Field(default_factory=list)
     normalized_text: str = ""
     normalized_lines: list[str] = Field(default_factory=list)
-    wide_plate_lines: list[Any] = Field(default_factory=list)
+    wide_plate_lines: list[CommercialWidePlateLine] = Field(default_factory=list)
     diagnostics: list[dict[str, Any]] = Field(default_factory=list)
     price_rows_count: int = 0
     breakdown_tables_count: int = 0
     total_sum: float = 0.0
+    plate_batches: list[CommercialPlateBatch] = Field(default_factory=list)
+    wide_plates_resolved: bool = False
+    last_source_filename: str = ""
+    current_step: str = "plates"
+    current_save_mode: CommercialSaveMode | None = None
+    execution_terms: str = ""
 
 
 class CommercialDraftDetailsResponse(BaseModel):
@@ -51,18 +93,36 @@ class CommercialDraftDetailsResponse(BaseModel):
     order_data: list[dict[str, Any]]
     metadata: CommercialDraftMetadata
     files: list[CommercialGeneratedFile] = Field(default_factory=list)
-    saved_offer: dict[str, Any] | None = None
+    saved_offer: CommercialSavedOffer | None = None
     totals: dict[str, Any]
+    offer_identity: CommercialOfferIdentity
 
 
 class CommercialCreateFromFormResponse(CommercialDraftDetailsResponse):
     pass
 
 
+class CommercialDraftMetaUpdateRequest(BaseModel):
+    manager_id: int | None = None
+    client_name: str | None = None
+    discount_percent: float | None = None
+    conditions_mode: CommercialConditionsMode | None = None
+    delivery_conditions: str | None = None
+    payment_conditions: str | None = None
+
+
+class CommercialWidePlateDecision(BaseModel):
+    source_line: str = Field(min_length=1)
+    action: CommercialWidePlateAction
+    replacement_text: str = ""
+
+
+class CommercialWidePlatesResolveRequest(BaseModel):
+    decisions: list[CommercialWidePlateDecision] = Field(min_length=1)
+
+
 class CommercialGenerateFilesRequest(BaseModel):
-    file_types: list[Literal["pdf", "xlsx", "breakdown", "schema"]] = Field(
-        default_factory=lambda: ["pdf", "xlsx", "breakdown", "schema"]
-    )
+    file_types: list[CommercialFileKind] = Field(default_factory=lambda: ["pdf", "xlsx", "breakdown", "schema"])
 
 
 class CommercialGenerateFilesResponse(BaseModel):
@@ -70,9 +130,26 @@ class CommercialGenerateFilesResponse(BaseModel):
     files: list[CommercialGeneratedFile]
 
 
+class CommercialSaveDraftRequest(BaseModel):
+    mode: CommercialSaveMode = "skip"
+    execution_terms_input: str = ""
+
+
+class CommercialSaveResultCard(BaseModel):
+    kp_id: int | None = None
+    offer_number: str
+    offer_date: str
+    client_name: str
+    manager_name: str
+    total_amount: float
+    status: str
+    execution_terms: str = ""
+
+
 class CommercialSaveOfferResponse(BaseModel):
     draft_id: str
-    kp_id: int
-    status: str
+    saved_offer: CommercialSavedOffer | None = None
     totals: dict[str, Any]
+    offer_identity: CommercialOfferIdentity
+    result_card: CommercialSaveResultCard
 

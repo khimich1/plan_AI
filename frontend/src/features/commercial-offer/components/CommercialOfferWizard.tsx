@@ -1,0 +1,298 @@
+import { useMemo, useState } from "react";
+import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
+import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
+import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
+import { WidePlateReviewStep } from "@/features/commercial-offer/components/steps/WidePlateReviewStep";
+import { ManagerStep } from "@/features/commercial-offer/components/steps/ManagerStep";
+import { ClientConditionsStep } from "@/features/commercial-offer/components/steps/ClientConditionsStep";
+import { CalculationResultStep } from "@/features/commercial-offer/components/steps/CalculationResultStep";
+import type { CommercialDraftDetails, WidePlateAction, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
+import { getErrorMessage } from "@/shared/lib/apiError";
+import { Alert } from "@/shared/ui/Alert";
+import { Card } from "@/shared/ui/Card";
+
+const getNextStepFromDraft = (draft: CommercialDraftDetails): WizardStepId => {
+  if (draft.metadata.wide_plate_lines.length > 0 && !draft.metadata.wide_plates_resolved) {
+    return "wide-plates";
+  }
+  if (!draft.metadata.manager_id) {
+    return "manager";
+  }
+  if (!draft.metadata.client_name) {
+    return "client";
+  }
+  return "result";
+};
+
+export const CommercialOfferWizard = () => {
+  const {
+    state,
+    dispatch,
+    managersQuery,
+    currentDraft,
+    createDraftMutation,
+    updatePlatesMutation,
+    resolveWidePlatesMutation,
+    updateMetaMutation,
+    generateFilesMutation,
+    saveDraftMutation,
+  } = useCommercialOfferWizard();
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [stepError, setStepError] = useState<string | null>(null);
+
+  const managers = managersQuery.data?.items ?? [];
+
+  const draftOverview = useMemo(
+    () => [
+      { label: "Draft ID", value: currentDraft?.draft_id ?? "ещё не создан" },
+      { label: "Менеджер", value: currentDraft?.metadata.manager_name || "не выбран" },
+      { label: "Клиент", value: currentDraft?.metadata.client_name || "не указан" },
+      { label: "Позиции", value: String(currentDraft?.order_data.length ?? 0) },
+    ],
+    [currentDraft],
+  );
+
+  const resetSource = () => {
+    setSelectedImage(null);
+    dispatch({ type: "set-source", text: "", imageName: null });
+  };
+
+  const handlePlateSubmit = async (mode: "append" | "replace") => {
+    setStepError(null);
+    if (!state.sourceText.trim() && !selectedImage) {
+      setStepError("Введите текст списка плит или загрузите изображение.");
+      return;
+    }
+
+    try {
+      if (currentDraft?.draft_id) {
+        await updatePlatesMutation.mutateAsync({
+          draftId: currentDraft.draft_id,
+          text: state.sourceText,
+          image: selectedImage,
+          mode,
+        });
+      } else {
+        await createDraftMutation.mutateAsync({
+          text: state.sourceText,
+          image: selectedImage,
+        });
+      }
+      resetSource();
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleStepForwardFromPlates = () => {
+    if (!currentDraft) {
+      setStepError("Сначала обработайте список плит.");
+      return;
+    }
+    dispatch({ type: "set-step", step: getNextStepFromDraft(currentDraft) });
+  };
+
+  const handleWideSubmit = async (): Promise<boolean> => {
+    if (!currentDraft?.draft_id) {
+      return false;
+    }
+    setStepError(null);
+    try {
+      await resolveWidePlatesMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        decisions: currentDraft.metadata.wide_plate_lines.map((item) => ({
+          sourceLine: item.line,
+          action: state.widePlateActions[item.line]?.action ?? "confirm",
+          replacementText: state.widePlateActions[item.line]?.replacementText ?? "",
+        })),
+      });
+      return true;
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+      return false;
+    }
+  };
+
+  const handleManagerSubmit = async () => {
+    if (!currentDraft?.draft_id || !state.managerId) {
+      setStepError("Выберите менеджера.");
+      return;
+    }
+    setStepError(null);
+    try {
+      await updateMetaMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        managerId: state.managerId,
+      });
+      dispatch({ type: "set-step", step: "client" });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleClientSubmit = async (payload: {
+    clientName: string;
+    discountPercent: number;
+    conditionsMode: "standard" | "custom";
+    deliveryConditions: string;
+    paymentConditions: string;
+  }) => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    dispatch({ type: "set-client-form", payload });
+    try {
+      await updateMetaMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        managerId: state.managerId,
+        clientName: payload.clientName,
+        discountPercent: payload.discountPercent,
+        conditionsMode: payload.conditionsMode,
+        deliveryConditions: payload.deliveryConditions,
+        paymentConditions: payload.paymentConditions,
+      });
+      dispatch({ type: "set-step", step: "result" });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleGenerateFiles = async () => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await generateFilesMutation.mutateAsync(currentDraft.draft_id);
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleSave = async (payload: { mode: "database" | "archive" | "skip"; executionTermsInput: string }) => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await saveDraftMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        mode: payload.mode,
+        executionTermsInput: payload.executionTermsInput,
+      });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleCreateNewOffer = () => {
+    setStepError(null);
+    setSelectedImage(null);
+    dispatch({ type: "reset" });
+  };
+
+  const currentStepContent =
+    state.currentStep === "plates" ? (
+      <PlateInputStep
+        draft={currentDraft}
+        sourceText={state.sourceText}
+        selectedImageName={state.selectedImageName}
+        errorMessage={stepError}
+        isPending={createDraftMutation.isPending || updatePlatesMutation.isPending}
+        onTextChange={(value) => dispatch({ type: "set-source", text: value, imageName: selectedImage?.name ?? null })}
+        onFileChange={(file) => {
+          setSelectedImage(file);
+          dispatch({ type: "set-source", text: state.sourceText, imageName: file?.name ?? null });
+        }}
+        onSubmit={handlePlateSubmit}
+        onNext={handleStepForwardFromPlates}
+      />
+    ) : state.currentStep === "wide-plates" && currentDraft ? (
+      <WidePlateReviewStep
+        draft={currentDraft}
+        decisions={state.widePlateActions}
+        errorMessage={stepError}
+        isPending={resolveWidePlatesMutation.isPending}
+        onDecisionChange={(line, action, replacementText) =>
+          dispatch({ type: "set-wide-action", line, action, replacementText })
+        }
+        onBack={() => dispatch({ type: "set-step", step: "plates" })}
+        onSubmit={async () => {
+          const success = await handleWideSubmit();
+          if (success) {
+            dispatch({ type: "set-step", step: "manager" });
+          }
+        }}
+      />
+    ) : state.currentStep === "manager" ? (
+      <ManagerStep
+        managers={managers}
+        selectedManagerId={state.managerId}
+        errorMessage={stepError}
+        isPending={updateMetaMutation.isPending}
+        onSelect={(managerId) => dispatch({ type: "set-manager", managerId })}
+        onBack={() =>
+          dispatch({
+            type: "set-step",
+            step: currentDraft?.metadata.wide_plate_lines.length ? "wide-plates" : "plates",
+          })
+        }
+        onNext={handleManagerSubmit}
+      />
+    ) : state.currentStep === "client" ? (
+      <ClientConditionsStep
+        defaultValues={{
+          clientName: state.clientName,
+          discountPercent: state.discountPercent,
+          conditionsMode: state.conditionsMode,
+          deliveryConditions: state.deliveryConditions,
+          paymentConditions: state.paymentConditions,
+        }}
+        errorMessage={stepError}
+        isPending={updateMetaMutation.isPending}
+        onBack={() => dispatch({ type: "set-step", step: "manager" })}
+        onSubmit={handleClientSubmit}
+      />
+    ) : state.currentStep === "result" && currentDraft ? (
+      <CalculationResultStep
+        draft={currentDraft}
+        errorMessage={stepError}
+        isGeneratingFiles={generateFilesMutation.isPending}
+        isSaving={saveDraftMutation.isPending}
+        lastSaveResult={state.lastSaveResult}
+        executionTermsInput={state.executionTermsInput}
+        onBack={() => dispatch({ type: "set-step", step: "client" })}
+        onCreateNew={handleCreateNewOffer}
+        onGenerateFiles={handleGenerateFiles}
+        onExecutionTermsChange={(value) => dispatch({ type: "set-execution-terms", value })}
+        onSave={handleSave}
+      />
+    ) : null;
+
+  return (
+    <div style={{ display: "grid", gap: "1.25rem" }}>
+      {managersQuery.error && <Alert tone="error">{getErrorMessage(managersQuery.error)}</Alert>}
+
+      <div className="wizard-shell">
+        <div className="wizard-main">{currentStepContent}</div>
+
+        <aside className="wizard-sidebar">
+          <div className="wizard-sidebar__inner">
+            <WizardProgress currentStep={state.currentStep} />
+            <Card title="Черновик на клиенте">
+              <div style={{ display: "grid", gap: "0.5rem" }}>
+                {draftOverview.map((item) => (
+                  <div key={item.label} style={{ display: "flex", justifyContent: "space-between", gap: "1rem" }}>
+                    <span style={{ color: "#475467" }}>{item.label}</span>
+                    <strong style={{ textAlign: "right" }}>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+};

@@ -9,11 +9,14 @@ from app.dependencies.auth import require_roles
 from app.schemas.commercial import (
     CommercialCreateFromFormResponse,
     CommercialDraftDetailsResponse,
+    CommercialDraftMetaUpdateRequest,
     CommercialGenerateFilesRequest,
     CommercialGenerateFilesResponse,
     CommercialParseRequest,
     CommercialPreviewRequest,
+    CommercialSaveDraftRequest,
     CommercialSaveOfferResponse,
+    CommercialWidePlatesResolveRequest,
 )
 from app.services.commercial_workflow_service import CommercialWorkflowService
 from app.services.commercial_service import CommercialService
@@ -42,6 +45,112 @@ def parse_commercial_text(
         "wide_plate_lines": result.wide_plate_lines,
         "diagnostics": result.diagnostics,
     }
+
+
+@router.post("/drafts", response_model=CommercialDraftDetailsResponse)
+async def create_commercial_draft(
+    text: str = Form(default=""),
+    image: UploadFile | None = File(default=None),
+    _user: dict = Depends(require_roles("admin", "manager")),
+) -> CommercialDraftDetailsResponse:
+    if image and image.content_type and not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Поддерживаются только изображения.")
+
+    workflow = CommercialWorkflowService()
+    try:
+        result = await workflow.create_draft(
+            text=text,
+            image_bytes=await image.read() if image else None,
+            image_filename=image.filename if image else None,
+        )
+    except (PlateParseError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/plates", response_model=CommercialDraftDetailsResponse)
+async def update_commercial_draft_plates(
+    draft_id: str,
+    mode: str = Form(default="append"),
+    text: str = Form(default=""),
+    image: UploadFile | None = File(default=None),
+    _user: dict = Depends(require_roles("admin", "manager")),
+) -> CommercialDraftDetailsResponse:
+    if image and image.content_type and not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Поддерживаются только изображения.")
+
+    workflow = CommercialWorkflowService()
+    try:
+        result = await workflow.update_draft_plates(
+            draft_id,
+            mode=mode,
+            text=text,
+            image_bytes=await image.read() if image else None,
+            image_filename=image.filename if image else None,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except (PlateParseError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/wide-plates/resolve", response_model=CommercialDraftDetailsResponse)
+def resolve_draft_wide_plates(
+    draft_id: str,
+    payload: CommercialWidePlatesResolveRequest,
+    _user: dict = Depends(require_roles("admin", "manager")),
+) -> CommercialDraftDetailsResponse:
+    workflow = CommercialWorkflowService()
+    try:
+        result = workflow.resolve_wide_plates(
+            draft_id,
+            decisions=[item.model_dump() for item in payload.decisions],
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except (PlateParseError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/meta", response_model=CommercialDraftDetailsResponse)
+def update_draft_meta(
+    draft_id: str,
+    payload: CommercialDraftMetaUpdateRequest,
+    _user: dict = Depends(require_roles("admin", "manager")),
+) -> CommercialDraftDetailsResponse:
+    workflow = CommercialWorkflowService()
+    try:
+        result = workflow.update_draft_meta(
+            draft_id,
+            manager_id=payload.manager_id,
+            client_name=payload.client_name,
+            discount_percent=payload.discount_percent,
+            conditions_mode=payload.conditions_mode,
+            delivery_conditions=payload.delivery_conditions,
+            payment_conditions=payload.payment_conditions,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/calculate", response_model=CommercialDraftDetailsResponse)
+def calculate_draft(
+    draft_id: str,
+    _user: dict = Depends(require_roles("admin", "manager")),
+) -> CommercialDraftDetailsResponse:
+    workflow = CommercialWorkflowService()
+    try:
+        result = workflow.calculate_draft(draft_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return CommercialDraftDetailsResponse.model_validate(result)
 
 
 @router.post("/generate-preview")
@@ -140,13 +249,20 @@ def generate_draft_files(
 @router.post("/drafts/{draft_id}/save", response_model=CommercialSaveOfferResponse)
 def save_draft_offer(
     draft_id: str,
+    payload: CommercialSaveDraftRequest,
     _user: dict = Depends(require_roles("admin", "manager")),
 ) -> CommercialSaveOfferResponse:
     workflow = CommercialWorkflowService()
     try:
-        result = workflow.save_offer(draft_id)
+        result = workflow.save_draft(
+            draft_id,
+            mode=payload.mode,
+            execution_terms_input=payload.execution_terms_input,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return CommercialSaveOfferResponse(draft_id=draft_id, **result)
 
 
