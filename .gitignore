@@ -3,14 +3,29 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.egg-info/
+.eggs/
 
 # Virtual environments
 .venv/
 venv/
 ENV/
 
+# Инструменты / отчёты (pytest, coverage)
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+
 # VS Code settings
 .vscode/
+
+# JetBrains
+.idea/
 
 # OS-specific
 .DS_Store
@@ -45,9 +60,10 @@ Outputs/
 bot/tmp/
 tmp/
 
-# Тестовые файлы
-test_*.py
-debug_*.py
+# Frontend (Vite / npm): зависимости и сборка
+node_modules/
+dist/
+.vite/
 
 # Папка с описанием изменений
 описание изменений/

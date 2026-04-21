@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import router as api_v1_router
 from app.core.settings import get_settings
@@ -14,9 +16,15 @@ from core.logging_config import setup_logging
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     settings = get_settings()
     setup_logging(level=logging.INFO, log_dir=settings.logs_dir, log_filename="backend.log")
-    AuthRepository(str(settings.plita_db_path)).ensure_bootstrap_admin()
+    AuthRepository(str(settings.plita_db_path)).init_schema()
     app.state.settings = settings
     yield
 
@@ -27,6 +35,13 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         debug=settings.app_debug,
         lifespan=lifespan,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
     )
 
     @app.get("/health", tags=["health"])

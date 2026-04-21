@@ -1,0 +1,169 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #172033;
+  background: #f4f6fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    radial-gradient(circle at top, rgba(82, 109, 255, 0.12), transparent 35%),
+    #f4f6fb;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  background: #ffffff;
+  border-bottom: 1px solid #e4e7ec;
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.app-header__inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0.9rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.app-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.app-header__logo {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2b5cff, #6e7dff);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.app-header__title {
+  font-weight: 700;
+  color: #101828;
+}
+
+.app-header__subtitle {
+  font-size: 0.85rem;
+  color: #667085;
+}
+
+.app-nav {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.app-nav__link {
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #344054;
+  padding: 0.55rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border 0.15s ease, color 0.15s ease;
+}
+
+.app-nav__link:hover {
+  background: #eef2ff;
+  border-color: #d6defa;
+  color: #23366f;
+}
+
+.app-nav__link--active {
+  background: #2b5cff;
+  border-color: #2b5cff;
+  color: #ffffff;
+}
+
+.app-nav__link--active:hover {
+  background: #1f47cc;
+  border-color: #1f47cc;
+  color: #ffffff;
+}
+
+@media (max-width: 640px) {
+  .app-header__inner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+  .app-header__subtitle {
+    display: none;
+  }
+  .app-nav {
+    justify-content: flex-end;
+  }
+}
+
+.wizard-shell {
+  display: grid;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.wizard-main {
+  min-width: 0;
+}
+
+.wizard-sidebar {
+  min-width: 0;
+}
+
+.wizard-sidebar__inner {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 960px) {
+  .wizard-shell {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+
+  .wizard-sidebar__inner {
+    position: sticky;
+    top: 1rem;
+  }
+}

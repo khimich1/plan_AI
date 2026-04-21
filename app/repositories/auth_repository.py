@@ -55,60 +55,89 @@ class AuthRepository:
             )
             conn.commit()
 
-    def ensure_bootstrap_admin(self) -> None:
-        self.init_schema()
-        username = self.settings.bootstrap_admin_username
-        password = self.settings.bootstrap_admin_password
-        if not username or not password:
-            return
+    def _row_to_payload(self, row: sqlite3.Row | None, *, include_password_hash: bool = False) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        payload = dict(row)
+        if not include_password_hash:
+            payload.pop("password_hash", None)
+        return payload
 
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id FROM app_users WHERE username = ?", (username,))
-            row = cursor.fetchone()
-            password_hash = _hash_password(password)
-            if row:
-                cursor.execute(
-                    """
-                    UPDATE app_users
-                    SET password_hash = ?, role = ?, is_active = 1
-                    WHERE username = ?
-                    """,
-                    (password_hash, self.settings.bootstrap_admin_role, username),
-                )
-            else:
-                cursor.execute(
-                    """
-                    INSERT INTO app_users(username, password_hash, role, is_active)
-                    VALUES(?, ?, ?, 1)
-                    """,
-                    (username, password_hash, self.settings.bootstrap_admin_role),
-                )
-            conn.commit()
-
-    def authenticate(self, username: str, password: str) -> dict[str, Any] | None:
+    def get_user_by_username(self, username: str, *, include_password_hash: bool = False) -> dict[str, Any] | None:
         self.init_schema()
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, username, password_hash, role, manager_id, is_active
+                SELECT id, username, password_hash, role, manager_id, is_active, created_at
                 FROM app_users
                 WHERE username = ?
                 """,
                 (username,),
             )
             row = cursor.fetchone()
-            if not row:
-                return None
-            payload = dict(row)
-            if not payload.get("is_active"):
-                return None
-            if not _verify_password(password, payload["password_hash"]):
-                return None
-            payload.pop("password_hash", None)
-            return payload
+            return self._row_to_payload(row, include_password_hash=include_password_hash)
+
+    def create_or_update_user(
+        self,
+        *,
+        username: str,
+        password: str,
+        role: str,
+        manager_id: int | None = None,
+        is_active: bool = True,
+    ) -> tuple[dict[str, Any], bool]:
+        self.init_schema()
+        password_hash = _hash_password(password)
+        normalized_username = username.strip()
+        if not normalized_username:
+            raise ValueError("Username must not be empty.")
+        if not password:
+            raise ValueError("Password must not be empty.")
+        if not role.strip():
+            raise ValueError("Role must not be empty.")
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM app_users WHERE username = ?", (normalized_username,))
+            row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    """
+                    INSERT INTO app_users(username, password_hash, role, manager_id, is_active)
+                    VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (normalized_username, password_hash, role.strip(), manager_id, int(is_active)),
+                )
+                created = True
+            else:
+                cursor.execute(
+                    """
+                    UPDATE app_users
+                    SET password_hash = ?, role = ?, manager_id = ?, is_active = ?
+                    WHERE username = ?
+                    """,
+                    (password_hash, role.strip(), manager_id, int(is_active), normalized_username),
+                )
+                created = False
+            conn.commit()
+        user = self.get_user_by_username(normalized_username)
+        if user is None:
+            raise RuntimeError("User was not persisted.")
+        return user, created
+
+    def authenticate(self, username: str, password: str) -> dict[str, Any] | None:
+        payload = self.get_user_by_username(username, include_password_hash=True)
+        if not payload:
+            return None
+        if not payload.get("is_active"):
+            return None
+        if not _verify_password(password, payload["password_hash"]):
+            return None
+        payload.pop("password_hash", None)
+        return payload
 
     def list_users(self) -> list[dict[str, Any]]:
         self.init_schema()
