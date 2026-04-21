@@ -15,3 +15,15 @@ const resolveDownloadUrl = (downloadUrl: string): string => {
 export const downloadFile = (downloadUrl: string): void => {
   window.open(resolveDownloadUrl(downloadUrl), "_blank", "noopener,noreferrer");
 };
+
+export const saveBlobAs = (blob: Blob, filename: string): void => {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+};

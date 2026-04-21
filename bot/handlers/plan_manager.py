@@ -23,6 +23,7 @@ PROJECT_ROOT_FOR_IMPORT = BOT_DIR_FOR_IMPORT.parent
 sys.path.insert(0, str(PROJECT_ROOT_FOR_IMPORT))
 
 from core import kp_db
+from core.serialization import strip_plate_audit_from_plan
 from core.work_calendar import is_working_day, load_extra_workdays, load_holidays
 
 # Пути к файлам
@@ -152,12 +153,11 @@ def _make_plan_json_serializable(plan_data: dict) -> dict:
     """
     Строит копию плана без несериализуемых в JSON полей (PlateAudit в optimization_result['_plate_audit']).
     Исходный plan_data не изменяется.
+
+    Тонкая обёртка над :func:`core.serialization.strip_plate_audit_from_plan`,
+    оставлена ради существующих вызовов внутри модуля.
     """
-    to_save = dict(plan_data)
-    opt = plan_data.get('optimization_result')
-    if isinstance(opt, dict):
-        to_save['optimization_result'] = {k: v for k, v in opt.items() if k != '_plate_audit'}
-    return to_save
+    return strip_plate_audit_from_plan(plan_data)
 
 
 def save_plan(plan_data: dict):
@@ -287,26 +287,34 @@ def get_all_active_plan_ids() -> List[str]:
 def distribute_tracks_by_days(
     tracks_list: list,
     start_date: str,
-    tracks_per_day: int
+    tracks_per_day: int,
+    global_occupancy: Optional[Dict[str, int]] = None,
+    max_per_day: int = MAX_TRACKS_PER_DAY,
 ) -> Dict[str, List]:
     """
-    Разбивает список дорожек по дням.
-    
+    Разбивает список дорожек по дням с учётом глобальной занятости.
+
+    Алгоритм:
+
+    - Стартуем с ``start_date`` (если нерабочий день — сдвигаемся вперёд).
+    - Для каждого рабочего дня берём ``chunk = min(tracks_per_day, available, remaining)``,
+      где ``available = max_per_day - global_occupancy.get(date_key, 0)``.
+    - Если ``available <= 0`` — день полностью пропускается, треки переносятся
+      на следующий рабочий день.
+
     Args:
-        tracks_list: Список дорожек для распределения
-        start_date: Дата начала в формате 'YYYY-MM-DD'
-        tracks_per_day: Сколько дорожек в день
-        
+        tracks_list: Список дорожек для распределения.
+        start_date: Дата начала в формате ``YYYY-MM-DD``.
+        tracks_per_day: Верхняя граница «сколько дорожек пользователь хотел на день».
+        global_occupancy: Словарь ``{date_key: уже_занято_дорожек}`` по другим планам.
+            Если ``None`` — считаем, что другие планы пусты.
+        max_per_day: Жёсткий лимит дорожек в день (по умолчанию ``MAX_TRACKS_PER_DAY``).
+
     Returns:
-        dict: {
-            "2026-01-22": [track1, track2, ...],
-            "2026-01-23": [track6, track7, ...],
-            ...
-        }
+        dict: ``{date_key: [track, ...]}`` только для дней, куда реально попали треки.
     """
-    result = {}
-    
-    # Парсим дату начала
+    result: Dict[str, list] = {}
+
     try:
         current_date = datetime.strptime(start_date, '%Y-%m-%d')
     except ValueError:
@@ -314,25 +322,39 @@ def distribute_tracks_by_days(
 
     holidays = load_holidays()
     extra_workdays = load_extra_workdays()
+    occupancy = global_occupancy or {}
 
-    # Если стартовая дата нерабочая — переносим на ближайший рабочий день
     while not is_working_day(current_date.date(), holidays, extra_workdays):
         current_date += timedelta(days=1)
-    
-    # Распределяем дорожки по дням
+
     track_index = 0
     while track_index < len(tracks_list):
         date_key = current_date.strftime('%Y-%m-%d')
-        
-        # Берём tracks_per_day дорожек для этого дня
-        day_tracks = tracks_list[track_index:track_index + tracks_per_day]
-        result[date_key] = day_tracks
-        
-        track_index += tracks_per_day
+
+        available = max_per_day - int(occupancy.get(date_key, 0) or 0)
+        remaining = len(tracks_list) - track_index
+
+        if available <= 0:
+            logger.info(
+                "[DISTRIBUTE] День %s заполнен (%s/%s) — пропускаем и ищем следующий рабочий",
+                date_key,
+                occupancy.get(date_key, 0),
+                max_per_day,
+            )
+            current_date += timedelta(days=1)
+            while not is_working_day(current_date.date(), holidays, extra_workdays):
+                current_date += timedelta(days=1)
+            continue
+
+        chunk_size = min(tracks_per_day, available, remaining)
+        if chunk_size > 0:
+            result[date_key] = tracks_list[track_index:track_index + chunk_size]
+            track_index += chunk_size
+
         current_date += timedelta(days=1)
         while not is_working_day(current_date.date(), holidays, extra_workdays):
             current_date += timedelta(days=1)
-    
+
     return result
 
 
@@ -346,7 +368,9 @@ def add_tracks_to_plan(
     orders_2d: list,
     optimization_result: dict,
     plan_name: Optional[str] = None,
-    auto_save: bool = True
+    auto_save: bool = True,
+    global_occupancy: Optional[Dict[str, int]] = None,
+    max_per_day: int = MAX_TRACKS_PER_DAY,
 ) -> Tuple[dict, dict]:
     """
     Добавляет дорожки к существующему плану или создаёт новый.
@@ -413,8 +437,14 @@ def add_tracks_to_plan(
         stats['is_new_plan'] = True
         logger.info(f"Создан новый план: {plan_id}")
     
-    # Распределяем новые дорожки по дням
-    tracks_by_day = distribute_tracks_by_days(new_tracks_list, start_date, tracks_per_day)
+    # Распределяем новые дорожки по дням с учётом уже занятых слотов у других планов
+    tracks_by_day = distribute_tracks_by_days(
+        new_tracks_list,
+        start_date,
+        tracks_per_day,
+        global_occupancy=global_occupancy,
+        max_per_day=max_per_day,
+    )
     
     # Добавляем дорожки к дням
     day_number = len(plan['days']) + 1  # Начинаем с последнего дня + 1
@@ -423,7 +453,7 @@ def add_tracks_to_plan(
         if date_key in plan['days']:
             # День уже существует — добавляем дорожки
             existing_day = plan['days'][date_key]
-            old_count = existing_day.get('saved_tracks_count', len(existing_day.get('tracks', [])))
+            old_count = count_day_tracks(existing_day)
             
             # Добавляем новые дорожки
             existing_day['tracks'].extend(day_tracks)
@@ -510,7 +540,7 @@ def update_plan_metadata(plan: dict):
     # Подсчитываем статистику
     total_days = len(plan.get('days', {}))
     total_tracks = sum(
-        day.get('saved_tracks_count', len(day.get('tracks', [])))
+        count_day_tracks(day)
         for day in plan.get('days', {}).values()
     )
     
@@ -561,7 +591,7 @@ def get_plan_days_info(plan: dict) -> Dict[str, dict]:
     
     for date_key, day_data in plan.get('days', {}).items():
         result[date_key] = {
-            'saved': day_data.get('saved_tracks_count', len(day_data.get('tracks', []))),
+            'saved': count_day_tracks(day_data),
             'total': day_data.get('total_tracks_count', plan.get('tracks_count', 5)),
             'completed': day_data.get('completed', False),
             'day_number': day_data.get('day_number', 1)
@@ -747,6 +777,25 @@ def format_plan_stats_message(stats: dict) -> str:
     return '\n'.join(lines)
 
 
+def count_day_tracks(day_data: dict) -> int:
+    """Единая точка truth: сколько дорожек реально в дне.
+
+    Ориентируемся на фактический массив ``tracks``, а не на
+    ``saved_tracks_count``: иначе календарь показывает занятость для дней,
+    у которых массив треков уже пустой (рассинхрон с деталями дня в Drawer).
+    При расхождении с ``saved_tracks_count`` пишем WARNING в лог, чтобы не
+    терять диагностику повреждённых планов.
+    """
+    real = len(day_data.get('tracks', []) or [])
+    saved = day_data.get('saved_tracks_count')
+    if saved is not None and saved != real:
+        logger.warning(
+            "[DAY_TRACKS] Рассинхрон: saved_tracks_count=%s, len(tracks)=%s",
+            saved, real,
+        )
+    return real
+
+
 def get_global_day_occupancy(exclude_plan_id: Optional[str] = None) -> Dict[str, int]:
     """
     Подсчитывает занятость дорожек по ВСЕМ планам для каждой даты.
@@ -782,7 +831,7 @@ def get_global_day_occupancy(exclude_plan_id: Optional[str] = None) -> Dict[str,
         
         # Суммируем дорожки по дням
         for date_key, day_data in plan.get('days', {}).items():
-            tracks_count = day_data.get('saved_tracks_count', len(day_data.get('tracks', [])))
+            tracks_count = count_day_tracks(day_data)
             
             if date_key in occupancy:
                 occupancy[date_key] += tracks_count
@@ -1053,7 +1102,7 @@ def get_global_calendar_info() -> Optional[dict]:
                 continue
             
             # Считаем загрузку
-            tracks_count = day_data.get('saved_tracks_count', len(day_data.get('tracks', [])))
+            tracks_count = count_day_tracks(day_data)
             is_completed = day_data.get('completed', False)
             
             # Добавляем или обновляем информацию о дате
@@ -1176,7 +1225,10 @@ def get_tracks_for_date_from_all_plans(date_key: str) -> Optional[dict]:
         
         # === 1. Собираем дорожки на эту дату ===
         day_data = plan['days'][date_key]
-        day_tracks = day_data.get('tracks', [])
+        day_tracks = day_data.get('tracks', []) or []
+        # Вызов count_day_tracks тут ради побочного эффекта (WARNING в логе
+        # при расхождении saved_tracks_count и фактического tracks).
+        count_day_tracks(day_data)
         
         # НОВОЕ: Добавляем информацию о плане-источнике к каждой дорожке
         plan_name = plan.get('name', f'План {plan_id}')
