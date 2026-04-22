@@ -19,7 +19,7 @@ from .plan_manager import (
     load_plans_metadata, load_plan, set_active_plan,
     get_active_plan_id, delete_plan as delete_plan_func,
     get_global_days_info, get_all_tracks_from_plan,
-    convert_lookup_keys_to_tuples
+    convert_lookup_keys_to_tuples, count_day_tracks
 )
 
 router = Router()
@@ -89,7 +89,7 @@ async def select_plan(callback: CallbackQuery, state: FSMContext):
     # Подсчитываем статистику
     total_days = len(plan.get('days', {}))
     total_tracks = sum(
-        day.get('saved_tracks_count', len(day.get('tracks', [])))
+        count_day_tracks(day)
         for day in plan.get('days', {}).values()
     )
     completed_days = sum(

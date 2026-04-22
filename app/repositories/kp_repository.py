@@ -94,3 +94,47 @@ class KpRepository:
             cursor.execute(query, (limit,))
             return [dict(row) for row in cursor.fetchall()]
 
+    def list_kps_in_production(self) -> list[dict]:
+        """Возвращает список КП со статусом 'в работе' с метриками выполнения.
+
+        Для каждой КП считаем:
+        - ``completion_pct`` — процент выполненных плит (из ``core.kp_db.get_kp_completion_percentage``),
+        - ``in_plan_pct`` — доля плит уже помещённых в какой-либо план (в статусе 'в плане'),
+        - ``total_length_m`` — сумма длин плит (в метрах) в состоянии 'в производстве'/'в плане',
+        - ``estimated_days`` — грубая оценка числа дней, если бы ширина дорожки использовалась полностью.
+        """
+        query = """
+        SELECT o.kp_id, o.customer_name, o.creation_date, o.execution_terms
+        FROM KP_offers o
+        JOIN kp_meta m ON m.kp_id = o.kp_id
+        WHERE m.status = 'в работе'
+        ORDER BY o.kp_id ASC
+        """
+        result: list[dict] = []
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(query)
+            rows = [dict(row) for row in cursor.fetchall()]
+
+        for row in rows:
+            kp_id = int(row["kp_id"])
+            completion = kp_db.get_kp_completion_percentage(kp_id, self.db_path)
+            in_plan = kp_db.get_kp_plates_in_plan_percentage(kp_id, self.db_path)
+            total_length_m = kp_db.get_kp_total_length(kp_id, self.db_path)
+
+            result.append(
+                {
+                    "kp_id": kp_id,
+                    "customer_name": row.get("customer_name") or "",
+                    "creation_date": row.get("creation_date") or "",
+                    "execution_terms": row.get("execution_terms") or "",
+                    "total_plates": int(completion.get("total_plates", 0)),
+                    "completed_plates": int(completion.get("completed_plates", 0)),
+                    "completion_pct": float(completion.get("percentage", 0.0)),
+                    "in_plan_pct": float(in_plan.get("percentage", 0.0)),
+                    "total_length_m": round(float(total_length_m), 2),
+                }
+            )
+        return result
+

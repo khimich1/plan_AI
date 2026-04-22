@@ -2,7 +2,7 @@ import { env } from "@/shared/config/env";
 import { ApiError } from "@/shared/lib/apiError";
 
 type RequestOptions = {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: BodyInit | null;
   headers?: HeadersInit;
 };
@@ -47,13 +47,62 @@ const request = async <TResponse>(path: string, options: RequestOptions = {}): P
   return (await response.json()) as TResponse;
 };
 
+export type DownloadResult = {
+  blob: Blob;
+  filename: string;
+  contentType: string;
+};
+
+const extractFilename = (response: Response, fallback: string): string => {
+  const header = response.headers.get("Content-Disposition");
+  if (!header) {
+    return fallback;
+  }
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      /* fall through */
+    }
+  }
+  const plainMatch = header.match(/filename="?([^";]+)"?/i);
+  if (plainMatch) {
+    return plainMatch[1];
+  }
+  return fallback;
+};
+
+const downloadRequest = async (
+  path: string,
+  fallbackFilename: string,
+): Promise<DownloadResult> => {
+  const response = await fetch(buildUrl(path), {
+    method: "GET",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    return parseError(response);
+  }
+  const blob = await response.blob();
+  const filename = extractFilename(response, fallbackFilename);
+  const contentType = response.headers.get("Content-Type") ?? blob.type;
+  return { blob, filename, contentType };
+};
+
 export const httpClient = {
   get: <TResponse>(path: string) => request<TResponse>(path),
   post: <TResponse>(path: string, body?: BodyInit | null, headers?: HeadersInit) =>
     request<TResponse>(path, { method: "POST", body, headers }),
+  put: <TResponse>(path: string, body?: BodyInit | null, headers?: HeadersInit) =>
+    request<TResponse>(path, { method: "PUT", body, headers }),
   patch: <TResponse>(path: string, body?: BodyInit | null, headers?: HeadersInit) =>
     request<TResponse>(path, { method: "PATCH", body, headers }),
   delete: <TResponse>(path: string) => request<TResponse>(path, { method: "DELETE" }),
+  request: <TResponse>(path: string, options: RequestOptions) =>
+    request<TResponse>(path, options),
+  download: (path: string, fallbackFilename = "download"): Promise<DownloadResult> =>
+    downloadRequest(path, fallbackFilename),
 };
 
 export const resolveApiUrl = (path: string): string => buildUrl(path);

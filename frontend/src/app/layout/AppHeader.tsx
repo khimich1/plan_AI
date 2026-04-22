@@ -7,6 +7,7 @@ import { Button } from "@/shared/ui/Button";
 
 const NEW_OFFER_PATH = "/commercial-offer/new";
 const ARCHIVE_PATH = "/commercial-offer/archive";
+const PRODUCTION_PATH = "/production";
 
 const hasDraft = (state: ReturnType<typeof useWizardDraftStore>["state"]): boolean => {
   if (state.draftId) {
@@ -83,6 +84,14 @@ export const AppHeader = () => {
             }
           >
             Архив
+          </NavLink>
+          <NavLink
+            to={PRODUCTION_PATH}
+            className={({ isActive }) =>
+              isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
+            }
+          >
+            Производство
           </NavLink>
         </nav>
       </div>

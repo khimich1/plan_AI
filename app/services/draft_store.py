@@ -8,24 +8,10 @@ from typing import Any
 from app.core.settings import get_settings
 from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.plate_order import PlateOrder
-
-
-def _json_safe_optimization_result(result: dict[str, Any]) -> dict[str, Any]:
-    """Копия optimization_result без объектов, которые json.dump не сериализует (например PlateAudit)."""
-    safe = dict(result)
-    safe.pop("_plate_audit", None)
-    return safe
-
-
-def _json_safe_plan_by_load(plan_by_load: dict[str, Any]) -> dict[str, Any]:
-    """То же для plan_by_load: значения — те же dict'ы, что и optimization_result (в т.ч. с _plate_audit)."""
-    out: dict[str, Any] = {}
-    for key, value in plan_by_load.items():
-        if isinstance(value, dict):
-            out[key] = _json_safe_optimization_result(value)
-        else:
-            out[key] = value
-    return out
+from core.serialization import (
+    strip_plate_audit,
+    strip_plate_audit_from_plan_by_load,
+)
 
 
 class DraftStore:
@@ -74,10 +60,12 @@ class DraftStore:
         payload = {
             "order": order.to_dict(),
             "optimization": {
-                "optimization_result": _json_safe_optimization_result(
+                "optimization_result": strip_plate_audit(
                     optimization_context.optimization_result
                 ),
-                "plan_by_load": _json_safe_plan_by_load(optimization_context.plan_by_load),
+                "plan_by_load": strip_plate_audit_from_plan_by_load(
+                    optimization_context.plan_by_load
+                ),
                 "load_to_reinforcement_map": optimization_context.load_to_reinforcement_map,
             },
             "order_data": order_data,

@@ -6,8 +6,12 @@ from typing import Any
 from app.repositories.kp_repository import KpRepository
 from app.repositories.plan_repository import PlanRepository
 from app.repositories.work_calendar_repository import WorkCalendarRepository
+from app.services.day_view_service import build_day_view_detail
 from app.services.optimization_service import OptimizationService
+from app.services.production_planning_service import ProductionPlanningService
 from bot.handlers import plan_manager
+
+MAX_TRACKS_PER_DAY = plan_manager.MAX_TRACKS_PER_DAY
 
 
 class ProductionService:
@@ -16,6 +20,7 @@ class ProductionService:
         self.plan_repository = PlanRepository()
         self.calendar_repository = WorkCalendarRepository()
         self.optimization_service = OptimizationService()
+        self.planning_service = ProductionPlanningService()
 
     def list_plans(self) -> dict:
         return self.plan_repository.list_metadata()
@@ -27,11 +32,51 @@ class ProductionService:
         self.plan_repository.set_active_plan(plan_id)
         return {"plan_id": plan_id, "active": True}
 
+    def delete_plan(self, plan_id: str) -> dict:
+        deleted = self.plan_repository.delete_plan(plan_id)
+        return {"plan_id": plan_id, "deleted": deleted}
+
+    def get_day_occupancy(self, exclude_plan_id: str | None = None) -> dict:
+        occupancy = self.plan_repository.get_global_occupancy(exclude_plan_id=exclude_plan_id)
+        return {
+            "occupancy": {str(k): int(v) for k, v in occupancy.items()},
+            "max_per_day": int(MAX_TRACKS_PER_DAY),
+        }
+
+    def list_kp_candidates(self) -> dict:
+        items = self.kp_repository.list_kps_in_production()
+        visible = [item for item in items if item.get("in_plan_pct", 0) < 100]
+        return {"items": visible, "count": len(visible)}
+
+    def build_plan_from_filters(
+        self,
+        *,
+        start_date: str,
+        tracks_count: int,
+        filter_method: str,
+        selected_kp_ids: list[int] | None = None,
+        selected_plate_ids: dict[int, list[int]] | None = None,
+        active_plan_id: str | None = None,
+        plan_name: str | None = None,
+    ) -> dict[str, Any]:
+        return self.planning_service.build_plan(
+            start_date=start_date,
+            tracks_count=tracks_count,
+            filter_method=filter_method,  # type: ignore[arg-type]
+            selected_kp_ids=selected_kp_ids,
+            selected_plate_ids=selected_plate_ids,
+            active_plan_id=active_plan_id,
+            plan_name=plan_name,
+        )
+
     def get_calendar(self) -> dict | None:
         return plan_manager.get_global_calendar_info()
 
     def get_day_view(self, target_date: str) -> dict | None:
         return self.plan_repository.get_tracks_for_date(target_date)
+
+    def get_day_view_detailed(self, target_date: str) -> dict | None:
+        return build_day_view_detail(target_date)
 
     def complete_day(self, *, plan_id: str, target_date: str) -> dict:
         completed = self.plan_repository.mark_day_completed(plan_id, target_date)
