@@ -157,7 +157,6 @@ export const AppHeader = () => {
               </Button>
             </div>
           )}
-          )}
         </nav>
       </div>
 

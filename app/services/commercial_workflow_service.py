@@ -153,30 +153,50 @@ class CommercialWorkflowService:
         if not current_text:
             raise ValueError("Список плит отсутствует.")
 
-        wide_lines = [item["line"] for item in self._normalize_wide_plate_lines(metadata.get("wide_plate_lines", []))]
-        if not wide_lines:
+        wide_items = self._normalize_wide_plate_lines(metadata.get("wide_plate_lines", []))
+        if not wide_items:
             return self.get_draft_details(draft_id)
 
+        decisions_by_id: dict[str, dict[str, Any]] = {}
         decisions_by_line: dict[str, dict[str, Any]] = {}
         for item in decisions:
+            line_id = str(item.get("line_id", "") or "").strip()
             source_line = str(item.get("source_line", "")).strip()
+            if line_id:
+                decisions_by_id[line_id] = item
             if not source_line:
                 continue
             decisions_by_line[source_line] = item
 
-        unresolved = [line for line in wide_lines if line not in decisions_by_line]
+        resolved_by_line: dict[str, dict[str, Any]] = {}
+        resolved_decisions: dict[str, dict[str, Any]] = {}
+        unresolved: list[str] = []
+        for wide_item in wide_items:
+            line_id = str(wide_item.get("id", "")).strip()
+            line = str(wide_item.get("line", "")).strip()
+            decision = decisions_by_id.get(line_id) if line_id else None
+            if decision is None:
+                decision = decisions_by_line.get(line)
+            if decision is None:
+                unresolved.append(line or line_id)
+                continue
+            resolved_decisions[line_id or line] = decision
+            if line:
+                resolved_by_line[line] = decision
         if unresolved:
             raise ValueError("Нужно выбрать действие для всех широких плит.")
 
-        original_lines = [line.strip() for line in re.split(r"[\n;]+", current_text) if line.strip()]
-        wide_set = set(wide_lines)
+        original_lines = [line.strip() for line in list(metadata.get("normalized_lines") or []) if line.strip()]
+        if not original_lines:
+            original_lines = [line.strip() for line in re.split(r"[\n;]+", current_text) if line.strip()]
+        wide_set = {str(item.get("line", "")).strip() for item in wide_items if str(item.get("line", "")).strip()}
         merged_lines: list[str] = []
         for line in original_lines:
             if line not in wide_set:
                 merged_lines.append(line)
                 continue
 
-            decision = decisions_by_line[line]
+            decision = resolved_by_line[line]
             action = str(decision.get("action", "")).strip().lower()
             if action == "confirm":
                 merged_lines.append(line)
@@ -209,7 +229,7 @@ class CommercialWorkflowService:
             wide_plates_resolved=True,
             source_metadata={},
         )
-        next_metadata["wide_plate_decisions"] = list(decisions_by_line.values())
+        next_metadata["wide_plate_decisions"] = list(resolved_decisions.values())
         self.draft_store.replace_preview(
             draft_id,
             order=preview.parse_result.order,
@@ -709,11 +729,23 @@ class CommercialWorkflowService:
 
     def _serialize_wide_plate_lines(self, items: Iterable[Any]) -> list[dict[str, Any]]:
         serialized: list[dict[str, Any]] = []
-        for item in items:
+        for idx, item in enumerate(items, start=1):
             if isinstance(item, (tuple, list)) and len(item) >= 2:
-                serialized.append({"line": str(item[0]), "qty": int(item[1])})
+                serialized.append(
+                    {
+                        "id": f"wide-{idx}",
+                        "line": str(item[0]),
+                        "qty": int(item[1]),
+                    }
+                )
             elif isinstance(item, dict) and item.get("line"):
-                serialized.append({"line": str(item["line"]), "qty": int(item.get("qty", 1) or 1)})
+                serialized.append(
+                    {
+                        "id": str(item.get("id") or f"wide-{idx}"),
+                        "line": str(item["line"]),
+                        "qty": int(item.get("qty", 1) or 1),
+                    }
+                )
         return serialized
 
     def _normalize_wide_plate_lines(self, items: Iterable[Any]) -> list[dict[str, Any]]:

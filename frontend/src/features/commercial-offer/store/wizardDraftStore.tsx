@@ -26,7 +26,7 @@ type WizardDraftAction =
     }
   | {
       type: "set-wide-action";
-      line: string;
+      lineId: string;
       action: WizardStoreState["widePlateActions"][string]["action"];
       replacementText: string;
     }
@@ -53,22 +53,6 @@ const initialState: WizardStoreState = {
   lastSaveResult: null,
 };
 
-const buildNextStep = (draft: CommercialDraftDetails): WizardStepId => {
-  if (draft.saved_offer) {
-    return "result";
-  }
-  if (draft.metadata.wide_plate_lines.length > 0 && !draft.metadata.wide_plates_resolved) {
-    return "wide-plates";
-  }
-  if (!draft.metadata.manager_id) {
-    return "manager";
-  }
-  if (!draft.metadata.client_name) {
-    return "client";
-  }
-  return "result";
-};
-
 const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStoreState => {
   switch (action.type) {
     case "set-step":
@@ -84,7 +68,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         ...state,
         widePlateActions: {
           ...state.widePlateActions,
-          [action.line]: {
+          [action.lineId]: {
             action: action.action,
             replacementText: action.replacementText,
           },
@@ -96,7 +80,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
       return {
         ...state,
         draftId: action.payload.draft_id,
-        currentStep: buildNextStep(action.payload),
+        currentStep: state.currentStep,
         managerId: action.payload.metadata.manager_id,
         clientName: action.payload.metadata.client_name,
         discountPercent: action.payload.metadata.discount_percent,

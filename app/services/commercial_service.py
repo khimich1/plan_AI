@@ -58,7 +58,12 @@ class CommercialService:
                 breakdown_tables = build_component_breakdown(price_table, price_rows)
                 procurement_items = build_procurement_items()
 
-        order_data = self._build_order_data(procurement_items, price_rows, order)
+        order_data = self._build_order_data(
+            procurement_items,
+            price_rows,
+            order,
+            current_parse_result,
+        )
         order_data = enrich_order_data_with_nomenclature(order_data)
         return CommercialPreviewResult(
             parse_result=current_parse_result,
@@ -74,9 +79,11 @@ class CommercialService:
         procurement_items: list[dict[str, Any]],
         price_rows: list,
         order: PlateOrder,
+        parse_result: ParseResult,
     ) -> list[dict[str, Any]]:
-        order_data: list[dict[str, Any]] = []
+        order_data_with_order: list[tuple[int, dict[str, Any]]] = []
         cache_by_key = order.nomenclature_cache
+        order_sequence = self._build_order_sequence_map(parse_result)
         for item in procurement_items:
             length_m = float(item["length"])
             width_m = float(item["width"])
@@ -146,6 +153,83 @@ class CommercialService:
             }
             if nomenclature_id is not None:
                 entry["nomenclature_id"] = nomenclature_id
-            order_data.append(entry)
-        return order_data
+            line_order = self._resolve_line_order(
+                order_sequence,
+                length_m=length_m,
+                width_m=width_m,
+                load_code=load_code,
+                length_dm_raw=(length_dm_raw or item_ldr),
+                fallback_raw=item_ldr,
+            )
+            order_data_with_order.append((line_order, entry))
+
+        order_data_with_order.sort(key=lambda item: item[0])
+        return [entry for _order, entry in order_data_with_order]
+
+    @staticmethod
+    def _normalize_sequence_key(
+        *,
+        length_m: float,
+        width_m: float,
+        load_code: float | int,
+        length_dm_raw: str,
+    ) -> tuple[float, float, float, str]:
+        return (
+            round(float(length_m), 3),
+            round(float(width_m), 3),
+            float(load_code),
+            (length_dm_raw or "").strip(),
+        )
+
+    def _build_order_sequence_map(self, parse_result: ParseResult) -> dict[tuple[float, float, float, str], int]:
+        sequence: dict[tuple[float, float, float, str], int] = {}
+        for line_idx, line_items in enumerate(parse_result.line_plate_load_details):
+            for key in line_items.keys():
+                if len(key) < 4:
+                    continue
+                sequence_key = self._normalize_sequence_key(
+                    length_m=float(key[0]),
+                    width_m=float(key[1]),
+                    load_code=float(key[2]),
+                    length_dm_raw=str(key[3]),
+                )
+                if sequence_key not in sequence:
+                    sequence[sequence_key] = line_idx
+        return sequence
+
+    def _resolve_line_order(
+        self,
+        order_sequence: dict[tuple[float, float, float, str], int],
+        *,
+        length_m: float,
+        width_m: float,
+        load_code: float | int,
+        length_dm_raw: str,
+        fallback_raw: str,
+    ) -> int:
+        default_order = 10_000
+        candidate_keys = [
+            self._normalize_sequence_key(
+                length_m=length_m,
+                width_m=width_m,
+                load_code=load_code,
+                length_dm_raw=length_dm_raw,
+            ),
+            self._normalize_sequence_key(
+                length_m=length_m,
+                width_m=width_m,
+                load_code=load_code,
+                length_dm_raw=fallback_raw,
+            ),
+            self._normalize_sequence_key(
+                length_m=length_m,
+                width_m=width_m,
+                load_code=load_code,
+                length_dm_raw="",
+            ),
+        ]
+        for candidate in candidate_keys:
+            if candidate in order_sequence:
+                return order_sequence[candidate]
+        return default_order
 

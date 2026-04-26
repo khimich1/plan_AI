@@ -57,7 +57,7 @@ export const CommercialOfferWizard = () => {
     dispatch({ type: "set-source", text: "", imageName: null });
   };
 
-  const handlePlateSubmit = async (mode: "append" | "replace") => {
+  const handleRecognize = async (mode: "append" | "replace") => {
     setStepError(null);
     if (!state.sourceText.trim() && !selectedImage) {
       setStepError("Введите текст списка плит или загрузите изображение.");
@@ -84,7 +84,8 @@ export const CommercialOfferWizard = () => {
     }
   };
 
-  const handleStepForwardFromPlates = () => {
+  const handleProcess = () => {
+    setStepError(null);
     if (!currentDraft) {
       setStepError("Сначала обработайте список плит.");
       return;
@@ -101,9 +102,10 @@ export const CommercialOfferWizard = () => {
       await resolveWidePlatesMutation.mutateAsync({
         draftId: currentDraft.draft_id,
         decisions: currentDraft.metadata.wide_plate_lines.map((item) => ({
+          lineId: item.id,
           sourceLine: item.line,
-          action: state.widePlateActions[item.line]?.action ?? "confirm",
-          replacementText: state.widePlateActions[item.line]?.replacementText ?? "",
+          action: state.widePlateActions[item.id]?.action ?? "confirm",
+          replacementText: state.widePlateActions[item.id]?.replacementText ?? "",
         })),
       });
       return true;
@@ -186,6 +188,21 @@ export const CommercialOfferWizard = () => {
     }
   };
 
+  const handleDiscountSubmit = async (discountPercent: number) => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await updateMetaMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        discountPercent,
+      });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
   const handleCreateNewOffer = () => {
     setStepError(null);
     setSelectedImage(null);
@@ -199,14 +216,14 @@ export const CommercialOfferWizard = () => {
         sourceText={state.sourceText}
         selectedImageName={state.selectedImageName}
         errorMessage={stepError}
-        isPending={createDraftMutation.isPending || updatePlatesMutation.isPending}
+        isRecognizing={createDraftMutation.isPending || updatePlatesMutation.isPending}
         onTextChange={(value) => dispatch({ type: "set-source", text: value, imageName: selectedImage?.name ?? null })}
         onFileChange={(file) => {
           setSelectedImage(file);
           dispatch({ type: "set-source", text: state.sourceText, imageName: file?.name ?? null });
         }}
-        onSubmit={handlePlateSubmit}
-        onNext={handleStepForwardFromPlates}
+        onRecognize={handleRecognize}
+        onProcess={handleProcess}
       />
     ) : state.currentStep === "wide-plates" && currentDraft ? (
       <WidePlateReviewStep
@@ -214,8 +231,8 @@ export const CommercialOfferWizard = () => {
         decisions={state.widePlateActions}
         errorMessage={stepError}
         isPending={resolveWidePlatesMutation.isPending}
-        onDecisionChange={(line, action, replacementText) =>
-          dispatch({ type: "set-wide-action", line, action, replacementText })
+        onDecisionChange={(lineId, action, replacementText) =>
+          dispatch({ type: "set-wide-action", lineId, action, replacementText })
         }
         onBack={() => dispatch({ type: "set-step", step: "plates" })}
         onSubmit={async () => {
@@ -267,6 +284,8 @@ export const CommercialOfferWizard = () => {
         onGenerateFiles={handleGenerateFiles}
         onExecutionTermsChange={(value) => dispatch({ type: "set-execution-terms", value })}
         onSave={handleSave}
+        isUpdatingDiscount={updateMetaMutation.isPending}
+        onDiscountSubmit={handleDiscountSubmit}
       />
     ) : null;
 

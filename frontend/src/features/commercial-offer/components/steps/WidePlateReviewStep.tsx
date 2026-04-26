@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { CommercialDraftDetails, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
@@ -10,7 +11,7 @@ type WidePlateReviewStepProps = {
   decisions: Record<string, { action: WidePlateAction; replacementText: string }>;
   errorMessage: string | null;
   isPending: boolean;
-  onDecisionChange: (line: string, action: WidePlateAction, replacementText: string) => void;
+  onDecisionChange: (lineId: string, action: WidePlateAction, replacementText: string) => void;
   onBack: () => void;
   onSubmit: () => void;
 };
@@ -23,8 +24,18 @@ export const WidePlateReviewStep = ({
   onDecisionChange,
   onBack,
   onSubmit,
-}: WidePlateReviewStepProps) => (
-  <StepLayout
+}: WidePlateReviewStepProps) => {
+  useEffect(() => {
+    draft.metadata.wide_plate_lines.forEach((item) => {
+      const currentDecision = decisions[item.id];
+      if (currentDecision?.action === "replace" && !currentDecision.replacementText.trim()) {
+        onDecisionChange(item.id, "replace", buildAutoSplitSuggestion(item.line, item.qty));
+      }
+    });
+  }, [decisions, draft.metadata.wide_plate_lines, onDecisionChange]);
+
+  return (
+    <StepLayout
     title="Шаг 2. Проверка проблемных плит"
     description="Backend обнаружил плиты шире 12 дм. Для каждой позиции выберите действие: подтвердить, заменить или исключить."
     footer={
@@ -44,10 +55,11 @@ export const WidePlateReviewStep = ({
       <Alert tone="success">Проблемных плит нет. Можно перейти дальше.</Alert>
     ) : (
       draft.metadata.wide_plate_lines.map((item) => {
-        const currentDecision = decisions[item.line] ?? { action: "confirm", replacementText: "" };
+        const currentDecision = decisions[item.id] ?? { action: "confirm", replacementText: "" };
+        const suggestedReplacement = buildAutoSplitSuggestion(item.line, item.qty);
 
         return (
-          <Card key={item.line} title={item.line} subtitle={`Количество: ${item.qty}`}>
+          <Card key={item.id} title={item.line} subtitle={`Количество: ${item.qty}`}>
             <div style={{ display: "grid", gap: "0.75rem" }}>
               <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
                 {([
@@ -69,7 +81,15 @@ export const WidePlateReviewStep = ({
                     <input
                       type="radio"
                       checked={currentDecision.action === value}
-                      onChange={() => onDecisionChange(item.line, value, currentDecision.replacementText)}
+                      onChange={() =>
+                        onDecisionChange(
+                          item.id,
+                          value,
+                          value === "replace" && !currentDecision.replacementText.trim()
+                            ? suggestedReplacement
+                            : currentDecision.replacementText,
+                        )
+                      }
                     />
                     <span>{label}</span>
                   </label>
@@ -83,8 +103,7 @@ export const WidePlateReviewStep = ({
                 >
                   <Textarea
                     value={currentDecision.replacementText}
-                    onChange={(event) => onDecisionChange(item.line, "replace", event.target.value)}
-                    placeholder={"ПБ 78-12-8п 2\nПБ 78-3-8п 2"}
+                    onChange={(event) => onDecisionChange(item.id, "replace", event.target.value)}
                   />
                 </FieldWrapper>
               )}
@@ -93,5 +112,29 @@ export const WidePlateReviewStep = ({
         );
       })
     )}
-  </StepLayout>
-);
+    </StepLayout>
+  );
+};
+
+const buildAutoSplitSuggestion = (line: string, fallbackQty: number): string => {
+  const normalized = line.trim().replace(",", ".");
+  const lineMatch = normalized.match(/^(.*\S)\s+(\d+)$/);
+  const platePart = (lineMatch?.[1] ?? normalized).trim();
+  const qty = lineMatch?.[2] ?? String(fallbackQty > 0 ? fallbackQty : 1);
+  const nameMatch = platePart.match(/^(ПБ\s+[\d.]+)-([\d.]+)-(.+)$/i);
+  if (!nameMatch) {
+    return `ПБ 60-12-8п ${qty}\nПБ 60-3.0-8п ${qty}`;
+  }
+
+  const prefix = nameMatch[1];
+  const widthRaw = nameMatch[2];
+  const suffix = nameMatch[3];
+  const widthDm = Number(widthRaw);
+  if (!Number.isFinite(widthDm) || widthDm <= 12) {
+    return `${prefix}-12-${suffix} ${qty}\n${prefix}-3.0-${suffix} ${qty}`;
+  }
+
+  const remainder = Math.max(widthDm - 12, 0);
+  const remainderFormatted = remainder.toFixed(1);
+  return `${prefix}-12-${suffix} ${qty}\n${prefix}-${remainderFormatted}-${suffix} ${qty}`;
+};

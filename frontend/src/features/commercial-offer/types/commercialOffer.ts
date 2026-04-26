@@ -18,6 +18,7 @@ export type ManagersResponse = {
 };
 
 export type WidePlateLine = {
+  id: string;
   line: string;
   qty: number;
 };
