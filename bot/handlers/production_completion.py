@@ -895,6 +895,8 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     day_number = data.get('completing_day', 1)
     day_plates_by_track = data.get('day_plates_by_track', [])
     rejected_quantities = data.get('rejected_quantities', {})
+    # actor для plate_status_log: уникально привязывается к Telegram-user'у бота
+    bot_actor = f"bot:{callback.from_user.id}" if callback.from_user else None
     # #region agent log
     _debug_session_write(
         "run1",
@@ -1049,7 +1051,7 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
             # Переносим плиту в completed_plates
             kp_id = plate.get('kp_id')
             if kp_id:
-                moved = kp_db.move_plates_to_completed(kp_id, [plate], day_number, db_path, plan_ids=plan_ids)
+                moved = kp_db.move_plates_to_completed(kp_id, [plate], day_number, db_path, plan_ids=plan_ids, actor=bot_actor)
                 total_moved += moved
                 
                 if kp_db.check_and_update_kp_completion(kp_id, db_path):
@@ -1068,7 +1070,7 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
         if not plates_not_from_rests:
             continue
         
-        moved = kp_db.move_plates_to_completed(kp_id, plates_not_from_rests, day_number, db_path, plan_ids=plan_ids)
+        moved = kp_db.move_plates_to_completed(kp_id, plates_not_from_rests, day_number, db_path, plan_ids=plan_ids, actor=bot_actor)
         total_moved += moved
         
         # Проверяем, завершён ли КП полностью
@@ -1111,7 +1113,7 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
             db_plate_name = row[1]
             plate['plate_name'] = db_plate_name  # Используем имя из БД для корректного списания
             
-            moved = kp_db.move_plates_to_completed(found_kp_id, [plate], day_number, db_path, plan_ids=plan_ids)
+            moved = kp_db.move_plates_to_completed(found_kp_id, [plate], day_number, db_path, plan_ids=plan_ids, actor=bot_actor)
             total_moved += moved
             logger.info(f"[COMPLETION] Плита найдена по длине+классу: {plate_name} ({length_m}м, {load_class}) → КП #{found_kp_id}")
             
@@ -1248,23 +1250,31 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
         pass
     # #endregion
     # Бракованные плиты возвращаются в статус 'в производстве',
-    # чтобы попасть в следующее планирование
+    # чтобы попасть в следующее планирование. Логика возврата вынесена в
+    # ProductionCompletionService._return_rejected — единая точка для бота
+    # и web, чтобы поведение «брак → следующее планирование» совпадало.
+    # Зовём helper по одной позиции, чтобы сохранить per-position-счётчик
+    # rejected_returned (используется только в логах и agent-debug-логе).
+    from app.services.production_completion_service import ProductionCompletionService
+
     rejected_returned = 0
     for plate in rejected_plates:
         kp_id = plate.get('kp_id')
         plate_name = plate.get('plate_name')
-        qty = plate.get('qty', 1)
-        
-        if kp_id and plate_name and qty > 0:
-            success = kp_db.return_plates_to_production(
-                kp_id=kp_id,
-                plate_name=plate_name,
-                qty=qty,
-                db_path=db_path
+        qty = int(plate.get('qty', 1) or 0)
+        if not (kp_id and plate_name and qty > 0):
+            continue
+        returned_qty = ProductionCompletionService._return_rejected(
+            [{"kp_id": kp_id, "plate_name": plate_name, "qty": qty}],
+            db_path,
+            actor=bot_actor,
+        )
+        if returned_qty > 0:
+            rejected_returned += 1
+            logger.info(
+                f"[COMPLETION] Брак: {plate_name} x{qty} возвращена в производство "
+                f"(КП #{kp_id})"
             )
-            if success:
-                rejected_returned += 1
-                logger.info(f"[COMPLETION] Брак: {plate_name} x{qty} возвращена в производство (КП #{kp_id})")
     
     # #region agent log: сколько брака возвращено в производство
     try:

@@ -29,6 +29,17 @@ class SaveWorkCalendarRequest(BaseModel):
 # ---------- Web-флоу «Производство» ----------
 
 
+class KpCandidatePlateItem(BaseModel):
+    """Плита, доступная для постановки в новый план (статус ``в производстве``)."""
+
+    id: int
+    plate_name: str
+    length_m: float
+    width_m: float
+    load_class: int | None = None
+    qty: int
+
+
 class KpCandidateItem(BaseModel):
     kp_id: int
     customer_name: str
@@ -39,6 +50,7 @@ class KpCandidateItem(BaseModel):
     completion_pct: float
     in_plan_pct: float
     total_length_m: float
+    plates: list[KpCandidatePlateItem] = Field(default_factory=list)
 
 
 class KpCandidatesResponse(BaseModel):
@@ -56,6 +68,13 @@ class DeletePlanResponse(BaseModel):
     deleted: bool
 
 
+class FillTargetItem(BaseModel):
+    """Один пункт корзины дозаполнения: дата + сколько дорожек туда положить."""
+
+    date: str
+    tracks: int = Field(ge=1, le=50)
+
+
 class BuildPlanRequest(BaseModel):
     start_date: str
     tracks_count: int = Field(ge=1, le=50)
@@ -64,11 +83,28 @@ class BuildPlanRequest(BaseModel):
     selected_plate_ids: dict[int, list[int]] = Field(default_factory=dict)
     active_plan_id: str | None = None
     plan_name: str | None = None
+    fill_targets: list[FillTargetItem] | None = None
 
     @field_validator("selected_kp_ids")
     @classmethod
     def _unique_kp_ids(cls, value: list[int]) -> list[int]:
         return list(dict.fromkeys(value))
+
+    @field_validator("fill_targets")
+    @classmethod
+    def _unique_fill_target_dates(
+        cls, value: list[FillTargetItem] | None
+    ) -> list[FillTargetItem] | None:
+        # Дублирующиеся даты ломали бы _build_tracks_by_day_from_targets
+        # (одна и та же дата перезаписалась бы), поэтому отсекаем заранее.
+        if value is None:
+            return value
+        seen: set[str] = set()
+        for item in value:
+            if item.date in seen:
+                raise ValueError(f"Дата {item.date} указана в fill_targets дважды")
+            seen.add(item.date)
+        return value
 
 
 class BuildPlanSummary(BaseModel):

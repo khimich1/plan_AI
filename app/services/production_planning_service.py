@@ -9,13 +9,14 @@ from __future__ import annotations
 import copy
 import logging
 import sqlite3
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import core.config_and_data as cfg
 from app.core.settings import get_settings
+from app.domain.enums import PlateStatus
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
 from core.plan_commit import PlanCommitError, commit_plan_plates
@@ -57,8 +58,13 @@ class ProductionPlanningService:
         selected_plate_ids: dict[int, list[int]] | None = None,
         active_plan_id: str | None = None,
         plan_name: str | None = None,
+        fill_targets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Собирает план по заданным фильтрам.
+
+        Если передан ``fill_targets`` — это режим «дозаполнения дней»: дорожки
+        раскладываются строго по выбранным датам, лишние плиты обрезаются
+        и НЕ помечаются как ``в плане`` (остаются ``в производстве``).
 
         Returns:
             dict: ``{"plan": plan_dict, "stats": stats_dict, "summary": {...}}``
@@ -106,11 +112,45 @@ class ProductionPlanningService:
             exclude_plan_id=active_plan_id,
         )
 
+        precomputed_tracks_by_day: dict[str, list[dict[str, Any]]] | None = None
+        if fill_targets:
+            # Режим «дозаполнения»: жёсткое размещение по выбранным дням,
+            # без переноса лишних дорожек на следующий рабочий день.
+            self._validate_fill_targets(fill_targets, global_occupancy)
+
+            cap = sum(int(t["tracks"]) for t in fill_targets)
+            if cap < len(all_tracks_list):
+                logger.info(
+                    "[WEB-PLAN] fill_targets cap=%s, обрезаем дорожек: %s -> %s",
+                    cap,
+                    len(all_tracks_list),
+                    cap,
+                )
+                all_tracks_list = all_tracks_list[:cap]
+                optimization_result = self._trim_assignments_to_tracks(
+                    optimization_result=optimization_result,
+                    kept_tracks=all_tracks_list,
+                )
+
+            precomputed_tracks_by_day = self._build_tracks_by_day_from_targets(
+                kept_tracks=all_tracks_list,
+                fill_targets=fill_targets,
+            )
+
+            # Дозаполнение всегда новый план: дописывать в чужой план дорожки
+            # в его уже планируемый день — некорректно по семантике планов.
+            active_plan_id = None
+            sorted_dates = sorted(t["date"] for t in fill_targets)
+            start_date = sorted_dates[0]
+            tracks_per_day_effective = max(int(t["tracks"]) for t in fill_targets)
+        else:
+            tracks_per_day_effective = tracks_count
+
         plan, stats = plan_manager.add_tracks_to_plan(
             plan_id=active_plan_id,
             new_tracks_list=all_tracks_list,
             start_date=start_date,
-            tracks_per_day=tracks_count,
+            tracks_per_day=tracks_per_day_effective,
             plate_lookup_exact=plate_lookup_exact,
             plate_lookup_by_length=plate_lookup_by_length,
             orders_2d=orders_2d,
@@ -118,6 +158,7 @@ class ProductionPlanningService:
             plan_name=plan_name,
             auto_save=False,
             global_occupancy=global_occupancy,
+            precomputed_tracks_by_day=precomputed_tracks_by_day,
         )
         plan_id = plan["id"]
 
@@ -279,20 +320,20 @@ class ProductionPlanningService:
                         f"""
                         SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
                         FROM kp_plates
-                        WHERE kp_id = ? AND status = 'в производстве'
+                        WHERE kp_id = ? AND status = ?
                           AND id IN ({placeholders})
                         ORDER BY position_number, id
                         """,
-                        (kp_id,) + tuple(plate_ids),
+                        (kp_id, PlateStatus.IN_PRODUCTION.value) + tuple(plate_ids),
                     )
                 else:
                     cur.execute(
                         """
                         SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
                         FROM kp_plates
-                        WHERE kp_id = ? AND status = 'в производстве'
+                        WHERE kp_id = ? AND status = ?
                         """,
-                        (kp_id,),
+                        (kp_id, PlateStatus.IN_PRODUCTION.value),
                     )
 
                 for row in cur.fetchall():
@@ -403,6 +444,7 @@ class ProductionPlanningService:
                 "customer": order.get("customer", "неизвестно"),
                 "plate_name": order.get("plate_name", ""),
                 "reinforcement": order.get("reinforcement", 0),
+                "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
                 "qty_remaining": order.get("qty", 1),
                 "kp_id": order.get("kp_id"),
             }
@@ -441,8 +483,12 @@ class ProductionPlanningService:
                 length, width_m, load_code, raw_val = key
                 cfg.PLATE_LENGTH_DM_RAW[(length, width_m, int(float(load_code)), raw_val)] = raw
 
-            context = self.optimization_service.optimize(plate_order)
+            context = self.optimization_service.optimize(
+                plate_order,
+                orders_2d=orders_2d,
+            )
             optimization_result = context.optimization_result or {}
+            self._log_unmapped_optimizer_assignments(optimization_result)
             if not optimization_result or optimization_result.get("total_plates", 0) == 0:
                 return [], optimization_result
 
@@ -459,3 +505,127 @@ class ProductionPlanningService:
             cfg.PLATE_LENGTH_DM_RAW.update(saved_plate_length_raw)
 
         return all_tracks_list, optimization_result
+
+    @staticmethod
+    def _validate_fill_targets(
+        fill_targets: list[dict[str, Any]],
+        global_occupancy: dict[str, int],
+    ) -> None:
+        """Проверяет, что каждая дата существует и имеет достаточно свободных слотов."""
+        if not fill_targets:
+            raise ProductionPlanBuildError("fill_targets пуст.")
+        max_per_day = plan_manager.MAX_TRACKS_PER_DAY
+        for t in fill_targets:
+            date = t.get("date") or ""
+            try:
+                datetime.strptime(date, "%Y-%m-%d")
+            except ValueError as exc:
+                raise ProductionPlanBuildError(
+                    f"Неверный формат даты в fill_targets: {date}"
+                ) from exc
+            occupied = int(global_occupancy.get(date, 0) or 0)
+            free = max(0, max_per_day - occupied)
+            requested = int(t.get("tracks", 0) or 0)
+            if requested <= 0:
+                raise ProductionPlanBuildError(
+                    f"На {date} запрошено {requested} дорожек — должно быть >= 1."
+                )
+            if requested > free:
+                raise ProductionPlanBuildError(
+                    f"На {date} свободно {free} дорожек, запрошено {requested}."
+                )
+
+    @staticmethod
+    def _build_tracks_by_day_from_targets(
+        *,
+        kept_tracks: list[dict[str, Any]],
+        fill_targets: list[dict[str, Any]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Раскладывает kept_tracks по датам строго в порядке fill_targets.
+
+        Не использует ``distribute_tracks_by_days`` — нам нужно положить дорожки
+        ровно в указанные даты, без переноса на следующий рабочий день.
+        """
+        result: dict[str, list[dict[str, Any]]] = {}
+        cursor = 0
+        for t in fill_targets:
+            requested = int(t["tracks"])
+            chunk = kept_tracks[cursor:cursor + requested]
+            if chunk:
+                result[t["date"]] = chunk
+            cursor += requested
+        return result
+
+    @staticmethod
+    def _trim_assignments_to_tracks(
+        *,
+        optimization_result: dict[str, Any],
+        kept_tracks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Оставляет в plate_assignments столько плит, сколько лежит в kept_tracks.
+
+        ``commit_plan_plates`` помечает плиты «в плане» по
+        ``optimization_result["plate_assignments"]`` (для primary/secondary)
+        и по track items с ``label='РЕСКЬЮ'`` (для rescue). Если просто срезать
+        ``all_tracks_list``, но оставить ``plate_assignments`` нетронутым — будут
+        помечены и плиты выкинутых дорожек, либо ``commit_plan_plates`` упадёт
+        на ``leftovers_by_source``. Поэтому считаем плиты по идентичности
+        ``(kp_id, plate_name)`` в kept_tracks (без RESCUE — он считается из
+        track items напрямую) и оставляем в assignments не больше этого числа.
+        Порядок исходного списка сохраняется, поэтому primary-плиты той же пары
+        идентичности приоритетнее secondary, как и было до обрезания.
+        """
+        kept_counts: Counter[tuple[Any, str]] = Counter()
+        for track in kept_tracks:
+            if track.get("label") == "РЕСКЬЮ":
+                continue
+            for item in track.get("items") or []:
+                if not item:
+                    continue
+                kp_id = item.get("kp_id")
+                plate_name = item.get("plate_name") or ""
+                if kp_id and plate_name:
+                    kept_counts[(kp_id, plate_name)] += 1
+
+        remaining = Counter(kept_counts)
+        filtered: list[dict[str, Any]] = []
+        for assignment in optimization_result.get("plate_assignments", []) or []:
+            source = assignment.get("source")
+            if source not in ("primary", "secondary"):
+                # rescue/прочие источники не управляются через assignments
+                filtered.append(assignment)
+                continue
+            key = (assignment.get("kp_id"), assignment.get("plate_name") or "")
+            if remaining.get(key, 0) > 0:
+                filtered.append(assignment)
+                remaining[key] -= 1
+
+        return {**optimization_result, "plate_assignments": filtered}
+
+    @staticmethod
+    def _log_unmapped_optimizer_assignments(optimization_result: dict[str, Any]) -> None:
+        unmapped = []
+        for assignment in optimization_result.get("plate_assignments", []) or []:
+            source = str(assignment.get("source") or "unknown")
+            if source not in {"primary", "secondary"}:
+                continue
+            if assignment.get("kp_id") and assignment.get("plate_name"):
+                continue
+            unmapped.append(
+                {
+                    "source": source,
+                    "length": assignment.get("length"),
+                    "width": assignment.get("width"),
+                    "load_code": assignment.get("load_code"),
+                    "identity_match_type": assignment.get("identity_match_type"),
+                    "has_kp_id": bool(assignment.get("kp_id")),
+                    "has_plate_name": bool(assignment.get("plate_name")),
+                }
+            )
+
+        if unmapped:
+            logger.error(
+                "[WEB-PLAN] Optimizer assignments без exact identity: count=%s sample=%s",
+                len(unmapped),
+                unmapped[:10],
+            )

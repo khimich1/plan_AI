@@ -8,6 +8,7 @@ from app.repositories.plan_repository import PlanRepository
 from app.repositories.work_calendar_repository import WorkCalendarRepository
 from app.services.day_view_service import build_day_view_detail
 from app.services.optimization_service import OptimizationService
+from app.services.production_completion_service import ProductionCompletionService
 from app.services.production_planning_service import ProductionPlanningService
 from bot.handlers import plan_manager
 
@@ -15,12 +16,25 @@ MAX_TRACKS_PER_DAY = plan_manager.MAX_TRACKS_PER_DAY
 
 
 class ProductionService:
-    def __init__(self) -> None:
-        self.kp_repository = KpRepository()
-        self.plan_repository = PlanRepository()
-        self.calendar_repository = WorkCalendarRepository()
-        self.optimization_service = OptimizationService()
-        self.planning_service = ProductionPlanningService()
+    def __init__(
+        self,
+        *,
+        kp_repository: KpRepository | None = None,
+        plan_repository: PlanRepository | None = None,
+        calendar_repository: WorkCalendarRepository | None = None,
+        optimization_service: OptimizationService | None = None,
+        planning_service: ProductionPlanningService | None = None,
+        completion_service: ProductionCompletionService | None = None,
+    ) -> None:
+        self.kp_repository = kp_repository or KpRepository()
+        self.plan_repository = plan_repository or PlanRepository()
+        self.calendar_repository = calendar_repository or WorkCalendarRepository()
+        self.optimization_service = optimization_service or OptimizationService()
+        self.planning_service = planning_service or ProductionPlanningService()
+        self.completion_service = completion_service or ProductionCompletionService(
+            db_path=self.kp_repository.db_path,
+            plan_repository=self.plan_repository,
+        )
 
     def list_plans(self) -> dict:
         return self.plan_repository.list_metadata()
@@ -45,7 +59,11 @@ class ProductionService:
 
     def list_kp_candidates(self) -> dict:
         items = self.kp_repository.list_kps_in_production()
-        visible = [item for item in items if item.get("in_plan_pct", 0) < 100]
+        visible = [
+            item
+            for item in items
+            if item.get("in_plan_pct", 0) < 100 and item.get("plates")
+        ]
         return {"items": visible, "count": len(visible)}
 
     def build_plan_from_filters(
@@ -58,6 +76,7 @@ class ProductionService:
         selected_plate_ids: dict[int, list[int]] | None = None,
         active_plan_id: str | None = None,
         plan_name: str | None = None,
+        fill_targets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return self.planning_service.build_plan(
             start_date=start_date,
@@ -67,6 +86,7 @@ class ProductionService:
             selected_plate_ids=selected_plate_ids,
             active_plan_id=active_plan_id,
             plan_name=plan_name,
+            fill_targets=fill_targets,
         )
 
     def get_calendar(self) -> dict | None:
@@ -78,9 +98,27 @@ class ProductionService:
     def get_day_view_detailed(self, target_date: str) -> dict | None:
         return build_day_view_detail(target_date)
 
-    def complete_day(self, *, plan_id: str, target_date: str) -> dict:
+    def complete_day(
+        self,
+        *,
+        plan_id: str,
+        target_date: str,
+        rejected_plates: list[dict[str, Any]] | None = None,
+        actor: str | None = None,
+    ) -> dict:
+        completion_result = self.completion_service.complete_day(
+            plan_id=plan_id,
+            target_date=target_date,
+            rejected_plates=rejected_plates,
+            actor=actor,
+        )
         completed = self.plan_repository.mark_day_completed(plan_id, target_date)
-        return {"plan_id": plan_id, "date": target_date, "completed": completed}
+        return {
+            "plan_id": plan_id,
+            "date": target_date,
+            "completed": completed,
+            **completion_result,
+        }
 
     def load_candidates_for_plan(self, limit: int = 500) -> list[dict]:
         return self.kp_repository.list_production_candidates(limit=limit)
