@@ -58,6 +58,27 @@ class KpRepository:
             cursor.execute(query, (limit,))
             return [dict(row) for row in cursor.fetchall()]
 
+    def list_offers_grouped(self) -> dict[str, list[dict]]:
+        return kp_db.get_all_kp_list(self.db_path)
+
+    def get_offer(self, kp_id: int) -> dict | None:
+        return kp_db.get_kp_by_id(kp_id, self.db_path)
+
+    def update_offer_discount(self, kp_id: int, discount_percent: float) -> bool:
+        return kp_db.update_kp_discount(kp_id, discount_percent, self.db_path)
+
+    def update_offer_status(self, kp_id: int, status: str) -> bool:
+        return kp_db.update_kp_status(kp_id, status, self.db_path)
+
+    def update_offer_execution_date(self, kp_id: int, execution_date: str) -> bool:
+        return kp_db.update_kp_execution_date(kp_id, execution_date, self.db_path)
+
+    def delete_offer(self, kp_id: int) -> bool:
+        return kp_db.delete_kp_by_id(kp_id, self.db_path)
+
+    def get_completion_percentage(self, kp_id: int) -> dict:
+        return kp_db.get_kp_completion_percentage(kp_id, self.db_path)
+
     def list_production_candidates(self, limit: int = 500) -> list[dict]:
         query = """
         SELECT kp_id, id, plate_name, length_m, width_m, load_class, qty,
