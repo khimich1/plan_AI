@@ -4,6 +4,8 @@ import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDra
 import { draftStorage } from "@/features/commercial-offer/store/draftStorage";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
+import { useCurrentUserQuery } from "@/features/auth/hooks/useCurrentUserQuery";
+import { DbManagementModal } from "@/features/admin/components/DbManagementModal";
 
 const NEW_OFFER_PATH = "/commercial-offer/new";
 const ARCHIVE_PATH = "/commercial-offer/archive";
@@ -30,6 +32,9 @@ export const AppHeader = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [dbModalOpen, setDbModalOpen] = useState(false);
+  const currentUser = useCurrentUserQuery();
+  const isAdmin = currentUser.data?.role === "admin";
 
   const onNewOfferClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
@@ -93,6 +98,42 @@ export const AppHeader = () => {
           >
             Производство
           </NavLink>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setDbModalOpen(true)}
+              aria-label="Управление БД"
+              title="Управление БД"
+              style={{
+                marginLeft: "0.75rem",
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                border: "1px solid #d6defa",
+                background: "#ffffff",
+                color: "#23366f",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+          )}
         </nav>
       </div>
 
@@ -113,6 +154,13 @@ export const AppHeader = () => {
           </Button>
         </div>
       </Modal>
+
+      {isAdmin && (
+        <DbManagementModal
+          open={dbModalOpen}
+          onClose={() => setDbModalOpen(false)}
+        />
+      )}
     </header>
   );
 };

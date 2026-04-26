@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     prices_dir: Path = Field(default=PROJECT_ROOT / "банк знаний")
     plans_dir: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "plans")
     plans_metadata_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "plans_metadata.json")
+    current_plan_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "current_plan.json")
     work_calendar_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "work_calendar.json")
     logs_dir: Path = Field(default=PROJECT_ROOT / "logs")
     drafts_dir: Path = Field(default=PROJECT_ROOT / ".app_data" / "drafts")

@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from datetime import date
 
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 from core.work_calendar import is_working_day, load_extra_workdays, load_holidays, nth_working_day
 
 
 class WorkCalendarRepository:
-    def __init__(self) -> None:
-        self.settings = get_settings()
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or get_settings()
         self.path = self.settings.work_calendar_path
 
     def load_raw(self) -> dict:

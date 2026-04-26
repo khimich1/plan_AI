@@ -262,7 +262,7 @@ alwaysApply: false
 - frontend/src/main.tsx — точка входа React-приложения
 - frontend/src/app/router/AppRouter.tsx:7 — определение маршрутов SPA
 - frontend/src/shared/api/httpClient.ts:31 — fetch-обёртка с credentials: "include" и ApiError
-### Архитектурные наблюдения
+### Арrтектурные наблюдения
 Только факты о текущих паттернах проекта, например:
 - FastAPI-приложение создаётся в app/main.py и переэкспортируется в корневом main.py
 - API v1 смонтирован под префиксом /api/v1 (app/main.py:51), web-роуты смонтированы без префикса и без OpenAPI (app/web/router.py:18)
