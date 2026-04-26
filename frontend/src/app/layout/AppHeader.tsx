@@ -2,6 +2,7 @@ import { useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
 import { draftStorage } from "@/features/commercial-offer/store/draftStorage";
+import { useAuth } from "@/features/auth/model/AuthProvider";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 
@@ -27,9 +28,20 @@ const hasDraft = (state: ReturnType<typeof useWizardDraftStore>["state"]): boole
 
 export const AppHeader = () => {
   const { state, dispatch } = useWizardDraftStore();
+  const { user, logout, isLoggingOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const onLogoutClick = async () => {
+    try {
+      await logout();
+    } finally {
+      dispatch({ type: "reset" });
+      draftStorage.clear();
+      navigate("/login", { replace: true });
+    }
+  };
 
   const onNewOfferClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
@@ -93,6 +105,17 @@ export const AppHeader = () => {
           >
             Производство
           </NavLink>
+          {user && (
+            <div className="app-header__user">
+              <div className="app-header__user-info">
+                <span className="app-header__user-name">{user.username}</span>
+                <span className="app-header__user-role">{user.role}</span>
+              </div>
+              <Button variant="ghost" onClick={onLogoutClick} disabled={isLoggingOut}>
+                {isLoggingOut ? "Выход..." : "Выйти"}
+              </Button>
+            </div>
+          )}
         </nav>
       </div>
 
