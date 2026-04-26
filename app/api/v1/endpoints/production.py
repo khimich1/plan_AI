@@ -25,6 +25,7 @@ from app.schemas.production import (
     SaveWorkCalendarRequest,
 )
 from app.services.production_planning_service import ProductionPlanBuildError
+from app.services.production_completion_service import ProductionCompletionError
 from app.services.production_service import ProductionService
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,17 @@ def complete_day(
     payload: CompleteProductionDayRequest,
     _user: dict = Depends(require_roles("admin", "production")),
 ) -> dict:
-    return ProductionService().complete_day(plan_id=payload.plan_id, target_date=target_date)
+    try:
+        return ProductionService().complete_day(
+            plan_id=payload.plan_id,
+            target_date=target_date,
+            rejected_plates=[item.model_dump() for item in payload.rejected_plates],
+        )
+    except ProductionCompletionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get("/days/{target_date}/documents/schema")

@@ -161,7 +161,7 @@ def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
             plate_name = label_hint
 
         reinforcement = float(info.get("reinforcement") or 0)
-        load_code = _reinforcement_to_load_code(reinforcement)
+        load_code = int(info.get("load_code") or _reinforcement_to_load_code(reinforcement))
 
         if not plate_name:
             plate_name = _make_plate_name(length_m, width_mm, load_code)

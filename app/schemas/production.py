@@ -17,8 +17,17 @@ class CreatePlanRequest(BaseModel):
     active_plan_id: str | None = None
 
 
+class RejectedPlateItem(BaseModel):
+    """Позиция плиты, которую не нужно списывать как выполненную."""
+
+    track_number: int = Field(ge=1)
+    plate_index: int = Field(ge=0)
+    qty: int = Field(ge=0)
+
+
 class CompleteProductionDayRequest(BaseModel):
     plan_id: str
+    rejected_plates: list[RejectedPlateItem] = Field(default_factory=list)
 
 
 class SaveWorkCalendarRequest(BaseModel):

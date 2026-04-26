@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
 import core.optimization as legacy_optimization
 
@@ -12,10 +12,23 @@ from core.optimization import optimize_with_cascading_longitudinal_cuts
 
 
 class OptimizationService:
-    def optimize(self, order: PlateOrder) -> OptimizationContext:
-        orders_2d = order.to_orders_2d()
-        result = optimize_with_cascading_longitudinal_cuts(orders_2d=orders_2d) if orders_2d else {}
-        all_loads = sorted({int(float(item.get("load_code", 8))) for item in orders_2d}) if orders_2d else [8]
+    def optimize(
+        self,
+        order: PlateOrder,
+        *,
+        orders_2d: list[dict[str, Any]] | None = None,
+    ) -> OptimizationContext:
+        optimizer_orders = orders_2d if orders_2d is not None else order.to_orders_2d()
+        result = (
+            optimize_with_cascading_longitudinal_cuts(orders_2d=optimizer_orders)
+            if optimizer_orders
+            else {}
+        )
+        all_loads = (
+            sorted({int(float(item.get("load_code", 8))) for item in optimizer_orders})
+            if optimizer_orders
+            else [8]
+        )
         if result:
             result["loads_in_group"] = all_loads
         plan_by_load = {"all": result} if result else {}

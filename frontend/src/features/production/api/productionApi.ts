@@ -2,12 +2,14 @@ import { httpClient } from "@/shared/api/httpClient";
 import type {
   BuildPlanRequest,
   BuildPlanResponse,
+  CompleteDayResponse,
   DayOccupancyResponse,
   DayViewResponse,
   DeletePlanResponse,
   GlobalCalendarResponse,
   KpCandidatesResponse,
   PlansMetadataResponse,
+  RejectedPlateItem,
   WorkCalendarPayload,
 } from "@/features/production/types/production";
 
@@ -48,10 +50,14 @@ export const productionApi = {
   getDayView: (date: string) =>
     httpClient.get<DayViewResponse>(`${BASE}/days/${encodeURIComponent(date)}`),
 
-  completeDay: (date: string, planId: string) =>
-    httpClient.post<{ plan_id: string; date: string; completed: boolean }>(
+  completeDay: (
+    date: string,
+    planId: string,
+    rejectedPlates: RejectedPlateItem[] = [],
+  ) =>
+    httpClient.post<CompleteDayResponse>(
       `${BASE}/days/${encodeURIComponent(date)}/complete`,
-      JSON.stringify({ plan_id: planId }),
+      JSON.stringify({ plan_id: planId, rejected_plates: rejectedPlates }),
       { "Content-Type": "application/json" },
     ),
 

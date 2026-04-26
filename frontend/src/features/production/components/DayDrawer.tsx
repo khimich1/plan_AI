@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
@@ -12,6 +12,7 @@ import type {
   DayInfo,
   DayPlanBlock,
   DayTrackDetail,
+  RejectedPlateItem,
 } from "@/features/production/types/production";
 
 type DayDrawerProps = {
@@ -53,6 +54,12 @@ const formatLengthM = (value: number): string => {
   return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 };
 
+const makeRejectionKey = (
+  planId: string,
+  trackNumber: number,
+  plateIndex: number,
+): string => `${planId}:${trackNumber}:${plateIndex}`;
+
 export const DayDrawer = ({ date, summary, onClose }: DayDrawerProps) => {
   const open = date !== null;
   const dayQuery = useDayViewQuery(date);
@@ -60,6 +67,11 @@ export const DayDrawer = ({ date, summary, onClose }: DayDrawerProps) => {
   const schemaMutation = useDayDocumentMutation("schema");
   const breakdownMutation = useDayDocumentMutation("breakdown");
   const formovkaMutation = useDayDocumentMutation("formovka");
+  const [rejectedByPlate, setRejectedByPlate] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    setRejectedByPlate({});
+  }, [date]);
 
   const plans: DayPlanBlock[] = useMemo(
     () => dayQuery.data?.plans ?? [],
@@ -69,9 +81,69 @@ export const DayDrawer = ({ date, summary, onClose }: DayDrawerProps) => {
   const totalTracks = dayQuery.data?.total_tracks ?? 0;
   const hasTracks = totalTracks > 0;
 
-  const handleCompleteDay = (planId: string) => {
+  const setRejectedQty = (
+    planId: string,
+    trackNumber: number,
+    plateIndex: number,
+    nextQty: number,
+    maxQty: number,
+  ) => {
+    const key = makeRejectionKey(planId, trackNumber, plateIndex);
+    const clampedQty = Math.max(0, Math.min(maxQty, nextQty));
+
+    setRejectedByPlate((current) => {
+      const updated = { ...current };
+      if (clampedQty === 0) {
+        delete updated[key];
+      } else {
+        updated[key] = clampedQty;
+      }
+      return updated;
+    });
+  };
+
+  const clearPlanRejections = (planId: string) => {
+    setRejectedByPlate((current) => {
+      const updated = { ...current };
+      for (const key of Object.keys(updated)) {
+        if (key.startsWith(`${planId}:`)) {
+          delete updated[key];
+        }
+      }
+      return updated;
+    });
+  };
+
+  const buildRejectedPlates = (plan: DayPlanBlock): RejectedPlateItem[] =>
+    plan.tracks.flatMap((track) =>
+      track.plates_info.flatMap((plate, plateIndex) => {
+        const key = makeRejectionKey(plan.plan_id, track.track_number, plateIndex);
+        const qty = rejectedByPlate[key] ?? 0;
+        if (qty <= 0) {
+          return [];
+        }
+        return [
+          {
+            track_number: track.track_number,
+            plate_index: plateIndex,
+            qty: Math.min(qty, plate.qty),
+          },
+        ];
+      }),
+    );
+
+  const handleCompleteDay = (plan: DayPlanBlock) => {
     if (date) {
-      completeMutation.mutate({ date, planId });
+      completeMutation.mutate(
+        {
+          date,
+          planId: plan.plan_id,
+          rejectedPlates: buildRejectedPlates(plan),
+        },
+        {
+          onSuccess: () => clearPlanRejections(plan.plan_id),
+        },
+      );
     }
   };
 
@@ -176,7 +248,7 @@ export const DayDrawer = ({ date, summary, onClose }: DayDrawerProps) => {
                 </div>
                 <Button
                   variant="secondary"
-                  onClick={() => handleCompleteDay(plan.plan_id)}
+                  onClick={() => handleCompleteDay(plan)}
                   disabled={completeMutation.isPending || plan.completed}
                 >
                   {plan.completed
@@ -207,36 +279,105 @@ export const DayDrawer = ({ date, summary, onClose }: DayDrawerProps) => {
                           <th>Заказчик</th>
                           <th>Срок КП</th>
                           <th className="day-plates-table__qty">Кол-во</th>
+                          <th className="day-plates-table__qty">Брак</th>
+                          <th className="day-plates-table__qty">Выполнено</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {track.plates_info.map((plate, index) => (
-                          <tr key={`${track.track_number}-${index}`}>
-                            <td>
-                              <strong>{plate.plate_name || "—"}</strong>
-                              {plate.kp_id && (
-                                <span
-                                  style={{
-                                    color: "#98a2b3",
-                                    marginLeft: 6,
-                                    fontSize: "0.8rem",
-                                  }}
-                                >
-                                  КП {plate.kp_id}
-                                </span>
-                              )}
-                            </td>
-                            <td>
-                              {formatLengthM(plate.length_m)} м ×{" "}
-                              {plate.width_mm} мм
-                            </td>
-                            <td>{plate.customer}</td>
-                            <td>{plate.kp_date}</td>
-                            <td className="day-plates-table__qty">
-                              {plate.qty}
-                            </td>
-                          </tr>
-                        ))}
+                        {track.plates_info.map((plate, index) => {
+                          const key = makeRejectionKey(
+                            plan.plan_id,
+                            track.track_number,
+                            index,
+                          );
+                          const rejectedQty = rejectedByPlate[key] ?? 0;
+                          const completedQty = Math.max(plate.qty - rejectedQty, 0);
+                          const controlsDisabled =
+                            plan.completed || completeMutation.isPending;
+
+                          return (
+                            <tr key={`${track.track_number}-${index}`}>
+                              <td>
+                                <strong>{plate.plate_name || "—"}</strong>
+                                {plate.kp_id && (
+                                  <span
+                                    style={{
+                                      color: "#98a2b3",
+                                      marginLeft: 6,
+                                      fontSize: "0.8rem",
+                                    }}
+                                  >
+                                    КП {plate.kp_id}
+                                  </span>
+                                )}
+                              </td>
+                              <td>
+                                {formatLengthM(plate.length_m)} м ×{" "}
+                                {plate.width_mm} мм
+                              </td>
+                              <td>{plate.customer}</td>
+                              <td>{plate.kp_date}</td>
+                              <td className="day-plates-table__qty">
+                                {plate.qty}
+                              </td>
+                              <td className="day-plates-table__qty">
+                                <div className="day-reject-control">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setRejectedQty(
+                                        plan.plan_id,
+                                        track.track_number,
+                                        index,
+                                        rejectedQty - 1,
+                                        plate.qty,
+                                      )
+                                    }
+                                    disabled={controlsDisabled || rejectedQty <= 0}
+                                  >
+                                    -
+                                  </button>
+                                  <span>{rejectedQty}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setRejectedQty(
+                                        plan.plan_id,
+                                        track.track_number,
+                                        index,
+                                        rejectedQty + 1,
+                                        plate.qty,
+                                      )
+                                    }
+                                    disabled={controlsDisabled || rejectedQty >= plate.qty}
+                                  >
+                                    +
+                                  </button>
+                                  {rejectedQty > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setRejectedQty(
+                                          plan.plan_id,
+                                          track.track_number,
+                                          index,
+                                          0,
+                                          plate.qty,
+                                        )
+                                      }
+                                      disabled={controlsDisabled}
+                                    >
+                                      Сброс
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="day-plates-table__qty">
+                                {completedQty}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   )}

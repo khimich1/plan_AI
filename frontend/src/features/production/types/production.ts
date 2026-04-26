@@ -67,6 +67,24 @@ export interface DayViewResponse {
   total_tracks: number;
 }
 
+export interface CompleteDayResponse {
+  plan_id: string;
+  date: string;
+  completed: boolean;
+  moved_plates?: number;
+  completed_kps?: number[];
+  affected_kps?: number[];
+  day_number?: number;
+  rejected_plates?: number;
+  rejected_positions?: number;
+}
+
+export interface RejectedPlateItem {
+  track_number: number;
+  plate_index: number;
+  qty: number;
+}
+
 export type DayDocumentKind = "schema" | "breakdown" | "formovka";
 
 export interface DayOccupancyResponse {

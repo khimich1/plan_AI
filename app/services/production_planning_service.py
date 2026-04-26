@@ -403,6 +403,7 @@ class ProductionPlanningService:
                 "customer": order.get("customer", "неизвестно"),
                 "plate_name": order.get("plate_name", ""),
                 "reinforcement": order.get("reinforcement", 0),
+                "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
                 "qty_remaining": order.get("qty", 1),
                 "kp_id": order.get("kp_id"),
             }
@@ -441,8 +442,12 @@ class ProductionPlanningService:
                 length, width_m, load_code, raw_val = key
                 cfg.PLATE_LENGTH_DM_RAW[(length, width_m, int(float(load_code)), raw_val)] = raw
 
-            context = self.optimization_service.optimize(plate_order)
+            context = self.optimization_service.optimize(
+                plate_order,
+                orders_2d=orders_2d,
+            )
             optimization_result = context.optimization_result or {}
+            self._log_unmapped_optimizer_assignments(optimization_result)
             if not optimization_result or optimization_result.get("total_plates", 0) == 0:
                 return [], optimization_result
 
@@ -459,3 +464,31 @@ class ProductionPlanningService:
             cfg.PLATE_LENGTH_DM_RAW.update(saved_plate_length_raw)
 
         return all_tracks_list, optimization_result
+
+    @staticmethod
+    def _log_unmapped_optimizer_assignments(optimization_result: dict[str, Any]) -> None:
+        unmapped = []
+        for assignment in optimization_result.get("plate_assignments", []) or []:
+            source = str(assignment.get("source") or "unknown")
+            if source not in {"primary", "secondary"}:
+                continue
+            if assignment.get("kp_id") and assignment.get("plate_name"):
+                continue
+            unmapped.append(
+                {
+                    "source": source,
+                    "length": assignment.get("length"),
+                    "width": assignment.get("width"),
+                    "load_code": assignment.get("load_code"),
+                    "identity_match_type": assignment.get("identity_match_type"),
+                    "has_kp_id": bool(assignment.get("kp_id")),
+                    "has_plate_name": bool(assignment.get("plate_name")),
+                }
+            )
+
+        if unmapped:
+            logger.error(
+                "[WEB-PLAN] Optimizer assignments без exact identity: count=%s sample=%s",
+                len(unmapped),
+                unmapped[:10],
+            )

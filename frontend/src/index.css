@@ -499,6 +499,28 @@ a {
   font-weight: 600;
 }
 
+.day-reject-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.day-reject-control button {
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #344054;
+  cursor: pointer;
+  font-weight: 700;
+  min-width: 1.7rem;
+  padding: 0.2rem 0.35rem;
+}
+
+.day-reject-control button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .day-docs {
   display: flex;
   flex-wrap: wrap;
