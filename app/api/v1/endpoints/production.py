@@ -62,6 +62,11 @@ def build_plan_from_filters(
             selected_plate_ids=payload.selected_plate_ids or None,
             active_plan_id=payload.active_plan_id,
             plan_name=payload.plan_name,
+            fill_targets=(
+                [item.model_dump() for item in payload.fill_targets]
+                if payload.fill_targets
+                else None
+            ),
         )
     except ProductionPlanBuildError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
@@ -146,13 +151,15 @@ def get_day_view(
 def complete_day(
     target_date: str,
     payload: CompleteProductionDayRequest,
-    _user: dict = Depends(require_roles("admin", "production")),
+    user: dict = Depends(require_roles("admin", "production")),
 ) -> dict:
+    actor = user.get("email") or user.get("login") or user.get("user_id")
     try:
         return ProductionService().complete_day(
             plan_id=payload.plan_id,
             target_date=target_date,
             rejected_plates=[item.model_dump() for item in payload.rejected_plates],
+            actor=str(actor) if actor else None,
         )
     except ProductionCompletionError as exc:
         raise HTTPException(

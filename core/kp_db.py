@@ -57,6 +57,52 @@ def _connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+def _audit_append(
+    cur: sqlite3.Cursor,
+    *,
+    plate_id: Optional[int],
+    kp_id: int,
+    plate_name: Optional[str],
+    plan_id: Optional[str],
+    day_number: Optional[int],
+    from_status: Optional[str],
+    to_status: str,
+    qty: int,
+    reason: str,
+    actor: Optional[str],
+) -> None:
+    """Добавляет запись в ``plate_status_log`` через переданный курсор.
+
+    Локальный helper в core/, чтобы избежать импорта app/ из core/ слоя.
+    Логически дублирует :class:`app.repositories.plate_audit_repository.PlateAuditRepository`,
+    но репозиторий — это публичный API для сервисов, а здесь — внутренняя
+    точка, вызываемая из :func:`mark_plates_as_planned`,
+    :func:`return_plates_to_production`, :func:`move_plates_to_completed`.
+
+    Принимает уже открытый ``cur`` — каллер сам отвечает за commit/rollback.
+    """
+    cur.execute(
+        """
+        INSERT INTO plate_status_log (
+            plate_id, kp_id, plate_name, plan_id, day_number,
+            from_status, to_status, qty, reason, actor
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            plate_id,
+            int(kp_id),
+            plate_name,
+            plan_id,
+            day_number,
+            from_status,
+            to_status,
+            int(qty),
+            reason,
+            actor,
+        ),
+    )
+
+
 def init_schema(db_path: str = DEFAULT_DB) -> None:
     """
     Создаёт таблицы в базе данных, если их ещё нет.
@@ -197,7 +243,29 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
                 UNIQUE(email)
             )
         ''')
-        
+
+        # Таблица 8: plate_status_log — журнал переходов статусов плит.
+        # Каждая запись — это отдельный переход (planned / completed / rejected /
+        # plan_rollback). Используется для диагностики «куда делась плита» и
+        # независима от kp_plates: даже если строка в kp_plates удалена, история
+        # переходов остаётся.
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS plate_status_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                plate_id     INTEGER,
+                kp_id        INTEGER NOT NULL,
+                plate_name   TEXT,
+                plan_id      TEXT,
+                day_number   INTEGER,
+                from_status  TEXT,
+                to_status    TEXT NOT NULL,
+                qty          INTEGER NOT NULL,
+                reason       TEXT,
+                actor        TEXT,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        ''')
+
         # Создаём индексы для быстрого поиска
         # Это как закладки в книге — помогают быстро найти нужную информацию
         cur.execute('CREATE INDEX IF NOT EXISTS idx_kp_id_plates ON kp_plates(kp_id)')
@@ -209,6 +277,9 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
         cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_kp_id ON plate_rests(kp_id)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_status ON plate_rests(status)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_managers_email ON managers(email)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_status_log_kp ON plate_status_log(kp_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_status_log_plan ON plate_status_log(plan_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_status_log_status ON plate_status_log(to_status)')
         # Индексы для status и plan_id создаются в блоке миграции ниже
         
         # === МИГРАЦИЯ: Добавляем колонки status и plan_id если их нет ===
@@ -1225,7 +1296,9 @@ def move_plates_to_completed(
     production_day: int,
     db_path: str = DEFAULT_DB,
     plan_ids: Optional[List[str]] = None,
-    allow_cross_kp: bool = False
+    allow_cross_kp: bool = False,
+    *,
+    actor: str | None = None,
 ) -> int:
     """
     Переносит плиты из kp_plates в completed_plates.
@@ -1552,6 +1625,19 @@ def move_plates_to_completed(
                         qty, completed_date, production_day, nomenclature_id
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (row_kp_id, row_plate_name, length_m, row_width_m, load_class, deduct, completed_date, production_day, row_nomenclature_id))
+                _audit_append(
+                    cur,
+                    plate_id=row_id,
+                    kp_id=row_kp_id,
+                    plate_name=row_plate_name,
+                    plan_id=(plan_ids[0] if plan_ids else None),
+                    day_number=production_day,
+                    from_status='в плане',
+                    to_status='completed',
+                    qty=deduct,
+                    reason='completed',
+                    actor=actor,
+                )
                 # #region agent log (61,8-5 / 45-7 / 37,9-9: списание успешно, какая строка в БД)
                 if any(sub in (plate_name or '') for sub in ('61,8-5', '45-7', '37,9-9')):
                     try:
@@ -2116,7 +2202,9 @@ def mark_plates_as_planned(
     plate_name: str,
     qty_to_plan: int,
     plan_id: str,
-    db_path: str = DEFAULT_DB
+    db_path: str = DEFAULT_DB,
+    *,
+    actor: str | None = None,
 ) -> Dict[str, object]:
     """
     Помечает плиты как 'в плане' при сохранении плана.
@@ -2215,6 +2303,19 @@ def mark_plates_as_planned(
                     SET status = 'в плане', plan_id = ?
                     WHERE id = ?
                 ''', (plan_id, plate_id))
+                _audit_append(
+                    cur,
+                    plate_id=plate_id,
+                    kp_id=kp_id,
+                    plate_name=plate_name,
+                    plan_id=plan_id,
+                    day_number=None,
+                    from_status='в производстве',
+                    to_status='в плане',
+                    qty=current_qty,
+                    reason='planned',
+                    actor=actor,
+                )
                 print(f"[DB] ✅ Плита {plate_name} x{current_qty} помечена как 'в плане' (запись #{plate_id})")
                 remaining_to_plan -= current_qty
                 processed_count += current_qty
@@ -2239,6 +2340,19 @@ def mark_plates_as_planned(
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'в производстве', NULL)
                 ''', (kp_id, pos_num, plate_name, length_m, width_m, load_class,
                       remaining_in_production, unit_w, total_w, price))
+                _audit_append(
+                    cur,
+                    plate_id=plate_id,
+                    kp_id=kp_id,
+                    plate_name=plate_name,
+                    plan_id=plan_id,
+                    day_number=None,
+                    from_status='в производстве',
+                    to_status='в плане',
+                    qty=qty_for_plan,
+                    reason='planned',
+                    actor=actor,
+                )
                 
                 print(f"[DB] ✅ Плита {plate_name} разбита: {qty_for_plan} в план, {remaining_in_production} осталось (запись #{plate_id})")
                 remaining_to_plan = 0
@@ -2297,7 +2411,10 @@ def return_plates_to_production(
     kp_id: int,
     plate_name: str,
     qty: int,
-    db_path: str = DEFAULT_DB
+    db_path: str = DEFAULT_DB,
+    *,
+    actor: str | None = None,
+    reason: str = "rejected",
 ) -> bool:
     """
     Возвращает плиты обратно в статус 'в производстве'.
@@ -2358,6 +2475,19 @@ def return_plates_to_production(
                     SET status = 'в производстве', plan_id = NULL
                     WHERE id = ?
                 ''', (plate_id,))
+                _audit_append(
+                    cur,
+                    plate_id=plate_id,
+                    kp_id=kp_id,
+                    plate_name=plate_name,
+                    plan_id=None,
+                    day_number=None,
+                    from_status='в плане',
+                    to_status='в производстве',
+                    qty=current_qty,
+                    reason=reason,
+                    actor=actor,
+                )
                 print(f"[DB] ✅ Плита {plate_name} x{current_qty} возвращена в производство (запись #{plate_id})")
                 remaining_to_return -= current_qty
                 processed_count += current_qty
@@ -2381,6 +2511,19 @@ def return_plates_to_production(
                         'в производстве', NULL
                     FROM kp_plates WHERE id = ?
                 ''', (remaining_to_return, plate_id))
+                _audit_append(
+                    cur,
+                    plate_id=plate_id,
+                    kp_id=kp_id,
+                    plate_name=plate_name,
+                    plan_id=None,
+                    day_number=None,
+                    from_status='в плане',
+                    to_status='в производстве',
+                    qty=remaining_to_return,
+                    reason=reason,
+                    actor=actor,
+                )
                 print(f"[DB] ✅ Частичный возврат: {plate_name} x{remaining_to_return} в производство (осталось в плане: {new_qty_in_plan}, запись #{plate_id})")
                 processed_count += remaining_to_return
                 remaining_to_return = 0

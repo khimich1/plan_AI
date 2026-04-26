@@ -59,7 +59,11 @@ class ProductionService:
 
     def list_kp_candidates(self) -> dict:
         items = self.kp_repository.list_kps_in_production()
-        visible = [item for item in items if item.get("in_plan_pct", 0) < 100]
+        visible = [
+            item
+            for item in items
+            if item.get("in_plan_pct", 0) < 100 and item.get("plates")
+        ]
         return {"items": visible, "count": len(visible)}
 
     def build_plan_from_filters(
@@ -72,6 +76,7 @@ class ProductionService:
         selected_plate_ids: dict[int, list[int]] | None = None,
         active_plan_id: str | None = None,
         plan_name: str | None = None,
+        fill_targets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return self.planning_service.build_plan(
             start_date=start_date,
@@ -81,6 +86,7 @@ class ProductionService:
             selected_plate_ids=selected_plate_ids,
             active_plan_id=active_plan_id,
             plan_name=plan_name,
+            fill_targets=fill_targets,
         )
 
     def get_calendar(self) -> dict | None:
@@ -98,11 +104,13 @@ class ProductionService:
         plan_id: str,
         target_date: str,
         rejected_plates: list[dict[str, Any]] | None = None,
+        actor: str | None = None,
     ) -> dict:
         completion_result = self.completion_service.complete_day(
             plan_id=plan_id,
             target_date=target_date,
             rejected_plates=rejected_plates,
+            actor=actor,
         )
         completed = self.plan_repository.mark_day_completed(plan_id, target_date)
         return {

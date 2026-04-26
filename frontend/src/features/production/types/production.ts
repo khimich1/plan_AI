@@ -92,6 +92,15 @@ export interface DayOccupancyResponse {
   max_per_day: number;
 }
 
+export interface KpCandidatePlateItem {
+  id: number;
+  plate_name: string;
+  length_m: number;
+  width_m: number;
+  load_class: number | null;
+  qty: number;
+}
+
 export interface KpCandidateItem {
   kp_id: number;
   customer_name: string;
@@ -102,6 +111,7 @@ export interface KpCandidateItem {
   completion_pct: number;
   in_plan_pct: number;
   total_length_m: number;
+  plates: KpCandidatePlateItem[];
 }
 
 export interface KpCandidatesResponse {
@@ -111,6 +121,11 @@ export interface KpCandidatesResponse {
 
 export type FilterMethod = "all" | "kp";
 
+export interface FillTargetItem {
+  date: string;
+  tracks: number;
+}
+
 export interface BuildPlanRequest {
   start_date: string;
   tracks_count: number;
@@ -119,6 +134,7 @@ export interface BuildPlanRequest {
   selected_plate_ids?: Record<number, number[]>;
   active_plan_id?: string | null;
   plan_name?: string | null;
+  fill_targets?: FillTargetItem[];
 }
 
 export interface BuildPlanSummary {

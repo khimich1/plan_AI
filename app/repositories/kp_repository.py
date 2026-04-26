@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
 
 from app.core.settings import get_settings
+from app.domain.enums import PlateStatus
 from core import kp_db
 
 
@@ -111,11 +113,42 @@ class KpRepository:
         ORDER BY o.kp_id ASC
         """
         result: list[dict] = []
+        plates_by_kp: dict[int, list[dict]] = defaultdict(list)
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(query)
             rows = [dict(row) for row in cursor.fetchall()]
+
+            if rows:
+                kp_ids = [int(r["kp_id"]) for r in rows]
+                placeholders = ",".join("?" * len(kp_ids))
+                plates_query = f"""
+                SELECT kp_id, id, plate_name, length_m, width_m, load_class, qty
+                FROM kp_plates
+                WHERE status = ? AND kp_id IN ({placeholders})
+                ORDER BY kp_id ASC, position_number, id
+                """
+                cursor.execute(
+                    plates_query,
+                    (PlateStatus.IN_PRODUCTION.value, *kp_ids),
+                )
+                for plate_row in cursor.fetchall():
+                    plate = dict(plate_row)
+                    plates_by_kp[int(plate["kp_id"])].append(
+                        {
+                            "id": int(plate["id"]),
+                            "plate_name": plate.get("plate_name") or "",
+                            "length_m": float(plate.get("length_m") or 0.0),
+                            "width_m": float(plate.get("width_m") or 0.0),
+                            "load_class": (
+                                int(plate["load_class"])
+                                if plate.get("load_class") is not None
+                                else None
+                            ),
+                            "qty": int(plate.get("qty") or 0),
+                        }
+                    )
 
         for row in rows:
             kp_id = int(row["kp_id"])
@@ -134,6 +167,7 @@ class KpRepository:
                     "completion_pct": float(completion.get("percentage", 0.0)),
                     "in_plan_pct": float(in_plan.get("percentage", 0.0)),
                     "total_length_m": round(float(total_length_m), 2),
+                    "plates": plates_by_kp.get(kp_id, []),
                 }
             )
         return result

@@ -371,6 +371,7 @@ def add_tracks_to_plan(
     auto_save: bool = True,
     global_occupancy: Optional[Dict[str, int]] = None,
     max_per_day: int = MAX_TRACKS_PER_DAY,
+    precomputed_tracks_by_day: Optional[Dict[str, list]] = None,
 ) -> Tuple[dict, dict]:
     """
     Добавляет дорожки к существующему плану или создаёт новый.
@@ -393,6 +394,11 @@ def add_tracks_to_plan(
         plan_name: Название плана (для нового)
         auto_save: Если True - сохраняет план автоматически (по умолчанию),
                    если False - только подготавливает план без сохранения
+        precomputed_tracks_by_day: Готовое распределение дорожек по дням
+            ``{date_key: [track, ...]}``. Если задано — пропускаем
+            ``distribute_tracks_by_days`` и кладём строго так, как передали.
+            Используется в режиме «дозаполнения дней» (fill_targets), когда
+            нельзя переносить лишние дорожки на следующий рабочий день.
         
     Returns:
         Tuple[dict, dict]: (обновлённый план, статистика изменений)
@@ -437,14 +443,19 @@ def add_tracks_to_plan(
         stats['is_new_plan'] = True
         logger.info(f"Создан новый план: {plan_id}")
     
-    # Распределяем новые дорожки по дням с учётом уже занятых слотов у других планов
-    tracks_by_day = distribute_tracks_by_days(
-        new_tracks_list,
-        start_date,
-        tracks_per_day,
-        global_occupancy=global_occupancy,
-        max_per_day=max_per_day,
-    )
+    # Распределяем новые дорожки по дням с учётом уже занятых слотов у других планов.
+    # В режиме «дозаполнения» (fill_targets) распределение готовится снаружи —
+    # его нельзя пересчитывать, иначе лишние дорожки уплывут на следующий день.
+    if precomputed_tracks_by_day is not None:
+        tracks_by_day = precomputed_tracks_by_day
+    else:
+        tracks_by_day = distribute_tracks_by_days(
+            new_tracks_list,
+            start_date,
+            tracks_per_day,
+            global_occupancy=global_occupancy,
+            max_per_day=max_per_day,
+        )
     
     # Добавляем дорожки к дням
     day_number = len(plan['days']) + 1  # Начинаем с последнего дня + 1

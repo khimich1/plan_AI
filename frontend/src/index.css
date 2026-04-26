@@ -301,6 +301,136 @@ a {
   color: #d0d5dd;
 }
 
+.prod-calendar__day--in-basket {
+  outline: 2px solid #2b5cff;
+  outline-offset: -2px;
+  box-shadow: 0 0 0 4px rgba(43, 92, 255, 0.12);
+}
+
+.prod-calendar__day--selected {
+  border-color: #2b5cff;
+}
+
+.prod-calendar__basket-mark {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  font-size: 0.85rem;
+  color: #2b5cff;
+  line-height: 1;
+}
+
+/* ================ Fill basket ================ */
+
+.fill-basket {
+  position: sticky;
+  bottom: 0;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: #ffffff;
+  border: 1px solid #d6defa;
+  border-radius: 14px;
+  box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 5;
+}
+
+.fill-basket__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.fill-basket__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: #eef2ff;
+  color: #23366f;
+  border: 1px solid #d6defa;
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.fill-basket__chip-remove {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #475467;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+}
+
+.fill-basket__chip-remove:hover {
+  color: #b42318;
+}
+
+.fill-basket__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.fill-basket__clear {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: #475467;
+  cursor: pointer;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.fill-basket__clear:hover {
+  color: #b42318;
+}
+
+/* ================ DayDrawer fill add section ================ */
+
+.day-fill-add {
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+}
+
+.day-fill-add__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.day-fill-add__label {
+  color: #475467;
+  font-size: 0.92rem;
+}
+
+.day-fill-add__field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+  color: #23366f;
+}
+
+.day-fill-add__field input {
+  width: 80px;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid #d0d5dd;
+  font-size: 0.95rem;
+}
+
 .prod-calendar__legend {
   display: flex;
   flex-wrap: wrap;
