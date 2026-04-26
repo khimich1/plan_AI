@@ -2,6 +2,7 @@ import { useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
 import { draftStorage } from "@/features/commercial-offer/store/draftStorage";
+import { useAuth } from "@/features/auth/model/AuthProvider";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { useCurrentUserQuery } from "@/features/auth/hooks/useCurrentUserQuery";
@@ -29,12 +30,23 @@ const hasDraft = (state: ReturnType<typeof useWizardDraftStore>["state"]): boole
 
 export const AppHeader = () => {
   const { state, dispatch } = useWizardDraftStore();
+  const { user, logout, isLoggingOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [dbModalOpen, setDbModalOpen] = useState(false);
   const currentUser = useCurrentUserQuery();
   const isAdmin = currentUser.data?.role === "admin";
+
+  const onLogoutClick = async () => {
+    try {
+      await logout();
+    } finally {
+      dispatch({ type: "reset" });
+      draftStorage.clear();
+      navigate("/login", { replace: true });
+    }
+  };
 
   const onNewOfferClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
@@ -133,6 +145,18 @@ export const AppHeader = () => {
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
               </svg>
             </button>
+          )}
+          {user && (
+            <div className="app-header__user">
+              <div className="app-header__user-info">
+                <span className="app-header__user-name">{user.username}</span>
+                <span className="app-header__user-role">{user.role}</span>
+              </div>
+              <Button variant="ghost" onClick={onLogoutClick} disabled={isLoggingOut}>
+                {isLoggingOut ? "Выход..." : "Выйти"}
+              </Button>
+            </div>
+          )}
           )}
         </nav>
       </div>

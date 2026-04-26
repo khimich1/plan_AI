@@ -12,8 +12,7 @@ export const useCurrentUserQuery = () =>
     queryKey: authKeys.me,
     queryFn: async () => {
       try {
-        const response = await authApi.me();
-        return response.user;
+        return await authApi.me();
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           return null;

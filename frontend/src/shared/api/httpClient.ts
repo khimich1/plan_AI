@@ -1,5 +1,9 @@
 import { env } from "@/shared/config/env";
 import { ApiError } from "@/shared/lib/apiError";
+import { queryClient } from "@/shared/lib/queryClient";
+
+const AUTH_ME_QUERY_KEY = ["auth", "me"] as const;
+const AUTH_LOGIN_PATH = "/api/v1/auth/login";
 
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -28,6 +32,14 @@ const parseError = async (response: Response): Promise<never> => {
   throw new ApiError(detail, response.status, detail);
 };
 
+const handleUnauthorized = (path: string): void => {
+  if (path.startsWith(AUTH_LOGIN_PATH)) {
+    return;
+  }
+  queryClient.setQueryData(AUTH_ME_QUERY_KEY, null);
+  queryClient.invalidateQueries({ queryKey: AUTH_ME_QUERY_KEY });
+};
+
 const request = async <TResponse>(path: string, options: RequestOptions = {}): Promise<TResponse> => {
   const response = await fetch(buildUrl(path), {
     method: options.method ?? "GET",
@@ -37,6 +49,9 @@ const request = async <TResponse>(path: string, options: RequestOptions = {}): P
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized(path);
+    }
     return parseError(response);
   }
 
@@ -82,6 +97,9 @@ const downloadRequest = async (
     credentials: "include",
   });
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized(path);
+    }
     return parseError(response);
   }
   const blob = await response.blob();
