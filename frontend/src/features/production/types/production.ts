@@ -72,11 +72,16 @@ export interface CompleteDayResponse {
   date: string;
   completed: boolean;
   moved_plates?: number;
+  rejected_returned?: number;
+  planned_qty_total?: number;
+  completed_requested_qty?: number;
+  rejected_requested_qty?: number;
   completed_kps?: number[];
   affected_kps?: number[];
   day_number?: number;
   rejected_plates?: number;
   rejected_positions?: number;
+  skipped_without_kp_count?: number;
 }
 
 export interface RejectedPlateItem {

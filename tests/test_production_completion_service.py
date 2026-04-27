@@ -160,6 +160,12 @@ def _completed_total(db_path: str) -> int:
         ).fetchone()[0]
 
 
+def _day_completed(plan_id: str, date_key: str) -> bool:
+    plan = plan_manager.load_plan(plan_id)
+    assert plan is not None
+    return bool((plan.get("days") or {}).get(date_key, {}).get("completed"))
+
+
 def test_full_reject_returns_plate_to_production(planning_service, tmp_plita):
     """Полностью забракованная позиция возвращается в 'в производстве'."""
     built = planning_service.build_plan(
@@ -186,6 +192,95 @@ def test_full_reject_returns_plate_to_production(planning_service, tmp_plita):
     assert rows == [("в производстве", 3, None)]
     assert _completed_total(tmp_plita) == 0
     assert _kp_status(tmp_plita) == "в работе"
+
+
+def test_unmoved_plates_do_not_mark_day_completed(
+    planning_service,
+    tmp_plita,
+    monkeypatch,
+):
+    """Если БД не списала запрошенные плиты, день нельзя закрывать."""
+    from app.services.production_completion_service import ProductionCompletionError
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    monkeypatch.setattr(kp_db, "move_plates_to_completed", lambda *args, **kwargs: 0)
+
+    service = _make_production_service(planning_service, tmp_plita)
+    with pytest.raises(
+        ProductionCompletionError,
+        match=r"не списано 3 плит.*Не хватает:.*КП 1: ПБ 60-12-8п — 3 шт",
+    ):
+        service.complete_day(plan_id=plan_id, target_date="2026-04-21")
+
+    assert _day_completed(plan_id, "2026-04-21") is False
+    assert _completed_total(tmp_plita) == 0
+    rows = _kp_plate_rows(tmp_plita)
+    assert rows == [("в плане", 3, plan_id)]
+
+
+def test_plate_without_kp_id_does_not_mark_day_completed(
+    planning_service,
+    tmp_plita,
+    monkeypatch,
+):
+    """Позиции без kp_id не должны превращаться в ложное completed=True."""
+    from app.services.production_completion_service import ProductionCompletionError
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    def fake_day_view(_target_date: str) -> dict:
+        return {
+            "date": "2026-04-21",
+            "plans": [
+                {
+                    "plan_id": plan_id,
+                    "plan_name": plan_id,
+                    "completed": False,
+                    "tracks": [
+                        {
+                            "track_number": 1,
+                            "plates_info": [
+                                {
+                                    "plate_name": PLATE_NAME,
+                                    "length_m": 6.0,
+                                    "width_mm": 1200,
+                                    "qty": 3,
+                                    "load_code": 8,
+                                    "kp_id": None,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "plans_count": 1,
+            "total_tracks": 1,
+        }
+
+    monkeypatch.setattr(
+        "app.services.production_completion_service.build_day_view_detail",
+        fake_day_view,
+    )
+
+    service = _make_production_service(planning_service, tmp_plita)
+    with pytest.raises(ProductionCompletionError, match="нет привязки к КП"):
+        service.complete_day(plan_id=plan_id, target_date="2026-04-21")
+
+    assert _day_completed(plan_id, "2026-04-21") is False
+    assert _completed_total(tmp_plita) == 0
+    rows = _kp_plate_rows(tmp_plita)
+    assert rows == [("в плане", 3, plan_id)]
 
 
 def test_partial_reject_splits_correctly(planning_service, tmp_plita):

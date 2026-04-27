@@ -18,7 +18,7 @@
 import os
 import sqlite3
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, TypedDict
 
 # Путь к базе данных (в корне проекта)
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'plita.db')
@@ -1290,6 +1290,15 @@ def _normalize_plate_name(name: str) -> str:
     return cleaned
 
 
+class UnmovedPlateInfo(TypedDict):
+    kp_id: int
+    plate_name: str
+    qty: int
+    length_m: float
+    width_m: float
+    load_class: int
+
+
 def move_plates_to_completed(
     kp_id: int,
     plates_to_complete: List[Dict],
@@ -1299,7 +1308,8 @@ def move_plates_to_completed(
     allow_cross_kp: bool = False,
     *,
     actor: str | None = None,
-) -> int:
+    return_unmoved: bool = False,
+) -> int | tuple[int, list[UnmovedPlateInfo]]:
     """
     Переносит плиты из kp_plates в completed_plates.
     
@@ -1320,6 +1330,7 @@ def move_plates_to_completed(
     init_schema(db_path)
     conn = _connect(db_path)
     completed_count = 0
+    unmoved_plates: list[UnmovedPlateInfo] = []
     # #region agent log
     import json as _json4
     _debug_log4 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
@@ -1658,6 +1669,16 @@ def move_plates_to_completed(
                     print(f"[DB] ⚠️ Плита списана из КП #{row_kp_id}: {row_plate_name} (qty={deduct})")
 
             if qty_remaining > 0:
+                unmoved_plates.append(
+                    {
+                        "kp_id": int(kp_id),
+                        "plate_name": str(current_plate_name or plate_name or ""),
+                        "qty": int(qty_remaining),
+                        "length_m": float(length_m or 0),
+                        "width_m": float(current_width_m or width_m or 0),
+                        "load_class": int(load_class or 0),
+                    }
+                )
                 print(f"[DB] ⚠️ Не найдена плита для списания: КП #{kp_id}, {current_plate_name} (width={current_width_m}, осталось qty={qty_remaining})")
                 # #region agent log: плита не найдена в БД (всегда логируем для отладки)
                 cur.execute("SELECT plate_name, length_m, width_m, load_class, qty, status FROM kp_plates WHERE kp_id = ? AND status IN ('в плане', 'в производстве') AND qty > 0 LIMIT 10", (kp_id,))
@@ -1681,11 +1702,15 @@ def move_plates_to_completed(
         
         conn.commit()
         print(f"[DB] ✅ Перенесено {completed_count} плит в completed_plates (КП #{kp_id}, день {production_day})")
+        if return_unmoved:
+            return completed_count, unmoved_plates
         return completed_count
         
     except Exception as e:
         print(f"[DB] ❌ Ошибка при переносе плит: {e}")
         conn.rollback()
+        if return_unmoved:
+            return 0, []
         return 0
     
     finally:

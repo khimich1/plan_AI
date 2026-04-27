@@ -38,22 +38,63 @@ class ProductionCompletionService:
 
         day_number = self._get_day_number(plan, target_date)
         day_view = build_day_view_detail(target_date)
-        plates_by_kp, rejected_by_kp, rejection_stats = self._collect_plates_by_kp(
+        (
+            plates_by_kp,
+            rejected_by_kp,
+            completion_stats,
+        ) = self._collect_plates_by_kp(
             day_view,
             plan_id,
             rejected_plates or [],
         )
 
+        planned_qty_total = completion_stats["planned_qty_total"]
+        completed_requested_qty = completion_stats["completed_requested_qty"]
+        rejected_requested_qty = completion_stats["rejected_requested_qty"]
+        skipped_without_kp = completion_stats["skipped_without_kp"]
+        if planned_qty_total <= 0:
+            raise ProductionCompletionError(
+                "В выбранном плане на дату нет плит для завершения."
+            )
+        if skipped_without_kp:
+            raise ProductionCompletionError(
+                "Не удалось завершить день: у части плит нет привязки к КП "
+                f"(позиций: {len(skipped_without_kp)})."
+            )
+
         total_moved = 0
+        unmoved_plates: list[dict[str, Any]] = []
         for kp_id, plates in plates_by_kp.items():
-            total_moved += kp_db.move_plates_to_completed(
+            move_result = kp_db.move_plates_to_completed(
                 kp_id,
                 plates,
                 day_number,
                 self.db_path,
                 plan_ids=[plan_id],
                 actor=actor,
+                return_unmoved=True,
             )
+            if isinstance(move_result, tuple):
+                moved, unmoved = move_result
+            else:
+                moved = int(move_result or 0)
+                # Backward compatibility for tests/mocks that return plain int.
+                # In this branch we don't know exact DB misses, so use requested
+                # payload as best-effort details for user-facing error.
+                unmoved = [
+                    {
+                        "kp_id": int(kp_id),
+                        "plate_name": str(plate.get("plate_name") or ""),
+                        "qty": int(plate.get("qty") or 0),
+                        "length_m": float(plate.get("length_m") or 0),
+                        "width_m": float(plate.get("width_m") or 0),
+                        "load_class": int(plate.get("load_class") or 0),
+                    }
+                    for plate in plates
+                    if int(plate.get("qty") or 0) > 0
+                ]
+            total_moved += moved
+            unmoved_plates.extend(unmoved)
 
         # Бракованные плиты возвращаем в 'в производстве', чтобы они попали
         # в следующее планирование. Иначе строки залипают со status='в плане'
@@ -66,6 +107,22 @@ class ProductionCompletionService:
         rejected_returned = self._return_rejected(
             rejected_flat, self.db_path, actor=actor
         )
+
+        if total_moved < completed_requested_qty:
+            missing_qty = completed_requested_qty - total_moved
+            missing_details = self._format_unmoved_plates(unmoved_plates)
+            raise ProductionCompletionError(
+                "Не удалось завершить день: не списано "
+                f"{missing_qty} плит из "
+                f"{completed_requested_qty}. "
+                f"Не хватает: {missing_details}."
+            )
+        if rejected_returned < rejected_requested_qty:
+            raise ProductionCompletionError(
+                "Не удалось завершить день: не возвращено в производство "
+                f"{rejected_requested_qty - rejected_returned} бракованных плит "
+                f"из {rejected_requested_qty}."
+            )
 
         # Проверка автозавершения КП — ТОЛЬКО после возврата брака,
         # иначе КП с полностью забракованным днём ошибочно станет 'выполнено'.
@@ -81,8 +138,38 @@ class ProductionCompletionService:
             "completed_kps": sorted(set(completed_kps)),
             "affected_kps": sorted(affected_kp_ids),
             "day_number": day_number,
-            **rejection_stats,
+            **completion_stats,
         }
+
+    @staticmethod
+    def _format_unmoved_plates(
+        unmoved_plates: list[dict[str, Any]],
+        *,
+        max_items: int = 8,
+    ) -> str:
+        grouped: dict[tuple[int, str], int] = defaultdict(int)
+        for item in unmoved_plates:
+            kp_id = int(item.get("kp_id") or 0)
+            plate_name = str(item.get("plate_name") or "").strip() or "Без названия"
+            qty = int(item.get("qty") or 0)
+            if qty <= 0:
+                continue
+            grouped[(kp_id, plate_name)] += qty
+
+        if not grouped:
+            return "не удалось определить позиции"
+
+        parts = [
+            f"КП {kp_id}: {plate_name} — {qty} шт"
+            for (kp_id, plate_name), qty in sorted(
+                grouped.items(),
+                key=lambda item: (-item[1], item[0][0], item[0][1]),
+            )
+        ]
+        if len(parts) > max_items:
+            hidden_count = len(parts) - max_items
+            parts = parts[:max_items] + [f"... и ещё {hidden_count} поз."]
+        return "; ".join(parts)
 
     @staticmethod
     def _return_rejected(
@@ -135,7 +222,7 @@ class ProductionCompletionService:
     ) -> tuple[
         dict[int, list[dict[str, Any]]],
         dict[int, list[dict[str, Any]]],
-        dict[str, int],
+        dict[str, Any],
     ]:
         grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
         rejected_grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -148,6 +235,9 @@ class ProductionCompletionService:
         seen_positions: set[tuple[int, int]] = set()
         rejected_positions = 0
         rejected_qty_total = 0
+        planned_qty_total = 0
+        completed_requested_qty = 0
+        skipped_without_kp: list[dict[str, Any]] = []
         plan_found = False
 
         for block in day_view.get("plans") or []:
@@ -166,6 +256,9 @@ class ProductionCompletionService:
                         raise ProductionCompletionError(
                             "Rejected quantity cannot exceed plate quantity"
                         )
+                    if total_qty <= 0:
+                        continue
+                    planned_qty_total += total_qty
 
                     completed_qty = total_qty - reject_qty
                     if reject_qty:
@@ -173,6 +266,16 @@ class ProductionCompletionService:
                         rejected_qty_total += reject_qty
 
                     kp_id = plate.get("kp_id")
+                    if not kp_id:
+                        skipped_without_kp.append(
+                            {
+                                "track_number": track_number,
+                                "plate_index": plate_index,
+                                "plate_name": plate.get("plate_name") or "",
+                                "qty": total_qty,
+                            }
+                        )
+                        continue
                     if reject_qty and kp_id:
                         rejected_grouped[int(kp_id)].append(
                             {
@@ -183,8 +286,7 @@ class ProductionCompletionService:
 
                     if completed_qty <= 0:
                         continue
-                    if not kp_id:
-                        continue
+                    completed_requested_qty += completed_qty
                     plate_to_move = {**plate, "qty": completed_qty}
                     grouped[int(kp_id)].append(
                         ProductionCompletionService._to_completed_plate_payload(
@@ -203,8 +305,13 @@ class ProductionCompletionService:
             grouped,
             rejected_grouped,
             {
+                "planned_qty_total": planned_qty_total,
+                "completed_requested_qty": completed_requested_qty,
+                "rejected_requested_qty": rejected_qty_total,
                 "rejected_plates": rejected_qty_total,
                 "rejected_positions": rejected_positions,
+                "skipped_without_kp": skipped_without_kp,
+                "skipped_without_kp_count": len(skipped_without_kp),
             },
         )
 
