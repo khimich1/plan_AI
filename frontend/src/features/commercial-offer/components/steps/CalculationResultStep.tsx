@@ -1,9 +1,11 @@
+import { useEffect, useState } from "react";
 import type { CommercialDraftDetails, CommercialSaveResult, SaveMode } from "@/features/commercial-offer/types/commercialOffer";
 import { DownloadFilesSection } from "@/features/commercial-offer/components/DownloadFilesSection";
 import { SaveOfferSection } from "@/features/commercial-offer/components/SaveOfferSection";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
+import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { StepLayout } from "@/shared/ui/StepLayout";
 
 type CalculationResultStepProps = {
@@ -18,6 +20,8 @@ type CalculationResultStepProps = {
   onGenerateFiles: () => void;
   onExecutionTermsChange: (value: string) => void;
   onSave: (payload: { mode: SaveMode; executionTermsInput: string }) => void;
+  isUpdatingDiscount: boolean;
+  onDiscountSubmit: (discountPercent: number) => Promise<void>;
 };
 
 export const CalculationResultStep = ({
@@ -32,8 +36,29 @@ export const CalculationResultStep = ({
   onGenerateFiles,
   onExecutionTermsChange,
   onSave,
-}: CalculationResultStepProps) => (
-  <StepLayout
+  isUpdatingDiscount,
+  onDiscountSubmit,
+}: CalculationResultStepProps) => {
+  const [discountDraft, setDiscountDraft] = useState(String(draft.metadata.discount_percent ?? 0));
+  const [discountError, setDiscountError] = useState<string | null>(null);
+  const totalWeight = draft.order_data.reduce((acc, item) => acc + (toNumber(item.weight) ?? 0), 0);
+
+  useEffect(() => {
+    setDiscountDraft(String(draft.metadata.discount_percent ?? 0));
+  }, [draft.metadata.discount_percent]);
+
+  const handleDiscountSave = async () => {
+    const parsed = toNumber(discountDraft);
+    if (parsed === null || parsed < 0 || parsed > 100) {
+      setDiscountError("Скидка должна быть числом от 0 до 100.");
+      return;
+    }
+    setDiscountError(null);
+    await onDiscountSubmit(parsed);
+  };
+
+  return (
+    <StepLayout
     title="Шаг 5. Расчёт и результат"
     description="Запустите финальный расчёт, проверьте итоговые данные и скачайте файлы. Сохранение в БД и архив также выполняется через backend."
     footer={
@@ -71,7 +96,7 @@ export const CalculationResultStep = ({
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {["Наименование", "Кол-во", "Длина", "Ширина", "Цена"].map((column) => (
+              {["№", "Наименование", "Кол-во", "Ед.", "Вес(кг)", "Цена", "Сумма"].map((column) => (
                 <th
                   key={column}
                   style={{ textAlign: "left", padding: "0.75rem", borderBottom: "1px solid #e4e7ec" }}
@@ -84,15 +109,50 @@ export const CalculationResultStep = ({
           <tbody>
             {draft.order_data.map((item, index) => (
               <tr key={`${item.name ?? "row"}-${index}`}>
+                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.name ?? "")}</td>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.qty ?? "")}</td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.length_m ?? "")}</td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.width_m ?? "")}</td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.unit_price ?? "")}</td>
+                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>шт</td>
+                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
+                  {formatNumber(item.weight)}
+                </td>
+                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
+                  {formatNumber(item.unit_price)}
+                </td>
+                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
+                  {formatSum(item.qty, item.unit_price)}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+    </Card>
+
+    <Card title="Итоги и скидка">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "0.75rem",
+          alignItems: "end",
+        }}
+      >
+        <SummaryCell label="Общий вес (кг)" value={formatNumber(totalWeight)} />
+        <SummaryCell label="Общая стоимость (с НДС)" value={formatNumber(draft.totals.total_with_vat ?? 0)} />
+        <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
+          <FieldWrapper label="Скидка (%)" error={discountError}>
+            <Input
+              value={discountDraft}
+              onChange={(event) => setDiscountDraft(event.target.value)}
+              inputMode="decimal"
+              placeholder="Например, 5"
+            />
+          </FieldWrapper>
+          <Button type="button" onClick={handleDiscountSave} disabled={isUpdatingDiscount}>
+            {isUpdatingDiscount ? "Обновляем..." : "Применить скидку"}
+          </Button>
+        </div>
       </div>
     </Card>
 
@@ -124,8 +184,9 @@ export const CalculationResultStep = ({
         </div>
       </Card>
     )}
-  </StepLayout>
-);
+    </StepLayout>
+  );
+};
 
 const SummaryCell = ({ label, value }: { label: string; value: string }) => (
   <div
@@ -140,3 +201,33 @@ const SummaryCell = ({ label, value }: { label: string; value: string }) => (
     <strong>{value}</strong>
   </div>
 );
+
+const toNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.replace(",", "."));
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const formatNumber = (value: unknown): string => {
+  const parsed = toNumber(value);
+  if (parsed === null) {
+    return "0";
+  }
+  return parsed.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+};
+
+const formatSum = (qtyValue: unknown, unitPriceValue: unknown): string => {
+  const qty = toNumber(qtyValue);
+  const unitPrice = toNumber(unitPriceValue);
+  if (qty === null || unitPrice === null) {
+    return "0";
+  }
+  return (qty * unitPrice).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+};

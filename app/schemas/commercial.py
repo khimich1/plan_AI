@@ -28,6 +28,7 @@ class CommercialGeneratedFile(BaseModel):
 
 
 class CommercialWidePlateLine(BaseModel):
+    id: str = Field(min_length=1)
     line: str
     qty: int = 1
 
@@ -112,7 +113,8 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
 
 
 class CommercialWidePlateDecision(BaseModel):
-    source_line: str = Field(min_length=1)
+    line_id: str | None = None
+    source_line: str | None = None
     action: CommercialWidePlateAction
     replacement_text: str = ""
 

@@ -9,7 +9,11 @@ from app.core.settings import get_settings
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
 from app.security.session import create_session_token
+from app.domain.models.optimization_context import OptimizationContext
+from app.domain.models.parse_result import ParseResult
+from app.domain.models.plate_order import PlateOrder
 from app.services.commercial_service import CommercialService
+from app.services.commercial_service import CommercialPreviewResult
 from app.services.commercial_workflow_service import CommercialWorkflowService
 
 
@@ -205,3 +209,92 @@ def test_web_offer_form_and_redirect(
     assert "Новое коммерческое предложение" in page_response.text
     assert submit_response.status_code == 303
     assert submit_response.headers["location"] == "/web/offers/drafts/draft-web"
+
+
+def test_build_order_data_preserves_input_sequence() -> None:
+    service = CommercialService()
+    order = PlateOrder()
+    parse_result = ParseResult(
+        order=order,
+        normalized_text="",
+        line_plate_load_details=[
+            {(7.1, 1.2, 8.0, "71"): 1},
+            {(5.9, 1.2, 8.0, "59"): 1},
+        ],
+    )
+    procurement_items = [
+        {"length": 5.9, "width": 1.2, "qty": 1, "load_code": 8, "length_dm_raw": "59"},
+        {"length": 7.1, "width": 1.2, "qty": 1, "load_code": 8, "length_dm_raw": "71"},
+    ]
+
+    order_data = service._build_order_data(procurement_items, [], order, parse_result)
+
+    assert len(order_data) == 2
+    assert order_data[0]["length_m"] == pytest.approx(7.1)
+    assert order_data[1]["length_m"] == pytest.approx(5.9)
+
+
+def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = CommercialWorkflowService()
+    draft_payload = {
+        "order": PlateOrder(),
+        "optimization_context": OptimizationContext(order=PlateOrder()),
+        "order_data": [],
+        "metadata": {
+            "source_type": "text",
+            "original_text": "Плиты ПБ 59-15-8п 2",
+            "ocr_text": "",
+            "input_text": "Плиты ПБ 59-15-8п 2\nПБ 59-12-8п 1",
+            "normalized_lines": ["ПБ 59-15-8п 2", "ПБ 59-12-8п 1"],
+            "plate_batches": [],
+            "wide_plate_lines": [{"id": "wide-1", "line": "ПБ 59-15-8п 2", "qty": 2}],
+            "last_source_filename": "",
+        },
+    }
+    monkeypatch.setattr(
+        workflow,
+        "_load_draft_or_raise",
+        lambda _draft_id: draft_payload,
+    )
+
+    captured: dict[str, str] = {}
+
+    def fake_generate_preview(*, text: str | None = None, parse_result: ParseResult | None = None):
+        _ = parse_result
+        preview_text = text or ""
+        captured["text"] = preview_text
+        fake_parse_result = ParseResult(
+            order=PlateOrder(),
+            normalized_text=preview_text,
+            normalized_lines=[line for line in preview_text.splitlines() if line.strip()],
+        )
+        return CommercialPreviewResult(
+            parse_result=fake_parse_result,
+            optimization_context=OptimizationContext(
+                order=PlateOrder(),
+                optimization_result={"total_plates": 0, "total_cost": 0.0},
+            ),
+            order_data=[],
+            price_rows=[],
+            breakdown_tables=[],
+            total_sum=0.0,
+        )
+
+    monkeypatch.setattr(workflow.commercial_service, "generate_preview", fake_generate_preview)
+    monkeypatch.setattr(
+        workflow,
+        "_build_preview_metadata",
+        lambda **kwargs: {"wide_plate_lines": [], "wide_plates_resolved": True},
+    )
+    monkeypatch.setattr(workflow.draft_store, "replace_preview", lambda *args, **kwargs: None)
+    monkeypatch.setattr(workflow, "get_draft_details", lambda _draft_id: {"draft_id": _draft_id})
+
+    result = workflow.resolve_wide_plates(
+        "draft-1",
+        decisions=[{"line_id": "wide-1", "action": "exclude"}],
+    )
+
+    assert result["draft_id"] == "draft-1"
+    assert captured["text"] == "ПБ 59-12-8п 1"

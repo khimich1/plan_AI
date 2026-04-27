@@ -11,11 +11,11 @@ type PlateInputStepProps = {
   sourceText: string;
   selectedImageName: string | null;
   errorMessage: string | null;
-  isPending: boolean;
+  isRecognizing: boolean;
   onTextChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
-  onSubmit: (mode: PlateInputMode) => void;
-  onNext: () => void;
+  onRecognize: (mode: PlateInputMode) => void;
+  onProcess: () => void;
 };
 
 export const PlateInputStep = ({
@@ -23,11 +23,11 @@ export const PlateInputStep = ({
   sourceText,
   selectedImageName,
   errorMessage,
-  isPending,
+  isRecognizing,
   onTextChange,
   onFileChange,
-  onSubmit,
-  onNext,
+  onRecognize,
+  onProcess,
 }: PlateInputStepProps) => {
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     onFileChange(event.target.files?.[0] ?? null);
@@ -37,18 +37,6 @@ export const PlateInputStep = ({
     <StepLayout
       title="Шаг 1. Ввод плит"
       description="Вставьте текст списка плит или загрузите фото/изображение таблицы. Backend выполнит OCR, нормализацию и подготовит превью."
-      footer={
-        draft ? (
-          <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
-            <Button type="button" variant="secondary" onClick={() => onSubmit("append")} disabled={isPending}>
-              {isPending ? "Обработка..." : "Добавить ещё плиты"}
-            </Button>
-            <Button type="button" onClick={onNext}>
-              Далее
-            </Button>
-          </div>
-        ) : null
-      }
     >
       {errorMessage && <Alert tone="error">{errorMessage}</Alert>}
 
@@ -69,14 +57,17 @@ export const PlateInputStep = ({
           {selectedImageName && <Alert tone="info">Выбран файл: {selectedImageName}</Alert>}
 
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-            <Button type="button" onClick={() => onSubmit(draft ? "replace" : "replace")} disabled={isPending}>
-              {draft ? "Заменить список" : "Распознать / обработать"}
+            <Button type="button" onClick={() => onRecognize("replace")} disabled={isRecognizing}>
+              {isRecognizing ? "Распознавание..." : draft ? "Распознать (заменить)" : "Распознать"}
             </Button>
             {draft && (
-              <Button type="button" variant="ghost" onClick={() => onSubmit("append")} disabled={isPending}>
-                Добавить ещё плиты
+              <Button type="button" variant="ghost" onClick={() => onRecognize("append")} disabled={isRecognizing}>
+                Распознать и добавить
               </Button>
             )}
+            <Button type="button" variant="secondary" onClick={onProcess} disabled={!draft || isRecognizing}>
+              Обработать
+            </Button>
           </div>
         </div>
       </Card>

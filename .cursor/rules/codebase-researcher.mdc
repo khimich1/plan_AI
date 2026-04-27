@@ -37,7 +37,7 @@ alwaysApply: false
 Начинай с:
 - `app/main.py` — создание FastAPI, lifespan, CORS, подключение API v1 и web-роутов
 - `app/api/v1/router.py` — сборка всех endpoint'ов v1
-- нужный модуль в `app/api/v1/endpoints/`: `health.py`, `auth.py`, `managers.py`, `commercial.py`, `archive.py`, `production.py`
+- нужный модуль в `app/api/v1/endpoints/`: `health.py`, `auth.py`, `managers.py`, `commercial.py`, `archive.py`, `production.py`, `offers.py`, `admin.py`
 - `app/dependencies/auth.py` — если задача про авторизацию, роли, сессии
 - `app/security/session.py` — если задача про токены/cookie-сессии
 - `app/services/` — если задача про бизнес-логику
@@ -55,8 +55,8 @@ alwaysApply: false
 - `frontend/src/app/providers/AppProviders.tsx` — провайдеры (QueryClient и т.д.)
 - `frontend/src/app/router/AppRouter.tsx` — BrowserRouter, маршруты SPA
 - `frontend/src/app/layout/AppLayout.tsx`, `frontend/src/app/layout/AppHeader.tsx` — общая оболочка
-- `frontend/src/pages/` — страницы (commercial-offer-create, commercial-offer-archive, production)
-- `frontend/src/features/` — фичи (commercial-offer, commercial-archive, production) с подкаталогами `api/`, `components/`, `hooks/`, `store/`, `schemas/`, `types/`, `lib/`
+- `frontend/src/pages/` — страницы (login, commercial-offer-create, commercial-offer-archive, production)
+- `frontend/src/features/` — фичи (auth, admin, commercial-offer, commercial-archive, production) с подкаталогами `api/`, `components/`, `hooks/`, `store/`, `schemas/`, `model/`, `types/`, `lib/`
 - `frontend/src/shared/` — общий код: `api/httpClient.ts`, `lib/`, `ui/`, `config/env.ts`
 
 ### Если задача про Telegram-бота
@@ -65,7 +65,8 @@ alwaysApply: false
 - `bot/bot_main.py` — инициализация aiogram `Bot` и `Dispatcher`, логирование, BOT_TOKEN
 - `bot/bot_config.py` — токен и пути
 - `bot/handlers/__init__.py` — централизованная регистрация роутеров (`register_all_handlers`)
-- нужный файл в `bot/handlers/`: `main.py`, `instructions.py`, `kp.py`, `comparison.py`, `commercial.py`, `archive.py`, `pb_info.py`, `optimize.py`, `export.py`, `admin.py`, `work_calendar_manager.py`, семейство `production_*` (`production_planning`, `production_plans_list`, `production_create`, `production_calendar`, `production_execution`, `production_day_view`, `production_export`, `production_completion`, `production_track_fill`)
+- нужный файл в `bot/handlers/`: `main.py`, `instructions.py`, `kp.py`, `comparison.py`, `commercial.py`, `archive.py`, `pb_info.py`, `optimize.py`, `export.py`, `admin.py`, `plan_manager.py`, `work_calendar_manager.py`, семейство `production_*` (`production_planning`, `production_plans_list`, `production_create`, `production_calendar`, `production_execution`, `production_day_view`, `production_export`, `production_completion`, `production_track_fill`)
+- отдельно фиксируй, подключён ли handler в `register_all_handlers()` из `bot/handlers/__init__.py`
 - `bot/states.py` — FSM-состояния
 - `bot/keyboards.py` — клавиатуры
 
@@ -158,13 +159,17 @@ alwaysApply: false
 - `app/services/commercial_service.py`
 - `app/services/commercial_workflow_service.py`
 - `app/services/archive_service.py`
+- `app/services/offers_service.py`
 - `app/services/production_service.py`
 - `app/services/production_planning_service.py`
+- `app/services/day_view_service.py`
+- `app/services/day_documents_service.py`
 - `app/services/plate_parser_service.py`
 - `app/services/optimization_service.py`
 - `app/services/file_generation_service.py`
 - `app/services/execution_terms_service.py`
 - `app/services/draft_store.py`
+- `app/services/admin_service.py`
 
 ### Для `app/repositories/`
 Фиксируй:
@@ -254,7 +259,8 @@ alwaysApply: false
 - `main.py:1` — переэкспорт ASGI-приложения из `app.main`
 - `app/main.py:32` — фабрика `create_app`, CORS, подключение роутеров
 - `app/main.py:17` — `lifespan` с настройкой логирования и инициализацией `AuthRepository`
-- `app/api/v1/router.py:7-13` — сборка API v1 (health, auth, managers, commercial, archive, production)
+- `app/api/v1/router.py:7-14` — сборка API v1 (health, auth, managers, commercial, archive, production, admin)
+- `app/api/v1/endpoints/offers.py` — endpoints управления КП (создание, список, карточка, смена статуса, удаление, выгрузка)
 - `app/web/router.py:18` — web-router без OpenAPI schema
 - `app/web/router.py:42-52` — отдача SPA shell из `frontend/dist/index.html`
 - `app/dependencies/auth.py:13-25` — `get_current_user` по cookie `app_session`
@@ -263,7 +269,7 @@ alwaysApply: false
 - `bot/bot_main.py:44` — async `main` для запуска aiogram-поллинга
 - `bot/handlers/__init__.py:11` — централизованная регистрация bot router'ов
 - `frontend/src/main.tsx` — точка входа React-приложения
-- `frontend/src/app/router/AppRouter.tsx:7` — определение маршрутов SPA
+- `frontend/src/app/router/AppRouter.tsx:9-23` — определение маршрутов SPA (login, commercial-offer/new, commercial-offer/archive, production)
 - `frontend/src/shared/api/httpClient.ts:31` — fetch-обёртка с `credentials: "include"` и `ApiError`
 
 ### Архитектурные наблюдения

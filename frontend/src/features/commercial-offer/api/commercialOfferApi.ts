@@ -29,6 +29,7 @@ type UpdateDraftMetaPayload = {
 };
 
 type WidePlateDecisionPayload = {
+  lineId?: string;
   sourceLine: string;
   action: WidePlateAction;
   replacementText?: string;
@@ -70,6 +71,7 @@ export const commercialOfferApi = {
       `/api/v1/commercial/drafts/${draftId}/wide-plates/resolve`,
       JSON.stringify({
         decisions: decisions.map((item) => ({
+          line_id: item.lineId ?? null,
           source_line: item.sourceLine,
           action: item.action,
           replacement_text: item.replacementText ?? "",
