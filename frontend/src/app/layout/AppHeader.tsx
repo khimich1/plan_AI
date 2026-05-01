@@ -81,7 +81,7 @@ export const AppHeader = () => {
           </span>
           <div>
             <div className="app-header__title">Коммерческие предложения</div>
-            <div className="app-header__subtitle">Шишов · внутренний кабинет</div>
+            <div className="app-header__subtitle">Внутренний кабинет</div>
           </div>
         </div>
         <nav className="app-nav">

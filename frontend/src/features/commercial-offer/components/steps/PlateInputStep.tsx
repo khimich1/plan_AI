@@ -36,7 +36,7 @@ export const PlateInputStep = ({
   return (
     <StepLayout
       title="Шаг 1. Ввод плит"
-      description="Вставьте текст списка плит или загрузите фото/изображение таблицы. Backend выполнит OCR, нормализацию и подготовит превью."
+      description="Вставьте текст списка плит или загрузите фото/изображение таблицы."
     >
       {errorMessage && <Alert tone="error">{errorMessage}</Alert>}
 

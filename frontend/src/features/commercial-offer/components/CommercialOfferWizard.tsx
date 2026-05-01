@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
@@ -9,7 +9,6 @@ import { CalculationResultStep } from "@/features/commercial-offer/components/st
 import type { CommercialDraftDetails, WidePlateAction, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { Alert } from "@/shared/ui/Alert";
-import { Card } from "@/shared/ui/Card";
 
 const getNextStepFromDraft = (draft: CommercialDraftDetails): WizardStepId => {
   if (draft.metadata.wide_plate_lines.length > 0 && !draft.metadata.wide_plates_resolved) {
@@ -41,16 +40,6 @@ export const CommercialOfferWizard = () => {
   const [stepError, setStepError] = useState<string | null>(null);
 
   const managers = managersQuery.data?.items ?? [];
-
-  const draftOverview = useMemo(
-    () => [
-      { label: "Draft ID", value: currentDraft?.draft_id ?? "ещё не создан" },
-      { label: "Менеджер", value: currentDraft?.metadata.manager_name || "не выбран" },
-      { label: "Клиент", value: currentDraft?.metadata.client_name || "не указан" },
-      { label: "Позиции", value: String(currentDraft?.order_data.length ?? 0) },
-    ],
-    [currentDraft],
-  );
 
   const resetSource = () => {
     setSelectedImage(null);
@@ -134,7 +123,6 @@ export const CommercialOfferWizard = () => {
 
   const handleClientSubmit = async (payload: {
     clientName: string;
-    discountPercent: number;
     conditionsMode: "standard" | "custom";
     deliveryConditions: string;
     paymentConditions: string;
@@ -149,7 +137,6 @@ export const CommercialOfferWizard = () => {
         draftId: currentDraft.draft_id,
         managerId: state.managerId,
         clientName: payload.clientName,
-        discountPercent: payload.discountPercent,
         conditionsMode: payload.conditionsMode,
         deliveryConditions: payload.deliveryConditions,
         paymentConditions: payload.paymentConditions,
@@ -261,7 +248,6 @@ export const CommercialOfferWizard = () => {
       <ClientConditionsStep
         defaultValues={{
           clientName: state.clientName,
-          discountPercent: state.discountPercent,
           conditionsMode: state.conditionsMode,
           deliveryConditions: state.deliveryConditions,
           paymentConditions: state.paymentConditions,
@@ -299,16 +285,6 @@ export const CommercialOfferWizard = () => {
         <aside className="wizard-sidebar">
           <div className="wizard-sidebar__inner">
             <WizardProgress currentStep={state.currentStep} />
-            <Card title="Черновик на клиенте">
-              <div style={{ display: "grid", gap: "0.5rem" }}>
-                {draftOverview.map((item) => (
-                  <div key={item.label} style={{ display: "flex", justifyContent: "space-between", gap: "1rem" }}>
-                    <span style={{ color: "#475467" }}>{item.label}</span>
-                    <strong style={{ textAlign: "right" }}>{item.value}</strong>
-                  </div>
-                ))}
-              </div>
-            </Card>
           </div>
         </aside>
       </div>

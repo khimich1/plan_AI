@@ -13,7 +13,6 @@ export const plateSubmissionSchema = z
 export const clientConditionsSchema = z
   .object({
     clientName: z.string().trim().min(1, "Укажите клиента."),
-    discountPercent: z.coerce.number().min(0, "Скидка не может быть отрицательной.").max(100, "Скидка не может быть больше 100%."),
     conditionsMode: z.enum(["standard", "custom"]),
     deliveryConditions: z.string().trim(),
     paymentConditions: z.string().trim(),
