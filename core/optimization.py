@@ -12,6 +12,7 @@
 - ПОПЕРЕЧНЫЙ РЕЗ: режет поперёк, уменьшает ДЛИНУ (6.0м → 3.0м + 3.0м)
 """
 # Относительные импорты внутри core/
+import os as _os
 from pathlib import Path as _Path
 from . import config_and_data as cfg
 from .config_and_data import canonical_plate_key
@@ -23,6 +24,117 @@ _DEBUG_RUNTIME_LOG_648532 = _Path(__file__).resolve().parent.parent / "debug-648
 _DEBUG_RUNTIME_SESSION_ID_648532 = "648532"
 
 
+# ==================== ХЕЛПЕРЫ ОПТИМИЗАЦИИ ====================
+
+def _canonical_length(length) -> float:
+    """
+    Каноническая длина (метры, round до 2 знаков).
+    Используется как единый формат сравнения длин в ILP-модели,
+    чтобы убрать float-tolerance с риском дрейфа при round-trip через JSON.
+    """
+    try:
+        return round(float(length), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _opt_debug_enabled() -> bool:
+    """
+    Включены ли подробные debug-логи оптимизатора.
+    По умолчанию выключены: дебаг-регионы пишут в файлы только при OPT_DEBUG_LOG=1.
+    Это нужно для честных замеров и чтобы prod не засорял диск.
+    """
+    return _os.environ.get("OPT_DEBUG_LOG", "").strip() in ("1", "true", "True", "yes", "on")
+
+
+class _DbgNullFile:
+    """
+    No-op file handle: используется как заглушка для debug-логов,
+    когда OPT_DEBUG_LOG выключен. Поддерживает и контекст-менеджер,
+    и прямой `.write(...)` без `with`.
+    """
+
+    def write(self, *_args, **_kwargs):
+        return 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args, **_kwargs):
+        return False
+
+
+_DBG_NULL_FILE = _DbgNullFile()
+
+
+def _dbg_open_append(path):
+    """
+    Append-handle для debug-логов оптимизатора.
+    При OPT_DEBUG_LOG=0 возвращает no-op handle, поэтому никакая запись не идёт.
+    Никогда не бросает исключений: при ошибке открытия — тоже no-op.
+    """
+    if not _opt_debug_enabled():
+        return _DBG_NULL_FILE
+    try:
+        return open(path, 'a', encoding='utf-8')
+    except Exception:
+        return _DBG_NULL_FILE
+
+
+def verify_coverage(
+    demand_2d: dict,
+    primary_cuts: list,
+    secondary_cuts: list,
+) -> dict:
+    """
+    Сверяет фактическое покрытие спроса по primary_cuts + secondary_cuts.
+
+    Returns:
+        {
+            "demand_total": int,
+            "covered_total": int,
+            "missing": {(L, W, lc): int},     # дефицит по ключам
+            "surplus": {(L, W, lc): int},     # перепроизводство по ключам
+            "ok": bool                          # True, если нет дефицита
+        }
+    Все ключи приведены через canonical_plate_key, так что 800/8 и
+    дробные длины не дают ложного несоответствия.
+    """
+    from collections import Counter as _Counter
+
+    demand_norm: _Counter = _Counter()
+    for key, qty in (demand_2d or {}).items():
+        if isinstance(key, tuple) and len(key) == 3:
+            demand_norm[canonical_plate_key(*key)] += int(qty)
+
+    coverage: _Counter = _Counter()
+    for cut in primary_cuts or []:
+        ak = cut.get("assignment_key")
+        if ak and isinstance(ak, tuple) and len(ak) == 3:
+            coverage[canonical_plate_key(*ak)] += 1
+    for cut in secondary_cuts or []:
+        tk = cut.get("target_order_key")
+        if tk and isinstance(tk, tuple) and len(tk) == 3:
+            coverage[canonical_plate_key(*tk)] += 1
+
+    missing: dict = {}
+    surplus: dict = {}
+    for key, need in demand_norm.items():
+        have = coverage.get(key, 0)
+        if have < need:
+            missing[key] = need - have
+        elif have > need:
+            surplus[key] = have - need
+
+    return {
+        "demand_total": int(sum(demand_norm.values())),
+        "covered_total": int(sum(coverage.values())),
+        "missing": missing,
+        "surplus": surplus,
+        "ok": not missing,
+    }
+
+
 def _debug_runtime_write_648532(
     run_id: str,
     hypothesis_id: str,
@@ -30,6 +142,8 @@ def _debug_runtime_write_648532(
     message: str,
     data: dict,
 ) -> None:
+    if not _opt_debug_enabled():
+        return
     try:
         import json as _json
         import time as _time
@@ -226,7 +340,7 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
     """
     # #region agent log (session 5b5324) _get_next_order_info entry
     try:
-        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
             _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:entry", "message": "key requested", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -246,7 +360,7 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
             }
             # #region agent log (session 5b5324) _get_next_order_info return exact
             try:
-                with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+                with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
                     _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "exact match", "data": {"match_type": "exact", "kp_id": out.get("kp_id"), "plate_name": (out.get("plate_name") or "")[:60]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
             except Exception:
                 pass
@@ -263,7 +377,7 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
                         try:
                             _req_lc = key[2] if len(key) >= 3 else None
                             _found_lc = candidate_key[2] if len(candidate_key) >= 3 else None
-                            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                            with _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log") as _f:
                                 _f.write(__import__('json').dumps({
                                     "hypothesisId": "H2_fallback",
                                     "location": "optimization.py:_get_next_order_info",
@@ -292,7 +406,7 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
                         }
                         # #region agent log (session 5b5324) fallback_same_length_width
                         try:
-                            with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+                            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
                                 _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_same_length_width", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_fb.get("kp_id"), "plate_name": (out_fb.get("plate_name") or "")[:60]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
                         except Exception:
                             pass
@@ -321,7 +435,7 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
                         }
                         # #region agent log (session 5b5324) fallback_neighbor_length
                         try:
-                            with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+                            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
                                 _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_neighbor_length", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_n.get("kp_id"), "plate_name": (out_n.get("plate_name") or "")[:60]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
                         except Exception:
                             pass
@@ -329,7 +443,7 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
                         return out_n
     # #region agent log (session 5b5324) _get_next_order_info return empty
     try:
-        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
             _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "empty", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -496,7 +610,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     _demand_59_10 = [(list(k), v) for k, v in demand_2d.items() if abs(k[0] - 5.99) < 0.02 and (k[2] == 10 or abs(float(k[2]) - 10) < 0.01)]
     if _demand_59_10:
         try:
-            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H_59_10_demand", "location": "optimization.py:demand_2d_built", "message": "demand_2d: ключи 5.99м 10п (length, width, load_code)", "data": {"keys": _demand_59_10}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log").write(__import__("json").dumps({"hypothesisId": "H_59_10_demand", "location": "optimization.py:demand_2d_built", "message": "demand_2d: ключи 5.99м 10п (length, width, load_code)", "data": {"keys": _demand_59_10}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
         except Exception:
             pass
     # #endregion
@@ -527,7 +641,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         for k, slots in list(slot_lists.items())[:3]:
             if slots:
                 _sample_slot.append({"key": list(k), "first_identity": [slots[0].get("kp_id"), (slots[0].get("plate_name") or "")[:50]]})
-        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
             _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_slots", "location": "optimization:after_build_slot_lists", "message": "slot_lists summary", "data": {"slot_summary": _slot_summary, "sample_slot_identity": _sample_slot}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -560,9 +674,12 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         pass
     # #endregion
 
-    tolerance_length = 0  # Строгое совпадение длины (после правок length_dm_to_m)
     tolerance_width = 20     # ±20мм по ширине (генерация опций, напр. поперечный рез остаток→цель)
     demand_tolerance_width = 10  # ±10мм при сопоставлении спроса с источником (по письму: допуск реза при работе)
+    # Длины сравниваем через канонический ключ (round до 2 знаков), а не через float-tolerance.
+    # tolerance_length оставлен для совместимости со старым блоком sources_to_demands,
+    # который будет удалён в этапе 2.7 ассайнмент-рефакторинга.
+    tolerance_length = 0
 
     # 2. ГЕНЕРАЦИЯ ОПЦИЙ ПЕРВИЧНЫХ РЕЗОВ (с длинами!)
     primary_options = []
@@ -669,7 +786,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
         _opts_320 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type'), "load_code": o.get('load_code')} for o in primary_options if o.get('main') == 320 or o.get('target_width') == 320]
         _opts_530 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type'), "load_code": o.get('load_code')} for o in primary_options if o.get('main') == 530 or o.get('target_width') == 530]
-        with open(_log, 'a', encoding='utf-8') as _f:
+        with _dbg_open_append(_log) as _f:
             _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H_opt_gen", "location": "optimization:primary_options_after_build", "message": "options for 320 and 530 before filter", "data": {"opts_320": _opts_320, "opts_530": _opts_530, "solid_widths": solid_widths}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -686,7 +803,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             has_direct = any(
                 o['type'] == 'direct' and 
                 o['main'] == target_w and
-                abs(o['length'] - opt['length']) <= tolerance_length
+                _canonical_length(o['length']) == _canonical_length(opt['length'])
                 for o in primary_options
             )
             if has_direct:
@@ -701,7 +818,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
         _opts_320 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type')} for o in primary_options if o.get('main') == 320 or o.get('target_width') == 320]
         _opts_530 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type')} for o in primary_options if o.get('main') == 530 or o.get('target_width') == 530]
-        with open(_log, 'a', encoding='utf-8') as _f:
+        with _dbg_open_append(_log) as _f:
             _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H_opt_filter", "location": "optimization:primary_options_after_filter", "message": "options for 320 and 530 after filter", "data": {"opts_320": _opts_320, "opts_530": _opts_530}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -729,7 +846,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             
             # Вариант A: Множественная резка по ширине (одинаковая длина)
             # ВАЖНО: Нельзя получить больше, чем есть! target_width <= source_width
-            if abs(target_length - source_length) <= tolerance_length and target_width <= source_width:
+            if _canonical_length(target_length) == _canonical_length(source_length) and target_width <= source_width:
                 # РАНЬШЕ: брали только максимум кусков (pieces = source_width // target_width)
                 # ТЕПЕРЬ: перебираем все варианты от 1 до max_pieces, чтобы можно было
                 # получать 1, 2, ... плит из одного остатка (например, 0.88 → 1×0.32 с хвостом 0.56)
@@ -783,7 +900,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                         sec_id += 1
             
             # Вариант B: Сужение (narrowing)
-            if (abs(target_length - source_length) <= tolerance_length and
+            if (_canonical_length(target_length) == _canonical_length(source_length) and
                 target_width < source_width <= target_width + 100):
                 waste = source_width - target_width
                 if waste <= 100:
@@ -880,179 +997,86 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     x_sec = {opt['id']: LpVariable(f"sec_{opt['id']}", lowBound=0, cat=LpInteger) 
              for opt in secondary_options}
     
-    # 5. ОГРАНИЧЕНИЯ: Покрытие спроса по (length, width, load_code)
-    # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code для различения плит с разной нагрузкой
-    BIG_M = 1e6
-    surplus_vars = []
-    # #region agent log: total demand (H_demand)
-    _debug_log = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
-    _total_demand = sum(demand_2d.values())
-    try:
-        open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H_demand", "location": "optimization.py:before_demand_loop", "message": "total demand and keys", "data": {"total_demand": _total_demand, "demand_keys_count": len(demand_2d), "demand_keys": [(round(k[0], 2), k[1], k[2], v) for k, v in demand_2d.items()]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log (95694e) спрос по плитам РЕСКЬЮ: 50.8-3.2-8П, 59.8-5.3-8П
-    try:
-        _d508320 = sum(q for k, q in demand_2d.items() if abs(k[0] - 5.08) < 0.02 and k[1] == 320 and (k[2] == 8 or k[2] == '8'))
-        _d598530 = sum(q for k, q in demand_2d.items() if abs(k[0] - 5.98) < 0.02 and k[1] == 530 and (k[2] == 8 or k[2] == '8'))
-        _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
-        with open(_log_p, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_demand_rescue", "location": "optimization:demand_2d", "message": "demand for 5.08/320 and 5.98/530 before solver", "data": {"demand_508_320": _d508320, "demand_598_530": _d598530}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    no_sources_keys = []  # [(key, qty), ...] for H1
-    opt_to_demands = {}  # opt_id -> [(demand_key, qty), ...] — какой спрос использует этот opt
-    _dbg_73_targets = {(5.1, 320, 8), (5.8, 320, 8)}
-    _dbg_73_sources = {}
-    _dbg_73_match_details = {}
-    # Группируем спросы по множеству источников. Ограничение: по каждому ключу спроса (dk)
-    # требуем lpSum(sources с этим assignment_key) >= qty, чтобы 5.1 и 5.8 не "делили" одну группу.
-    # sources_with_ak: (var_or_expr, assignment_key) для разбивки ограничений по ключу.
-    sources_to_demands = {}  # (frozenset(prim_ids), frozenset(sec_id_pieces)) -> (sources_with_ak, [(dk, qty), ...])
-    for (target_length, target_width, target_load_code), qty in demand_2d.items():
-        sources_with_ak = []  # [(var_or_expr, assignment_key), ...]
-        prim_ids = set()
-        sec_id_pieces = set()  # (opt_id, pieces)
-        dk = (round(target_length, 2), target_width, target_load_code)
-        
-        # Источник 1a: Первичные резы ПРЯМЫЕ (type='direct' или 'solid')
+    # 5. ASSIGNMENT-MODEL: пары совместимости (opt × demand_key) и z-переменные
+    #
+    # Идея: вместо "сумма всех источников >= qty" с группировкой по frozenset,
+    # вводим явные переменные распределения z_prim[(p, d)] / z_sec[(s, d)] —
+    # сколько штук производства от опции p (или s) идёт на закрытие конкретного
+    # спроса d. Это:
+    #   * убирает двойной счёт переменных между разными группами,
+    #   * полностью решает tolerance-edge cases на этапе построения пар,
+    #   * делает покрытие точным (`demand_d == q_d`) — нет ни потерь, ни лишнего,
+    #   * избавляет от костылей вроде demand_598665_min и пост-коррекции,
+    #     которые лечили симптомы старой "flow + group-surplus" модели.
+    primary_options_by_id = {o['id']: o for o in primary_options}
+    secondary_options_by_id = {o['id']: o for o in secondary_options}
+
+    dk_list = list(demand_2d.keys())
+    dk_to_idx = {dk: i for i, dk in enumerate(dk_list)}
+    primary_pairs_per_dk: dict = {dk: [] for dk in dk_list}    # dk -> [opt_id]
+    secondary_pairs_per_dk: dict = {dk: [] for dk in dk_list}  # dk -> [opt_id]
+    solid_pairs_per_dk: dict = {dk: [] for dk in dk_list}      # dk -> [opt_id] (solid only)
+    no_sources_keys: list = []  # [(dk, qty), ...] — для совместимости с force-add safety net
+
+    for dk in dk_list:
+        target_length, target_width, target_load_code = dk
         for opt in primary_options:
-            if (abs(opt['length'] - target_length) <= tolerance_length and 
-                abs(opt['main'] - target_width) <= demand_tolerance_width and
-                opt.get('type') in ['direct', 'solid'] and
-                opt.get('load_code', 800) == target_load_code):
-                lookup_w = opt.get('target_width', opt['main']) if opt.get('type') == 'indirect' else opt['main']
-                assignment_key = (opt['length'], lookup_w, opt.get('load_code', 800))
-                sources_with_ak.append((x_prim[opt['id']], assignment_key))
-                prim_ids.add(opt['id'])
-                opt_to_demands.setdefault(opt['id'], []).append((dk, qty))
-                if (round(target_length, 2), int(target_width), int(target_load_code)) in _dbg_73_targets:
-                    _dbg_73_match_details.setdefault((round(target_length, 2), int(target_width), int(target_load_code)), []).append({
-                        "source_kind": "primary_direct_or_solid",
-                        "opt_id": int(opt['id']),
-                        "source_width": int(opt.get('main', 0) or 0),
-                        "target_width": int(target_width),
-                        "is_exact_width": bool(int(opt.get('main', 0) or 0) == int(target_width)),
-                    })
-        
-        # Источник 1b: Первичные резы НЕПРЯМЫЕ (type='indirect', через narrowing)
-        for opt in primary_options:
-            if (abs(opt['length'] - target_length) <= tolerance_length and
-                opt.get('type') == 'indirect' and
-                abs(opt.get('target_width', 0) - target_width) <= demand_tolerance_width and
-                opt.get('load_code', 800) == target_load_code):
-                lookup_w = opt.get('target_width', opt['main'])
-                assignment_key = (opt['length'], lookup_w, opt.get('load_code', 800))
-                sources_with_ak.append((x_prim[opt['id']], assignment_key))
-                prim_ids.add(opt['id'])
-                opt_to_demands.setdefault(opt['id'], []).append((dk, qty))
-                if (round(target_length, 2), int(target_width), int(target_load_code)) in _dbg_73_targets:
-                    _dbg_73_match_details.setdefault((round(target_length, 2), int(target_width), int(target_load_code)), []).append({
-                        "source_kind": "primary_indirect",
-                        "opt_id": int(opt['id']),
-                        "source_width": int(opt.get('target_width', 0) or 0),
-                        "target_width": int(target_width),
-                        "is_exact_width": bool(int(opt.get('target_width', 0) or 0) == int(target_width)),
-                    })
-        
-        # Источник 2: Вторичные резы
+            if (_canonical_length(opt['length']) != _canonical_length(target_length)
+                    or opt.get('load_code', 800) != target_load_code):
+                continue
+            opt_type = opt.get('type')
+            if opt_type in ('direct', 'solid'):
+                if abs(opt['main'] - target_width) <= demand_tolerance_width:
+                    primary_pairs_per_dk[dk].append(opt['id'])
+                    if opt_type == 'solid' and target_width in solid_widths:
+                        solid_pairs_per_dk[dk].append(opt['id'])
+            elif opt_type == 'indirect':
+                if abs(opt.get('target_width', 0) - target_width) <= demand_tolerance_width:
+                    primary_pairs_per_dk[dk].append(opt['id'])
+
         for opt in secondary_options:
             opt_target_key = opt.get('target_order_key', (0, 0, 800))
-            if len(opt_target_key) == 3:
-                opt_target_load = opt_target_key[2]
-            else:
-                opt_target_load = 800
-            if (abs(opt['output_length'] - target_length) <= tolerance_length and 
-                abs(opt['output_width'] - target_width) <= demand_tolerance_width and
-                opt_target_load == target_load_code):
-                sec_assignment_key = (opt['output_length'], opt['output_width'], opt_target_load)
-                sources_with_ak.append((x_sec[opt['id']] * opt['pieces'], sec_assignment_key))
-                sec_id_pieces.add((opt['id'], opt['pieces']))
-                if (round(target_length, 2), int(target_width), int(target_load_code)) in _dbg_73_targets:
-                    _dbg_73_match_details.setdefault((round(target_length, 2), int(target_width), int(target_load_code)), []).append({
-                        "source_kind": "secondary",
-                        "opt_id": int(opt['id']),
-                        "pieces": int(opt.get('pieces', 1) or 1),
-                        "source_width": int(opt.get('output_width', 0) or 0),
-                        "target_width": int(target_width),
-                        "is_exact_width": bool(int(opt.get('output_width', 0) or 0) == int(target_width)),
-                    })
-        # #region agent log
-        _k73 = (round(target_length, 2), int(target_width), int(target_load_code))
-        if _k73 in _dbg_73_targets:
-            _dbg_73_sources[_k73] = {
-                "qty": int(qty),
-                "prim_ids": sorted(list(prim_ids)),
-                "sec_id_pieces": [[int(sid), int(pcs)] for sid, pcs in sorted(list(sec_id_pieces))],
-                "sources_count": int(len(sources_with_ak)),
-            }
-        # #endregion
-        
-        if sources_with_ak:
-            key = (frozenset(prim_ids), frozenset(sec_id_pieces))
-            if key not in sources_to_demands:
-                sources_to_demands[key] = (list(sources_with_ak), [])
-            else:
-                sources_to_demands[key][0].extend(sources_with_ak)
-            sources_to_demands[key][1].append((dk, qty))
-        else:
-            # === КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: НЕТ ИСТОЧНИКОВ ДЛЯ СПРОСА ===
-            no_sources_keys.append(((round(target_length, 2), target_width, target_load_code), qty))
-            # #region agent log: no sources (H1) + same L/W other load (H3)
-            _same_lw_other_load = [opt.get('load_code') for opt in primary_options if abs(opt['length'] - target_length) <= tolerance_length and abs(opt.get('main', opt.get('target_width', 0)) - target_width) <= demand_tolerance_width and opt.get('load_code', 800) != target_load_code]
-            try:
-                open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H1", "location": "optimization.py:no_sources", "message": "demand key has no sources", "data": {"target_length": target_length, "target_width": target_width, "target_load_code": target_load_code, "qty": qty, "same_LW_other_load_codes": _same_lw_other_load[:5]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-            # #endregion
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"[OPT_2D] ❌ НЕТ ИСТОЧНИКОВ для плиты: {target_length}м x {target_width}мм (load={target_load_code}) x{qty}шт!")
-            logger.error(f"[OPT_2D]    Эта плита НЕ БУДЕТ включена в план!")
-            logger.error(f"[OPT_2D]    Возможные причины:")
-            logger.error(f"[OPT_2D]      - Нестандартная ширина {target_width}мм не поддерживается NARROWING_TABLE")
-            logger.error(f"[OPT_2D]      - Нет подходящих исходных плит для реза")
-            logger.error(f"[OPT_2D]      - Несовместимый load_code={target_load_code}")
-            print(f"[OPT_2D] ⚠️ ВНИМАНИЕ: Плита {target_length}м x {target_width}мм НЕ МОЖЕТ быть произведена!")
-    
-    # #region agent log (2d5c43) Plan B: ключи без источников (no_sources_keys)
-    try:
-        _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
-        _no_src_ser = [[list(k), q] for k, q in no_sources_keys]
-        with open(_log, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H_no_sources", "location": "optimization:after_demand_loop", "message": "demand keys with no sources in model", "data": {"no_sources_keys": _no_src_ser, "count": len(no_sources_keys)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log
-    try:
-        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
-        _no_sources_73 = [{"key": list(k), "qty": q} for k, q in no_sources_keys if (round(k[0], 2), int(k[1]), int(k[2])) in _dbg_73_targets]
-        with open(_log_73, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({
-                "sessionId": "73ca51",
-                "runId": "run2",
-                "hypothesisId": "H6_sources_for_320",
-                "location": "optimization:after_demand_loop",
-                "message": "Sources for 5.1/320/8 and 5.8/320/8",
-                "data": {
-                    "targets_sources": {str(list(k)): v for k, v in _dbg_73_sources.items()},
-                    "targets_in_no_sources": _no_sources_73,
-                    "target_match_details": {str(list(k)): v for k, v in _dbg_73_match_details.items()},
-                },
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # Сохраняем ссылку на группу с opt 105 для проверки после solve (95694e)
-    _dbg_grp105_sources = None
-    _dbg_grp105_total_qty = None
-    _dbg_rescue_groups = {}  # (length_key, width) -> (sources_list, total_qty) для 5.08/320 и 5.98/530
-    _dbg_73_groups = {}
-    _opt_598_for_dbg = next((o for o in primary_options if abs(o.get('length', 0) - 5.98) < 0.02 and o.get('main') == 665), None)
+            opt_target_load = opt_target_key[2] if len(opt_target_key) == 3 else 800
+            if (_canonical_length(opt['output_length']) == _canonical_length(target_length)
+                    and abs(opt['output_width'] - target_width) <= demand_tolerance_width
+                    and opt_target_load == target_load_code):
+                secondary_pairs_per_dk[dk].append(opt['id'])
+
+        if not primary_pairs_per_dk[dk] and not secondary_pairs_per_dk[dk]:
+            no_sources_keys.append((dk, demand_2d[dk]))
+            import logging as _no_src_log
+            _no_src_log.getLogger(__name__).error(
+                "[OPT_2D] ❌ НЕТ ИСТОЧНИКОВ для плиты: %sм x %sмм (load=%s) x%dшт — закроется через unmet/post-correction",
+                target_length, target_width, target_load_code, demand_2d[dk],
+            )
+
+    # 5.1 Z-переменные распределения (assignment) и slack
+    z_prim: dict = {}      # (opt_id, dk) -> LpVariable, штук primary p, идущих на спрос d
+    z_sec: dict = {}       # (opt_id, dk) -> LpVariable, штук secondary s, идущих на спрос d
+    slack_solid: dict = {} # dk -> LpVariable: недопокрытие solid-priority (мягкий приоритет)
+    unmet: dict = {}       # dk -> LpVariable: глобальный дефицит (последний рубеж)
+
+    for dk in dk_list:
+        di = dk_to_idx[dk]
+        for opt_id in primary_pairs_per_dk[dk]:
+            z_prim[(opt_id, dk)] = LpVariable(
+                f"z_prim_{opt_id}_d{di}", lowBound=0, cat=LpInteger,
+            )
+        for opt_id in secondary_pairs_per_dk[dk]:
+            z_sec[(opt_id, dk)] = LpVariable(
+                f"z_sec_{opt_id}_d{di}", lowBound=0, cat=LpInteger,
+            )
+        if solid_pairs_per_dk[dk]:
+            slack_solid[dk] = LpVariable(
+                f"slack_solid_d{di}", lowBound=0, cat=LpInteger,
+            )
+        unmet[dk] = LpVariable(f"unmet_d{di}", lowBound=0, cat=LpInteger)
+
+    # Сохранения для post-solve диагностики (вместо россыпи _dbg_*)
+    _opt_to_demands = {}  # для logger ниже: opt_id -> [(dk, qty), ...]
+    for dk, opt_ids in primary_pairs_per_dk.items():
+        for oid in opt_ids:
+            _opt_to_demands.setdefault(oid, []).append((dk, demand_2d[dk]))
 
     def _norm_key(k):
         if not k or len(k) < 2:
@@ -1062,594 +1086,189 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             lc = 8
         return (round(float(k[0]), 2), int(k[1]), lc)
 
-    # Ограничения: по каждому ключу спроса (dk) — lpSum(sources с этим assignment_key) >= qty
-    for grp_idx, (key, (sources_with_ak_list, demands_list)) in enumerate(sources_to_demands.items()):
-        total_qty = sum(q for _, q in demands_list)
-        # Уникальные переменные группы для surplus (без дубликатов по объекту).
-        # LpAffineExpression (x_sec * pieces) не hashable — дедупликация по id().
-        _seen = set()
-        sources_list = []
-        for v, _ in sources_with_ak_list:
-            vid = id(v)
-            if vid not in _seen:
-                _seen.add(vid)
-                sources_list.append(v)
-        surplus = LpVariable(f"surplus_grp_{grp_idx}", lowBound=0, cat=LpInteger)
-        surplus_vars.append(surplus)
-        _per_dk_added = []
-        for _di, (_dk, _q) in enumerate(demands_list):
-            _dk_norm = _norm_key(_dk)
-            sources_dk = [v for v, ak in sources_with_ak_list if _norm_key(ak) == _dk_norm]
-            if sources_dk:
-                prob += lpSum(sources_dk) >= _q, f"demand_grp_{grp_idx}_dk_{_di}"
-                if (abs(_dk_norm[0] - 5.1) < 0.02 or abs(_dk_norm[0] - 5.8) < 0.02) and _dk_norm[1] == 320:
-                    _per_dk_added.append({"dk": list(_dk_norm), "qty": _q, "sources_dk_len": len(sources_dk)})
-        if _per_dk_added:
-            try:
-                _log_a636 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-a636b6.log"
-                with open(_log_a636, 'a', encoding='utf-8') as _f:
-                    _f.write(__import__('json').dumps({"sessionId": "a636b6", "hypothesisId": "per_dk_constraints_320", "location": "optimization:constraint_loop", "message": "per-dk constraints for 5.1/5.8 320", "data": {"grp_idx": grp_idx, "added": _per_dk_added}, "timestamp": int(__import__('time').time() * 1000)}, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-        prob += surplus == lpSum(sources_list) - total_qty, f"demand_grp_{grp_idx}_surplus"
-        if _opt_598_for_dbg and key[0] and _opt_598_for_dbg['id'] in key[0]:
-            _dbg_grp105_sources = list(sources_list)
-            _dbg_grp105_total_qty = total_qty
-        for _dk, _q in demands_list:
-            _len_w = (round(float(_dk[0]), 2), _dk[1]) if _dk else (0, 0)
-            if abs(_len_w[0] - 5.08) < 0.02 and _len_w[1] == 320:
-                _dbg_rescue_groups[(5.08, 320)] = (list(sources_list), total_qty)
-            if abs(_len_w[0] - 5.98) < 0.02 and _len_w[1] == 530:
-                _dbg_rescue_groups[(5.98, 530)] = (list(sources_list), total_qty)
-            _k73 = (round(float(_dk[0]), 2), int(_dk[1]), int(_dk[2])) if _dk and len(_dk) == 3 else None
-            if _k73 in _dbg_73_targets:
-                _dbg_73_groups[_k73] = {
-                    "sources_list": list(sources_list),
-                    "total_qty": int(total_qty),
-                    "demands_list": [(list(dk_item), int(qty_item)) for dk_item, qty_item in demands_list],
-                    "grp_idx": int(grp_idx),
-                }
-    
-    # Явный нижний предел для 5.98/665: гарантирует минимум по спросу (обход возможной потери в групповом ограничении)
-    _demand_598665 = sum(q for k, q in demand_2d.items() if abs(k[0] - 5.98) < 0.02 and k[1] == 665)
-    if _demand_598665 > 0:
-        _opts_598 = [o for o in primary_options if abs(o.get('length', 0) - 5.98) < 0.02 and o.get('main') == 665]
-        if _opts_598:
-            _vars_598 = [x_prim[o['id']] for o in _opts_598]
-            prob += lpSum(_vars_598) >= _demand_598665, "demand_598665_min"
-    
-    # #region agent log (95694e) группа ограничений, содержащая opt 5.98/665
-    try:
-        _opt_598 = next((o for o in primary_options if abs(o.get('length', 0) - 5.98) < 0.02 and o.get('main') == 665), None)
-        if _opt_598:
-            _oid = _opt_598['id']
-            for _key, (_sources_list, _demands_list) in sources_to_demands.items():
-                _prim_ids = _key[0] if isinstance(_key[0], (set, frozenset)) else set(_key[0]) if _key else set()
-                if _oid in _prim_ids:
-                    _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
-                    with open(_log_p, 'a', encoding='utf-8') as _f:
-                        _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_grp_598665", "location": "optimization:demand_group", "message": "constraint group for 5.98/665 opt", "data": {"opt_id": _oid, "total_qty": sum(q for _, q in _demands_list), "demands_list": [[list(d[0]), d[1]] for d in _demands_list], "prim_ids": list(_prim_ids)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-                    break
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log
-    try:
-        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
-        _groups_ser = {}
-        for _k, _v in (_dbg_73_groups or {}).items():
-            _groups_ser[str(list(_k))] = {
-                "grp_idx": _v.get("grp_idx"),
-                "total_qty": _v.get("total_qty"),
-                "demands_list": _v.get("demands_list"),
-                "sources_count": len(_v.get("sources_list", [])),
-            }
-        with open(_log_73, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({
-                "sessionId": "73ca51",
-                "runId": "run2",
-                "hypothesisId": "H7_group_constraints_320",
-                "location": "optimization:after_group_constraints",
-                "message": "Constraint groups for 5.1/320/8 and 5.8/320/8",
-                "data": {"groups": _groups_ser},
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log (95694e) группа ограничений для 5.08/320 и 5.98/530
-    try:
-        for _lk, _lw in [(5.08, 320), (5.98, 530)]:
-            _opt_r = next((o for o in primary_options if abs(o.get('length', 0) - _lk) < 0.02 and o.get('main') == _lw), None)
-            if not _opt_r:
-                continue
-            _oid = _opt_r['id']
-            for _key, (_sources_list, _demands_list) in sources_to_demands.items():
-                _prim_ids = _key[0] if isinstance(_key[0], (set, frozenset)) else set(_key[0]) if _key else set()
-                if _oid in _prim_ids:
-                    _label = "5.08/320" if _lk == 5.08 else "5.98/530"
-                    _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
-                    with open(_log_p, 'a', encoding='utf-8') as _f:
-                        _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_grp_rescue", "location": "optimization:demand_group", "message": f"constraint group for {_label} opt", "data": {"plate_key": _label, "opt_id": _oid, "total_qty": sum(q for _, q in _demands_list), "prim_ids": list(_prim_ids)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-                    break
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log
-    try:
-        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
-        _contrib = {}
-        for _target_key, _src_payload in (_dbg_73_sources or {}).items():
-            _prim_ids = _src_payload.get("prim_ids", []) or []
-            _sec_pairs = _src_payload.get("sec_id_pieces", []) or []
-            _prim_sum = 0.0
-            _sec_sum = 0.0
-            for _pid in _prim_ids:
-                if _pid in x_prim:
-                    _pv = value(x_prim[_pid])
-                    _prim_sum += float(_pv) if _pv is not None else 0.0
-            for _pair in _sec_pairs:
-                if not isinstance(_pair, (list, tuple)) or len(_pair) != 2:
-                    continue
-                _sid, _pcs = int(_pair[0]), int(_pair[1])
-                if _sid in x_sec:
-                    _sv = value(x_sec[_sid])
-                    _sec_sum += (float(_sv) if _sv is not None else 0.0) * _pcs
-            _contrib[str(list(_target_key))] = {
-                "primary_sum": _prim_sum,
-                "secondary_sum_weighted": _sec_sum,
-                "total_contrib": _prim_sum + _sec_sum,
-                "required_qty": int(_src_payload.get("qty", 0) or 0),
-                "covers_required": bool((_prim_sum + _sec_sum) >= int(_src_payload.get("qty", 0) or 0)),
-            }
-        _lhs_rhs = {}
-        for _k, _v in (_dbg_73_groups or {}).items():
-            _src = _v.get("sources_list", [])
-            _actual = sum((value(var) if value(var) is not None else 0.0) for var in _src)
-            _need = int(_v.get("total_qty", 0))
-            _lhs_rhs[str(list(_k))] = {
-                "grp_idx": _v.get("grp_idx"),
-                "lhs_actual_sum": float(_actual),
-                "rhs_total_qty": _need,
-                "constraint_satisfied": bool(_actual >= _need),
-            }
-        with open(_log_73, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({
-                "sessionId": "73ca51",
-                "runId": "run2",
-                "hypothesisId": "H8_group_lhs_rhs_320",
-                "location": "optimization:after_solve",
-                "message": "LHS vs RHS and exact/tolerant contributions for target 320 groups",
-                "data": {"groups_lhs_rhs": _lhs_rhs, "contributions": _contrib},
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + "\n")
-    except Exception as _e73:
-        try:
-            _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
-            with open(_log_73, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({
-                    "sessionId": "73ca51",
-                    "runId": "run2",
-                    "hypothesisId": "H8_group_lhs_rhs_320_error",
-                    "location": "optimization:after_solve",
-                    "message": "Error during LHS/RHS contribution logging",
-                    "data": {"error": str(_e73)},
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-    # #endregion
-    # #region agent log: no_sources summary (H1)
-    if no_sources_keys:
-        _plates_lost = sum(q for _, q in no_sources_keys)
-        try:
-            open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H1", "location": "optimization.py:no_sources_summary", "message": "no_sources summary", "data": {"keys_count": len(no_sources_keys), "total_plates_lost": _plates_lost, "keys": [(list(k), q) for k, q in no_sources_keys]}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #region agent log (session 73b708) H_A: потери на этапе оптимизатора
-        try:
-            _agent_log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73b708.log"
-            open(_agent_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_A", "location": "optimization.py:no_sources_summary", "message": "Plates lost at optimizer (no sources)", "data": {"keys_count": len(no_sources_keys), "total_plates_lost": _plates_lost, "keys": [(list(k), q) for k, q in no_sources_keys]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
-    # #endregion
-    # #region agent log: competing demand keys (share same primary opts)
-    _competing_opts = []
-    for opt_id, demands in opt_to_demands.items():
-        lengths = set(d[0][0] for d in demands)
-        if len(lengths) > 1:
-            opt_info = next((o for o in primary_options if o['id'] == opt_id), None)
-            _competing_opts.append({"opt_id": opt_id, "opt_length": opt_info['length'] if opt_info else None,
-                                    "demands": [(list(d[0]), d[1]) for d in demands]})
-    if _competing_opts:
-        try:
-            open(_debug_log, 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H_opt_competing", "location": "optimization.py:competing_demands", "message": "primary opt used by multiple demand keys (different lengths)", "data": {"competing_opts": _competing_opts}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-    # #endregion
-    # 5.5 ПРИОРИТЕТНОЕ ОГРАНИЧЕНИЕ: Solid плиты ОБЯЗАТЕЛЬНЫ для полных ширин (1200/1080мм)!
-    # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code
-    print(f"[OPT_2D] Проверяем приоритетные ограничения для solid-плит: {solid_widths}")
-    for (target_length, target_width, target_load_code), qty in demand_2d.items():
-        if target_width in solid_widths:
-            solid_sources = []
-            for opt in primary_options:
-                if (abs(opt['length'] - target_length) <= tolerance_length and 
-                    opt['main'] == target_width and
-                    opt.get('type') == 'solid' and
-                    opt['main'] == target_width and
-                    opt.get('load_code', 800) == target_load_code):  # ИСПРАВЛЕНИЕ: проверяем load_code
-                    solid_sources.append(x_prim[opt['id']])
-            
-            if solid_sources:
-                # ЖЁСТКОЕ требование: удовлетворить спрос ТОЛЬКО solid-плитами!
-                prob += lpSum(solid_sources) >= qty, f"solid_priority_{target_length}m_{target_width}mm_{target_load_code}"
-                print(f"[OPT_2D] ✓ ПРИОРИТЕТ: {qty} плит {target_width}мм × {target_length}м (load={target_load_code}) ОБЯЗАТЕЛЬНО solid")
-    
-    # 6. ОГРАНИЧЕНИЯ: Баланс остатков
-    for (source_length, source_width), source_ids in possible_rests.items():
-        # Пропускаем остатки нулевой ширины (solid плиты не создают остатков!)
-        if source_width == 0:
-            continue
-            
-        # Произведено (ТОЛЬКО из плит С резом, не solid!)
-        produced = []
-        for opt_id in source_ids:
-            opt = next((o for o in primary_options if o['id'] == opt_id), None)
-            if opt and opt.get('type') != 'solid':  # ИСКЛЮЧАЕМ SOLID!
-                produced.append(x_prim[opt_id])
-        
-        # Использовано
-        consumed = []
-        for opt in secondary_options:
-            if (abs(opt['source_length'] - source_length) <= tolerance_length and 
-                opt['source_rest'] == source_width):
-                consumed.append(x_sec[opt['id']])
-        
-        if produced and consumed:
-            prob += lpSum(consumed) <= lpSum(produced), f"balance_{source_length}m_{source_width}mm"
-    
-    # 7. ЦЕЛЕВАЯ ФУНКЦИЯ (УЛУЧШЕННАЯ: учёт реальных цен + приоритет остатков)
-    total_cost = 0
-    for surplus in surplus_vars:
-        total_cost += BIG_M * surplus
+    # 5.2 demand_d == q_d: точное закрытие спроса (assignment-вид).
+    # Equality важно: одновременно "не теряем" (>=) и "не плодим" (<=).
+    # При полном отсутствии источников спрос закроется через unmet[d] (см. 5.1)
+    # с очень большим штрафом, чтобы модель никогда не была infeasible.
+    for dk in dk_list:
+        qty = demand_2d[dk]
+        parts = [z_prim[(oid, dk)] for oid in primary_pairs_per_dk[dk]]
+        parts += [z_sec[(oid, dk)] for oid in secondary_pairs_per_dk[dk]]
+        parts.append(unmet[dk])
+        prob += lpSum(parts) == qty, f"demand_d{dk_to_idx[dk]}"
 
-    # Новое: мягкий приоритет на МЕНЬШЕЕ количество исходных плит 1200 мм.
-    # total_plates_var = сумма всех первичных резов (каждый такой рез — одна плита 1.2 м).
-    total_plates_var = lpSum(x_prim.values())
+    # 5.3 cap_prim: sum_d z_prim[p,d] <= x_p — производство ограничивает назначения
+    prim_to_dks: dict = {}
+    for _dk, _opts in primary_pairs_per_dk.items():
+        for _oid in _opts:
+            prim_to_dks.setdefault(_oid, []).append(_dk)
+    for _oid, _dks in prim_to_dks.items():
+        prob += (
+            lpSum(z_prim[(_oid, _dk)] for _dk in _dks) <= x_prim[_oid],
+            f"cap_prim_{_oid}",
+        )
+
+    # 5.4 cap_sec: sum_d z_sec[s,d] <= x_sec[s] * pieces_s
+    sec_to_dks: dict = {}
+    for _dk, _opts in secondary_pairs_per_dk.items():
+        for _oid in _opts:
+            sec_to_dks.setdefault(_oid, []).append(_dk)
+    for _oid, _dks in sec_to_dks.items():
+        _pieces = secondary_options_by_id[_oid].get('pieces', 1)
+        prob += (
+            lpSum(z_sec[(_oid, _dk)] for _dk in _dks) <= x_sec[_oid] * _pieces,
+            f"cap_sec_{_oid}",
+        )
+
+    # 5.5 SOFT solid-priority: solid-плиты — приоритет для полных ширин (1200/1080),
+    # но через slack_solid + штраф в objective, не через hard >=. Это убирает риск
+    # infeasibility при нехватке solid-опций и оставляет видимый сигнал в логах.
+    for _dk, _solid_ids in solid_pairs_per_dk.items():
+        if not _solid_ids:
+            continue
+        _qty = demand_2d[_dk]
+        prob += (
+            lpSum(z_prim[(oid, _dk)] for oid in _solid_ids) + slack_solid[_dk] >= _qty,
+            f"solid_priority_d{dk_to_idx[_dk]}",
+        )
     
-    # 7.1 Стоимость ПЕРВИЧНЫХ РЕЗОВ (плиты + продольные резы)
+    if no_sources_keys:
+        import logging as _no_src_summary_log
+        _no_src_summary_log.getLogger(__name__).warning(
+            "[OPT_2D] no_sources: %d ключей, %d плит — закроются через unmet/post-correction",
+            len(no_sources_keys), sum(q for _, q in no_sources_keys),
+        )
+    # 6. ОГРАНИЧЕНИЯ: Баланс остатков с load_code в ключе.
+    # Ключ остатка теперь (length, rest_width, load_code) — остатки разных load_code
+    # не пулятся, что закрывает старый баг "общий пул остатков".
+    rests_by_lkey: dict = {}  # rkey -> {'produced': [opt_id], 'consumed': [opt_id]}
+    for opt in primary_options:
+        rest_w = opt.get('rest', 0)
+        if rest_w > 0 and opt.get('type') != 'solid':
+            rkey = (opt['length'], rest_w, opt.get('load_code', 800))
+            rests_by_lkey.setdefault(rkey, {'produced': [], 'consumed': []})['produced'].append(opt['id'])
+    for opt in secondary_options:
+        target_key = opt.get('target_order_key', (0, 0, 800))
+        sec_lc = target_key[2] if len(target_key) == 3 else 800
+        rkey = (opt['source_length'], opt['source_rest'], sec_lc)
+        if rkey in rests_by_lkey:
+            rests_by_lkey[rkey]['consumed'].append(opt['id'])
+    for rkey, rec in rests_by_lkey.items():
+        if rec['produced'] and rec['consumed']:
+            prob += (
+                lpSum(x_sec[i] for i in rec['consumed']) <= lpSum(x_prim[i] for i in rec['produced']),
+                f"balance_L{rkey[0]}_R{rkey[1]}_LC{rkey[2]}",
+            )
+    
+    # 7. ЦЕЛЕВАЯ ФУНКЦИЯ
+    # Структура: cost_prim + cost_sec + waste + unused_rests + plates_priority
+    #            + M_SOLID*slack_solid + M_UNMET*unmet
+    # Иерархия штрафов: M_UNMET (1e7) >> M_SOLID (1e5) >> цены (1e3..1e4).
+    # M_UNMET — последний рубеж: оплачиваем дефицит, чтобы модель никогда не была
+    # infeasible. M_SOLID > цены, чтобы solid-priority доминировал в выборе типа реза,
+    # но при отсутствии solid-опций solver не падал.
+    M_UNMET = 1e7
+    M_SOLID = 1e5
+
+    obj_terms: list = []
+
+    # 7.1 Стоимость первичных резов (цена плиты + продольный рез)
     print(f"[OPT_2D] Расчёт стоимости первичных резов...")
     for opt in primary_options:
-        qty_var = x_prim[opt['id']]
-        
-        # Получаем РЕАЛЬНУЮ цену плиты из базы данных
-        plate_price = get_price(opt['length'], 8, cfg.PRICE_DB_PATH)
-        if plate_price is None:
-            plate_price = 10000  # Дефолтная цена, если нет в БД
-        
-        # Стоимость продольного реза (если плита режется)
-        if opt['type'] in ['direct', 'indirect']:
-            cut_cost = cfg.LONG_CUT_PRICE_PER_M * opt['length']
-        else:
-            cut_cost = 0  # Solid плита - без реза
-        
-        # КРИТИЧНО: Плиты solid (1200мм целиком) должны иметь ВЫСОКИЙ приоритет
-        # Добавляем огромный штраф, если solid-плита НЕ используется, но есть спрос
-        if opt['type'] == 'solid':
-            # Бонус за использование solid-плиты (делаем их очень выгодными)
-            total_cost += qty_var * (plate_price + cut_cost - 5000)  # БОНУС 5000 руб!
-        else:
-            # Обычная стоимость для плит с резом
-            total_cost += qty_var * (plate_price + cut_cost)
-    
-    # 7.2 Стоимость ВТОРИЧНЫХ РЕЗОВ (продольные + поперечные)
+        plate_price = get_price(opt['length'], 8, cfg.PRICE_DB_PATH) or 10000
+        cut_cost = (cfg.LONG_CUT_PRICE_PER_M * opt['length']
+                    if opt['type'] in ('direct', 'indirect') else 0)
+        obj_terms.append(x_prim[opt['id']] * (plate_price + cut_cost))
+
+    # 7.2 Стоимость вторичных резов (продольный + поперечный)
     for opt in secondary_options:
-        qty_var = x_sec[opt['id']]
-        
-        # Продольный рез (для narrowing и multiple)
-        if opt['type'] in ['narrowing', 'multiple', 'multiple_transverse']:
-            cut_cost = cfg.LONG_CUT_PRICE_PER_M * opt['source_length']
-            total_cost += qty_var * cut_cost
-        
-        # ПОПЕРЕЧНЫЙ РЕЗ (используем цену за штуку × количество резов)
-        if opt['type'] in ['transverse', 'multiple_transverse']:
-            # TRANSVERSE_CUT_PRICE = 1200 руб/шт (из конфига)
-            total_cost += qty_var * cfg.TRANSVERSE_CUT_PRICE
-    
-    # 7.3 ШТРАФ ЗА НЕИСПОЛЬЗОВАННЫЕ ОСТАТКИ (настраиваемый через конфиг)
-    unused_penalty = 0
-    for (source_length, source_width), source_ids in possible_rests.items():
-        produced = [x_prim[opt_id] for opt_id in source_ids]
-        consumed = []
+        if opt['type'] in ('narrowing', 'multiple', 'multiple_transverse'):
+            obj_terms.append(x_sec[opt['id']] * cfg.LONG_CUT_PRICE_PER_M * opt['source_length'])
+        if opt['type'] in ('transverse', 'multiple_transverse'):
+            obj_terms.append(x_sec[opt['id']] * cfg.TRANSVERSE_CUT_PRICE)
+
+    # 7.3 Штраф за неиспользованные остатки (rest produced, но не consumed)
+    for rkey, rec in rests_by_lkey.items():
+        if not (rec['produced'] and rec['consumed']):
+            continue
+        unused_expr = (lpSum(x_prim[i] for i in rec['produced'])
+                       - lpSum(x_sec[i] for i in rec['consumed']))
+        base_price = get_price(rkey[0], 6, cfg.PRICE_DB_PATH) or 5000
+        rest_price = base_price * (rkey[1] / float(plate_width))
+        obj_terms.append(unused_expr * rest_price * opt_config.unused_rest_penalty_coeff)
+
+    # 7.4 Штраф за отходы (геометрический): waste по ширине и по длине, ~1000 руб/м²
+    for opt in secondary_options:
+        waste_w = opt.get('waste', 0)
+        if waste_w > 0:
+            waste_area_m2 = (waste_w / 1000.0) * opt['source_length']
+            obj_terms.append(x_sec[opt['id']] * waste_area_m2 * 1000)
+        waste_l = opt.get('length_waste', 0)
+        if waste_l > 0:
+            waste_area_m2 = (waste_l / 1000.0) * (opt['source_rest'] / 1000.0)
+            obj_terms.append(x_sec[opt['id']] * waste_area_m2 * 1000)
+
+    # 7.5 Бонус за переиспользование остатков (опционально через config)
+    if opt_config.secondary_reuse_bonus:
         for opt in secondary_options:
-            if (abs(opt['source_length'] - source_length) <= tolerance_length and 
-                opt['source_rest'] == source_width):
-                consumed.append(x_sec[opt['id']])
-        
-        if produced and consumed:
-            unused = lpSum(produced) - lpSum(consumed)
-            
-            # НОВАЯ ФОРМУЛА: Стоимость остатка = цена плиты × (ширина_остатка / ширина исходной плиты)
-            base_price = get_price(source_length, 6, cfg.PRICE_DB_PATH)
-            if base_price is None:
-                base_price = 5000  # Дефолтная цена для остатков
-            rest_price = base_price * (source_width / float(plate_width))
-            
-            # Штраф = N% стоимости остатка (коэффициент берём из конфига)
-            # OLD: 0.5 (50% стоимости), NEW: 0.15 (15% стоимости)
-            unused_penalty += unused * rest_price * opt_config.unused_rest_penalty_coeff
-    
-    # 7.4 ШТРАФ ЗА ОТХОДЫ (в рублях, усиленный)
-    waste_penalty = 0
-    for opt in secondary_options:
-        # Отходы по ШИРИНЕ (в мм → в м² → в рубли)
-        waste_width_mm = opt.get('waste', 0)
-        if waste_width_mm > 0:
-            waste_area_m2 = (waste_width_mm / 1000.0) * opt['source_length']
-            waste_price = waste_area_m2 * 1000  # ~1000 руб/м² за отход
-            waste_penalty += x_sec[opt['id']] * waste_price
-        
-        # Отходы по ДЛИНЕ (в мм → в м² → в рубли)
-        waste_length_mm = opt.get('length_waste', 0)
-        if waste_length_mm > 0:
-            waste_area_m2 = (waste_length_mm / 1000.0) * (opt['source_rest'] / 1000.0)
-            waste_price = waste_area_m2 * 1000
-            waste_penalty += x_sec[opt['id']] * waste_price
-    
-    # 7.5 БОНУС ЗА ИСПОЛЬЗОВАНИЕ ОСТАТКОВ (настраиваемый через конфиг)
-    reuse_bonus = 0
-    for opt in secondary_options:
-        # За каждый вторичный рез - бонус (отрицательное значение уменьшает стоимость)
-        # OLD: -500 руб за каждый вторичный рез
-        # NEW: 0 (нет экономического бонуса)
-        reuse_bonus += x_sec[opt['id']] * opt_config.secondary_reuse_bonus
-    
-    # 7.6 ИТОГОВАЯ ЦЕЛЕВАЯ ФУНКЦИЯ
-    print(f"[OPT_2D] Минимизируем: стоимость плит + резов + штрафы + бонусы")
-    print(f"[OPT_2D] Конфиг: unused_penalty={opt_config.unused_rest_penalty_coeff}, reuse_bonus={opt_config.secondary_reuse_bonus}")
+            obj_terms.append(x_sec[opt['id']] * opt_config.secondary_reuse_bonus)
 
-    # Дополнительный приоритет: меньше исходных плит лучше.
-    # Коэффициент 5000 ~ половина средней цены плиты: не ломает расчёт стоимости,
-    # но заставляет оптимизатор избегать лишних плит, если есть альтернатива.
-    plates_priority_penalty = total_plates_var * 5000.0
+    # 7.6 Мягкий приоритет: меньше исходных плит = лучше (избегаем "раздутого" плана).
+    obj_terms.append(lpSum(x_prim.values()) * 5000.0)
 
-    prob += total_cost + unused_penalty + waste_penalty + reuse_bonus + plates_priority_penalty
-    
+    # 7.7 Slack-штрафы — последняя линия защиты модели от infeasibility.
+    if slack_solid:
+        obj_terms.append(M_SOLID * lpSum(slack_solid.values()))
+    if unmet:
+        obj_terms.append(M_UNMET * lpSum(unmet.values()))
+
+    print(f"[OPT_2D] Конфиг: unused_penalty={opt_config.unused_rest_penalty_coeff}, "
+          f"reuse_bonus={opt_config.secondary_reuse_bonus}")
+    prob += lpSum(t for t in obj_terms if t != 0)
+
     # 8. РЕШЕНИЕ
-    print(f"[OPT_2D] Запуск решателя...")
-    prob.solve(PULP_CBC_CMD(msg=0))
+    print(f"[OPT_2D] Запуск решателя: {len(primary_options)} primary, "
+          f"{len(secondary_options)} secondary, {len(z_prim) + len(z_sec)} z-vars, "
+          f"{len(dk_list)} demand keys")
+    prob.solve(PULP_CBC_CMD(msg=0, timeLimit=60, gapRel=0.005))
     
-    # #region agent log (95694e) статус решателя
-    try:
-        _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
-        with open(_log_p, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_solver_status", "location": "optimization:after_solve", "message": "solver status", "data": {"status": LpStatus[prob.status]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log (95694e) проверка: фактическая сумма переменных группы 105 vs total_qty
-    try:
-        if _dbg_grp105_sources is not None and _dbg_grp105_total_qty is not None:
-            _actual_sum = sum(value(v) for v in _dbg_grp105_sources)
-            _satisfied = _actual_sum >= _dbg_grp105_total_qty
-            _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
-            with open(_log_p, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_verify", "location": "optimization:after_solve", "message": "group 105 LHS vs RHS", "data": {"actual_sum": _actual_sum, "total_qty": _dbg_grp105_total_qty, "constraint_satisfied": _satisfied}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-            if not _satisfied:
-                _lp_path = _log_p.parent / "debug-95694e-violation.lp"
-                try:
-                    prob.writeLP(str(_lp_path))
-                    with open(_log_p, 'a', encoding='utf-8') as _f:
-                        _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_lp_export", "location": "optimization:after_solve", "message": "model written (constraint violated)", "data": {"lp_path": str(_lp_path)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log (95694e) verify для групп 5.08/320 и 5.98/530
-    try:
-        _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
-        for (_lk, _lw), (_src_list, _tq) in (_dbg_rescue_groups or {}).items():
-            _actual = sum(value(v) for v in _src_list)
-            _sat = _actual >= _tq
-            _label = "5.08/320" if _lk == 5.08 else "5.98/530"
-            with open(_log_p, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_verify_rescue", "location": "optimization:after_solve", "message": f"group {_label} LHS vs RHS", "data": {"plate_key": _label, "actual_sum": _actual, "total_qty": _tq, "constraint_satisfied": _sat}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log (95694e) ограничения, содержащие переменную opt 105
-    try:
-        if _opt_598_for_dbg:
-            _var105 = x_prim[_opt_598_for_dbg['id']]
-            _constr_names = []
-            for _cname, _c in getattr(prob, 'constraints', {}).items():
-                if getattr(_c, 'constants', None) and _var105 in _c.constants:
-                    _constr_names.append(_cname)
-            _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
-            with open(_log_p, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_constraints", "location": "optimization:after_solve", "message": "constraints involving x_prim[105]", "data": {"constraint_names": _constr_names}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    if LpStatus[prob.status] != 'Optimal':
-        print(f"[OPT_2D] ⚠️ Решение не найдено! Статус: {LpStatus[prob.status]}")
-        return {}
-    
-    # #region agent log (95694e) значения x_prim для опций 5.98/665 после решателя
-    try:
-        _opts_598665 = []
-        for opt in primary_options:
-            if abs(opt.get('length', 0) - 5.98) < 0.02 and opt.get('main') == 665:
-                _val = value(x_prim[opt['id']])
-                _opts_598665.append({"opt_id": opt['id'], "value": _val, "qty_rounded": int(round(_val))})
-        if _opts_598665:
-            _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
-            with open(_log_p, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_xprim_598665", "location": "optimization:after_solve", "message": "x_prim for 5.98/665 options", "data": {"opts": _opts_598665, "total_rounded": sum(o["qty_rounded"] for o in _opts_598665)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log (95694e) значения x_prim для опций 5.08/320 и 5.98/530 после решателя
-    try:
-        _rescue_opts = []
-        for _lk, _lw in [(5.08, 320), (5.98, 530)]:
-            _opts_r = [o for o in primary_options if abs(o.get('length', 0) - _lk) < 0.02 and o.get('main') == _lw]
-            for o in _opts_r:
-                _val = value(x_prim[o['id']])
-                _rescue_opts.append({"plate_key": "5.08/320" if _lk == 5.08 else "5.98/530", "opt_id": o['id'], "value": _val, "qty_rounded": int(round(_val))})
-        if _rescue_opts:
-            _log_p = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-95694e.log"
-            with open(_log_p, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_xprim_rescue", "location": "optimization:after_solve", "message": "x_prim for 5.08/320 and 5.98/530 options", "data": {"opts": _rescue_opts}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log (2d5c43) Plan B: значения x_prim для опций 320 и 530 после решателя
-    try:
-        _opts_320 = []
-        _opts_530 = []
-        for opt in primary_options:
-            if opt.get('main') == 320 or opt.get('target_width') == 320:
-                _v = value(x_prim[opt['id']])
-                _opts_320.append({"opt_id": opt['id'], "length": opt['length'], "main": opt['main'], "type": opt.get('type'), "value": _v, "qty_rounded": int(round(_v))})
-            if opt.get('main') == 530 or opt.get('target_width') == 530:
-                _v = value(x_prim[opt['id']])
-                _opts_530.append({"opt_id": opt['id'], "length": opt['length'], "main": opt['main'], "type": opt.get('type'), "value": _v, "qty_rounded": int(round(_v))})
-        _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
-        with open(_log, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H_solver_val", "location": "optimization:after_solve", "message": "x_prim values for 320 and 530 options", "data": {"opts_320": _opts_320, "opts_530": _opts_530, "sum_320": sum(o["qty_rounded"] for o in _opts_320), "sum_530": sum(o["qty_rounded"] for o in _opts_530)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log
-    try:
-        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
-        _opts_320_target = []
-        for _opt in primary_options:
-            _len = round(float(_opt.get('length', 0)), 2)
-            _main = int(_opt.get('main', 0) or 0)
-            _tw = int(_opt.get('target_width', 0) or 0)
-            _lc = int(_opt.get('load_code', 800) or 800)
-            if _lc != 8:
-                continue
-            if (_main == 320 and _len in (5.1, 5.8)) or (_tw == 320 and _len in (5.1, 5.8)):
-                _val = value(x_prim[_opt['id']])
-                _opts_320_target.append({
-                    "opt_id": int(_opt['id']),
-                    "length": _len,
-                    "main": _main,
-                    "target_width": _tw,
-                    "type": _opt.get('type'),
-                    "value": float(_val),
-                    "qty_rounded": int(round(_val)),
-                })
-        with open(_log_73, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({
-                "sessionId": "73ca51",
-                "runId": "run2",
-                "hypothesisId": "H9_xprim_320_values",
-                "location": "optimization:after_solve",
-                "message": "x_prim values for 5.1/320/8 and 5.8/320/8 options",
-                "data": {"opts": _opts_320_target},
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log H8 POST-SOLVE: LHS групп 5.1/5.8 320 после solve (debug-a636b6)
-    try:
-        _log_a636 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-a636b6.log"
-        _lhs_rhs_post = {}
-        for _k, _v in (_dbg_73_groups or {}).items():
-            _src = _v.get("sources_list", [])
-            _actual = sum((value(var) if value(var) is not None else 0.0) for var in _src)
-            _need = int(_v.get("total_qty", 0))
-            _lhs_rhs_post[str(list(_k))] = {
-                "grp_idx": _v.get("grp_idx"),
-                "lhs_actual_sum": float(_actual),
-                "rhs_total_qty": _need,
-                "constraint_satisfied": bool(_actual >= _need),
-            }
-        with open(_log_a636, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({
-                "sessionId": "a636b6",
-                "hypothesisId": "H8_post_solve",
-                "location": "optimization:after_solve",
-                "message": "LHS vs RHS for 5.1/5.8 320 groups AFTER solve",
-                "data": {"groups_lhs_rhs": _lhs_rhs_post},
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log
-    try:
-        _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
-        _postsolve_groups = {}
-        for _k, _v in (_dbg_73_groups or {}).items():
-            _src = _v.get("sources_list", []) or []
-            _lhs = 0.0
-            for _s in _src:
-                _sv = value(_s)
-                _lhs += float(_sv) if _sv is not None else 0.0
-            _need = int(_v.get("total_qty", 0) or 0)
-            _postsolve_groups[str(list(_k))] = {
-                "lhs_after_solve": _lhs,
-                "rhs_total_qty": _need,
-                "constraint_satisfied": bool(_lhs >= _need),
-            }
-        _postsolve_sources = {}
-        for _k, _src_payload in (_dbg_73_sources or {}).items():
-            _prim_sum = 0.0
-            for _pid in (_src_payload.get("prim_ids", []) or []):
-                if _pid in x_prim:
-                    _pv = value(x_prim[_pid])
-                    _prim_sum += float(_pv) if _pv is not None else 0.0
-            _sec_sum = 0.0
-            for _sid, _pcs in (_src_payload.get("sec_id_pieces", []) or []):
-                if _sid in x_sec:
-                    _sv = value(x_sec[_sid])
-                    _sec_sum += (float(_sv) if _sv is not None else 0.0) * int(_pcs)
-            _need = int(_src_payload.get("qty", 0) or 0)
-            _postsolve_sources[str(list(_k))] = {
-                "from_prim_ids_sum": _prim_sum,
-                "from_sec_ids_weighted_sum": _sec_sum,
-                "total_source_sum": _prim_sum + _sec_sum,
-                "required_qty": _need,
-                "covers_required": bool((_prim_sum + _sec_sum) >= _need),
-            }
-        with open(_log_73, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({
-                "sessionId": "73ca51",
-                "runId": "run2",
-                "hypothesisId": "H10_postsolve_balance_320",
-                "location": "optimization:after_solve",
-                "message": "Post-solve balance for 5.1/320/8 and 5.8/320/8",
-                "data": {
-                    "groups_balance": _postsolve_groups,
-                    "sources_balance": _postsolve_sources,
-                },
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + "\n")
-    except Exception as _e10:
-        try:
-            _log_73 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-73ca51.log"
-            with open(_log_73, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({
-                    "sessionId": "73ca51",
-                    "runId": "run2",
-                    "hypothesisId": "H10_postsolve_balance_320_error",
-                    "location": "optimization:after_solve",
-                    "message": "Error in post-solve balance log",
-                    "data": {"error": str(_e10)},
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-    # #endregion
+    # 8.1 Статус решателя и graceful fallback.
+    # При Not Optimal не выходим пустотой — у нас есть unmet[d] как safety net,
+    # post-correction добёрет недостающее. Это критично, чтобы пользователь
+    # получил хоть какой-то план + видимый сигнал в логах.
+    _solver_status = LpStatus[prob.status]
+    print(f"[OPT_2D] Статус решателя: {_solver_status}")
+    if _solver_status not in ('Optimal',):
+        import logging as _solver_status_log
+        _solver_status_log.getLogger(__name__).warning(
+            "[OPT_2D] Решатель завершился со статусом %s — "
+            "будет извлечён частичный результат, остатки добёрет post-correction",
+            _solver_status,
+        )
+        # Если решатель не нашёл вообще никакого решения — возвращаем пустой результат,
+        # чтобы upstream мог корректно отреагировать.
+        if _solver_status in ('Infeasible', 'Undefined'):
+            print(f"[OPT_2D] ⚠️ Решение не найдено! Статус: {_solver_status}")
+            return {}
+
+    # 8.2 Диагностика slack/unmet — ВИДИМЫЙ сигнал, что safety net сработал.
+    _slack_total = int(round(sum((value(s) or 0) for s in slack_solid.values())))
+    _unmet_total = int(round(sum((value(u) or 0) for u in unmet.values())))
+    if _slack_total > 0 or _unmet_total > 0:
+        import logging as _slack_diag_log
+        _slack_logger = _slack_diag_log.getLogger(__name__)
+        _slack_logger.warning(
+            "[OPT_2D] [SLACK] solid_slack=%d, unmet=%d (см. unmet_d* / slack_solid_d*)",
+            _slack_total, _unmet_total,
+        )
+        for dk, sv in unmet.items():
+            v = value(sv) or 0
+            if v > 0.5:
+                _slack_logger.warning("[OPT_2D] [UNMET] %s = %d", dk, int(round(v)))
+        for dk, sv in slack_solid.items():
+            v = value(sv) or 0
+            if v > 0.5:
+                _slack_logger.warning("[OPT_2D] [SOLID_SLACK] %s = %d", dk, int(round(v)))
     # 9. ИЗВЛЕЧЕНИЕ РЕЗУЛЬТАТОВ
     from .plate_audit import PlateAudit as _PlateAudit
     import logging as _log_mod
@@ -1671,51 +1290,33 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     planned_primary_cuts = []
     planned_secondary_cuts = []
 
-    # Первичные резы: сначала собираем все output без exact identity.
-    # Identity будет выдаваться позже из одного общего ledger спроса.
-    # BUG-2 FIX: используем math.ceil вместо round, чтобы дробные значения PuLP
-    # (например, 2.9999) не давали потерю целой плиты при округлении вниз.
-    # Пост-коррекция ниже является финальной страховкой, но лучше не допускать
-    # потерю на этом этапе.
+    # Первичные резы: извлекаем напрямую из z_prim[(p, d)] — каждая единица z = одна
+    # плита, идущая на конкретный спрос d. assignment_key = dk: больше нет
+    # неоднозначности "какой dk закрыла эта плита", которую старая модель решала
+    # эвристикой по opt['target_width']/'main'.
+    #
+    # x_prim[p] >= sum_d z_prim[p,d] (cap_prim_p), поэтому если solver установил
+    # x_prim больше суммы z, лишние плиты — это "пустые" слоты в физическом
+    # смысле, и они не выходят в план (что и нужно: точное покрытие).
     import math as _math
-    for opt in primary_options:
-        raw_val = value(x_prim[opt['id']]) or 0
+    for (opt_id, dk), zv in z_prim.items():
+        raw_val = value(zv) or 0
         qty = _math.ceil(raw_val - 1e-6) if raw_val > 1e-6 else 0
-        if qty > 0:
-            for _ in range(qty):
-                lookup_width = opt.get('target_width', opt['main']) if opt.get('type') == 'indirect' else opt['main']
-                lookup_load_code = opt.get('load_code', 800)
-                planned_primary_cuts.append({
-                    'width': opt['main'],
-                    'demand_width': lookup_width,
-                    'rest': opt['rest'],
-                    'qty': 1,  # Каждая плита отдельно!
-                    'lengths': [opt['length']],
-                    'load_code': lookup_load_code,
-                    'assignment_key': (opt['length'], lookup_width, lookup_load_code),
-                })
-                result['total_plates'] += 1
-
-    # #region agent log planned_primary_cuts по ключам 5.1/5.8 320 до сортировки (debug-a636b6)
-    try:
-        _cnt_key = __import__('collections').Counter(c.get('assignment_key') for c in planned_primary_cuts if c.get('assignment_key'))
-        _count_51 = sum(c for k, c in _cnt_key.items() if abs(k[0] - 5.1) < 0.02 and k[1] == 320 and k[2] == 8)
-        _count_58 = sum(c for k, c in _cnt_key.items() if abs(k[0] - 5.8) < 0.02 and k[1] == 320 and k[2] == 8)
-        _demand_51 = next((q for (L, W, lc), q in demand_2d.items() if abs(L - 5.1) < 0.02 and W == 320 and lc == 8), 0)
-        _demand_58 = next((q for (L, W, lc), q in demand_2d.items() if abs(L - 5.8) < 0.02 and W == 320 and lc == 8), 0)
-        _log_a636 = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-a636b6.log"
-        with open(_log_a636, 'a', encoding='utf-8') as _f:
-            _f.write(__import__('json').dumps({
-                "sessionId": "a636b6",
-                "hypothesisId": "planned_primary_by_key",
-                "location": "optimization:after_build_primary_cuts",
-                "message": "planned_primary_cuts count by assignment_key 5.1/5.8 320 before sort",
-                "data": {"count_5.1_320_8": _count_51, "count_5.8_320_8": _count_58, "demand_51_320_8": _demand_51, "demand_58_320_8": _demand_58},
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
+        if qty <= 0:
+            continue
+        opt = primary_options_by_id[opt_id]
+        target_length, target_width, target_load_code = dk
+        for _ in range(qty):
+            planned_primary_cuts.append({
+                'width': opt['main'],
+                'demand_width': target_width,
+                'rest': opt['rest'],
+                'qty': 1,
+                'lengths': [opt['length']],
+                'load_code': target_load_code,
+                'assignment_key': dk,
+            })
+            result['total_plates'] += 1
 
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
     # Требования завода:
@@ -1744,32 +1345,41 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # Новый порядок: СНАЧАЛА целые (ОТСОРТИРОВАННЫЕ!), ПОТОМ плиты с резом (сгруппированные)
     result['primary_cuts'] = solid_plates + cut_plates
 
-    # Вторичные резы: тоже сначала собираем output без identity.
+    # Вторичные резы:
+    # 1) rests_used агрегируем по операциям — x_sec[s] — это сколько раз применена
+    #    опция s. Каждое применение потребляет один остаток source_length × source_rest.
+    # 2) secondary_cuts — по выходным плитам через z_sec[(s, d)]: каждая единица z
+    #    это одна выходная плита, назначенная на конкретный спрос d.
+    # cap_sec гарантирует sum_d z_sec[s,d] <= x_sec[s] * pieces_s; нераспределённые
+    # выходы (если есть) — это "implicit waste", в план они не выходят.
     for opt in secondary_options:
-        qty = int(round(value(x_sec[opt['id']])))
-        if qty > 0:
-            target_key = opt.get('target_order_key')
-            sec_load_code = target_key[2] if isinstance(target_key, (list, tuple)) and len(target_key) > 2 else 800
+        apps = int(round(value(x_sec[opt['id']]) or 0))
+        for _ in range(apps):
+            result['rests_used'].append({
+                'source_length': opt['source_length'],
+                'source_rest_mm': opt['source_rest'],
+            })
 
-            for _ in range(qty):
-                result['rests_used'].append({
-                    'source_length': opt['source_length'],
-                    'source_rest_mm': opt['source_rest']
-                })
-
-                for _ in range(opt['pieces']):
-                    planned_secondary_cuts.append({
-                        'source': opt['source_rest'],
-                        'cuts': [opt['output_width']],
-                        'qty': 1,
-                        'pieces': 1,
-                        'waste': opt.get('waste', 0),
-                        'type': opt['type'],
-                        'source_lengths': [opt['source_length']],
-                        'lengths': [opt['output_length']],
-                        'target_order_key': target_key,
-                        'load_code': sec_load_code,
-                    })
+    for (opt_id, dk), zv in z_sec.items():
+        raw_val = value(zv) or 0
+        qty = int(round(raw_val))
+        if qty <= 0:
+            continue
+        opt = secondary_options_by_id[opt_id]
+        target_length, target_width, target_load_code = dk
+        for _ in range(qty):
+            planned_secondary_cuts.append({
+                'source': opt['source_rest'],
+                'cuts': [opt['output_width']],
+                'qty': 1,
+                'pieces': 1,
+                'waste': opt.get('waste', 0),
+                'type': opt['type'],
+                'source_lengths': [opt['source_length']],
+                'lengths': [opt['output_length']],
+                'target_order_key': dk,
+                'load_code': target_load_code,
+            })
 
     result['secondary_cuts'] = planned_secondary_cuts
 
@@ -1898,6 +1508,29 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # #endregion
     result['_plate_audit'] = _audit
 
+    # ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА ПОКРЫТИЯ: логируем итог по demand_2d vs primary+secondary.
+    # Сейчас работает как наблюдатель; в этап 2 модель должна выдавать ok=True всегда.
+    _coverage_summary = verify_coverage(demand_2d, result['primary_cuts'], result['secondary_cuts'])
+    result['_coverage_summary'] = _coverage_summary
+    import logging as _log_cov
+    _cov_logger = _log_cov.getLogger(__name__)
+    if not _coverage_summary['ok']:
+        _cov_logger.error(
+            "[OPT_2D] [COVERAGE] missing=%d плит по %d ключам, surplus=%d плит по %d ключам",
+            sum(_coverage_summary['missing'].values()),
+            len(_coverage_summary['missing']),
+            sum(_coverage_summary['surplus'].values()),
+            len(_coverage_summary['surplus']),
+        )
+    else:
+        _cov_logger.info(
+            "[OPT_2D] [COVERAGE] OK: demand=%d, covered=%d, surplus=%d по %d ключам",
+            _coverage_summary['demand_total'],
+            _coverage_summary['covered_total'],
+            sum(_coverage_summary['surplus'].values()),
+            len(_coverage_summary['surplus']),
+        )
+
     # #region agent log (2d5c43) H1,H2,H5: demand vs primary_cuts, 6m 530/1200
     try:
         from pathlib import Path as _Path
@@ -1925,7 +1558,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 _prim_6_530_1200.append({"length": L, "width": W, "rest": c.get('rest', 0), "plate_name": (c.get('plate_name') or "")[:60]})
         _demand_by_key_ser = [list(k) + [v] for k, v in _demand_by_key.items()]
         _prim_by_key_ser = [list(k) + [v] for k, v in _prim_by_key.items()]
-        with open(_log_2d5c43, 'a', encoding='utf-8') as _f:
+        with _dbg_open_append(_log_2d5c43) as _f:
             _f.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H1_H2_H5", "location": "optimization:_optimize_2d:primary_cuts_done", "message": "demand vs primary_cuts", "data": {"demand_total": _demand_total, "demand_by_key": _demand_by_key_ser, "primary_total": _prim_total, "primary_by_key": _prim_by_key_ser, "primary_6m_530_1200_sample": _prim_6_530_1200}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -1982,7 +1615,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         try:
             _c = Counter(_empty_primary_keys)
             _summary = [{"key": list(k), "count": _c[k]} for k in sorted(_c.keys())]
-            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+            with _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log") as _f:
                 _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:primary_emit_summary", "message": "plan keys with empty plate_info (summary)", "data": {"by_key": _summary, "total_plates_empty": len(_empty_primary_keys), "unique_keys": len(_c)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
         except Exception:
             pass
@@ -1991,7 +1624,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # #region agent log (session 5b5324) после пересборки primary plate_assignments
     try:
         _prim_sample = [{"kp_id": p.get("kp_id"), "plate_name": (p.get("plate_name") or "")[:50], "identity_match_type": p.get("identity_match_type")} for p in result['plate_assignments'][:5]]
-        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
             _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_primary_pa", "location": "optimization:plate_assignments_after_primary", "message": "primary plate_assignments count and sample", "data": {"primary_plate_assignments_count": len(result['plate_assignments']), "sample": _prim_sample}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -2018,7 +1651,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         # #region agent log: secondary plate kp_id (H2, H5)
         if not plate_info and target_key:
             try:
-                with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                with _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log") as _f:
                     _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:secondary_emit", "message": "secondary plate_info empty", "data": {"target_key": list(target_key) if isinstance(target_key, tuple) else target_key, "output_length": cut.get('lengths', [None])[0], "output_width": cut.get('cuts', [None])[0]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
             except Exception:
                 pass
@@ -2044,7 +1677,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     # #region agent log (session 5b5324) после вторичных резов
     try:
         _sec_count = sum(1 for p in result['plate_assignments'] if p.get('source') == 'secondary')
-        with open(_DEBUG_LOG_5b5324, 'a', encoding='utf-8') as _f:
+        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
             _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_secondary", "location": "optimization:after_secondary", "message": "secondary attributions and plate_assignments", "data": {"secondary_attribution_sample": _secondary_attribution_log[:40], "plate_assignments_total": len(result['plate_assignments']), "secondary_count": _sec_count}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -2087,7 +1720,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     print(f"[OPT_2D] Остатков использовано вторично: {len(result['rests_used'])}")
     # #region agent log: result counts (H5) + plates by key (H_rescue_trace)
     try:
-        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H5", "location": "optimization.py:result_built", "message": "plate_assignments count", "data": {"len_plate_assignments": len(result['plate_assignments']), "total_plates": result.get('total_plates', 0), "demand_sum": _total_demand}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+        _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log").write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H5", "location": "optimization.py:result_built", "message": "plate_assignments count", "data": {"len_plate_assignments": len(result['plate_assignments']), "total_plates": result.get('total_plates', 0), "demand_sum": sum(demand_2d.values())}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
     except Exception:
         pass
     # Лог по ключам (length, width, load_code) — для сравнения с дорожками и РЕСКЬЮ (любые размеры).
@@ -2109,7 +1742,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             if L and W:
                 k = (round(L, 2), W, lc)
                 _by_key[k] = _by_key.get(k, 0) + 1
-        open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(__import__('json').dumps({"hypothesisId": "H_opt_plates_by_key", "location": "optimization.py:result_built", "message": "optimizer output plates by (length, width, load_code)", "data": {"plates_by_key": {str(list(k)): v for k, v in _by_key.items()}, "total": sum(_by_key.values())}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+        _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log").write(__import__('json').dumps({"hypothesisId": "H_opt_plates_by_key", "location": "optimization.py:result_built", "message": "optimizer output plates by (length, width, load_code)", "data": {"plates_by_key": {str(list(k)): v for k, v in _by_key.items()}, "total": sum(_by_key.values())}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
     except Exception:
         pass
     # #endregion
@@ -2137,7 +1770,10 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
         }
     """
     try:
-        from pulp import LpProblem, LpMinimize, LpVariable, LpInteger, lpSum, value, PULP_CBC_CMD
+        from pulp import (
+            LpProblem, LpMinimize, LpVariable, LpInteger, lpSum, value,
+            PULP_CBC_CMD, LpStatus,
+        )
     except ImportError:
         print('[OPT_CASCADING] PuLP не установлен, пропускаем.')
         return {}
@@ -2245,88 +1881,123 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
     for i, opt in enumerate(secondary_cut_options):
         x_sec[i] = LpVariable(f"sec_{i}_{opt['id']}", lowBound=0, cat=LpInteger)
     
-    # Ограничение 1: Покрыть спрос по каждой ширине
-    for target_w, qty in orders.items():
-        sources = []
-        
-        # Источник 1: Основные части первичных резов
+    # ASSIGNMENT-MODEL: пары совместимости (option × target_width).
+    # Один проход даёт три коллекции:
+    #   - primary_pairs_per_w[w]: список (i, opt) совместимых первичных опций;
+    #   - secondary_pairs_per_w[w]: (i, opt, contribution) — pieces для output1,
+    #     либо 1 для output2.
+    #   - на основе пар вводим z_prim_w[(i, w)] и z_sec_w[(i, w)].
+    target_widths_keys = list(orders.keys())
+    primary_pairs_per_w: dict = {w: [] for w in target_widths_keys}
+    secondary_pairs_per_w: dict = {w: [] for w in target_widths_keys}
+
+    for w in target_widths_keys:
         for i, opt in enumerate(primary_cut_options):
-            if abs(opt['main'] - target_w) <= tolerance:
-                sources.append(x_prim[i])
-        
-        # Источник 2: Выходы из вторичных резов (output1)
+            if abs(opt['main'] - w) <= tolerance:
+                primary_pairs_per_w[w].append(i)
         for i, opt in enumerate(secondary_cut_options):
-            if abs(opt['output1'] - target_w) <= tolerance:
-                pieces = opt.get('pieces', 1)
-                sources.append(x_sec[i] * pieces)
-        
-        # Источник 3: Выходы из вторичных резов (output2, если есть)
-        for i, opt in enumerate(secondary_cut_options):
-            if opt['output2'] > 0 and abs(opt['output2'] - target_w) <= tolerance:
-                sources.append(x_sec[i])
-        
-        if sources:
-            prob += lpSum(sources) >= qty, f"demand_{target_w}"
-    
-    # Ограничение 2: Баланс остатков (не можем резать больше, чем произвели)
+            if abs(opt['output1'] - w) <= tolerance:
+                secondary_pairs_per_w[w].append((i, opt.get('pieces', 1)))
+            if opt['output2'] > 0 and abs(opt['output2'] - w) <= tolerance:
+                secondary_pairs_per_w[w].append((i, 1))
+
+    z_prim_w: dict = {}  # (i, w) -> LpVariable, штук primary i, идущих на спрос w
+    z_sec_w: dict = {}   # (i, w) -> LpVariable, штук secondary i (по общему вкладу),
+                         #          идущих на спрос w
+    unmet_w: dict = {}   # w -> LpVariable: глобальный дефицит (последний рубеж)
+    for w in target_widths_keys:
+        for i in primary_pairs_per_w[w]:
+            z_prim_w[(i, w)] = LpVariable(f"z1d_prim_{i}_w{w}", lowBound=0, cat=LpInteger)
+        for (i, _) in secondary_pairs_per_w[w]:
+            z_sec_w[(i, w)] = LpVariable(f"z1d_sec_{i}_w{w}", lowBound=0, cat=LpInteger)
+        unmet_w[w] = LpVariable(f"unmet_w{w}", lowBound=0, cat=LpInteger)
+
+    # 1) demand_w == qty[w]: точное закрытие; unmet[w] закрывает экстремальные кейсы.
+    for w, qty in orders.items():
+        parts = [z_prim_w[(i, w)] for i in primary_pairs_per_w[w]]
+        parts += [z_sec_w[(i, w)] for (i, _) in secondary_pairs_per_w[w]]
+        parts.append(unmet_w[w])
+        prob += lpSum(parts) == qty, f"demand_w{w}"
+
+    # 2) cap_prim: sum_w z_prim_w[i,w] <= x_prim[i]
+    prim_to_ws_1d: dict = {}
+    for w, ids in primary_pairs_per_w.items():
+        for i in ids:
+            prim_to_ws_1d.setdefault(i, []).append(w)
+    for i, ws in prim_to_ws_1d.items():
+        prob += (
+            lpSum(z_prim_w[(i, w)] for w in ws) <= x_prim[i],
+            f"cap_prim_w_{i}",
+        )
+
+    # 3) cap_sec: sum_w z_sec_w[i,w]*share_unit <= x_sec[i] * pieces_total.
+    # Здесь z_sec_w[i,w] — это штуки выходных плит (с учётом и output1*pieces,
+    # и output2*1). Капа: сумма этих штук для опции i не должна превышать
+    # количество произведённых выходов = x_sec[i] * total_outputs_i.
+    sec_to_ws_1d: dict = {}
+    for w, pairs in secondary_pairs_per_w.items():
+        for (i, contrib) in pairs:
+            sec_to_ws_1d.setdefault(i, []).append((w, contrib))
+    for i, ws_contribs in sec_to_ws_1d.items():
+        opt = secondary_cut_options[i]
+        # Сколько выходных плит даёт ОДНО применение опции i:
+        # output1 даёт pieces штук, output2 (если есть и >0) даёт ещё 1 штуку.
+        outputs_per_app = opt.get('pieces', 1)
+        if opt.get('output2', 0) > 0:
+            outputs_per_app += 1
+        prob += (
+            lpSum(z_sec_w[(i, w)] for (w, _) in ws_contribs) <= x_sec[i] * outputs_per_app,
+            f"cap_sec_w_{i}",
+        )
+
+    # 4) Баланс остатков: sum_consumed <= sum_produced (как и было).
     for rest_w in possible_rests:
-        # Сколько создали остатков rest_w (первичными резами)
-        produced = []
-        for i, opt in enumerate(primary_cut_options):
-            if opt['rest'] == rest_w:
-                produced.append(x_prim[i])
-        
-        # Сколько используем для вторичных резов
-        consumed = []
-        for i, opt in enumerate(secondary_cut_options):
-            if opt['source_rest'] == rest_w:
-                consumed.append(x_sec[i])
-        
+        produced = [x_prim[i] for i, opt in enumerate(primary_cut_options) if opt['rest'] == rest_w]
+        consumed = [x_sec[i] for i, opt in enumerate(secondary_cut_options) if opt['source_rest'] == rest_w]
         if produced and consumed:
             prob += lpSum(consumed) <= lpSum(produced), f"balance_rest_{rest_w}"
-    
-    # Целевая функция: УМНАЯ ОПТИМИЗАЦИЯ
-    # Приоритет 1: Минимум плит (главное!)
-    # Приоритет 2: Минимум неиспользованных остатков (важно!)
-    # Приоритет 3: Минимум отходов (хорошо, но не критично)
-    
+
+    # 5) Целевая функция: total_plates + unused_rests_penalty + waste_penalty
+    #    + M_unmet_w * unmet (последний рубеж — обычно 0, но избавляет от infeasible).
+    M_UNMET_W = 1e7
+
     total_plates = lpSum(x_prim.values())
-    
-    # Считаем неиспользованные остатки для каждого типа
-    # (остатки, которые создали, но НЕ пустили во вторичные резы)
+
     unused_rests_penalty = 0
     for rest_w in possible_rests:
-        # Сколько создали остатков
-        produced = []
-        for i, opt in enumerate(primary_cut_options):
-            if opt['rest'] == rest_w:
-                produced.append(x_prim[i])
-        
-        # Сколько использовали для вторичных резов
-        consumed = []
-        for i, opt in enumerate(secondary_cut_options):
-            if opt['source_rest'] == rest_w:
-                consumed.append(x_sec[i])
-        
+        produced = [x_prim[i] for i, opt in enumerate(primary_cut_options) if opt['rest'] == rest_w]
+        consumed = [x_sec[i] for i, opt in enumerate(secondary_cut_options) if opt['source_rest'] == rest_w]
         if produced and consumed:
-            # Неиспользованные остатки = произведено - использовано
             unused = lpSum(produced) - lpSum(consumed)
-            # Штраф за каждый неиспользованный остаток
-            # Больше остаток = больше штраф (в пропорции к ширине)
             unused_rests_penalty += unused * (rest_w / 1000.0) * 0.05
-    
-    # Штраф за отходы от вторичных резов (суммарные мм)
+
     waste_penalty = 0
     for i, opt in enumerate(secondary_cut_options):
         waste_penalty += x_sec[i] * opt.get('waste', 0) * 0.0001
-    
-    # ИТОГОВАЯ ЦЕЛЕВАЯ ФУНКЦИЯ:
-    # 1. total_plates - доминирует (вес = 1.0)
-    # 2. unused_rests_penalty - влияет, но слабее плит (вес ~0.05)
-    # 3. waste_penalty - минимальное влияние (вес ~0.0001)
-    # Оптимизатор САМ выберет, что выгоднее: множественная резка или сужение!
-    prob += total_plates + unused_rests_penalty + waste_penalty
-    prob.solve(PULP_CBC_CMD(msg=0))
+
+    obj = total_plates + unused_rests_penalty + waste_penalty
+    if unmet_w:
+        obj = obj + M_UNMET_W * lpSum(unmet_w.values())
+    prob += obj
+    prob.solve(PULP_CBC_CMD(msg=0, timeLimit=60, gapRel=0.005))
+
+    _solver_status_1d = LpStatus[prob.status]
+    if _solver_status_1d not in ('Optimal',):
+        import logging as _solver_status_log_1d
+        _solver_status_log_1d.getLogger(__name__).warning(
+            "[OPT_1D] Решатель завершился со статусом %s — извлекаем частичный результат",
+            _solver_status_1d,
+        )
+        if _solver_status_1d in ('Infeasible', 'Undefined'):
+            return {}
+
+    _unmet_total_1d = int(round(sum((value(u) or 0) for u in unmet_w.values())))
+    if _unmet_total_1d > 0:
+        import logging as _unmet_log_1d
+        _unmet_log_1d.getLogger(__name__).warning(
+            "[OPT_1D] [UNMET] Дефицит: %d плит — модель не нашла источников",
+            _unmet_total_1d,
+        )
     
     # Извлекаем результаты
     result = {

@@ -239,7 +239,7 @@ def test_plate_without_kp_id_does_not_mark_day_completed(
     )
     plan_id = built["plan"]["id"]
 
-    def fake_day_view(_target_date: str) -> dict:
+    def fake_day_view(_target_date: str, **_kwargs) -> dict:
         return {
             "date": "2026-04-21",
             "plans": [
@@ -415,3 +415,316 @@ def test_return_rejected_helper_idempotent(planning_service, tmp_plita):
     rows = _kp_plate_rows(tmp_plita)
     assert sum(r[1] for r in rows if r[0] == "в производстве") == 3
     assert sum(r[1] for r in rows if r[0] == "в плане") == 0
+
+
+def test_to_completed_payload_prefers_explicit_load_class():
+    from app.services.production_completion_service import ProductionCompletionService
+
+    payload = ProductionCompletionService._to_completed_plate_payload(
+        {
+            "kp_id": 7,
+            "plate_name": "ПБ 55-12-12,5п",
+            "length_m": 5.5,
+            "width_mm": 1200,
+            "qty": 2,
+            "load_code": 12,
+            "load_class": 1250,
+        }
+    )
+
+    assert payload["load_class"] == 1250
+
+
+def test_to_completed_payload_legacy_fallback_uses_load_code():
+    from app.services.production_completion_service import ProductionCompletionService
+
+    payload = ProductionCompletionService._to_completed_plate_payload(
+        {
+            "kp_id": 7,
+            "plate_name": "ПБ 60-12-8п",
+            "length_m": 6.0,
+            "width_mm": 1200,
+            "qty": 1,
+            "load_code": 8,
+        }
+    )
+
+    assert payload["load_class"] == 800
+
+
+def test_verify_plates_exist_preflight_accepts_1250(tmp_path):
+    from app.services.production_completion_service import ProductionCompletionService
+
+    db_path = str(tmp_path / "plita_1250.db")
+    kp_db.init_schema(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, qty, status
+            ) VALUES (?, 1, ?, 5.5, 1.2, 1250, 6, 'в плане')
+            """,
+            (KP_ID, "ПБ 55-12-12,5п"),
+        )
+        conn.commit()
+
+        missing = ProductionCompletionService._verify_plates_exist_in_db(
+            {
+                KP_ID: [
+                    {
+                        "kp_id": KP_ID,
+                        "plate_name": "ПБ 55-12-12,5п",
+                        "length_m": 5.5,
+                        "width_m": 1.2,
+                        "load_class": 1250,
+                        "qty": 6,
+                    }
+                ]
+            },
+            conn,
+        )
+
+    assert missing == []
+
+
+def test_complete_day_succeeds_for_1250_load_class(tmp_path, monkeypatch):
+    from app.services.production_completion_service import ProductionCompletionService
+
+    class _PlanRepositoryStub:
+        def load_plan(self, _plan_id: str) -> dict:
+            return {"id": "plan-1250", "days": {"2026-04-30": {"day_number": 1}}}
+
+    db_path = str(tmp_path / "plita_1250.db")
+    kp_db.init_schema(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO KP_offers (kp_id, creation_date, execution_terms, customer_name) "
+            "VALUES (?, '2026-04-01', '06.06.2026', 'Ромашка')",
+            (KP_ID,),
+        )
+        conn.execute(
+            "INSERT INTO kp_meta (kp_id, status) VALUES (?, 'в работе')",
+            (KP_ID,),
+        )
+        conn.execute(
+            """
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, qty, status, plan_id, day_number
+            ) VALUES (?, 1, ?, 5.5, 1.2, 1250, 6, 'в плане', ?, 1)
+            """,
+            (KP_ID, "ПБ 55-12-12,5п", "plan-1250"),
+        )
+        conn.commit()
+
+    def _fake_day_view(_target_date: str, **_kwargs) -> dict:
+        return {
+            "date": "2026-04-30",
+            "plans": [
+                {
+                    "plan_id": "plan-1250",
+                    "plan_name": "plan-1250",
+                    "completed": False,
+                    "tracks": [
+                        {
+                            "track_number": 1,
+                            "plates_info": [
+                                {
+                                    "kp_id": KP_ID,
+                                    "plate_name": "ПБ 55-12-12,5п",
+                                    "length_m": 5.5,
+                                    "width_mm": 1200,
+                                    "qty": 6,
+                                    "load_code": 12,
+                                    "load_class": 1250,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        "app.services.production_completion_service.build_day_view_detail",
+        _fake_day_view,
+    )
+
+    service = ProductionCompletionService(
+        db_path=db_path,
+        plan_repository=_PlanRepositoryStub(),
+    )
+    result = service.complete_day(
+        plan_id="plan-1250",
+        target_date="2026-04-30",
+    )
+
+    assert result["moved_plates"] == 6
+    with sqlite3.connect(db_path) as conn:
+        in_plan_qty = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM kp_plates WHERE status='в плане' AND kp_id=?",
+            (KP_ID,),
+        ).fetchone()[0]
+        completed_qty = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM completed_plates WHERE kp_id=?",
+            (KP_ID,),
+        ).fetchone()[0]
+
+    assert in_plan_qty == 0
+    assert completed_qty == 6
+
+
+def test_complete_day_handles_secondary_with_backfilled_identity(
+    planning_service,
+    tmp_plita,
+    monkeypatch,
+):
+    """P9: secondary с backfilled identity листится в plates_info day_view
+    и списывается complete_day, попадая в completed_plates.
+
+    Сценарий: в БД есть КП с primary 6x1.2 и secondary 6x0.32 без явного
+    target_length у secondary cut. После build_plan + complete_day обе
+    позиции переходят в completed_plates.
+    """
+    from app.services.production_planning_service import ProductionPlanningService
+
+    secondary_plate_name = "ПБ 60-3,2-8п"
+
+    with sqlite3.connect(tmp_plita) as conn:
+        conn.execute(
+            """
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, qty, status
+            ) VALUES (?, 2, ?, 6.0, 0.32, 800, 3, 'в производстве')
+            """,
+            (KP_ID, secondary_plate_name),
+        )
+        conn.commit()
+
+    def fake_optimize_with_secondary(self, *, orders_2d):
+        if not orders_2d:
+            return [], {}
+        primary_order = next(
+            o for o in orders_2d if int(round(float(o["width"]))) == 1200
+        )
+        secondary_order = next(
+            o for o in orders_2d if int(round(float(o["width"]))) == 320
+        )
+
+        items: list[dict] = []
+        for _ in range(int(primary_order["qty"])):
+            items.append({
+                "length": primary_order["length"],
+                "mode": "split",
+                "main_w": 1.2,
+                "rest_w": 0.32,
+                "load_code": primary_order["load_code"],
+                "kp_id": primary_order["kp_id"],
+                "plate_name": primary_order["plate_name"],
+                "secondary_cuts": [
+                    {
+                        "width": 0.32,
+                        "label": "[2] secondary без target_length",
+                        "load_code": primary_order["load_code"],
+                    }
+                ],
+            })
+
+        tracks = [{"label": "ОСНОВНАЯ", "items": items}]
+        plate_assignments: list[dict] = []
+        for _ in range(int(primary_order["qty"])):
+            plate_assignments.append({
+                "source": "primary",
+                "kp_id": primary_order["kp_id"],
+                "plate_name": primary_order["plate_name"],
+                "length": primary_order["length"],
+                "width": primary_order["width"],
+                "load_code": primary_order["load_code"],
+            })
+        for _ in range(int(secondary_order["qty"])):
+            plate_assignments.append({
+                "source": "secondary",
+                "kp_id": secondary_order["kp_id"],
+                "plate_name": secondary_order["plate_name"],
+                "length": secondary_order["length"],
+                "width": secondary_order["width"],
+                "load_code": secondary_order["load_code"],
+            })
+
+        from core.plate_attribution import backfill_track_items_identity
+        backfill_track_items_identity(tracks, orders_2d)
+
+        return tracks, {
+            "total_plates": len(plate_assignments),
+            "plate_assignments": plate_assignments,
+        }
+
+    monkeypatch.setattr(
+        ProductionPlanningService,
+        "_run_optimization_and_split",
+        fake_optimize_with_secondary,
+    )
+
+    service = ProductionPlanningService(
+        plita_db_path=tmp_plita,
+        pb_db_path=tmp_plita,
+    )
+    monkeypatch.setattr(
+        "app.services.production_planning_service.get_reinforcement",
+        lambda **kwargs: 999.0,
+    )
+
+    built = service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    from app.services.day_view_service import build_day_view_detail
+    day_view = build_day_view_detail("2026-04-21", db_path=tmp_plita)
+    assert day_view is not None
+
+    plate_names_in_day_view: set[str] = set()
+    for block in day_view["plans"]:
+        if block["plan_id"] != plan_id:
+            continue
+        for track in block["tracks"]:
+            for p in track.get("plates_info") or []:
+                name = (p.get("plate_name") or "").strip()
+                if name:
+                    plate_names_in_day_view.add(name)
+
+    assert any("ПБ 60-3,2" in n for n in plate_names_in_day_view), (
+        f"secondary должна быть в day_view plates_info, "
+        f"но видим: {plate_names_in_day_view}"
+    )
+
+    production = _make_production_service(service, tmp_plita)
+    result = production.complete_day(plan_id=plan_id, target_date="2026-04-21")
+
+    assert result["completed"] is True
+    assert result["moved_plates"] == 6, (
+        f"ожидаем списание 3 primary + 3 secondary = 6, получено {result}"
+    )
+
+    with sqlite3.connect(tmp_plita) as conn:
+        completed_by_name = dict(
+            conn.execute(
+                "SELECT plate_name, COALESCE(SUM(qty), 0) "
+                "FROM completed_plates WHERE kp_id = ? GROUP BY plate_name",
+                (KP_ID,),
+            ).fetchall()
+        )
+        remaining = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM kp_plates WHERE kp_id = ?",
+            (KP_ID,),
+        ).fetchone()[0]
+
+    assert completed_by_name.get(PLATE_NAME) == 3
+    assert completed_by_name.get(secondary_plate_name) == 3
+    assert remaining == 0

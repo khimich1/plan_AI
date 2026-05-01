@@ -11,10 +11,13 @@ import logging
 from typing import Any
 
 from bot.handlers import plan_manager
+from core import plate_name as plate_name_utils
 
 logger = logging.getLogger(__name__)
 
-FUZZY_TOLERANCE_M = 0.03
+# P3: tolerance ±0.005 м — защита от float-погрешности.
+# Раньше было 0.03 м, что склеивало 5.7 и 5.71 как один заказ и крало identity.
+FUZZY_TOLERANCE_M = 0.005
 
 
 def _reinforcement_to_load_code(reinforcement: float) -> int:
@@ -27,25 +30,6 @@ def _reinforcement_to_load_code(reinforcement: float) -> int:
     if reinforcement < 15:
         return 10
     return 12
-
-
-def _make_plate_name(length_m: float, width_mm: int, load_code: int) -> str:
-    length_dm = length_m * 10
-    if abs(length_dm - round(length_dm)) < 0.01:
-        length_str = str(int(round(length_dm)))
-    else:
-        length_str = f"{length_dm:.1f}".rstrip("0").rstrip(".").replace(".", ",")
-
-    if width_mm == 1200:
-        width_str = "12"
-    else:
-        width_dm = width_mm / 100.0
-        if abs(width_dm - int(width_dm)) < 0.01:
-            width_str = str(int(width_dm))
-        else:
-            width_str = str(width_dm).replace(".", ",")
-
-    return f"ПБ {length_str}-{width_str}-{load_code}п"
 
 
 def _build_smart_lookup(
@@ -63,6 +47,12 @@ def _build_smart_lookup(
     formovka_by_length = copy.deepcopy(plate_lookup_by_length)
 
     def lookup(length_m: float, width_mm: int) -> dict[str, Any]:
+        """Точный поиск identity заказа по (length, width).
+
+        P3: убран опасный fallback width<1200 → (length, 1200), который
+        крал identity primary-заказа у вторичного реза.
+        Fuzzy сужен до ±0.005 м (защита от float).
+        """
         rounded_length = round(length_m, 2)
 
         key = (rounded_length, width_mm)
@@ -72,31 +62,12 @@ def _build_smart_lookup(
                 entry["qty_remaining"] -= 1
                 return entry.copy()
 
-        if width_mm < 1200:
-            key_original = (rounded_length, 1200)
-            for entry in formovka_exact.get(key_original, []):
-                if entry.get("qty_remaining", 0) > 0:
-                    entry["qty_remaining"] -= 1
-                    return entry.copy()
-
+        # P3: ТОЛЬКО fuzzy ±0.005 (float-tolerance), без подмены width.
         for lookup_key, entries in formovka_exact.items():
             key_length, key_width = lookup_key
-            if key_width != width_mm and key_width != 1200:
+            if key_width != width_mm:
                 continue
             if abs(key_length - rounded_length) <= FUZZY_TOLERANCE_M:
-                for entry in entries:
-                    if entry.get("qty_remaining", 0) > 0:
-                        entry["qty_remaining"] -= 1
-                        return entry.copy()
-
-        entries = formovka_by_length.get(rounded_length, [])
-        for entry in entries:
-            if entry.get("qty_remaining", 0) > 0:
-                entry["qty_remaining"] -= 1
-                return entry.copy()
-
-        for lookup_length, entries in formovka_by_length.items():
-            if abs(lookup_length - rounded_length) <= FUZZY_TOLERANCE_M:
                 for entry in entries:
                     if entry.get("qty_remaining", 0) > 0:
                         entry["qty_remaining"] -= 1
@@ -116,7 +87,11 @@ def _build_smart_lookup(
 def _iter_plate_items(track: dict):
     """Перебирает основные плиты + вторичные резы (остатки) внутри дорожки.
 
-    Возвращает кортежи `(length_m, width_mm, is_secondary, label_hint)`.
+    Возвращает кортежи `(length_m, width_mm, is_secondary, parent_item, label_hint)`.
+
+    P3: Если у secondary_cut НЕТ ``target_length`` — НЕ берём длину родителя
+    (раньше брали, и lookup по (parent_length, sec_width) с fallback width<1200
+    крал identity родительского заказа). Без длины secondary_cut пропускается.
     """
     for item in track.get("items", []) or []:
         if item is None:
@@ -140,18 +115,151 @@ def _iter_plate_items(track: dict):
             if sec_width_m <= 0:
                 continue
             sec_width_mm = round(sec_width_m * 1000)
-            sec_length = sec.get("target_length") or length
+            sec_length = sec.get("target_length")
+            if not sec_length:
+                # P3: без явной target_length secondary не должен брать identity
+                # родительского заказа — это было главным источником phantom-плит.
+                continue
             label_hint = None
             if sec.get("label"):
                 label_hint = sec["label"].replace("О ", "").strip()
             yield float(sec_length), int(sec_width_mm), True, item, label_hint
 
 
+def _aggregate_plates_for_track_from_db(
+    track: dict,
+    db_rows_by_id: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """P5: строит plates_info по items с kp_plate_id, читая данные из БД.
+
+    Возвращает список словарей в том же формате, что и
+    :func:`_aggregate_plates_for_track`. Все плиты «реальные» — есть запись
+    в kp_plates, поэтому complete_day гарантированно их найдёт.
+    """
+    plates: list[dict[str, Any]] = []
+
+    def _add_plate(item: dict[str, Any], is_secondary: bool) -> None:
+        plate_id = item.get("kp_plate_id")
+        if plate_id is None:
+            return
+        row = db_rows_by_id.get(int(plate_id))
+        if row is None:
+            return
+        length_m = float(row.get("length_m") or 0)
+        width_mm = int(round(float(row.get("width_m") or 0) * 1000))
+        load_class = int(row.get("load_class") or 800)
+        load_code_value = load_class / 100.0
+        load_code: int | float
+        if load_code_value.is_integer():
+            load_code = int(load_code_value)
+        else:
+            load_code = load_code_value
+        plate_name = row.get("plate_name") or ""
+        canon = plate_name_utils.canonical(plate_name)
+
+        existing = next(
+            (
+                p
+                for p in plates
+                if p.get("kp_plate_id") == int(plate_id)
+            ),
+            None,
+        )
+        if existing:
+            existing["qty"] += 1
+            return
+
+        plates.append(
+            {
+                "length_m": round(length_m, 3),
+                "width_mm": width_mm,
+                "qty": 1,
+                "reinforcement": float(row.get("reinforcement") or 0),
+                "kp_date": row.get("kp_date") or "неизвестно",
+                "customer": row.get("customer") or "неизвестно",
+                "kp_id": int(row.get("kp_id") or 0) or None,
+                "plate_name": plate_name,
+                "plate_name_canonical": canon,
+                "load_class": load_class,
+                "load_code": load_code,
+                "length_dm_raw": row.get("length_dm_raw") or "",
+                "is_secondary": bool(is_secondary),
+                "kp_plate_id": int(plate_id),
+            }
+        )
+
+    for item in track.get("items") or []:
+        if not item:
+            continue
+        _add_plate(item, is_secondary=False)
+        for sec in item.get("secondary_cuts") or []:
+            if not sec:
+                continue
+            _add_plate(sec, is_secondary=True)
+
+    plates.sort(key=lambda p: p["length_m"], reverse=True)
+    return plates
+
+
+def _track_has_plate_ids(track: dict) -> bool:
+    """True, если у любого item трека есть kp_plate_id (значит план новый)."""
+    for item in track.get("items") or []:
+        if not item:
+            continue
+        if item.get("kp_plate_id") is not None:
+            return True
+        for sec in item.get("secondary_cuts") or []:
+            if sec and sec.get("kp_plate_id") is not None:
+                return True
+    return False
+
+
+def _load_db_rows_for_plan_day(
+    db_path: str, plan_id: str, day_number: int
+) -> dict[int, dict[str, Any]]:
+    """Загружает строки kp_plates для (plan_id, day_number) status='в плане'.
+
+    Возвращает ``{plate_id: {plate_name, length_m, width_m, load_class, ...}}``.
+    Используется в новом пути ``_aggregate_plates_for_track_from_db``.
+    """
+    import sqlite3 as _sql
+
+    rows: dict[int, dict[str, Any]] = {}
+    with _sql.connect(db_path) as conn:
+        conn.row_factory = _sql.Row
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT p.id, p.kp_id, p.plate_name, p.length_m, p.width_m,
+                   p.load_class, p.qty, p.length_dm_raw,
+                   k.customer_name, k.execution_terms
+            FROM kp_plates p
+            LEFT JOIN KP_offers k ON k.kp_id = p.kp_id
+            WHERE p.plan_id = ? AND p.day_number = ? AND p.status = 'в плане'
+            """,
+            (plan_id, day_number),
+        )
+        for row in cur.fetchall():
+            rows[int(row["id"])] = {
+                "kp_id": row["kp_id"],
+                "plate_name": row["plate_name"],
+                "length_m": row["length_m"],
+                "width_m": row["width_m"],
+                "load_class": row["load_class"],
+                "qty": row["qty"],
+                "length_dm_raw": row["length_dm_raw"],
+                "customer": row["customer_name"],
+                "kp_date": row["execution_terms"],
+                "reinforcement": 0,
+            }
+    return rows
+
+
 def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
     plates: list[dict[str, Any]] = []
     is_rescue = track.get("label") == "РЕСКЬЮ"
 
-    for length_m, width_mm, _is_secondary, parent_item, label_hint in _iter_plate_items(track):
+    for length_m, width_mm, is_secondary, parent_item, label_hint in _iter_plate_items(track):
         info = lookup(length_m, width_mm)
 
         plate_name = info.get("plate_name") or ""
@@ -163,11 +271,22 @@ def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
         reinforcement = float(info.get("reinforcement") or 0)
         load_code = int(info.get("load_code") or _reinforcement_to_load_code(reinforcement))
 
+        length_dm_raw = info.get("length_dm_raw") or ""
         if not plate_name:
-            plate_name = _make_plate_name(length_m, width_mm, load_code)
+            plate_name = plate_name_utils.make(
+                length_m, width_mm, load_code, length_dm_raw=length_dm_raw or None
+            )
 
-        kp_id = info.get("kp_id") or (parent_item.get("kp_id") if parent_item else None)
+        # P2: kp_id у secondary без target_length мы уже не подхватываем.
+        # У вторичных без identity (label_hint == None) — kp_id остаётся None,
+        # такая плита позже сохранится в plate_rests (Фаза 6).
+        kp_id = info.get("kp_id")
+        if kp_id is None and is_rescue and parent_item is not None:
+            kp_id = parent_item.get("kp_id")
 
+        # P2: ключ агрегации использует canonical(plate_name) — «Плиты ПБ 45-12-6п»
+        # и «ПБ 45-12-6п» считаются одной плитой и больше не дублируются.
+        canon = plate_name_utils.canonical(plate_name)
         existing = next(
             (
                 p
@@ -178,7 +297,8 @@ def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
                 and p["kp_date"] == info.get("kp_date", "неизвестно")
                 and p["customer"] == info.get("customer", "неизвестно")
                 and p.get("kp_id") == kp_id
-                and p["plate_name"] == plate_name
+                and plate_name_utils.canonical(p["plate_name"]) == canon
+                and bool(p.get("is_secondary")) == bool(is_secondary)
             ),
             None,
         )
@@ -197,6 +317,8 @@ def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
                 "kp_id": kp_id,
                 "plate_name": plate_name,
                 "load_code": load_code,
+                "length_dm_raw": length_dm_raw,
+                "is_secondary": bool(is_secondary),
             }
         )
 
@@ -215,8 +337,16 @@ def _plan_completion_map(source_plan_ids: list[str], date_key: str) -> dict[str,
     return result
 
 
-def build_day_view_detail(date_key: str) -> dict | None:
+def build_day_view_detail(date_key: str, db_path: str | None = None) -> dict | None:
     """Собирает детальный вид дня: дорожки с плитами, сгруппированные по планам.
+
+    P5: для планов, где у items есть ``kp_plate_id`` (новый формат), читает
+    plates_info ПРЯМО из БД по ``plan_id+day_number``. Это гарантирует
+    инвариант ``plates_info ↔ kp_plates``, и complete_day всегда находит
+    нужные строки.
+
+    Для старых (legacy) планов без ``kp_plate_id`` сохраняется fuzzy-lookup
+    путь — он помечается флагом ``is_legacy=true`` в каждом track-блоке.
 
     Возвращает:
         - ``None``, если даты нет ни в одном плане (фронт получит 404);
@@ -246,6 +376,13 @@ def build_day_view_detail(date_key: str) -> dict | None:
     source_plans: list[str] = multi.get("source_plans") or []
     completion = _plan_completion_map(source_plans, date_key)
 
+    # Определяем путь по plan'у, чтобы читать БД-данные один раз на (plan_id, day).
+    if db_path is None:
+        from app.core.settings import get_settings as _get_settings
+        db_path = str(_get_settings().plita_db_path)
+
+    db_rows_cache: dict[tuple[str, int], dict[int, dict[str, Any]]] = {}
+
     plan_blocks: dict[str, dict[str, Any]] = {}
     plan_order: list[str] = []
 
@@ -264,7 +401,30 @@ def build_day_view_detail(date_key: str) -> dict | None:
             plan_blocks[plan_id] = block
             plan_order.append(plan_id)
 
-        plates_info = _aggregate_plates_for_track(track, lookup)
+        # P5: пытаемся пойти DB-путём, если у трека есть kp_plate_id.
+        is_legacy = True
+        plates_info: list[dict[str, Any]] = []
+        if _track_has_plate_ids(track):
+            day_number = int(track.get("production_day") or 0)
+            cache_key = (plan_id, day_number)
+            db_rows = db_rows_cache.get(cache_key)
+            if db_rows is None and day_number > 0:
+                try:
+                    db_rows = _load_db_rows_for_plan_day(db_path, plan_id, day_number)
+                except Exception:
+                    logger.exception(
+                        "[DAY_VIEW] DB-путь не сработал для plan=%s day=%s",
+                        plan_id, day_number,
+                    )
+                    db_rows = None
+                if db_rows is not None:
+                    db_rows_cache[cache_key] = db_rows
+            if db_rows is not None:
+                plates_info = _aggregate_plates_for_track_from_db(track, db_rows)
+                is_legacy = False
+
+        if is_legacy:
+            plates_info = _aggregate_plates_for_track(track, lookup)
 
         block["tracks"].append(
             {
@@ -275,8 +435,59 @@ def build_day_view_detail(date_key: str) -> dict | None:
                 "source_plan_id": plan_id,
                 "source_plan_name": plan_name,
                 "plates_info": plates_info,
+                "is_legacy": is_legacy,
             }
         )
+
+    # #region agent log
+    try:
+        import json as _agent_json
+        import time as _agent_time
+
+        _plan_summaries = []
+        for _pid, _block in plan_blocks.items():
+            _tracks = _block.get("tracks") or []
+            _qty_total = 0
+            _without_kp = 0
+            _legacy_tracks = 0
+            _empty_tracks = 0
+            for _track in _tracks:
+                if _track.get("is_legacy"):
+                    _legacy_tracks += 1
+                _plates_info = _track.get("plates_info") or []
+                if not _plates_info:
+                    _empty_tracks += 1
+                for _plate in _plates_info:
+                    _qty = int(_plate.get("qty") or 0)
+                    _qty_total += _qty
+                    if not _plate.get("kp_id"):
+                        _without_kp += _qty
+            _plan_summaries.append({
+                "plan_id": _pid,
+                "tracks": len(_tracks),
+                "legacy_tracks": _legacy_tracks,
+                "empty_tracks": _empty_tracks,
+                "plates_qty_total": _qty_total,
+                "plates_without_kp_qty": _without_kp,
+            })
+        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            _agent_f.write(_agent_json.dumps({
+                "sessionId": "ebb546",
+                "runId": "pre-fix",
+                "hypothesisId": "H3,H4",
+                "location": "app/services/day_view_service.py:build_day_view_detail:return",
+                "message": "Day-view summary по планам и plates_info",
+                "data": {
+                    "date_key": date_key,
+                    "source_plans": source_plans,
+                    "total_tracks": len(tracks),
+                    "plans": _plan_summaries,
+                },
+                "timestamp": int(_agent_time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     return {
         "date": date_key,

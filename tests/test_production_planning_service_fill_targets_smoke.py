@@ -140,12 +140,15 @@ def test_smoke_three_days_with_excess_plates(planning_service, tmp_plita):
     assert len([a for a in assignments if a.get("source") == "primary"]) == 6
 
     # Статусы в БД: 6 → "в плане", 4 → "в производстве".
+    # P5: один identity может теперь занимать несколько строк kp_plates
+    # (по дням), поэтому сравниваем СУММЫ статусов.
     with sqlite3.connect(tmp_plita) as conn:
         rows = conn.execute(
-            "SELECT status, qty FROM kp_plates WHERE kp_id = 1 AND plate_name = ?",
+            "SELECT status, SUM(qty) FROM kp_plates "
+            "WHERE kp_id = 1 AND plate_name = ? GROUP BY status",
             (PLATE_NAME,),
         ).fetchall()
-    statuses = {status: qty for status, qty in rows}
+    statuses = dict(rows)
     assert statuses.get("в плане") == 6
     assert statuses.get("в производстве") == 4
     assert sum(qty for _, qty in rows) == 10

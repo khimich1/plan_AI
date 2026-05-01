@@ -100,6 +100,43 @@ class ProductionPlanningService:
             selected_plates
         )
 
+        # #region agent log
+        try:
+            import json as _agent_json
+            import time as _agent_time
+            from collections import Counter as _AgentCounter
+
+            _selected_counter = _AgentCounter(
+                f"{p.get('kp_id')}|{p.get('plate_name')}"
+                for p in selected_plates
+            )
+            _orders_counter = _AgentCounter(
+                f"{o.get('kp_id')}|{o.get('plate_name')}"
+                for o in orders_2d
+                for _ in range(int(o.get("qty") or 0))
+            )
+            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                _agent_f.write(_agent_json.dumps({
+                    "sessionId": "ebb546",
+                    "runId": "stage-localization",
+                    "hypothesisId": "S3,S4",
+                    "location": "app/services/production_planning_service.py:after_build_orders",
+                    "message": "Стадии 3-4: загрузка плит и orders_2d перед оптимизатором",
+                    "data": {
+                        "kp_ids": [kp.get("kp_id") for kp in kp_list],
+                        "selected_plates_rows": len(selected_plates),
+                        "selected_plates_qty": sum(int(p.get("qty") or 0) for p in selected_plates),
+                        "orders_rows": len(orders_2d),
+                        "orders_qty": sum(int(o.get("qty") or 0) for o in orders_2d),
+                        "selected_top": _selected_counter.most_common(12),
+                        "orders_top": _orders_counter.most_common(12),
+                    },
+                    "timestamp": int(_agent_time.time() * 1000),
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
         all_tracks_list, optimization_result = self._run_optimization_and_split(
             orders_2d=orders_2d
         )
@@ -162,6 +199,72 @@ class ProductionPlanningService:
         )
         plan_id = plan["id"]
 
+        # P5: собираем tracks_by_day из готового plan'а — там tracks уже
+        # разложены по датам и имеют day_number в day-ноде. Прокидываем
+        # это в commit_plan_plates, чтобы он записал day_number в БД и
+        # kp_plate_id в каждый track.items[].
+        tracks_by_day_for_commit: dict[str, list[dict[str, Any]]] = {}
+        for date_key, day_data in (plan.get("days") or {}).items():
+            day_number = int((day_data or {}).get("day_number") or 0)
+            day_tracks = (day_data or {}).get("tracks") or []
+            for track in day_tracks:
+                if isinstance(track, dict):
+                    track.setdefault("production_day", day_number)
+            tracks_by_day_for_commit[date_key] = day_tracks
+
+        # #region agent log
+        try:
+            import json as _agent_json
+            import time as _agent_time
+            from collections import Counter as _AgentCounter
+
+            _physical_total = 0
+            _without_identity = 0
+            _secondary_without_identity = 0
+            _identity_counts: _AgentCounter[str] = _AgentCounter()
+            for _day_tracks in tracks_by_day_for_commit.values():
+                for _track in _day_tracks or []:
+                    for _item in (_track or {}).get("items") or []:
+                        if not isinstance(_item, dict):
+                            continue
+                        _items_to_check = [(_item, False)] + [
+                            (_sec, True)
+                            for _sec in (_item.get("secondary_cuts") or [])
+                            if isinstance(_sec, dict)
+                        ]
+                        for _physical, _is_secondary in _items_to_check:
+                            _physical_total += 1
+                            _kp_id = _physical.get("kp_id")
+                            _plate_name = _physical.get("plate_name") or ""
+                            if not (_kp_id and _plate_name):
+                                _without_identity += 1
+                                if _is_secondary:
+                                    _secondary_without_identity += 1
+                            else:
+                                _identity_counts[f"{_kp_id}|{_plate_name}"] += 1
+            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                _agent_f.write(_agent_json.dumps({
+                    "sessionId": "ebb546",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H1,H2",
+                    "location": "app/services/production_planning_service.py:before_commit",
+                    "message": "План перед commit_plan_plates: tracks_by_day и identity в физических items",
+                    "data": {
+                        "plan_id": plan_id,
+                        "dates": sorted(tracks_by_day_for_commit.keys()),
+                        "tracks_by_date": {k: len(v or []) for k, v in tracks_by_day_for_commit.items()},
+                        "physical_items_total": _physical_total,
+                        "physical_items_without_identity": _without_identity,
+                        "secondary_without_identity": _secondary_without_identity,
+                        "top_identity_counts": _identity_counts.most_common(12),
+                        "orders_total_qty": sum(int(o.get("qty") or 0) for o in orders_2d),
+                    },
+                    "timestamp": int(_agent_time.time() * 1000),
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
         # Коммитим план в БД до записи на диск: если пометка провалится,
         # файл плана остаётся нетронутым и шаг рестартуем без ручного cleanup.
         try:
@@ -171,6 +274,7 @@ class ProductionPlanningService:
                 optimization_result=optimization_result,
                 all_tracks_list=all_tracks_list,
                 db_path=self.plita_db_path,
+                tracks_by_day=tracks_by_day_for_commit,
             )
         except PlanCommitError as exc:
             logger.error(
@@ -428,6 +532,8 @@ class ProductionPlanningService:
         for order in orders_2d:
             length_key = round(order["length"], 2)
             width_key = order["width"]
+            # P4: length_dm_raw нужен в lookup-таблицах, чтобы day_view → _to_completed_plate_payload
+            # мог пробросить его в find_one_row (шаг 0 — самый точный матч 59,8 vs 59,9).
             entry_exact = {
                 "kp_date": order.get("kp_date", "неизвестно"),
                 "customer": order.get("customer", "неизвестно"),
@@ -436,6 +542,7 @@ class ProductionPlanningService:
                 "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
                 "qty_remaining": order.get("qty", 1),
                 "kp_id": order.get("kp_id"),
+                "length_dm_raw": order.get("length_dm_raw", "") or "",
             }
             plate_lookup_exact.setdefault((length_key, width_key), []).append(entry_exact)
 
@@ -447,6 +554,7 @@ class ProductionPlanningService:
                 "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
                 "qty_remaining": order.get("qty", 1),
                 "kp_id": order.get("kp_id"),
+                "length_dm_raw": order.get("length_dm_raw", "") or "",
             }
             plate_lookup_by_length.setdefault(length_key, []).append(entry_by_length)
 
@@ -488,6 +596,71 @@ class ProductionPlanningService:
                 orders_2d=orders_2d,
             )
             optimization_result = context.optimization_result or {}
+
+            # P8.1: backfill identity у plate_assignments, чтобы slot_exhausted
+            # / secondary_unmapped перестали быть блокером в plan_commit.
+            from core.plate_attribution import (
+                backfill_assignment_identity,
+                backfill_track_items_identity,
+            )
+            backfilled = backfill_assignment_identity(
+                optimization_result.get("plate_assignments", []) or [],
+                orders_2d,
+            )
+            if backfilled:
+                logger.info(
+                    "[WEB-PLAN] Восстановлена identity у %s plate_assignments-записей",
+                    backfilled,
+                )
+
+            # #region agent log
+            try:
+                import json as _agent_json
+                import time as _agent_time
+                from collections import Counter as _AgentCounter
+
+                _assignments = optimization_result.get("plate_assignments", []) or []
+                _assign_by_source: _AgentCounter[str] = _AgentCounter(
+                    str(a.get("source") or "unknown") for a in _assignments
+                )
+                _assign_by_identity: _AgentCounter[str] = _AgentCounter(
+                    f"{a.get('kp_id')}|{a.get('plate_name')}"
+                    for a in _assignments
+                    if a.get("kp_id") and a.get("plate_name")
+                )
+                _unmapped = [
+                    {
+                        "source": a.get("source"),
+                        "length": a.get("length"),
+                        "width": a.get("width"),
+                        "load_code": a.get("load_code"),
+                    }
+                    for a in _assignments
+                    if not (a.get("kp_id") and a.get("plate_name"))
+                ]
+                with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                    _agent_f.write(_agent_json.dumps({
+                        "sessionId": "ebb546",
+                        "runId": "stage-localization",
+                        "hypothesisId": "S5A",
+                        "location": "app/services/production_planning_service.py:after_optimize",
+                        "message": "Стадия 5A: результат optimize/plate_assignments до layout",
+                        "data": {
+                            "orders_qty": sum(int(o.get("qty") or 0) for o in orders_2d),
+                            "optimization_total_plates": optimization_result.get("total_plates"),
+                            "assignments_total": len(_assignments),
+                            "assignments_by_source": dict(_assign_by_source),
+                            "assignments_identity_total": sum(_assign_by_identity.values()),
+                            "assignments_top": _assign_by_identity.most_common(15),
+                            "unmapped_count": len(_unmapped),
+                            "unmapped_sample": _unmapped[:10],
+                        },
+                        "timestamp": int(_agent_time.time() * 1000),
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
+
             self._log_unmapped_optimizer_assignments(optimization_result)
             if not optimization_result or optimization_result.get("total_plates", 0) == 0:
                 return [], optimization_result
@@ -498,11 +671,152 @@ class ProductionPlanningService:
             with self.optimization_service.legacy_runtime(context):
                 seq = build_layout_sequence()
                 all_tracks_list = split_sequence_into_tracks(seq) or []
+
+            # #region agent log
+            try:
+                import json as _agent_json
+                import time as _agent_time
+                from collections import Counter as _AgentCounter
+
+                def _count_sequence_items(_seq: list[dict[str, Any]]) -> tuple[int, int, _AgentCounter[str]]:
+                    _total = 0
+                    _without_identity = 0
+                    _counts: _AgentCounter[str] = _AgentCounter()
+                    for _item in _seq or []:
+                        if not isinstance(_item, dict):
+                            continue
+                        _total += 1
+                        _kp_id = _item.get("kp_id")
+                        _plate_name = _item.get("plate_name") or _item.get("label")
+                        if _kp_id and _plate_name:
+                            _counts[f"{_kp_id}|{_plate_name}"] += 1
+                        else:
+                            _without_identity += 1
+                    return _total, _without_identity, _counts
+
+                def _count_track_items(_tracks: list[dict[str, Any]]) -> tuple[int, int, _AgentCounter[str]]:
+                    _total = 0
+                    _without_identity = 0
+                    _counts: _AgentCounter[str] = _AgentCounter()
+                    for _track in _tracks or []:
+                        if not isinstance(_track, dict):
+                            continue
+                        for _item in _track.get("items") or []:
+                            if not isinstance(_item, dict):
+                                continue
+                            _physical = [_item] + [
+                                _sec for _sec in (_item.get("secondary_cuts") or [])
+                                if isinstance(_sec, dict)
+                            ]
+                            for _p in _physical:
+                                _total += 1
+                                _kp_id = _p.get("kp_id")
+                                _plate_name = _p.get("plate_name") or _p.get("label")
+                                if _kp_id and _plate_name:
+                                    _counts[f"{_kp_id}|{_plate_name}"] += 1
+                                else:
+                                    _without_identity += 1
+                    return _total, _without_identity, _counts
+
+                _seq_total, _seq_without_identity, _seq_counts = _count_sequence_items(seq)
+                _tracks_total, _tracks_without_identity, _tracks_counts = _count_track_items(all_tracks_list)
+                with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                    _agent_f.write(_agent_json.dumps({
+                        "sessionId": "ebb546",
+                        "runId": "stage-localization",
+                        "hypothesisId": "S5B,S5C",
+                        "location": "app/services/production_planning_service.py:after_layout_split",
+                        "message": "Стадия 5B-5C: build_layout_sequence и split_sequence_into_tracks",
+                        "data": {
+                            "orders_qty": sum(int(o.get("qty") or 0) for o in orders_2d),
+                            "sequence_items_total": _seq_total,
+                            "sequence_without_identity": _seq_without_identity,
+                            "sequence_top": _seq_counts.most_common(15),
+                            "tracks_count": len(all_tracks_list),
+                            "track_physical_items_total": _tracks_total,
+                            "track_physical_without_identity": _tracks_without_identity,
+                            "track_top": _tracks_counts.most_common(15),
+                        },
+                        "timestamp": int(_agent_time.time() * 1000),
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
         finally:
             cfg.PLATE_LOAD_DETAILS.clear()
             cfg.PLATE_LOAD_DETAILS.update(saved_plate_load_details)
             cfg.PLATE_LENGTH_DM_RAW.clear()
             cfg.PLATE_LENGTH_DM_RAW.update(saved_plate_length_raw)
+
+        # P7/P8: подключаем общую с ботом RESCUE-логику. Без неё web-side
+        # планирование молча теряло позиции, которых не хватало.
+        # P8.4: после Phase 4 источник правды — plate_assignments
+        # (с backfill identity), а не all_tracks_list. Fuzzy-матч ушёл,
+        # подсчёт делается по точной identity (kp_id, plate_name).
+        try:
+            from core.rescue_tracks import build_rescue_tracks
+
+            plate_assignments = optimization_result.get("plate_assignments", []) or []
+            rescue_tracks, missing_counts, rescue_assignments = build_rescue_tracks(
+                orders_2d=orders_2d,
+                plate_assignments=plate_assignments,
+            )
+            if rescue_tracks:
+                logger.info(
+                    "[WEB-PLAN] RESCUE: добавлено %s дорожек / %s assignments, "
+                    "missing identities=%s",
+                    len(rescue_tracks),
+                    len(rescue_assignments),
+                    len(missing_counts),
+                )
+                all_tracks_list.extend(rescue_tracks)
+                if rescue_assignments:
+                    optimization_result.setdefault("plate_assignments", []).extend(
+                        rescue_assignments
+                    )
+        except Exception:
+            logger.exception("[WEB-PLAN] RESCUE-логика упала — продолжаем без rescue")
+
+        # P9: backfill identity у track-items / secondary_cuts. Зеркало
+        # backfill_assignment_identity, но для дерева track["items"][*]
+        # /items[*]["secondary_cuts"][*]. Без этого secondary без kp_id
+        # не учитываются в _count_track_items_by_day -> плиты помечаются
+        # без day_number, не отображаются в day_view, не списываются.
+        # ВАЖНО: должен пройти ДО _trim_assignments_to_tracks (в режиме
+        # fill_targets), потому что trim считает kept-плиты ПО identity
+        # items: если identity нет — assignments выкидываются как лишние.
+        backfilled_items = backfill_track_items_identity(
+            all_tracks_list,
+            orders_2d,
+        )
+        if backfilled_items:
+            logger.info(
+                "[WEB-PLAN] Восстановлена identity у %s track items "
+                "(root + secondary_cuts)",
+                backfilled_items,
+            )
+
+        try:
+            from core.rescue_tracks import build_track_gap_rescue_tracks
+
+            track_gap_rescue_tracks, track_gap_missing = build_track_gap_rescue_tracks(
+                orders_2d=orders_2d,
+                tracks_list=all_tracks_list,
+            )
+            if track_gap_rescue_tracks:
+                logger.warning(
+                    "[WEB-PLAN] RESCUE track-gap: добавлено %s дорожек для "
+                    "%s плит, которые были в assignments, но отсутствовали "
+                    "в track items: %s",
+                    len(track_gap_rescue_tracks),
+                    sum(track_gap_missing.values()),
+                    track_gap_missing,
+                )
+                all_tracks_list.extend(track_gap_rescue_tracks)
+        except Exception:
+            logger.exception(
+                "[WEB-PLAN] RESCUE track-gap логика упала — продолжаем без неё"
+            )
 
         return all_tracks_list, optimization_result
 

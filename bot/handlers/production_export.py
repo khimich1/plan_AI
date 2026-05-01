@@ -373,6 +373,19 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
         db_path = str(PROJECT_ROOT / "plita.db")
         plan_id = updated_plan['id']
 
+        # P9: собираем tracks_by_day из готового плана и передаём в commit,
+        # чтобы у каждой плиты в kp_plates был day_number и у каждого
+        # track item — kp_plate_id. Без этого срабатывает legacy-ветка
+        # (day_number=NULL) и плиты «зависают» вне day_view / complete_day.
+        tracks_by_day_for_commit: dict[str, list[dict]] = {}
+        for date_key, day_data in (updated_plan.get('days') or {}).items():
+            day_number = int((day_data or {}).get('day_number') or 0)
+            day_tracks = (day_data or {}).get('tracks') or []
+            for track in day_tracks:
+                if isinstance(track, dict):
+                    track.setdefault('production_day', day_number)
+            tracks_by_day_for_commit[date_key] = day_tracks
+
         try:
             commit_result = commit_plan_plates(
                 plan_id=plan_id,
@@ -380,6 +393,7 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                 optimization_result=optimization_result,
                 all_tracks_list=all_tracks_list,
                 db_path=db_path,
+                tracks_by_day=tracks_by_day_for_commit,
             )
         except PlanCommitError as commit_error:
             logger.error("[SAVE_PLAN] Не удалось закоммитить план: %s", commit_error)

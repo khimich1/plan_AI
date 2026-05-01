@@ -142,13 +142,15 @@ def test_fill_targets_split_across_days(planning_service, tmp_plita):
     assert len(days["2026-04-28"]["tracks"]) == 3
 
     # 5 плит ушли в план, 3 должны остаться в производстве.
+    # P5: после миграции day_number один identity может занимать несколько
+    # строк kp_plates (по строке на каждый день), поэтому сравниваем СУММЫ.
     with sqlite3.connect(tmp_plita) as conn:
         rows = conn.execute(
-            "SELECT status, qty FROM kp_plates "
-            "WHERE kp_id = 1 AND plate_name = ? ORDER BY status",
+            "SELECT status, SUM(qty) FROM kp_plates "
+            "WHERE kp_id = 1 AND plate_name = ? GROUP BY status",
             (PLATE_NAME,),
         ).fetchall()
-    statuses = {status: qty for status, qty in rows}
+    statuses = dict(rows)
     assert statuses.get("в плане") == 5
     assert statuses.get("в производстве") == 3
 

@@ -304,6 +304,19 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
         
         # Создаём индекс для plan_id (после того, как колонка точно существует)
         cur.execute('CREATE INDEX IF NOT EXISTS idx_plates_plan_id ON kp_plates(plan_id)')
+
+        # P5: day_number — день производства, в который попала плита.
+        # Записывается mark_plates_as_planned. Нужен, чтобы day_view мог читать
+        # plates_info напрямую из БД и держать инвариант с complete_day.
+        if 'day_number' not in columns:
+            print("[DB] Миграция: добавляем колонку day_number в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN day_number INTEGER")
+            print("[DB] ✅ Колонка day_number добавлена")
+
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_plates_plan_day '
+            'ON kp_plates(plan_id, day_number)'
+        )
         
         if 'length_dm_raw' not in columns:
             print("[DB] Миграция: добавляем колонку length_dm_raw в kp_plates...")
@@ -1278,16 +1291,13 @@ def clear_all_kp(db_path: str = DEFAULT_DB) -> Dict[str, int]:
 
 def _normalize_plate_name(name: str) -> str:
     """
-    Нормализует имя плиты для совпадений:
-    - убирает префикс "Плиты "
-    - лишние пробелы
+    Нормализует имя плиты для совпадений (DEPRECATED — оставлен для обратной
+    совместимости со старым кодом). Используйте :func:`core.plate_name.canonical`.
+
+    P2: единый источник истины — ``core/plate_name.py``.
     """
-    if not name:
-        return ''
-    cleaned = str(name).strip()
-    if cleaned.lower().startswith('плиты '):
-        cleaned = cleaned[6:].strip()
-    return cleaned
+    from core import plate_name as _pn
+    return _pn.canonical(name)
 
 
 class UnmovedPlateInfo(TypedDict):
@@ -1309,6 +1319,7 @@ def move_plates_to_completed(
     *,
     actor: str | None = None,
     return_unmoved: bool = False,
+    _external_conn: Optional[sqlite3.Connection] = None,
 ) -> int | tuple[int, list[UnmovedPlateInfo]]:
     """
     Переносит плиты из kp_plates в completed_plates.
@@ -1323,12 +1334,20 @@ def move_plates_to_completed(
         plates_to_complete: список плит для переноса (словари с plate_name, qty и т.д.)
         production_day: номер дня производства
         db_path: путь к базе данных
+        _external_conn: если задано — функция работает в существующей транзакции
+            переданного соединения, не делает commit/rollback и не закрывает conn.
+            Все исключения пробрасываются вызывающему слою, чтобы он мог
+            откатить свою транзакцию целиком (P0: атомарность complete_day).
     
     Возвращает:
         Количество перенесённых плит (сумма qty)
     """
-    init_schema(db_path)
-    conn = _connect(db_path)
+    own_conn = _external_conn is None
+    if own_conn:
+        init_schema(db_path)
+        conn = _connect(db_path)
+    else:
+        conn = _external_conn
     completed_count = 0
     unmoved_plates: list[UnmovedPlateInfo] = []
     # #region agent log
@@ -1337,7 +1356,8 @@ def move_plates_to_completed(
     # #endregion
     
     try:
-        conn.execute('PRAGMA foreign_keys = ON')
+        if own_conn:
+            conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         completed_date = datetime.now().strftime('%d.%m.%Y')
         
@@ -1391,7 +1411,7 @@ def move_plates_to_completed(
                 row = cur.fetchone()
                 if row:
                     return row
-            # 1) По kp_id + plate_name
+            # 1) По kp_id + plate_name (точное)
             cur.execute(f'''
                 SELECT id, kp_id, plate_name, width_m, qty, nomenclature_id FROM kp_plates
                 WHERE kp_id = ? AND plate_name = ? AND qty > 0 AND {_status_filter}
@@ -1400,7 +1420,20 @@ def move_plates_to_completed(
             row = cur.fetchone()
             if row:
                 return row
-            # 2) Нормализованное имя
+            # 1.5) P2: каноническое сравнение — снимает префикс «Плиты » и пробелы.
+            # Покрывает оба направления: plate_name хранит «Плиты ПБ …», ищем «ПБ …»
+            # и наоборот. Делаем в Python, чтобы не плодить sql-функции.
+            from core import plate_name as _pn
+            canon = _pn.canonical(plate_name)
+            if canon:
+                cur.execute(f'''
+                    SELECT id, kp_id, plate_name, width_m, qty, nomenclature_id FROM kp_plates
+                    WHERE kp_id = ? AND qty > 0 AND {_status_filter}
+                ''', (prefer_kp_id,))
+                for cand in cur.fetchall():
+                    if _pn.canonical(cand[2]) == canon:
+                        return cand
+            # 2) Нормализованное имя (DEPRECATED, теперь покрыто шагом 1.5)
             normalized_name = _normalize_plate_name(plate_name)
             if normalized_name and normalized_name != plate_name:
                 cur.execute(f'''
@@ -1579,6 +1612,7 @@ def move_plates_to_completed(
             width_m = plate.get('width_m', 0)
             load_class = plate.get('load_class', 800)
             length_dm_raw = plate.get('length_dm_raw') or ''
+            kp_plate_id = plate.get('kp_plate_id')
             
             if not plate_name:
                 continue
@@ -1611,7 +1645,38 @@ def move_plates_to_completed(
             current_plate_name = plate_name
             current_width_m = width_m
             while qty_remaining > 0:
-                row = find_one_row(current_plate_name, length_m, current_width_m, load_class, kp_id, length_dm_raw=length_dm_raw)
+                row = None
+                if kp_plate_id:
+                    try:
+                        if plan_ids:
+                            placeholders = ','.join('?' * len(plan_ids))
+                            cur.execute(f'''
+                                SELECT id, kp_id, plate_name, width_m, qty, nomenclature_id
+                                FROM kp_plates
+                                WHERE id = ?
+                                  AND plan_id IN ({placeholders})
+                                  AND day_number = ?
+                                  AND status IN ('в плане', 'в производстве')
+                                  AND qty > 0
+                                LIMIT 1
+                            ''', (int(kp_plate_id), *plan_ids, int(production_day)))
+                        else:
+                            cur.execute('''
+                                SELECT id, kp_id, plate_name, width_m, qty, nomenclature_id
+                                FROM kp_plates
+                                WHERE id = ?
+                                  AND day_number = ?
+                                  AND status IN ('в плане', 'в производстве')
+                                  AND qty > 0
+                                LIMIT 1
+                            ''', (int(kp_plate_id), int(production_day)))
+                        row = cur.fetchone()
+                    except Exception:
+                        row = None
+                if row is None and kp_plate_id:
+                    break
+                if row is None:
+                    row = find_one_row(current_plate_name, length_m, current_width_m, load_class, kp_id, length_dm_raw=length_dm_raw)
                 if not row:
                     # #region agent log (61,8-5 / 45-7 / 37,9-9: строка не найдена)
                     if any(sub in (current_plate_name or '') for sub in ('61,8-5', '45-7', '37,9-9')):
@@ -1699,22 +1764,73 @@ def move_plates_to_completed(
         
         # Удаляем записи с qty <= 0
         cur.execute('DELETE FROM kp_plates WHERE qty <= 0')
+
+        # #region agent log
+        try:
+            cur.execute(
+                """
+                SELECT status, COALESCE(day_number, -1), COUNT(*), COALESCE(SUM(qty), 0)
+                FROM kp_plates
+                WHERE kp_id = ?
+                  AND status IN ('в плане', 'в производстве')
+                  AND qty > 0
+                GROUP BY status, COALESCE(day_number, -1)
+                ORDER BY status, COALESCE(day_number, -1)
+                """,
+                (kp_id,),
+            )
+            _remaining_for_kp = [
+                {
+                    "status": _row[0],
+                    "day_number": None if int(_row[1]) == -1 else int(_row[1]),
+                    "rows": int(_row[2] or 0),
+                    "qty": int(_row[3] or 0),
+                }
+                for _row in cur.fetchall()
+            ]
+            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", 'a', encoding='utf-8') as _agent_f:
+                _agent_f.write(_json4.dumps({
+                    "sessionId": "ebb546",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H5",
+                    "location": "core/kp_db.py:move_plates_to_completed:exit",
+                    "message": "Итог move_plates_to_completed по КП",
+                    "data": {
+                        "kp_id": kp_id,
+                        "production_day": production_day,
+                        "plan_ids": plan_ids,
+                        "requested_items": len(plates_to_complete or []),
+                        "completed_count": completed_count,
+                        "unmoved_qty": sum(int(x.get("qty") or 0) for x in unmoved_plates),
+                        "unmoved_sample": unmoved_plates[:10],
+                        "remaining_for_kp": _remaining_for_kp,
+                    },
+                    "timestamp": int(__import__('time').time() * 1000),
+                }, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+        # #endregion
         
-        conn.commit()
+        if own_conn:
+            conn.commit()
         print(f"[DB] ✅ Перенесено {completed_count} плит в completed_plates (КП #{kp_id}, день {production_day})")
         if return_unmoved:
             return completed_count, unmoved_plates
         return completed_count
         
     except Exception as e:
-        print(f"[DB] ❌ Ошибка при переносе плит: {e}")
-        conn.rollback()
-        if return_unmoved:
-            return 0, []
-        return 0
+        if own_conn:
+            print(f"[DB] ❌ Ошибка при переносе плит: {e}")
+            conn.rollback()
+            if return_unmoved:
+                return 0, []
+            return 0
+        # В режиме внешней транзакции пробрасываем — caller сделает rollback своей транзакции.
+        raise
     
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 # ==================== ФУНКЦИИ ДЛЯ ОСТАТКОВ ПЛИТ ====================
@@ -1726,16 +1842,18 @@ def create_plate_rest(
     length_m: float,
     production_day: int,
     qty: int = 1,
-    db_path: str = DEFAULT_DB
+    db_path: str = DEFAULT_DB,
+    *,
+    _external_conn: Optional[sqlite3.Connection] = None,
 ) -> int:
     """
     Создает запись об остатке плиты.
-    
+
     Простыми словами:
     - При продольном резе плиты образуется остаток
     - Эта функция сохраняет информацию об остатке в БД
     - Остаток можно использовать для других заказов
-    
+
     Аргументы:
         kp_id: номер КП, при выполнении которого образовался остаток
         source_plate_name: имя исходной плиты (из которой вырезали)
@@ -1744,18 +1862,25 @@ def create_plate_rest(
         production_day: номер дня производства
         qty: количество остатков (по умолчанию 1)
         db_path: путь к базе данных
-    
+        _external_conn: если задано — функция работает в существующей
+            транзакции переданного соединения (P0/P6). Без commit/rollback/close.
+
     Возвращает:
         ID созданной записи или 0 при ошибке
     """
-    init_schema(db_path)
-    conn = _connect(db_path)
-    
+    own_conn = _external_conn is None
+    if own_conn:
+        init_schema(db_path)
+        conn = _connect(db_path)
+    else:
+        conn = _external_conn
+
     try:
-        conn.execute('PRAGMA foreign_keys = ON')
+        if own_conn:
+            conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         created_date = datetime.now().strftime('%d.%m.%Y')
-        
+
         cur.execute('''
             INSERT INTO plate_rests (
                 kp_id, source_plate_name, rest_width_mm, length_m,
@@ -1768,21 +1893,26 @@ def create_plate_rest(
             length_m,
             qty,
             created_date,
-            production_day
+            production_day,
         ))
-        
+
         rest_id = cur.lastrowid
-        conn.commit()
+        if own_conn:
+            conn.commit()
         print(f"[DB] ✅ Создан остаток #{rest_id}: {rest_width_mm}мм x {length_m}м (КП #{kp_id})")
         return rest_id
-        
+
     except Exception as e:
-        print(f"[DB] ❌ Ошибка при создании остатка: {e}")
-        conn.rollback()
-        return 0
-    
+        if own_conn:
+            print(f"[DB] ❌ Ошибка при создании остатка: {e}")
+            conn.rollback()
+            return 0
+        # Внешняя транзакция: пробрасываем для отката caller'ом
+        raise
+
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def get_available_rests(
@@ -2141,47 +2271,61 @@ def find_matching_rests(
         conn.close()
 
 
-def check_and_update_kp_completion(kp_id: int, db_path: str = DEFAULT_DB) -> bool:
+def check_and_update_kp_completion(
+    kp_id: int,
+    db_path: str = DEFAULT_DB,
+    *,
+    _external_conn: Optional[sqlite3.Connection] = None,
+) -> bool:
     """
     Проверяет, все ли плиты КП выполнены.
     Если да — меняет статус КП на "выполнено".
-    
+
     Простыми словами:
     - Смотрит, остались ли ещё плиты в kp_plates для данного КП
     - Если плит не осталось (все выполнены) — ставит статус "выполнено"
-    
+
     Аргументы:
         kp_id: номер КП для проверки
         db_path: путь к базе данных
-    
+        _external_conn: если задано — функция работает в существующей транзакции
+            переданного соединения (P0). Не делает commit/rollback и не закрывает conn.
+
     Возвращает:
         True если КП полностью выполнен, False если ещё есть плиты
     """
-    init_schema(db_path)
-    conn = _connect(db_path)
-    
+    own_conn = _external_conn is None
+    if own_conn:
+        init_schema(db_path)
+        conn = _connect(db_path)
+    else:
+        conn = _external_conn
+
     try:
-        conn.execute('PRAGMA foreign_keys = ON')
+        if own_conn:
+            conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
-        
+
         # Считаем оставшиеся плиты в КП
         cur.execute('SELECT SUM(qty) FROM kp_plates WHERE kp_id = ?', (kp_id,))
         result = cur.fetchone()
         remaining = result[0] if result[0] else 0
-        
+
         if remaining == 0:
             # Все плиты выполнены — обновляем статус
             cur.execute('''
                 UPDATE kp_meta SET status = 'выполнено' WHERE kp_id = ?
             ''', (kp_id,))
-            conn.commit()
+            if own_conn:
+                conn.commit()
             print(f"[DB] 🎉 КП #{kp_id} полностью выполнен! Статус обновлён.")
             return True
-        
+
         return False
-        
+
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def get_remaining_plates_for_kp(kp_id: int, db_path: str = DEFAULT_DB) -> List[Dict]:
@@ -2230,13 +2374,14 @@ def mark_plates_as_planned(
     db_path: str = DEFAULT_DB,
     *,
     actor: str | None = None,
+    day_number: Optional[int] = None,
 ) -> Dict[str, object]:
     """
     Помечает плиты как 'в плане' при сохранении плана.
-    
+
     ИСПРАВЛЕНО: Теперь обрабатывает ВСЕ записи с одинаковым plate_name,
     а не только первую (убран LIMIT 1).
-    
+
     Простыми словами:
     - Находит ВСЕ плиты по kp_id и plate_name со статусом 'в производстве'
     - Обрабатывает их по очереди, пока не наберется нужное qty_to_plan
@@ -2244,16 +2389,21 @@ def mark_plates_as_planned(
     - Если qty_to_plan < qty — разбивает запись на две:
       * Одна с qty_to_plan и статусом 'в плане'
       * Вторая с остатком и статусом 'в производстве'
-    
+
     Аргументы:
         kp_id: номер КП
         plate_name: название плиты (например, "ПБ 60-12-8п")
         qty_to_plan: сколько плит добавить в план
         plan_id: ID плана (для связи и отката)
         db_path: путь к базе данных
-    
+        day_number: номер дня производства (P5). Если задан — пишется в
+            ``kp_plates.day_number`` и в audit-лог. ``None`` оставляет
+            старое поведение (день не зафиксирован — legacy).
+
     Возвращает:
-        Dict с подробным результатом пометки.
+        Dict с подробным результатом пометки. ``updated_ids`` — id строк
+        kp_plates, которые получили статус «в плане» (нужно вызывающему
+        слою, чтобы записать ``kp_plate_id`` в plan.json/items).
     """
     init_schema(db_path)
     conn = _connect(db_path)
@@ -2299,6 +2449,7 @@ def mark_plates_as_planned(
                 'remaining_unplanned': requested_qty,
                 'split_count': 0,
                 'updated_ids': [],
+                'id_qty_pairs': [],
                 'error': "plate_not_found",
             }
         
@@ -2314,7 +2465,10 @@ def mark_plates_as_planned(
         processed_count = 0
         split_count = 0
         updated_ids: List[int] = []
-        
+        # P5: id_qty_pairs нужен caller'у, чтобы при записи kp_plate_id в plan.json
+        # знать, сколько items приходится на каждый plate_id.
+        id_qty_pairs: List[Tuple[int, int]] = []
+
         for row in rows:
             if remaining_to_plan <= 0:
                 break
@@ -2325,16 +2479,16 @@ def mark_plates_as_planned(
                 # Вся запись идет в план
                 cur.execute('''
                     UPDATE kp_plates
-                    SET status = 'в плане', plan_id = ?
+                    SET status = 'в плане', plan_id = ?, day_number = ?
                     WHERE id = ?
-                ''', (plan_id, plate_id))
+                ''', (plan_id, day_number, plate_id))
                 _audit_append(
                     cur,
                     plate_id=plate_id,
                     kp_id=kp_id,
                     plate_name=plate_name,
                     plan_id=plan_id,
-                    day_number=None,
+                    day_number=day_number,
                     from_status='в производстве',
                     to_status='в плане',
                     qty=current_qty,
@@ -2345,24 +2499,25 @@ def mark_plates_as_planned(
                 remaining_to_plan -= current_qty
                 processed_count += current_qty
                 updated_ids.append(plate_id)
+                id_qty_pairs.append((plate_id, current_qty))
             else:
                 # Частичная обработка: разбиваем запись
                 qty_for_plan = remaining_to_plan
                 remaining_in_production = current_qty - qty_for_plan
-                
+
                 # 1. Обновляем существующую запись: уменьшаем qty, помечаем 'в плане'
                 cur.execute('''
                     UPDATE kp_plates
-                    SET qty = ?, status = 'в плане', plan_id = ?
+                    SET qty = ?, status = 'в плане', plan_id = ?, day_number = ?
                     WHERE id = ?
-                ''', (qty_for_plan, plan_id, plate_id))
-                
+                ''', (qty_for_plan, plan_id, day_number, plate_id))
+
                 # 2. Создаём новую запись с остатком (статус 'в производстве')
                 cur.execute('''
                     INSERT INTO kp_plates (
                         kp_id, position_number, plate_name, length_m, width_m, load_class,
-                        qty, unit_weight, total_weight, discounted_price, status, plan_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'в производстве', NULL)
+                        qty, unit_weight, total_weight, discounted_price, status, plan_id, day_number
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'в производстве', NULL, NULL)
                 ''', (kp_id, pos_num, plate_name, length_m, width_m, load_class,
                       remaining_in_production, unit_w, total_w, price))
                 _audit_append(
@@ -2371,7 +2526,7 @@ def mark_plates_as_planned(
                     kp_id=kp_id,
                     plate_name=plate_name,
                     plan_id=plan_id,
-                    day_number=None,
+                    day_number=day_number,
                     from_status='в производстве',
                     to_status='в плане',
                     qty=qty_for_plan,
@@ -2384,6 +2539,7 @@ def mark_plates_as_planned(
                 processed_count += qty_for_plan
                 split_count += 1
                 updated_ids.append(plate_id)
+                id_qty_pairs.append((plate_id, qty_for_plan))
         
         print(f"[DB] ✅ Итого помечено {processed_count} плит '{plate_name}' как 'в плане' (план {plan_id})")
         # #region agent log
@@ -2411,6 +2567,7 @@ def mark_plates_as_planned(
             'remaining_unplanned': max(requested_qty - processed_count, 0),
             'split_count': split_count,
             'updated_ids': updated_ids,
+            'id_qty_pairs': id_qty_pairs,
             'error': None,
         }
         
@@ -2425,6 +2582,7 @@ def mark_plates_as_planned(
             'remaining_unplanned': requested_qty,
             'split_count': 0,
             'updated_ids': [],
+            'id_qty_pairs': [],
             'error': str(e),
         }
     
@@ -2440,35 +2598,44 @@ def return_plates_to_production(
     *,
     actor: str | None = None,
     reason: str = "rejected",
+    _external_conn: Optional[sqlite3.Connection] = None,
 ) -> bool:
     """
     Возвращает плиты обратно в статус 'в производстве'.
-    
+
     ИСПРАВЛЕНО: Теперь обрабатывает ВСЕ записи с одинаковым plate_name,
     а не только первую (убран LIMIT 1).
-    
+
     Простыми словами:
     - Используется при браке: бракованные плиты возвращаются в производство
     - Находит ВСЕ плиты со статусом 'в плане' и меняет статус на 'в производстве'
     - Очищает plan_id
     - Обрабатывает нужное количество (qty) по записям
-    
+
     Аргументы:
         kp_id: номер КП
         plate_name: название плиты
         qty: количество плит для возврата
         db_path: путь к базе данных
-    
+        _external_conn: если задано — функция работает в существующей транзакции
+            переданного соединения (P0). Не делает commit/rollback и не закрывает conn.
+            Все исключения пробрасываются вызывающему слою.
+
     Возвращает:
         True если успешно, False при ошибке
     """
-    init_schema(db_path)
-    conn = _connect(db_path)
-    
+    own_conn = _external_conn is None
+    if own_conn:
+        init_schema(db_path)
+        conn = _connect(db_path)
+    else:
+        conn = _external_conn
+
     try:
-        conn.execute('PRAGMA foreign_keys = ON')
+        if own_conn:
+            conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
-        
+
         # ИСПРАВЛЕНО: Находим ВСЕ плиты со статусом 'в плане' (без LIMIT 1)
         cur.execute('''
             SELECT id, qty
@@ -2476,7 +2643,7 @@ def return_plates_to_production(
             WHERE kp_id = ? AND plate_name = ? AND status = 'в плане' AND qty > 0
             ORDER BY id
         ''', (kp_id, plate_name))
-        
+
         rows = cur.fetchall()
         if not rows:
             # Плита могла уже быть возвращена или не была в плане
@@ -2554,17 +2721,22 @@ def return_plates_to_production(
                 remaining_to_return = 0
                 break
         
-        conn.commit()
+        if own_conn:
+            conn.commit()
         print(f"[DB] ✅ Итого возвращено {processed_count} плит '{plate_name}' в производство (КП #{kp_id})")
         return True
-        
+
     except Exception as e:
-        print(f"[DB] ❌ Ошибка при возврате плиты в производство: {e}")
-        conn.rollback()
-        return False
+        if own_conn:
+            print(f"[DB] ❌ Ошибка при возврате плиты в производство: {e}")
+            conn.rollback()
+            return False
+        # Внешняя транзакция: пробрасываем исключение для отката caller'ом
+        raise
     
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def return_plan_plates_to_production(plan_id: str, db_path: str = DEFAULT_DB) -> int:
