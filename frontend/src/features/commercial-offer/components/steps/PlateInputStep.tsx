@@ -16,6 +16,7 @@ type PlateInputStepProps = {
   onFileChange: (file: File | null) => void;
   onRecognize: (mode: PlateInputMode) => void;
   onProcess: () => void;
+  onReset: () => void;
 };
 
 export const PlateInputStep = ({
@@ -28,6 +29,7 @@ export const PlateInputStep = ({
   onFileChange,
   onRecognize,
   onProcess,
+  onReset,
 }: PlateInputStepProps) => {
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     onFileChange(event.target.files?.[0] ?? null);
@@ -57,7 +59,12 @@ export const PlateInputStep = ({
           {selectedImageName && <Alert tone="info">Выбран файл: {selectedImageName}</Alert>}
 
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-            <Button type="button" onClick={() => onRecognize("replace")} disabled={isRecognizing}>
+            <Button
+              type="button"
+              variant={draft ? "ghost" : "primary"}
+              onClick={() => onRecognize("replace")}
+              disabled={isRecognizing}
+            >
               {isRecognizing ? "Распознавание..." : draft ? "Распознать (заменить)" : "Распознать"}
             </Button>
             {draft && (
@@ -65,7 +72,12 @@ export const PlateInputStep = ({
                 Распознать и добавить
               </Button>
             )}
-            <Button type="button" variant="secondary" onClick={onProcess} disabled={!draft || isRecognizing}>
+            <Button
+              type="button"
+              variant={draft ? "primary" : "secondary"}
+              onClick={onProcess}
+              disabled={!draft || isRecognizing}
+            >
               Обработать
             </Button>
           </div>
@@ -95,6 +107,11 @@ export const PlateInputStep = ({
               <div>Предупреждения: {draft.metadata.warnings.length}</div>
               <div>Нераспознанные строки: {draft.metadata.unparsed_lines.length}</div>
               <div>Широкие плиты: {draft.metadata.wide_plate_lines.length}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.5rem" }}>
+                <Button type="button" variant="danger" onClick={onReset}>
+                  Начать заново
+                </Button>
+              </div>
             </div>
           </Card>
         </>

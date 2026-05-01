@@ -190,10 +190,53 @@ export const CommercialOfferWizard = () => {
     }
   };
 
+  const handleLogisticsCostSubmit = async (logisticsCost: number) => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await updateMetaMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        logisticsCost,
+      });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
   const handleCreateNewOffer = () => {
     setStepError(null);
     setSelectedImage(null);
     dispatch({ type: "reset" });
+  };
+
+  const canNavigateToStep = (step: WizardStepId): boolean => {
+    if (step === "plates") {
+      return true;
+    }
+    if (!currentDraft) {
+      return false;
+    }
+    if (step === "wide-plates") {
+      return currentDraft.metadata.wide_plate_lines.length > 0 && !currentDraft.metadata.wide_plates_resolved;
+    }
+    return true;
+  };
+
+  const handleSidebarStepClick = (step: WizardStepId) => {
+    if (!canNavigateToStep(step)) {
+      if (!currentDraft && step !== "plates") {
+        setStepError("Сначала распознайте и обработайте список плит.");
+        return;
+      }
+      if (step === "wide-plates") {
+        setStepError("Нет проблемных плит для отдельной проверки.");
+      }
+      return;
+    }
+    setStepError(null);
+    dispatch({ type: "set-step", step });
   };
 
   const currentStepContent =
@@ -211,6 +254,7 @@ export const CommercialOfferWizard = () => {
         }}
         onRecognize={handleRecognize}
         onProcess={handleProcess}
+        onReset={handleCreateNewOffer}
       />
     ) : state.currentStep === "wide-plates" && currentDraft ? (
       <WidePlateReviewStep
@@ -272,6 +316,7 @@ export const CommercialOfferWizard = () => {
         onSave={handleSave}
         isUpdatingDiscount={updateMetaMutation.isPending}
         onDiscountSubmit={handleDiscountSubmit}
+        onLogisticsCostSubmit={handleLogisticsCostSubmit}
       />
     ) : null;
 
@@ -284,7 +329,11 @@ export const CommercialOfferWizard = () => {
 
         <aside className="wizard-sidebar">
           <div className="wizard-sidebar__inner">
-            <WizardProgress currentStep={state.currentStep} />
+            <WizardProgress
+              currentStep={state.currentStep}
+              onStepClick={handleSidebarStepClick}
+              canNavigateToStep={canNavigateToStep}
+            />
           </div>
         </aside>
       </div>

@@ -11,17 +11,23 @@ const steps: Array<{ id: WizardStepId; title: string }> = [
 
 type WizardProgressProps = {
   currentStep: WizardStepId;
+  onStepClick: (step: WizardStepId) => void;
+  canNavigateToStep: (step: WizardStepId) => boolean;
 };
 
-export const WizardProgress = ({ currentStep }: WizardProgressProps) => (
+export const WizardProgress = ({ currentStep, onStepClick, canNavigateToStep }: WizardProgressProps) => (
   <Card title="Шаги мастера" subtitle="Состояние сохраняется в браузере до завершения сценария.">
     <div style={{ display: "grid", gap: "0.75rem" }}>
       {steps.map((step, index) => {
         const isActive = step.id === currentStep;
         const isPassed = steps.findIndex((item) => item.id === currentStep) > index;
+        const isEnabled = canNavigateToStep(step.id);
         return (
-          <div
+          <button
             key={step.id}
+            type="button"
+            onClick={() => onStepClick(step.id)}
+            disabled={!isEnabled}
             style={{
               borderRadius: 14,
               padding: "0.8rem 0.9rem",
@@ -29,10 +35,13 @@ export const WizardProgress = ({ currentStep }: WizardProgressProps) => (
               background: isActive ? "#eef2ff" : "#ffffff",
               color: isPassed ? "#067647" : isActive ? "#2b5cff" : "#344054",
               fontWeight: isActive ? 700 : 500,
+              textAlign: "left",
+              cursor: isEnabled ? "pointer" : "not-allowed",
+              opacity: isEnabled ? 1 : 0.55,
             }}
           >
             {step.title}
-          </div>
+          </button>
         );
       })}
     </div>

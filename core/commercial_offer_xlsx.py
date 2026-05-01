@@ -95,13 +95,14 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
         return round(area_m2 * 4000, 2)
 
 
-def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) -> Dict:
+def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0) -> Dict:
     """
     Рассчитывает общую стоимость заказа
     
     Args:
         order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
         discount_percent: процент скидки (0-100)
+        logistics_cost: транспортные расходы (с НДС), без применения скидки
     
     Returns:
         Словарь с итоговыми суммами
@@ -131,6 +132,9 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) ->
         total_qty += qty
         total_cost_with_vat += item_cost
     
+    logistics_cost = max(0.0, float(logistics_cost or 0.0))
+    total_cost_with_vat += logistics_cost
+
     # 🔥 ИСПРАВЛЕНИЕ: unit_price уже включает НДС, поэтому нужно вычесть НДС
     # Сумма без НДС = сумма с НДС / 1.22
     subtotal = round(total_cost_with_vat / 1.22, 2)
@@ -179,7 +183,8 @@ def generate_commercial_offer_xlsx(
     discount_percent: float = 0,
     delivery_conditions: Optional[str] = None,
     payment_conditions: Optional[str] = None,
-    kp_db_id: Optional[int] = None
+    kp_db_id: Optional[int] = None,
+    logistics_cost: float = 0.0,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате XLSX с расчётными формулами
@@ -196,6 +201,7 @@ def generate_commercial_offer_xlsx(
         delivery_conditions: условия поставки (строка 28, если указано)
         payment_conditions: условия оплаты (строка 29, если указано)
         kp_db_id: номер КП из базы данных (если КП сохранен в БД)
+        logistics_cost: транспортные расходы (с НДС), без применения скидки
     
     Returns:
         BytesIO буфер с XLSX файлом
@@ -294,13 +300,27 @@ def generate_commercial_offer_xlsx(
             'Сумма': discounted_price * qty  # Сначала вставим значение, потом заменим на формулу
         })
     
+    logistics_cost = max(0.0, float(logistics_cost or 0.0))
+    if logistics_cost > 0:
+        table_data.append(
+            {
+                '№': len(table_data) + 1,
+                'Наименование': 'Транспортные расходы',
+                'Кол-во': 1,
+                'Ед.': 'усл',
+                'Вес(кг)': 0.0,
+                'Цена': logistics_cost,
+                'Сумма': logistics_cost,
+            }
+        )
+
     df_table = pd.DataFrame(table_data)
     
     # Рассчитываем итоги с учётом скидки
-    totals = calculate_total_cost(order_data, discount_percent)
+    totals = calculate_total_cost(order_data, discount_percent, logistics_cost=logistics_cost)
     
     # Создаем строку итогов
-    total_items = len(order_data)
+    total_items = len(table_data)
     
     # Записываем в Excel
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -406,7 +426,8 @@ def generate_commercial_offer_xlsx(
             cell.border = thin_border
         
         # Форматируем строки таблицы
-        for row_idx in range(table_header_row + 1, table_header_row + 1 + len(order_data)):
+        table_rows_count = len(table_data)
+        for row_idx in range(table_header_row + 1, table_header_row + 1 + table_rows_count):
             # №
             worksheet.cell(row=row_idx, column=1).alignment = center_align
             worksheet.cell(row=row_idx, column=1).border = thin_border
@@ -448,7 +469,7 @@ def generate_commercial_offer_xlsx(
             sum_cell.number_format = '#,##0.00'
         
         # Добавляем итоговые строки
-        summary_row = table_header_row + len(order_data) + 2
+        summary_row = table_header_row + table_rows_count + 2
         
         # Итоговая сумма (уже с НДС, так как unit_price включает НДС)
         subtotal_row = summary_row
@@ -459,7 +480,7 @@ def generate_commercial_offer_xlsx(
         
         # Формула для подсчёта суммы (это сумма с НДС)
         first_data_row = table_header_row + 1
-        last_data_row = table_header_row + len(order_data)
+        last_data_row = table_header_row + table_rows_count
         sum_with_vat_cell = worksheet[f'G{subtotal_row}']
         sum_with_vat_cell.value = f"=SUM(G{first_data_row}:G{last_data_row})"
         sum_with_vat_cell.font = summary_font

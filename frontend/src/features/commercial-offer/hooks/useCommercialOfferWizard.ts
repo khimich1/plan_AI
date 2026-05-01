@@ -62,6 +62,7 @@ export const useCommercialOfferWizard = () => {
       conditionsMode,
       deliveryConditions,
       paymentConditions,
+      logisticsCost,
     }: {
       draftId: string;
       managerId?: number | null;
@@ -70,6 +71,7 @@ export const useCommercialOfferWizard = () => {
       conditionsMode?: "standard" | "custom";
       deliveryConditions?: string;
       paymentConditions?: string;
+      logisticsCost?: number;
     }) =>
       commercialOfferApi.updateDraftMeta(draftId, {
         managerId,
@@ -78,6 +80,7 @@ export const useCommercialOfferWizard = () => {
         conditionsMode,
         deliveryConditions,
         paymentConditions,
+        logisticsCost,
       }),
     onSuccess: syncDraft,
   });

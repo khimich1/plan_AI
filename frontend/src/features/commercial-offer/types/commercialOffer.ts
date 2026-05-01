@@ -82,6 +82,7 @@ export type CommercialDraftMetadata = {
   current_step: string;
   current_save_mode: SaveMode | null;
   execution_terms: string;
+  logistics_cost: number;
 };
 
 export type CommercialDraftDetails = {

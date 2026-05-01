@@ -249,6 +249,7 @@ class CommercialWorkflowService:
         conditions_mode: str | None = None,
         delivery_conditions: str | None = None,
         payment_conditions: str | None = None,
+        logistics_cost: float | None = None,
     ) -> dict[str, Any]:
         self._load_draft_or_raise(draft_id)
         updates: dict[str, Any] = {}
@@ -277,6 +278,10 @@ class CommercialWorkflowService:
             updates["delivery_conditions"] = delivery_conditions.strip()
         if payment_conditions is not None:
             updates["payment_conditions"] = payment_conditions.strip()
+        if logistics_cost is not None:
+            if logistics_cost < 0:
+                raise ValueError("Стоимость логистики не может быть отрицательной.")
+            updates["logistics_cost"] = float(logistics_cost)
         if updates:
             updates["current_step"] = "calculate"
             self.draft_store.update_metadata(draft_id, **updates)
@@ -307,6 +312,7 @@ class CommercialWorkflowService:
         totals = calculate_total_cost(
             payload["order_data"],
             float(metadata.get("discount_percent", 0.0) or 0.0),
+            logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
         )
         public_metadata = {key: value for key, value in metadata.items() if key != "breakdown_tables"}
         return {
@@ -339,11 +345,16 @@ class CommercialWorkflowService:
         discount_percent = float(metadata.get("discount_percent", 0.0) or 0.0)
         delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
         payment_conditions = str(metadata.get("payment_conditions", "") or "")
+        logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
         offer_number, offer_date, file_stem = self._build_offer_identity(draft_id)
 
         for file_type in requested_types:
             existing = files_by_kind.get(file_type)
-            if existing and self._resolve_generated_file(existing["filename"]).exists():
+            if (
+                file_type not in {"pdf", "xlsx"}
+                and existing
+                and self._resolve_generated_file(existing["filename"]).exists()
+            ):
                 continue
 
             if file_type == "pdf":
@@ -358,6 +369,7 @@ class CommercialWorkflowService:
                     manager_phone=manager_phone,
                     manager_email=manager_email,
                     discount_percent=discount_percent,
+                    logistics_cost=logistics_cost,
                 )
                 files_by_kind[file_type] = self._build_generated_file(file_type, output_path)
             elif file_type == "xlsx":
@@ -374,6 +386,7 @@ class CommercialWorkflowService:
                     discount_percent=discount_percent,
                     delivery_conditions=delivery_conditions,
                     payment_conditions=payment_conditions,
+                    logistics_cost=logistics_cost,
                 )
                 files_by_kind[file_type] = self._build_generated_file(file_type, output_path)
             elif file_type == "breakdown":
@@ -446,6 +459,7 @@ class CommercialWorkflowService:
         totals = calculate_total_cost(
             payload["order_data"],
             float(metadata.get("discount_percent", 0.0) or 0.0),
+            logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
         )
         offer_identity = self._build_offer_identity_payload(draft_id)
         return {
@@ -644,6 +658,7 @@ class CommercialWorkflowService:
         metadata.setdefault("conditions_mode", "standard")
         metadata.setdefault("delivery_conditions", "")
         metadata.setdefault("payment_conditions", "")
+        metadata.setdefault("logistics_cost", 0.0)
         return metadata
 
     def _normalize_file_types(self, file_types: Iterable[str] | None) -> list[str]:

@@ -213,13 +213,14 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
         return round(area_m2 * 4000, 2)
 
 
-def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) -> Dict:
+def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0) -> Dict:
     """
     Рассчитывает общую стоимость заказа
     
     Args:
         order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
         discount_percent: процент скидки (0-100, по умолчанию 0)
+        logistics_cost: транспортные расходы (с НДС), без применения скидки
     
     Returns:
         Словарь с итоговыми суммами
@@ -249,6 +250,9 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) ->
         total_qty += qty
         total_cost_with_vat += item_cost
     
+    logistics_cost = max(0.0, float(logistics_cost or 0.0))
+    total_cost_with_vat += logistics_cost
+
     # 🔥 ИСПРАВЛЕНИЕ: unit_price уже включает НДС, поэтому нужно вычесть НДС
     # Сумма без НДС = сумма с НДС / 1.22
     subtotal = round(total_cost_with_vat / 1.22, 2)
@@ -295,7 +299,8 @@ def generate_commercial_offer_pdf(
     manager_phone: Optional[str] = None,
     manager_email: Optional[str] = None,
     discount_percent: float = 0,
-    kp_db_id: Optional[int] = None
+    kp_db_id: Optional[int] = None,
+    logistics_cost: float = 0.0,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -311,6 +316,7 @@ def generate_commercial_offer_pdf(
         manager_email: email менеджера
         discount_percent: процент скидки (0-100, по умолчанию 0)
         kp_db_id: номер КП из базы данных
+        logistics_cost: транспортные расходы (с НДС), без применения скидки
     
     Note:
         Детальная разбивка компонентов НЕ включается в PDF.
@@ -495,7 +501,8 @@ def generate_commercial_offer_pdf(
     
     table_data = [['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']]
     
-    totals = calculate_total_cost(order_data, discount_percent)
+    logistics_cost = max(0.0, float(logistics_cost or 0.0))
+    totals = calculate_total_cost(order_data, discount_percent, logistics_cost=logistics_cost)
     total_weight = 0.0
     
     for idx, item in enumerate(order_data, start=1):
@@ -545,6 +552,20 @@ def generate_commercial_offer_pdf(
             price_str,
             sum_str
         ])
+
+    if logistics_cost > 0:
+        logistics_str = f"{logistics_cost:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+        table_data.append(
+            [
+                str(len(table_data)),
+                Paragraph(escape("Транспортные расходы"), style_table_text),
+                "1",
+                "усл",
+                "0,00",
+                logistics_str,
+                logistics_str,
+            ]
+        )
     
     no_width = 10 * mm
     qty_width = 14 * mm
@@ -601,7 +622,7 @@ def generate_commercial_offer_pdf(
     # ❌ ДЕТАЛЬНАЯ РАЗБИВКА НЕ ДОБАВЛЯЕТСЯ В PDF
     # Она сохраняется в отдельный Excel файл и отправляется вместе с PDF
     
-    total_items = len(order_data)
+    total_items = len(table_data) - 1
     weight_summary = f"{total_weight:,.3f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     subtotal_str = f"{totals['subtotal']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     total_with_vat_str = f"{totals['total_with_vat']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')

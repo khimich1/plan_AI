@@ -130,6 +130,7 @@ def update_draft_meta(
             conditions_mode=payload.conditions_mode,
             delivery_conditions=payload.delivery_conditions,
             payment_conditions=payload.payment_conditions,
+            logistics_cost=payload.logistics_cost,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
