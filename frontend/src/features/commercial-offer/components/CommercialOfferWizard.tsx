@@ -46,6 +46,18 @@ export const CommercialOfferWizard = () => {
     dispatch({ type: "set-source", text: "", imageName: null });
   };
 
+  const handleSourceTextChange = (value: string) => {
+    if (selectedImage) {
+      setSelectedImage(null);
+    }
+    dispatch({ type: "set-source", text: value, imageName: null });
+  };
+
+  const handleImageSelect = (file: File | null) => {
+    setSelectedImage(file);
+    dispatch({ type: "set-source", text: file ? "" : state.sourceText, imageName: file?.name ?? null });
+  };
+
   const handleRecognize = async (mode: "append" | "replace") => {
     setStepError(null);
     if (!state.sourceText.trim() && !selectedImage) {
@@ -53,17 +65,19 @@ export const CommercialOfferWizard = () => {
       return;
     }
 
+    const sourceText = selectedImage ? "" : state.sourceText;
+
     try {
       if (currentDraft?.draft_id) {
         await updatePlatesMutation.mutateAsync({
           draftId: currentDraft.draft_id,
-          text: state.sourceText,
+          text: sourceText,
           image: selectedImage,
           mode,
         });
       } else {
         await createDraftMutation.mutateAsync({
-          text: state.sourceText,
+          text: sourceText,
           image: selectedImage,
         });
       }
@@ -247,11 +261,9 @@ export const CommercialOfferWizard = () => {
         selectedImageName={state.selectedImageName}
         errorMessage={stepError}
         isRecognizing={createDraftMutation.isPending || updatePlatesMutation.isPending}
-        onTextChange={(value) => dispatch({ type: "set-source", text: value, imageName: selectedImage?.name ?? null })}
-        onFileChange={(file) => {
-          setSelectedImage(file);
-          dispatch({ type: "set-source", text: state.sourceText, imageName: file?.name ?? null });
-        }}
+        onTextChange={handleSourceTextChange}
+        onFileChange={handleImageSelect}
+        onImagePaste={handleImageSelect}
         onRecognize={handleRecognize}
         onProcess={handleProcess}
         onReset={handleCreateNewOffer}

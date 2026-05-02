@@ -220,20 +220,20 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, lo
     Args:
         order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
         discount_percent: процент скидки (0-100, по умолчанию 0)
-        logistics_cost: транспортные расходы (с НДС), без применения скидки
+        logistics_cost: транспортные расходы без НДС, без применения скидки
     
     Returns:
         Словарь с итоговыми суммами
     """
     total_qty = 0
-    total_cost_with_vat = 0.0  # Сумма с НДС (unit_price уже включает НДС)
+    plates_cost_without_vat = 0.0  # Сумма плит без НДС
     
     for item in order_data:
         qty = item.get('qty', 0)
 
         # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
         if 'unit_price' in item and item['unit_price'] is not None:
-            unit_price = item['unit_price']  # Цена УЖЕ включает НДС
+            unit_price = item['unit_price']
         else:
             # Fallback: старая логика (только базовая цена из БД)
             length_m = item.get('length_m', 0)
@@ -244,20 +244,16 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, lo
         # Применяем скидку к цене (если указана)
         discounted_price = unit_price * (1 - discount_percent / 100)
 
-        # Считаем сумму по позиции (это уже с НДС)
+        # Считаем сумму по позиции без НДС.
         item_cost = discounted_price * qty
         
         total_qty += qty
-        total_cost_with_vat += item_cost
+        plates_cost_without_vat += item_cost
     
     logistics_cost = max(0.0, float(logistics_cost or 0.0))
-    total_cost_with_vat += logistics_cost
-
-    # 🔥 ИСПРАВЛЕНИЕ: unit_price уже включает НДС, поэтому нужно вычесть НДС
-    # Сумма без НДС = сумма с НДС / 1.22
-    subtotal = round(total_cost_with_vat / 1.22, 2)
-    vat_amount = round(total_cost_with_vat - subtotal, 2)
-    total_with_vat = round(total_cost_with_vat, 2)
+    subtotal = round(plates_cost_without_vat + logistics_cost, 2)
+    vat_amount = round(subtotal * 0.22, 2)
+    total_with_vat = round(subtotal + vat_amount, 2)
     
     return {
         'total_qty': total_qty,
@@ -316,7 +312,7 @@ def generate_commercial_offer_pdf(
         manager_email: email менеджера
         discount_percent: процент скидки (0-100, по умолчанию 0)
         kp_db_id: номер КП из базы данных
-        logistics_cost: транспортные расходы (с НДС), без применения скидки
+        logistics_cost: транспортные расходы без НДС, без применения скидки
     
     Note:
         Детальная разбивка компонентов НЕ включается в PDF.

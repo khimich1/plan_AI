@@ -1,0 +1,2759 @@
+{
+  "order": {
+    "plates_1_2": [
+      5.7,
+      5.7,
+      5.7,
+      6.1,
+      6.1,
+      6.1,
+      6.1,
+      6.1,
+      6.1,
+      6.7,
+      6.7
+    ],
+    "plates_1_5_to_1_2": [],
+    "plates_1_0": [],
+    "plates_1_08": [
+      3.9,
+      5.7
+    ],
+    "plates_0_46": [
+      3.9
+    ],
+    "plates_0_32": [],
+    "plates_0_72": [],
+    "plates_0_70": [
+      3.9
+    ],
+    "plates_0_86": [
+      5.7,
+      5.7,
+      6.1
+    ],
+    "plates_0_74": [],
+    "plates_0_88": [],
+    "plates_0_48": [],
+    "plates_0_50": [],
+    "plates_0_34": [],
+    "plate_load_details": [
+      [
+        [
+          3.9,
+          0.5,
+          12.0,
+          "39"
+        ],
+        1
+      ],
+      [
+        [
+          3.9,
+          0.7,
+          12.0,
+          "39"
+        ],
+        1
+      ],
+      [
+        [
+          3.9,
+          1.1,
+          12.0,
+          "39"
+        ],
+        1
+      ],
+      [
+        [
+          5.7,
+          0.9,
+          12.0,
+          "57"
+        ],
+        2
+      ],
+      [
+        [
+          5.7,
+          1.1,
+          12.0,
+          "57"
+        ],
+        1
+      ],
+      [
+        [
+          5.7,
+          1.2,
+          12.0,
+          "57"
+        ],
+        1
+      ],
+      [
+        [
+          5.7,
+          1.2,
+          15.0,
+          "57"
+        ],
+        2
+      ],
+      [
+        [
+          6.1,
+          0.8,
+          12.0,
+          "61"
+        ],
+        1
+      ],
+      [
+        [
+          6.1,
+          0.9,
+          12.0,
+          "61"
+        ],
+        1
+      ],
+      [
+        [
+          6.1,
+          1.2,
+          12.0,
+          "61"
+        ],
+        1
+      ],
+      [
+        [
+          6.1,
+          1.5,
+          12.0,
+          "61"
+        ],
+        4
+      ],
+      [
+        [
+          6.7,
+          1.5,
+          12.0,
+          "67"
+        ],
+        2
+      ]
+    ],
+    "plate_length_dm_raw": [
+      [
+        [
+          3.9,
+          0.5,
+          12.0,
+          "39"
+        ],
+        "39"
+      ],
+      [
+        [
+          3.9,
+          0.7,
+          12.0,
+          "39"
+        ],
+        "39"
+      ],
+      [
+        [
+          3.9,
+          1.1,
+          12.0,
+          "39"
+        ],
+        "39"
+      ],
+      [
+        [
+          5.7,
+          0.9,
+          12.0,
+          "57"
+        ],
+        "57"
+      ],
+      [
+        [
+          5.7,
+          1.1,
+          12.0,
+          "57"
+        ],
+        "57"
+      ],
+      [
+        [
+          5.7,
+          1.2,
+          12.0,
+          "57"
+        ],
+        "57"
+      ],
+      [
+        [
+          5.7,
+          1.2,
+          15.0,
+          "57"
+        ],
+        "57"
+      ],
+      [
+        [
+          6.1,
+          0.8,
+          12.0,
+          "61"
+        ],
+        "61"
+      ],
+      [
+        [
+          6.1,
+          0.9,
+          12.0,
+          "61"
+        ],
+        "61"
+      ],
+      [
+        [
+          6.1,
+          1.2,
+          12.0,
+          "61"
+        ],
+        "61"
+      ],
+      [
+        [
+          6.1,
+          1.5,
+          12.0,
+          "61"
+        ],
+        "61"
+      ],
+      [
+        [
+          6.7,
+          1.5,
+          12.0,
+          "67"
+        ],
+        "67"
+      ]
+    ],
+    "plate_exact_widths": [
+      [
+        [
+          3.9,
+          "plates_0_46"
+        ],
+        0.5
+      ],
+      [
+        [
+          3.9,
+          "plates_0_70"
+        ],
+        0.7
+      ],
+      [
+        [
+          3.9,
+          "plates_1_08"
+        ],
+        1.1
+      ],
+      [
+        [
+          5.7,
+          "plates_0_86"
+        ],
+        0.9
+      ],
+      [
+        [
+          5.7,
+          "plates_1_08"
+        ],
+        1.1
+      ],
+      [
+        [
+          5.7,
+          "plates_1_2"
+        ],
+        1.2
+      ],
+      [
+        [
+          6.1,
+          "plates_1_2"
+        ],
+        1.5
+      ],
+      [
+        [
+          6.1,
+          "plates_0_86"
+        ],
+        0.9
+      ],
+      [
+        [
+          6.7,
+          "plates_1_2"
+        ],
+        1.5
+      ]
+    ],
+    "nomenclature_cache": [
+      [
+        [
+          3.9,
+          0.5,
+          12.0,
+          "39"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          3.9,
+          0.7,
+          12.0,
+          "39"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          3.9,
+          1.1,
+          12.0,
+          "39"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          5.7,
+          0.9,
+          12.0,
+          "57"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          5.7,
+          1.1,
+          12.0,
+          "57"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          5.7,
+          1.2,
+          12.0,
+          "57"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          5.7,
+          1.2,
+          15.0,
+          "57"
+        ],
+        {
+          "canonical_name": "Плиты ПБ 57-12-15п",
+          "nomenclature_id": "4eb3fdc2-e862-11ea-8f6c-04d9f5387845"
+        }
+      ],
+      [
+        [
+          6.1,
+          0.8,
+          12.0,
+          "61"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          6.1,
+          0.9,
+          12.0,
+          "61"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          6.1,
+          1.2,
+          12.0,
+          "61"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          6.1,
+          1.5,
+          12.0,
+          "61"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ],
+      [
+        [
+          6.7,
+          1.5,
+          12.0,
+          "67"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ]
+    ],
+    "longitudinal_cuts": 7,
+    "length_trims": 0,
+    "unused_strips_0_3_m_total": 0.0,
+    "scrap_strips_0_2_m_total": 0.0,
+    "usable_strips_0_74_m_total": 3.9,
+    "usable_strips_0_88_m_total": 0,
+    "usable_strips_0_48_m_total": 0,
+    "usable_strips_0_50_m_total": 3.9,
+    "usable_strips_0_34_m_total": 17.5,
+    "scrap_strips_0_12_m_total": 9.6,
+    "waste_area_m2": 1.15
+  },
+  "optimization": {
+    "optimization_result": {
+      "primary_cuts": [
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.1
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            6.1,
+            1200,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            5.7
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            5.7,
+            1200,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            5.7
+          ],
+          "load_code": 15.0,
+          "assignment_key": [
+            5.7,
+            1200,
+            15
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            5.7
+          ],
+          "load_code": 15.0,
+          "assignment_key": [
+            5.7,
+            1200,
+            15
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 500,
+          "demand_width": 500,
+          "rest": 700,
+          "qty": 1,
+          "lengths": [
+            3.9
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            3.9,
+            500,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 800,
+          "demand_width": 800,
+          "rest": 400,
+          "qty": 1,
+          "lengths": [
+            6.1
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            6.1,
+            800,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 900,
+          "demand_width": 900,
+          "rest": 300,
+          "qty": 1,
+          "lengths": [
+            5.7
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            5.7,
+            900,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 900,
+          "demand_width": 900,
+          "rest": 300,
+          "qty": 1,
+          "lengths": [
+            5.7
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            5.7,
+            900,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 900,
+          "demand_width": 900,
+          "rest": 300,
+          "qty": 1,
+          "lengths": [
+            6.1
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            6.1,
+            900,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1100,
+          "demand_width": 1100,
+          "rest": 100,
+          "qty": 1,
+          "lengths": [
+            3.9
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            3.9,
+            1100,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1100,
+          "demand_width": 1100,
+          "rest": 100,
+          "qty": 1,
+          "lengths": [
+            5.7
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            5.7,
+            1100,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1500,
+          "demand_width": 1500,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.1
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            6.1,
+            1500,
+            12
+          ],
+          "identity_match_type": "slot_proportional",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null
+        },
+        {
+          "width": 1500,
+          "demand_width": 1500,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.1
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            6.1,
+            1500,
+            12
+          ],
+          "identity_match_type": "slot_proportional",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null
+        },
+        {
+          "width": 1500,
+          "demand_width": 1500,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.1
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            6.1,
+            1500,
+            12
+          ],
+          "identity_match_type": "slot_proportional",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null
+        },
+        {
+          "width": 1500,
+          "demand_width": 1500,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.1
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            6.1,
+            1500,
+            12
+          ],
+          "identity_match_type": "slot_proportional",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null
+        },
+        {
+          "width": 1500,
+          "demand_width": 1500,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.7
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            6.7,
+            1500,
+            12
+          ],
+          "identity_match_type": "slot_proportional",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null
+        },
+        {
+          "width": 1500,
+          "demand_width": 1500,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.7
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            6.7,
+            1500,
+            12
+          ],
+          "identity_match_type": "slot_proportional",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null
+        }
+      ],
+      "secondary_cuts": [
+        {
+          "source": 700,
+          "cuts": [
+            700
+          ],
+          "qty": 1,
+          "pieces": 1,
+          "waste": 0,
+          "type": "multiple",
+          "source_lengths": [
+            3.9
+          ],
+          "lengths": [
+            3.9
+          ],
+          "target_order_key": [
+            3.9,
+            700,
+            12
+          ],
+          "load_code": 12,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        }
+      ],
+      "total_plates": 17,
+      "plate_assignments": [
+        {
+          "length": 6.1,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 5.7,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 5.7,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 15.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 5.7,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 15.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 3.9,
+          "width": 500,
+          "source": "primary",
+          "rest_width": 700,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 6.1,
+          "width": 800,
+          "source": "primary",
+          "rest_width": 400,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 5.7,
+          "width": 900,
+          "source": "primary",
+          "rest_width": 300,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 5.7,
+          "width": 900,
+          "source": "primary",
+          "rest_width": 300,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 6.1,
+          "width": 900,
+          "source": "primary",
+          "rest_width": 300,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 3.9,
+          "width": 1100,
+          "source": "primary",
+          "rest_width": 100,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 5.7,
+          "width": 1100,
+          "source": "primary",
+          "rest_width": 100,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 6.1,
+          "width": 1500,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 6.1,
+          "width": 1500,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 6.1,
+          "width": 1500,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 6.1,
+          "width": 1500,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 6.7,
+          "width": 1500,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 6.7,
+          "width": 1500,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "length": 3.9,
+          "width": 700,
+          "source": "secondary",
+          "source_rest": 700,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12,
+          "identity_match_type": "slot_proportional"
+        }
+      ],
+      "orders_requested": [
+        {
+          "length": 3.9,
+          "width": 500,
+          "qty": 1,
+          "load_code": 12.0,
+          "length_dm_raw": "39"
+        },
+        {
+          "length": 3.9,
+          "width": 700,
+          "qty": 1,
+          "load_code": 12.0,
+          "length_dm_raw": "39"
+        },
+        {
+          "length": 3.9,
+          "width": 1100,
+          "qty": 1,
+          "load_code": 12.0,
+          "length_dm_raw": "39"
+        },
+        {
+          "length": 5.7,
+          "width": 900,
+          "qty": 2,
+          "load_code": 12.0,
+          "length_dm_raw": "57"
+        },
+        {
+          "length": 5.7,
+          "width": 1100,
+          "qty": 1,
+          "load_code": 12.0,
+          "length_dm_raw": "57"
+        },
+        {
+          "length": 5.7,
+          "width": 1200,
+          "qty": 1,
+          "load_code": 12.0,
+          "length_dm_raw": "57"
+        },
+        {
+          "length": 5.7,
+          "width": 1200,
+          "qty": 2,
+          "load_code": 15.0,
+          "length_dm_raw": "57"
+        },
+        {
+          "length": 6.1,
+          "width": 800,
+          "qty": 1,
+          "load_code": 12.0,
+          "length_dm_raw": "61"
+        },
+        {
+          "length": 6.1,
+          "width": 900,
+          "qty": 1,
+          "load_code": 12.0,
+          "length_dm_raw": "61"
+        },
+        {
+          "length": 6.1,
+          "width": 1200,
+          "qty": 1,
+          "load_code": 12.0,
+          "length_dm_raw": "61"
+        },
+        {
+          "length": 6.1,
+          "width": 1500,
+          "qty": 4,
+          "load_code": 12.0,
+          "length_dm_raw": "61"
+        },
+        {
+          "length": 6.7,
+          "width": 1500,
+          "qty": 2,
+          "load_code": 12.0,
+          "length_dm_raw": "67"
+        }
+      ],
+      "rests_created": [
+        {
+          "length": 3.9,
+          "rest_width_mm": 700,
+          "source_width_mm": 500
+        },
+        {
+          "length": 6.1,
+          "rest_width_mm": 400,
+          "source_width_mm": 800
+        },
+        {
+          "length": 5.7,
+          "rest_width_mm": 300,
+          "source_width_mm": 900
+        },
+        {
+          "length": 5.7,
+          "rest_width_mm": 300,
+          "source_width_mm": 900
+        },
+        {
+          "length": 6.1,
+          "rest_width_mm": 300,
+          "source_width_mm": 900
+        },
+        {
+          "length": 3.9,
+          "rest_width_mm": 100,
+          "source_width_mm": 1100
+        },
+        {
+          "length": 5.7,
+          "rest_width_mm": 100,
+          "source_width_mm": 1100
+        }
+      ],
+      "rests_used": [
+        {
+          "source_length": 3.9,
+          "source_rest_mm": 700
+        }
+      ],
+      "loads_in_group": [
+        12,
+        15
+      ]
+    },
+    "plan_by_load": {
+      "all": {
+        "primary_cuts": [
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.1
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              6.1,
+              1200,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              5.7
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              5.7,
+              1200,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              5.7
+            ],
+            "load_code": 15.0,
+            "assignment_key": [
+              5.7,
+              1200,
+              15
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              5.7
+            ],
+            "load_code": 15.0,
+            "assignment_key": [
+              5.7,
+              1200,
+              15
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 500,
+            "demand_width": 500,
+            "rest": 700,
+            "qty": 1,
+            "lengths": [
+              3.9
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              3.9,
+              500,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 800,
+            "demand_width": 800,
+            "rest": 400,
+            "qty": 1,
+            "lengths": [
+              6.1
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              6.1,
+              800,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 900,
+            "demand_width": 900,
+            "rest": 300,
+            "qty": 1,
+            "lengths": [
+              5.7
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              5.7,
+              900,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 900,
+            "demand_width": 900,
+            "rest": 300,
+            "qty": 1,
+            "lengths": [
+              5.7
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              5.7,
+              900,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 900,
+            "demand_width": 900,
+            "rest": 300,
+            "qty": 1,
+            "lengths": [
+              6.1
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              6.1,
+              900,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1100,
+            "demand_width": 1100,
+            "rest": 100,
+            "qty": 1,
+            "lengths": [
+              3.9
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              3.9,
+              1100,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1100,
+            "demand_width": 1100,
+            "rest": 100,
+            "qty": 1,
+            "lengths": [
+              5.7
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              5.7,
+              1100,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1500,
+            "demand_width": 1500,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.1
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              6.1,
+              1500,
+              12
+            ],
+            "identity_match_type": "slot_proportional",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null
+          },
+          {
+            "width": 1500,
+            "demand_width": 1500,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.1
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              6.1,
+              1500,
+              12
+            ],
+            "identity_match_type": "slot_proportional",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null
+          },
+          {
+            "width": 1500,
+            "demand_width": 1500,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.1
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              6.1,
+              1500,
+              12
+            ],
+            "identity_match_type": "slot_proportional",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null
+          },
+          {
+            "width": 1500,
+            "demand_width": 1500,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.1
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              6.1,
+              1500,
+              12
+            ],
+            "identity_match_type": "slot_proportional",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null
+          },
+          {
+            "width": 1500,
+            "demand_width": 1500,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.7
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              6.7,
+              1500,
+              12
+            ],
+            "identity_match_type": "slot_proportional",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null
+          },
+          {
+            "width": 1500,
+            "demand_width": 1500,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.7
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              6.7,
+              1500,
+              12
+            ],
+            "identity_match_type": "slot_proportional",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null
+          }
+        ],
+        "secondary_cuts": [
+          {
+            "source": 700,
+            "cuts": [
+              700
+            ],
+            "qty": 1,
+            "pieces": 1,
+            "waste": 0,
+            "type": "multiple",
+            "source_lengths": [
+              3.9
+            ],
+            "lengths": [
+              3.9
+            ],
+            "target_order_key": [
+              3.9,
+              700,
+              12
+            ],
+            "load_code": 12,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          }
+        ],
+        "total_plates": 17,
+        "plate_assignments": [
+          {
+            "length": 6.1,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 5.7,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 5.7,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 15.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 5.7,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 15.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 3.9,
+            "width": 500,
+            "source": "primary",
+            "rest_width": 700,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 6.1,
+            "width": 800,
+            "source": "primary",
+            "rest_width": 400,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 5.7,
+            "width": 900,
+            "source": "primary",
+            "rest_width": 300,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 5.7,
+            "width": 900,
+            "source": "primary",
+            "rest_width": 300,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 6.1,
+            "width": 900,
+            "source": "primary",
+            "rest_width": 300,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 3.9,
+            "width": 1100,
+            "source": "primary",
+            "rest_width": 100,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 5.7,
+            "width": 1100,
+            "source": "primary",
+            "rest_width": 100,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 6.1,
+            "width": 1500,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 6.1,
+            "width": 1500,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 6.1,
+            "width": 1500,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 6.1,
+            "width": 1500,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 6.7,
+            "width": 1500,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 6.7,
+            "width": 1500,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "length": 3.9,
+            "width": 700,
+            "source": "secondary",
+            "source_rest": 700,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12,
+            "identity_match_type": "slot_proportional"
+          }
+        ],
+        "orders_requested": [
+          {
+            "length": 3.9,
+            "width": 500,
+            "qty": 1,
+            "load_code": 12.0,
+            "length_dm_raw": "39"
+          },
+          {
+            "length": 3.9,
+            "width": 700,
+            "qty": 1,
+            "load_code": 12.0,
+            "length_dm_raw": "39"
+          },
+          {
+            "length": 3.9,
+            "width": 1100,
+            "qty": 1,
+            "load_code": 12.0,
+            "length_dm_raw": "39"
+          },
+          {
+            "length": 5.7,
+            "width": 900,
+            "qty": 2,
+            "load_code": 12.0,
+            "length_dm_raw": "57"
+          },
+          {
+            "length": 5.7,
+            "width": 1100,
+            "qty": 1,
+            "load_code": 12.0,
+            "length_dm_raw": "57"
+          },
+          {
+            "length": 5.7,
+            "width": 1200,
+            "qty": 1,
+            "load_code": 12.0,
+            "length_dm_raw": "57"
+          },
+          {
+            "length": 5.7,
+            "width": 1200,
+            "qty": 2,
+            "load_code": 15.0,
+            "length_dm_raw": "57"
+          },
+          {
+            "length": 6.1,
+            "width": 800,
+            "qty": 1,
+            "load_code": 12.0,
+            "length_dm_raw": "61"
+          },
+          {
+            "length": 6.1,
+            "width": 900,
+            "qty": 1,
+            "load_code": 12.0,
+            "length_dm_raw": "61"
+          },
+          {
+            "length": 6.1,
+            "width": 1200,
+            "qty": 1,
+            "load_code": 12.0,
+            "length_dm_raw": "61"
+          },
+          {
+            "length": 6.1,
+            "width": 1500,
+            "qty": 4,
+            "load_code": 12.0,
+            "length_dm_raw": "61"
+          },
+          {
+            "length": 6.7,
+            "width": 1500,
+            "qty": 2,
+            "load_code": 12.0,
+            "length_dm_raw": "67"
+          }
+        ],
+        "rests_created": [
+          {
+            "length": 3.9,
+            "rest_width_mm": 700,
+            "source_width_mm": 500
+          },
+          {
+            "length": 6.1,
+            "rest_width_mm": 400,
+            "source_width_mm": 800
+          },
+          {
+            "length": 5.7,
+            "rest_width_mm": 300,
+            "source_width_mm": 900
+          },
+          {
+            "length": 5.7,
+            "rest_width_mm": 300,
+            "source_width_mm": 900
+          },
+          {
+            "length": 6.1,
+            "rest_width_mm": 300,
+            "source_width_mm": 900
+          },
+          {
+            "length": 3.9,
+            "rest_width_mm": 100,
+            "source_width_mm": 1100
+          },
+          {
+            "length": 5.7,
+            "rest_width_mm": 100,
+            "source_width_mm": 1100
+          }
+        ],
+        "rests_used": [
+          {
+            "source_length": 3.9,
+            "source_rest_mm": 700
+          }
+        ],
+        "loads_in_group": [
+          12,
+          15
+        ]
+      }
+    },
+    "load_to_reinforcement_map": {
+      "12": [
+        "all"
+      ],
+      "15": [
+        "all"
+      ]
+    }
+  },
+  "order_data": [
+    {
+      "name": "Плиты ПБ 39-5-12п",
+      "length_m": 3.9,
+      "length_dm_raw": "39",
+      "width_m": 0.5,
+      "qty": 1,
+      "load_class": 1200,
+      "unit_price": 8870.92,
+      "weight": 552.5,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 39-7-12п",
+      "length_m": 3.9,
+      "length_dm_raw": "39",
+      "width_m": 0.7,
+      "qty": 1,
+      "load_class": 1200,
+      "unit_price": 9190.08,
+      "weight": 773.5,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 39-11-12п",
+      "length_m": 3.9,
+      "length_dm_raw": "39",
+      "width_m": 1.1,
+      "qty": 1,
+      "load_class": 1200,
+      "unit_price": 14473.0,
+      "weight": 1215.5,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 57-9-12п",
+      "length_m": 5.7,
+      "length_dm_raw": "57",
+      "width_m": 0.9,
+      "qty": 2,
+      "load_class": 1200,
+      "unit_price": 18330.62,
+      "weight": 2907.0,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 57-11-12п",
+      "length_m": 5.7,
+      "length_dm_raw": "57",
+      "width_m": 1.1,
+      "qty": 1,
+      "load_class": 1200,
+      "unit_price": 22073.0,
+      "weight": 1776.5,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 57-12-12п",
+      "length_m": 5.7,
+      "length_dm_raw": "57",
+      "width_m": 1.2,
+      "qty": 1,
+      "load_class": 1200,
+      "unit_price": 19451.0,
+      "weight": 1938.0,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 57-12-15п",
+      "length_m": 5.7,
+      "length_dm_raw": "57",
+      "width_m": 1.2,
+      "qty": 2,
+      "load_class": 1500,
+      "unit_price": 0.0,
+      "weight": 3876.0,
+      "nomenclature_id": "4eb3fdc2-e862-11ea-8f6c-04d9f5387845"
+    },
+    {
+      "name": "Плиты ПБ 61-8-12п",
+      "length_m": 6.1,
+      "length_dm_raw": "61",
+      "width_m": 0.8,
+      "qty": 1,
+      "load_class": 1200,
+      "unit_price": 25176.0,
+      "weight": 1382.7,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 61-9-12п",
+      "length_m": 6.1,
+      "length_dm_raw": "61",
+      "width_m": 0.9,
+      "qty": 1,
+      "load_class": 1200,
+      "unit_price": 25176.0,
+      "weight": 1555.5,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 61-12-12п",
+      "length_m": 6.1,
+      "length_dm_raw": "61",
+      "width_m": 1.2,
+      "qty": 1,
+      "load_class": 1200,
+      "unit_price": 22370.0,
+      "weight": 2074.0,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 61-15-12п",
+      "length_m": 6.1,
+      "length_dm_raw": "61",
+      "width_m": 1.5,
+      "qty": 4,
+      "load_class": 1200,
+      "unit_price": 28664.0,
+      "weight": 10370.0,
+      "nomenclature_id": null
+    },
+    {
+      "name": "Плиты ПБ 67-15-12п",
+      "length_m": 6.7,
+      "length_dm_raw": "67",
+      "width_m": 1.5,
+      "qty": 2,
+      "load_class": 1200,
+      "unit_price": 35666.0,
+      "weight": 5695.0,
+      "nomenclature_id": null
+    }
+  ],
+  "metadata": {
+    "source_type": "image",
+    "original_text": "",
+    "ocr_text": "ПБ 39-5-12 1\nПБ 39-7-12 1\nПБ 39-11-12-2 1\nПБ 39-15-12 1\nПБ 57-9-12 1\nПБ 57-9-12 1\nПБ 57-11-12 1\nПБ 57-12-12-2 1\nПБ 57-12-15-2 2\nПБ 57-15-12 7\nПБ 61-8-12 1\nПБ 61-9-12-2 1\nПБ 61-12-12-2 1\nПБ 61-15-12 11\nПБ 61-15-12-2 4\nПБ 67-15-12 7\nПБ 67-15-12-2 2",
+    "input_text": "ПБ 39-5-12 1\nПБ 39-7-12 1\nПБ 39-11-12-2 1\nПБ 57-9-12 1\nПБ 57-9-12 1\nПБ 57-11-12 1\nПБ 57-12-12-2 1\nПБ 57-12-15-2 2\nПБ 61-8-12 1\nПБ 61-9-12-2 1\nПБ 61-12-12-2 1\nПБ 61-15-12-2 4\nПБ 67-15-12-2 2",
+    "accumulated_text": "ПБ 39-5-12 1\nПБ 39-7-12 1\nПБ 39-11-12-2 1\nПБ 57-9-12 1\nПБ 57-9-12 1\nПБ 57-11-12 1\nПБ 57-12-12-2 1\nПБ 57-12-15-2 2\nПБ 61-8-12 1\nПБ 61-9-12-2 1\nПБ 61-12-12-2 1\nПБ 61-15-12-2 4\nПБ 67-15-12-2 2",
+    "warnings": [],
+    "unparsed_lines": [],
+    "normalized_text": "ПБ 39-5-12 1\nПБ 39-7-12 1\nПБ 39-11-12-2 1\nПБ 57-9-12 1\nПБ 57-9-12 1\nПБ 57-11-12 1\nПБ 57-12-12-2 1\nПБ 57-12-15-2 2\nПБ 61-8-12 1\nПБ 61-9-12-2 1\nПБ 61-12-12-2 1\nПБ 61-15-12-2 4\nПБ 67-15-12-2 2",
+    "normalized_lines": [
+      "ПБ 39-5-12 1",
+      "ПБ 39-7-12 1",
+      "ПБ 39-11-12-2 1",
+      "ПБ 57-9-12 1",
+      "ПБ 57-9-12 1",
+      "ПБ 57-11-12 1",
+      "ПБ 57-12-12-2 1",
+      "ПБ 57-12-15-2 2",
+      "ПБ 61-8-12 1",
+      "ПБ 61-9-12-2 1",
+      "ПБ 61-12-12-2 1",
+      "ПБ 61-15-12-2 4",
+      "ПБ 67-15-12-2 2"
+    ],
+    "wide_plate_lines": [],
+    "diagnostics": [
+      {
+        "raw_input": "ПБ 39-5-12 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 39-5-12 1"
+      },
+      {
+        "raw_input": "ПБ 39-7-12 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 39-7-12 1"
+      },
+      {
+        "raw_input": "ПБ 39-11-12-2 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 39-11-12-2 1"
+      },
+      {
+        "raw_input": "ПБ 57-9-12 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 57-9-12 1"
+      },
+      {
+        "raw_input": "ПБ 57-9-12 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 57-9-12 1"
+      },
+      {
+        "raw_input": "ПБ 57-11-12 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 57-11-12 1"
+      },
+      {
+        "raw_input": "ПБ 57-12-12-2 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 57-12-12-2 1"
+      },
+      {
+        "raw_input": "ПБ 57-12-15-2 2",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 57-12-15-2 2"
+      },
+      {
+        "raw_input": "ПБ 61-8-12 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 61-8-12 1"
+      },
+      {
+        "raw_input": "ПБ 61-9-12-2 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 61-9-12-2 1"
+      },
+      {
+        "raw_input": "ПБ 61-12-12-2 1",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 61-12-12-2 1"
+      },
+      {
+        "raw_input": "ПБ 61-15-12-2 4",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 61-15-12-2 4"
+      },
+      {
+        "raw_input": "ПБ 67-15-12-2 2",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 67-15-12-2 2"
+      }
+    ],
+    "breakdown_tables": [
+      {
+        "name": "Плиты ПБ 39-5-12п",
+        "rows": [
+          [
+            "Базовая цена (0,50м)",
+            "12 679,00 × (0,50 / 1.2)",
+            "5 282,92 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 3,9 × 2",
+            "3 588,00 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "8 870,92 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "8 870,92 руб"
+          ],
+          [
+            "За 1 плит",
+            "8 870,92 × 1",
+            "8 870,92 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 39-7-12п",
+        "rows": [
+          [
+            "Базовая цена (0,70м)",
+            "12 679,00 × (0,70 / 1.2)",
+            "7 396,08 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 3,9",
+            "1 794,00 руб"
+          ],
+          [
+            "Остаток (500мм)",
+            "0 (не использован)",
+            "0,00 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "9 190,08 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "9 190,08 руб"
+          ],
+          [
+            "За 1 плит",
+            "9 190,08 × 1",
+            "9 190,08 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 39-11-12п",
+        "rows": [
+          [
+            "Базовая цена (1,10м)",
+            "12 679,00 × (1,10 / 1.2)",
+            "11 622,42 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 3,9 × 1",
+            "1 794,00 руб"
+          ],
+          [
+            "Остаток (100мм)",
+            "(100 / 1200) × 12 679,00 / 1",
+            "1 056,58 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "14 473,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "14 473,00 руб"
+          ],
+          [
+            "За 1 плит",
+            "14 473,00 × 1",
+            "14 473,00 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 57-9-12п",
+        "rows": [
+          [
+            "Базовая цена (0,90м)",
+            "19 451,00 × (0,90 / 1.2)",
+            "14 588,25 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 5,7 × 1 / 2",
+            "1 311,00 руб"
+          ],
+          [
+            "Остаток (300мм)",
+            "(300 / 1200) × 19 451,00 / 2",
+            "2 431,38 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "18 330,62 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "18 330,62 руб"
+          ],
+          [
+            "За 2 плит",
+            "18 330,62 × 2",
+            "36 661,25 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 57-11-12п",
+        "rows": [
+          [
+            "Базовая цена (1,10м)",
+            "19 451,00 × (1,10 / 1.2)",
+            "17 830,08 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 5,7 × 1",
+            "2 622,00 руб"
+          ],
+          [
+            "Остаток (100мм)",
+            "(100 / 1200) × 19 451,00 / 1",
+            "1 620,92 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "22 073,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "22 073,00 руб"
+          ],
+          [
+            "За 1 плит",
+            "22 073,00 × 1",
+            "22 073,00 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 57-12-15п (нагрузка?)",
+        "rows": [
+          [
+            "Базовая цена (1,20м)",
+            "0,00 × (1,20 / 1.2)",
+            "0,00 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "0,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "0,00 руб"
+          ],
+          [
+            "За 3 плит",
+            "0,00 × 3",
+            "0,00 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 61-8-12п",
+        "rows": [
+          [
+            "Базовая цена (0,80м)",
+            "22 370,00 × (0,80 / 1.2)",
+            "14 913,33 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 6,1 × 1",
+            "2 806,00 руб"
+          ],
+          [
+            "Остаток (400мм)",
+            "(400 / 1200) × 22 370,00 / 1",
+            "7 456,67 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "25 176,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "25 176,00 руб"
+          ],
+          [
+            "За 1 плит",
+            "25 176,00 × 1",
+            "25 176,00 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 61-9-12п",
+        "rows": [
+          [
+            "Базовая цена (0,90м)",
+            "22 370,00 × (0,90 / 1.2)",
+            "16 777,50 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 6,1 × 1",
+            "2 806,00 руб"
+          ],
+          [
+            "Остаток (300мм)",
+            "(300 / 1200) × 22 370,00 / 1",
+            "5 592,50 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "25 176,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "25 176,00 руб"
+          ],
+          [
+            "За 1 плит",
+            "25 176,00 × 1",
+            "25 176,00 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 61-12-12п",
+        "rows": [
+          [
+            "Базовая цена (1,20м)",
+            "22 370,00 × (1,20 / 1.2)",
+            "22 370,00 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "22 370,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "22 370,00 руб"
+          ],
+          [
+            "За 1 плит",
+            "22 370,00 × 1",
+            "22 370,00 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 61-15-12п",
+        "rows": [
+          [
+            "Базовая цена (1,50м)",
+            "22 370,00 × (1,50 / 1.2)",
+            "27 962,50 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 6,1 × 1 / 4",
+            "701,50 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "28 664,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "28 664,00 руб"
+          ],
+          [
+            "За 4 плит",
+            "28 664,00 × 4",
+            "114 656,00 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 67-15-12п",
+        "rows": [
+          [
+            "Базовая цена (1,50м)",
+            "27 300,00 × (1,50 / 1.2)",
+            "34 125,00 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 6,7 × 1 / 2",
+            "1 541,00 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "35 666,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "35 666,00 руб"
+          ],
+          [
+            "За 2 плит",
+            "35 666,00 × 2",
+            "71 332,00 руб"
+          ]
+        ]
+      }
+    ],
+    "price_rows_count": 12,
+    "breakdown_tables_count": 11,
+    "total_sum": 369429.25,
+    "plate_batches": [
+      {
+        "source_type": "image",
+        "original_text": "",
+        "normalized_text": "ПБ 39-5-12 1\nПБ 39-7-12 1\nПБ 39-11-12-2 1\nПБ 39-15-12 1\nПБ 57-9-12 1\nПБ 57-9-12 1\nПБ 57-11-12 1\nПБ 57-12-12-2 1\nПБ 57-12-15-2 2\nПБ 57-15-12 7\nПБ 61-8-12 1\nПБ 61-9-12-2 1\nПБ 61-12-12-2 1\nПБ 61-15-12 11\nПБ 61-15-12-2 4\nПБ 67-15-12 7\nПБ 67-15-12-2 2",
+        "ocr_text": "ПБ 39-5-12 1\nПБ 39-7-12 1\nПБ 39-11-12-2 1\nПБ 39-15-12 1\nПБ 57-9-12 1\nПБ 57-9-12 1\nПБ 57-11-12 1\nПБ 57-12-12-2 1\nПБ 57-12-15-2 2\nПБ 57-15-12 7\nПБ 61-8-12 1\nПБ 61-9-12-2 1\nПБ 61-12-12-2 1\nПБ 61-15-12 11\nПБ 61-15-12-2 4\nПБ 67-15-12 7\nПБ 67-15-12-2 2",
+        "filename": "2026-04-08_14-25.png"
+      }
+    ],
+    "wide_plates_resolved": true,
+    "last_source_filename": "2026-04-08_14-25.png",
+    "current_step": "calculate",
+    "saved_offer": {
+      "kp_id": 2,
+      "status": "в архиве",
+      "mode": "archive",
+      "execution_terms": "",
+      "saved_at": "2026-05-02T10:02:20"
+    },
+    "generated_files": [
+      {
+        "kind": "pdf",
+        "filename": "kp_6917fb98_20260502_102901.pdf",
+        "display_name": "Коммерческое предложение (PDF)",
+        "download_url": "/api/v1/commercial/files/kp_6917fb98_20260502_102901.pdf"
+      },
+      {
+        "kind": "xlsx",
+        "filename": "kp_6917fb98_20260502_102901.xlsx",
+        "display_name": "Коммерческое предложение (XLSX)",
+        "download_url": "/api/v1/commercial/files/kp_6917fb98_20260502_102901.xlsx"
+      },
+      {
+        "kind": "breakdown",
+        "filename": "kp_6917fb98_20260502_100443_breakdown.xlsx",
+        "display_name": "Детальная разбивка (XLSX)",
+        "download_url": "/api/v1/commercial/files/kp_6917fb98_20260502_100443_breakdown.xlsx"
+      },
+      {
+        "kind": "schema",
+        "filename": "Схема_Дорожка_1_20260502_100444_158022_КЗ.pdf",
+        "display_name": "Схема раскладки (PDF)",
+        "download_url": "/api/v1/commercial/files/Схема_Дорожка_1_20260502_100444_158022_КЗ.pdf"
+      }
+    ],
+    "current_save_mode": "archive",
+    "execution_terms": "",
+    "ocr_recognition_mode": "full_gpt",
+    "ocr_cost_usd": 0.0062725,
+    "ocr_plates": [
+      {
+        "raw_name": "ПБ 39-5-12",
+        "normalized_candidate": "ПБ 39-5-12",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 39-7-12",
+        "normalized_candidate": "ПБ 39-7-12",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 39-11-12-2",
+        "normalized_candidate": "ПБ 39-11-12-2",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 39-15-12",
+        "normalized_candidate": "ПБ 39-15-12",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 57-9-12",
+        "normalized_candidate": "ПБ 57-9-12",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 57-9-12",
+        "normalized_candidate": "ПБ 57-9-12",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 57-11-12",
+        "normalized_candidate": "ПБ 57-11-12",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 57-12-12-2",
+        "normalized_candidate": "ПБ 57-12-12-2",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 57-12-15-2",
+        "normalized_candidate": "ПБ 57-12-15-2",
+        "qty": 2,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 57-15-12",
+        "normalized_candidate": "ПБ 57-15-12",
+        "qty": 7,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 61-8-12",
+        "normalized_candidate": "ПБ 61-8-12",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 61-9-12-2",
+        "normalized_candidate": "ПБ 61-9-12-2",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 61-12-12-2",
+        "normalized_candidate": "ПБ 61-12-12-2",
+        "qty": 1,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 61-15-12",
+        "normalized_candidate": "ПБ 61-15-12",
+        "qty": 11,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 61-15-12-2",
+        "normalized_candidate": "ПБ 61-15-12-2",
+        "qty": 4,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 67-15-12",
+        "normalized_candidate": "ПБ 67-15-12",
+        "qty": 7,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 67-15-12-2",
+        "normalized_candidate": "ПБ 67-15-12-2",
+        "qty": 2,
+        "confidence": 0.95,
+        "issues": []
+      }
+    ],
+    "manager_id": 2,
+    "manager_name": "Зубов Алексей Юрьевич",
+    "manager_phone": "79621872265",
+    "manager_email": "zubov@gbkstart.ru",
+    "client_name": "ООО Марафон",
+    "discount_percent": 30.0,
+    "conditions_mode": "standard",
+    "delivery_conditions": "",
+    "payment_conditions": "",
+    "logistics_cost": 100000.0,
+    "wide_plate_decisions": [
+      {
+        "line_id": "wide-1",
+        "source_line": "ПБ 39-15-12 1",
+        "action": "exclude",
+        "replacement_text": "ПБ 39-12-12 1\nПБ 39-3.0-12 1"
+      },
+      {
+        "line_id": "wide-2",
+        "source_line": "ПБ 57-15-12 7",
+        "action": "exclude",
+        "replacement_text": "ПБ 57-12-12 7\nПБ 57-3.0-12 7"
+      },
+      {
+        "line_id": "wide-3",
+        "source_line": "ПБ 61-15-12 11",
+        "action": "exclude",
+        "replacement_text": "ПБ 61-12-12 11\nПБ 61-3.0-12 11"
+      },
+      {
+        "line_id": "wide-4",
+        "source_line": "ПБ 67-15-12 7",
+        "action": "exclude",
+        "replacement_text": "ПБ 67-12-12 7\nПБ 67-3.0-12 7"
+      }
+    ]
+  }
+}

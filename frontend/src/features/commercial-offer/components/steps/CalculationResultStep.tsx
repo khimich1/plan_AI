@@ -19,7 +19,7 @@ type CalculationResultStepProps = {
   onCreateNew: () => void;
   onGenerateFiles: () => void;
   onExecutionTermsChange: (value: string) => void;
-  onSave: (payload: { mode: SaveMode; executionTermsInput: string }) => void;
+  onSave: (payload: { mode: SaveMode; executionTermsInput: string }) => Promise<void>;
   isUpdatingDiscount: boolean;
   onDiscountSubmit: (discountPercent: number) => Promise<void>;
   onLogisticsCostSubmit: (logisticsCost: number) => Promise<void>;
@@ -49,14 +49,15 @@ export const CalculationResultStep = ({
   const discountPercent = toNumber(draft.metadata.discount_percent) ?? 0;
   const discountFactor = 1 - Math.min(Math.max(discountPercent, 0), 100) / 100;
   const logisticsCost = Math.max(toNumber(draft.metadata.logistics_cost) ?? 0, 0);
-  const platesTotalWithVat = draft.order_data.reduce((acc, item) => {
+  const platesTotalWithoutVat = draft.order_data.reduce((acc, item) => {
     const qty = toNumber(item.qty) ?? 0;
     const unitPrice = toNumber(item.unit_price) ?? 0;
     return acc + qty * unitPrice;
   }, 0);
-  const platesTotalWithoutVatAfterDiscount = (platesTotalWithVat / 1.22) * discountFactor;
+  const platesTotalWithoutVatAfterDiscount = platesTotalWithoutVat * discountFactor;
   const totalWithoutVat = platesTotalWithoutVatAfterDiscount + logisticsCost;
-  const totalWithVat = totalWithoutVat * 1.22;
+  const vatAmount = totalWithoutVat * 0.22;
+  const totalWithVat = totalWithoutVat + vatAmount;
 
   useEffect(() => {
     setDiscountDraft(String(draft.metadata.discount_percent ?? 0));
@@ -97,7 +98,7 @@ export const CalculationResultStep = ({
           Назад
         </Button>
         <Button type="button" onClick={onCreateNew}>
-          Создать КП
+          Создать новое КП
         </Button>
       </div>
     }
@@ -238,9 +239,9 @@ export const CalculationResultStep = ({
       lastSaveResult={lastSaveResult}
       defaultExecutionTerms={executionTermsInput}
       isPending={isSaving}
-      onSave={(payload) => {
+      onSave={async (payload) => {
         onExecutionTermsChange(payload.executionTermsInput);
-        onSave(payload);
+        await onSave(payload);
       }}
     />
 

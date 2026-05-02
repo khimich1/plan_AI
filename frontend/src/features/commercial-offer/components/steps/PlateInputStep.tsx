@@ -1,4 +1,4 @@
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, ClipboardEvent } from "react";
 import type { CommercialDraftDetails, PlateInputMode } from "@/features/commercial-offer/types/commercialOffer";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
@@ -14,10 +14,23 @@ type PlateInputStepProps = {
   isRecognizing: boolean;
   onTextChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
+  onImagePaste: (file: File) => void;
   onRecognize: (mode: PlateInputMode) => void;
   onProcess: () => void;
   onReset: () => void;
 };
+
+const buildClipboardImageName = (type: string) => {
+  const extension = type.split("/")[1]?.split("+")[0] || "png";
+  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
+  return `clipboard-image-${timestamp}.${extension}`;
+};
+
+const createClipboardImageFile = (file: File) =>
+  new File([file], buildClipboardImageName(file.type), {
+    type: file.type || "image/png",
+    lastModified: Date.now(),
+  });
 
 export const PlateInputStep = ({
   draft,
@@ -27,12 +40,28 @@ export const PlateInputStep = ({
   isRecognizing,
   onTextChange,
   onFileChange,
+  onImagePaste,
   onRecognize,
   onProcess,
   onReset,
 }: PlateInputStepProps) => {
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     onFileChange(event.target.files?.[0] ?? null);
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith("image/"));
+    if (!imageItem) {
+      return;
+    }
+
+    const imageFile = imageItem.getAsFile();
+    if (!imageFile) {
+      return;
+    }
+
+    event.preventDefault();
+    onImagePaste(createClipboardImageFile(imageFile));
   };
 
   return (
@@ -43,7 +72,7 @@ export const PlateInputStep = ({
       {errorMessage && <Alert tone="error">{errorMessage}</Alert>}
 
       <Card title="Источник данных" subtitle="Можно использовать текст, изображение или оба способа по очереди.">
-        <div style={{ display: "grid", gap: "1rem" }}>
+        <div style={{ display: "grid", gap: "1rem" }} onPaste={handlePaste}>
           <FieldWrapper label="Список плит">
             <Textarea
               value={sourceText}
@@ -52,7 +81,10 @@ export const PlateInputStep = ({
             />
           </FieldWrapper>
 
-          <FieldWrapper label="Фото / изображение таблицы" hint="Поддерживаются только изображения.">
+          <FieldWrapper
+            label="Фото / изображение таблицы"
+            hint="Поддерживаются только изображения. Можно вставить изображение из буфера обмена: Ctrl+V."
+          >
             <input type="file" accept="image/*" onChange={handleFileChange} />
           </FieldWrapper>
 
