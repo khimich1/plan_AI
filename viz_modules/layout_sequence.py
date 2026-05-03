@@ -4,9 +4,37 @@
 Модуль построения последовательности раскладки плит:
 - Формирование последовательности сегментов вдоль дорожки
 """
+import json
+import os
+import time
+
 import core.config_and_data as cfg
 from core.optimization import OPT_PLAN, OPT_WIDTH_PRIORITY
 from collections import defaultdict
+
+# Путь к NDJSON логам отладочной сессии (корень репозитория)
+_AGENT_SEQ_DEBUG_LOG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "debug-7e420e.log",
+)
+
+
+def _agent_seq_debug(hypothesis_id: str, message: str, data: dict) -> None:
+    # #region agent log
+    try:
+        payload = {
+            "sessionId": "7e420e",
+            "hypothesisId": hypothesis_id,
+            "location": "layout_sequence._build_sequence_from_plan",
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(_AGENT_SEQ_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
 
 def _choose_best_separator(solid_list, next_group, reinforcement_map):
@@ -1120,6 +1148,44 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 'target_length': tcut['target_length'],
                 'remainder': tcut['remainder']
             }
+    # #region agent log
+    _agent_seq_debug(
+        "H0",
+        "plan_input_after_maps",
+        {
+            "use_2d_data": use_2d_data,
+            "n_primary_cuts": len(plan.get("primary_cuts") or []),
+            "n_secondary_cuts_records": len(plan.get("secondary_cuts") or []),
+            "n_transverse_cuts": len(plan.get("transverse_cuts") or []),
+            "transverse_keys_sample": [list(k) for k in list(transverse_cut_map.keys())[:15]],
+            "primary_preview": [
+                {
+                    "plate_name": (c.get("plate_name") or "")[:100],
+                    "width": c.get("width"),
+                    "rest": c.get("rest"),
+                    "qty": c.get("qty"),
+                    "primary_instance_id": c.get("primary_instance_id"),
+                    "primary_instance_ids": [str(x) for x in (c.get("primary_instance_ids") or [])[:12]],
+                    "lengths_head": (c.get("lengths") or [])[:12],
+                    "load_code": c.get("load_code"),
+                }
+                for c in (plan.get("primary_cuts") or [])[:30]
+            ],
+            "secondary_preview": [
+                {
+                    "source_mm": sc.get("source"),
+                    "qty": sc.get("qty"),
+                    "cuts": sc.get("cuts"),
+                    "source_lengths_head": (sc.get("source_lengths") or [])[:12],
+                    "parent_instance_ids_head": [str(x) for x in (sc.get("parent_instance_ids") or [])[:12]],
+                    "secondary_instance_ids_head": [str(x) for x in (sc.get("secondary_instance_ids") or [])[:12]],
+                    "target_order_key": sc.get("target_order_key"),
+                }
+                for sc in (plan.get("secondary_cuts") or [])[:30]
+            ],
+        },
+    )
+    # #endregion
     
     # Создаём карту вторичных резов
     secondary_cuts_info = {}
@@ -1183,6 +1249,24 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 secondary_cuts_info[key].append(variant)
                 if parent_instance_id:
                     secondary_cuts_by_parent[str(parent_instance_id)].append(variant)
+    # #region agent log
+    if plan.get("secondary_cuts"):
+        _geom_variant_counts = {f"{k[0]}_{k[1]}": len(v) for k, v in secondary_cuts_info.items()}
+        _agent_seq_debug(
+            "H1",
+            "secondary_index_after_phase_A",
+            {
+                "n_geom_keys": len(secondary_cuts_info),
+                "n_parent_buckets": len(secondary_cuts_by_parent),
+                "geom_key_variant_counts": _geom_variant_counts,
+                "parent_bucket_keys_head": list(secondary_cuts_by_parent.keys())[:50],
+                "variants_per_parent_top": sorted(
+                    ((str(pid), len(lst)) for pid, lst in secondary_cuts_by_parent.items()),
+                    key=lambda x: -x[1],
+                )[:20],
+            },
+        )
+    # #endregion
     
     # ========== НОВАЯ ЛОГИКА: РАЗДЕЛИТЕЛИ МЕЖДУ ГРУППАМИ РЕЗОВ ==========
     # Требования завода (ОБНОВЛЁННЫЕ):
@@ -1317,6 +1401,30 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
         ordered_cuts.extend(solid_cuts_list)
         print(f"[VISUAL] Добавлено {len(solid_cuts_list)} оставшихся целых плит в конец")
     
+    # #region agent log
+    for oi, ocut in enumerate(ordered_cuts):
+        if ocut.get("rest", 0) <= 0:
+            continue
+        _pids = ocut.get("primary_instance_ids") or []
+        if ocut.get("primary_instance_id") and not _pids:
+            _pids = [ocut.get("primary_instance_id")]
+        _agent_seq_debug(
+            "H2",
+            "ordered_cut_split_row_phase_B",
+            {
+                "ordered_idx": oi,
+                "plate_name": (ocut.get("plate_name") or "")[:120],
+                "width_mm": ocut.get("width"),
+                "rest_mm": ocut.get("rest"),
+                "qty": ocut.get("qty"),
+                "primary_instance_ids": [str(x) for x in _pids],
+                "len_primary_ids_vs_qty": {"len_pids": len(_pids), "qty": ocut.get("qty")},
+                "lengths": (ocut.get("lengths") or []),
+                "load_code": ocut.get("load_code"),
+            },
+        )
+    # #endregion
+    
     # Обрабатываем первичные резы В НОВОМ ПОРЯДКЕ: целая → группа резов → целая → группа резов
     for cut in ordered_cuts:
         width_mm = cut['width']
@@ -1351,6 +1459,23 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
             transverse_cut_info = transverse_cut_map.get((length, width_mm))
             
             if transverse_cut_info:
+                # #region agent log
+                _agent_seq_debug(
+                    "H4",
+                    "phase_C_transverse_branch_skips_split_secondary",
+                    {
+                        "plate_name": (plate_name_from_cut or "")[:120],
+                        "length_m": length,
+                        "width_mm": width_mm,
+                        "rest_mm": rest_mm,
+                        "unit_idx_in_cut": i,
+                        "qty": qty,
+                        "parent_instance_id": str(parent_instance_id) if parent_instance_id else None,
+                        "transverse_target_length": transverse_cut_info.get("target_length"),
+                        "transverse_remainder": transverse_cut_info.get("remainder"),
+                    },
+                )
+                # #endregion
                 # Поперечный рез
                 width_m = width_mm / 1000.0
                 # Получаем армирование из карты (с учётом load_code)
@@ -1428,6 +1553,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     load_code_from_cut = cfg.normalize_load_code(cut.get('load_code', 800))
                     secondary_cuts_for_plate = None
                     chosen_variant = None
+                    _matched_via = None
+                    _geom_key_attach = _secondary_geom_cut_key(length, rest_mm)
                     # Сначала варианты по parent_instance_id; если не выбрали — геометрия
                     # (иначе непустой, но «неподходящий» by_parent блокирует legacy_match_used=0).
                     _pool_parent: list = []
@@ -1436,15 +1563,19 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     for variant in _pool_parent:
                         if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
                             chosen_variant = variant
+                            _matched_via = "parent"
                             break
+                    _pool_geom: list = []
                     if not chosen_variant:
-                        _pool_geom = secondary_cuts_info.get(_secondary_geom_cut_key(length, rest_mm)) or []
+                        _pool_geom = secondary_cuts_info.get(_geom_key_attach) or []
                         if _pool_geom:
                             legacy_secondary_match_used += 1
                             for variant in _pool_geom:
                                 if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
                                     chosen_variant = variant
+                                    _matched_via = "geom"
                                     break
+                    _pool_geom_for_log = secondary_cuts_info.get(_geom_key_attach) or []
                     
                     if chosen_variant:
                         secondary_cuts_for_plate = []
@@ -1507,6 +1638,54 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                             unmatched_by_reason["parent_instance_id_not_found"] += 1
                         else:
                             unmatched_by_reason["key_not_found"] += 1
+                    # #region agent log
+                    def _pool_free_n(pool: list) -> int:
+                        return sum(
+                            1
+                            for v in pool
+                            if v.get("used", 0) < v.get("qty", 0) and (v.get("pattern") or [])
+                        )
+
+                    _agent_seq_debug(
+                        "H3",
+                        "phase_C_split_secondary_attach_attempt",
+                        {
+                            "plate_name": (plate_name_from_cut or "")[:120],
+                            "length_m": length,
+                            "width_mm": width_mm,
+                            "rest_mm": rest_mm,
+                            "geom_key": list(_geom_key_attach),
+                            "unit_idx_in_cut": i,
+                            "qty": qty,
+                            "parent_instance_id": str(parent_instance_id) if parent_instance_id else None,
+                            "n_pool_parent": len(_pool_parent),
+                            "n_pool_parent_free": _pool_free_n(_pool_parent),
+                            "n_pool_geom": len(_pool_geom_for_log),
+                            "n_pool_geom_free": _pool_free_n(_pool_geom_for_log),
+                            "matched_via": _matched_via,
+                            "attached_pattern_segments": len(chosen_variant["pattern"])
+                            if chosen_variant
+                            else 0,
+                            "chosen_secondary_id": str(chosen_variant.get("secondary_instance_id"))
+                            if chosen_variant
+                            else None,
+                            "chosen_variant_parent_in_plan": str(
+                                chosen_variant.get("parent_instance_id")
+                            )
+                            if chosen_variant
+                            else None,
+                            "unmatched_increment": (
+                                "parent_instance_id_not_found"
+                                if (not chosen_variant and rest_mm > 0 and parent_instance_id)
+                                else (
+                                    "key_not_found"
+                                    if (not chosen_variant and rest_mm > 0 and not parent_instance_id)
+                                    else None
+                                )
+                            ),
+                        },
+                    )
+                    # #endregion
                     
                     # Получаем армирование из карты (с учётом load_code)
                     reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code_from_cut)
@@ -1537,6 +1716,22 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     
     _ensure_sequence_layout_uid(sequence, prefix="built")
     secondary_unmatched_total = max(0, secondary_total_from_plan - secondary_attached_total)
+    # #region agent log
+    _agent_seq_debug(
+        "H5",
+        "phase_end_summary",
+        {
+            "secondary_total_from_plan": secondary_total_from_plan,
+            "secondary_attached_total": secondary_attached_total,
+            "secondary_unmatched_total": secondary_unmatched_total,
+            "unmatched_by_reason": dict(unmatched_by_reason),
+            "legacy_secondary_match_used": legacy_secondary_match_used,
+            "sequence_len": len(sequence),
+            "n_split_in_sequence": sum(1 for s in sequence if s.get("mode") == "split"),
+            "n_transverse_in_sequence": sum(1 for s in sequence if s.get("mode") == "transverse"),
+        },
+    )
+    # #endregion
     if secondary_unmatched_total or legacy_secondary_match_used:
         _log.warning(
             "[LAYOUT_SEQUENCE] secondary mapping report: total=%s attached=%s unmatched=%s reasons=%s legacy_match_used=%s",
