@@ -577,6 +577,11 @@ class ProductionPlanningService:
         if not orders_2d:
             return [], {}
 
+        from core.plate_attribution import (
+            backfill_assignment_identity,
+            backfill_track_items_identity,
+        )
+
         plate_order = AppPlateOrder.from_orders_2d(orders_2d)
 
         # build_layout_sequence читает cfg.PLATE_LOAD_DETAILS; делаем временный snapshot
@@ -601,8 +606,6 @@ class ProductionPlanningService:
 
             # P8.1: backfill identity у plate_assignments, чтобы slot_exhausted
             # / secondary_unmapped перестали быть блокером в plan_commit.
-            from core.plate_attribution import backfill_assignment_identity
-
             backfilled = backfill_assignment_identity(
                 optimization_result.get("plate_assignments", []) or [],
                 orders_2d,

@@ -1344,6 +1344,11 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 primary_instance_ids[i] if i < len(primary_instance_ids)
                 else cut.get('primary_instance_id')
             )
+            plate_uids = cut.get('plate_uids') or []
+            plate_uid = (
+                plate_uids[i] if i < len(plate_uids)
+                else cut.get('plate_uid')
+            )
             
             # НОВОЕ: Получаем информацию о КП для этой плиты
             kp_id = cut.get('kp_id')
@@ -1423,6 +1428,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'customer': customer,
                         'kp_date': kp_date,
                         'plate_name': plate_name_from_cut,
+                        'plate_uid': plate_uid,
                         'unit_id': parent_instance_id,
                         'layout_uid': str(parent_instance_id) if parent_instance_id else f"solid:{len(sequence)}",
                     })
@@ -1445,6 +1451,14 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         if _pool_geom:
                             legacy_secondary_match_used += 1
                             for variant in _pool_geom:
+                                _variant_target_key = variant.get('target_order_key')
+                                _variant_target_lc = (
+                                    cfg.normalize_load_code(_variant_target_key[2], default=8)
+                                    if _variant_target_key and len(_variant_target_key) > 2
+                                    else load_code_from_cut
+                                )
+                                if _variant_target_lc > load_code_from_cut:
+                                    continue
                                 if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
                                     chosen_variant = variant
                                     break
@@ -1534,6 +1548,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'customer': customer,
                         'kp_date': kp_date,
                         'plate_name': plate_name_from_cut,
+                        'plate_uid': plate_uid,
                         'unit_id': parent_instance_id,
                         'layout_uid': str(parent_instance_id) if parent_instance_id else f"split:{len(sequence)}",
                     })

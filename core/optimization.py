@@ -139,6 +139,109 @@ def verify_coverage(
     }
 
 
+def _residual_phys_key(length, rest_width) -> tuple[float, int]:
+    """Physical residual band key shared by optimizer constraints and parent fallback."""
+    return (_canonical_length(length), int(round(float(rest_width or 0))))
+
+
+def _build_residual_balance_constraints(
+    *,
+    prob,
+    primary_options: list[dict],
+    secondary_options: list[dict],
+    x_prim: dict,
+    x_sec: dict,
+) -> dict:
+    """
+    Enforce residual supply/consumption with downgrade load-code policy.
+
+    A primary residual with higher/equal load_code may serve secondary demand with
+    lower/equal load_code. The reverse is forbidden by cumulative constraints.
+    """
+    from pulp import lpSum
+
+    supply_by_phys: dict[tuple[float, int], dict[float | int, list[int]]] = defaultdict(lambda: defaultdict(list))
+    demand_by_phys: dict[tuple[float, int], dict[float | int, list[int]]] = defaultdict(lambda: defaultdict(list))
+
+    for opt in primary_options:
+        rest_w = opt.get('rest', 0)
+        if rest_w > 0 and opt.get('type') != 'solid':
+            phys = _residual_phys_key(opt.get('length'), rest_w)
+            prim_lc = cfg.normalize_load_code(opt.get('load_code', 8), default=8)
+            opt['load_code'] = prim_lc
+            supply_by_phys[phys][prim_lc].append(opt['id'])
+
+    for opt in secondary_options:
+        target_key = opt.get('target_order_key', (0, 0, 8))
+        sec_lc = target_key[2] if len(target_key) == 3 else 8
+        sec_lc = cfg.normalize_load_code(sec_lc, default=8)
+        phys = _residual_phys_key(opt.get('source_length'), opt.get('source_rest'))
+        demand_by_phys[phys][sec_lc].append(opt['id'])
+
+    constraint_count = 0
+    blocked_no_supply = 0
+    rests_for_objective: dict = {}
+
+    for phys, demand_by_lc in demand_by_phys.items():
+        supply_by_lc = supply_by_phys.get(phys, {})
+        if not supply_by_lc:
+            for opt_ids in demand_by_lc.values():
+                for opt_id in opt_ids:
+                    prob += x_sec[opt_id] == 0, f"residual_no_supply_sec_{opt_id}"
+                    blocked_no_supply += 1
+            continue
+
+        produced_all = [opt_id for ids in supply_by_lc.values() for opt_id in ids]
+        consumed_all = [opt_id for ids in demand_by_lc.values() for opt_id in ids]
+        rests_for_objective[(phys[0], phys[1], "all")] = {
+            'produced': produced_all,
+            'consumed': consumed_all,
+        }
+
+        levels = sorted(set(supply_by_lc.keys()) | set(demand_by_lc.keys()), reverse=True)
+        for level in levels:
+            consumed = [
+                opt_id
+                for target_lc, opt_ids in demand_by_lc.items()
+                if target_lc >= level
+                for opt_id in opt_ids
+            ]
+            produced = [
+                opt_id
+                for prim_lc, opt_ids in supply_by_lc.items()
+                if prim_lc >= level
+                for opt_id in opt_ids
+            ]
+            if consumed:
+                prob += (
+                    lpSum(x_sec[i] for i in consumed) <= lpSum(x_prim[i] for i in produced),
+                    f"residual_balance_L{phys[0]}_R{phys[1]}_LC{level}",
+                )
+                constraint_count += 1
+
+    try:
+        import json as _json
+        import time as _time
+
+        with _dbg_open_append(_DEBUG_LOG_COMMON) as _f:
+            _f.write(_json.dumps({
+                "hypothesisId": "residual_balance_constraints_added",
+                "location": "optimization.py:_build_residual_balance_constraints",
+                "message": "Residual balance constraints with downgrade load-code policy",
+                "data": {
+                    "constraints_added": constraint_count,
+                    "blocked_secondary_without_supply": blocked_no_supply,
+                    "physical_supply_keys": len(supply_by_phys),
+                    "physical_demand_keys": len(demand_by_phys),
+                },
+                "timestamp": int(_time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+    return rests_for_objective
+
+
 def _debug_runtime_write_648532(
     run_id: str,
     hypothesis_id: str,
@@ -723,6 +826,10 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         # Получаем информацию о КП для этой плиты (без уменьшения счётчика)
         # ИСПРАВЛЕНИЕ: Ключ теперь включает load_code
         order_info = _peek_order_info(order_info_list, (length, width, load_code))
+        option_load_code = cfg.normalize_load_code(
+            order_info.get('load_code', load_code) if order_info else load_code,
+            default=8,
+        )
         
         # Вариант 1: Плита БЕЗ реза (ширины из списка solid_widths)
         # Эти ширины НЕ РЕЖУТСЯ и используются как есть
@@ -733,7 +840,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'main': width,
                 'rest': 0,
                 'type': 'solid',  # Без резов
-                'load_code': order_info.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
+                'load_code': option_load_code,  # load_code нормализован: 800 -> 8
                 'kp_id': order_info.get('kp_id'),
                 'customer': order_info.get('customer'),
                 'kp_date': order_info.get('kp_date'),
@@ -753,7 +860,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'main': width,
                 'rest': rest,
                 'type': 'direct',  # Прямой рез
-                'load_code': order_info.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
+                'load_code': option_load_code,  # load_code нормализован: 800 -> 8
                 'kp_id': order_info.get('kp_id'),
                 'customer': order_info.get('customer'),
                 'kp_date': order_info.get('kp_date'),
@@ -776,7 +883,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                             'type': 'indirect',       # Непрямой рез через narrowing
                             'target_width': width,    # Целевая ширина: 460мм (что нужно)
                             'narrowing_waste': waste, # Отход при сужении: 20мм
-                            'load_code': order_info.get('load_code', 800),  # ИСПРАВЛЕНИЕ: добавляем load_code
+                            'load_code': option_load_code,  # load_code нормализован: 800 -> 8
                             'kp_id': order_info.get('kp_id'),
                             'customer': order_info.get('customer'),
                             'kp_date': order_info.get('kp_date'),
@@ -961,7 +1068,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             opt['output_length'], 
             opt['output_width'], 
             opt['type'],
-            opt.get('pieces', 1)
+            opt.get('pieces', 1),
+            opt.get('target_order_key'),
         )
         
         if key in seen_combinations:
@@ -1173,27 +1281,16 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     except Exception:
         pass
     # #endregion
-    # 6. ОГРАНИЧЕНИЯ: Баланс остатков с load_code в ключе.
-    # Ключ остатка теперь (length, rest_width, load_code) — остатки разных load_code
-    # не пулятся, что закрывает старый баг "общий пул остатков".
-    rests_by_lkey: dict = {}  # rkey -> {'produced': [opt_id], 'consumed': [opt_id]}
-    for opt in primary_options:
-        rest_w = opt.get('rest', 0)
-        if rest_w > 0 and opt.get('type') != 'solid':
-            rkey = (opt['length'], rest_w, opt.get('load_code', 800))
-            rests_by_lkey.setdefault(rkey, {'produced': [], 'consumed': []})['produced'].append(opt['id'])
-    for opt in secondary_options:
-        target_key = opt.get('target_order_key', (0, 0, 800))
-        sec_lc = target_key[2] if len(target_key) == 3 else 800
-        rkey = (opt['source_length'], opt['source_rest'], sec_lc)
-        if rkey in rests_by_lkey:
-            rests_by_lkey[rkey]['consumed'].append(opt['id'])
-    for rkey, rec in rests_by_lkey.items():
-        if rec['produced'] and rec['consumed']:
-            prob += (
-                lpSum(x_sec[i] for i in rec['consumed']) <= lpSum(x_prim[i] for i in rec['produced']),
-                f"balance_L{rkey[0]}_R{rkey[1]}_LC{rkey[2]}",
-            )
+    # 6. ОГРАНИЧЕНИЯ: баланс физических остатков с downgrade load-code policy.
+    # Остаток плиты с большим/equal load_code может закрывать меньший/equal заказ,
+    # но обратное запрещено кумулятивными ограничениями по каждому уровню.
+    rests_by_lkey = _build_residual_balance_constraints(
+        prob=prob,
+        primary_options=primary_options,
+        secondary_options=secondary_options,
+        x_prim=x_prim,
+        x_sec=x_sec,
+    )
     
     # 7. ЦЕЛЕВАЯ ФУНКЦИЯ
     # Структура: cost_prim + cost_sec + waste + unused_rests + plates_priority
@@ -1378,6 +1475,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     _next_primary_instance_id = 1
     _next_secondary_instance_id = 1
     _primary_instances_by_opt_id: dict[int, list[str]] = defaultdict(list)
+    _primary_instances_by_geom_lc: dict[tuple[float, int], list[tuple[float | int, int, str]]] = defaultdict(list)
 
     planned_primary_cuts = []
     planned_secondary_cuts = []
@@ -1413,6 +1511,12 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'primary_instance_id': primary_instance_id,
             })
             _primary_instances_by_opt_id[opt_id].append(primary_instance_id)
+            if opt.get('rest', 0) > 0:
+                _primary_instances_by_geom_lc[_residual_phys_key(opt['length'], opt['rest'])].append((
+                    cfg.normalize_load_code(opt.get('load_code', target_load_code), default=8),
+                    opt_id,
+                    primary_instance_id,
+                ))
             result['total_plates'] += 1
 
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
@@ -1457,6 +1561,16 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'source_rest_mm': opt['source_rest'],
             })
 
+    def _remove_primary_instance_from_geom(instance_id: str) -> None:
+        for pool in _primary_instances_by_geom_lc.values():
+            for idx, (_prim_lc, _opt_id, _inst_id) in enumerate(pool):
+                if _inst_id == instance_id:
+                    del pool[idx]
+                    return
+
+    _orphan_recovered_geometry = 0
+    _secondary_parent_missing = 0
+
     for (opt_id, dk), zv in z_sec.items():
         raw_val = value(zv) or 0
         qty = int(round(raw_val))
@@ -1464,13 +1578,30 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             continue
         opt = secondary_options_by_id[opt_id]
         target_length, target_width, target_load_code = dk
+        target_load_code = cfg.normalize_load_code(target_load_code, default=8)
         for _ in range(qty):
             parent_instance_id = None
             for source_opt_id in opt.get('source_ids') or []:
                 queue = _primary_instances_by_opt_id.get(source_opt_id) or []
                 if queue:
                     parent_instance_id = queue.pop(0)
+                    _remove_primary_instance_from_geom(parent_instance_id)
                     break
+            if not parent_instance_id:
+                pool = _primary_instances_by_geom_lc.get(
+                    _residual_phys_key(opt.get('source_length'), opt.get('source_rest'))
+                ) or []
+                for idx, (prim_lc, source_opt_id, instance_id) in enumerate(pool):
+                    if cfg.normalize_load_code(prim_lc, default=8) >= target_load_code:
+                        parent_instance_id = instance_id
+                        del pool[idx]
+                        opt_queue = _primary_instances_by_opt_id.get(source_opt_id) or []
+                        if instance_id in opt_queue:
+                            opt_queue.remove(instance_id)
+                        _orphan_recovered_geometry += 1
+                        break
+            if not parent_instance_id:
+                _secondary_parent_missing += 1
             secondary_instance_id = f"sec-{_next_secondary_instance_id}"
             _next_secondary_instance_id += 1
             planned_secondary_cuts.append({
@@ -1490,6 +1621,13 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             })
 
     result['secondary_cuts'] = planned_secondary_cuts
+    if _orphan_recovered_geometry or _secondary_parent_missing:
+        import logging as _parent_log
+        _parent_log.getLogger(__name__).warning(
+            "[OPT_2D] secondary parent assignment: recovered_by_geometry=%d, missing=%d",
+            _orphan_recovered_geometry,
+            _secondary_parent_missing,
+        )
 
     # #region agent log
     try:
