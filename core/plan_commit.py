@@ -19,12 +19,12 @@
 from __future__ import annotations
 
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
 import core.config_and_data as cfg
-from core import kp_db
+from core import kp_db, plate_name as _plate_name
 
 logger = logging.getLogger(__name__)
 
@@ -68,28 +68,35 @@ def _make_order_identity(order: dict[str, Any]) -> OrderIdentity:
 
 def count_assigned_plates(
     optimization_result: dict[str, Any],
-    all_tracks_list: list[dict[str, Any]],
+    all_tracks_list: list[dict[str, Any]] | None = None,
 ) -> tuple[
     dict[str, dict[OrderIdentity, int]],
     dict[str, list[dict[str, Any]]],
 ]:
     """Считает плиты по точной идентичности ``(kp_id, plate_name)``.
 
+    Phase 3 P8: единственный источник учёта — ``plate_assignments``. RESCUE-плиты
+    после Phase 2 живут в нём с ``source='rescue'`` (см.
+    :func:`core.rescue_tracks.build_rescue_tracks`), поэтому отдельный
+    проход по ``all_tracks_list`` больше не нужен и может приводить к
+    двойному счёту.
+
     Args:
         optimization_result: результат оптимизации, содержит ``plate_assignments``
-            — plates, которые оптимизатор сопоставил с конкретной позицией заказа.
-        all_tracks_list: итоговый список дорожек. Используется только для
-            учёта RESCUE-дорожек, которые добавляются после оптимизации.
+            — flat-список плит с ``source`` ∈ ``primary``/``secondary``/``rescue``.
+        all_tracks_list: оставлен для обратной совместимости сигнатуры
+            (используется выше по стеку для распределения kp_plate_id по дням).
+            Для счёта identity не используется.
 
     Returns:
         Кортеж из двух словарей:
 
         - ``assigned_counts_by_source``: ``{source: {(kp_id, plate_name): qty}}``
-          для корректно сопоставленных плит по источникам
-          ``primary`` / ``secondary`` / ``rescue``.
+          для корректно сопоставленных плит по источникам.
         - ``unmapped_assignments_by_source``: ``{source: [assignment, ...]}``
           для записей без ``kp_id`` или ``plate_name`` (их нельзя пометить в БД).
     """
+    del all_tracks_list  # после Phase 3 учёт идёт только из plate_assignments
     assigned_counts_by_source: dict[str, Counter[OrderIdentity]] = {
         "primary": Counter(),
         "secondary": Counter(),
@@ -119,30 +126,9 @@ def count_assigned_plates(
                     "kp_id": assignment.get("kp_id"),
                     "plate_name": assignment.get("plate_name"),
                     "identity_match_type": assignment.get("identity_match_type"),
+                    "rescue_order_missing": assignment.get("rescue_order_missing", False),
                 }
             )
-
-    for track in all_tracks_list:
-        if track.get("label") != "РЕСКЬЮ":
-            continue
-        for item in track.get("items", []) or []:
-            if not item:
-                continue
-            identity = _make_order_identity(item)
-            if identity[0] and identity[1]:
-                assigned_counts_by_source["rescue"][identity] += 1
-            else:
-                unmapped_assignments_by_source["rescue"].append(
-                    {
-                        "source": "rescue",
-                        "length": round(float(item.get("length", 0) or 0), 2),
-                        "width": item.get("width"),
-                        "load_code": item.get("load_code"),
-                        "kp_id": item.get("kp_id"),
-                        "plate_name": item.get("plate_name"),
-                        "rescue_order_missing": item.get("rescue_order_missing", False),
-                    }
-                )
 
     return (
         {source: dict(counter) for source, counter in assigned_counts_by_source.items()},
@@ -224,6 +210,101 @@ def distribute_assigned_plates_to_orders(
     return lost, orders_with_qty, leftovers_by_source
 
 
+def _accumulate_mark_result(
+    mark_result: dict[str, Any],
+    result: "CommitResult",
+    *,
+    kp_id: int,
+    plate_name: str,
+    expected: int,
+) -> None:
+    """Аккумулирует статистику от ``mark_plates_as_planned`` в CommitResult."""
+    if mark_result.get("success"):
+        processed_count = int(mark_result.get("processed_count", 0) or 0)
+        result.plates_marked += processed_count
+        if processed_count != expected:
+            result.plates_mismatched += 1
+            logger.error(
+                "[PLAN_COMMIT] Расхождение при пометке плиты: КП #%s, %s. "
+                "Ожидалось %s, фактически помечено %s.",
+                kp_id,
+                plate_name,
+                expected,
+                processed_count,
+            )
+    else:
+        result.plates_failed += 1
+        logger.error(
+            "[PLAN_COMMIT] mark_plates_as_planned вернул ошибку: КП #%s, %s. Детали: %s",
+            kp_id,
+            plate_name,
+            mark_result,
+        )
+
+
+def _identity_for_track_item(item: dict[str, Any]) -> OrderIdentity | None:
+    """Возвращает identity (kp_id, canonical(plate_name)) для item трека.
+
+    Used by Phase 4: при подсчёте плит по дням нам нужен тот же ключ,
+    что и в orders_2d, поэтому plate_name всегда нормализуем.
+    """
+    kp_id = item.get("kp_id")
+    name = item.get("plate_name") or item.get("label") or ""
+    canon = _plate_name.canonical(name)
+    if kp_id is None or not canon:
+        return None
+    return (int(kp_id), canon)
+
+
+def _iter_physical_items(
+    track_items: list[dict[str, Any]] | None,
+) -> Iterable[dict[str, Any]]:
+    """Yields каждый физический item трека: root + все ``secondary_cuts``.
+
+    Каждый ``secondary_cut`` — это отдельная физическая плита,
+    полученная из остатка primary-резки. Раньше ``_count_track_items_by_day``
+    их не обходил, и identity от secondary терялась → плиты получали
+    ``day_number=NULL``. P9: считаем их как полноценные плиты.
+    """
+    for item in track_items or []:
+        if not isinstance(item, dict):
+            continue
+        yield item
+        for sec in item.get("secondary_cuts") or []:
+            if isinstance(sec, dict):
+                yield sec
+
+
+def _count_track_items_by_day(
+    tracks_by_day: dict[str, list[dict[str, Any]]],
+) -> dict[OrderIdentity, dict[int, int]]:
+    """Для каждого identity (kp_id, plate_name_canonical) считает qty по day_number.
+
+    Возвращает ``{identity: {day_number: qty}}``. Используется для split'а
+    ``mark_plates_as_planned`` по дням, если день у плиты не один.
+
+    P9: учитываются и root items, и ``secondary_cuts`` (они тоже
+    самостоятельные физические плиты).
+    """
+    by_identity: dict[OrderIdentity, dict[int, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
+    for date_key, day_tracks in tracks_by_day.items():
+        for track in day_tracks or []:
+            day_number = int(track.get("production_day") or 0)
+            if day_number <= 0:
+                # production_day могут не проставить — попробуем взять из track-самого
+                day_number = int(track.get("day_number") or 0)
+            if day_number <= 0:
+                continue
+            for physical in _iter_physical_items(track.get("items")):
+                identity = _identity_for_track_item(physical)
+                if identity is None:
+                    continue
+                by_identity[identity][day_number] += 1
+    return {k: dict(v) for k, v in by_identity.items()}
+
+
 def commit_plan_plates(
     *,
     plan_id: str,
@@ -231,6 +312,8 @@ def commit_plan_plates(
     optimization_result: dict[str, Any],
     all_tracks_list: list[dict[str, Any]],
     db_path: str,
+    tracks_by_day: dict[str, list[dict[str, Any]]] | None = None,
+    day_number_by_date: dict[str, int] | None = None,
 ) -> CommitResult:
     """Помечает плиты как «в плане» и валидирует результат.
 
@@ -251,6 +334,12 @@ def commit_plan_plates(
         optimization_result: результат оптимизации с ``plate_assignments``.
         all_tracks_list: итоговые дорожки (нужны для учёта RESCUE-плит).
         db_path: путь к ``plita.db``.
+        tracks_by_day: ``{date_key: [track, ...]}`` (P5). Если задан,
+            ``mark_plates_as_planned`` вызывается per-day, и в каждый
+            ``track.items[]`` записывается ``kp_plate_id`` (id строки
+            ``kp_plates``). Без этого аргумента — старое поведение.
+        day_number_by_date: ``{date_key: day_number}`` (P5). Используется,
+            чтобы перевести ``date_key`` в номер дня для записи в БД.
 
     Returns:
         :class:`CommitResult` со статистикой пометки.
@@ -330,13 +419,82 @@ def commit_plan_plates(
         )
 
     if rescue_leftovers:
+        # Phase 5 (P8): после Phase 1-4 этот warning не должен срабатывать
+        # никогда — identity берётся из единого источника (plate_assignments)
+        # и фантомных rescue не возникает. Если всё же сработал — пишем
+        # warning и не блокируем commit. Лишние rescue-плиты просто не
+        # помечаются в БД (их нет в kp_plates).
         logger.warning(
-            "[PLAN_COMMIT] RESCUE-плиты сверх уже покрытого спроса игнорируются при пометке БД: %s",
+            "[PLAN_COMMIT] RESCUE-плиты сверх покрытого спроса (safety-net): %s. "
+            "Эти плиты не будут помечены в БД, но коммит плана продолжается.",
             rescue_leftovers,
         )
 
     result = CommitResult(lost_plates=lost_plates)
     marked_any = False
+
+    # P5: если у нас есть tracks_by_day — собираем счётчики qty по дням для
+    # каждой identity, чтобы пометить плиты с конкретным day_number и потом
+    # записать kp_plate_id в plan.json. Иначе работаем в legacy-режиме.
+    counts_by_identity_and_day: dict[OrderIdentity, dict[int, int]] = {}
+    if tracks_by_day:
+        counts_by_identity_and_day = _count_track_items_by_day(tracks_by_day)
+
+    # #region agent log
+    try:
+        import json as _agent_json
+        import time as _agent_time
+
+        _orders_snapshot = []
+        _orders_without_day = 0
+        for _order, _qty_to_mark in orders_with_qty:
+            if _qty_to_mark <= 0:
+                continue
+            _kp_id = _order.get("kp_id")
+            _plate_label = _order.get("plate_name")
+            if not (_kp_id and _plate_label):
+                continue
+            _identity = (int(_kp_id), _plate_name.canonical(_plate_label))
+            _per_day = counts_by_identity_and_day.get(_identity) or {}
+            if not _per_day:
+                _orders_without_day += 1
+            _orders_snapshot.append({
+                "kp_id": int(_kp_id),
+                "plate_name": str(_plate_label),
+                "qty_to_mark": int(_qty_to_mark),
+                "per_day_total": int(sum(_per_day.values())),
+                "per_day": dict(_per_day),
+            })
+        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            _agent_f.write(_agent_json.dumps({
+                "sessionId": "ebb546",
+                "runId": "pre-fix",
+                "hypothesisId": "H1,H2",
+                "location": "core/plan_commit.py:counts_by_identity_and_day",
+                "message": "Сопоставление qty_to_mark с per-day счетчиками из tracks_by_day",
+                "data": {
+                    "plan_id": plan_id,
+                    "tracks_by_day_present": bool(tracks_by_day),
+                    "orders_to_mark": len(_orders_snapshot),
+                    "orders_without_per_day": _orders_without_day,
+                    "total_qty_to_mark": sum(x["qty_to_mark"] for x in _orders_snapshot),
+                    "total_per_day_qty": sum(x["per_day_total"] for x in _orders_snapshot),
+                    "sample": _orders_snapshot[:20],
+                },
+                "timestamp": int(_agent_time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
+    # P5: пул (plate_id, remaining_qty) пар по identity и дню.
+    # ``ids_by_identity_day[(kp_id, canon)][day_number]`` — список пар
+    # (plate_id, qty), показывающий, сколько items может разделить
+    # каждую запись kp_plates. caller декрементирует remaining_qty при
+    # назначении item → kp_plate_id.
+    ids_by_identity_day: dict[OrderIdentity, dict[int, list[list[int]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
 
     for order, qty_to_mark in orders_with_qty:
         kp_id = order.get("kp_id")
@@ -366,35 +524,186 @@ def commit_plan_plates(
         if not (kp_id and plate_name and qty_to_mark > 0):
             continue
 
-        mark_result = kp_db.mark_plates_as_planned(
-            kp_id=kp_id,
-            plate_name=plate_name,
-            qty_to_plan=qty_to_mark,
-            plan_id=plan_id,
-            db_path=db_path,
-        )
-        if mark_result.get("success"):
-            processed_count = int(mark_result.get("processed_count", 0) or 0)
-            result.plates_marked += processed_count
-            marked_any = marked_any or processed_count > 0
-            if processed_count != qty_to_mark:
-                result.plates_mismatched += 1
-                logger.error(
-                    "[PLAN_COMMIT] Расхождение при пометке плиты: КП #%s, %s. "
-                    "Ожидалось %s, фактически помечено %s.",
-                    kp_id,
-                    plate_name,
-                    qty_to_mark,
-                    processed_count,
+        identity = (int(kp_id), _plate_name.canonical(plate_name))
+        per_day = counts_by_identity_and_day.get(identity)
+
+        if per_day:
+            # Распределяем qty_to_mark по дням пропорционально per_day.
+            # Если сумма per_day > qty_to_mark — режем (могут быть rescue-плиты,
+            # которые не считаются как ordered, но попали в треки). Если меньше —
+            # остаток помечаем без day_number.
+            total_in_days = sum(per_day.values())
+            if total_in_days >= qty_to_mark:
+                # есть достаточно — split строго по per_day, обрезая равномерно
+                ordered_days = sorted(per_day.keys())
+                remaining = qty_to_mark
+                day_alloc: list[tuple[int, int]] = []
+                for d in ordered_days:
+                    take = min(per_day[d], remaining)
+                    if take > 0:
+                        day_alloc.append((d, take))
+                        remaining -= take
+                    if remaining <= 0:
+                        break
+                # mark_plates_as_planned per-day
+                for d, take in day_alloc:
+                    mark_result = kp_db.mark_plates_as_planned(
+                        kp_id=int(kp_id),
+                        plate_name=plate_name,
+                        qty_to_plan=take,
+                        plan_id=plan_id,
+                        db_path=db_path,
+                        day_number=d,
+                    )
+                    _accumulate_mark_result(
+                        mark_result,
+                        result,
+                        kp_id=int(kp_id),
+                        plate_name=plate_name,
+                        expected=take,
+                    )
+                    for pid, q in (mark_result.get("id_qty_pairs") or []):
+                        # mutable [id, remaining] для декремента при назначении items
+                        ids_by_identity_day[identity][d].append([int(pid), int(q)])
+                    if mark_result.get("success") and int(mark_result.get("processed_count", 0) or 0) > 0:
+                        marked_any = True
+            else:
+                # Несоответствие учёта (per_day < qty_to_mark): пишем день для
+                # известных, остаток — без дня. Логируем как warning.
+                logger.warning(
+                    "[PLAN_COMMIT] Pro-rated plates accounting mismatch: "
+                    "identity=%s qty_to_mark=%s sum_per_day=%s",
+                    identity, qty_to_mark, total_in_days,
                 )
+                ordered_days = sorted(per_day.keys())
+                day_alloc = [(d, per_day[d]) for d in ordered_days]
+                day_alloc.append((0, qty_to_mark - total_in_days))
+                for d, take in day_alloc:
+                    if take <= 0:
+                        continue
+                    mark_result = kp_db.mark_plates_as_planned(
+                        kp_id=int(kp_id),
+                        plate_name=plate_name,
+                        qty_to_plan=take,
+                        plan_id=plan_id,
+                        db_path=db_path,
+                        day_number=d if d > 0 else None,
+                    )
+                    _accumulate_mark_result(
+                        mark_result,
+                        result,
+                        kp_id=int(kp_id),
+                        plate_name=plate_name,
+                        expected=take,
+                    )
+                    if d > 0:
+                        for pid, q in (mark_result.get("id_qty_pairs") or []):
+                            ids_by_identity_day[identity][d].append([int(pid), int(q)])
+                    if mark_result.get("success") and int(mark_result.get("processed_count", 0) or 0) > 0:
+                        marked_any = True
         else:
-            result.plates_failed += 1
-            logger.error(
-                "[PLAN_COMMIT] mark_plates_as_planned вернул ошибку: КП #%s, %s. Детали: %s",
-                kp_id,
-                plate_name,
-                mark_result,
+            # Legacy (нет tracks_by_day) — старое поведение без day_number.
+            # P9: если tracks_by_day был передан, но per_day для этой
+            # identity пуст — это означает, что в track items у плит нет
+            # identity (kp_id+plate_name) и backfill_track_items_identity
+            # не справился. Пишем явный WARNING — без него такие плиты
+            # тихо помечаются с day_number=NULL и зависают вне day_view.
+            if tracks_by_day:
+                logger.warning(
+                    "[PLAN_COMMIT] Identity %s присутствует в "
+                    "plate_assignments (qty_to_mark=%s), но в "
+                    "tracks_by_day у соответствующих items нет identity. "
+                    "Плиты будут помечены БЕЗ day_number и не попадут "
+                    "в day_view. Проверить: backfill_track_items_identity "
+                    "и наличие kp_id/plate_name у secondary_cuts.",
+                    identity, qty_to_mark,
+                )
+            mark_result = kp_db.mark_plates_as_planned(
+                kp_id=int(kp_id),
+                plate_name=plate_name,
+                qty_to_plan=qty_to_mark,
+                plan_id=plan_id,
+                db_path=db_path,
             )
+            _accumulate_mark_result(
+                mark_result,
+                result,
+                kp_id=int(kp_id),
+                plate_name=plate_name,
+                expected=qty_to_mark,
+            )
+            if mark_result.get("success") and int(mark_result.get("processed_count", 0) or 0) > 0:
+                marked_any = True
+
+    # P5/P9: записываем kp_plate_id в каждую физическую плиту трека —
+    # и в root item, и в каждый secondary_cut. Один plate_id может покрывать
+    # несколько физических плит (qty>1) — декрементируем remaining qty в пуле,
+    # не удаляя сразу.
+    if tracks_by_day:
+        for date_key, day_tracks in tracks_by_day.items():
+            for track in day_tracks or []:
+                day_number = int(track.get("production_day") or 0) or int(track.get("day_number") or 0)
+                if day_number <= 0:
+                    continue
+                for physical in _iter_physical_items(track.get("items")):
+                    identity = _identity_for_track_item(physical)
+                    if identity is None:
+                        continue
+                    pool = ids_by_identity_day.get(identity, {}).get(day_number)
+                    if not pool:
+                        continue
+                    pair = next((p for p in pool if p[1] > 0), None)
+                    if pair is None:
+                        continue
+                    physical["kp_plate_id"] = pair[0]
+                    pair[1] -= 1
+
+    # #region agent log
+    try:
+        import json as _agent_json
+        import time as _agent_time
+
+        _physical_total = 0
+        _missing_identity = 0
+        _missing_plate_id = 0
+        _missing_plate_id_sample = []
+        if tracks_by_day:
+            for _day_tracks in tracks_by_day.values():
+                for _track in _day_tracks or []:
+                    for _physical in _iter_physical_items((_track or {}).get("items")):
+                        _physical_total += 1
+                        _identity = _identity_for_track_item(_physical)
+                        if _identity is None:
+                            _missing_identity += 1
+                            continue
+                        if _physical.get("kp_plate_id") is None:
+                            _missing_plate_id += 1
+                            if len(_missing_plate_id_sample) < 10:
+                                _missing_plate_id_sample.append({
+                                    "kp_id": _physical.get("kp_id"),
+                                    "plate_name": _physical.get("plate_name") or _physical.get("label"),
+                                    "length": _physical.get("length") or _physical.get("target_length"),
+                                    "width": _physical.get("width") or _physical.get("main_w"),
+                                })
+        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            _agent_f.write(_agent_json.dumps({
+                "sessionId": "ebb546",
+                "runId": "pre-fix",
+                "hypothesisId": "H3",
+                "location": "core/plan_commit.py:after_kp_plate_id_assignment",
+                "message": "Проверка kp_plate_id после назначения на track items",
+                "data": {
+                    "plan_id": plan_id,
+                    "physical_items_total": _physical_total,
+                    "missing_identity": _missing_identity,
+                    "missing_kp_plate_id": _missing_plate_id,
+                    "missing_kp_plate_id_sample": _missing_plate_id_sample,
+                },
+                "timestamp": int(_agent_time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     logger.info(
         "[PLAN_COMMIT] План %s: помечено %s плит, пропущено %s",

@@ -6,6 +6,7 @@
 """
 import core.config_and_data as cfg
 from core.optimization import OPT_PLAN, OPT_WIDTH_PRIORITY
+from collections import defaultdict
 
 
 def _choose_best_separator(solid_list, next_group, reinforcement_map):
@@ -96,6 +97,17 @@ def _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code=N
         if abs(l - length) < 0.01 and w == width_mm:
             return reinforcement
     return None
+
+
+def _ensure_sequence_layout_uid(sequence, prefix="seq"):
+    """Гарантирует наличие identity у каждого root item sequence."""
+    for idx, item in enumerate(sequence or []):
+        if not isinstance(item, dict):
+            continue
+        if item.get("layout_uid"):
+            continue
+        unit_id = item.get("unit_id")
+        item["layout_uid"] = str(unit_id) if unit_id else f"{prefix}:{idx}"
 
 
 def _split_group_into_subgroups(cut_group, max_length=90.0):
@@ -406,6 +418,10 @@ def build_layout_sequence():
     # Приоритет 1: OPT_CASCADING_PLAN (старый формат, без группировки)
     print(f"[VISUAL] Проверяем OPT_CASCADING_PLAN: {OPT_CASCADING_PLAN is not None}")
     if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
+        sequence = _build_sequence_from_plan(OPT_CASCADING_PLAN, plate_label, reinforcement_map)
+        _ensure_sequence_layout_uid(sequence, prefix="single")
+        return sequence
+    if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get('primary_cuts'):
         print("[VISUAL] OK: Используем каскадную оптимизацию для визуализации")
         print(f"[VISUAL] Первичных резов: {len(OPT_CASCADING_PLAN.get('primary_cuts', []))}")
         print(f"[VISUAL] Вторичных резов: {len(OPT_CASCADING_PLAN.get('secondary_cuts', []))}")
@@ -481,7 +497,7 @@ def build_layout_sequence():
                 # ИСПРАВЛЕНИЕ: Создаём запись для КАЖДОЙ ИСХОДНОЙ длины отдельно
                 for i in range(qty):
                     source_length = source_lengths_list[i] if i < len(source_lengths_list) else 6.0
-                    key = (source_length, source_mm)
+                    key = _secondary_geom_cut_key(source_length, source_mm)
 
                     if key not in secondary_cuts_info:
                         secondary_cuts_info[key] = []
@@ -710,7 +726,7 @@ def build_layout_sequence():
                 plate_name_from_cut = cut.get('plate_name')
                 
                 # ИСПРАВЛЕНИЕ: Проверяем вторичные резы для КОНКРЕТНОГО остатка (длина + ширина)
-                sec_variants = secondary_cuts_info.get((length, rest_mm)) or []
+                sec_variants = secondary_cuts_info.get(_secondary_geom_cut_key(length, rest_mm)) or []
                 
                 # ОТЛАДКА: Выводим информацию о поиске вторичных резов
                 if rest_mm > 0:
@@ -1037,6 +1053,14 @@ def build_layout_sequence():
     return sequence
 
 
+def _secondary_geom_cut_key(length_m: object, rest_or_source_mm: object) -> tuple[float, int]:
+    """Ключ (длина м, остаток мм) для secondary_cuts_info / legacy-lookup.
+
+    Нормализует float/int чтобы (2.7, 880) и (2.7, 880.0) не давали промах dict.
+    """
+    return (round(float(length_m), 2), int(round(float(rest_or_source_mm))))
+
+
 def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     """
     Вспомогательная функция: строит последовательность плит из плана оптимизации.
@@ -1099,17 +1123,25 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     
     # Создаём карту вторичных резов
     secondary_cuts_info = {}
+    secondary_cuts_by_parent: dict[str, list[dict]] = defaultdict(list)
+    secondary_total_from_plan = 0
+    secondary_attached_total = 0
+    unmatched_by_reason = defaultdict(int)
+    legacy_secondary_match_used = 0
     if plan.get('secondary_cuts'):
         for sec_cut in plan['secondary_cuts']:
             source_mm = sec_cut['source']
             pieces = sec_cut.get('pieces', 1)
             cuts_list = sec_cut.get('cuts', [])
             qty = sec_cut['qty']
+            secondary_total_from_plan += int(qty) * max(1, int(pieces))
             
             source_lengths_list = sec_cut.get('source_lengths', [])
             target_lengths_list = sec_cut.get('lengths', [])
             target_order_key = sec_cut.get('target_order_key')
             target_load_code = cfg.normalize_load_code(target_order_key[2]) if (target_order_key and len(target_order_key) > 2) else None
+            parent_ids_list = sec_cut.get('parent_instance_ids') or []
+            secondary_ids_list = sec_cut.get('secondary_instance_ids') or []
             
             pattern = []
             if cuts_list:
@@ -1126,18 +1158,31 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
             
             for i in range(qty):
                 source_length = source_lengths_list[i] if i < len(source_lengths_list) else 6.0
-                key = (source_length, source_mm)
+                key = _secondary_geom_cut_key(source_length, source_mm)
+                parent_instance_id = (
+                    parent_ids_list[i] if i < len(parent_ids_list)
+                    else sec_cut.get('parent_instance_id')
+                )
+                secondary_instance_id = (
+                    secondary_ids_list[i] if i < len(secondary_ids_list)
+                    else sec_cut.get('secondary_instance_id')
+                )
                 
                 if key not in secondary_cuts_info:
                     secondary_cuts_info[key] = []
                 
-                secondary_cuts_info[key].append({
+                variant = {
                     'pattern': [segment.copy() for segment in pattern],
                     'qty': 1,
                     'used': 0,
                     # BUG-4 FIX: canonical ключ заказа для точного match в rescue
                     'target_order_key': target_order_key,
-                })
+                    'parent_instance_id': parent_instance_id,
+                    'secondary_instance_id': secondary_instance_id,
+                }
+                secondary_cuts_info[key].append(variant)
+                if parent_instance_id:
+                    secondary_cuts_by_parent[str(parent_instance_id)].append(variant)
     
     # ========== НОВАЯ ЛОГИКА: РАЗДЕЛИТЕЛИ МЕЖДУ ГРУППАМИ РЕЗОВ ==========
     # Требования завода (ОБНОВЛЁННЫЕ):
@@ -1277,6 +1322,9 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
         width_mm = cut['width']
         rest_mm = cut['rest']
         qty = cut['qty']
+        primary_instance_ids = cut.get('primary_instance_ids') or []
+        if cut.get('primary_instance_id') and not primary_instance_ids:
+            primary_instance_ids = [cut.get('primary_instance_id')]
         
         # Получаем длины для этих плит
         if use_2d_data and 'lengths' in cut:
@@ -1289,6 +1337,10 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
         
         for i in range(qty):
             length = lengths_for_cut[i] if i < len(lengths_for_cut) else 6.0
+            parent_instance_id = (
+                primary_instance_ids[i] if i < len(primary_instance_ids)
+                else cut.get('primary_instance_id')
+            )
             
             # НОВОЕ: Получаем информацию о КП для этой плиты
             kp_id = cut.get('kp_id')
@@ -1296,7 +1348,6 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
             kp_date = cut.get('kp_date')
             plate_name_from_cut = cut.get('plate_name')
             
-            sec_variants = secondary_cuts_info.get((length, rest_mm)) or []
             transverse_cut_info = transverse_cut_map.get((length, width_mm))
             
             if transverse_cut_info:
@@ -1320,7 +1371,9 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     'kp_id': kp_id,
                     'customer': customer,
                     'kp_date': kp_date,
-                    'plate_name': plate_name_from_cut
+                    'plate_name': plate_name_from_cut,
+                    'unit_id': parent_instance_id,
+                    'layout_uid': str(parent_instance_id) if parent_instance_id else f"transverse:{len(sequence)}",
                 })
             else:
                 # Обычная плита
@@ -1366,23 +1419,41 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'kp_id': kp_id,
                         'customer': customer,
                         'kp_date': kp_date,
-                        'plate_name': plate_name_from_cut
+                        'plate_name': plate_name_from_cut,
+                        'unit_id': parent_instance_id,
+                        'layout_uid': str(parent_instance_id) if parent_instance_id else f"solid:{len(sequence)}",
                     })
                 else:
                     # Плита с резом
                     load_code_from_cut = cfg.normalize_load_code(cut.get('load_code', 800))
                     secondary_cuts_for_plate = None
                     chosen_variant = None
-                    for variant in sec_variants:
-                        if variant['used'] < variant['qty']:
+                    # Сначала варианты по parent_instance_id; если не выбрали — геометрия
+                    # (иначе непустой, но «неподходящий» by_parent блокирует legacy_match_used=0).
+                    _pool_parent: list = []
+                    if parent_instance_id:
+                        _pool_parent = secondary_cuts_by_parent.get(str(parent_instance_id)) or []
+                    for variant in _pool_parent:
+                        if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
                             chosen_variant = variant
                             break
+                    if not chosen_variant:
+                        _pool_geom = secondary_cuts_info.get(_secondary_geom_cut_key(length, rest_mm)) or []
+                        if _pool_geom:
+                            legacy_secondary_match_used += 1
+                            for variant in _pool_geom:
+                                if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
+                                    chosen_variant = variant
+                                    break
                     
                     if chosen_variant:
                         secondary_cuts_for_plate = []
                         # BUG-4 FIX: canonical ключ заказа из оптимизатора для точного match
                         _sec_tok_plan = chosen_variant.get('target_order_key')
-                        for sec_cut_template in chosen_variant['pattern']:
+                        for sec_idx, sec_cut_template in enumerate(chosen_variant['pattern']):
+                            sec_unit_id = chosen_variant.get('secondary_instance_id')
+                            if sec_unit_id is None:
+                                sec_unit_id = f"{parent_instance_id or 'secondary'}:{length}:{rest_mm}:{sec_idx}:{chosen_variant['used']}"
                             sec_width = sec_cut_template['width']
                             sec_width_mm = sec_cut_template['width_mm']
                             lc = sec_cut_template.get('target_load_code')
@@ -1399,6 +1470,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                                     'remainder': sec_transverse['remainder'],
                                     'load_code': lc,
                                     'target_order_key': _sec_tok_plan,
+                                    'parent_unit_id': parent_instance_id,
+                                    'unit_id': sec_unit_id,
                                 })
                             else:
                                 target_length = sec_cut_template.get('target_length')
@@ -1410,6 +1483,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                                         'target_length': target_length,
                                         'load_code': lc,
                                         'target_order_key': _sec_tok_plan,
+                                        'parent_unit_id': parent_instance_id,
+                                        'unit_id': sec_unit_id,
                                     })
                                 else:
                                     result_width = sec_cut_template['width']
@@ -1422,8 +1497,16 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                                         'label': label_text,
                                         'load_code': lc,
                                         'target_order_key': _sec_tok_plan,
+                                        'parent_unit_id': parent_instance_id,
+                                        'unit_id': sec_unit_id,
                                     })
                         chosen_variant['used'] += 1
+                        secondary_attached_total += len(secondary_cuts_for_plate)
+                    elif rest_mm > 0:
+                        if parent_instance_id:
+                            unmatched_by_reason["parent_instance_id_not_found"] += 1
+                        else:
+                            unmatched_by_reason["key_not_found"] += 1
                     
                     # Получаем армирование из карты (с учётом load_code)
                     reinforcement = _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code_from_cut)
@@ -1447,8 +1530,21 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'kp_id': kp_id,
                         'customer': customer,
                         'kp_date': kp_date,
-                        'plate_name': plate_name_from_cut
+                        'plate_name': plate_name_from_cut,
+                        'unit_id': parent_instance_id,
+                        'layout_uid': str(parent_instance_id) if parent_instance_id else f"split:{len(sequence)}",
                     })
     
+    _ensure_sequence_layout_uid(sequence, prefix="built")
+    secondary_unmatched_total = max(0, secondary_total_from_plan - secondary_attached_total)
+    if secondary_unmatched_total or legacy_secondary_match_used:
+        _log.warning(
+            "[LAYOUT_SEQUENCE] secondary mapping report: total=%s attached=%s unmatched=%s reasons=%s legacy_match_used=%s",
+            secondary_total_from_plan,
+            secondary_attached_total,
+            secondary_unmatched_total,
+            dict(unmatched_by_reason),
+            legacy_secondary_match_used,
+        )
     return sequence
 

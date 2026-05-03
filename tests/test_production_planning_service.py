@@ -122,6 +122,60 @@ def planning_service(tmp_plita, monkeypatch):
     return service
 
 
+def test_optimization_service_preserves_identity_orders(monkeypatch):
+    from app.domain.models.plate_order import PlateOrder
+    from app.services.optimization_service import OptimizationService
+    from core.plan_commit import count_assigned_plates
+
+    full_orders = [
+        {
+            "length": 6.0,
+            "width": 1200,
+            "qty": 2,
+            "load_code": 8,
+            "reinforcement": 999.0,
+            "kp_date": "21.04.2026",
+            "customer": "ТестКлиент",
+            "plate_name": PLATE_NAME,
+            "kp_id": 1,
+            "length_dm_raw": "60",
+        }
+    ]
+    captured: dict[str, list[dict]] = {}
+
+    def fake_optimize(*, orders_2d):
+        captured["orders_2d"] = orders_2d
+        order = orders_2d[0]
+        return {
+            "total_plates": order["qty"],
+            "plate_assignments": [
+                {
+                    "source": "primary",
+                    "kp_id": order["kp_id"],
+                    "plate_name": order["plate_name"],
+                    "length": order["length"],
+                    "width": order["width"],
+                    "load_code": order["load_code"],
+                }
+                for _ in range(order["qty"])
+            ],
+        }
+
+    monkeypatch.setattr(
+        "app.services.optimization_service.optimize_with_cascading_longitudinal_cuts",
+        fake_optimize,
+    )
+
+    plate_order = PlateOrder.from_orders_2d(full_orders)
+    context = OptimizationService().optimize(plate_order, orders_2d=full_orders)
+
+    assert captured["orders_2d"] == full_orders
+    counts, unmapped = count_assigned_plates(context.optimization_result, [])
+    assert counts["primary"] == {(1, PLATE_NAME): 2}
+    assert unmapped["primary"] == []
+    assert unmapped["secondary"] == []
+
+
 def test_build_plan_marks_plates_and_second_call_fails(planning_service, tmp_plita):
     from app.services.production_planning_service import ProductionPlanBuildError
 
@@ -147,3 +201,354 @@ def test_build_plan_marks_plates_and_second_call_fails(planning_service, tmp_pli
             tracks_count=3,
             filter_method="all",
         )
+
+
+def test_complete_day_moves_plates_and_marks_kp_completed(planning_service, tmp_plita):
+    from app.repositories.kp_repository import KpRepository
+    from app.repositories.plan_repository import PlanRepository
+    from app.services.production_service import ProductionService
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    service = ProductionService(
+        kp_repository=KpRepository(db_path=tmp_plita),
+        plan_repository=PlanRepository(),
+        planning_service=planning_service,
+    )
+    result = service.complete_day(plan_id=plan_id, target_date="2026-04-21")
+
+    assert result["completed"] is True
+    assert result["moved_plates"] == 3
+    assert result["completed_kps"] == [1]
+
+    completion = kp_db.get_kp_completion_percentage(1, tmp_plita)
+    assert completion["percentage"] == 100.0
+    assert completion["completed_plates"] == 3
+    assert completion["in_production"] == 0
+
+    with sqlite3.connect(tmp_plita) as conn:
+        status = conn.execute(
+            "SELECT status FROM kp_meta WHERE kp_id = 1",
+        ).fetchone()[0]
+        remaining = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM kp_plates WHERE kp_id = 1",
+        ).fetchone()[0]
+        completed = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM completed_plates WHERE kp_id = 1",
+        ).fetchone()[0]
+
+    assert status == "выполнено"
+    assert remaining == 0
+    assert completed == 3
+
+
+def test_complete_day_with_partial_rejection_moves_only_accepted_qty(
+    planning_service,
+    tmp_plita,
+):
+    from app.repositories.kp_repository import KpRepository
+    from app.repositories.plan_repository import PlanRepository
+    from app.services.production_service import ProductionService
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    service = ProductionService(
+        kp_repository=KpRepository(db_path=tmp_plita),
+        plan_repository=PlanRepository(),
+        planning_service=planning_service,
+    )
+    result = service.complete_day(
+        plan_id=plan_id,
+        target_date="2026-04-21",
+        rejected_plates=[
+            {"track_number": 1, "plate_index": 0, "qty": 1},
+        ],
+    )
+
+    assert result["completed"] is True
+    assert result["moved_plates"] == 2
+    assert result["completed_kps"] == []
+    assert result["rejected_plates"] == 1
+    assert result["rejected_positions"] == 1
+
+    with sqlite3.connect(tmp_plita) as conn:
+        status = conn.execute(
+            "SELECT status FROM kp_meta WHERE kp_id = 1",
+        ).fetchone()[0]
+        remaining = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM kp_plates WHERE kp_id = 1",
+        ).fetchone()[0]
+        completed = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM completed_plates WHERE kp_id = 1",
+        ).fetchone()[0]
+
+    assert status == "в работе"
+    assert remaining == 1
+    assert completed == 2
+
+
+def test_complete_day_with_full_rejection_does_not_move_plate(
+    planning_service,
+    tmp_plita,
+):
+    from app.repositories.kp_repository import KpRepository
+    from app.repositories.plan_repository import PlanRepository
+    from app.services.production_service import ProductionService
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    service = ProductionService(
+        kp_repository=KpRepository(db_path=tmp_plita),
+        plan_repository=PlanRepository(),
+        planning_service=planning_service,
+    )
+    result = service.complete_day(
+        plan_id=plan_id,
+        target_date="2026-04-21",
+        rejected_plates=[
+            {"track_number": 1, "plate_index": 0, "qty": 3},
+        ],
+    )
+
+    assert result["completed"] is True
+    assert result["moved_plates"] == 0
+    assert result["completed_kps"] == []
+    assert result["rejected_plates"] == 3
+    assert result["rejected_positions"] == 1
+
+    with sqlite3.connect(tmp_plita) as conn:
+        status = conn.execute(
+            "SELECT status FROM kp_meta WHERE kp_id = 1",
+        ).fetchone()[0]
+        remaining = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM kp_plates WHERE kp_id = 1",
+        ).fetchone()[0]
+        completed = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM completed_plates WHERE kp_id = 1",
+        ).fetchone()[0]
+
+    assert status == "в работе"
+    assert remaining == 3
+    assert completed == 0
+
+
+def test_complete_day_rejects_qty_greater_than_plate_qty(
+    planning_service,
+    tmp_plita,
+):
+    from app.repositories.kp_repository import KpRepository
+    from app.repositories.plan_repository import PlanRepository
+    from app.services.production_completion_service import ProductionCompletionError
+    from app.services.production_service import ProductionService
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    service = ProductionService(
+        kp_repository=KpRepository(db_path=tmp_plita),
+        plan_repository=PlanRepository(),
+        planning_service=planning_service,
+    )
+
+    with pytest.raises(ProductionCompletionError):
+        service.complete_day(
+            plan_id=plan_id,
+            target_date="2026-04-21",
+            rejected_plates=[
+                {"track_number": 1, "plate_index": 0, "qty": 4},
+            ],
+        )
+
+
+def test_full_cycle_no_stuck_plates(tmp_plita, monkeypatch):
+    """P9 e2e: воспроизведение кейса пользователя в миниатюре.
+
+    Реалистичный набор: primary 6x1.2 (3 шт) + secondary 6x0.32 (6 шт),
+    разложенный на несколько дорожек/дней. После полного прохождения
+    цикла build_plan → complete_day по всем дням ожидаем:
+    - ``kp_plates`` для этого плана пуст (всё списано);
+    - KP помечен ``'выполнено'``.
+
+    Этот тест подтверждает, что secondary с backfilled identity не
+    «зависают» с ``day_number=NULL`` и реально списываются complete_day.
+    """
+    from app.repositories.kp_repository import KpRepository
+    from app.repositories.plan_repository import PlanRepository
+    from app.services.production_planning_service import ProductionPlanningService
+    from app.services.production_service import ProductionService
+
+    secondary_plate_name = "ПБ 60-3,2-8п"
+
+    with sqlite3.connect(tmp_plita) as conn:
+        conn.execute(
+            """
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, qty, status
+            ) VALUES (1, 2, ?, 6.0, 0.32, 800, 6, 'в производстве')
+            """,
+            (secondary_plate_name,),
+        )
+        conn.commit()
+
+    def fake_optimize_with_secondary(self, *, orders_2d):
+        if not orders_2d:
+            return [], {}
+        primary_order = next(o for o in orders_2d if int(round(float(o["width"]))) == 1200)
+        secondary_order = next(o for o in orders_2d if int(round(float(o["width"]))) == 320)
+
+        items: list[dict] = []
+        for _ in range(int(primary_order["qty"])):
+            items.append({
+                "length": primary_order["length"],
+                "mode": "split",
+                "main_w": 1.2,
+                "rest_w": 0.32,
+                "load_code": primary_order["load_code"],
+                "kp_id": primary_order["kp_id"],
+                "plate_name": primary_order["plate_name"],
+                "secondary_cuts": [
+                    {
+                        "width": 0.32,
+                        "label": "[2] secondary",
+                        "load_code": primary_order["load_code"],
+                    },
+                    {
+                        "width": 0.32,
+                        "label": "[2] secondary",
+                        "load_code": primary_order["load_code"],
+                    },
+                ],
+            })
+
+        tracks_per_day = 1
+        tracks: list[dict] = []
+        for chunk_start in range(0, len(items), tracks_per_day):
+            chunk = items[chunk_start:chunk_start + tracks_per_day]
+            tracks.append({"label": "ОСНОВНАЯ", "items": chunk})
+
+        plate_assignments: list[dict] = []
+        for _ in range(int(primary_order["qty"])):
+            plate_assignments.append({
+                "source": "primary",
+                "kp_id": primary_order["kp_id"],
+                "plate_name": primary_order["plate_name"],
+                "length": primary_order["length"],
+                "width": primary_order["width"],
+                "load_code": primary_order["load_code"],
+            })
+        for _ in range(int(secondary_order["qty"])):
+            plate_assignments.append({
+                "source": "secondary",
+                "kp_id": secondary_order["kp_id"],
+                "plate_name": secondary_order["plate_name"],
+                "length": secondary_order["length"],
+                "width": secondary_order["width"],
+                "load_code": secondary_order["load_code"],
+            })
+
+        from core.plate_attribution import backfill_track_items_identity
+        backfill_track_items_identity(tracks, orders_2d)
+
+        return tracks, {
+            "total_plates": len(plate_assignments),
+            "plate_assignments": plate_assignments,
+        }
+
+    monkeypatch.setattr(
+        ProductionPlanningService,
+        "_run_optimization_and_split",
+        fake_optimize_with_secondary,
+    )
+    monkeypatch.setattr(
+        "app.services.production_planning_service.get_reinforcement",
+        lambda **kwargs: 999.0,
+    )
+
+    service = ProductionPlanningService(
+        plita_db_path=tmp_plita,
+        pb_db_path=tmp_plita,
+    )
+
+    built = service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=1,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    with sqlite3.connect(tmp_plita) as conn:
+        rows = conn.execute(
+            "SELECT day_number, status FROM kp_plates WHERE plan_id = ?",
+            (plan_id,),
+        ).fetchall()
+    assert rows, "ожидается, что план пометил плиты"
+    null_day_in_plan = [r for r in rows if r[1] == "в плане" and r[0] is None]
+    assert null_day_in_plan == [], (
+        f"после P9 fix не должно быть плит с day_number IS NULL: {null_day_in_plan}"
+    )
+
+    days = sorted({r[0] for r in rows if r[0] is not None})
+    assert days, "ожидается хотя бы один день с плитами"
+
+    production = ProductionService(
+        kp_repository=KpRepository(db_path=tmp_plita),
+        plan_repository=PlanRepository(),
+        planning_service=service,
+    )
+
+    plan_dict = built["plan"]
+    sorted_dates = sorted(plan_dict.get("days", {}).keys())
+    assert sorted_dates, "ожидается хотя бы один день в плане"
+
+    for date_key in sorted_dates:
+        result = production.complete_day(plan_id=plan_id, target_date=date_key)
+        assert result["completed"] is True, f"day {date_key} не завершился: {result}"
+
+    with sqlite3.connect(tmp_plita) as conn:
+        remaining_plan = conn.execute(
+            "SELECT COUNT(*) FROM kp_plates WHERE plan_id = ?", (plan_id,),
+        ).fetchone()[0]
+        remaining_total = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM kp_plates WHERE kp_id = 1",
+        ).fetchone()[0]
+        completed_total = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM completed_plates WHERE kp_id = 1",
+        ).fetchone()[0]
+        kp_status = conn.execute(
+            "SELECT status FROM kp_meta WHERE kp_id = 1",
+        ).fetchone()[0]
+
+    assert remaining_plan == 0, (
+        f"в kp_plates не должно остаться строк плана {plan_id}, "
+        f"но осталось {remaining_plan}"
+    )
+    assert remaining_total == 0, (
+        f"у KP=1 не должно остаться плит, но осталось qty={remaining_total}"
+    )
+    assert completed_total == 9, (
+        f"в completed_plates ожидается 9 плит (3 primary + 6 secondary), "
+        f"получено {completed_total}"
+    )
+    assert kp_status == "выполнено", (
+        f"KP=1 должен иметь статус 'выполнено', получено '{kp_status}'"
+    )

@@ -18,6 +18,8 @@ FRONTEND_LOG="$LOGS_DIR/frontend_${TIMESTAMP}.log"
 BACKEND_PID=""
 FRONTEND_PID=""
 HAS_PAUSED_ON_EXIT=0
+PYTHON_CMD=""
+VENV_ACTIVATE_PATH=""
 
 pause_before_exit() {
     # Для запуска из GUI/двойным кликом: окно не закроется мгновенно.
@@ -56,13 +58,38 @@ echo -e "${YELLOW}Backend лог:  ${BACKEND_LOG}${NC}"
 echo -e "${YELLOW}Frontend лог: ${FRONTEND_LOG}${NC}"
 echo ""
 
+detect_python_command() {
+    if command -v python >/dev/null 2>&1; then
+        PYTHON_CMD="python"
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_CMD="python3"
+        return 0
+    fi
+    return 1
+}
+
+detect_venv_activate_path() {
+    if [ -f "venv/bin/activate" ]; then
+        VENV_ACTIVATE_PATH="venv/bin/activate"
+        return 0
+    fi
+    if [ -f "venv/Scripts/activate" ]; then
+        VENV_ACTIVATE_PATH="venv/Scripts/activate"
+        return 0
+    fi
+    return 1
+}
+
+if ! detect_python_command; then
+    echo -e "${RED}❌ Команда python/python3 не найдена. Установи Python 3 и повтори запуск.${NC}"
+    exit 1
+fi
+
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}venv не найден, создаю автоматически...${NC}"
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo -e "${RED}❌ Команда python3 не найдена. Установи Python 3 и повтори запуск.${NC}"
-        exit 1
-    fi
-    python3 -m venv venv
+    "$PYTHON_CMD" -m venv venv
     if [ $? -ne 0 ]; then
         echo -e "${RED}❌ Не удалось создать venv${NC}"
         exit 1
@@ -121,8 +148,7 @@ ensure_modern_node() {
 if ! command -v npm >/dev/null 2>&1; then
     echo -e "${RED}❌ Команда npm не найдена.${NC}"
     echo -e "${YELLOW}Установи Node.js и npm, затем запусти скрипт снова.${NC}"
-    echo -e "${YELLOW}Для Linux Mint:${NC}"
-    echo "sudo apt update && sudo apt install -y nodejs npm"
+    echo -e "${YELLOW}Рекомендуемая версия Node.js: 20+ (лучше 22).${NC}"
     exit 1
 fi
 
@@ -134,7 +160,11 @@ fi
 ensure_modern_node
 
 echo -e "${YELLOW}Активирую venv и проверяю зависимости backend...${NC}"
-source venv/bin/activate
+if ! detect_venv_activate_path; then
+    echo -e "${RED}❌ Не найден activate-скрипт виртуального окружения (venv/bin/activate или venv/Scripts/activate).${NC}"
+    exit 1
+fi
+source "$VENV_ACTIVATE_PATH"
 python -m pip install -r requirements.txt >/dev/null
 
 echo -e "${YELLOW}Проверяю зависимости frontend...${NC}"

@@ -17,8 +17,17 @@ class CreatePlanRequest(BaseModel):
     active_plan_id: str | None = None
 
 
+class RejectedPlateItem(BaseModel):
+    """Позиция плиты, которую не нужно списывать как выполненную."""
+
+    track_number: int = Field(ge=1)
+    plate_index: int = Field(ge=0)
+    qty: int = Field(ge=0)
+
+
 class CompleteProductionDayRequest(BaseModel):
     plan_id: str
+    rejected_plates: list[RejectedPlateItem] = Field(default_factory=list)
 
 
 class SaveWorkCalendarRequest(BaseModel):
@@ -134,7 +143,9 @@ class DayPlateInfo(BaseModel):
     width_mm: int
     qty: int
     reinforcement: float = 0.0
-    load_code: int | None = None
+    # В БД load_class может быть, например, 1250 -> код 12.5.
+    # Поэтому принимаем числовой код как int/float.
+    load_code: float | int | None = None
 
 
 class DayTrackDetail(BaseModel):

@@ -3,6 +3,7 @@ import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Spinner } from "@/shared/ui/Spinner";
+import { getErrorMessage } from "@/shared/lib/apiError";
 import {
   useCompleteDayMutation,
   useDayDocumentMutation,
@@ -199,6 +200,11 @@ export const DayDrawer = ({
     schemaMutation.isPending ||
     breakdownMutation.isPending ||
     formovkaMutation.isPending;
+  const completionResult =
+    completeMutation.data?.date === date ? completeMutation.data : null;
+  const completeErrorMessage = completeMutation.isError
+    ? getErrorMessage(completeMutation.error)
+    : null;
 
   return (
     <Drawer
@@ -304,6 +310,14 @@ export const DayDrawer = ({
               </div>
             )}
           </section>
+
+          {completionResult && (
+            <Alert tone="success">
+              День отмечен выполненным. Списано:{" "}
+              {completionResult.moved_plates ?? 0}, возвращено брака:{" "}
+              {completionResult.rejected_returned ?? 0}.
+            </Alert>
+          )}
 
           {plans.map((plan) => (
             <div className="day-plan-block" key={plan.plan_id}>
@@ -466,8 +480,10 @@ export const DayDrawer = ({
             </div>
           ))}
 
-          {completeMutation.isError && (
-            <Alert tone="error">Не удалось отметить день выполненным.</Alert>
+          {completeErrorMessage && (
+            <Alert tone="error">
+              Не удалось отметить день выполненным: {completeErrorMessage}
+            </Alert>
           )}
         </div>
       )}

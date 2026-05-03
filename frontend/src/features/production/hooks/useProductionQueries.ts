@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { archiveKeys } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import { productionApi } from "@/features/production/api/productionApi";
 import { saveBlobAs } from "@/shared/lib/downloadFile";
 import type {
@@ -10,6 +11,7 @@ import type {
   GlobalCalendarResponse,
   KpCandidatesResponse,
   PlansMetadataResponse,
+  RejectedPlateItem,
   WorkCalendarPayload,
 } from "@/features/production/types/production";
 
@@ -107,10 +109,18 @@ export const useBuildPlanMutation = () => {
 export const useCompleteDayMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ date, planId }: { date: string; planId: string }) =>
-      productionApi.completeDay(date, planId),
+    mutationFn: ({
+      date,
+      planId,
+      rejectedPlates = [],
+    }: {
+      date: string;
+      planId: string;
+      rejectedPlates?: RejectedPlateItem[];
+    }) => productionApi.completeDay(date, planId, rejectedPlates),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: productionKeys.all });
+      queryClient.invalidateQueries({ queryKey: archiveKeys.all });
     },
   });
 };

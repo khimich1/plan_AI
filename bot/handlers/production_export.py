@@ -285,6 +285,54 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
     orders_2d = data.get('orders_2d', [])
     optimization_result = data.get('optimization_result', {})
 
+    # #region agent log
+    try:
+        import json as _agent_json
+        import time as _agent_time
+        from collections import Counter as _AgentCounter
+
+        _physical_total = 0
+        _without_identity = 0
+        _id_counts: _AgentCounter[str] = _AgentCounter()
+        for _tr in all_tracks_list or []:
+            if not isinstance(_tr, dict):
+                continue
+            for _it in _tr.get("items") or []:
+                if not isinstance(_it, dict):
+                    continue
+                _phys = [_it] + [
+                    _sec for _sec in (_it.get("secondary_cuts") or [])
+                    if isinstance(_sec, dict)
+                ]
+                for _p in _phys:
+                    _physical_total += 1
+                    _kp = _p.get("kp_id")
+                    _name = _p.get("plate_name") or _p.get("label")
+                    if _kp and _name:
+                        _id_counts[f"{_kp}|{_name}"] += 1
+                    else:
+                        _without_identity += 1
+        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            _agent_f.write(_agent_json.dumps({
+                "sessionId": "ebb546",
+                "runId": "bot-stage",
+                "hypothesisId": "B2",
+                "location": "bot/handlers/production_export.py:save_current_plan:state_in",
+                "message": "Bot stage state->save: что пришло из FSM",
+                "data": {
+                    "orders_qty": sum(int(o.get("qty") or 0) for o in orders_2d),
+                    "assignments_total": len((optimization_result or {}).get("plate_assignments", []) or []),
+                    "tracks_total": len(all_tracks_list or []),
+                    "physical_items_total": _physical_total,
+                    "physical_without_identity": _without_identity,
+                    "top_identity_counts": _id_counts.most_common(12),
+                },
+                "timestamp": int(_agent_time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
     if not all_tracks_list:
         await callback.message.answer(
             "❌ Нет данных для сохранения.\n"
@@ -369,9 +417,126 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
             optimization_result=optimization_result,
             auto_save=False  # НЕ сохраняем автоматически!
         )
+
+        # #region agent log
+        try:
+            import json as _agent_json
+            import time as _agent_time
+            from collections import Counter as _AgentCounter
+
+            _all_plan_tracks: list[dict] = []
+            for _day in (updated_plan.get("days") or {}).values():
+                _all_plan_tracks.extend((_day or {}).get("tracks") or [])
+
+            _physical_total = 0
+            _without_identity = 0
+            _id_counts: _AgentCounter[str] = _AgentCounter()
+            for _tr in _all_plan_tracks:
+                if not isinstance(_tr, dict):
+                    continue
+                for _it in _tr.get("items") or []:
+                    if not isinstance(_it, dict):
+                        continue
+                    _phys = [_it] + [
+                        _sec for _sec in (_it.get("secondary_cuts") or [])
+                        if isinstance(_sec, dict)
+                    ]
+                    for _p in _phys:
+                        _physical_total += 1
+                        _kp = _p.get("kp_id")
+                        _name = _p.get("plate_name") or _p.get("label")
+                        if _kp and _name:
+                            _id_counts[f"{_kp}|{_name}"] += 1
+                        else:
+                            _without_identity += 1
+            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                _agent_f.write(_agent_json.dumps({
+                    "sessionId": "ebb546",
+                    "runId": "bot-stage",
+                    "hypothesisId": "B3",
+                    "location": "bot/handlers/production_export.py:save_current_plan:after_add_tracks_to_plan",
+                    "message": "Bot stage F/G: updated_plan после add_tracks_to_plan",
+                    "data": {
+                        "plan_id": updated_plan.get("id"),
+                        "days": sorted((updated_plan.get("days") or {}).keys()),
+                        "day_tracks_count": {
+                            _k: len((_v or {}).get("tracks") or [])
+                            for _k, _v in (updated_plan.get("days") or {}).items()
+                        },
+                        "plan_tracks_total": len(_all_plan_tracks),
+                        "physical_items_total": _physical_total,
+                        "physical_without_identity": _without_identity,
+                        "top_identity_counts": _id_counts.most_common(12),
+                    },
+                    "timestamp": int(_agent_time.time() * 1000),
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         
         db_path = str(PROJECT_ROOT / "plita.db")
         plan_id = updated_plan['id']
+
+        # P9: собираем tracks_by_day из готового плана и передаём в commit,
+        # чтобы у каждой плиты в kp_plates был day_number и у каждого
+        # track item — kp_plate_id. Без этого срабатывает legacy-ветка
+        # (day_number=NULL) и плиты «зависают» вне day_view / complete_day.
+        tracks_by_day_for_commit: dict[str, list[dict]] = {}
+        for date_key, day_data in (updated_plan.get('days') or {}).items():
+            day_number = int((day_data or {}).get('day_number') or 0)
+            day_tracks = (day_data or {}).get('tracks') or []
+            for track in day_tracks:
+                if isinstance(track, dict):
+                    track.setdefault('production_day', day_number)
+            tracks_by_day_for_commit[date_key] = day_tracks
+
+        # #region agent log
+        try:
+            import json as _agent_json
+            import time as _agent_time
+            from collections import Counter as _AgentCounter
+
+            _physical_total = 0
+            _without_identity = 0
+            _id_counts: _AgentCounter[str] = _AgentCounter()
+            for _day_tracks in tracks_by_day_for_commit.values():
+                for _tr in _day_tracks or []:
+                    for _it in (_tr or {}).get("items") or []:
+                        if not isinstance(_it, dict):
+                            continue
+                        _phys = [_it] + [
+                            _sec for _sec in (_it.get("secondary_cuts") or [])
+                            if isinstance(_sec, dict)
+                        ]
+                        for _p in _phys:
+                            _physical_total += 1
+                            _kp = _p.get("kp_id")
+                            _name = _p.get("plate_name") or _p.get("label")
+                            if _kp and _name:
+                                _id_counts[f"{_kp}|{_name}"] += 1
+                            else:
+                                _without_identity += 1
+            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                _agent_f.write(_agent_json.dumps({
+                    "sessionId": "ebb546",
+                    "runId": "bot-stage",
+                    "hypothesisId": "B4,B5",
+                    "location": "bot/handlers/production_export.py:save_current_plan:before_commit",
+                    "message": "Bot stage H вход: tracks_by_day_for_commit",
+                    "data": {
+                        "plan_id": updated_plan.get("id"),
+                        "orders_qty": sum(int(o.get("qty") or 0) for o in orders_2d),
+                        "assignments_total": len((optimization_result or {}).get("plate_assignments", []) or []),
+                        "tracks_by_date": {k: len(v or []) for k, v in tracks_by_day_for_commit.items()},
+                        "physical_items_total": _physical_total,
+                        "physical_without_identity": _without_identity,
+                        "top_identity_counts": _id_counts.most_common(12),
+                    },
+                    "timestamp": int(_agent_time.time() * 1000),
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
 
         try:
             commit_result = commit_plan_plates(
@@ -380,6 +545,7 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                 optimization_result=optimization_result,
                 all_tracks_list=all_tracks_list,
                 db_path=db_path,
+                tracks_by_day=tracks_by_day_for_commit,
             )
         except PlanCommitError as commit_error:
             logger.error("[SAVE_PLAN] Не удалось закоммитить план: %s", commit_error)
