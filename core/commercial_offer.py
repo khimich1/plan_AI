@@ -215,19 +215,28 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
 
 def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0) -> Dict:
     """
-    Рассчитывает общую стоимость заказа
-    
+    Рассчитывает общую стоимость заказа.
+
+    unit_price в позициях считается уже с НДС. Скидка применяется к сумме плит.
+    НДС (22%) для отображения: сумма плит после скидки * 0.22.
+    Итого к оплате: сумма плит после скидки + логистика (логистика в сумму НДС-строки не входит).
+
+    subtotal = total_with_vat - vat_amount (согласованная разбивка для документов и архива).
+
     Args:
         order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
         discount_percent: процент скидки (0-100, по умолчанию 0)
-        logistics_cost: транспортные расходы без НДС, без применения скидки
-    
+        logistics_cost: транспортные расходы (добавляются к сумме плит после скидки)
+
     Returns:
         Словарь с итоговыми суммами
     """
     total_qty = 0
-    plates_cost_without_vat = 0.0  # Сумма плит без НДС
-    
+    plates_total_with_vat = 0.0
+    dp = float(discount_percent or 0.0)
+    dp = min(max(dp, 0.0), 100.0)
+    discount_factor = 1.0 - dp / 100.0
+
     for item in order_data:
         qty = item.get('qty', 0)
 
@@ -241,20 +250,17 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, lo
             load_class = item.get('load_class', 800)
             unit_price = get_plate_price(length_m, width_m, load_class)
 
-        # Применяем скидку к цене (если указана)
-        discounted_price = unit_price * (1 - discount_percent / 100)
-
-        # Считаем сумму по позиции без НДС.
+        discounted_price = float(unit_price) * discount_factor
         item_cost = discounted_price * qty
-        
+
         total_qty += qty
-        plates_cost_without_vat += item_cost
-    
+        plates_total_with_vat += item_cost
+
     logistics_cost = max(0.0, float(logistics_cost or 0.0))
-    subtotal = round(plates_cost_without_vat + logistics_cost, 2)
-    vat_amount = round(subtotal * 0.22, 2)
-    total_with_vat = round(subtotal + vat_amount, 2)
-    
+    vat_amount = round(plates_total_with_vat * 0.22, 2)
+    total_with_vat = round(plates_total_with_vat + logistics_cost, 2)
+    subtotal = round(total_with_vat - vat_amount, 2)
+
     return {
         'total_qty': total_qty,
         'subtotal': subtotal,

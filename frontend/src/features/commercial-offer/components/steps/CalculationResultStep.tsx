@@ -49,15 +49,15 @@ export const CalculationResultStep = ({
   const discountPercent = toNumber(draft.metadata.discount_percent) ?? 0;
   const discountFactor = 1 - Math.min(Math.max(discountPercent, 0), 100) / 100;
   const logisticsCost = Math.max(toNumber(draft.metadata.logistics_cost) ?? 0, 0);
-  const platesTotalWithoutVat = draft.order_data.reduce((acc, item) => {
+  // Цены в позициях уже с НДС; скидка уменьшает сумму плит, логистика добавляется сверху.
+  const platesTotalWithVat = draft.order_data.reduce((acc, item) => {
     const qty = toNumber(item.qty) ?? 0;
     const unitPrice = toNumber(item.unit_price) ?? 0;
     return acc + qty * unitPrice;
   }, 0);
-  const platesTotalWithoutVatAfterDiscount = platesTotalWithoutVat * discountFactor;
-  const totalWithoutVat = platesTotalWithoutVatAfterDiscount + logisticsCost;
-  const vatAmount = totalWithoutVat * 0.22;
-  const totalWithVat = totalWithoutVat + vatAmount;
+  const platesAfterDiscount = platesTotalWithVat * discountFactor;
+  const vat22FromPlates = platesAfterDiscount * 0.22;
+  const grandTotal = platesAfterDiscount + logisticsCost;
 
   useEffect(() => {
     setDiscountDraft(String(draft.metadata.discount_percent ?? 0));
@@ -117,8 +117,8 @@ export const CalculationResultStep = ({
         <SummaryCell label="Менеджер" value={draft.metadata.manager_name || "Не выбран"} />
         <SummaryCell label="Позиций" value={String(draft.order_data.length)} />
         <SummaryCell label="Количество" value={String(draft.totals.total_qty ?? 0)} />
-        <SummaryCell label="Сумма без НДС" value={`${draft.totals.subtotal ?? 0}`} />
-        <SummaryCell label="Сумма с НДС" value={`${draft.totals.total_with_vat ?? 0}`} />
+        <SummaryCell label="(НДС 22%)" value={formatNumber(draft.totals.vat_amount ?? 0)} />
+        <SummaryCell label="Общая стоимость" value={formatNumber(draft.totals.total_with_vat ?? 0)} />
       </div>
     </Card>
 
@@ -177,7 +177,7 @@ export const CalculationResultStep = ({
           }}
         >
           <SummaryCell label="Общий вес (кг)" value={formatNumber(totalWeight)} />
-          <SummaryCell label="Стоимость без НДС" value={formatNumber(totalWithoutVat)} />
+          <SummaryCell label="(НДС 22%)" value={formatNumber(vat22FromPlates)} />
           <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
             <FieldWrapper label="Стоимость логистики" error={logisticsError}>
               <div style={{ position: "relative" }}>
@@ -214,7 +214,7 @@ export const CalculationResultStep = ({
               </div>
             </FieldWrapper>
           </div>
-          <SummaryCell label="Стоимость с НДС" value={formatNumber(totalWithVat)} />
+          <SummaryCell label="Общая стоимость" value={formatNumber(grandTotal)} />
         </div>
         <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
           <FieldWrapper label="Скидка (%)" error={discountError}>
