@@ -214,7 +214,7 @@ LOAD_TO_REINFORCEMENT_MAP = {}  # маппинг: load_code → [reinforcement_k
 
 
 # ==================== ЛЕГАСИ-АДАПТЕРЫ ====================
-from collections import Counter
+from collections import Counter, defaultdict
 
 
 def _group_plate_lengths(plates: list[float]) -> dict[float, int]:
@@ -1138,6 +1138,37 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             "[OPT_2D] no_sources: %d ключей, %d плит — закроются через unmet/post-correction",
             len(no_sources_keys), sum(q for _, q in no_sources_keys),
         )
+    # #region agent log
+    try:
+        import json as _agent_json
+        import time as _agent_time
+        _supply_diag = []
+        for _dk in dk_list:
+            _supply_diag.append({
+                "dk": list(_dk),
+                "need_qty": int(demand_2d.get(_dk, 0)),
+                "primary_opts": len(primary_pairs_per_dk.get(_dk) or []),
+                "secondary_opts": len(secondary_pairs_per_dk.get(_dk) or []),
+                "solid_opts": len(solid_pairs_per_dk.get(_dk) or []),
+            })
+        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            _agent_f.write(_agent_json.dumps({
+                "sessionId": "ebb546",
+                "runId": "solver-localization",
+                "hypothesisId": "O1,O2",
+                "location": "core/optimization.py:before_solve:demand_option_supply",
+                "message": "Demand keys и количество доступных опций до solve",
+                "data": {
+                    "demand_total": int(sum(demand_2d.values())),
+                    "demand_keys": int(len(dk_list)),
+                    "no_sources_keys": [{"dk": list(k), "qty": int(q)} for k, q in (no_sources_keys or [])],
+                    "supply_diag": _supply_diag[:200],
+                },
+                "timestamp": int(_agent_time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     # 6. ОГРАНИЧЕНИЯ: Баланс остатков с load_code в ключе.
     # Ключ остатка теперь (length, rest_width, load_code) — остатки разных load_code
     # не пулятся, что закрывает старый баг "общий пул остатков".
@@ -1269,6 +1300,60 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             v = value(sv) or 0
             if v > 0.5:
                 _slack_logger.warning("[OPT_2D] [SOLID_SLACK] %s = %d", dk, int(round(v)))
+    # #region agent log
+    try:
+        import json as _agent_json
+        import time as _agent_time
+
+        _coverage_diag = []
+        _missing_after_solver = []
+        for _dk in dk_list:
+            _need = int(demand_2d.get(_dk, 0))
+            _z_prim = int(round(sum((value(z_prim.get((_oid, _dk))) or 0) for _oid in (primary_pairs_per_dk.get(_dk) or []))))
+            _z_sec = int(round(sum((value(z_sec.get((_oid, _dk))) or 0) for _oid in (secondary_pairs_per_dk.get(_dk) or []))))
+            _unmet_v = int(round(value(unmet.get(_dk)) or 0))
+            _covered = _z_prim + _z_sec
+            _coverage_diag.append({
+                "dk": list(_dk),
+                "need_qty": _need,
+                "z_prim": _z_prim,
+                "z_sec": _z_sec,
+                "covered": _covered,
+                "unmet": _unmet_v,
+                "supply_primary_opts": len(primary_pairs_per_dk.get(_dk) or []),
+                "supply_secondary_opts": len(secondary_pairs_per_dk.get(_dk) or []),
+            })
+            if _covered < _need:
+                _missing_after_solver.append({
+                    "dk": list(_dk),
+                    "need_qty": _need,
+                    "covered": _covered,
+                    "missing": _need - _covered,
+                    "unmet": _unmet_v,
+                })
+        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            _agent_f.write(_agent_json.dumps({
+                "sessionId": "ebb546",
+                "runId": "solver-localization",
+                "hypothesisId": "O3,O4,O5",
+                "location": "core/optimization.py:after_solve:z_coverage",
+                "message": "Покрытие спроса по dk после solve через z_prim/z_sec/unmet",
+                "data": {
+                    "solver_status": _solver_status,
+                    "demand_total": int(sum(demand_2d.values())),
+                    "z_prim_total": int(round(sum((value(v) or 0) for v in z_prim.values()))),
+                    "z_sec_total": int(round(sum((value(v) or 0) for v in z_sec.values()))),
+                    "unmet_total": _unmet_total,
+                    "slack_total": _slack_total,
+                    "missing_after_solver_total": int(sum(x["missing"] for x in _missing_after_solver)),
+                    "missing_after_solver": _missing_after_solver[:120],
+                    "coverage_diag": _coverage_diag[:250],
+                },
+                "timestamp": int(_agent_time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     # 9. ИЗВЛЕЧЕНИЕ РЕЗУЛЬТАТОВ
     from .plate_audit import PlateAudit as _PlateAudit
     import logging as _log_mod
@@ -1286,6 +1371,9 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         'rests_created': [],  # Остатки, созданные при первичных резах
         'rests_used': []      # Остатки, использованные во вторичных резах
     }
+    _next_primary_instance_id = 1
+    _next_secondary_instance_id = 1
+    _primary_instances_by_opt_id: dict[int, list[str]] = defaultdict(list)
 
     planned_primary_cuts = []
     planned_secondary_cuts = []
@@ -1307,6 +1395,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         opt = primary_options_by_id[opt_id]
         target_length, target_width, target_load_code = dk
         for _ in range(qty):
+            primary_instance_id = f"prim-{_next_primary_instance_id}"
+            _next_primary_instance_id += 1
             planned_primary_cuts.append({
                 'width': opt['main'],
                 'demand_width': target_width,
@@ -1315,7 +1405,10 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'lengths': [opt['length']],
                 'load_code': target_load_code,
                 'assignment_key': dk,
+                'source_opt_id': opt_id,
+                'primary_instance_id': primary_instance_id,
             })
+            _primary_instances_by_opt_id[opt_id].append(primary_instance_id)
             result['total_plates'] += 1
 
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
@@ -1368,6 +1461,14 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         opt = secondary_options_by_id[opt_id]
         target_length, target_width, target_load_code = dk
         for _ in range(qty):
+            parent_instance_id = None
+            for source_opt_id in opt.get('source_ids') or []:
+                queue = _primary_instances_by_opt_id.get(source_opt_id) or []
+                if queue:
+                    parent_instance_id = queue.pop(0)
+                    break
+            secondary_instance_id = f"sec-{_next_secondary_instance_id}"
+            _next_secondary_instance_id += 1
             planned_secondary_cuts.append({
                 'source': opt['source_rest'],
                 'cuts': [opt['output_width']],
@@ -1379,9 +1480,44 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'lengths': [opt['output_length']],
                 'target_order_key': dk,
                 'load_code': target_load_code,
+                'parent_instance_id': parent_instance_id,
+                'secondary_instance_id': secondary_instance_id,
+                'source_opt_ids': list(opt.get('source_ids') or []),
             })
 
     result['secondary_cuts'] = planned_secondary_cuts
+
+    # #region agent log
+    try:
+        import json as _agent_json
+        import time as _agent_time
+        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            _agent_f.write(_agent_json.dumps({
+                "sessionId": "ebb546",
+                "runId": "solver-localization",
+                "hypothesisId": "O6",
+                "location": "core/optimization.py:before_solver_output_checkpoint",
+                "message": "Фактические primary/secondary перед PlateAudit solver_output",
+                "data": {
+                    "primary_cuts_len": len(result.get("primary_cuts") or []),
+                    "secondary_cuts_len": len(result.get("secondary_cuts") or []),
+                    "total_for_audit": len(result.get("primary_cuts") or []) + len(result.get("secondary_cuts") or []),
+                    "secondary_sample": [
+                        {
+                            "source": c.get("source"),
+                            "cuts": c.get("cuts"),
+                            "lengths": c.get("lengths"),
+                            "target_order_key": c.get("target_order_key"),
+                            "load_code": c.get("load_code"),
+                        }
+                        for c in (result.get("secondary_cuts") or [])[:20]
+                    ],
+                },
+                "timestamp": int(_agent_time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     # PlateAudit: checkpoint после сбора данных из solver (до пост-коррекции)
     _audit.checkpoint("solver_output", result['primary_cuts'] + result['secondary_cuts'])
@@ -1409,6 +1545,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             continue
         rest = (plate_width - W) if W < plate_width else 0
         for _ in range(need - have):
+            primary_instance_id = f"prim-{_next_primary_instance_id}"
+            _next_primary_instance_id += 1
             result['primary_cuts'].append({
                 'width': W,
                 'demand_width': W,
@@ -1418,6 +1556,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'load_code': lc,
                 'assignment_key': (L, W, lc),
                 'identity_match_type': 'post_correction_pending',
+                'source_opt_id': None,
+                'primary_instance_id': primary_instance_id,
             })
             result['total_plates'] += 1
             _post_correction_added += 1
@@ -1454,6 +1594,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             _shortfall = _qty - _have
             _rest = max(0, plate_width - _W) if _W <= plate_width else 0
             for _ in range(_shortfall):
+                primary_instance_id = f"prim-{_next_primary_instance_id}"
+                _next_primary_instance_id += 1
                 result['primary_cuts'].append({
                     'width': _W,
                     'demand_width': _W,
@@ -1463,6 +1605,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     'load_code': _lc,
                     'assignment_key': (_L, _W, _lc),
                     'identity_match_type': 'force_added_no_sources',
+                    'source_opt_id': None,
+                    'primary_instance_id': primary_instance_id,
                 })
                 result['total_plates'] += 1
                 _force_added += 1
@@ -1601,6 +1745,9 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 'plate_name': cut.get('plate_name'),
                 'load_code': cut.get('load_code', 800),
                 'identity_match_type': cut.get('identity_match_type'),
+                'unit_id': cut.get('primary_instance_id'),
+                'parent_unit_id': None,
+                'source_opt_id': cut.get('source_opt_id'),
             })
             
             # Сохраняем информацию об остатке для отслеживания
@@ -1673,6 +1820,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             'plate_name': cut.get('plate_name'),
             'load_code': cut.get('load_code', 800),
             'identity_match_type': cut.get('identity_match_type'),
+            'unit_id': cut.get('secondary_instance_id'),
+            'parent_unit_id': cut.get('parent_instance_id'),
         })
     # #region agent log (session 5b5324) после вторичных резов
     try:

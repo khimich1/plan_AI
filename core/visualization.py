@@ -50,13 +50,95 @@ except Exception:
 
 
 # Реэкспорт для обратной совместимости
-__all__ = ['visualize_plan', 'build_layout_sequence', 'split_sequence_into_tracks']
+__all__ = [
+    'visualize_plan',
+    'build_layout_sequence',
+    'split_sequence_into_tracks',
+    'validate_track_integrity',
+    'LayoutIntegrityError',
+]
+
+
+class LayoutIntegrityError(RuntimeError):
+    """Ошибка целостности раскладки: часть плит потеряна или задублирована."""
+
+
+def _iter_sequence_items(sequence: list) -> list[dict]:
+    """Возвращает flat-список root items из grouped/flat sequence."""
+    if not isinstance(sequence, list):
+        return []
+    if sequence and isinstance(sequence[0], dict) and 'load_code' in sequence[0]:
+        items: list[dict] = []
+        for group in sequence:
+            if not isinstance(group, dict):
+                continue
+            for item in group.get('sequence') or []:
+                if isinstance(item, dict):
+                    items.append(item)
+        return items
+    return [item for item in sequence if isinstance(item, dict)]
+
+
+def _ensure_layout_uid(items: list[dict], *, prefix: str) -> None:
+    """Проставляет стабильный uid у элементов, если он ещё не задан."""
+    for idx, item in enumerate(items):
+        if item.get("layout_uid"):
+            continue
+        unit_id = item.get("unit_id")
+        if unit_id:
+            item["layout_uid"] = str(unit_id)
+            continue
+        # fallback uid нужен только для контроля целостности split.
+        item["layout_uid"] = f"{prefix}:{idx}"
+
+
+def validate_track_integrity(
+    input_sequence: list,
+    tracks: list[dict],
+    *,
+    strict: bool = False,
+) -> dict:
+    """Сверяет identity входной последовательности и выхода split по layout_uid."""
+    in_items = _iter_sequence_items(input_sequence)
+    _ensure_layout_uid(in_items, prefix="seq")
+    input_ids = [str(item.get("layout_uid")) for item in in_items]
+
+    out_items: list[dict] = []
+    for track in tracks or []:
+        if not isinstance(track, dict):
+            continue
+        for item in track.get("items") or []:
+            if isinstance(item, dict):
+                out_items.append(item)
+    _ensure_layout_uid(out_items, prefix="track")
+    output_ids = [str(item.get("layout_uid")) for item in out_items]
+
+    input_counter = Counter(input_ids)
+    output_counter = Counter(output_ids)
+    missing = dict(input_counter - output_counter)
+    duplicated = dict(output_counter - input_counter)
+
+    report = {
+        "input_total": len(input_ids),
+        "output_total": len(output_ids),
+        "missing": missing,
+        "duplicated": duplicated,
+        "ok": not missing and not duplicated,
+    }
+    if strict and not report["ok"]:
+        raise LayoutIntegrityError(
+            "Нарушена целостность split_sequence_into_tracks: "
+            f"input={report['input_total']}, output={report['output_total']}, "
+            f"missing={len(missing)}, duplicated={len(duplicated)}"
+        )
+    return report
 
 
 def split_sequence_into_tracks(
     sequence: list,
     max_track_length: float = 101.0,
-    min_track_length: float = 96.0
+    min_track_length: float = 96.0,
+    strict_layout_integrity: bool = False,
 ) -> list:
     """
     Разбивает последовательность плит на дорожки с соблюдением правил завода.
@@ -94,6 +176,8 @@ def split_sequence_into_tracks(
         return 'Нагрузка ' + ', '.join(disp) if len(disp) > 1 else f'Нагрузка {disp[0]}'
 
     tracks = []
+    _sequence_items_for_uid = _iter_sequence_items(sequence)
+    _ensure_layout_uid(_sequence_items_for_uid, prefix="seq")
     
     # Проверяем формат данных (с группировкой по нагрузке или без)
     if isinstance(sequence, list) and sequence and isinstance(sequence[0], dict) and 'load_code' in sequence[0]:
@@ -444,6 +528,8 @@ def split_sequence_into_tracks(
                         current_track.append(candidate)
                         current_track_length += candidate['length']
                         items.pop(found_solid_idx)
+                        if found_solid_idx < i:
+                            i -= 1
                     else:
                         logger.warning("[SPLIT_TRACKS] Целой плиты для завершения не найдено, закрываем как есть")
                 else:
@@ -502,6 +588,47 @@ def split_sequence_into_tracks(
         pass
     # #endregion
     logger.info(f"[SPLIT_TRACKS] Плиты разбиты на {len(tracks)} дорожек")
+    try:
+        integrity_report = validate_track_integrity(
+            sequence,
+            tracks,
+            strict=strict_layout_integrity,
+        )
+        # #region agent log
+        try:
+            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                _agent_f.write(__import__("json").dumps({
+                    "sessionId": "ebb546",
+                    "runId": "stage-localization",
+                    "hypothesisId": "S5C",
+                    "location": "core/visualization.py:split_sequence_into_tracks:integrity_report",
+                    "message": "Integrity report split_sequence_into_tracks",
+                    "data": {
+                        "input_total": int(integrity_report.get("input_total") or 0),
+                        "output_total": int(integrity_report.get("output_total") or 0),
+                        "ok": bool(integrity_report.get("ok")),
+                        "missing_count": len(integrity_report.get("missing") or {}),
+                        "duplicated_count": len(integrity_report.get("duplicated") or {}),
+                        "missing_sample": list((integrity_report.get("missing") or {}).items())[:20],
+                        "duplicated_sample": list((integrity_report.get("duplicated") or {}).items())[:20],
+                    },
+                    "timestamp": int(__import__("time").time() * 1000),
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        if not integrity_report["ok"]:
+            logger.error(
+                "[SPLIT_TRACKS] Integrity mismatch: input=%s output=%s missing=%s duplicated=%s",
+                integrity_report["input_total"],
+                integrity_report["output_total"],
+                len(integrity_report["missing"]),
+                len(integrity_report["duplicated"]),
+            )
+    except LayoutIntegrityError:
+        raise
+    except Exception:
+        logger.exception("[SPLIT_TRACKS] Ошибка проверки integrity split")
     return tracks
 
 

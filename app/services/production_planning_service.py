@@ -665,12 +665,20 @@ class ProductionPlanningService:
             if not optimization_result or optimization_result.get("total_plates", 0) == 0:
                 return [], optimization_result
 
-            from core.visualization import split_sequence_into_tracks
+            from core.visualization import LayoutIntegrityError, split_sequence_into_tracks
             from viz_modules.layout_sequence import build_layout_sequence
 
             with self.optimization_service.legacy_runtime(context):
                 seq = build_layout_sequence()
-                all_tracks_list = split_sequence_into_tracks(seq) or []
+                try:
+                    all_tracks_list = split_sequence_into_tracks(
+                        seq,
+                        strict_layout_integrity=True,
+                    ) or []
+                except LayoutIntegrityError as exc:
+                    raise ProductionPlanBuildError(
+                        f"Нарушена целостность раскладки дорожек: {exc}"
+                    ) from exc
 
             # #region agent log
             try:
@@ -682,9 +690,25 @@ class ProductionPlanningService:
                     _total = 0
                     _without_identity = 0
                     _counts: _AgentCounter[str] = _AgentCounter()
-                    for _item in _seq or []:
-                        if not isinstance(_item, dict):
-                            continue
+                    if (
+                        isinstance(_seq, list)
+                        and _seq
+                        and isinstance(_seq[0], dict)
+                        and isinstance(_seq[0].get("sequence"), list)
+                    ):
+                        _iter_items: list[dict[str, Any]] = []
+                        for _group in _seq:
+                            if not isinstance(_group, dict):
+                                continue
+                            for _item in _group.get("sequence") or []:
+                                if isinstance(_item, dict):
+                                    _iter_items.append(_item)
+                    else:
+                        _iter_items = [
+                            _item for _item in (_seq or [])
+                            if isinstance(_item, dict)
+                        ]
+                    for _item in _iter_items:
                         _total += 1
                         _kp_id = _item.get("kp_id")
                         _plate_name = _item.get("plate_name") or _item.get("label")
@@ -797,28 +821,99 @@ class ProductionPlanningService:
             )
 
         try:
-            from core.rescue_tracks import build_track_gap_rescue_tracks
-
-            track_gap_rescue_tracks, track_gap_missing = build_track_gap_rescue_tracks(
-                orders_2d=orders_2d,
+            fallback_tracks, fallback_missing = self._build_assignment_gap_fallback_tracks(
+                plate_assignments=optimization_result.get("plate_assignments", []) or [],
                 tracks_list=all_tracks_list,
             )
-            if track_gap_rescue_tracks:
+            if fallback_tracks:
                 logger.warning(
-                    "[WEB-PLAN] RESCUE track-gap: добавлено %s дорожек для "
-                    "%s плит, которые были в assignments, но отсутствовали "
-                    "в track items: %s",
-                    len(track_gap_rescue_tracks),
-                    sum(track_gap_missing.values()),
-                    track_gap_missing,
+                    "[WEB-PLAN] FALLBACK track-gap: добавлено %s дорожек для "
+                    "%s плит из assignments, отсутствующих в tracks: %s",
+                    len(fallback_tracks),
+                    sum(fallback_missing.values()),
+                    fallback_missing,
                 )
-                all_tracks_list.extend(track_gap_rescue_tracks)
+                all_tracks_list.extend(fallback_tracks)
         except Exception:
             logger.exception(
-                "[WEB-PLAN] RESCUE track-gap логика упала — продолжаем без неё"
+                "[WEB-PLAN] FALLBACK track-gap логика упала — продолжаем без неё"
             )
 
         return all_tracks_list, optimization_result
+
+    @staticmethod
+    def _build_assignment_gap_fallback_tracks(
+        *,
+        plate_assignments: list[dict[str, Any]],
+        tracks_list: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], Counter]:
+        """Возвращает fallback-треки для плит, потерянных между assignments и tracks."""
+        assignments_by_unit_id: dict[str, dict[str, Any]] = {}
+        missing_counter: Counter = Counter()
+        for assignment in plate_assignments or []:
+            unit_id = assignment.get("unit_id")
+            if not unit_id:
+                continue
+            assignments_by_unit_id[str(unit_id)] = assignment
+
+        present_unit_ids: set[str] = set()
+        for track in tracks_list or []:
+            if not isinstance(track, dict):
+                continue
+            for item in track.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                root_id = item.get("unit_id")
+                if root_id:
+                    present_unit_ids.add(str(root_id))
+                for sec in item.get("secondary_cuts") or []:
+                    if isinstance(sec, dict) and sec.get("unit_id"):
+                        present_unit_ids.add(str(sec.get("unit_id")))
+
+        missing_assignments = [
+            a for uid, a in assignments_by_unit_id.items()
+            if uid not in present_unit_ids
+        ]
+        fallback_tracks: list[dict[str, Any]] = []
+        for assignment in missing_assignments:
+            source = str(assignment.get("source") or "")
+            width_mm = int(round(float(assignment.get("width") or 1200)))
+            length = float(assignment.get("length") or 6.0)
+            mode = "split" if source == "secondary" else "solid"
+            item: dict[str, Any] = {
+                "mode": mode,
+                "length": length,
+                "width": width_mm / 1000.0,
+                "unit_id": assignment.get("unit_id"),
+                "layout_uid": str(assignment.get("unit_id")),
+                "parent_unit_id": assignment.get("parent_unit_id"),
+                "kp_id": assignment.get("kp_id"),
+                "customer": assignment.get("customer"),
+                "kp_date": assignment.get("kp_date"),
+                "plate_name": assignment.get("plate_name"),
+                "load_code": assignment.get("load_code", 8),
+                "placement_status": "fallback",
+                "origin_reason": "track_gap_missing_unit_id",
+            }
+            if mode == "solid":
+                item["label"] = assignment.get("plate_name") or f"fallback:{width_mm}"
+            else:
+                main_w = width_mm / 1000.0
+                item["main_w"] = main_w
+                item["rest_w"] = 0.0
+                item["label_main"] = assignment.get("plate_name") or f"fallback:{width_mm}"
+                item["label_rest"] = None
+                item["secondary_cuts"] = []
+            track_label = "FALLBACK"
+            fallback_tracks.append({
+                "label": track_label,
+                "placement_status": "fallback",
+                "items": [item],
+                "length": length,
+            })
+            missing_counter[(assignment.get("kp_id"), assignment.get("plate_name") or "")] += 1
+
+        return fallback_tracks, missing_counter
 
     @staticmethod
     def _validate_fill_targets(

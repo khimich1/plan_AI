@@ -896,7 +896,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         await message.answer("⏳ Подсчитываю дорожки...")
         
         from viz_modules.layout_sequence import build_layout_sequence
-        from core.visualization import split_sequence_into_tracks
+        from core.visualization import LayoutIntegrityError, split_sequence_into_tracks
         from core.plate_audit import PlateAudit as _PlateAudit
 
         # Подхватываем audit из оптимизатора, если он там был создан
@@ -983,7 +983,17 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             pass
         # #endregion
 
-        all_tracks_list = split_sequence_into_tracks(seq)
+        try:
+            all_tracks_list = split_sequence_into_tracks(
+                seq,
+                strict_layout_integrity=True,
+            )
+        except LayoutIntegrityError as exc:
+            logger.error("[BOT-PLAN] Ошибка целостности раскладки: %s", exc)
+            await message.answer(
+                f"❌ Нарушена целостность раскладки дорожек: {exc}"
+            )
+            return
 
         # PlateAudit: checkpoint после split_sequence_into_tracks
         _handler_audit.checkpoint("tracks", all_tracks_list)
@@ -1430,6 +1440,58 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             completed_days=completed_days,
             days_info=days_info
         )
+
+        # #region agent log
+        try:
+            import json as _agent_json
+            import time as _agent_time
+            from collections import Counter as _AgentCounter
+
+            def _bot_count_physical(_tracks: list[dict]) -> tuple[int, int, _AgentCounter[str]]:
+                _total = 0
+                _without_identity = 0
+                _counts: _AgentCounter[str] = _AgentCounter()
+                for _tr in _tracks or []:
+                    if not isinstance(_tr, dict):
+                        continue
+                    for _it in _tr.get("items") or []:
+                        if not isinstance(_it, dict):
+                            continue
+                        _phys = [_it] + [
+                            _sec for _sec in (_it.get("secondary_cuts") or [])
+                            if isinstance(_sec, dict)
+                        ]
+                        for _p in _phys:
+                            _total += 1
+                            _kp = _p.get("kp_id")
+                            _name = _p.get("plate_name") or _p.get("label")
+                            if _kp and _name:
+                                _counts[f"{_kp}|{_name}"] += 1
+                            else:
+                                _without_identity += 1
+                return _total, _without_identity, _counts
+
+            _physical_total, _without_identity, _id_counts = _bot_count_physical(all_tracks_list)
+            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                _agent_f.write(_agent_json.dumps({
+                    "sessionId": "ebb546",
+                    "runId": "bot-stage",
+                    "hypothesisId": "B1,B2",
+                    "location": "bot/handlers/production_execution.py:before_state_update",
+                    "message": "Bot stage E->state: треки перед сохранением в FSM",
+                    "data": {
+                        "orders_qty": sum(int(o.get("qty") or 0) for o in orders_2d),
+                        "assignments_total": len((optimization_result or {}).get("plate_assignments", []) or []),
+                        "tracks_count": len(all_tracks_list or []),
+                        "physical_items_total": _physical_total,
+                        "physical_without_identity": _without_identity,
+                        "top_identity_counts": _id_counts.most_common(15),
+                    },
+                    "timestamp": int(_agent_time.time() * 1000),
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         
         # === ПОКАЗЫВАЕМ КНОПКИ С ДАТАМИ ===
         await message.answer(
