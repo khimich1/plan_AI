@@ -12,6 +12,9 @@ import re
 import sqlite3
 
 import core.config_and_data as cfg
+from core.debug_paths import get_debug_log_path
+
+_DEBUG_LOG_DB7A51 = get_debug_log_path("debug-db7a51.log")
 
 try:
     import pandas as pd
@@ -228,7 +231,7 @@ def find_price_for_plate(price_table: dict, length_m: float, load_code: int | fl
     # #region agent log
     import json
     import time
-    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-db7a51.log')
+    _log_path = _DEBUG_LOG_DB7A51
     try:
         with open(_log_path, 'a', encoding='utf-8') as _f:
             _f.write(json.dumps({"sessionId": "db7a51", "hypothesisId": "find_price_for_plate", "location": "price_utils.py:find_price_for_plate", "message": "find_price_for_plate lookup", "data": {"length_m": length_m, "load_code": load_code, "load_code_int": load_code_int, "key": key, "result": result, "key_in_table": key in price_table, "loads_keys": list(price_table.get(key, {}).keys())}, "timestamp": int(time.time() * 1000)}, ensure_ascii=False) + "\n")

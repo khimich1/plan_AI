@@ -21,11 +21,13 @@ from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
 from core.plan_commit import PlanCommitError, commit_plan_plates
 from core.serialization import strip_plate_audit_from_plan
+from core.debug_paths import get_debug_log_path
 from bot.handlers import plan_manager
 from core import kp_db
 from core.reinforcement_db import get_reinforcement
 
 logger = logging.getLogger(__name__)
+_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
 
 FilterMethod = Literal["all", "kp"]
 
@@ -115,7 +117,7 @@ class ProductionPlanningService:
                 for o in orders_2d
                 for _ in range(int(o.get("qty") or 0))
             )
-            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
                 _agent_f.write(_agent_json.dumps({
                     "sessionId": "ebb546",
                     "runId": "stage-localization",
@@ -242,7 +244,7 @@ class ProductionPlanningService:
                                     _secondary_without_identity += 1
                             else:
                                 _identity_counts[f"{_kp_id}|{_plate_name}"] += 1
-            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
                 _agent_f.write(_agent_json.dumps({
                     "sessionId": "ebb546",
                     "runId": "pre-fix",
@@ -694,7 +696,7 @@ class ProductionPlanningService:
 
                 _seq_total, _seq_without_identity, _seq_counts = _count_sequence_items(seq)
                 _tracks_total, _tracks_without_identity, _tracks_counts = _count_track_items(all_tracks_list)
-                with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
                     _agent_f.write(_agent_json.dumps({
                         "sessionId": "ebb546",
                         "runId": "stage-localization",

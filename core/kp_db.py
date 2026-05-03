@@ -19,10 +19,17 @@ import os
 import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, TypedDict
+from core.debug_paths import get_debug_log_path
 
 # Путь к базе данных (в корне проекта)
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'plita.db')
-_DEBUG_SESSION_LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-d7e22e.log')
+_DEBUG_SESSION_LOG = get_debug_log_path("debug-d7e22e.log")
+_DEBUG_NOMENCLATURE_LOG = get_debug_log_path("debug-00f316.log")
+_DEBUG_LOG = get_debug_log_path("debug.log")
+_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
+_DEBUG_LOG_A9176E = get_debug_log_path("debug-a9176e.log")
+_DEBUG_LOG_B59370 = get_debug_log_path("debug-b59370.log")
+_DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
 
 
 def _debug_session_write(run_id: str, hypothesis_id: str, location: str, message: str, data: Dict) -> None:
@@ -443,7 +450,7 @@ def lookup_nomenclature_by_plate_name(
 
     # #region agent log (nomenclature not found — stage: after exact, variants, LIKE)
     try:
-        _debug_log = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bot', 'debug-00f316.log')
+        _debug_log = _DEBUG_NOMENCLATURE_LOG
         with open(_debug_log, 'a', encoding='utf-8') as _f:
             _f.write(__import__('json').dumps({"sessionId": "00f316", "hypothesisId": "nomenclature_stage", "location": "kp_db:lookup_nomenclature_by_plate_name", "message": "nomenclature not found after exact, variants, LIKE", "data": {"plate_name": (plate_name or "")[:120], "stage": "not_found"}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
     except Exception:
@@ -486,7 +493,7 @@ def fill_plate_nomenclature_cache() -> None:
             # #region agent log (a9176e: 57/57,1 — fill_plate_nomenclature_cache)
             if 5.69 <= length_m <= 5.73:
                 try:
-                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-a9176e.log')
+                    _log_path = _DEBUG_LOG_A9176E
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "a9176e", "hypothesisId": "H5", "location": "kp_db:fill_plate_nomenclature_cache", "message": "57/57,1 cache fill", "data": {"key": [length_m, width_m, load_code], "length_dm_raw": length_dm_raw, "plate_name": (plate_name or "")[:60], "canonical_name": (canonical_name or "")[:60] if canonical_name else None}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -523,7 +530,7 @@ def enrich_order_data_with_nomenclature(order_data: List[Dict]) -> List[Dict]:
             if item.get('nomenclature_id') is not None:
                 # #region agent log (00f316: плита уже с id из кэша)
                 try:
-                    _debug_log = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bot', 'debug-00f316.log')
+                    _debug_log = _DEBUG_NOMENCLATURE_LOG
                     with open(_debug_log, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "00f316", "hypothesisId": "nomenclature_check", "location": "kp_db:enrich_order_data_with_nomenclature", "message": "plate skipped, has nomenclature_id from cache", "data": {"plate_name": (item.get('name', '') or '')[:120], "has_nomenclature_id": True, "match_type": "from_cache"}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -531,7 +538,7 @@ def enrich_order_data_with_nomenclature(order_data: List[Dict]) -> List[Dict]:
                 # #endregion
                 # #region agent log
                 try:
-                    _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'debug-b59370.log')
+                    _log_path = _DEBUG_LOG_B59370
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H_prays", "location": "kp_db:enrich_skipped", "message": "item had nomenclature_id from cache", "data": {"name": (item.get('name', '') or '')[:60]}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -549,7 +556,7 @@ def enrich_order_data_with_nomenclature(order_data: List[Dict]) -> List[Dict]:
             # #region agent log (a9176e: 57/57,1 — enrich подстановка)
             if ('57,1' in (original_name or '') or ('57-12' in (original_name or '') and '57,' not in (original_name or ''))):
                 try:
-                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-a9176e.log')
+                    _log_path = _DEBUG_LOG_A9176E
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "a9176e", "hypothesisId": "H4", "location": "kp_db:enrich_order_data_with_nomenclature", "message": "57/57,1 enrich lookup", "data": {"original_name": (original_name or "")[:80], "canonical_name": (canonical_name or "")[:80] if canonical_name else None, "match_type": match_type, "replaced": canonical_name is not None}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -557,7 +564,7 @@ def enrich_order_data_with_nomenclature(order_data: List[Dict]) -> List[Dict]:
             # #endregion
             # #region agent log (00f316: каждая плита — есть ли nomenclature_id и этап совпадения)
             try:
-                _debug_log = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bot', 'debug-00f316.log')
+                _debug_log = _DEBUG_NOMENCLATURE_LOG
                 with open(_debug_log, 'a', encoding='utf-8') as _f:
                     _f.write(__import__('json').dumps({"sessionId": "00f316", "hypothesisId": "nomenclature_check", "location": "kp_db:enrich_order_data_with_nomenclature", "message": "plate nomenclature result", "data": {"plate_name": (original_name or "")[:120], "has_nomenclature_id": nomenclature_id is not None, "match_type": match_type}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
             except Exception:
@@ -567,7 +574,7 @@ def enrich_order_data_with_nomenclature(order_data: List[Dict]) -> List[Dict]:
             _no_nom_substrings = ('61,8-5', '45-7', '37,9-9')
             if any(sub in (original_name or '') for sub in _no_nom_substrings):
                 try:
-                    _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'debug-8e9428.log')
+                    _log_path = _DEBUG_LOG_8E9428
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_no_nomenclature", "location": "kp_db:enrich_order_data_with_nomenclature", "message": "lookup prays_plity for 61,8-5 / 45-7 / 37,9-9", "data": {"original_name": (original_name or "")[:80], "canonical_name": (canonical_name[:80] if canonical_name else None), "nomenclature_id": nomenclature_id, "match_type": match_type}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -575,7 +582,7 @@ def enrich_order_data_with_nomenclature(order_data: List[Dict]) -> List[Dict]:
             # #endregion
             # #region agent log
             try:
-                _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'debug-b59370.log')
+                _log_path = _DEBUG_LOG_B59370
                 with open(_log_path, 'a', encoding='utf-8') as _f:
                     _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H_prays", "location": "kp_db:enrich_lookup", "message": "prays_plity lookup result", "data": {"original_name": original_name[:60], "canonical_name": (canonical_name[:60] if canonical_name else None), "match_type": match_type}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
             except Exception:
@@ -1352,7 +1359,7 @@ def move_plates_to_completed(
     unmoved_plates: list[UnmovedPlateInfo] = []
     # #region agent log
     import json as _json4
-    _debug_log4 = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
+    _debug_log4 = _DEBUG_LOG
     # #endregion
     
     try:
@@ -1385,7 +1392,7 @@ def move_plates_to_completed(
             _trace_substrings = ('61,8-5', '45-7', '37,9-9')
             if any(sub in (plate_name or '') for sub in _trace_substrings):
                 try:
-                    _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'debug-8e9428.log')
+                    _log_path = _DEBUG_LOG_8E9428
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_find_row_in", "location": "kp_db:find_one_row:entry", "message": "find_one_row for 61,8-5/45-7/37,9-9", "data": {"plate_name": (plate_name or "")[:80], "length_dm_raw": length_dm_raw, "prefer_kp_id": prefer_kp_id}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -1478,7 +1485,7 @@ def move_plates_to_completed(
                     row = cur.fetchone()
                     if row:
                         try:
-                            with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                            with open(_DEBUG_LOG, 'a', encoding='utf-8') as _f:
                                 _f.write(__import__('json').dumps({
                                     "hypothesisId": "H_61_cross_kp",
                                     "location": "kp_db:find_one_row:step_2.55",
@@ -1501,7 +1508,7 @@ def move_plates_to_completed(
                 row = cur.fetchone()
                 if row:
                     try:
-                        with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8') as _f:
+                        with open(_DEBUG_LOG, 'a', encoding='utf-8') as _f:
                             _f.write(__import__('json').dumps({
                                 "hypothesisId": "H_length_tolerance",
                                 "location": "kp_db:find_one_row:step_2.6",
@@ -1681,7 +1688,7 @@ def move_plates_to_completed(
                     # #region agent log (61,8-5 / 45-7 / 37,9-9: строка не найдена)
                     if any(sub in (current_plate_name or '') for sub in ('61,8-5', '45-7', '37,9-9')):
                         try:
-                            _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'debug-8e9428.log')
+                            _log_path = _DEBUG_LOG_8E9428
                             with open(_log_path, 'a', encoding='utf-8') as _f:
                                 _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_find_row_not_found", "location": "kp_db:move_plates_to_completed", "message": "find_one_row returned None for 61,8-5/45-7/37,9-9", "data": {"plate_name": (current_plate_name or "")[:80], "length_dm_raw": length_dm_raw, "kp_id": kp_id, "qty_remaining": qty_remaining}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                         except Exception:
@@ -1717,7 +1724,7 @@ def move_plates_to_completed(
                 # #region agent log (61,8-5 / 45-7 / 37,9-9: списание успешно, какая строка в БД)
                 if any(sub in (plate_name or '') for sub in ('61,8-5', '45-7', '37,9-9')):
                     try:
-                        _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'debug-8e9428.log')
+                        _log_path = _DEBUG_LOG_8E9428
                         with open(_log_path, 'a', encoding='utf-8') as _f:
                             _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_find_row_found", "location": "kp_db:move_plates_to_completed:deduct", "message": "plate found and deducted for 61,8-5/45-7/37,9-9", "data": {"requested_plate_name": (plate_name or "")[:80], "db_plate_name": (row_plate_name or "")[:80], "nomenclature_id": row_nomenclature_id, "deduct": deduct}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                     except Exception:
@@ -1788,7 +1795,7 @@ def move_plates_to_completed(
                 }
                 for _row in cur.fetchall()
             ]
-            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", 'a', encoding='utf-8') as _agent_f:
+            with open(_DEBUG_AGENT_LOG, 'a', encoding='utf-8') as _agent_f:
                 _agent_f.write(_json4.dumps({
                     "sessionId": "ebb546",
                     "runId": "pre-fix",

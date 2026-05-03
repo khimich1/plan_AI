@@ -24,9 +24,15 @@ from . import config_and_data as cfg
 from .optimization import optimize_cuts_pulp
 from .price_db import init_schema, import_from_xlsx
 from .exceptions import FileGenerationError
+from .debug_paths import get_debug_log_path
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
+_DEBUG_LOG = get_debug_log_path("debug.log")
+_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
+_DEBUG_LOG_95694E = get_debug_log_path("debug-95694e.log")
+_DEBUG_LOG_73B708 = get_debug_log_path("debug-73b708.log")
+_DEBUG_LOG_2D5C43 = get_debug_log_path("debug-2d5c43.log")
 
 # Импорты из новых модулей
 from viz_modules.price_utils import load_price_table_from_xlsx
@@ -267,7 +273,7 @@ def split_sequence_into_tracks(
                             i -= 1
                             # #region agent log (95694e)
                             try:
-                                _p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+                                _p = _DEBUG_LOG_95694E
                                 with open(_p, 'a', encoding='utf-8') as _f:
                                     _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_solid_before_i", "location": "visualization:split_tracks:empty_track", "message": "solid before cut: i-=1", "data": {"found_solid_idx": found_solid_idx, "i_before": i + 1, "group_label": group_label}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
                             except Exception:
@@ -279,7 +285,7 @@ def split_sequence_into_tracks(
                         logger.warning("[SPLIT_TRACKS] ВНИМАНИЕ: целой плиты для начала дорожки не найдено!")
                         # #region agent log
                         try:
-                            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", 'a', encoding='utf-8').write(__import__('json').dumps({"hypothesisId": "H4", "location": "visualization.py:split_tracks_no_solid", "message": "no solid plate for track start", "data": {"group_label": group_label, "i": i, "item_length": item_length, "current_track_len": len(current_track)}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+                            open(_DEBUG_LOG, 'a', encoding='utf-8').write(__import__('json').dumps({"hypothesisId": "H4", "location": "visualization.py:split_tracks_no_solid", "message": "no solid plate for track start", "data": {"group_label": group_label, "i": i, "item_length": item_length, "current_track_len": len(current_track)}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
                         except Exception:
                             pass
                         # #endregion
@@ -335,7 +341,7 @@ def split_sequence_into_tracks(
                                 i = found_solid_idx  # Следующей обрабатываем первый из "середины группы", плиты не теряются
                                 # #region agent log (95694e)
                                 try:
-                                    _p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+                                    _p = _DEBUG_LOG_95694E
                                     with open(_p, 'a', encoding='utf-8') as _f:
                                         _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_solid_before_i", "location": "visualization:split_tracks:will_exceed", "message": "solid before cut: i=found_solid_idx", "data": {"found_solid_idx": found_solid_idx, "i_before": _i_before, "group_label": group_label}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
                                 except Exception:
@@ -573,7 +579,7 @@ def split_sequence_into_tracks(
         )
     # #region agent log (73b708) H_SPLIT_IO: целостность на выходе split_sequence_into_tracks
     try:
-        _log_path = Path(__file__).resolve().parent.parent / "debug-73b708.log"
+        _log_path = _DEBUG_LOG_73B708
         with open(_log_path, 'a', encoding='utf-8') as _lf:
             _lf.write(__import__('json').dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_SPLIT_IO", "location": "visualization:split_sequence_into_tracks:exit", "message": "Input vs output item count", "data": {"input_count": input_count, "output_count": output_count, "diff": input_count - output_count}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
@@ -581,7 +587,7 @@ def split_sequence_into_tracks(
     # #endregion
     # #region agent log (2d5c43) H4: split input vs output
     try:
-        _log_2d5c43 = Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        _log_2d5c43 = _DEBUG_LOG_2D5C43
         with open(_log_2d5c43, 'a', encoding='utf-8') as _lf:
             _lf.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H4", "location": "visualization:split_sequence_into_tracks:exit", "message": "split input vs output item count", "data": {"input_count": input_count, "output_count": output_count, "diff": input_count - output_count, "tracks_count": len(tracks)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
     except Exception:
@@ -596,7 +602,7 @@ def split_sequence_into_tracks(
         )
         # #region agent log
         try:
-            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
                 _agent_f.write(__import__("json").dumps({
                     "sessionId": "ebb546",
                     "runId": "stage-localization",
@@ -757,7 +763,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                             if abs(L - 5.98) < 0.02 and w_mm == 665:
                                 n += 1
                 return n
-            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            _log_p = _DEBUG_LOG_95694E
             with open(_log_p, 'a', encoding='utf-8') as _f:
                 _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_seq_598665", "location": "visualization:visualize_plan:after_build_layout", "message": "count 5.98/665 in sequence before split", "data": {"count_598_665": _c598665(seq)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
         except Exception:
@@ -774,7 +780,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
                     if abs(L - 5.98) < 0.02 and w_mm == 665:
                         _nt += 1
-            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            _log_p = _DEBUG_LOG_95694E
             with open(_log_p, 'a', encoding='utf-8') as _f:
                 _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_598665", "location": "visualization:visualize_plan:after_split", "message": "count 5.98/665 in tracks after split", "data": {"count_598_665": _nt}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
         except Exception:

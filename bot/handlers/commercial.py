@@ -32,6 +32,7 @@ from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core import kp_db
 from core.exceptions import PlateParseError, FileGenerationError
+from core.debug_paths import get_debug_log_path
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -55,6 +56,10 @@ OPT_PLAN_CACHE: Dict[int, dict] = {}
 
 commercial_service = CommercialService()
 optimization_service = OptimizationService()
+_DEBUG_LOG = get_debug_log_path("debug.log")
+_DEBUG_LOG_B59370 = get_debug_log_path("debug-b59370.log")
+_DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
+_DEBUG_LOG_A9176E = get_debug_log_path("debug-a9176e.log")
 
 
 async def _enter_kp_manager_selection(message: Message, state: FSMContext) -> bool:
@@ -1141,7 +1146,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
             else:
                 # #region agent log
                 try:
-                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-b59370.log')
+                    _log_path = _DEBUG_LOG_B59370
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -1172,7 +1177,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
             # #region agent log (57/57,1: итоговое имя в order_data)
             if 5.69 <= length_m <= 5.73:
                 try:
-                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-8e9428.log')
+                    _log_path = _DEBUG_LOG_8E9428
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_order_data", "location": "commercial:order_data_loop", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -1182,7 +1187,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
             if 5.69 <= length_m <= 5.73:
                 try:
                     _parsed = (cfg.parse_name_to_sizes(matching_row[1]) if matching_row and len(matching_row) > 1 else (None, None))
-                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-a9176e.log')
+                    _log_path = _DEBUG_LOG_A9176E
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -1231,7 +1236,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
         try:
             _od_total = sum(i.get('qty', 0) for i in order_data)
             _od_sample = [(i.get('name', '')[:30], round(i.get('length_m', 0), 3), i.get('qty')) for i in order_data[:3]]
-            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(
+            open(_DEBUG_LOG, "a", encoding="utf-8").write(
                 __import__("json").dumps({"hypothesisId": "H3", "location": "commercial:order_data_from_price_rows", "message": "order_data after build_price_rows", "data": {"len_order_data": len(order_data), "total_qty": _od_total, "sample": _od_sample}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n"
             )
         except Exception:
@@ -1572,7 +1577,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             else:
                 # #region agent log
                 try:
-                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-b59370.log')
+                    _log_path = _DEBUG_LOG_B59370
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -1603,7 +1608,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             # #region agent log (57/57,1: итоговое имя в order_data, альт. поток)
             if 5.69 <= length_m <= 5.73:
                 try:
-                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-8e9428.log')
+                    _log_path = _DEBUG_LOG_8E9428
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_order_data_alt", "location": "commercial:order_data_loop_alt", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
@@ -1613,7 +1618,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             if 5.69 <= length_m <= 5.73:
                 try:
                     _parsed = (cfg.parse_name_to_sizes(matching_row[1]) if matching_row and len(matching_row) > 1 else (None, None))
-                    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-a9176e.log')
+                    _log_path = _DEBUG_LOG_A9176E
                     with open(_log_path, 'a', encoding='utf-8') as _f:
                         _f.write(__import__('json').dumps({"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop_alt", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:

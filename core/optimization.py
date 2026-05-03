@@ -16,11 +16,15 @@ import os as _os
 from pathlib import Path as _Path
 from . import config_and_data as cfg
 from .config_and_data import canonical_plate_key
+from .debug_paths import get_debug_log_path
 from .price_db import get_price
 from dataclasses import dataclass
 
-_DEBUG_LOG_5b5324 = _Path(__file__).resolve().parent.parent / "debug-5b5324.log"
-_DEBUG_RUNTIME_LOG_648532 = _Path(__file__).resolve().parent.parent / "debug-648532.log"
+_DEBUG_LOG_COMMON = get_debug_log_path("debug.log")
+_DEBUG_LOG_5b5324 = get_debug_log_path("debug-5b5324.log")
+_DEBUG_AGENT_LOG_EBB546 = get_debug_log_path("debug-ebb546.log")
+_DEBUG_RUNTIME_LOG_648532 = get_debug_log_path("debug-648532.log")
+_DEBUG_LOG_2D5C43 = get_debug_log_path("debug-2d5c43.log")
 _DEBUG_RUNTIME_SESSION_ID_648532 = "648532"
 
 
@@ -377,7 +381,7 @@ def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
                         try:
                             _req_lc = key[2] if len(key) >= 3 else None
                             _found_lc = candidate_key[2] if len(candidate_key) >= 3 else None
-                            with _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log") as _f:
+                            with _dbg_open_append(_DEBUG_LOG_COMMON) as _f:
                                 _f.write(__import__('json').dumps({
                                     "hypothesisId": "H2_fallback",
                                     "location": "optimization.py:_get_next_order_info",
@@ -610,7 +614,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     _demand_59_10 = [(list(k), v) for k, v in demand_2d.items() if abs(k[0] - 5.99) < 0.02 and (k[2] == 10 or abs(float(k[2]) - 10) < 0.01)]
     if _demand_59_10:
         try:
-            _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log").write(__import__("json").dumps({"hypothesisId": "H_59_10_demand", "location": "optimization.py:demand_2d_built", "message": "demand_2d: ключи 5.99м 10п (length, width, load_code)", "data": {"keys": _demand_59_10}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            _dbg_open_append(_DEBUG_LOG_COMMON).write(__import__("json").dumps({"hypothesisId": "H_59_10_demand", "location": "optimization.py:demand_2d_built", "message": "demand_2d: ключи 5.99м 10п (length, width, load_code)", "data": {"keys": _demand_59_10}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
         except Exception:
             pass
     # #endregion
@@ -783,7 +787,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     print(f"[OPT_2D] Опций первичных резов (до фильтрации): {len(primary_options)}")
     # #region agent log (2d5c43) Plan B: опции для 5.1/320 и 6/530 до фильтра
     try:
-        _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        _log = _DEBUG_LOG_2D5C43
         _opts_320 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type'), "load_code": o.get('load_code')} for o in primary_options if o.get('main') == 320 or o.get('target_width') == 320]
         _opts_530 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type'), "load_code": o.get('load_code')} for o in primary_options if o.get('main') == 530 or o.get('target_width') == 530]
         with _dbg_open_append(_log) as _f:
@@ -815,7 +819,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     print(f"[OPT_2D] После фильтрации осталось: {len(primary_options)} первичных опций")
     # #region agent log (2d5c43) Plan B: опции для 320/530 после фильтра
     try:
-        _log = __import__('pathlib').Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        _log = _DEBUG_LOG_2D5C43
         _opts_320 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type')} for o in primary_options if o.get('main') == 320 or o.get('target_width') == 320]
         _opts_530 = [{"id": o['id'], "length": o['length'], "main": o['main'], "type": o.get('type')} for o in primary_options if o.get('main') == 530 or o.get('target_width') == 530]
         with _dbg_open_append(_log) as _f:
@@ -1151,7 +1155,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 "secondary_opts": len(secondary_pairs_per_dk.get(_dk) or []),
                 "solid_opts": len(solid_pairs_per_dk.get(_dk) or []),
             })
-        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+        with open(_DEBUG_AGENT_LOG_EBB546, "a", encoding="utf-8") as _agent_f:
             _agent_f.write(_agent_json.dumps({
                 "sessionId": "ebb546",
                 "runId": "solver-localization",
@@ -1331,7 +1335,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                     "missing": _need - _covered,
                     "unmet": _unmet_v,
                 })
-        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+        with open(_DEBUG_AGENT_LOG_EBB546, "a", encoding="utf-8") as _agent_f:
             _agent_f.write(_agent_json.dumps({
                 "sessionId": "ebb546",
                 "runId": "solver-localization",
@@ -1491,7 +1495,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     try:
         import json as _agent_json
         import time as _agent_time
-        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+        with open(_DEBUG_AGENT_LOG_EBB546, "a", encoding="utf-8") as _agent_f:
             _agent_f.write(_agent_json.dumps({
                 "sessionId": "ebb546",
                 "runId": "solver-localization",
@@ -1677,8 +1681,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
 
     # #region agent log (2d5c43) H1,H2,H5: demand vs primary_cuts, 6m 530/1200
     try:
-        from pathlib import Path as _Path
-        _log_2d5c43 = _Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+        _log_2d5c43 = _DEBUG_LOG_2D5C43
         _demand_total = sum(demand_2d.values())
         _target_keys = [(6.0, 1200, 8), (6.0, 530, 8), (5.1, 320, 8)]
         _demand_by_key = {}
@@ -1762,7 +1765,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         try:
             _c = Counter(_empty_primary_keys)
             _summary = [{"key": list(k), "count": _c[k]} for k in sorted(_c.keys())]
-            with _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log") as _f:
+            with _dbg_open_append(_DEBUG_LOG_COMMON) as _f:
                 _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:primary_emit_summary", "message": "plan keys with empty plate_info (summary)", "data": {"by_key": _summary, "total_plates_empty": len(_empty_primary_keys), "unique_keys": len(_c)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
         except Exception:
             pass
@@ -1798,7 +1801,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         # #region agent log: secondary plate kp_id (H2, H5)
         if not plate_info and target_key:
             try:
-                with _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log") as _f:
+                with _dbg_open_append(_DEBUG_LOG_COMMON) as _f:
                     _f.write(__import__('json').dumps({"hypothesisId": "H2", "location": "optimization.py:secondary_emit", "message": "secondary plate_info empty", "data": {"target_key": list(target_key) if isinstance(target_key, tuple) else target_key, "output_length": cut.get('lengths', [None])[0], "output_width": cut.get('cuts', [None])[0]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + '\n')
             except Exception:
                 pass
@@ -1869,7 +1872,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     print(f"[OPT_2D] Остатков использовано вторично: {len(result['rests_used'])}")
     # #region agent log: result counts (H5) + plates by key (H_rescue_trace)
     try:
-        _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log").write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H5", "location": "optimization.py:result_built", "message": "plate_assignments count", "data": {"len_plate_assignments": len(result['plate_assignments']), "total_plates": result.get('total_plates', 0), "demand_sum": sum(demand_2d.values())}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+        _dbg_open_append(_DEBUG_LOG_COMMON).write(__import__('json').dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "H5", "location": "optimization.py:result_built", "message": "plate_assignments count", "data": {"len_plate_assignments": len(result['plate_assignments']), "total_plates": result.get('total_plates', 0), "demand_sum": sum(demand_2d.values())}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
     except Exception:
         pass
     # Лог по ключам (length, width, load_code) — для сравнения с дорожками и РЕСКЬЮ (любые размеры).
@@ -1891,7 +1894,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             if L and W:
                 k = (round(L, 2), W, lc)
                 _by_key[k] = _by_key.get(k, 0) + 1
-        _dbg_open_append(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log").write(__import__('json').dumps({"hypothesisId": "H_opt_plates_by_key", "location": "optimization.py:result_built", "message": "optimizer output plates by (length, width, load_code)", "data": {"plates_by_key": {str(list(k)): v for k, v in _by_key.items()}, "total": sum(_by_key.values())}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
+        _dbg_open_append(_DEBUG_LOG_COMMON).write(__import__('json').dumps({"hypothesisId": "H_opt_plates_by_key", "location": "optimization.py:result_built", "message": "optimizer output plates by (length, width, load_code)", "data": {"plates_by_key": {str(list(k)): v for k, v in _by_key.items()}, "total": sum(_by_key.values())}, "timestamp": __import__('time').time() * 1000}, ensure_ascii=False) + "\n")
     except Exception:
         pass
     # #endregion

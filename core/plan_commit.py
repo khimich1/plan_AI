@@ -25,8 +25,10 @@ from typing import Any, Iterable
 
 import core.config_and_data as cfg
 from core import kp_db, plate_name as _plate_name
+from core.debug_paths import get_debug_log_path
 
 logger = logging.getLogger(__name__)
+_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
 
 
 OrderIdentity = tuple[int | None, str]
@@ -465,7 +467,7 @@ def commit_plan_plates(
                 "per_day_total": int(sum(_per_day.values())),
                 "per_day": dict(_per_day),
             })
-        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+        with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
             _agent_f.write(_agent_json.dumps({
                 "sessionId": "ebb546",
                 "runId": "pre-fix",
@@ -685,7 +687,7 @@ def commit_plan_plates(
                                     "length": _physical.get("length") or _physical.get("target_length"),
                                     "width": _physical.get("width") or _physical.get("main_w"),
                                 })
-        with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+        with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
             _agent_f.write(_agent_json.dumps({
                 "sessionId": "ebb546",
                 "runId": "pre-fix",

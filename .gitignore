@@ -37,6 +37,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+debug_logs/
 
 # Бот конфигурация (содержит токен!)
 bot.env

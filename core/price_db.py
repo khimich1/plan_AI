@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from typing import Dict, Optional
+from .debug_paths import get_debug_log_path
 
 try:
     import pandas as pd
@@ -10,6 +11,7 @@ except Exception:
 
 # Путь к базе данных в корне проекта (на уровень выше core/)
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'pb.db')
+_DEBUG_LOG_DB7A51 = get_debug_log_path("debug-db7a51.log")
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -153,7 +155,7 @@ def get_price(length_m: float, load_code: float | int = 8, db_path: str = DEFAUL
             row = cur.fetchone()
             result = float(row[0]) if row else None
         # #region agent log
-        _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-db7a51.log')
+        _log_path = _DEBUG_LOG_DB7A51
         try:
             with open(_log_path, 'a', encoding='utf-8') as _f:
                 _f.write(json.dumps({"sessionId": "db7a51", "hypothesisId": "get_price", "location": "price_db.py:get_price", "message": "get_price lookup", "data": {"length_m": length_m, "load_code": load_code, "length_dm": length_dm, "load_code_for_db": load_code_for_db, "result": result}, "timestamp": int(time.time() * 1000)}, ensure_ascii=False) + "\n")
