@@ -49,51 +49,6 @@ class ProductionCompletionService:
             rejected_plates or [],
         )
 
-        # #region agent log
-        try:
-            import json as _agent_json
-            import time as _agent_time
-
-            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
-                _agent_f.write(_agent_json.dumps({
-                    "sessionId": "ebb546",
-                    "runId": "pre-fix",
-                    "hypothesisId": "H4,H5",
-                    "location": "app/services/production_completion_service.py:after_collect_plates",
-                    "message": "Перед списанием: что day_view отдал в complete_day",
-                    "data": {
-                        "plan_id": plan_id,
-                        "target_date": target_date,
-                        "day_number": day_number,
-                        "planned_qty_total": completion_stats.get("planned_qty_total"),
-                        "completed_requested_qty": completion_stats.get("completed_requested_qty"),
-                        "rejected_requested_qty": completion_stats.get("rejected_requested_qty"),
-                        "skipped_without_kp_count": completion_stats.get("skipped_without_kp_count"),
-                        "secondary_rests_qty": sum(int(x.get("qty") or 0) for x in completion_stats.get("secondary_rests") or []),
-                        "plates_by_kp_qty": {
-                            str(_kp_id): sum(int(_p.get("qty") or 0) for _p in _plates)
-                            for _kp_id, _plates in plates_by_kp.items()
-                        },
-                        "plates_by_kp_sample": {
-                            str(_kp_id): [
-                                {
-                                    "plate_name": _p.get("plate_name"),
-                                    "qty": _p.get("qty"),
-                                    "length_m": _p.get("length_m"),
-                                    "width_m": _p.get("width_m"),
-                                    "load_class": _p.get("load_class"),
-                                }
-                                for _p in _plates[:8]
-                            ]
-                            for _kp_id, _plates in list(plates_by_kp.items())[:5]
-                        },
-                    },
-                    "timestamp": int(_agent_time.time() * 1000),
-                }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
-
         planned_qty_total = completion_stats["planned_qty_total"]
         completed_requested_qty = completion_stats["completed_requested_qty"]
         rejected_requested_qty = completion_stats["rejected_requested_qty"]
@@ -199,7 +154,6 @@ class ProductionCompletionService:
             # P6: secondary-cuts без kp_id сохраняем в plate_rests — внутри
             # той же транзакции, чтобы при ошибке всё откатилось целиком.
             secondary_rests = completion_stats.get("secondary_rests") or []
-            secondary_rests_created = 0
             for rest in secondary_rests:
                 qty = int(rest.get("qty") or 0)
                 if qty <= 0:
@@ -218,7 +172,6 @@ class ProductionCompletionService:
                         db_path=self.db_path,
                         _external_conn=conn,
                     )
-                    secondary_rests_created += qty
                 except Exception:  # noqa: BLE001
                     # Если БД отказывается принять (FK на kp_id) — продолжаем,
                     # secondary без kp_id просто не пишем как rest.
@@ -233,55 +186,6 @@ class ProductionCompletionService:
                     kp_id, self.db_path, _external_conn=conn
                 ):
                     completed_kps.append(kp_id)
-
-            # #region agent log
-            try:
-                import json as _agent_json
-                import time as _agent_time
-
-                _cur = conn.cursor()
-                _cur.execute(
-                    """
-                    SELECT status, COALESCE(day_number, -1), COUNT(*), COALESCE(SUM(qty), 0)
-                    FROM kp_plates
-                    WHERE plan_id = ?
-                    GROUP BY status, COALESCE(day_number, -1)
-                    ORDER BY status, COALESCE(day_number, -1)
-                    """,
-                    (plan_id,),
-                )
-                _remaining_by_status_day = [
-                    {
-                        "status": _row[0],
-                        "day_number": None if int(_row[1]) == -1 else int(_row[1]),
-                        "rows": int(_row[2] or 0),
-                        "qty": int(_row[3] or 0),
-                    }
-                    for _row in _cur.fetchall()
-                ]
-                with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
-                    _agent_f.write(_agent_json.dumps({
-                        "sessionId": "ebb546",
-                        "runId": "pre-fix",
-                        "hypothesisId": "H4,H5",
-                        "location": "app/services/production_completion_service.py:before_commit",
-                        "message": "После move_plates_to_completed: остатки по plan_id перед commit транзакции",
-                        "data": {
-                            "plan_id": plan_id,
-                            "target_date": target_date,
-                            "day_number": day_number,
-                            "completed_requested_qty": completed_requested_qty,
-                            "total_moved": total_moved,
-                            "unmoved_qty": sum(int(x.get("qty") or 0) for x in unmoved_plates),
-                            "unmoved_sample": unmoved_plates[:10],
-                            "remaining_by_status_day": _remaining_by_status_day,
-                            "completed_kps": completed_kps,
-                        },
-                        "timestamp": int(_agent_time.time() * 1000),
-                    }, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-            # #endregion
 
             conn.commit()
         except ProductionCompletionError:

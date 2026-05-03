@@ -13,7 +13,7 @@ type SaveOfferSectionProps = {
   lastSaveResult: CommercialSaveResult | null;
   defaultExecutionTerms: string;
   isPending: boolean;
-  onSave: (payload: { mode: SaveMode; executionTermsInput: string }) => void;
+  onSave: (payload: { mode: SaveMode; executionTermsInput: string }) => Promise<void>;
 };
 
 type SaveOfferFormValues = {
@@ -37,6 +37,8 @@ export const SaveOfferSection = ({
   });
 
   const mode = form.watch("mode");
+  const hasSavedOffer = Boolean(lastSaveResult ?? draft.saved_offer);
+  const isSubmitDisabled = isPending || form.formState.isSubmitting || hasSavedOffer;
 
   useEffect(() => {
     form.reset({
@@ -47,7 +49,15 @@ export const SaveOfferSection = ({
 
   return (
     <Card title="Сохранение результата" subtitle="Выберите, как сохранить подготовленное коммерческое предложение.">
-      <form onSubmit={form.handleSubmit(onSave)} style={{ display: "grid", gap: "1rem" }}>
+      <form
+        onSubmit={form.handleSubmit(async (payload) => {
+          if (hasSavedOffer) {
+            return;
+          }
+          await onSave(payload);
+        })}
+        style={{ display: "grid", gap: "1rem" }}
+      >
         <div style={{ display: "grid", gap: "0.75rem" }}>
           {[
             { value: "database", label: "Сохранить в БД со статусом «в работе»" },
@@ -65,7 +75,7 @@ export const SaveOfferSection = ({
                 padding: "0.9rem",
               }}
             >
-              <input type="radio" value={item.value} {...form.register("mode")} />
+              <input type="radio" value={item.value} {...form.register("mode")} disabled={isSubmitDisabled} />
               <span>{item.label}</span>
             </label>
           ))}
@@ -77,12 +87,12 @@ export const SaveOfferSection = ({
             hint="Можно указать дату (`25.04.2026` или `2026-04-25`), количество дней (`14 дней`) или недель (`3 недели`)."
             error={form.formState.errors.executionTermsInput?.message}
           >
-            <Input {...form.register("executionTermsInput")} placeholder="Например, 14 дней" />
+            <Input {...form.register("executionTermsInput")} placeholder="Например, 14 дней" disabled={isSubmitDisabled} />
           </FieldWrapper>
         )}
 
-        <Button type="submit" disabled={isPending}>
-          {isPending ? "Сохранение..." : "Подтвердить сохранение"}
+        <Button type="submit" variant={hasSavedOffer ? "secondary" : "primary"} disabled={isSubmitDisabled}>
+          {hasSavedOffer ? "Сохранено" : isPending ? "Сохранение..." : "Подтвердить сохранение"}
         </Button>
       </form>
 

@@ -85,6 +85,7 @@ class CommercialDraftMetadata(BaseModel):
     current_step: str = "plates"
     current_save_mode: CommercialSaveMode | None = None
     execution_terms: str = ""
+    logistics_cost: float = 0.0
 
 
 class CommercialDraftDetailsResponse(BaseModel):
@@ -110,6 +111,7 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
     conditions_mode: CommercialConditionsMode | None = None
     delivery_conditions: str | None = None
     payment_conditions: str | None = None
+    logistics_cost: float | None = None
 
 
 class CommercialWidePlateDecision(BaseModel):

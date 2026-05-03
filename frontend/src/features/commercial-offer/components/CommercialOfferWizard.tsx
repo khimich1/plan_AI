@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
@@ -9,7 +9,6 @@ import { CalculationResultStep } from "@/features/commercial-offer/components/st
 import type { CommercialDraftDetails, WidePlateAction, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { Alert } from "@/shared/ui/Alert";
-import { Card } from "@/shared/ui/Card";
 
 const getNextStepFromDraft = (draft: CommercialDraftDetails): WizardStepId => {
   if (draft.metadata.wide_plate_lines.length > 0 && !draft.metadata.wide_plates_resolved) {
@@ -42,19 +41,21 @@ export const CommercialOfferWizard = () => {
 
   const managers = managersQuery.data?.items ?? [];
 
-  const draftOverview = useMemo(
-    () => [
-      { label: "Draft ID", value: currentDraft?.draft_id ?? "ещё не создан" },
-      { label: "Менеджер", value: currentDraft?.metadata.manager_name || "не выбран" },
-      { label: "Клиент", value: currentDraft?.metadata.client_name || "не указан" },
-      { label: "Позиции", value: String(currentDraft?.order_data.length ?? 0) },
-    ],
-    [currentDraft],
-  );
-
   const resetSource = () => {
     setSelectedImage(null);
     dispatch({ type: "set-source", text: "", imageName: null });
+  };
+
+  const handleSourceTextChange = (value: string) => {
+    if (selectedImage) {
+      setSelectedImage(null);
+    }
+    dispatch({ type: "set-source", text: value, imageName: null });
+  };
+
+  const handleImageSelect = (file: File | null) => {
+    setSelectedImage(file);
+    dispatch({ type: "set-source", text: file ? "" : state.sourceText, imageName: file?.name ?? null });
   };
 
   const handleRecognize = async (mode: "append" | "replace") => {
@@ -64,17 +65,19 @@ export const CommercialOfferWizard = () => {
       return;
     }
 
+    const sourceText = selectedImage ? "" : state.sourceText;
+
     try {
       if (currentDraft?.draft_id) {
         await updatePlatesMutation.mutateAsync({
           draftId: currentDraft.draft_id,
-          text: state.sourceText,
+          text: sourceText,
           image: selectedImage,
           mode,
         });
       } else {
         await createDraftMutation.mutateAsync({
-          text: state.sourceText,
+          text: sourceText,
           image: selectedImage,
         });
       }
@@ -134,7 +137,6 @@ export const CommercialOfferWizard = () => {
 
   const handleClientSubmit = async (payload: {
     clientName: string;
-    discountPercent: number;
     conditionsMode: "standard" | "custom";
     deliveryConditions: string;
     paymentConditions: string;
@@ -149,7 +151,6 @@ export const CommercialOfferWizard = () => {
         draftId: currentDraft.draft_id,
         managerId: state.managerId,
         clientName: payload.clientName,
-        discountPercent: payload.discountPercent,
         conditionsMode: payload.conditionsMode,
         deliveryConditions: payload.deliveryConditions,
         paymentConditions: payload.paymentConditions,
@@ -203,10 +204,53 @@ export const CommercialOfferWizard = () => {
     }
   };
 
+  const handleLogisticsCostSubmit = async (logisticsCost: number) => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await updateMetaMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        logisticsCost,
+      });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
   const handleCreateNewOffer = () => {
     setStepError(null);
     setSelectedImage(null);
     dispatch({ type: "reset" });
+  };
+
+  const canNavigateToStep = (step: WizardStepId): boolean => {
+    if (step === "plates") {
+      return true;
+    }
+    if (!currentDraft) {
+      return false;
+    }
+    if (step === "wide-plates") {
+      return currentDraft.metadata.wide_plate_lines.length > 0 && !currentDraft.metadata.wide_plates_resolved;
+    }
+    return true;
+  };
+
+  const handleSidebarStepClick = (step: WizardStepId) => {
+    if (!canNavigateToStep(step)) {
+      if (!currentDraft && step !== "plates") {
+        setStepError("Сначала распознайте и обработайте список плит.");
+        return;
+      }
+      if (step === "wide-plates") {
+        setStepError("Нет проблемных плит для отдельной проверки.");
+      }
+      return;
+    }
+    setStepError(null);
+    dispatch({ type: "set-step", step });
   };
 
   const currentStepContent =
@@ -217,13 +261,12 @@ export const CommercialOfferWizard = () => {
         selectedImageName={state.selectedImageName}
         errorMessage={stepError}
         isRecognizing={createDraftMutation.isPending || updatePlatesMutation.isPending}
-        onTextChange={(value) => dispatch({ type: "set-source", text: value, imageName: selectedImage?.name ?? null })}
-        onFileChange={(file) => {
-          setSelectedImage(file);
-          dispatch({ type: "set-source", text: state.sourceText, imageName: file?.name ?? null });
-        }}
+        onTextChange={handleSourceTextChange}
+        onFileChange={handleImageSelect}
+        onImagePaste={handleImageSelect}
         onRecognize={handleRecognize}
         onProcess={handleProcess}
+        onReset={handleCreateNewOffer}
       />
     ) : state.currentStep === "wide-plates" && currentDraft ? (
       <WidePlateReviewStep
@@ -261,7 +304,6 @@ export const CommercialOfferWizard = () => {
       <ClientConditionsStep
         defaultValues={{
           clientName: state.clientName,
-          discountPercent: state.discountPercent,
           conditionsMode: state.conditionsMode,
           deliveryConditions: state.deliveryConditions,
           paymentConditions: state.paymentConditions,
@@ -286,6 +328,7 @@ export const CommercialOfferWizard = () => {
         onSave={handleSave}
         isUpdatingDiscount={updateMetaMutation.isPending}
         onDiscountSubmit={handleDiscountSubmit}
+        onLogisticsCostSubmit={handleLogisticsCostSubmit}
       />
     ) : null;
 
@@ -298,17 +341,11 @@ export const CommercialOfferWizard = () => {
 
         <aside className="wizard-sidebar">
           <div className="wizard-sidebar__inner">
-            <WizardProgress currentStep={state.currentStep} />
-            <Card title="Черновик на клиенте">
-              <div style={{ display: "grid", gap: "0.5rem" }}>
-                {draftOverview.map((item) => (
-                  <div key={item.label} style={{ display: "flex", justifyContent: "space-between", gap: "1rem" }}>
-                    <span style={{ color: "#475467" }}>{item.label}</span>
-                    <strong style={{ textAlign: "right" }}>{item.value}</strong>
-                  </div>
-                ))}
-              </div>
-            </Card>
+            <WizardProgress
+              currentStep={state.currentStep}
+              onStepClick={handleSidebarStepClick}
+              canNavigateToStep={canNavigateToStep}
+            />
           </div>
         </aside>
       </div>

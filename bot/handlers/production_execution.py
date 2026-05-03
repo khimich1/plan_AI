@@ -29,6 +29,7 @@ from core.config_and_data import PlateOrder, canonical_plate_key
 import core.optimization as optimization
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
+from core.debug_paths import get_debug_log_path
 
 from ..keyboards import main_menu_kb, calendar_days_kb
 from ..states import ProductionStates
@@ -44,9 +45,13 @@ from .plan_manager import (
 # plate_assignments, см. core.rescue_tracks.
 
 # Путь к NDJSON-логу для отладки плит/ключей
-_DEBUG_LOG = r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log"
-_DEBUG_SESSION_LOG = r"c:\Users\Роман\Desktop\Шишов\debug-d7e22e.log"
-_DEBUG_RUNTIME_LOG = PROJECT_ROOT / "debug-648532.log"
+_DEBUG_LOG = get_debug_log_path("debug.log")
+_DEBUG_SESSION_LOG = get_debug_log_path("debug-d7e22e.log")
+_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
+_DEBUG_RUNTIME_LOG = get_debug_log_path("debug-648532.log")
+_DEBUG_LOG_476B25 = get_debug_log_path("debug-476b25.log")
+_DEBUG_LOG_73B708 = get_debug_log_path("debug-73b708.log")
+_DEBUG_LOG_95694E = get_debug_log_path("debug-95694e.log")
 _DEBUG_RUNTIME_SESSION_ID = "648532"
 
 
@@ -525,7 +530,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         # #endregion
         # #region agent log
         try:
-            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _log_476b25 = _DEBUG_LOG_476B25
             _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
             _n51 = _orders_by_key.get(_tk51, 0)
             _n58 = _orders_by_key.get(_tk58, 0)
@@ -556,7 +561,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         _log_59_10 = [{"length": o["length"], "width": o["width"], "plate_name": o.get("plate_name", ""), "kp_id": o.get("kp_id"), "qty": o.get("qty", 1)} for o in orders_2d if 5.98 <= float(o.get("length", 0)) <= 6.0 and cfg.normalize_load_code(o.get("load_code", 8)) == 10]
         if _log_59_10:
             try:
-                with open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8") as _f:
+                with open(_DEBUG_LOG, "a", encoding="utf-8") as _f:
                     _f.write(__import__("json").dumps({"hypothesisId": "H_59_10_source", "location": "production_execution:orders_2d_built", "message": "orders_2d: плиты 5.98-6м 10п (ширина для 59,9-12-10п)", "data": {"orders": _log_59_10}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
             except Exception:
                 pass
@@ -756,7 +761,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                     if abs(_pl - _tk[0]) < 0.02 and _pw == _tk[1] and _plc == _tk[2]:
                         _opt_counts[str(_tk)] = _opt_counts.get(str(_tk), 0) + 1
                         break
-            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            _agent_log = _DEBUG_LOG_73B708
             with open(_agent_log, 'a', encoding='utf-8') as _f:
                 _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_OPT", "location": "production_execution:after_optimizer", "message": "Plates by key at optimizer output", "data": {"target_keys": _target_keys, "counts": _opt_counts, "total_plate_assignments": len(_pa)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
         except Exception:
@@ -764,7 +769,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         # #endregion
         # #region agent log
         try:
-            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _log_476b25 = _DEBUG_LOG_476B25
             _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
             _pa = optimization_result.get('plate_assignments', []) or []
             _n51 = sum(1 for p in _pa if p.get('source') == 'primary' and abs(round(float(p.get('length', 0)), 2) - 5.1) < 0.02 and int(round(float(p.get('width', 0)))) == 320 and cfg.normalize_load_code(p.get('load_code', 8)) == 8)
@@ -864,7 +869,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         
         # #region agent log (95694e) количество 5.98/665 в результате оптимизации (primary_cuts)
         try:
-            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _log_95694e = _DEBUG_LOG_95694E
             _n_opt = 0
             for _c in optimization_result.get('primary_cuts', []) or []:
                 _L = round(float((_c.get('lengths') or [6.0])[0]), 2)
@@ -878,7 +883,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         # #endregion
         # #region agent log (95694e) количество 5.08/320 и 5.98/530 в primary_cuts
         try:
-            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _log_95694e = _DEBUG_LOG_95694E
             _n_508320 = _n_598530 = 0
             for _c in optimization_result.get('primary_cuts', []) or []:
                 _L = round(float((_c.get('lengths') or [6.0])[0]), 2)
@@ -914,7 +919,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             else:
                 _seq_total = len(seq) if seq else 0
                 _format = "flat"
-            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            _agent_log = _DEBUG_LOG_73B708
             with open(_agent_log, 'a', encoding='utf-8') as _f:
                 _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_LAYOUT_IN", "location": "production_execution:after_build_layout_sequence", "message": "Sequence vs plate_assignments count", "data": {"sequence_total": _seq_total, "plate_assignments_count": _pa_count, "format": _format, "diff": _seq_total - _pa_count}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
         except Exception:
@@ -922,7 +927,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         # #endregion
         # #region agent log (95694e) количество 5.98/665 в последовательности до split
         try:
-            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _log_95694e = _DEBUG_LOG_95694E
             def _count_598_665_in_seq(s):
                 n = 0
                 if isinstance(s, list) and s and isinstance(s[0], dict) and s[0].get('load_code') is not None:
@@ -942,7 +947,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         # #endregion
         # #region agent log (95694e) количество 5.08/320 и 5.98/530 в последовательности до split
         try:
-            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _log_95694e = _DEBUG_LOG_95694E
             _n508, _n598 = 0, 0
             if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
                 for g in seq:
@@ -963,7 +968,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         _handler_audit.checkpoint("layout_sequence", seq)
         # #region agent log
         try:
-            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _log_476b25 = _DEBUG_LOG_476B25
             _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
             _n51, _n58 = 0, 0
             if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
@@ -999,7 +1004,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         _handler_audit.checkpoint("tracks", all_tracks_list)
         # #region agent log
         try:
-            _log_476b25 = PROJECT_ROOT / "debug-476b25.log"
+            _log_476b25 = _DEBUG_LOG_476B25
             _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
             _n51, _n58 = 0, 0
             for tr in all_tracks_list or []:
@@ -1094,7 +1099,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         # #endregion
         # #region agent log (95694e) количество 5.98/665 в дорожках после split
         try:
-            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _log_95694e = _DEBUG_LOG_95694E
             _n_tracks = 0
             for tr in (all_tracks_list or []):
                 for it in tr.get('items', []) or []:
@@ -1110,7 +1115,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         # #endregion
         # #region agent log (95694e) количество 5.08/320 и 5.98/530 в дорожках после split
         try:
-            _log_95694e = PROJECT_ROOT / "debug-95694e.log"
+            _log_95694e = _DEBUG_LOG_95694E
             _n508, _n598 = 0, 0
             for tr in (all_tracks_list or []):
                 for it in tr.get('items', []) or []:
@@ -1168,7 +1173,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                             if abs(_sl - _tk[0]) < 0.02 and _sw == _tk[1] and _slc == _tk[2]:
                                 _track_counts[str(_tk)] = _track_counts.get(str(_tk), 0) + 1
                                 break
-            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            _agent_log = _DEBUG_LOG_73B708
             with open(_agent_log, 'a', encoding='utf-8') as _f:
                 _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_TRACKS", "location": "production_execution:after_split_tracks", "message": "Plates by key in all_tracks_list", "data": {"target_keys": _target_keys, "counts": _track_counts}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
         except Exception:
@@ -1215,7 +1220,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             )
         # #region agent log (session 73b708) H_E: резюме недостачи и рескью
         try:
-            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            _agent_log = _DEBUG_LOG_73B708
             _payload = {
                 "sessionId": "73b708",
                 "runId": "run1",
@@ -1248,7 +1253,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
 
         # #region agent log (session 73b708) H_E: резюме недостачи и рескью + какие заказы дали недостающие ключи
         try:
-            _agent_log = PROJECT_ROOT / "debug-73b708.log"
+            _agent_log = _DEBUG_LOG_73B708
             _total_missing = sum(missing_counts.values()) if missing_counts else 0
             _missing_sample = [list(k) + [v] for k, v in list(missing_counts.items())[:10]] if missing_counts else []
             _missing_to_orders = []
@@ -1472,7 +1477,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 return _total, _without_identity, _counts
 
             _physical_total, _without_identity, _id_counts = _bot_count_physical(all_tracks_list)
-            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
                 _agent_f.write(_agent_json.dumps({
                     "sessionId": "ebb546",
                     "runId": "bot-stage",

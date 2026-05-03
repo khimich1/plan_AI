@@ -21,11 +21,13 @@ from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
 from core.plan_commit import PlanCommitError, commit_plan_plates
 from core.serialization import strip_plate_audit_from_plan
+from core.debug_paths import get_debug_log_path
 from bot.handlers import plan_manager
 from core import kp_db
 from core.reinforcement_db import get_reinforcement
 
 logger = logging.getLogger(__name__)
+_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
 
 FilterMethod = Literal["all", "kp"]
 
@@ -115,7 +117,7 @@ class ProductionPlanningService:
                 for o in orders_2d
                 for _ in range(int(o.get("qty") or 0))
             )
-            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
                 _agent_f.write(_agent_json.dumps({
                     "sessionId": "ebb546",
                     "runId": "stage-localization",
@@ -242,7 +244,7 @@ class ProductionPlanningService:
                                     _secondary_without_identity += 1
                             else:
                                 _identity_counts[f"{_kp_id}|{_plate_name}"] += 1
-            with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
                 _agent_f.write(_agent_json.dumps({
                     "sessionId": "ebb546",
                     "runId": "pre-fix",
@@ -575,6 +577,11 @@ class ProductionPlanningService:
         if not orders_2d:
             return [], {}
 
+        from core.plate_attribution import (
+            backfill_assignment_identity,
+            backfill_track_items_identity,
+        )
+
         plate_order = AppPlateOrder.from_orders_2d(orders_2d)
 
         # build_layout_sequence читает cfg.PLATE_LOAD_DETAILS; делаем временный snapshot
@@ -599,10 +606,6 @@ class ProductionPlanningService:
 
             # P8.1: backfill identity у plate_assignments, чтобы slot_exhausted
             # / secondary_unmapped перестали быть блокером в plan_commit.
-            from core.plate_attribution import (
-                backfill_assignment_identity,
-                backfill_track_items_identity,
-            )
             backfilled = backfill_assignment_identity(
                 optimization_result.get("plate_assignments", []) or [],
                 orders_2d,
@@ -612,54 +615,6 @@ class ProductionPlanningService:
                     "[WEB-PLAN] Восстановлена identity у %s plate_assignments-записей",
                     backfilled,
                 )
-
-            # #region agent log
-            try:
-                import json as _agent_json
-                import time as _agent_time
-                from collections import Counter as _AgentCounter
-
-                _assignments = optimization_result.get("plate_assignments", []) or []
-                _assign_by_source: _AgentCounter[str] = _AgentCounter(
-                    str(a.get("source") or "unknown") for a in _assignments
-                )
-                _assign_by_identity: _AgentCounter[str] = _AgentCounter(
-                    f"{a.get('kp_id')}|{a.get('plate_name')}"
-                    for a in _assignments
-                    if a.get("kp_id") and a.get("plate_name")
-                )
-                _unmapped = [
-                    {
-                        "source": a.get("source"),
-                        "length": a.get("length"),
-                        "width": a.get("width"),
-                        "load_code": a.get("load_code"),
-                    }
-                    for a in _assignments
-                    if not (a.get("kp_id") and a.get("plate_name"))
-                ]
-                with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
-                    _agent_f.write(_agent_json.dumps({
-                        "sessionId": "ebb546",
-                        "runId": "stage-localization",
-                        "hypothesisId": "S5A",
-                        "location": "app/services/production_planning_service.py:after_optimize",
-                        "message": "Стадия 5A: результат optimize/plate_assignments до layout",
-                        "data": {
-                            "orders_qty": sum(int(o.get("qty") or 0) for o in orders_2d),
-                            "optimization_total_plates": optimization_result.get("total_plates"),
-                            "assignments_total": len(_assignments),
-                            "assignments_by_source": dict(_assign_by_source),
-                            "assignments_identity_total": sum(_assign_by_identity.values()),
-                            "assignments_top": _assign_by_identity.most_common(15),
-                            "unmapped_count": len(_unmapped),
-                            "unmapped_sample": _unmapped[:10],
-                        },
-                        "timestamp": int(_agent_time.time() * 1000),
-                    }, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-            # #endregion
 
             self._log_unmapped_optimizer_assignments(optimization_result)
             if not optimization_result or optimization_result.get("total_plates", 0) == 0:
@@ -744,7 +699,7 @@ class ProductionPlanningService:
 
                 _seq_total, _seq_without_identity, _seq_counts = _count_sequence_items(seq)
                 _tracks_total, _tracks_without_identity, _tracks_counts = _count_track_items(all_tracks_list)
-                with open(r"c:\Users\Роман\Desktop\Шишов\debug-ebb546.log", "a", encoding="utf-8") as _agent_f:
+                with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
                     _agent_f.write(_agent_json.dumps({
                         "sessionId": "ebb546",
                         "runId": "stage-localization",

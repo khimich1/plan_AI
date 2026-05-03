@@ -5,18 +5,17 @@
 - Формирование последовательности сегментов вдоль дорожки
 """
 import json
-import os
 import time
 
 import core.config_and_data as cfg
 from core.optimization import OPT_PLAN, OPT_WIDTH_PRIORITY
+from core.debug_paths import get_debug_log_path
 from collections import defaultdict
 
-# Путь к NDJSON логам отладочной сессии (корень репозитория)
-_AGENT_SEQ_DEBUG_LOG = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "debug-7e420e.log",
-)
+_DEBUG_LOG = get_debug_log_path("debug.log")
+_DEBUG_LOG_95694E = get_debug_log_path("debug-95694e.log")
+_DEBUG_LOG_2D5C43 = get_debug_log_path("debug-2d5c43.log")
+_DEBUG_LOG_7E420E = get_debug_log_path("debug-7e420e.log")
 
 
 def _agent_seq_debug(hypothesis_id: str, message: str, data: dict) -> None:
@@ -30,7 +29,7 @@ def _agent_seq_debug(hypothesis_id: str, message: str, data: dict) -> None:
             "data": data,
             "timestamp": int(time.time() * 1000),
         }
-        with open(_AGENT_SEQ_DEBUG_LOG, "a", encoding="utf-8") as f:
+        with open(_DEBUG_LOG_7E420E, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
     except Exception:
         pass
@@ -115,7 +114,7 @@ def _get_reinforcement_from_map(reinforcement_map, length, width_mm, load_code=N
             if abs(length - 7.1) < 0.05 and canonical in (12, 13):
                 try:
                     keys_71 = [(k[0], k[1], k[2]) for k in list(reinforcement_map.keys())[:50] if abs(k[0] - 7.1) < 0.05]
-                    open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71lookup", "location": "layout_sequence:_get_reinforcement_from_map", "message": "71-12п поиск в карте", "data": {"length": length, "width_mm": width_mm, "load_code": load_code, "canonical": canonical, "key": (round(length, 3), width_mm, canonical), "result": result, "keys_71_in_map": keys_71[:10]}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                    open(_DEBUG_LOG, "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71lookup", "location": "layout_sequence:_get_reinforcement_from_map", "message": "71-12п поиск в карте", "data": {"length": length, "width_mm": width_mm, "load_code": load_code, "canonical": canonical, "key": (round(length, 3), width_mm, canonical), "result": result, "keys_71_in_map": keys_71[:10]}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                 except Exception:
                     pass
             # #endregion
@@ -271,7 +270,7 @@ def build_layout_sequence():
                     # #region agent log
                     if abs(length - 7.1) < 0.05 and lc_canonical in (12, 13):
                         try:
-                            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71supp", "location": "layout_sequence:_supplement", "message": "71-12п дополнение карты", "data": {"length": length, "width_mm": width_mm, "lc_canonical": lc_canonical, "reinforcement": reinforcement, "raw_load_code": load_code}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                            open(_DEBUG_LOG, "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71supp", "location": "layout_sequence:_supplement", "message": "71-12п дополнение карты", "data": {"length": length, "width_mm": width_mm, "lc_canonical": lc_canonical, "reinforcement": reinforcement, "raw_load_code": load_code}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                         except Exception:
                             pass
                     # #endregion
@@ -315,7 +314,7 @@ def build_layout_sequence():
                     _w = _c.get('width') or 1200
                     if abs(_L - 5.98) < 0.02 and _w == 665:
                         _n_598665 += _c.get('qty', 1)
-            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            _log_p = _DEBUG_LOG_95694E
             with open(_log_p, 'a', encoding='utf-8') as _f:
                 _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_plan_598665", "location": "layout_sequence:build_layout_sequence:plans_in", "message": "count 5.98/665 in primary_cuts across all load plans", "data": {"count_598_665": _n_598665}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
         except Exception:
@@ -333,7 +332,7 @@ def build_layout_sequence():
                         _n_508320 += _c.get('qty', 1)
                     if abs(_L - 5.98) < 0.02 and _w == 530:
                         _n_598530 += _c.get('qty', 1)
-            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            _log_p = _DEBUG_LOG_95694E
             with open(_log_p, 'a', encoding='utf-8') as _f:
                 _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_plan_rescue", "location": "layout_sequence:build_layout_sequence:plans_in", "message": "count 5.08/320 and 5.98/530 in primary_cuts across all load plans", "data": {"count_508_320": _n_508320, "count_598_530": _n_598530}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
         except Exception:
@@ -379,7 +378,7 @@ def build_layout_sequence():
                     _w_mm = round(float(_w) * 1000) if float(_w) < 20 else round(float(_w))
                     if abs(_L - 5.98) < 0.02 and _w_mm == 665:
                         _n_out += 1
-            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            _log_p = _DEBUG_LOG_95694E
             with open(_log_p, 'a', encoding='utf-8') as _f:
                 _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_layout_out_598665", "location": "layout_sequence:build_layout_sequence:plans_out", "message": "count 5.98/665 in sequences after _build_sequence_from_plan", "data": {"count_598_665": _n_out}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
         except Exception:
@@ -397,7 +396,7 @@ def build_layout_sequence():
                         _n508 += 1
                     if abs(_L - 5.98) < 0.02 and _w_mm == 530:
                         _n598 += 1
-            _log_p = Path(__file__).resolve().parent.parent / "debug-95694e.log"
+            _log_p = _DEBUG_LOG_95694E
             with open(_log_p, 'a', encoding='utf-8') as _f:
                 _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_layout_out_rescue", "location": "layout_sequence:build_layout_sequence:plans_out", "message": "count 5.08/320 and 5.98/530 in sequences after _build_sequence_from_plan", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
         except Exception:
@@ -405,8 +404,7 @@ def build_layout_sequence():
         # #endregion
         # #region agent log (2d5c43) H3 grouped path: sequence totals and by key before return
         try:
-            from pathlib import Path as _Path
-            _log_2d5c43 = _Path(__file__).resolve().parent.parent / "debug-2d5c43.log"
+            _log_2d5c43 = _DEBUG_LOG_2D5C43
             _target_keys = [(6.0, 1200, 8), (6.0, 530, 8), (5.1, 320, 8)]
             _seq_by_key = {tuple(tk): 0 for tk in _target_keys}
             _total_in_sequence = 0
@@ -815,7 +813,7 @@ def build_layout_sequence():
                         # #region agent log
                         if abs(length - 7.1) < 0.05 and load_code_from_cut in (12, 12.5, 13):
                             try:
-                                open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71item", "location": "layout_sequence:sequence_append_solid", "message": "71-12п item в sequence", "data": {"length": length, "width_mm": width_mm, "load_code_from_cut": load_code_from_cut, "reinforcement": reinforcement}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                                open(_DEBUG_LOG, "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71item", "location": "layout_sequence:sequence_append_solid", "message": "71-12п item в sequence", "data": {"length": length, "width_mm": width_mm, "load_code_from_cut": load_code_from_cut, "reinforcement": reinforcement}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                             except Exception:
                                 pass
                         # #endregion
@@ -982,8 +980,7 @@ def build_layout_sequence():
                 logger.info(f"[TRACE] ✓ Проверка пройдена: все {total_from_primary} плит в sequence")
             # #region agent log (2d5c43) H3: sequence total vs primary, counts by key
             try:
-                from pathlib import Path as _P
-                _log_2d5c43 = _P(__file__).resolve().parent.parent / "debug-2d5c43.log"
+                _log_2d5c43 = _DEBUG_LOG_2D5C43
                 _target_keys = [(6.0, 1200, 8), (6.0, 530, 8), (5.1, 320, 8)]
                 _seq_by_key = {tuple(tk): 0 for tk in _target_keys}
                 _seq_6_530_1200 = []
@@ -1449,6 +1446,11 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                 primary_instance_ids[i] if i < len(primary_instance_ids)
                 else cut.get('primary_instance_id')
             )
+            plate_uids = cut.get('plate_uids') or []
+            plate_uid = (
+                plate_uids[i] if i < len(plate_uids)
+                else cut.get('plate_uid')
+            )
             
             # НОВОЕ: Получаем информацию о КП для этой плиты
             kp_id = cut.get('kp_id')
@@ -1522,7 +1524,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     # #region agent log
                     if abs(length - 7.1) < 0.05 and load_code_from_cut in (12, 12.5, 13):
                         try:
-                            open(r"c:\Users\Роман\Desktop\Шишов\.cursor\debug.log", "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71item2d", "location": "layout_sequence:sequence_append_solid_2d", "message": "71-12п item в sequence (2d)", "data": {"length": length, "width_mm": width_mm, "load_code_from_cut": load_code_from_cut, "reinforcement": reinforcement}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                            open(_DEBUG_LOG, "a", encoding="utf-8").write(__import__("json").dumps({"hypothesisId": "H71item2d", "location": "layout_sequence:sequence_append_solid_2d", "message": "71-12п item в sequence (2d)", "data": {"length": length, "width_mm": width_mm, "load_code_from_cut": load_code_from_cut, "reinforcement": reinforcement}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
                         except Exception:
                             pass
                     # #endregion
@@ -1545,6 +1547,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'customer': customer,
                         'kp_date': kp_date,
                         'plate_name': plate_name_from_cut,
+                        'plate_uid': plate_uid,
                         'unit_id': parent_instance_id,
                         'layout_uid': str(parent_instance_id) if parent_instance_id else f"solid:{len(sequence)}",
                     })
@@ -1571,6 +1574,14 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         if _pool_geom:
                             legacy_secondary_match_used += 1
                             for variant in _pool_geom:
+                                _variant_target_key = variant.get('target_order_key')
+                                _variant_target_lc = (
+                                    cfg.normalize_load_code(_variant_target_key[2], default=8)
+                                    if _variant_target_key and len(_variant_target_key) > 2
+                                    else load_code_from_cut
+                                )
+                                if _variant_target_lc > load_code_from_cut:
+                                    continue
                                 if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
                                     chosen_variant = variant
                                     _matched_via = "geom"
@@ -1710,6 +1721,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         'customer': customer,
                         'kp_date': kp_date,
                         'plate_name': plate_name_from_cut,
+                        'plate_uid': plate_uid,
                         'unit_id': parent_instance_id,
                         'layout_uid': str(parent_instance_id) if parent_instance_id else f"split:{len(sequence)}",
                     })

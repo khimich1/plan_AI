@@ -1,0 +1,332 @@
+{
+  "order": {
+    "plates_1_2": [],
+    "plates_1_5_to_1_2": [],
+    "plates_1_0": [],
+    "plates_1_08": [
+      3.9
+    ],
+    "plates_0_46": [],
+    "plates_0_32": [],
+    "plates_0_72": [],
+    "plates_0_70": [],
+    "plates_0_86": [],
+    "plates_0_74": [],
+    "plates_0_88": [],
+    "plates_0_48": [],
+    "plates_0_50": [],
+    "plates_0_34": [],
+    "plate_load_details": [
+      [
+        [
+          3.9,
+          1.1,
+          12.0,
+          "39"
+        ],
+        1
+      ]
+    ],
+    "plate_length_dm_raw": [
+      [
+        [
+          3.9,
+          1.1,
+          12.0,
+          "39"
+        ],
+        "39"
+      ]
+    ],
+    "plate_exact_widths": [
+      [
+        [
+          3.9,
+          "plates_1_08"
+        ],
+        1.1
+      ]
+    ],
+    "nomenclature_cache": [
+      [
+        [
+          3.9,
+          1.1,
+          12.0,
+          "39"
+        ],
+        {
+          "canonical_name": null,
+          "nomenclature_id": null
+        }
+      ]
+    ],
+    "longitudinal_cuts": 1,
+    "length_trims": 0,
+    "unused_strips_0_3_m_total": 0.0,
+    "scrap_strips_0_2_m_total": 0.0,
+    "usable_strips_0_74_m_total": 0,
+    "usable_strips_0_88_m_total": 0,
+    "usable_strips_0_48_m_total": 0,
+    "usable_strips_0_50_m_total": 0,
+    "usable_strips_0_34_m_total": 0,
+    "scrap_strips_0_12_m_total": 3.9,
+    "waste_area_m2": 0.47
+  },
+  "optimization": {
+    "optimization_result": {
+      "primary_cuts": [
+        {
+          "width": 1100,
+          "demand_width": 1100,
+          "rest": 100,
+          "qty": 1,
+          "lengths": [
+            3.9
+          ],
+          "load_code": 12.0,
+          "assignment_key": [
+            3.9,
+            1100,
+            12
+          ],
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        }
+      ],
+      "secondary_cuts": [],
+      "total_plates": 1,
+      "plate_assignments": [
+        {
+          "length": 3.9,
+          "width": 1100,
+          "source": "primary",
+          "rest_width": 100,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 12.0,
+          "identity_match_type": "slot_proportional"
+        }
+      ],
+      "orders_requested": [
+        {
+          "length": 3.9,
+          "width": 1100,
+          "qty": 1,
+          "load_code": 12.0,
+          "length_dm_raw": "39"
+        }
+      ],
+      "rests_created": [
+        {
+          "length": 3.9,
+          "rest_width_mm": 100,
+          "source_width_mm": 1100
+        }
+      ],
+      "rests_used": [],
+      "loads_in_group": [
+        12
+      ]
+    },
+    "plan_by_load": {
+      "all": {
+        "primary_cuts": [
+          {
+            "width": 1100,
+            "demand_width": 1100,
+            "rest": 100,
+            "qty": 1,
+            "lengths": [
+              3.9
+            ],
+            "load_code": 12.0,
+            "assignment_key": [
+              3.9,
+              1100,
+              12
+            ],
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          }
+        ],
+        "secondary_cuts": [],
+        "total_plates": 1,
+        "plate_assignments": [
+          {
+            "length": 3.9,
+            "width": 1100,
+            "source": "primary",
+            "rest_width": 100,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 12.0,
+            "identity_match_type": "slot_proportional"
+          }
+        ],
+        "orders_requested": [
+          {
+            "length": 3.9,
+            "width": 1100,
+            "qty": 1,
+            "load_code": 12.0,
+            "length_dm_raw": "39"
+          }
+        ],
+        "rests_created": [
+          {
+            "length": 3.9,
+            "rest_width_mm": 100,
+            "source_width_mm": 1100
+          }
+        ],
+        "rests_used": [],
+        "loads_in_group": [
+          12
+        ]
+      }
+    },
+    "load_to_reinforcement_map": {
+      "12": [
+        "all"
+      ]
+    }
+  },
+  "order_data": [
+    {
+      "name": "Плиты ПБ 39-11-12п",
+      "length_m": 3.9,
+      "length_dm_raw": "39",
+      "width_m": 1.1,
+      "qty": 1,
+      "load_class": 1200,
+      "unit_price": 14473.0,
+      "weight": 1215.5,
+      "nomenclature_id": null
+    }
+  ],
+  "metadata": {
+    "source_type": "text",
+    "original_text": "Плиты ПБ 39-11-12п",
+    "ocr_text": "",
+    "input_text": "Плиты ПБ 39-11-12п",
+    "accumulated_text": "Плиты ПБ 39-11-12п",
+    "warnings": [],
+    "unparsed_lines": [],
+    "normalized_text": "Плиты ПБ 39-11-12п",
+    "normalized_lines": [
+      "Плиты ПБ 39-11-12п"
+    ],
+    "wide_plate_lines": [],
+    "diagnostics": [
+      {
+        "raw_input": "Плиты ПБ 39-11-12п",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "Плиты ПБ 39-11-12п"
+      }
+    ],
+    "breakdown_tables": [
+      {
+        "name": "Плиты ПБ 39-11-12п",
+        "rows": [
+          [
+            "Базовая цена (1,10м)",
+            "12 679,00 × (1,10 / 1.2)",
+            "11 622,42 руб"
+          ],
+          [
+            "Продольный рез",
+            "460 × 3,9 × 1",
+            "1 794,00 руб"
+          ],
+          [
+            "Остаток (100мм)",
+            "(100 / 1200) × 12 679,00 / 1",
+            "1 056,58 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "14 473,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "14 473,00 руб"
+          ],
+          [
+            "За 1 плит",
+            "14 473,00 × 1",
+            "14 473,00 руб"
+          ]
+        ]
+      }
+    ],
+    "price_rows_count": 1,
+    "breakdown_tables_count": 1,
+    "total_sum": 14473.000000000002,
+    "plate_batches": [
+      {
+        "source_type": "text",
+        "original_text": "Плиты ПБ 39-11-12п",
+        "normalized_text": "Плиты ПБ 39-11-12п",
+        "ocr_text": "",
+        "filename": ""
+      }
+    ],
+    "wide_plates_resolved": true,
+    "last_source_filename": "",
+    "current_step": "calculate",
+    "saved_offer": null,
+    "generated_files": [
+      {
+        "kind": "pdf",
+        "filename": "kp_283623f1_20260502_103651.pdf",
+        "display_name": "Коммерческое предложение (PDF)",
+        "download_url": "/api/v1/commercial/files/kp_283623f1_20260502_103651.pdf"
+      },
+      {
+        "kind": "xlsx",
+        "filename": "kp_283623f1_20260502_103651.xlsx",
+        "display_name": "Коммерческое предложение (XLSX)",
+        "download_url": "/api/v1/commercial/files/kp_283623f1_20260502_103651.xlsx"
+      },
+      {
+        "kind": "breakdown",
+        "filename": "kp_283623f1_20260502_103130_breakdown.xlsx",
+        "display_name": "Детальная разбивка (XLSX)",
+        "download_url": "/api/v1/commercial/files/kp_283623f1_20260502_103130_breakdown.xlsx"
+      },
+      {
+        "kind": "schema",
+        "filename": "Схема_Дорожка_1_20260502_103130_971709_КЗ.pdf",
+        "display_name": "Схема раскладки (PDF)",
+        "download_url": "/api/v1/commercial/files/Схема_Дорожка_1_20260502_103130_971709_КЗ.pdf"
+      }
+    ],
+    "current_save_mode": null,
+    "execution_terms": "",
+    "manager_id": 4,
+    "manager_name": "Шишов Александр Васильевич",
+    "manager_phone": "79206405585",
+    "manager_email": "shishov@gbkstart.ru",
+    "client_name": "ООО Марафон",
+    "discount_percent": 0.0,
+    "conditions_mode": "standard",
+    "delivery_conditions": "",
+    "payment_conditions": "",
+    "logistics_cost": 3000.0
+  }
+}

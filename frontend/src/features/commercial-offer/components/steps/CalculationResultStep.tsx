@@ -19,9 +19,10 @@ type CalculationResultStepProps = {
   onCreateNew: () => void;
   onGenerateFiles: () => void;
   onExecutionTermsChange: (value: string) => void;
-  onSave: (payload: { mode: SaveMode; executionTermsInput: string }) => void;
+  onSave: (payload: { mode: SaveMode; executionTermsInput: string }) => Promise<void>;
   isUpdatingDiscount: boolean;
   onDiscountSubmit: (discountPercent: number) => Promise<void>;
+  onLogisticsCostSubmit: (logisticsCost: number) => Promise<void>;
 };
 
 export const CalculationResultStep = ({
@@ -38,14 +39,33 @@ export const CalculationResultStep = ({
   onSave,
   isUpdatingDiscount,
   onDiscountSubmit,
+  onLogisticsCostSubmit,
 }: CalculationResultStepProps) => {
   const [discountDraft, setDiscountDraft] = useState(String(draft.metadata.discount_percent ?? 0));
+  const [logisticsCostDraft, setLogisticsCostDraft] = useState(String(draft.metadata.logistics_cost ?? 0));
   const [discountError, setDiscountError] = useState<string | null>(null);
+  const [logisticsError, setLogisticsError] = useState<string | null>(null);
   const totalWeight = draft.order_data.reduce((acc, item) => acc + (toNumber(item.weight) ?? 0), 0);
+  const discountPercent = toNumber(draft.metadata.discount_percent) ?? 0;
+  const discountFactor = 1 - Math.min(Math.max(discountPercent, 0), 100) / 100;
+  const logisticsCost = Math.max(toNumber(draft.metadata.logistics_cost) ?? 0, 0);
+  const platesTotalWithoutVat = draft.order_data.reduce((acc, item) => {
+    const qty = toNumber(item.qty) ?? 0;
+    const unitPrice = toNumber(item.unit_price) ?? 0;
+    return acc + qty * unitPrice;
+  }, 0);
+  const platesTotalWithoutVatAfterDiscount = platesTotalWithoutVat * discountFactor;
+  const totalWithoutVat = platesTotalWithoutVatAfterDiscount + logisticsCost;
+  const vatAmount = totalWithoutVat * 0.22;
+  const totalWithVat = totalWithoutVat + vatAmount;
 
   useEffect(() => {
     setDiscountDraft(String(draft.metadata.discount_percent ?? 0));
   }, [draft.metadata.discount_percent]);
+
+  useEffect(() => {
+    setLogisticsCostDraft(String(draft.metadata.logistics_cost ?? 0).replace(".", ","));
+  }, [draft.metadata.logistics_cost]);
 
   const handleDiscountSave = async () => {
     const parsed = toNumber(discountDraft);
@@ -55,6 +75,17 @@ export const CalculationResultStep = ({
     }
     setDiscountError(null);
     await onDiscountSubmit(parsed);
+  };
+
+  const handleApplyLogisticsCost = async () => {
+    const parsed = toNumber(logisticsCostDraft);
+    if (parsed === null || parsed < 0) {
+      setLogisticsError("Стоимость логистики должна быть числом не меньше 0.");
+      return;
+    }
+    setLogisticsError(null);
+    await onLogisticsCostSubmit(parsed);
+    setLogisticsCostDraft(String(parsed).replace(".", ","));
   };
 
   return (
@@ -67,7 +98,7 @@ export const CalculationResultStep = ({
           Назад
         </Button>
         <Button type="button" onClick={onCreateNew}>
-          Создать КП
+          Создать новое КП
         </Button>
       </div>
     }
@@ -133,13 +164,58 @@ export const CalculationResultStep = ({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gridTemplateColumns: "minmax(0, 2fr) minmax(220px, 1fr)",
           gap: "0.75rem",
-          alignItems: "end",
+          alignItems: "start",
         }}
       >
-        <SummaryCell label="Общий вес (кг)" value={formatNumber(totalWeight)} />
-        <SummaryCell label="Общая стоимость (с НДС)" value={formatNumber(draft.totals.total_with_vat ?? 0)} />
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: "0.75rem",
+          }}
+        >
+          <SummaryCell label="Общий вес (кг)" value={formatNumber(totalWeight)} />
+          <SummaryCell label="Стоимость без НДС" value={formatNumber(totalWithoutVat)} />
+          <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
+            <FieldWrapper label="Стоимость логистики" error={logisticsError}>
+              <div style={{ position: "relative" }}>
+                <input
+                  value={logisticsCostDraft}
+                  onChange={(event) => setLogisticsCostDraft(event.target.value)}
+                  inputMode="decimal"
+                  placeholder="Введите стоимость"
+                  style={{
+                    width: "100%",
+                    border: "1px solid #d0d5dd",
+                    borderRadius: 12,
+                    padding: "0.8rem 3.5rem 0.8rem 0.9rem",
+                    background: "#ffffff",
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleApplyLogisticsCost}
+                  disabled={isUpdatingDiscount}
+                  style={{
+                    position: "absolute",
+                    right: "0.35rem",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    borderRadius: 8,
+                    padding: "0.25rem 0.6rem",
+                    fontSize: "0.8rem",
+                  }}
+                >
+                  OK
+                </Button>
+              </div>
+            </FieldWrapper>
+          </div>
+          <SummaryCell label="Стоимость с НДС" value={formatNumber(totalWithVat)} />
+        </div>
         <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
           <FieldWrapper label="Скидка (%)" error={discountError}>
             <Input
@@ -163,9 +239,9 @@ export const CalculationResultStep = ({
       lastSaveResult={lastSaveResult}
       defaultExecutionTerms={executionTermsInput}
       isPending={isSaving}
-      onSave={(payload) => {
+      onSave={async (payload) => {
         onExecutionTermsChange(payload.executionTermsInput);
-        onSave(payload);
+        await onSave(payload);
       }}
     />
 
@@ -207,7 +283,8 @@ const toNumber = (value: unknown): number | null => {
     return value;
   }
   if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value.replace(",", "."));
+    const normalized = value.replace(/\s+/g, "").replace(",", ".");
+    const parsed = Number(normalized);
     if (Number.isFinite(parsed)) {
       return parsed;
     }

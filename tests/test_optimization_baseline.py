@@ -25,6 +25,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 # Импортируем то, что тестируем
 from core.optimization import (  # noqa: E402
+    _build_residual_balance_constraints,
     optimize_with_cascading_longitudinal_cuts,
     verify_coverage,
 )
@@ -100,6 +101,78 @@ def test_verify_coverage_handles_load_code_normalization():
     cov = verify_coverage(demand, primary, [])
     assert cov["ok"] is True
     assert cov["missing"] == {}
+
+
+def test_residual_balance_normalizes_load_code_and_blocks_ghost_secondary():
+    prob = pulp.LpProblem("residual_balance_normalized", pulp.LpMaximize)
+    primary_options = [
+        {"id": 1, "length": 7.3, "rest": 880, "type": "direct", "load_code": 800}
+    ]
+    secondary_options = [
+        {
+            "id": 10,
+            "source_length": 7.3,
+            "source_rest": 880,
+            "target_order_key": (7.3, 720, 8),
+        }
+    ]
+    x_prim = {1: pulp.LpVariable("p1", lowBound=0, upBound=0, cat=pulp.LpInteger)}
+    x_sec = {10: pulp.LpVariable("s10", lowBound=0, cat=pulp.LpInteger)}
+
+    _build_residual_balance_constraints(
+        prob=prob,
+        primary_options=primary_options,
+        secondary_options=secondary_options,
+        x_prim=x_prim,
+        x_sec=x_sec,
+    )
+    prob += x_sec[10]
+    prob.solve(pulp.PULP_CBC_CMD(msg=0))
+
+    assert pulp.value(x_sec[10]) == 0
+
+
+def test_residual_balance_allows_only_load_code_downgrade():
+    prob = pulp.LpProblem("residual_balance_downgrade", pulp.LpMaximize)
+    primary_options = [
+        {"id": 1, "length": 7.3, "rest": 880, "type": "direct", "load_code": 10},
+        {"id": 2, "length": 8.4, "rest": 480, "type": "direct", "load_code": 8},
+    ]
+    secondary_options = [
+        {
+            "id": 10,
+            "source_length": 7.3,
+            "source_rest": 880,
+            "target_order_key": (7.3, 720, 8),
+        },
+        {
+            "id": 11,
+            "source_length": 8.4,
+            "source_rest": 480,
+            "target_order_key": (8.4, 320, 10),
+        },
+    ]
+    x_prim = {
+        1: pulp.LpVariable("p1", lowBound=1, upBound=1, cat=pulp.LpInteger),
+        2: pulp.LpVariable("p2", lowBound=1, upBound=1, cat=pulp.LpInteger),
+    }
+    x_sec = {
+        10: pulp.LpVariable("s10", lowBound=0, cat=pulp.LpInteger),
+        11: pulp.LpVariable("s11", lowBound=0, cat=pulp.LpInteger),
+    }
+
+    _build_residual_balance_constraints(
+        prob=prob,
+        primary_options=primary_options,
+        secondary_options=secondary_options,
+        x_prim=x_prim,
+        x_sec=x_sec,
+    )
+    prob += x_sec[10] + x_sec[11]
+    prob.solve(pulp.PULP_CBC_CMD(msg=0))
+
+    assert pulp.value(x_sec[10]) == 1
+    assert pulp.value(x_sec[11]) == 0
 
 
 # ---------- integration: golden cases ----------------------------------------

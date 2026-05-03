@@ -25,6 +25,7 @@ from core.config_and_data import PlateOrder
 import core.optimization as optimization
 from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
+from core.debug_paths import get_debug_log_path
 
 from ..keyboards import production_day_actions_kb, day_documents_menu_kb
 from ..bot_config import OUTPUTS_DIR_STR
@@ -33,6 +34,7 @@ from ..bot_config import OUTPUTS_DIR_STR
 from .plan_manager import get_tracks_for_date_from_all_plans
 
 router = Router()
+_DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
 
 
 async def _restore_optimization_data(state: FSMContext, day_number: int):
@@ -504,7 +506,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     # #region agent log (57/57,1: post-fix verification)
                     if 5.69 <= plate.get('length', 0) <= 5.73:
                         try:
-                            _log_path = os.path.join(PROJECT_ROOT, 'debug-8e9428.log')
+                            _log_path = _DEBUG_LOG_8E9428
                             with open(_log_path, 'a', encoding='utf-8') as _f:
                                 _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_prod_view_track", "location": "production_day_view:track_plate_str", "message": "57/57,1: plate_str (post-fix)", "data": {"plate_length": plate['length'], "length_str": length_str, "plate_str": plate_str}, "timestamp": __import__("time").time() * 1000, "runId": "post-fix"}, ensure_ascii=False) + "\n")
                         except Exception:
@@ -969,7 +971,7 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                         # #region agent log (57/57,1: post-fix verification)
                         if 5.69 <= plate['length'] <= 5.73:
                             try:
-                                _log_path = os.path.join(PROJECT_ROOT, 'debug-8e9428.log')
+                                _log_path = _DEBUG_LOG_8E9428
                                 with open(_log_path, 'a', encoding='utf-8') as _f:
                                     _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_prod_view", "location": "production_day_view:formovka_plate_name", "message": "57/57,1: plate_name (post-fix)", "data": {"plate_length": plate['length'], "length_str": length_str, "plate_name": plate_str_val}, "timestamp": __import__("time").time() * 1000, "runId": "post-fix"}, ensure_ascii=False) + "\n")
                             except Exception:

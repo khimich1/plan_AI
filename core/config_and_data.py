@@ -18,9 +18,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from .exceptions import PlateParseError
 from .plate_line_parser import parse_line
 from .plate_validation import validate_plate_values
+from .debug_paths import get_debug_log_path
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
+_DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
+_DEBUG_LOG_B59370 = get_debug_log_path("debug-b59370.log")
 
 # ==================== КОНСТАНТЫ ====================
 
@@ -904,7 +907,7 @@ def make_plate_name(
         # #region agent log (57/57,1: где теряется сотка по длине)
         if 5.69 <= length_m <= 5.73:
             try:
-                _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'debug-8e9428.log')
+                _log_path = _DEBUG_LOG_8E9428
                 with open(_log_path, 'a', encoding='utf-8') as _f:
                     _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_length_001", "location": "config_and_data:make_plate_name", "message": "57/57,1: length_m -> length_str", "data": {"length_m": length_m, "length_dm_raw": length_dm_raw, "length_dm_val": length_dm_val, "length_str": length_str, "branch_001_used": branch_001}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
             except Exception:
@@ -912,7 +915,7 @@ def make_plate_name(
         # #endregion
         # #region agent log
         try:
-            _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'debug-b59370.log')
+            _log_path = _DEBUG_LOG_B59370
             with open(_log_path, 'a', encoding='utf-8') as _f:
                 _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H2", "location": "config_and_data:make_plate_name", "message": "length_str from length_m (no length_dm_raw)", "data": {"length_m": length_m, "length_dm_val": length_dm_val, "length_str": length_str}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
         except Exception:

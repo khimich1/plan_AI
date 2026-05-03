@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 import json, sqlite3
 from collections import defaultdict
+from pathlib import Path
 
-log_file = r'c:\Users\Роман\Desktop\Шишов\.cursor\debug.log'
-db_path = r'c:\Users\Роман\Desktop\Шишов\plita.db'
+PROJECT_ROOT = Path(__file__).resolve().parent
+log_file = PROJECT_ROOT / 'debug_logs' / 'debug.log'
+db_path = PROJECT_ROOT / 'plita.db'
 
 # 1. Из логов: что НЕ найдено
 not_found = []

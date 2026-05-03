@@ -133,6 +133,45 @@ def test_build_sequence_geometric_fallback_when_parent_instance_mismatch() -> No
     assert sec_item["parent_unit_id"] == "prim-on-split"
 
 
+def test_build_sequence_geometric_fallback_rejects_reverse_load_code_downgrade() -> None:
+    plan = {
+        "plate_assignments": [{"source": "primary"}],
+        "primary_cuts": [
+            {
+                "width": 320,
+                "rest": 880,
+                "qty": 1,
+                "lengths": [6.0],
+                "load_code": 8,
+                "primary_instance_id": "prim-8",
+            },
+        ],
+        "secondary_cuts": [
+            {
+                "source": 880,
+                "cuts": [320],
+                "qty": 1,
+                "pieces": 1,
+                "source_lengths": [6.0],
+                "lengths": [6.0],
+                "target_order_key": (6.0, 320, 10),
+                "parent_instance_id": "wrong-parent",
+                "secondary_instance_id": "sec-10",
+            }
+        ],
+    }
+
+    seq = _build_sequence_from_plan(
+        plan,
+        plate_label_func=lambda l, w, load_code=None: f"{l}-{w}-{load_code}",
+        reinforcement_map={},
+    )
+
+    split_item = next(item for item in seq if item.get("mode") == "split")
+    assert split_item.get("unit_id") == "prim-8"
+    assert split_item.get("secondary_cuts") in (None, [])
+
+
 def test_build_assignment_gap_fallback_tracks_uses_unit_identity() -> None:
     assignments = [
         {
@@ -174,3 +213,38 @@ def test_build_assignment_gap_fallback_tracks_uses_unit_identity() -> None:
     assert fallback_item["placement_status"] == "fallback"
     assert fallback_item["mode"] == "split"
     assert sum(missing.values()) == 1
+
+
+def test_build_assignment_gap_fallback_tracks_ignores_attached_secondary() -> None:
+    assignments = [
+        {"unit_id": "prim-1", "source": "primary", "length": 6.0, "width": 320},
+        {
+            "unit_id": "sec-1",
+            "parent_unit_id": "prim-1",
+            "source": "secondary",
+            "length": 6.0,
+            "width": 320,
+        },
+    ]
+    tracks = [
+        {
+            "items": [
+                {
+                    "unit_id": "prim-1",
+                    "mode": "split",
+                    "length": 6.0,
+                    "secondary_cuts": [
+                        {"unit_id": "sec-1", "parent_unit_id": "prim-1", "width": 0.32}
+                    ],
+                }
+            ]
+        }
+    ]
+
+    fallback_tracks, missing = ProductionPlanningService._build_assignment_gap_fallback_tracks(
+        plate_assignments=assignments,
+        tracks_list=tracks,
+    )
+
+    assert fallback_tracks == []
+    assert sum(missing.values()) == 0

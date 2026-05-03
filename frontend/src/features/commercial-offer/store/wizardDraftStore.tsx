@@ -18,7 +18,6 @@ type WizardDraftAction =
       type: "set-client-form";
       payload: {
         clientName: string;
-        discountPercent: number;
         conditionsMode: WizardStoreState["conditionsMode"];
         deliveryConditions: string;
         paymentConditions: string;

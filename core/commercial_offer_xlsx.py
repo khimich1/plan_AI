@@ -95,26 +95,27 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
         return round(area_m2 * 4000, 2)
 
 
-def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) -> Dict:
+def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0) -> Dict:
     """
     Рассчитывает общую стоимость заказа
     
     Args:
         order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
         discount_percent: процент скидки (0-100)
+        logistics_cost: транспортные расходы без НДС, без применения скидки
     
     Returns:
         Словарь с итоговыми суммами
     """
     total_qty = 0
-    total_cost_with_vat = 0.0  # Сумма с НДС (unit_price уже включает НДС)
+    plates_cost_without_vat = 0.0  # Сумма плит без НДС
     
     for item in order_data:
         qty = item.get('qty', 0)
         
         # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
         if 'unit_price' in item and item['unit_price'] is not None:
-            unit_price = item['unit_price']  # Цена УЖЕ включает НДС
+            unit_price = item['unit_price']
         else:
             # Fallback: старая логика (только базовая цена из БД)
             length_m = item.get('length_m', 0)
@@ -125,17 +126,16 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0) ->
         # Применяем скидку к цене (если указана)
         discounted_price = unit_price * (1 - discount_percent / 100)
         
-        # Считаем сумму по позиции (это уже с НДС)
+        # Считаем сумму по позиции без НДС.
         item_cost = discounted_price * qty
         
         total_qty += qty
-        total_cost_with_vat += item_cost
+        plates_cost_without_vat += item_cost
     
-    # 🔥 ИСПРАВЛЕНИЕ: unit_price уже включает НДС, поэтому нужно вычесть НДС
-    # Сумма без НДС = сумма с НДС / 1.22
-    subtotal = round(total_cost_with_vat / 1.22, 2)
-    vat_amount = round(total_cost_with_vat - subtotal, 2)
-    total_with_vat = round(total_cost_with_vat, 2)
+    logistics_cost = max(0.0, float(logistics_cost or 0.0))
+    subtotal = round(plates_cost_without_vat + logistics_cost, 2)
+    vat_amount = round(subtotal * 0.22, 2)
+    total_with_vat = round(subtotal + vat_amount, 2)
     
     return {
         'total_qty': total_qty,
@@ -179,7 +179,8 @@ def generate_commercial_offer_xlsx(
     discount_percent: float = 0,
     delivery_conditions: Optional[str] = None,
     payment_conditions: Optional[str] = None,
-    kp_db_id: Optional[int] = None
+    kp_db_id: Optional[int] = None,
+    logistics_cost: float = 0.0,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате XLSX с расчётными формулами
@@ -196,6 +197,7 @@ def generate_commercial_offer_xlsx(
         delivery_conditions: условия поставки (строка 28, если указано)
         payment_conditions: условия оплаты (строка 29, если указано)
         kp_db_id: номер КП из базы данных (если КП сохранен в БД)
+        logistics_cost: транспортные расходы без НДС, без применения скидки
     
     Returns:
         BytesIO буфер с XLSX файлом
@@ -294,13 +296,27 @@ def generate_commercial_offer_xlsx(
             'Сумма': discounted_price * qty  # Сначала вставим значение, потом заменим на формулу
         })
     
+    logistics_cost = max(0.0, float(logistics_cost or 0.0))
+    if logistics_cost > 0:
+        table_data.append(
+            {
+                '№': len(table_data) + 1,
+                'Наименование': 'Транспортные расходы',
+                'Кол-во': 1,
+                'Ед.': 'усл',
+                'Вес(кг)': 0.0,
+                'Цена': logistics_cost,
+                'Сумма': logistics_cost,
+            }
+        )
+
     df_table = pd.DataFrame(table_data)
     
     # Рассчитываем итоги с учётом скидки
-    totals = calculate_total_cost(order_data, discount_percent)
+    totals = calculate_total_cost(order_data, discount_percent, logistics_cost=logistics_cost)
     
     # Создаем строку итогов
-    total_items = len(order_data)
+    total_items = len(table_data)
     
     # Записываем в Excel
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -406,7 +422,8 @@ def generate_commercial_offer_xlsx(
             cell.border = thin_border
         
         # Форматируем строки таблицы
-        for row_idx in range(table_header_row + 1, table_header_row + 1 + len(order_data)):
+        table_rows_count = len(table_data)
+        for row_idx in range(table_header_row + 1, table_header_row + 1 + table_rows_count):
             # №
             worksheet.cell(row=row_idx, column=1).alignment = center_align
             worksheet.cell(row=row_idx, column=1).border = thin_border
@@ -448,32 +465,31 @@ def generate_commercial_offer_xlsx(
             sum_cell.number_format = '#,##0.00'
         
         # Добавляем итоговые строки
-        summary_row = table_header_row + len(order_data) + 2
+        summary_row = table_header_row + table_rows_count + 2
         
-        # Итоговая сумма (уже с НДС, так как unit_price включает НДС)
+        # Итоговая сумма без НДС: сумма позиций после скидки + логистика.
         subtotal_row = summary_row
         worksheet.merge_cells(f'A{subtotal_row}:F{subtotal_row}')
         worksheet[f'A{subtotal_row}'] = f"Всего наименований {total_items}, общим весом {total_weight:,.3f} кг."
         worksheet[f'A{subtotal_row}'].font = summary_font
         worksheet[f'A{subtotal_row}'].alignment = left_align
         
-        # Формула для подсчёта суммы (это сумма с НДС)
+        # Формула для подсчёта суммы без НДС.
         first_data_row = table_header_row + 1
-        last_data_row = table_header_row + len(order_data)
-        sum_with_vat_cell = worksheet[f'G{subtotal_row}']
-        sum_with_vat_cell.value = f"=SUM(G{first_data_row}:G{last_data_row})"
-        sum_with_vat_cell.font = summary_font
-        sum_with_vat_cell.number_format = '#,##0.00'
-        sum_with_vat_cell.alignment = right_align
+        last_data_row = table_header_row + table_rows_count
+        subtotal_cell = worksheet[f'G{subtotal_row}']
+        subtotal_cell.value = f"=SUM(G{first_data_row}:G{last_data_row})"
+        subtotal_cell.font = summary_font
+        subtotal_cell.number_format = '#,##0.00'
+        subtotal_cell.alignment = right_align
         
-        # НДС 22% - вычитаем из суммы с НДС
+        # НДС 22% начисляется поверх суммы без НДС.
         vat_row = summary_row + 1
         worksheet.merge_cells(f'A{vat_row}:F{vat_row}')
         worksheet[f'A{vat_row}'] = "в том числе НДС (22%)"
         worksheet[f'A{vat_row}'].font = summary_font
         worksheet[f'A{vat_row}'].alignment = left_align
-        # НДС = сумма с НДС - сумма без НДС = сумма с НДС - (сумма с НДС / 1.22)
-        worksheet[f'G{vat_row}'] = f"=G{subtotal_row}-G{subtotal_row}/1.22"  # Формула для НДС
+        worksheet[f'G{vat_row}'] = f"=G{subtotal_row}*0.22"
         worksheet[f'G{vat_row}'].font = summary_font
         worksheet[f'G{vat_row}'].number_format = '#,##0.00'
         worksheet[f'G{vat_row}'].alignment = right_align

@@ -12,7 +12,6 @@ import { StepLayout } from "@/shared/ui/StepLayout";
 type ClientConditionsStepProps = {
   defaultValues: {
     clientName: string;
-    discountPercent: number;
     conditionsMode: ConditionsMode;
     deliveryConditions: string;
     paymentConditions: string;
@@ -22,7 +21,6 @@ type ClientConditionsStepProps = {
   onBack: () => void;
   onSubmit: (payload: {
     clientName: string;
-    discountPercent: number;
     conditionsMode: ConditionsMode;
     deliveryConditions: string;
     paymentConditions: string;
@@ -31,7 +29,6 @@ type ClientConditionsStepProps = {
 
 type ClientConditionsFormValues = {
   clientName: string;
-  discountPercent: number;
   conditionsMode: ConditionsMode;
   deliveryConditions: string;
   paymentConditions: string;
@@ -58,7 +55,7 @@ export const ClientConditionsStep = ({
   return (
     <StepLayout
       title="Шаг 4. Клиент и условия"
-      description="Сохраните данные клиента, скидку и условия. Эти поля используются в расчёте и итоговых документах."
+      description="Сохраните данные клиента и условия. Эти поля используются в расчёте и итоговых документах."
       footer={
         <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem" }}>
           <Button type="button" variant="ghost" onClick={onBack}>
@@ -76,10 +73,6 @@ export const ClientConditionsStep = ({
         <div style={{ display: "grid", gap: "1rem" }}>
           <FieldWrapper label="Клиент" error={form.formState.errors.clientName?.message}>
             <Input {...form.register("clientName")} placeholder="ООО Ромашка" />
-          </FieldWrapper>
-
-          <FieldWrapper label="Скидка, %" error={form.formState.errors.discountPercent?.message}>
-            <Input type="number" step="0.01" min={0} max={100} {...form.register("discountPercent")} />
           </FieldWrapper>
         </div>
       </Card>

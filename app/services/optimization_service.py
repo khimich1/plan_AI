@@ -18,15 +18,18 @@ class OptimizationService:
         *,
         orders_2d: list[dict[str, Any]] | None = None,
     ) -> OptimizationContext:
-        optimizer_orders = orders_2d if orders_2d is not None else order.to_orders_2d()
+        # Для совместимости с новым web-пайплайном допускаем явный orders_2d:
+        # там важны дополнительные поля (kp_id/plate_name) для последующего
+        # корректного commit в БД.
+        source_orders_2d = orders_2d if orders_2d is not None else order.to_orders_2d()
         result = (
-            optimize_with_cascading_longitudinal_cuts(orders_2d=optimizer_orders)
-            if optimizer_orders
+            optimize_with_cascading_longitudinal_cuts(orders_2d=source_orders_2d)
+            if source_orders_2d
             else {}
         )
         all_loads = (
-            sorted({int(float(item.get("load_code", 8))) for item in optimizer_orders})
-            if optimizer_orders
+            sorted({int(float(item.get("load_code", 8))) for item in source_orders_2d})
+            if source_orders_2d
             else [8]
         )
         if result:

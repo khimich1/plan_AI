@@ -10,12 +10,16 @@ import re
 from collections import Counter
 
 import core.config_and_data as cfg
+from core.debug_paths import get_debug_log_path
 from core.optimization import OPT_PLAN
 from core.price_db import get_price
 from .price_utils import find_price_for_plate
 
 WIDE_WIDTH_M = 1.2
 WIDE_EPS = 1e-6
+_DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
+_DEBUG_LOG_A9176E = get_debug_log_path("debug-a9176e.log")
+_DEBUG_LOG_DB7A51 = get_debug_log_path("debug-db7a51.log")
 
 
 def _is_wide_width(width_m: float, *, threshold_m: float = WIDE_WIDTH_M, eps: float = WIDE_EPS) -> bool:
@@ -569,7 +573,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         if 5.69 <= L <= 5.73:
             try:
                 import os as _os
-                _log_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), 'debug-8e9428.log')
+                _log_path = _DEBUG_LOG_8E9428
                 with open(_log_path, 'a', encoding='utf-8') as _f:
                     _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_price_row", "location": "procurement:build_price_rows", "message": "57/57,1: price_row name", "data": {"L": L, "name": name, "canonical_name": it.get('canonical_name')}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
             except Exception:
@@ -579,7 +583,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         if 5.69 <= L <= 5.73:
             try:
                 import os as _os
-                _log_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), 'debug-a9176e.log')
+                _log_path = _DEBUG_LOG_A9176E
                 import json as _json
                 _pay = {"sessionId": "a9176e", "hypothesisId": "H2", "location": "procurement:build_price_rows", "message": "57/57,1 price_row name source", "data": {"L": L, "canonical_name": it.get("canonical_name"), "length_dm_raw": it.get("length_dm_raw"), "name": name}, "timestamp": __import__("time").time() * 1000}
                 with open(_log_path, 'a', encoding='utf-8') as _f:
@@ -598,7 +602,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8):
         import os
         import time
         if base_price_1_2m == 0.0:
-            _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'debug-db7a51.log')
+            _log_path = _DEBUG_LOG_DB7A51
             try:
                 with open(_log_path, 'a', encoding='utf-8') as _f:
                     _f.write(json.dumps({"sessionId": "db7a51", "hypothesisId": "build_price_rows", "location": "procurement.py:build_price_rows", "message": "price chain", "data": {"name": name, "L": L, "W": W, "load_code": load_code, "db_price": db_price, "find_price": find_price, "base_price_1_2m": base_price_1_2m}, "timestamp": int(time.time() * 1000)}, ensure_ascii=False) + "\n")

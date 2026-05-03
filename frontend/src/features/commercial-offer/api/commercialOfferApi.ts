@@ -26,6 +26,7 @@ type UpdateDraftMetaPayload = {
   conditionsMode?: ConditionsMode;
   deliveryConditions?: string;
   paymentConditions?: string;
+  logisticsCost?: number;
 };
 
 type WidePlateDecisionPayload = {
@@ -90,6 +91,7 @@ export const commercialOfferApi = {
         conditions_mode: payload.conditionsMode,
         delivery_conditions: payload.deliveryConditions,
         payment_conditions: payload.paymentConditions,
+        logistics_cost: payload.logisticsCost,
       }),
       { "Content-Type": "application/json" },
     ),

@@ -7,6 +7,9 @@
 import os
 import re
 from collections import defaultdict
+from core.debug_paths import get_debug_log_path
+
+_DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
 
 ORDER_RAW = """
 Плиты ПБ 69-12-8п    20
@@ -225,7 +228,7 @@ def normalize_name(raw: str) -> str:
     # #region agent log (57/57,1: какой сырой текст в какой ключ попал)
     if '57' in s and '-12-8' in s:
         try:
-            _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'debug-8e9428.log')
+            _log_path = _DEBUG_LOG_8E9428
             with open(_log_path, 'a', encoding='utf-8') as _f:
                 _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_compare_norm", "location": "compare_order_kp:normalize_name_input", "message": "57/57,1: raw name before norm", "data": {"raw": raw[:80]}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
         except Exception:
@@ -252,7 +255,7 @@ def normalize_name(raw: str) -> str:
     if '57' in s and '-12-8' in s:
         try:
             import os as _os
-            _log_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'debug-8e9428.log')
+            _log_path = _DEBUG_LOG_8E9428
             with open(_log_path, 'a', encoding='utf-8') as _f:
                 _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_compare_norm", "location": "compare_order_kp:normalize_name_output", "message": "57/57,1: key after norm", "data": {"normalized_key": s[:80]}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
         except Exception:
