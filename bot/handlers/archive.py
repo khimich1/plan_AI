@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from core import kp_db
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
+from core.execution_terms import parse_execution_terms_to_datetime
 from core.gantt_excel import create_gantt_excel
 from ..bot_config import OUTPUTS_DIR_STR
 from ..keyboards import main_menu_kb, archive_sections_kb, kp_details_kb
@@ -693,30 +694,7 @@ async def receive_production_execution_terms(message: Message, state: FSMContext
         )
         await state.clear()
         return
-    deadline_date = None
-    # Вариант 1: ДД.ММ.ГГГГ
-    try:
-        deadline_date = datetime.strptime(execution_terms_input, "%d.%m.%Y")
-    except ValueError:
-        pass
-    # Вариант 2: ГГГГ-ММ-ДД
-    if not deadline_date:
-        try:
-            deadline_date = datetime.strptime(execution_terms_input, "%Y-%m-%d")
-        except ValueError:
-            pass
-    # Вариант 3: N дней
-    if not deadline_date:
-        match_days = re.search(r"(\d+)\s*(?:дн|день|дней|day|days)", execution_terms_input, re.IGNORECASE)
-        if match_days:
-            days = int(match_days.group(1))
-            deadline_date = datetime.now() + timedelta(days=days)
-    # Вариант 4: N недель
-    if not deadline_date:
-        match_weeks = re.search(r"(\d+)\s*(?:нед|недел|недели|week|weeks)", execution_terms_input, re.IGNORECASE)
-        if match_weeks:
-            weeks = int(match_weeks.group(1))
-            deadline_date = datetime.now() + timedelta(weeks=weeks)
+    deadline_date = parse_execution_terms_to_datetime(execution_terms_input)
     if not deadline_date:
         deadline_date = datetime.now() + timedelta(days=14)
         await message.answer(

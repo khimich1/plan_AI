@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { saveOfferSchema } from "@/features/commercial-offer/schemas/commercialOffer";
+import { EXECUTION_TERMS_FIELD_HINT, EXECUTION_TERMS_PLACEHOLDER } from "@/shared/lib/executionTerms";
 import type { CommercialDraftDetails, CommercialSaveResult, SaveMode } from "@/features/commercial-offer/types/commercialOffer";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
@@ -81,13 +82,21 @@ export const SaveOfferSection = ({
           ))}
         </div>
 
-        {mode === "database" && (
+        {mode !== "skip" && (
           <FieldWrapper
             label="Срок изготовления"
-            hint="Можно указать дату (`25.04.2026` или `2026-04-25`), количество дней (`14 дней`) или недель (`3 недели`)."
+            hint={
+              mode === "archive"
+                ? `${EXECUTION_TERMS_FIELD_HINT} Необязательно для архива — можно оставить пустым.`
+                : EXECUTION_TERMS_FIELD_HINT
+            }
             error={form.formState.errors.executionTermsInput?.message}
           >
-            <Input {...form.register("executionTermsInput")} placeholder="Например, 14 дней" disabled={isSubmitDisabled} />
+            <Input
+              {...form.register("executionTermsInput")}
+              placeholder={EXECUTION_TERMS_PLACEHOLDER}
+              disabled={isSubmitDisabled}
+            />
           </FieldWrapper>
         )}
 

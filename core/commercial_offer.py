@@ -24,8 +24,18 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 # Единый расчёт веса строки КП (plate_weights → approximate)
 try:
+    from .cargo_delivery_pricing import (
+        cargo_delivery_trips_count,
+        delivery_service_charge_rub,
+        total_order_cargo_weight_kg,
+    )
     from .kp_plate_weight import resolve_kp_line_weight_kg
 except ImportError:
+    from cargo_delivery_pricing import (
+        cargo_delivery_trips_count,
+        delivery_service_charge_rub,
+        total_order_cargo_weight_kg,
+    )
     from kp_plate_weight import resolve_kp_line_weight_kg
 
 
@@ -219,14 +229,15 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, lo
 
     unit_price в позициях считается уже с НДС. Скидка применяется к сумме плит.
     НДС (22%) для отображения: сумма плит после скидки * 0.22.
-    Итого к оплате: сумма плит после скидки + логистика (логистика в сумму НДС-строки не входит).
+    Итого к оплате: сумма плит после скидки + услуга по доставке грузов
+    (стоимость рейса × ceil(масса заказа кг / 18600); в базу НДС по плитам не входит).
 
     subtotal = total_with_vat - vat_amount (согласованная разбивка для документов и архива).
 
     Args:
         order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
         discount_percent: процент скидки (0-100, по умолчанию 0)
-        logistics_cost: транспортные расходы (добавляются к сумме плит после скидки)
+        logistics_cost: стоимость одного рейса (добавляется как строка доставки по числу рейсов)
 
     Returns:
         Словарь с итоговыми суммами
@@ -256,9 +267,11 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, lo
         total_qty += qty
         plates_total_with_vat += item_cost
 
-    logistics_cost = max(0.0, float(logistics_cost or 0.0))
+    trip_cost = max(0.0, float(logistics_cost or 0.0))
+    cargo_kg = total_order_cargo_weight_kg(order_data)
+    delivery_total = delivery_service_charge_rub(trip_cost, cargo_kg)
     vat_amount = round(plates_total_with_vat * 0.22, 2)
-    total_with_vat = round(plates_total_with_vat + logistics_cost, 2)
+    total_with_vat = round(plates_total_with_vat + delivery_total, 2)
     subtotal = round(total_with_vat - vat_amount, 2)
 
     return {
@@ -318,7 +331,7 @@ def generate_commercial_offer_pdf(
         manager_email: email менеджера
         discount_percent: процент скидки (0-100, по умолчанию 0)
         kp_db_id: номер КП из базы данных
-        logistics_cost: транспортные расходы без НДС, без применения скидки
+        logistics_cost: стоимость одного рейса (без НДС по плитам; итог доставки = рейс × ceil(вес/18600))
     
     Note:
         Детальная разбивка компонентов НЕ включается в PDF.
@@ -503,8 +516,8 @@ def generate_commercial_offer_pdf(
     
     table_data = [['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']]
     
-    logistics_cost = max(0.0, float(logistics_cost or 0.0))
-    totals = calculate_total_cost(order_data, discount_percent, logistics_cost=logistics_cost)
+    trip_cost = max(0.0, float(logistics_cost or 0.0))
+    totals = calculate_total_cost(order_data, discount_percent, logistics_cost=trip_cost)
     total_weight = 0.0
     
     for idx, item in enumerate(order_data, start=1):
@@ -555,17 +568,20 @@ def generate_commercial_offer_pdf(
             sum_str
         ])
 
-    if logistics_cost > 0:
-        logistics_str = f"{logistics_cost:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+    delivery_trips = cargo_delivery_trips_count(total_weight)
+    if trip_cost > 0 and delivery_trips > 0:
+        delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
+        trip_str = f"{trip_cost:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+        delivery_total_str = f"{delivery_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
         table_data.append(
             [
                 str(len(table_data)),
-                Paragraph(escape("Транспортные расходы"), style_table_text),
-                "1",
-                "усл",
+                Paragraph(escape("Услуга по доставке грузов"), style_table_text),
+                str(delivery_trips),
+                "рейс",
                 "0,00",
-                logistics_str,
-                logistics_str,
+                trip_str,
+                delivery_total_str,
             ]
         )
     

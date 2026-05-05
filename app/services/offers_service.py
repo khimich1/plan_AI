@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta
 from typing import Any
 
 from app.repositories.kp_repository import KpRepository
 from app.schemas.offers import CreateOfferRequest
 from core import kp_db
+from core.execution_terms import parse_execution_terms_to_datetime
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 
@@ -156,25 +156,8 @@ class OffersService:
 
     def _parse_execution_terms(self, raw_terms: str) -> tuple[str, bool]:
         text = (raw_terms or "").strip()
-        deadline_date = None
+        deadline_date = parse_execution_terms_to_datetime(text)
         used_default = False
-        try:
-            deadline_date = datetime.strptime(text, "%d.%m.%Y")
-        except ValueError:
-            pass
-        if not deadline_date:
-            try:
-                deadline_date = datetime.strptime(text, "%Y-%m-%d")
-            except ValueError:
-                pass
-        if not deadline_date:
-            match_days = re.search(r"(\d+)\s*(?:дн|день|дней|day|days)", text, re.IGNORECASE)
-            if match_days:
-                deadline_date = datetime.now() + timedelta(days=int(match_days.group(1)))
-        if not deadline_date:
-            match_weeks = re.search(r"(\d+)\s*(?:нед|недел|недели|week|weeks)", text, re.IGNORECASE)
-            if match_weeks:
-                deadline_date = datetime.now() + timedelta(weeks=int(match_weeks.group(1)))
         if not deadline_date:
             deadline_date = datetime.now() + timedelta(days=14)
             used_default = True

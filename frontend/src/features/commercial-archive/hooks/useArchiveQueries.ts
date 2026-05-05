@@ -57,6 +57,18 @@ export const useUpdateDiscountMutation = () => {
   });
 };
 
+export const useUpdateLogisticsCostMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kpId, logisticsCost }: { kpId: number; logisticsCost: number }) =>
+      archiveApi.updateLogisticsCost(kpId, logisticsCost),
+    onSuccess: (offer) => {
+      queryClient.setQueryData(archiveKeys.detail(offer.kp_id), offer);
+      queryClient.invalidateQueries({ queryKey: archiveKeys.all });
+    },
+  });
+};
+
 export const useDeleteOfferMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({

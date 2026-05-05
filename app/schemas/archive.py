@@ -63,6 +63,12 @@ class ArchiveOfferDetails(BaseModel):
     delivery_conditions: str | None = None
     payment_conditions: str | None = None
     finance: ArchiveOfferFinance
+    logistics_cost: float = Field(default=0.0, description="Стоимость одного рейса (как logistics_cost при создании КП).")
+    total_cargo_weight_kg: float = Field(default=0.0, description="Суммарная масса по строкам через resolve_kp_line_weight_kg (как PDF/XLSX).")
+    delivery_service_total_rub: float = Field(
+        default=0.0,
+        description="Строка «Услуга по доставке грузов»: рейсы × стоимость рейса.",
+    )
     plates: list[ArchivePlateItem] = Field(default_factory=list)
     completion_percentage: float | None = None
 
@@ -71,8 +77,12 @@ class UpdateDiscountRequest(BaseModel):
     discount: float = Field(ge=0, le=100)
 
 
+class UpdateLogisticsCostRequest(BaseModel):
+    logistics_cost: float = Field(ge=0, description="Новая стоимость одного рейса.")
+
+
 class MoveToProductionRequest(BaseModel):
-    execution_terms: str = Field(min_length=1, max_length=64)
+    execution_terms: str = Field(min_length=1, max_length=128)
 
 
 class ArchiveSearchResponse(BaseModel):

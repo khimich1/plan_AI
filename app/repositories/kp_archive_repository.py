@@ -30,6 +30,9 @@ class KpArchiveRepository:
     def update_discount(self, kp_id: int, discount_percent: float) -> bool:
         return kp_db.update_kp_discount(kp_id, discount_percent, self.db_path)
 
+    def update_logistics_cost(self, kp_id: int, logistics_cost: float) -> bool:
+        return kp_db.update_kp_logistics_cost(kp_id, logistics_cost, self.db_path)
+
     def delete(self, kp_id: int) -> bool:
         return kp_db.delete_kp_by_id(kp_id, self.db_path)
 

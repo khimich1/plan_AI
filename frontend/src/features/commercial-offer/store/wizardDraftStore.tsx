@@ -86,6 +86,9 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         conditionsMode: action.payload.metadata.conditions_mode,
         deliveryConditions: action.payload.metadata.delivery_conditions,
         paymentConditions: action.payload.metadata.payment_conditions,
+        executionTermsInput:
+          (action.payload.metadata.execution_terms || action.payload.saved_offer?.execution_terms || "").trim() ||
+          state.executionTermsInput,
         lastDraft: action.payload,
       };
     case "set-save-result":

@@ -1,0 +1,731 @@
+{
+  "id": "plan_20260503_180211",
+  "name": "План с 19.05.2026",
+  "created_at": "2026-05-03 18:02:11",
+  "start_date": "2026-05-19",
+  "tracks_count": 5,
+  "days": {
+    "2026-05-19": {
+      "date": "2026-05-19",
+      "day_number": 1,
+      "tracks": [
+        {
+          "items": [
+            {
+              "length": 8.9,
+              "mode": "solid",
+              "width": 1.2,
+              "load_code": 8,
+              "label": "Плиты ПБ 89-12-8п",
+              "reinforcement": 38.0,
+              "is_separator": false,
+              "kp_id": 1,
+              "customer": "ООО Сальса",
+              "kp_date": "06.06.2026",
+              "plate_name": "Плиты ПБ 89-12-8п",
+              "plate_uid": null,
+              "unit_id": "prim-3",
+              "layout_uid": "prim-3",
+              "kp_plate_id": 115
+            },
+            {
+              "length": 5.1,
+              "mode": "split",
+              "main_w": 0.32,
+              "rest_w": 0.88,
+              "load_code": 8,
+              "label_main": "Плиты ПБ 51-3,2-8п",
+              "label_rest": null,
+              "secondary_cuts": [
+                {
+                  "width": 0.32,
+                  "label": "О Плиты ПБ 51-3,2-8п",
+                  "has_transverse": true,
+                  "target_length": 5.1,
+                  "load_code": 8,
+                  "target_order_key": [
+                    5.1,
+                    320,
+                    8
+                  ],
+                  "parent_unit_id": "prim-1",
+                  "unit_id": "sec-1",
+                  "kp_id": 1,
+                  "plate_name": "Плиты ПБ 51-3,2-8п",
+                  "identity_match_type": "backfilled",
+                  "kp_plate_id": 162
+                }
+              ],
+              "reinforcement": 13.0,
+              "kp_id": 1,
+              "customer": "ООО Сальса",
+              "kp_date": "06.06.2026",
+              "plate_name": "Плиты ПБ 51-3,2-8п",
+              "plate_uid": null,
+              "unit_id": "prim-1",
+              "layout_uid": "prim-1",
+              "kp_plate_id": 151
+            },
+            {
+              "length": 6.39,
+              "mode": "split",
+              "main_w": 0.53,
+              "rest_w": 0.67,
+              "load_code": 10,
+              "label_main": "Плиты ПБ 63,9-5,3-10п",
+              "label_rest": null,
+              "secondary_cuts": [
+                {
+                  "width": 0.32,
+                  "label": "О Плиты ПБ 58-3,2-8п",
+                  "has_transverse": true,
+                  "target_length": 5.8,
+                  "load_code": 8,
+                  "target_order_key": [
+                    5.8,
+                    320,
+                    8
+                  ],
+                  "parent_unit_id": "prim-2",
+                  "unit_id": "sec-2",
+                  "kp_id": 1,
+                  "plate_name": "Плиты ПБ 58-3,2-8п",
+                  "identity_match_type": "backfilled",
+                  "kp_plate_id": 153
+                }
+              ],
+              "reinforcement": 22.0,
+              "kp_id": 1,
+              "customer": "ООО Сальса",
+              "kp_date": "06.06.2026",
+              "plate_name": "Плиты ПБ 63,9-5,3-10п",
+              "plate_uid": null,
+              "unit_id": "prim-2",
+              "layout_uid": "prim-2",
+              "kp_plate_id": 79
+            }
+          ],
+          "length": 20.39,
+          "load_code": "all",
+          "label": "Нагрузка 8п, 10п",
+          "max_reinforcement": 38.0,
+          "production_day": 1
+        },
+        {
+          "label": "FALLBACK",
+          "placement_status": "fallback",
+          "items": [
+            {
+              "mode": "split",
+              "length": 5.8,
+              "width": 0.32,
+              "unit_id": "sec-3",
+              "layout_uid": "sec-3",
+              "parent_unit_id": null,
+              "kp_id": 1,
+              "customer": "ООО Сальса",
+              "kp_date": "06.06.2026",
+              "plate_name": "Плиты ПБ 58-3,2-8п",
+              "load_code": 8,
+              "placement_status": "fallback",
+              "origin_reason": "track_gap_missing_unit_id",
+              "main_w": 0.32,
+              "rest_w": 0.0,
+              "label_main": "Плиты ПБ 58-3,2-8п",
+              "label_rest": null,
+              "secondary_cuts": [],
+              "kp_plate_id": 163
+            }
+          ],
+          "length": 5.8,
+          "production_day": 1
+        }
+      ],
+      "saved_tracks_count": 2,
+      "total_tracks_count": 5,
+      "completed": true
+    }
+  },
+  "plate_lookup_exact": {
+    "(5.1, 320)": [
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "reinforcement": 13.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "51"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "reinforcement": 13.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "51"
+      }
+    ],
+    "(5.8, 320)": [
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "reinforcement": 16.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "58"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "reinforcement": 16.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "58"
+      }
+    ],
+    "(6.39, 530)": [
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 63,9-5,3-10п",
+        "reinforcement": 22.0,
+        "load_code": 10,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "63,9"
+      }
+    ],
+    "(8.9, 1200)": [
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 89-12-8п",
+        "reinforcement": 38.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "89"
+      }
+    ]
+  },
+  "plate_lookup_by_length": {
+    "5.1": [
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "reinforcement": 13.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "51"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "reinforcement": 13.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "51"
+      }
+    ],
+    "5.8": [
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "reinforcement": 16.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "58"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "reinforcement": 16.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "58"
+      }
+    ],
+    "6.39": [
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 63,9-5,3-10п",
+        "reinforcement": 22.0,
+        "load_code": 10,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "63,9"
+      }
+    ],
+    "8.9": [
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 89-12-8п",
+        "reinforcement": 38.0,
+        "load_code": 8,
+        "qty_remaining": 1,
+        "kp_id": 1,
+        "length_dm_raw": "89"
+      }
+    ]
+  },
+  "orders_2d": [
+    {
+      "length": 5.1,
+      "width": 320,
+      "qty": 1,
+      "load_code": 8,
+      "reinforcement": 13.0,
+      "kp_date": "06.06.2026",
+      "customer": "ООО Сальса",
+      "plate_name": "Плиты ПБ 51-3,2-8п",
+      "kp_id": 1,
+      "length_dm_raw": "51"
+    },
+    {
+      "length": 5.1,
+      "width": 320,
+      "qty": 1,
+      "load_code": 8,
+      "reinforcement": 13.0,
+      "kp_date": "06.06.2026",
+      "customer": "ООО Сальса",
+      "plate_name": "Плиты ПБ 51-3,2-8п",
+      "kp_id": 1,
+      "length_dm_raw": "51"
+    },
+    {
+      "length": 5.8,
+      "width": 320,
+      "qty": 1,
+      "load_code": 8,
+      "reinforcement": 16.0,
+      "kp_date": "06.06.2026",
+      "customer": "ООО Сальса",
+      "plate_name": "Плиты ПБ 58-3,2-8п",
+      "kp_id": 1,
+      "length_dm_raw": "58"
+    },
+    {
+      "length": 5.8,
+      "width": 320,
+      "qty": 1,
+      "load_code": 8,
+      "reinforcement": 16.0,
+      "kp_date": "06.06.2026",
+      "customer": "ООО Сальса",
+      "plate_name": "Плиты ПБ 58-3,2-8п",
+      "kp_id": 1,
+      "length_dm_raw": "58"
+    },
+    {
+      "length": 6.39,
+      "width": 530,
+      "qty": 1,
+      "load_code": 10,
+      "reinforcement": 22.0,
+      "kp_date": "06.06.2026",
+      "customer": "ООО Сальса",
+      "plate_name": "Плиты ПБ 63,9-5,3-10п",
+      "kp_id": 1,
+      "length_dm_raw": "63,9"
+    },
+    {
+      "length": 8.9,
+      "width": 1200,
+      "qty": 1,
+      "load_code": 8,
+      "reinforcement": 38.0,
+      "kp_date": "06.06.2026",
+      "customer": "ООО Сальса",
+      "plate_name": "Плиты ПБ 89-12-8п",
+      "kp_id": 1,
+      "length_dm_raw": "89"
+    }
+  ],
+  "optimization_result": {
+    "primary_cuts": [
+      {
+        "width": 1200,
+        "demand_width": 1200,
+        "rest": 0,
+        "qty": 1,
+        "lengths": [
+          8.9
+        ],
+        "load_code": 8,
+        "assignment_key": [
+          8.9,
+          1200,
+          8
+        ],
+        "source_opt_id": 3,
+        "primary_instance_id": "prim-3",
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 89-12-8п",
+        "identity_match_type": "slot_proportional"
+      },
+      {
+        "width": 320,
+        "demand_width": 320,
+        "rest": 880,
+        "qty": 1,
+        "lengths": [
+          5.1
+        ],
+        "load_code": 8,
+        "assignment_key": [
+          5.1,
+          320,
+          8
+        ],
+        "source_opt_id": 0,
+        "primary_instance_id": "prim-1",
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "identity_match_type": "slot_proportional"
+      },
+      {
+        "width": 530,
+        "demand_width": 530,
+        "rest": 670,
+        "qty": 1,
+        "lengths": [
+          6.39
+        ],
+        "load_code": 10,
+        "assignment_key": [
+          6.39,
+          530,
+          10
+        ],
+        "source_opt_id": 2,
+        "primary_instance_id": "prim-2",
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 63,9-5,3-10п",
+        "identity_match_type": "slot_proportional"
+      }
+    ],
+    "secondary_cuts": [
+      {
+        "source": 880,
+        "cuts": [
+          320
+        ],
+        "qty": 1,
+        "pieces": 1,
+        "waste": 240,
+        "type": "multiple",
+        "source_lengths": [
+          5.1
+        ],
+        "lengths": [
+          5.1
+        ],
+        "target_order_key": [
+          5.1,
+          320,
+          8
+        ],
+        "load_code": 8,
+        "parent_instance_id": "prim-1",
+        "secondary_instance_id": "sec-1",
+        "source_opt_ids": [
+          0
+        ],
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "identity_match_type": "slot_proportional"
+      },
+      {
+        "source": 670,
+        "cuts": [
+          320
+        ],
+        "qty": 1,
+        "pieces": 1,
+        "waste": 30,
+        "type": "multiple_transverse",
+        "source_lengths": [
+          6.39
+        ],
+        "lengths": [
+          5.8
+        ],
+        "target_order_key": [
+          5.8,
+          320,
+          8
+        ],
+        "load_code": 8,
+        "parent_instance_id": "prim-2",
+        "secondary_instance_id": "sec-2",
+        "source_opt_ids": [
+          2
+        ],
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "identity_match_type": "slot_proportional"
+      },
+      {
+        "source": 670,
+        "cuts": [
+          320
+        ],
+        "qty": 1,
+        "pieces": 1,
+        "waste": 30,
+        "type": "multiple_transverse",
+        "source_lengths": [
+          6.39
+        ],
+        "lengths": [
+          5.8
+        ],
+        "target_order_key": [
+          5.8,
+          320,
+          8
+        ],
+        "load_code": 8,
+        "parent_instance_id": null,
+        "secondary_instance_id": "sec-3",
+        "source_opt_ids": [
+          2
+        ],
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "identity_match_type": "slot_proportional"
+      }
+    ],
+    "total_plates": 3,
+    "plate_assignments": [
+      {
+        "length": 8.9,
+        "width": 1200,
+        "source": "primary",
+        "rest_width": 0,
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 89-12-8п",
+        "load_code": 8,
+        "identity_match_type": "slot_proportional",
+        "unit_id": "prim-3",
+        "parent_unit_id": null,
+        "source_opt_id": 3
+      },
+      {
+        "length": 5.1,
+        "width": 320,
+        "source": "primary",
+        "rest_width": 880,
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "load_code": 8,
+        "identity_match_type": "slot_proportional",
+        "unit_id": "prim-1",
+        "parent_unit_id": null,
+        "source_opt_id": 0
+      },
+      {
+        "length": 6.39,
+        "width": 530,
+        "source": "primary",
+        "rest_width": 670,
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 63,9-5,3-10п",
+        "load_code": 10,
+        "identity_match_type": "slot_proportional",
+        "unit_id": "prim-2",
+        "parent_unit_id": null,
+        "source_opt_id": 2
+      },
+      {
+        "length": 5.1,
+        "width": 320,
+        "source": "secondary",
+        "source_rest": 880,
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "load_code": 8,
+        "identity_match_type": "slot_proportional",
+        "unit_id": "sec-1",
+        "parent_unit_id": "prim-1"
+      },
+      {
+        "length": 5.8,
+        "width": 320,
+        "source": "secondary",
+        "source_rest": 670,
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "load_code": 8,
+        "identity_match_type": "slot_proportional",
+        "unit_id": "sec-2",
+        "parent_unit_id": "prim-2"
+      },
+      {
+        "length": 5.8,
+        "width": 320,
+        "source": "secondary",
+        "source_rest": 670,
+        "kp_id": 1,
+        "customer": "ООО Сальса",
+        "kp_date": "06.06.2026",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "load_code": 8,
+        "identity_match_type": "slot_proportional",
+        "unit_id": "sec-3",
+        "parent_unit_id": null
+      }
+    ],
+    "orders_requested": [
+      {
+        "length": 5.1,
+        "width": 320,
+        "qty": 1,
+        "load_code": 8,
+        "reinforcement": 13.0,
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "kp_id": 1,
+        "length_dm_raw": "51"
+      },
+      {
+        "length": 5.1,
+        "width": 320,
+        "qty": 1,
+        "load_code": 8,
+        "reinforcement": 13.0,
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 51-3,2-8п",
+        "kp_id": 1,
+        "length_dm_raw": "51"
+      },
+      {
+        "length": 5.8,
+        "width": 320,
+        "qty": 1,
+        "load_code": 8,
+        "reinforcement": 16.0,
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "kp_id": 1,
+        "length_dm_raw": "58"
+      },
+      {
+        "length": 5.8,
+        "width": 320,
+        "qty": 1,
+        "load_code": 8,
+        "reinforcement": 16.0,
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 58-3,2-8п",
+        "kp_id": 1,
+        "length_dm_raw": "58"
+      },
+      {
+        "length": 6.39,
+        "width": 530,
+        "qty": 1,
+        "load_code": 10,
+        "reinforcement": 22.0,
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 63,9-5,3-10п",
+        "kp_id": 1,
+        "length_dm_raw": "63,9"
+      },
+      {
+        "length": 8.9,
+        "width": 1200,
+        "qty": 1,
+        "load_code": 8,
+        "reinforcement": 38.0,
+        "kp_date": "06.06.2026",
+        "customer": "ООО Сальса",
+        "plate_name": "Плиты ПБ 89-12-8п",
+        "kp_id": 1,
+        "length_dm_raw": "89"
+      }
+    ],
+    "rests_created": [
+      {
+        "length": 5.1,
+        "rest_width_mm": 880,
+        "source_width_mm": 320
+      },
+      {
+        "length": 6.39,
+        "rest_width_mm": 670,
+        "source_width_mm": 530
+      }
+    ],
+    "rests_used": [
+      {
+        "source_length": 5.1,
+        "source_rest_mm": 880
+      },
+      {
+        "source_length": 6.39,
+        "source_rest_mm": 670
+      }
+    ],
+    "_coverage_summary": {
+      "demand_total": 6,
+      "covered_total": 6,
+      "missing": {},
+      "surplus": {},
+      "ok": true
+    },
+    "loads_in_group": [
+      8,
+      10
+    ]
+  },
+  "completed_days": [
+    1
+  ]
+}

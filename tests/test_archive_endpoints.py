@@ -59,7 +59,15 @@ def auth_cookie() -> dict[str, str]:
     }
 
 
-def _fake_details(kp_id: int = 42, status: str = "в архиве") -> ArchiveOfferDetails:
+def _fake_details(
+    kp_id: int = 42,
+    status: str = "в архиве",
+    *,
+    finance: ArchiveOfferFinance | None = None,
+    logistics_cost: float = 0.0,
+    total_cargo_weight_kg: float = 0.0,
+    delivery_service_total_rub: float = 0.0,
+) -> ArchiveOfferDetails:
     return ArchiveOfferDetails(
         kp_id=kp_id,
         creation_date="01.03.2026",
@@ -69,9 +77,13 @@ def _fake_details(kp_id: int = 42, status: str = "в архиве") -> ArchiveOf
         execution_terms=None,
         delivery_conditions=None,
         payment_conditions=None,
-        finance=ArchiveOfferFinance(
+        finance=finance
+        or ArchiveOfferFinance(
             subtotal=1000, vat_amount=220, total_amount=1220, discount_percent=5
         ),
+        logistics_cost=logistics_cost,
+        total_cargo_weight_kg=total_cargo_weight_kg,
+        delivery_service_total_rub=delivery_service_total_rub,
         plates=[],
         completion_percentage=None,
     )
@@ -157,6 +169,74 @@ def test_update_discount_validation(
         cookies=auth_cookie,
     )
     assert response.status_code == 422
+
+
+def test_update_logistics_cost_requires_auth(client: TestClient) -> None:
+    response = client.patch(
+        "/api/v1/commercial/archive/42/logistics-cost",
+        json={"logistics_cost": 100},
+    )
+    assert response.status_code == 401
+
+
+def test_update_logistics_cost_ok(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.update_logistics_cost.return_value = _fake_details(
+        finance=ArchiveOfferFinance(
+            subtotal=607.0,
+            vat_amount=143.0,
+            total_amount=750.0,
+            discount_percent=0.0,
+        ),
+        logistics_cost=100.0,
+        total_cargo_weight_kg=18414.5,
+        delivery_service_total_rub=100.0,
+    )
+
+    response = client.patch(
+        "/api/v1/commercial/archive/42/logistics-cost",
+        json={"logistics_cost": 100},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    fake_service.update_logistics_cost.assert_called_once_with(42, 100.0)
+    payload = response.json()
+    assert payload["logistics_cost"] == 100.0
+    assert payload["finance"]["total_amount"] == 750.0
+
+
+def test_update_logistics_cost_validation_negative(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    response = client.patch(
+        "/api/v1/commercial/archive/42/logistics-cost",
+        json={"logistics_cost": -1},
+        cookies=auth_cookie,
+    )
+    assert response.status_code == 422
+
+
+def test_update_logistics_cost_404(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveNotFoundError
+
+    fake_service.update_logistics_cost.side_effect = ArchiveNotFoundError("нет такого")
+
+    response = client.patch(
+        "/api/v1/commercial/archive/999/logistics-cost",
+        json={"logistics_cost": 50},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 404
 
 
 def test_delete_ok(

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CommercialDraftDetails, CommercialSaveResult, SaveMode } from "@/features/commercial-offer/types/commercialOffer";
+import { deliveryServiceTotalRub } from "@/features/commercial-offer/utils/cargoDeliveryPricing";
 import { DownloadFilesSection } from "@/features/commercial-offer/components/DownloadFilesSection";
 import { SaveOfferSection } from "@/features/commercial-offer/components/SaveOfferSection";
 import { Alert } from "@/shared/ui/Alert";
@@ -48,8 +49,8 @@ export const CalculationResultStep = ({
   const totalWeight = draft.order_data.reduce((acc, item) => acc + (toNumber(item.weight) ?? 0), 0);
   const discountPercent = toNumber(draft.metadata.discount_percent) ?? 0;
   const discountFactor = 1 - Math.min(Math.max(discountPercent, 0), 100) / 100;
-  const logisticsCost = Math.max(toNumber(draft.metadata.logistics_cost) ?? 0, 0);
-  // Цены в позициях уже с НДС; скидка уменьшает сумму плит, логистика добавляется сверху.
+  const tripCost = Math.max(toNumber(draft.metadata.logistics_cost) ?? 0, 0);
+  // Цены в позициях уже с НДС; скидка уменьшает сумму плит; доставка — стоимость рейса × число рейсов по общему весу.
   const platesTotalWithVat = draft.order_data.reduce((acc, item) => {
     const qty = toNumber(item.qty) ?? 0;
     const unitPrice = toNumber(item.unit_price) ?? 0;
@@ -57,7 +58,8 @@ export const CalculationResultStep = ({
   }, 0);
   const platesAfterDiscount = platesTotalWithVat * discountFactor;
   const vat22FromPlates = platesAfterDiscount * 0.22;
-  const grandTotal = platesAfterDiscount + logisticsCost;
+  const deliveryServiceTotal = deliveryServiceTotalRub(tripCost, totalWeight);
+  const grandTotal = platesAfterDiscount + deliveryServiceTotal;
 
   useEffect(() => {
     setDiscountDraft(String(draft.metadata.discount_percent ?? 0));
@@ -80,7 +82,7 @@ export const CalculationResultStep = ({
   const handleApplyLogisticsCost = async () => {
     const parsed = toNumber(logisticsCostDraft);
     if (parsed === null || parsed < 0) {
-      setLogisticsError("Стоимость логистики должна быть числом не меньше 0.");
+      setLogisticsError("Стоимость рейса должна быть числом не меньше 0.");
       return;
     }
     setLogisticsError(null);
@@ -179,13 +181,13 @@ export const CalculationResultStep = ({
           <SummaryCell label="Общий вес (кг)" value={formatNumber(totalWeight)} />
           <SummaryCell label="(НДС 22%)" value={formatNumber(vat22FromPlates)} />
           <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
-            <FieldWrapper label="Стоимость логистики" error={logisticsError}>
+            <FieldWrapper label="Стоимость рейса" error={logisticsError}>
               <div style={{ position: "relative" }}>
                 <input
                   value={logisticsCostDraft}
                   onChange={(event) => setLogisticsCostDraft(event.target.value)}
                   inputMode="decimal"
-                  placeholder="Введите стоимость"
+                  placeholder="Стоимость одного рейса"
                   style={{
                     width: "100%",
                     border: "1px solid #d0d5dd",

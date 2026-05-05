@@ -21,6 +21,10 @@ htmlcov/
 .tox/
 .hypothesis/
 
+# Cursor, локальная AI-документация, логи отладки (не в репозитории)
+.cursor/
+ai_docs/
+
 # VS Code settings
 .vscode/
 

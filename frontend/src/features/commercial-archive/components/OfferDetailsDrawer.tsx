@@ -1,14 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { Spinner } from "@/shared/ui/Spinner";
 import { Alert } from "@/shared/ui/Alert";
+import { FieldWrapper } from "@/shared/ui/Field";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
-import { useArchiveOfferQuery } from "@/features/commercial-archive/hooks/useArchiveQueries";
+import {
+  useArchiveOfferQuery,
+  useUpdateDiscountMutation,
+  useUpdateLogisticsCostMutation,
+} from "@/features/commercial-archive/hooks/useArchiveQueries";
+import {
+  cargoDeliveryTripsCount,
+} from "@/features/commercial-offer/utils/cargoDeliveryPricing";
 import { formatMoney, statusEmoji } from "@/features/commercial-archive/lib/format";
 import { downloadFile } from "@/shared/lib/downloadFile";
 import { getErrorMessage } from "@/shared/lib/apiError";
-import { DiscountEditDialog } from "./DiscountEditDialog";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
 import { MoveToProductionDialog } from "./MoveToProductionDialog";
 
@@ -23,9 +30,16 @@ const PLATES_PREVIEW = 10;
 export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const query = useArchiveOfferQuery(open ? kpId : null);
   const [showAllPlates, setShowAllPlates] = useState(false);
-  const [discountOpen, setDiscountOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [discountDraft, setDiscountDraft] = useState("");
+  const [logisticsDraft, setLogisticsDraft] = useState("");
+  const [discountError, setDiscountError] = useState<string | null>(null);
+  const [logisticsError, setLogisticsError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  const discountMutation = useUpdateDiscountMutation();
+  const logisticsMutation = useUpdateLogisticsCostMutation();
+  const financePending = discountMutation.isPending || logisticsMutation.isPending;
 
   const offer = query.data;
   const platesToShow = offer
@@ -33,6 +47,44 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       ? offer.plates
       : offer.plates.slice(0, PLATES_PREVIEW)
     : [];
+
+  useEffect(() => {
+    if (offer) {
+      setDiscountDraft(String(offer.finance.discount_percent ?? 0));
+      setLogisticsDraft(String(offer.logistics_cost ?? 0).replace(".", ","));
+      setDiscountError(null);
+      setLogisticsError(null);
+    }
+  }, [offer?.kp_id, offer?.finance.discount_percent, offer?.logistics_cost]);
+
+  const handleDiscountOk = async () => {
+    if (!offer) {
+      return;
+    }
+    const parsed = parseNumberField(discountDraft);
+    if (parsed === null || parsed < 0 || parsed > 100) {
+      setDiscountError("Скидка должна быть числом от 0 до 100.");
+      return;
+    }
+    setDiscountError(null);
+    await discountMutation.mutateAsync({ kpId: offer.kp_id, discount: parsed });
+  };
+
+  const handleLogisticsOk = async () => {
+    if (!offer) {
+      return;
+    }
+    const parsed = parseNumberField(logisticsDraft);
+    if (parsed === null || parsed < 0) {
+      setLogisticsError("Стоимость рейса должна быть числом не меньше 0.");
+      return;
+    }
+    setLogisticsError(null);
+    await logisticsMutation.mutateAsync({ kpId: offer.kp_id, logisticsCost: parsed });
+    setLogisticsDraft(String(parsed).replace(".", ","));
+  };
+
+  const clientTrips = offer ? cargoDeliveryTripsCount(Math.max(0, offer.total_cargo_weight_kg ?? 0)) : 0;
 
   return (
     <Modal open={open} onClose={onClose} title={offer ? `КП №${offer.kp_id}` : "Карточка КП"} maxWidth={720}>
@@ -90,17 +142,146 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             </div>
           </section>
 
+          {/* Итоги: слева вес, НДС, рейс, доставка; справа скидка и под ней «Итого с НДС» */}
           <section
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: "0.75rem",
+              padding: "1rem",
+              border: "1px solid #e4e7ec",
+              borderRadius: 14,
+              background: "#ffffff",
             }}
           >
-            <FinanceCard label="Сумма без НДС" value={formatMoney(offer.finance.subtotal)} />
-            <FinanceCard label="НДС (22%)" value={formatMoney(offer.finance.vat_amount)} />
-            <FinanceCard label="Итого с НДС" value={formatMoney(offer.finance.total_amount)} accent />
-            <FinanceCard label="Скидка" value={`${offer.finance.discount_percent}%`} />
+            <h3 style={{ margin: "0 0 0.75rem", fontSize: "1rem" }}>Итоги</h3>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 2fr) minmax(220px, 1fr)",
+                gap: "0.75rem",
+                alignItems: "start",
+              }}
+            >
+              <div style={{ display: "grid", gap: "0.75rem" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                    gap: "0.75rem",
+                  }}
+                >
+                  <FinanceCard
+                    label="Общий вес груза, кг"
+                    value={formatNumberLocale(Math.max(0, offer.total_cargo_weight_kg ?? 0))}
+                  />
+                  <FinanceCard label="НДС (22%)" value={formatMoney(offer.finance.vat_amount)} />
+                </div>
+
+                <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
+                  <FieldWrapper label="Стоимость рейса" error={logisticsError}>
+                    <div style={{ position: "relative" }}>
+                      <input
+                        value={logisticsDraft}
+                        onChange={(event) => setLogisticsDraft(event.target.value)}
+                        inputMode="decimal"
+                        placeholder="Стоимость одного рейса"
+                        disabled={financePending}
+                        style={{
+                          width: "100%",
+                          border: "1px solid #d0d5dd",
+                          borderRadius: 12,
+                          padding: "0.8rem 3.5rem 0.8rem 0.9rem",
+                          background: "#ffffff",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={handleLogisticsOk}
+                        disabled={financePending}
+                        style={{
+                          position: "absolute",
+                          right: "0.35rem",
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          borderRadius: 8,
+                          padding: "0.25rem 0.6rem",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        OK
+                      </Button>
+                    </div>
+                  </FieldWrapper>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "0.75rem",
+                    border: "1px solid #e4e7ec",
+                    borderRadius: 12,
+                    padding: "0.85rem 1rem",
+                    background: "#fafafa",
+                  }}
+                >
+                  <span style={{ color: "#475467", fontWeight: 500 }}>
+                    Услуга по доставке грузов
+                    {clientTrips > 0 ? ` (${tripsRussianLabel(clientTrips)})` : ""}
+                  </span>
+                  <strong style={{ fontVariantNumeric: "tabular-nums" }}>{formatMoney(offer.delivery_service_total_rub)}</strong>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: "0.75rem", alignSelf: "stretch" }}>
+                <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
+                  <FieldWrapper label="Скидка (%)" error={discountError}>
+                    <div style={{ position: "relative" }}>
+                      <input
+                        value={discountDraft}
+                        onChange={(event) => setDiscountDraft(event.target.value)}
+                        inputMode="decimal"
+                        placeholder="Например, 5"
+                        disabled={financePending}
+                        style={{
+                          width: "100%",
+                          border: "1px solid #d0d5dd",
+                          borderRadius: 12,
+                          padding: "0.8rem 3.5rem 0.8rem 0.9rem",
+                          background: "#ffffff",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={handleDiscountOk}
+                        disabled={financePending}
+                        style={{
+                          position: "absolute",
+                          right: "0.35rem",
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          borderRadius: 8,
+                          padding: "0.25rem 0.6rem",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        OK
+                      </Button>
+                    </div>
+                  </FieldWrapper>
+                </div>
+                <FinanceCard label="Итого с НДС" value={formatMoney(offer.finance.total_amount)} accent />
+              </div>
+            </div>
+
+            {(discountMutation.isError || logisticsMutation.isError) && (
+              <div style={{ marginTop: "0.75rem" }}>
+                <Alert tone="error">{getErrorMessage(discountMutation.error ?? logisticsMutation.error)}</Alert>
+              </div>
+            )}
           </section>
 
           <section>
@@ -147,15 +328,8 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
           </section>
 
           <section style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-            <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "pdf"))}>
-              📄 PDF
-            </Button>
-            <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "xlsx"))}>
-              📊 XLSX
-            </Button>
-            <Button variant="secondary" onClick={() => setDiscountOpen(true)}>
-              Изменить скидку
-            </Button>
+            <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "pdf"))}>📄 PDF</Button>
+            <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "xlsx"))}>📊 XLSX</Button>
             {offer.status === "в архиве" && (
               <Button variant="secondary" onClick={() => setMoveOpen(true)}>
                 🏭 В производство
@@ -170,12 +344,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
 
       {offer && (
         <>
-          <DiscountEditDialog
-            open={discountOpen}
-            onClose={() => setDiscountOpen(false)}
-            kpId={offer.kp_id}
-            currentDiscount={offer.finance.discount_percent}
-          />
           <DeleteConfirmDialog
             open={deleteOpen}
             onClose={() => setDeleteOpen(false)}
@@ -187,6 +355,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             open={moveOpen}
             onClose={() => setMoveOpen(false)}
             kpId={offer.kp_id}
+            initialExecutionTerms={offer.execution_terms}
           />
         </>
       )}
@@ -207,3 +376,32 @@ const FinanceCard = ({ label, value, accent }: { label: string; value: string; a
     <div style={{ fontWeight: 700, color: accent ? "#1d4ed8" : "#101828", marginTop: "0.25rem" }}>{value}</div>
   </div>
 );
+
+const parseNumberField = (raw: string): number | null => {
+  const normalized = raw.trim().replace(/\s+/g, "").replace(",", ".");
+  if (!normalized.length) {
+    return null;
+  }
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+};
+
+const formatNumberLocale = (value: number): string =>
+  value.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+
+/** Подпись «N рейс/рейса/рейсов» для подсказки к расчётной строке доставки. */
+const tripsRussianLabel = (n: number): string => {
+  const k = Math.abs(Math.trunc(n));
+  const mod100 = k % 100;
+  const mod10 = k % 10;
+  if (mod100 >= 11 && mod100 <= 14) {
+    return `${k} рейсов`;
+  }
+  if (mod10 === 1) {
+    return `${k} рейс`;
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return `${k} рейса`;
+  }
+  return `${k} рейсов`;
+};

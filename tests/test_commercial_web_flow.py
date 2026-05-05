@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -298,3 +299,71 @@ def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
 
     assert result["draft_id"] == "draft-1"
     assert captured["text"] == "ПБ 59-12-8п 1"
+
+
+def test_save_draft_archive_passes_normalized_execution_terms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = CommercialWorkflowService()
+    fake_xlsx = tmp_path / "kp-out.xlsx"
+    fake_xlsx.write_bytes(b"x")
+
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: _sample_draft())
+    monkeypatch.setattr(
+        workflow,
+        "generate_files",
+        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+    )
+    # Атрибут экземпляра: вызывается без привязки self — только имя файла.
+    monkeypatch.setattr(workflow, "_resolve_generated_file", lambda filename: fake_xlsx)
+
+    captured: dict[str, Any] = {}
+
+    def fake_save_offer(**kwargs: Any) -> int:
+        captured["execution_terms"] = kwargs["execution_terms"]
+        captured["status"] = kwargs["status"]
+        return 101
+
+    monkeypatch.setattr(workflow.kp_repository, "save_offer", fake_save_offer)
+    monkeypatch.setattr(workflow.draft_store, "update_metadata", lambda *args, **kwargs: None)
+
+    result = workflow.save_draft(
+        "draft-123",
+        mode="archive",
+        execution_terms_input="2026-06-05",
+    )
+
+    assert captured["status"] == "в архиве"
+    assert captured["execution_terms"] == "05.06.2026"
+    assert result["saved_offer"]["execution_terms"] == "05.06.2026"
+
+
+def test_save_draft_archive_empty_execution_terms_input_skips_normalize(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = CommercialWorkflowService()
+    fake_xlsx = tmp_path / "kp-out.xlsx"
+    fake_xlsx.write_bytes(b"x")
+
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: _sample_draft())
+    monkeypatch.setattr(
+        workflow,
+        "generate_files",
+        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+    )
+    monkeypatch.setattr(workflow, "_resolve_generated_file", lambda filename: fake_xlsx)
+
+    captured: dict[str, Any] = {}
+
+    def fake_save_offer(**kwargs: Any) -> int:
+        captured["execution_terms"] = kwargs["execution_terms"]
+        return 102
+
+    monkeypatch.setattr(workflow.kp_repository, "save_offer", fake_save_offer)
+    monkeypatch.setattr(workflow.draft_store, "update_metadata", lambda *args, **kwargs: None)
+
+    workflow.save_draft("draft-123", mode="archive", execution_terms_input="   ")
+
+    assert captured["execution_terms"] == ""
