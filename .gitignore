@@ -24,6 +24,9 @@ htmlcov/
 # VS Code settings
 .vscode/
 
+# Cursor workspace (временные файлы)
+.cursor/workspace/
+
 # JetBrains
 .idea/
 
