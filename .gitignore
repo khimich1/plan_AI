@@ -26,6 +26,7 @@ htmlcov/
 
 # Cursor workspace (временные файлы)
 .cursor/workspace/
+.cursor/
 
 # JetBrains
 .idea/
@@ -71,3 +72,6 @@ dist/
 
 # Папка с описанием изменений
 описание изменений/
+
+# AI-generated docs
+ai_docs/
