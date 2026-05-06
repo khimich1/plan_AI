@@ -1195,6 +1195,113 @@ def _append_parent_variants_to_secondary_cuts_info(
             secondary_cuts_info[gk].append(v)
 
 
+def _plan_stock_width_mm(plan: dict) -> int:
+    """Ширина заготовки для варианта A (остаток = stock − выход)."""
+    explicit = plan.get("plate_width_mm")
+    if explicit is not None:
+        try:
+            return int(round(float(explicit)))
+        except (TypeError, ValueError):
+            pass
+    return 1200
+
+
+def _extract_orphan_secondaries_as_synthetic_primary_cuts(
+    *,
+    secondary_cuts_info: dict,
+    plan: dict,
+    plate_width_mm: int,
+) -> list[dict]:
+    """
+    Вторичные без parent_instance_id убираем из гео-индекса и представляем как
+    строки первичного реза (ширина = выход, rest = stock − ширина).
+    """
+    synthetic: list[dict] = []
+    sec_rows_by_id: dict[str, dict] = {}
+    for row in plan.get("secondary_cuts") or []:
+        sid = row.get("secondary_instance_id")
+        if sid is not None:
+            sec_rows_by_id[str(sid)] = row
+    assign_by_id: dict[str, dict] = {}
+    for a in plan.get("plate_assignments") or []:
+        if a.get("source") == "secondary" and a.get("unit_id") is not None:
+            assign_by_id[str(a["unit_id"])] = a
+
+    for gk in list(secondary_cuts_info.keys()):
+        kept: list[dict] = []
+        for v in secondary_cuts_info[gk]:
+            if v.get("parent_instance_id"):
+                kept.append(v)
+                continue
+            sid = v.get("secondary_instance_id")
+            if sid is None:
+                continue
+            sid_s = str(sid)
+            pat = v.get("pattern") or []
+            if not pat:
+                continue
+            seg0 = pat[0]
+            width_mm = int(round(float(seg0.get("width_mm") or 0)))
+            if width_mm <= 0 or width_mm >= plate_width_mm:
+                kept.append(v)
+                continue
+            rest_mm = int(plate_width_mm - width_mm)
+            if rest_mm <= 0:
+                kept.append(v)
+                continue
+            row = sec_rows_by_id.get(sid_s, {})
+            assign = assign_by_id.get(sid_s, {})
+            tok = v.get("target_order_key")
+            if tok and len(tok) > 2:
+                lc = cfg.normalize_load_code(tok[2], default=8)
+            else:
+                lc = cfg.normalize_load_code(row.get("load_code") or assign.get("load_code", 8))
+            _tl = seg0.get("target_length")
+            if _tl is not None:
+                try:
+                    length_m = float(_tl)
+                except (TypeError, ValueError):
+                    length_m = float(gk[0])
+            else:
+                length_m = float(gk[0])
+            _len_fallback = row.get("lengths")
+            if _len_fallback:
+                if isinstance(_len_fallback, (list, tuple)) and _len_fallback:
+                    try:
+                        length_m = float(_len_fallback[0])
+                    except (TypeError, ValueError):
+                        pass
+            elif assign.get("length") is not None:
+                try:
+                    length_m = float(assign["length"])
+                except (TypeError, ValueError):
+                    pass
+
+            synthetic.append({
+                "width": width_mm,
+                "rest": rest_mm,
+                "qty": 1,
+                "lengths": [length_m],
+                "load_code": lc,
+                "kp_id": row.get("kp_id") if row.get("kp_id") is not None else assign.get("kp_id"),
+                "customer": row.get("customer") if row.get("customer") is not None else assign.get("customer"),
+                "kp_date": row.get("kp_date") if row.get("kp_date") is not None else assign.get("kp_date"),
+                "plate_name": row.get("plate_name") if row.get("plate_name") is not None else assign.get("plate_name"),
+                "primary_instance_id": sid,
+                "skip_secondary_attachment": True,
+                "ignore_transverse": True,
+                "emulated_primary_from_secondary": True,
+                "emulated_secondary_units": max(1, len(pat)),
+                "identity_match_type": row.get("identity_match_type") or assign.get("identity_match_type"),
+            })
+        if kept:
+            secondary_cuts_info[gk] = kept
+        else:
+            del secondary_cuts_info[gk]
+
+    return synthetic
+
+
 def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     """
     Вспомогательная функция: строит последовательность плит из плана оптимизации.
@@ -1382,6 +1489,14 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
             },
         )
     # #endregion
+
+    synthetic_orphan_primary_cuts: list[dict] = []
+    if plan.get("secondary_cuts"):
+        synthetic_orphan_primary_cuts = _extract_orphan_secondaries_as_synthetic_primary_cuts(
+            secondary_cuts_info=secondary_cuts_info,
+            plan=plan,
+            plate_width_mm=_plan_stock_width_mm(plan),
+        )
     
     # ========== НОВАЯ ЛОГИКА: РАЗДЕЛИТЕЛИ МЕЖДУ ГРУППАМИ РЕЗОВ ==========
     # Требования завода (ОБНОВЛЁННЫЕ):
@@ -1405,6 +1520,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     
     # Плиты с резом - вычисляем армирование для группировки
     cut_with_rest_raw = [cut for cut in all_primary_cuts if cut['rest'] > 0]
+    if synthetic_orphan_primary_cuts:
+        cut_with_rest_raw.extend(synthetic_orphan_primary_cuts)
     
     # НОВОЕ: Добавляем армирование к каждой плите с резом для группировки
     for cut in cut_with_rest_raw:
@@ -1577,6 +1694,8 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
             plate_name_from_cut = cut.get('plate_name')
             
             transverse_cut_info = transverse_cut_map.get((length, width_mm))
+            if cut.get("ignore_transverse"):
+                transverse_cut_info = None
             
             if transverse_cut_info:
                 # #region agent log
@@ -1676,35 +1795,40 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     chosen_variant = None
                     _matched_via = None
                     _geom_key_attach = _secondary_geom_cut_key(length, rest_mm)
-                    # Сначала варианты по parent_instance_id; если не выбрали — геометрия
-                    # (иначе непустой, но «неподходящий» by_parent блокирует legacy_match_used=0).
                     _pool_parent: list = []
-                    if parent_instance_id:
-                        _pool_parent = secondary_cuts_by_parent.get(str(parent_instance_id)) or []
-                    for variant in _pool_parent:
-                        if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
-                            chosen_variant = variant
-                            _matched_via = "parent"
-                            break
                     _pool_geom: list = []
-                    if not chosen_variant:
-                        _pool_geom = secondary_cuts_info.get(_geom_key_attach) or []
-                        if _pool_geom:
-                            legacy_secondary_match_used += 1
-                            for variant in _pool_geom:
-                                _variant_target_key = variant.get('target_order_key')
-                                _variant_target_lc = (
-                                    cfg.normalize_load_code(_variant_target_key[2], default=8)
-                                    if _variant_target_key and len(_variant_target_key) > 2
-                                    else load_code_from_cut
-                                )
-                                if _variant_target_lc > load_code_from_cut:
-                                    continue
-                                if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
-                                    chosen_variant = variant
-                                    _matched_via = "geom"
-                                    break
-                    _pool_geom_for_log = secondary_cuts_info.get(_geom_key_attach) or []
+                    _pool_geom_for_log: list = []
+                    if cut.get("skip_secondary_attachment"):
+                        _matched_via = "emulated_primary"
+                        secondary_attached_total += int(cut.get("emulated_secondary_units") or 1)
+                    else:
+                        # Сначала варианты по parent_instance_id; если не выбрали — геометрия
+                        # (иначе непустой, но «неподходящий» by_parent блокирует legacy_match_used=0).
+                        if parent_instance_id:
+                            _pool_parent = secondary_cuts_by_parent.get(str(parent_instance_id)) or []
+                        for variant in _pool_parent:
+                            if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
+                                chosen_variant = variant
+                                _matched_via = "parent"
+                                break
+                        if not chosen_variant:
+                            _pool_geom = secondary_cuts_info.get(_geom_key_attach) or []
+                            if _pool_geom:
+                                legacy_secondary_match_used += 1
+                                for variant in _pool_geom:
+                                    _variant_target_key = variant.get('target_order_key')
+                                    _variant_target_lc = (
+                                        cfg.normalize_load_code(_variant_target_key[2], default=8)
+                                        if _variant_target_key and len(_variant_target_key) > 2
+                                        else load_code_from_cut
+                                    )
+                                    if _variant_target_lc > load_code_from_cut:
+                                        continue
+                                    if variant['used'] < variant['qty'] and (variant.get('pattern') or []):
+                                        chosen_variant = variant
+                                        _matched_via = "geom"
+                                        break
+                        _pool_geom_for_log = secondary_cuts_info.get(_geom_key_attach) or []
                     
                     if chosen_variant:
                         secondary_cuts_for_plate = []
@@ -1766,7 +1890,7 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                                     })
                         chosen_variant['used'] += 1
                         secondary_attached_total += len(secondary_cuts_for_plate)
-                    elif rest_mm > 0:
+                    elif rest_mm > 0 and not cut.get("skip_secondary_attachment"):
                         if parent_instance_id:
                             unmatched_by_reason["parent_instance_id_not_found"] += 1
                         else:
@@ -1813,12 +1937,16 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                             if chosen_variant
                             else None,
                             "unmatched_increment": (
-                                "parent_instance_id_not_found"
-                                if (not chosen_variant and rest_mm > 0 and parent_instance_id)
+                                None
+                                if cut.get("skip_secondary_attachment")
                                 else (
-                                    "key_not_found"
-                                    if (not chosen_variant and rest_mm > 0 and not parent_instance_id)
-                                    else None
+                                    "parent_instance_id_not_found"
+                                    if (not chosen_variant and rest_mm > 0 and parent_instance_id)
+                                    else (
+                                        "key_not_found"
+                                        if (not chosen_variant and rest_mm > 0 and not parent_instance_id)
+                                        else None
+                                    )
                                 )
                             ),
                         },

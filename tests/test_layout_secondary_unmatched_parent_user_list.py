@@ -149,6 +149,9 @@ def test_layout_phase_C_logs_null_parent_slot_and_h5_unmatched(user_list_opt_con
     secondary_cuts_by_parent он не попадает (if parent_instance_id), поэтому
     привязка только по геометрии; один сегмент может остаться без слота → unmatched=1.
 
+    Вторичные без parent эмулируются как первичный рез (вариант A) и учитываются
+    в secondary_attached_total — при наличии только таких «сирот» unmatched=0.
+
     Если после оптимизатора null-parent нет, ожидаем secondary_unmatched_total==0.
     """
     _orders_2d, plate_order, svc, ctx = user_list_opt_context
@@ -181,8 +184,8 @@ def test_layout_phase_C_logs_null_parent_slot_and_h5_unmatched(user_list_opt_con
     assert h5, "ожидали хотя бы одну запись H5 phase_end_summary"
     last = h5[-1]["data"]
     if n_orphan_plan >= 1:
-        assert last.get("secondary_unmatched_total") == 1
-        assert last.get("secondary_total_from_plan", 0) - last.get("secondary_attached_total", 0) == 1
+        assert last.get("secondary_unmatched_total") == 0
+        assert last.get("secondary_total_from_plan", 0) == last.get("secondary_attached_total", 0)
     else:
         assert last.get("secondary_unmatched_total") == 0
         assert last.get("secondary_total_from_plan", 0) == last.get("secondary_attached_total", 0)
@@ -193,11 +196,8 @@ def test_layout_phase_C_logs_null_parent_slot_and_h5_unmatched(user_list_opt_con
         if x.get("hypothesisId") == "H3"
         and x.get("data", {}).get("unmatched_increment") == "parent_instance_id_not_found"
     ]
-    if n_orphan_plan >= 1:
-        assert h3_unmatched, "ожидали H3 с unmatched_increment=parent_instance_id_not_found"
-    else:
-        if not h3_unmatched:
-            return
+    if not h3_unmatched:
+        return
     by_parent = defaultdict(int)
     for d in h3_unmatched:
         pid = d.get("parent_instance_id")
