@@ -9,7 +9,7 @@ import time
 
 import core.config_and_data as cfg
 from core.optimization import OPT_PLAN, OPT_WIDTH_PRIORITY
-from core.debug_paths import get_debug_log_path
+from core.debug_paths import PROJECT_ROOT, get_debug_log_path
 from collections import defaultdict
 
 _DEBUG_LOG = get_debug_log_path("debug.log")
@@ -1086,6 +1086,115 @@ def _secondary_geom_cut_key(length_m: object, rest_or_source_mm: object) -> tupl
     return (round(float(length_m), 2), int(round(float(rest_or_source_mm))))
 
 
+def _canonical_target_order_key_tok(tok: object | None) -> tuple | None:
+    """Хешируемый ключ заказа для слияния вторичных с одним parent_instance_id."""
+    if tok is None:
+        return None
+    try:
+        L, w, lc = tok[0], tok[1], tok[2]  # type: ignore[index]
+        return (round(float(L), 2), int(round(float(w))), int(round(float(lc))))
+    except (TypeError, ValueError, IndexError):
+        return (repr(tok),)
+
+
+def _secondary_merge_key(tok: object | None, geom_key: tuple[float, int]) -> tuple[tuple | None, tuple[float, int]]:
+    return (_canonical_target_order_key_tok(tok), geom_key)
+
+
+def _merge_atomic_secondaries_by_shared_parent(
+    *,
+    secondary_cuts_by_parent: dict[str, list[dict]],
+    logger: object,
+) -> None:
+    """
+    Несколько строк secondary_cuts с одним parent_instance_id → один variant с суммой
+    pattern-сегментов и secondary_instance_ids, чтобы один проход split в фазе C навесил всех.
+    """
+    max_segments_warn = 8
+    for pid, bucket in list(secondary_cuts_by_parent.items()):
+        grouped: dict[tuple, list[dict]] = defaultdict(list)
+        for variant in bucket:
+            gk = variant.get("geom_key")
+            if gk is None:
+                grouped[(None, "__no_geom__", id(variant))].append(variant)
+                continue
+            mk = _secondary_merge_key(variant.get("target_order_key"), gk)
+            grouped[mk].append(variant)
+
+        new_bucket: list[dict] = []
+        for _mk, grp in grouped.items():
+            atomic = [v for v in grp if len(v.get("pattern") or []) == 1]
+            non_atomic = [v for v in grp if len(v.get("pattern") or []) != 1]
+
+            if len(atomic) > 1:
+                atomic.sort(key=lambda x: str(x.get("secondary_instance_id") or ""))
+                merged_segments: list[dict] = []
+                sec_ids: list[object] = []
+                widths: set[float] = set()
+                for v in atomic:
+                    for seg in v.get("pattern") or []:
+                        merged_segments.append(seg.copy())
+                    sec_ids.append(v.get("secondary_instance_id"))
+                    for seg in v.get("pattern") or []:
+                        widths.add(float(seg.get("width_mm", 0)))
+                if len(widths) > 1:
+                    logger.warning(
+                        "[LAYOUT_SEQUENCE] skip merge parent=%s: inconsistent width_mm in atomic group %s",
+                        pid,
+                        widths,
+                    )
+                    for v in atomic:
+                        sid = v.get("secondary_instance_id")
+                        if sid is not None and not v.get("secondary_instance_ids"):
+                            v["secondary_instance_ids"] = [sid]
+                        new_bucket.append(v)
+                else:
+                    if len(merged_segments) > max_segments_warn:
+                        logger.warning(
+                            "[LAYOUT_SEQUENCE] merged %s secondary segments under parent=%s merge_key=%s — "
+                            "check plan vs physics (max sane strip count)",
+                            len(merged_segments),
+                            pid,
+                            _mk,
+                        )
+                    merged_variant = {
+                        "pattern": merged_segments,
+                        "qty": 1,
+                        "used": 0,
+                        "target_order_key": atomic[0].get("target_order_key"),
+                        "parent_instance_id": pid,
+                        "geom_key": atomic[0].get("geom_key"),
+                        "secondary_instance_ids": sec_ids,
+                        "secondary_instance_id": sec_ids[0] if sec_ids else None,
+                    }
+                    new_bucket.append(merged_variant)
+            elif len(atomic) == 1:
+                solo = atomic[0]
+                sid = solo.get("secondary_instance_id")
+                if sid is not None and not solo.get("secondary_instance_ids"):
+                    solo["secondary_instance_ids"] = [sid]
+                new_bucket.append(solo)
+            new_bucket.extend(non_atomic)
+
+        secondary_cuts_by_parent[pid] = new_bucket
+
+
+def _append_parent_variants_to_secondary_cuts_info(
+    *,
+    secondary_cuts_info: dict,
+    secondary_cuts_by_parent: dict[str, list[dict]],
+) -> None:
+    """После слияния parent-bucket — добавить merged variant в геометрический индекс."""
+    for _pid, lst in secondary_cuts_by_parent.items():
+        for v in lst:
+            gk = v.get("geom_key")
+            if gk is None:
+                continue
+            if gk not in secondary_cuts_info:
+                secondary_cuts_info[gk] = []
+            secondary_cuts_info[gk].append(v)
+
+
 def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
     """
     Вспомогательная функция: строит последовательность плит из плана оптимизации.
@@ -1231,9 +1340,6 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     else sec_cut.get('secondary_instance_id')
                 )
                 
-                if key not in secondary_cuts_info:
-                    secondary_cuts_info[key] = []
-                
                 variant = {
                     'pattern': [segment.copy() for segment in pattern],
                     'qty': 1,
@@ -1242,10 +1348,22 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                     'target_order_key': target_order_key,
                     'parent_instance_id': parent_instance_id,
                     'secondary_instance_id': secondary_instance_id,
+                    'geom_key': key,
                 }
-                secondary_cuts_info[key].append(variant)
                 if parent_instance_id:
                     secondary_cuts_by_parent[str(parent_instance_id)].append(variant)
+                else:
+                    if key not in secondary_cuts_info:
+                        secondary_cuts_info[key] = []
+                    secondary_cuts_info[key].append(variant)
+        _merge_atomic_secondaries_by_shared_parent(
+            secondary_cuts_by_parent=secondary_cuts_by_parent,
+            logger=_log,
+        )
+        _append_parent_variants_to_secondary_cuts_info(
+            secondary_cuts_info=secondary_cuts_info,
+            secondary_cuts_by_parent=secondary_cuts_by_parent,
+        )
     # #region agent log
     if plan.get("secondary_cuts"):
         _geom_variant_counts = {f"{k[0]}_{k[1]}": len(v) for k, v in secondary_cuts_info.items()}
@@ -1593,7 +1711,11 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                         # BUG-4 FIX: canonical ключ заказа из оптимизатора для точного match
                         _sec_tok_plan = chosen_variant.get('target_order_key')
                         for sec_idx, sec_cut_template in enumerate(chosen_variant['pattern']):
-                            sec_unit_id = chosen_variant.get('secondary_instance_id')
+                            _sec_ids_list = chosen_variant.get("secondary_instance_ids") or []
+                            if sec_idx < len(_sec_ids_list) and _sec_ids_list[sec_idx]:
+                                sec_unit_id = _sec_ids_list[sec_idx]
+                            else:
+                                sec_unit_id = chosen_variant.get('secondary_instance_id')
                             if sec_unit_id is None:
                                 sec_unit_id = f"{parent_instance_id or 'secondary'}:{length}:{rest_mm}:{sec_idx}:{chosen_variant['used']}"
                             sec_width = sec_cut_template['width']
@@ -1677,9 +1799,14 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
                             "attached_pattern_segments": len(chosen_variant["pattern"])
                             if chosen_variant
                             else 0,
-                            "chosen_secondary_id": str(chosen_variant.get("secondary_instance_id"))
-                            if chosen_variant
-                            else None,
+                            "chosen_secondary_id": (
+                                str(
+                                    chosen_variant.get("secondary_instance_ids")
+                                    or chosen_variant.get("secondary_instance_id")
+                                )
+                                if chosen_variant
+                                else None
+                            ),
                             "chosen_variant_parent_in_plan": str(
                                 chosen_variant.get("parent_instance_id")
                             )
@@ -1753,5 +1880,27 @@ def _build_sequence_from_plan(plan, plate_label_func, reinforcement_map=None):
             dict(unmatched_by_reason),
             legacy_secondary_match_used,
         )
+    # #region agent log (ef42ae: H2 вторички из плана не пристыковались к сплиту в sequence)
+    try:
+        if secondary_unmatched_total or dict(unmatched_by_reason):
+            _ef42_payload = {
+                "sessionId": "ef42ae",
+                "hypothesisId": "H2",
+                "location": "viz_modules/layout_sequence.py:_build_sequence_from_plan:end",
+                "message": "secondary plan vs attached to sequence (unmatched => sec unit_ids may miss tracks)",
+                "data": {
+                    "secondary_total_from_plan": secondary_total_from_plan,
+                    "secondary_attached_total": secondary_attached_total,
+                    "secondary_unmatched_total": secondary_unmatched_total,
+                    "unmatched_by_reason": dict(unmatched_by_reason),
+                    "legacy_secondary_match_used": legacy_secondary_match_used,
+                },
+                "timestamp": int(time.time() * 1000),
+            }
+            with open(PROJECT_ROOT / "debug-ef42ae.log", "a", encoding="utf-8") as _ef42_f:
+                _ef42_f.write(json.dumps(_ef42_payload, ensure_ascii=False, default=str) + "\n")
+    except Exception:
+        pass
+    # #endregion
     return sequence
 

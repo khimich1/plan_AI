@@ -1,12 +1,12 @@
 {
-  "id": "plan_20260504_160857",
-  "name": "План с 04.05.2026",
-  "created_at": "2026-05-04 16:08:57",
-  "start_date": "2026-05-04",
+  "id": "plan_20260506_161658",
+  "name": "План с 06.05.2026",
+  "created_at": "2026-05-06 16:16:58",
+  "start_date": "2026-05-06",
   "tracks_count": 5,
   "days": {
-    "2026-05-04": {
-      "date": "2026-05-04",
+    "2026-05-06": {
+      "date": "2026-05-06",
       "day_number": 1,
       "tracks": [
         {
@@ -54,6 +54,42 @@
                   "plate_name": "Плиты ПБ 25,4-3,0-8п",
                   "identity_match_type": "backfilled",
                   "kp_plate_id": 82
+                },
+                {
+                  "width": 0.3,
+                  "label": "О Плиты ПБ 25,4-3-8п",
+                  "has_transverse": true,
+                  "target_length": 2.54,
+                  "load_code": 8,
+                  "target_order_key": [
+                    2.54,
+                    300,
+                    8
+                  ],
+                  "parent_unit_id": "prim-35",
+                  "unit_id": "sec-3",
+                  "kp_id": 1,
+                  "plate_name": "Плиты ПБ 25,4-3,0-8п",
+                  "identity_match_type": "backfilled",
+                  "kp_plate_id": 89
+                },
+                {
+                  "width": 0.3,
+                  "label": "О Плиты ПБ 25,4-3-8п",
+                  "has_transverse": true,
+                  "target_length": 2.54,
+                  "load_code": 8,
+                  "target_order_key": [
+                    2.54,
+                    300,
+                    8
+                  ],
+                  "parent_unit_id": "prim-35",
+                  "unit_id": "sec-4",
+                  "kp_id": 1,
+                  "plate_name": "Плиты ПБ 25,4-3,0-8п",
+                  "identity_match_type": "backfilled",
+                  "kp_plate_id": 89
                 }
               ],
               "reinforcement": 6.0,
@@ -2822,8 +2858,8 @@
       "total_tracks_count": 5,
       "completed": false
     },
-    "2026-05-05": {
-      "date": "2026-05-05",
+    "2026-05-07": {
+      "date": "2026-05-07",
       "day_number": 2,
       "tracks": [
         {
@@ -2842,8 +2878,7 @@
               "plate_name": "Плиты ПБ 37-12-8п",
               "plate_uid": null,
               "unit_id": "prim-64",
-              "layout_uid": "prim-64",
-              "kp_plate_id": 90
+              "layout_uid": "prim-64"
             },
             {
               "length": 3.7,
@@ -2859,8 +2894,7 @@
               "plate_name": "Плиты ПБ 37-12-8п",
               "plate_uid": null,
               "unit_id": "prim-65",
-              "layout_uid": "prim-65",
-              "kp_plate_id": 90
+              "layout_uid": "prim-65"
             },
             {
               "length": 3.7,
@@ -2876,8 +2910,7 @@
               "plate_name": "Плиты ПБ 37-12-8п",
               "plate_uid": null,
               "unit_id": "prim-66",
-              "layout_uid": "prim-66",
-              "kp_plate_id": 90
+              "layout_uid": "prim-66"
             },
             {
               "length": 3.7,
@@ -2893,8 +2926,7 @@
               "plate_name": "Плиты ПБ 37-12-8п",
               "plate_uid": null,
               "unit_id": "prim-67",
-              "layout_uid": "prim-67",
-              "kp_plate_id": 90
+              "layout_uid": "prim-67"
             },
             {
               "length": 4.5,
@@ -4690,8 +4722,8 @@
       "total_tracks_count": 5,
       "completed": false
     },
-    "2026-05-06": {
-      "date": "2026-05-06",
+    "2026-05-08": {
+      "date": "2026-05-08",
       "day_number": 3,
       "tracks": [
         {
@@ -4710,8 +4742,7 @@
               "plate_name": "Плиты ПБ 57,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-211",
-              "layout_uid": "prim-211",
-              "kp_plate_id": 91
+              "layout_uid": "prim-211"
             },
             {
               "length": 5.71,
@@ -4727,8 +4758,7 @@
               "plate_name": "Плиты ПБ 57,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-212",
-              "layout_uid": "prim-212",
-              "kp_plate_id": 91
+              "layout_uid": "prim-212"
             },
             {
               "length": 5.71,
@@ -4744,8 +4774,7 @@
               "plate_name": "Плиты ПБ 57,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-213",
-              "layout_uid": "prim-213",
-              "kp_plate_id": 91
+              "layout_uid": "prim-213"
             },
             {
               "length": 5.71,
@@ -4761,8 +4790,7 @@
               "plate_name": "Плиты ПБ 57,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-214",
-              "layout_uid": "prim-214",
-              "kp_plate_id": 91
+              "layout_uid": "prim-214"
             },
             {
               "length": 5.71,
@@ -4778,8 +4806,7 @@
               "plate_name": "Плиты ПБ 57,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-215",
-              "layout_uid": "prim-215",
-              "kp_plate_id": 91
+              "layout_uid": "prim-215"
             },
             {
               "length": 5.71,
@@ -4795,8 +4822,7 @@
               "plate_name": "Плиты ПБ 57,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-216",
-              "layout_uid": "prim-216",
-              "kp_plate_id": 91
+              "layout_uid": "prim-216"
             },
             {
               "length": 5.71,
@@ -4812,8 +4838,7 @@
               "plate_name": "Плиты ПБ 57,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-217",
-              "layout_uid": "prim-217",
-              "kp_plate_id": 91
+              "layout_uid": "prim-217"
             },
             {
               "length": 5.71,
@@ -4829,8 +4854,7 @@
               "plate_name": "Плиты ПБ 57,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-218",
-              "layout_uid": "prim-218",
-              "kp_plate_id": 91
+              "layout_uid": "prim-218"
             },
             {
               "length": 5.7,
@@ -6104,8 +6128,8 @@
       "total_tracks_count": 5,
       "completed": false
     },
-    "2026-05-07": {
-      "date": "2026-05-07",
+    "2026-05-11": {
+      "date": "2026-05-11",
       "day_number": 4,
       "tracks": [
         {
@@ -6124,8 +6148,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-303",
-              "layout_uid": "prim-303",
-              "kp_plate_id": 92
+              "layout_uid": "prim-303"
             },
             {
               "length": 6.37,
@@ -6141,8 +6164,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-304",
-              "layout_uid": "prim-304",
-              "kp_plate_id": 92
+              "layout_uid": "prim-304"
             },
             {
               "length": 6.37,
@@ -6158,8 +6180,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-305",
-              "layout_uid": "prim-305",
-              "kp_plate_id": 92
+              "layout_uid": "prim-305"
             },
             {
               "length": 6.37,
@@ -6175,8 +6196,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-306",
-              "layout_uid": "prim-306",
-              "kp_plate_id": 92
+              "layout_uid": "prim-306"
             },
             {
               "length": 6.37,
@@ -6192,8 +6212,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-307",
-              "layout_uid": "prim-307",
-              "kp_plate_id": 92
+              "layout_uid": "prim-307"
             },
             {
               "length": 6.37,
@@ -6209,8 +6228,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-308",
-              "layout_uid": "prim-308",
-              "kp_plate_id": 92
+              "layout_uid": "prim-308"
             },
             {
               "length": 6.37,
@@ -6226,8 +6244,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-309",
-              "layout_uid": "prim-309",
-              "kp_plate_id": 92
+              "layout_uid": "prim-309"
             },
             {
               "length": 6.37,
@@ -6243,8 +6260,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-310",
-              "layout_uid": "prim-310",
-              "kp_plate_id": 92
+              "layout_uid": "prim-310"
             },
             {
               "length": 6.37,
@@ -6260,8 +6276,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-311",
-              "layout_uid": "prim-311",
-              "kp_plate_id": 92
+              "layout_uid": "prim-311"
             },
             {
               "length": 6.37,
@@ -6277,8 +6292,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-312",
-              "layout_uid": "prim-312",
-              "kp_plate_id": 92
+              "layout_uid": "prim-312"
             },
             {
               "length": 6.37,
@@ -6294,8 +6308,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-313",
-              "layout_uid": "prim-313",
-              "kp_plate_id": 92
+              "layout_uid": "prim-313"
             },
             {
               "length": 6.37,
@@ -6311,8 +6324,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-314",
-              "layout_uid": "prim-314",
-              "kp_plate_id": 92
+              "layout_uid": "prim-314"
             },
             {
               "length": 6.37,
@@ -6328,8 +6340,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-315",
-              "layout_uid": "prim-315",
-              "kp_plate_id": 92
+              "layout_uid": "prim-315"
             },
             {
               "length": 6.37,
@@ -6345,8 +6356,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-316",
-              "layout_uid": "prim-316",
-              "kp_plate_id": 92
+              "layout_uid": "prim-316"
             },
             {
               "length": 6.37,
@@ -6362,8 +6372,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-317",
-              "layout_uid": "prim-317",
-              "kp_plate_id": 92
+              "layout_uid": "prim-317"
             }
           ],
           "length": 95.55000000000001,
@@ -6388,8 +6397,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-318",
-              "layout_uid": "prim-318",
-              "kp_plate_id": 92
+              "layout_uid": "prim-318"
             },
             {
               "length": 6.37,
@@ -6405,8 +6413,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-319",
-              "layout_uid": "prim-319",
-              "kp_plate_id": 92
+              "layout_uid": "prim-319"
             },
             {
               "length": 6.37,
@@ -6422,8 +6429,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-320",
-              "layout_uid": "prim-320",
-              "kp_plate_id": 92
+              "layout_uid": "prim-320"
             },
             {
               "length": 6.37,
@@ -6439,8 +6445,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-321",
-              "layout_uid": "prim-321",
-              "kp_plate_id": 92
+              "layout_uid": "prim-321"
             },
             {
               "length": 6.37,
@@ -6456,8 +6461,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-322",
-              "layout_uid": "prim-322",
-              "kp_plate_id": 92
+              "layout_uid": "prim-322"
             },
             {
               "length": 6.37,
@@ -6473,8 +6477,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-323",
-              "layout_uid": "prim-323",
-              "kp_plate_id": 92
+              "layout_uid": "prim-323"
             },
             {
               "length": 6.37,
@@ -6490,8 +6493,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-324",
-              "layout_uid": "prim-324",
-              "kp_plate_id": 92
+              "layout_uid": "prim-324"
             },
             {
               "length": 6.37,
@@ -6507,8 +6509,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-325",
-              "layout_uid": "prim-325",
-              "kp_plate_id": 92
+              "layout_uid": "prim-325"
             },
             {
               "length": 6.37,
@@ -6524,8 +6525,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-326",
-              "layout_uid": "prim-326",
-              "kp_plate_id": 92
+              "layout_uid": "prim-326"
             },
             {
               "length": 6.37,
@@ -6541,8 +6541,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-327",
-              "layout_uid": "prim-327",
-              "kp_plate_id": 92
+              "layout_uid": "prim-327"
             },
             {
               "length": 6.37,
@@ -6558,8 +6557,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-328",
-              "layout_uid": "prim-328",
-              "kp_plate_id": 92
+              "layout_uid": "prim-328"
             },
             {
               "length": 6.37,
@@ -6575,8 +6573,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-329",
-              "layout_uid": "prim-329",
-              "kp_plate_id": 92
+              "layout_uid": "prim-329"
             },
             {
               "length": 6.37,
@@ -6592,8 +6589,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-330",
-              "layout_uid": "prim-330",
-              "kp_plate_id": 92
+              "layout_uid": "prim-330"
             },
             {
               "length": 6.37,
@@ -6609,8 +6605,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-331",
-              "layout_uid": "prim-331",
-              "kp_plate_id": 92
+              "layout_uid": "prim-331"
             },
             {
               "length": 6.37,
@@ -6626,8 +6621,7 @@
               "plate_name": "Плиты ПБ 63,7-12-8п",
               "plate_uid": null,
               "unit_id": "prim-332",
-              "layout_uid": "prim-332",
-              "kp_plate_id": 92
+              "layout_uid": "prim-332"
             }
           ],
           "length": 95.55000000000001,
@@ -7382,8 +7376,8 @@
       "total_tracks_count": 5,
       "completed": false
     },
-    "2026-05-08": {
-      "date": "2026-05-08",
+    "2026-05-12": {
+      "date": "2026-05-12",
       "day_number": 5,
       "tracks": [
         {
@@ -7402,8 +7396,7 @@
               "plate_name": "Плиты ПБ 69-12-8п",
               "plate_uid": null,
               "unit_id": "prim-372",
-              "layout_uid": "prim-372",
-              "kp_plate_id": 93
+              "layout_uid": "prim-372"
             },
             {
               "length": 6.9,
@@ -7419,8 +7412,7 @@
               "plate_name": "Плиты ПБ 69-12-8п",
               "plate_uid": null,
               "unit_id": "prim-373",
-              "layout_uid": "prim-373",
-              "kp_plate_id": 93
+              "layout_uid": "prim-373"
             },
             {
               "length": 6.9,
@@ -7436,8 +7428,7 @@
               "plate_name": "Плиты ПБ 69-12-8п",
               "plate_uid": null,
               "unit_id": "prim-374",
-              "layout_uid": "prim-374",
-              "kp_plate_id": 93
+              "layout_uid": "prim-374"
             },
             {
               "length": 5.8,
@@ -8711,8 +8702,8 @@
       "total_tracks_count": 5,
       "completed": false
     },
-    "2026-05-11": {
-      "date": "2026-05-11",
+    "2026-05-13": {
+      "date": "2026-05-13",
       "day_number": 6,
       "tracks": [
         {
@@ -8731,8 +8722,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-416",
-              "layout_uid": "prim-416",
-              "kp_plate_id": 94
+              "layout_uid": "prim-416"
             },
             {
               "length": 7.41,
@@ -8748,8 +8738,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-417",
-              "layout_uid": "prim-417",
-              "kp_plate_id": 94
+              "layout_uid": "prim-417"
             },
             {
               "length": 7.41,
@@ -8765,8 +8754,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-418",
-              "layout_uid": "prim-418",
-              "kp_plate_id": 94
+              "layout_uid": "prim-418"
             },
             {
               "length": 7.41,
@@ -8782,8 +8770,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-419",
-              "layout_uid": "prim-419",
-              "kp_plate_id": 94
+              "layout_uid": "prim-419"
             },
             {
               "length": 7.41,
@@ -8799,8 +8786,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-420",
-              "layout_uid": "prim-420",
-              "kp_plate_id": 94
+              "layout_uid": "prim-420"
             },
             {
               "length": 7.41,
@@ -8816,8 +8802,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-421",
-              "layout_uid": "prim-421",
-              "kp_plate_id": 94
+              "layout_uid": "prim-421"
             },
             {
               "length": 7.41,
@@ -8833,8 +8818,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-422",
-              "layout_uid": "prim-422",
-              "kp_plate_id": 94
+              "layout_uid": "prim-422"
             },
             {
               "length": 7.41,
@@ -8850,8 +8834,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-423",
-              "layout_uid": "prim-423",
-              "kp_plate_id": 94
+              "layout_uid": "prim-423"
             },
             {
               "length": 7.41,
@@ -8867,8 +8850,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-424",
-              "layout_uid": "prim-424",
-              "kp_plate_id": 94
+              "layout_uid": "prim-424"
             },
             {
               "length": 7.41,
@@ -8884,8 +8866,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-425",
-              "layout_uid": "prim-425",
-              "kp_plate_id": 94
+              "layout_uid": "prim-425"
             },
             {
               "length": 7.41,
@@ -8901,8 +8882,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-426",
-              "layout_uid": "prim-426",
-              "kp_plate_id": 94
+              "layout_uid": "prim-426"
             },
             {
               "length": 7.41,
@@ -8918,8 +8898,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-427",
-              "layout_uid": "prim-427",
-              "kp_plate_id": 94
+              "layout_uid": "prim-427"
             },
             {
               "length": 7.41,
@@ -8935,8 +8914,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-428",
-              "layout_uid": "prim-428",
-              "kp_plate_id": 94
+              "layout_uid": "prim-428"
             }
           ],
           "length": 96.32999999999997,
@@ -8961,8 +8939,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-429",
-              "layout_uid": "prim-429",
-              "kp_plate_id": 94
+              "layout_uid": "prim-429"
             },
             {
               "length": 7.41,
@@ -8978,8 +8955,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-430",
-              "layout_uid": "prim-430",
-              "kp_plate_id": 94
+              "layout_uid": "prim-430"
             },
             {
               "length": 7.41,
@@ -8995,8 +8971,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-431",
-              "layout_uid": "prim-431",
-              "kp_plate_id": 94
+              "layout_uid": "prim-431"
             },
             {
               "length": 7.41,
@@ -9012,8 +8987,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-432",
-              "layout_uid": "prim-432",
-              "kp_plate_id": 94
+              "layout_uid": "prim-432"
             },
             {
               "length": 7.41,
@@ -9029,8 +9003,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-433",
-              "layout_uid": "prim-433",
-              "kp_plate_id": 94
+              "layout_uid": "prim-433"
             },
             {
               "length": 7.41,
@@ -9046,8 +9019,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-434",
-              "layout_uid": "prim-434",
-              "kp_plate_id": 94
+              "layout_uid": "prim-434"
             },
             {
               "length": 7.41,
@@ -9063,8 +9035,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-435",
-              "layout_uid": "prim-435",
-              "kp_plate_id": 94
+              "layout_uid": "prim-435"
             },
             {
               "length": 7.41,
@@ -9080,8 +9051,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-436",
-              "layout_uid": "prim-436",
-              "kp_plate_id": 94
+              "layout_uid": "prim-436"
             },
             {
               "length": 7.41,
@@ -9097,8 +9067,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-437",
-              "layout_uid": "prim-437",
-              "kp_plate_id": 94
+              "layout_uid": "prim-437"
             },
             {
               "length": 7.41,
@@ -9114,8 +9083,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-438",
-              "layout_uid": "prim-438",
-              "kp_plate_id": 94
+              "layout_uid": "prim-438"
             },
             {
               "length": 7.41,
@@ -9131,8 +9099,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-439",
-              "layout_uid": "prim-439",
-              "kp_plate_id": 94
+              "layout_uid": "prim-439"
             },
             {
               "length": 7.41,
@@ -9148,8 +9115,7 @@
               "plate_name": "Плиты ПБ 74,1-12-8п",
               "plate_uid": null,
               "unit_id": "prim-440",
-              "layout_uid": "prim-440",
-              "kp_plate_id": 94
+              "layout_uid": "prim-440"
             },
             {
               "length": 7.3,
@@ -9819,8 +9785,8 @@
       "total_tracks_count": 5,
       "completed": false
     },
-    "2026-05-12": {
-      "date": "2026-05-12",
+    "2026-05-14": {
+      "date": "2026-05-14",
       "day_number": 7,
       "tracks": [
         {
@@ -9839,8 +9805,7 @@
               "plate_name": "Плиты ПБ 89-12-8п",
               "plate_uid": null,
               "unit_id": "prim-479",
-              "layout_uid": "prim-479",
-              "kp_plate_id": 95
+              "layout_uid": "prim-479"
             },
             {
               "length": 8.9,
@@ -9856,72 +9821,13 @@
               "plate_name": "Плиты ПБ 89-12-8п",
               "plate_uid": null,
               "unit_id": "prim-480",
-              "layout_uid": "prim-480",
-              "kp_plate_id": 95
+              "layout_uid": "prim-480"
             }
           ],
           "length": 17.8,
           "load_code": "all",
           "label": "Нагрузка 8п",
           "max_reinforcement": 38.0,
-          "production_day": 7
-        },
-        {
-          "label": "FALLBACK",
-          "placement_status": "fallback",
-          "items": [
-            {
-              "mode": "split",
-              "length": 2.54,
-              "width": 0.3,
-              "unit_id": "sec-3",
-              "layout_uid": "sec-3",
-              "parent_unit_id": null,
-              "kp_id": 1,
-              "customer": "ооо Ромашка",
-              "kp_date": "06.06.2026",
-              "plate_name": "Плиты ПБ 25,4-3,0-8п",
-              "load_code": 8,
-              "placement_status": "fallback",
-              "origin_reason": "track_gap_missing_unit_id",
-              "main_w": 0.3,
-              "rest_w": 0.0,
-              "label_main": "Плиты ПБ 25,4-3,0-8п",
-              "label_rest": null,
-              "secondary_cuts": [],
-              "kp_plate_id": 89
-            }
-          ],
-          "length": 2.54,
-          "production_day": 7
-        },
-        {
-          "label": "FALLBACK",
-          "placement_status": "fallback",
-          "items": [
-            {
-              "mode": "split",
-              "length": 2.54,
-              "width": 0.3,
-              "unit_id": "sec-4",
-              "layout_uid": "sec-4",
-              "parent_unit_id": null,
-              "kp_id": 1,
-              "customer": "ооо Ромашка",
-              "kp_date": "06.06.2026",
-              "plate_name": "Плиты ПБ 25,4-3,0-8п",
-              "load_code": 8,
-              "placement_status": "fallback",
-              "origin_reason": "track_gap_missing_unit_id",
-              "main_w": 0.3,
-              "rest_w": 0.0,
-              "label_main": "Плиты ПБ 25,4-3,0-8п",
-              "label_rest": null,
-              "secondary_cuts": [],
-              "kp_plate_id": 89
-            }
-          ],
-          "length": 2.54,
           "production_day": 7
         },
         {
@@ -9954,7 +9860,7 @@
           "production_day": 7
         }
       ],
-      "saved_tracks_count": 4,
+      "saved_tracks_count": 2,
       "total_tracks_count": 5,
       "completed": false
     }
@@ -10051,7 +9957,17 @@
         "plate_name": "Плиты ПБ 25,4-3,0-8п",
         "reinforcement": 6.0,
         "load_code": 8,
-        "qty_remaining": 4,
+        "qty_remaining": 2,
+        "kp_id": 1,
+        "length_dm_raw": "25,4"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 25,4-3,0-8п",
+        "reinforcement": 6.0,
+        "load_code": 8,
+        "qty_remaining": 2,
         "kp_id": 1,
         "length_dm_raw": "25,4"
       }
@@ -10167,7 +10083,17 @@
         "plate_name": "Плиты ПБ 37-12-8п",
         "reinforcement": 8.0,
         "load_code": 8,
-        "qty_remaining": 10,
+        "qty_remaining": 6,
+        "kp_id": 1,
+        "length_dm_raw": "37"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 37-12-8п",
+        "reinforcement": 8.0,
+        "load_code": 8,
+        "qty_remaining": 4,
         "kp_id": 1,
         "length_dm_raw": "37"
       }
@@ -10605,9 +10531,19 @@
         "plate_name": "Плиты ПБ 57,1-12-8п",
         "reinforcement": 15.0,
         "load_code": 8,
-        "qty_remaining": 23,
+        "qty_remaining": 15,
         "kp_id": 1,
         "length_dm_raw": "57"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 57,1-12-8п",
+        "reinforcement": 15.0,
+        "load_code": 8,
+        "qty_remaining": 8,
+        "kp_id": 1,
+        "length_dm_raw": "57,1"
       }
     ],
     "(5.85, 1200)": [
@@ -10793,7 +10729,27 @@
         "plate_name": "Плиты ПБ 63,7-12-8п",
         "reinforcement": 19.0,
         "load_code": 8,
-        "qty_remaining": 51,
+        "qty_remaining": 21,
+        "kp_id": 1,
+        "length_dm_raw": "63,7"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 63,7-12-8п",
+        "reinforcement": 19.0,
+        "load_code": 8,
+        "qty_remaining": 21,
+        "kp_id": 1,
+        "length_dm_raw": "63,7"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 63,7-12-8п",
+        "reinforcement": 19.0,
+        "load_code": 8,
+        "qty_remaining": 9,
         "kp_id": 1,
         "length_dm_raw": "63,7"
       }
@@ -10817,7 +10773,17 @@
         "plate_name": "Плиты ПБ 69-12-8п",
         "reinforcement": 21.0,
         "load_code": 8,
-        "qty_remaining": 40,
+        "qty_remaining": 37,
+        "kp_id": 1,
+        "length_dm_raw": "69"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 69-12-8п",
+        "reinforcement": 21.0,
+        "load_code": 8,
+        "qty_remaining": 3,
         "kp_id": 1,
         "length_dm_raw": "69"
       }
@@ -10899,7 +10865,27 @@
         "plate_name": "Плиты ПБ 74,1-12-8п",
         "reinforcement": 24.0,
         "load_code": 8,
-        "qty_remaining": 40,
+        "qty_remaining": 15,
+        "kp_id": 1,
+        "length_dm_raw": "74,1"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 74,1-12-8п",
+        "reinforcement": 24.0,
+        "load_code": 8,
+        "qty_remaining": 15,
+        "kp_id": 1,
+        "length_dm_raw": "74,1"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 74,1-12-8п",
+        "reinforcement": 24.0,
+        "load_code": 8,
+        "qty_remaining": 10,
         "kp_id": 1,
         "length_dm_raw": "74,1"
       }
@@ -10983,7 +10969,17 @@
         "plate_name": "Плиты ПБ 89-12-8п",
         "reinforcement": 38.0,
         "load_code": 8,
-        "qty_remaining": 9,
+        "qty_remaining": 7,
+        "kp_id": 1,
+        "length_dm_raw": "89"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 89-12-8п",
+        "reinforcement": 38.0,
+        "load_code": 8,
+        "qty_remaining": 2,
         "kp_id": 1,
         "length_dm_raw": "89"
       }
@@ -11089,7 +11085,17 @@
         "plate_name": "Плиты ПБ 25,4-3,0-8п",
         "reinforcement": 6.0,
         "load_code": 8,
-        "qty_remaining": 4,
+        "qty_remaining": 2,
+        "kp_id": 1,
+        "length_dm_raw": "25,4"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 25,4-3,0-8п",
+        "reinforcement": 6.0,
+        "load_code": 8,
+        "qty_remaining": 2,
         "kp_id": 1,
         "length_dm_raw": "25,4"
       }
@@ -11223,7 +11229,17 @@
         "plate_name": "Плиты ПБ 37-12-8п",
         "reinforcement": 8.0,
         "load_code": 8,
-        "qty_remaining": 10,
+        "qty_remaining": 6,
+        "kp_id": 1,
+        "length_dm_raw": "37"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 37-12-8п",
+        "reinforcement": 8.0,
+        "load_code": 8,
+        "qty_remaining": 4,
         "kp_id": 1,
         "length_dm_raw": "37"
       }
@@ -11615,9 +11631,19 @@
         "plate_name": "Плиты ПБ 57,1-12-8п",
         "reinforcement": 15.0,
         "load_code": 8,
-        "qty_remaining": 23,
+        "qty_remaining": 15,
         "kp_id": 1,
         "length_dm_raw": "57"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 57,1-12-8п",
+        "reinforcement": 15.0,
+        "load_code": 8,
+        "qty_remaining": 8,
+        "kp_id": 1,
+        "length_dm_raw": "57,1"
       }
     ],
     "5.85": [
@@ -11803,7 +11829,7 @@
         "plate_name": "Плиты ПБ 63,7-12-8п",
         "reinforcement": 19.0,
         "load_code": 8,
-        "qty_remaining": 51,
+        "qty_remaining": 21,
         "kp_id": 1,
         "length_dm_raw": "63,7"
       },
@@ -11816,6 +11842,26 @@
         "qty_remaining": 2,
         "kp_id": 1,
         "length_dm_raw": "63,7"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 63,7-12-8п",
+        "reinforcement": 19.0,
+        "load_code": 8,
+        "qty_remaining": 21,
+        "kp_id": 1,
+        "length_dm_raw": "63,7"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 63,7-12-8п",
+        "reinforcement": 19.0,
+        "load_code": 8,
+        "qty_remaining": 9,
+        "kp_id": 1,
+        "length_dm_raw": "63,7"
       }
     ],
     "6.9": [
@@ -11825,7 +11871,17 @@
         "plate_name": "Плиты ПБ 69-12-8п",
         "reinforcement": 21.0,
         "load_code": 8,
-        "qty_remaining": 40,
+        "qty_remaining": 37,
+        "kp_id": 1,
+        "length_dm_raw": "69"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 69-12-8п",
+        "reinforcement": 21.0,
+        "load_code": 8,
+        "qty_remaining": 3,
         "kp_id": 1,
         "length_dm_raw": "69"
       }
@@ -11895,7 +11951,7 @@
         "plate_name": "Плиты ПБ 74,1-12-8п",
         "reinforcement": 24.0,
         "load_code": 8,
-        "qty_remaining": 40,
+        "qty_remaining": 15,
         "kp_id": 1,
         "length_dm_raw": "74,1"
       },
@@ -11906,6 +11962,26 @@
         "reinforcement": 24.0,
         "load_code": 8,
         "qty_remaining": 4,
+        "kp_id": 1,
+        "length_dm_raw": "74,1"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 74,1-12-8п",
+        "reinforcement": 24.0,
+        "load_code": 8,
+        "qty_remaining": 15,
+        "kp_id": 1,
+        "length_dm_raw": "74,1"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 74,1-12-8п",
+        "reinforcement": 24.0,
+        "load_code": 8,
+        "qty_remaining": 10,
         "kp_id": 1,
         "length_dm_raw": "74,1"
       }
@@ -11971,7 +12047,17 @@
         "plate_name": "Плиты ПБ 89-12-8п",
         "reinforcement": 38.0,
         "load_code": 8,
-        "qty_remaining": 9,
+        "qty_remaining": 7,
+        "kp_id": 1,
+        "length_dm_raw": "89"
+      },
+      {
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 89-12-8п",
+        "reinforcement": 38.0,
+        "load_code": 8,
+        "qty_remaining": 2,
         "kp_id": 1,
         "length_dm_raw": "89"
       }
@@ -12077,7 +12163,7 @@
     {
       "length": 2.54,
       "width": 300,
-      "qty": 4,
+      "qty": 2,
       "load_code": 8,
       "reinforcement": 6.0,
       "kp_date": "06.06.2026",
@@ -12097,6 +12183,18 @@
       "plate_name": "Плиты ПБ 24,4-7,2-8п",
       "kp_id": 1,
       "length_dm_raw": "24,4"
+    },
+    {
+      "length": 2.54,
+      "width": 300,
+      "qty": 2,
+      "load_code": 8,
+      "reinforcement": 6.0,
+      "kp_date": "06.06.2026",
+      "customer": "ооо Ромашка",
+      "plate_name": "Плиты ПБ 25,4-3,0-8п",
+      "kp_id": 1,
+      "length_dm_raw": "25,4"
     },
     {
       "length": 3.3,
@@ -12173,7 +12271,7 @@
     {
       "length": 3.7,
       "width": 1200,
-      "qty": 10,
+      "qty": 6,
       "load_code": 8,
       "reinforcement": 8.0,
       "kp_date": "06.06.2026",
@@ -12289,6 +12387,18 @@
       "plate_name": "Плиты ПБ 39,0-12-8п",
       "kp_id": 1,
       "length_dm_raw": "39,0"
+    },
+    {
+      "length": 3.7,
+      "width": 1200,
+      "qty": 4,
+      "load_code": 8,
+      "reinforcement": 8.0,
+      "kp_date": "06.06.2026",
+      "customer": "ооо Ромашка",
+      "plate_name": "Плиты ПБ 37-12-8п",
+      "kp_id": 1,
+      "length_dm_raw": "37"
     },
     {
       "length": 4.5,
@@ -12641,7 +12751,7 @@
     {
       "length": 5.71,
       "width": 1200,
-      "qty": 23,
+      "qty": 15,
       "load_code": 8,
       "reinforcement": 15.0,
       "kp_date": "06.06.2026",
@@ -12649,6 +12759,18 @@
       "plate_name": "Плиты ПБ 57,1-12-8п",
       "kp_id": 1,
       "length_dm_raw": "57"
+    },
+    {
+      "length": 5.71,
+      "width": 1200,
+      "qty": 8,
+      "load_code": 8,
+      "reinforcement": 15.0,
+      "kp_date": "06.06.2026",
+      "customer": "ооо Ромашка",
+      "plate_name": "Плиты ПБ 57,1-12-8п",
+      "kp_id": 1,
+      "length_dm_raw": "57,1"
     },
     {
       "length": 5.85,
@@ -12809,7 +12931,7 @@
     {
       "length": 6.37,
       "width": 1200,
-      "qty": 51,
+      "qty": 21,
       "load_code": 8,
       "reinforcement": 19.0,
       "kp_date": "06.06.2026",
@@ -12831,9 +12953,33 @@
       "length_dm_raw": "63,7"
     },
     {
+      "length": 6.37,
+      "width": 1200,
+      "qty": 21,
+      "load_code": 8,
+      "reinforcement": 19.0,
+      "kp_date": "06.06.2026",
+      "customer": "ооо Ромашка",
+      "plate_name": "Плиты ПБ 63,7-12-8п",
+      "kp_id": 1,
+      "length_dm_raw": "63,7"
+    },
+    {
+      "length": 6.37,
+      "width": 1200,
+      "qty": 9,
+      "load_code": 8,
+      "reinforcement": 19.0,
+      "kp_date": "06.06.2026",
+      "customer": "ооо Ромашка",
+      "plate_name": "Плиты ПБ 63,7-12-8п",
+      "kp_id": 1,
+      "length_dm_raw": "63,7"
+    },
+    {
       "length": 6.9,
       "width": 1200,
-      "qty": 40,
+      "qty": 37,
       "load_code": 8,
       "reinforcement": 21.0,
       "kp_date": "06.06.2026",
@@ -12853,6 +12999,18 @@
       "plate_name": "Плиты ПБ 69,3-12-8п",
       "kp_id": 1,
       "length_dm_raw": "69,3"
+    },
+    {
+      "length": 6.9,
+      "width": 1200,
+      "qty": 3,
+      "load_code": 8,
+      "reinforcement": 21.0,
+      "kp_date": "06.06.2026",
+      "customer": "ооо Ромашка",
+      "plate_name": "Плиты ПБ 69-12-8п",
+      "kp_id": 1,
+      "length_dm_raw": "69"
     },
     {
       "length": 6.39,
@@ -12917,7 +13075,7 @@
     {
       "length": 7.41,
       "width": 1200,
-      "qty": 40,
+      "qty": 15,
       "load_code": 8,
       "reinforcement": 24.0,
       "kp_date": "06.06.2026",
@@ -12935,6 +13093,30 @@
       "kp_date": "06.06.2026",
       "customer": "ооо Ромашка",
       "plate_name": "Плиты ПБ 74,1-9,2-8п",
+      "kp_id": 1,
+      "length_dm_raw": "74,1"
+    },
+    {
+      "length": 7.41,
+      "width": 1200,
+      "qty": 15,
+      "load_code": 8,
+      "reinforcement": 24.0,
+      "kp_date": "06.06.2026",
+      "customer": "ооо Ромашка",
+      "plate_name": "Плиты ПБ 74,1-12-8п",
+      "kp_id": 1,
+      "length_dm_raw": "74,1"
+    },
+    {
+      "length": 7.41,
+      "width": 1200,
+      "qty": 10,
+      "load_code": 8,
+      "reinforcement": 24.0,
+      "kp_date": "06.06.2026",
+      "customer": "ооо Ромашка",
+      "plate_name": "Плиты ПБ 74,1-12-8п",
       "kp_id": 1,
       "length_dm_raw": "74,1"
     },
@@ -13013,7 +13195,19 @@
     {
       "length": 8.9,
       "width": 1200,
-      "qty": 9,
+      "qty": 7,
+      "load_code": 8,
+      "reinforcement": 38.0,
+      "kp_date": "06.06.2026",
+      "customer": "ооо Ромашка",
+      "plate_name": "Плиты ПБ 89-12-8п",
+      "kp_id": 1,
+      "length_dm_raw": "89"
+    },
+    {
+      "length": 8.9,
+      "width": 1200,
+      "qty": 2,
       "load_code": 8,
       "reinforcement": 38.0,
       "kp_date": "06.06.2026",
@@ -24576,7 +24770,7 @@
           8
         ],
         "load_code": 8,
-        "parent_instance_id": null,
+        "parent_instance_id": "prim-35",
         "secondary_instance_id": "sec-3",
         "source_opt_ids": [
           8
@@ -24608,7 +24802,7 @@
           8
         ],
         "load_code": 8,
-        "parent_instance_id": null,
+        "parent_instance_id": "prim-35",
         "secondary_instance_id": "sec-4",
         "source_opt_ids": [
           8
@@ -33390,7 +33584,7 @@
         "load_code": 8,
         "identity_match_type": "slot_proportional",
         "unit_id": "sec-3",
-        "parent_unit_id": null
+        "parent_unit_id": "prim-35"
       },
       {
         "length": 2.54,
@@ -33404,7 +33598,7 @@
         "load_code": 8,
         "identity_match_type": "slot_proportional",
         "unit_id": "sec-4",
-        "parent_unit_id": null
+        "parent_unit_id": "prim-35"
       },
       {
         "length": 4.2,
@@ -33901,7 +34095,7 @@
       {
         "length": 2.54,
         "width": 300,
-        "qty": 4,
+        "qty": 2,
         "load_code": 8,
         "reinforcement": 6.0,
         "kp_date": "06.06.2026",
@@ -33921,6 +34115,18 @@
         "plate_name": "Плиты ПБ 24,4-7,2-8п",
         "kp_id": 1,
         "length_dm_raw": "24,4"
+      },
+      {
+        "length": 2.54,
+        "width": 300,
+        "qty": 2,
+        "load_code": 8,
+        "reinforcement": 6.0,
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 25,4-3,0-8п",
+        "kp_id": 1,
+        "length_dm_raw": "25,4"
       },
       {
         "length": 3.3,
@@ -33997,7 +34203,7 @@
       {
         "length": 3.7,
         "width": 1200,
-        "qty": 10,
+        "qty": 6,
         "load_code": 8,
         "reinforcement": 8.0,
         "kp_date": "06.06.2026",
@@ -34113,6 +34319,18 @@
         "plate_name": "Плиты ПБ 39,0-12-8п",
         "kp_id": 1,
         "length_dm_raw": "39,0"
+      },
+      {
+        "length": 3.7,
+        "width": 1200,
+        "qty": 4,
+        "load_code": 8,
+        "reinforcement": 8.0,
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 37-12-8п",
+        "kp_id": 1,
+        "length_dm_raw": "37"
       },
       {
         "length": 4.5,
@@ -34465,7 +34683,7 @@
       {
         "length": 5.71,
         "width": 1200,
-        "qty": 23,
+        "qty": 15,
         "load_code": 8,
         "reinforcement": 15.0,
         "kp_date": "06.06.2026",
@@ -34473,6 +34691,18 @@
         "plate_name": "Плиты ПБ 57,1-12-8п",
         "kp_id": 1,
         "length_dm_raw": "57"
+      },
+      {
+        "length": 5.71,
+        "width": 1200,
+        "qty": 8,
+        "load_code": 8,
+        "reinforcement": 15.0,
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 57,1-12-8п",
+        "kp_id": 1,
+        "length_dm_raw": "57,1"
       },
       {
         "length": 5.85,
@@ -34633,7 +34863,7 @@
       {
         "length": 6.37,
         "width": 1200,
-        "qty": 51,
+        "qty": 21,
         "load_code": 8,
         "reinforcement": 19.0,
         "kp_date": "06.06.2026",
@@ -34655,9 +34885,33 @@
         "length_dm_raw": "63,7"
       },
       {
+        "length": 6.37,
+        "width": 1200,
+        "qty": 21,
+        "load_code": 8,
+        "reinforcement": 19.0,
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 63,7-12-8п",
+        "kp_id": 1,
+        "length_dm_raw": "63,7"
+      },
+      {
+        "length": 6.37,
+        "width": 1200,
+        "qty": 9,
+        "load_code": 8,
+        "reinforcement": 19.0,
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 63,7-12-8п",
+        "kp_id": 1,
+        "length_dm_raw": "63,7"
+      },
+      {
         "length": 6.9,
         "width": 1200,
-        "qty": 40,
+        "qty": 37,
         "load_code": 8,
         "reinforcement": 21.0,
         "kp_date": "06.06.2026",
@@ -34677,6 +34931,18 @@
         "plate_name": "Плиты ПБ 69,3-12-8п",
         "kp_id": 1,
         "length_dm_raw": "69,3"
+      },
+      {
+        "length": 6.9,
+        "width": 1200,
+        "qty": 3,
+        "load_code": 8,
+        "reinforcement": 21.0,
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 69-12-8п",
+        "kp_id": 1,
+        "length_dm_raw": "69"
       },
       {
         "length": 6.39,
@@ -34741,7 +35007,7 @@
       {
         "length": 7.41,
         "width": 1200,
-        "qty": 40,
+        "qty": 15,
         "load_code": 8,
         "reinforcement": 24.0,
         "kp_date": "06.06.2026",
@@ -34759,6 +35025,30 @@
         "kp_date": "06.06.2026",
         "customer": "ооо Ромашка",
         "plate_name": "Плиты ПБ 74,1-9,2-8п",
+        "kp_id": 1,
+        "length_dm_raw": "74,1"
+      },
+      {
+        "length": 7.41,
+        "width": 1200,
+        "qty": 15,
+        "load_code": 8,
+        "reinforcement": 24.0,
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 74,1-12-8п",
+        "kp_id": 1,
+        "length_dm_raw": "74,1"
+      },
+      {
+        "length": 7.41,
+        "width": 1200,
+        "qty": 10,
+        "load_code": 8,
+        "reinforcement": 24.0,
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 74,1-12-8п",
         "kp_id": 1,
         "length_dm_raw": "74,1"
       },
@@ -34837,7 +35127,19 @@
       {
         "length": 8.9,
         "width": 1200,
-        "qty": 9,
+        "qty": 7,
+        "load_code": 8,
+        "reinforcement": 38.0,
+        "kp_date": "06.06.2026",
+        "customer": "ооо Ромашка",
+        "plate_name": "Плиты ПБ 89-12-8п",
+        "kp_id": 1,
+        "length_dm_raw": "89"
+      },
+      {
+        "length": 8.9,
+        "width": 1200,
+        "qty": 2,
         "load_code": 8,
         "reinforcement": 38.0,
         "kp_date": "06.06.2026",
@@ -35255,6 +35557,7 @@
       "surplus": {},
       "ok": true
     },
+    "_opt_status": "ok",
     "loads_in_group": [
       6,
       8,

@@ -27,6 +27,7 @@ from typing import Any
 from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 import core.optimization as optimization
+from core.optimization.result_contract import is_optimization_success
 from core.config_and_data import PlateOrder
 from core.formovka_excel import create_formovka_files_for_tracks
 from core.visualization import visualize_plan
@@ -69,7 +70,7 @@ def _restore_optimization_globals(orders_2d: list, optimization_result: dict) ->
     context = OptimizationContext(
         order=app_order,
         optimization_result=optimization_result,
-        plan_by_load={"all": optimization_result} if optimization_result else {},
+        plan_by_load={"all": optimization_result} if is_optimization_success(optimization_result) else {},
         load_to_reinforcement_map=load_map,
     )
     optimization.OPT_CASCADING_PLAN = context.optimization_result

@@ -79,7 +79,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
       return {
         ...state,
         draftId: action.payload.draft_id,
-        currentStep: state.currentStep,
+        currentStep: action.payload.wizard_state?.current_step ?? state.currentStep,
         managerId: action.payload.metadata.manager_id,
         clientName: action.payload.metadata.client_name,
         discountPercent: action.payload.metadata.discount_percent,

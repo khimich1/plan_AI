@@ -1,9 +1,12 @@
 import { Outlet } from "react-router-dom";
 import { AppHeader } from "@/app/layout/AppHeader";
+import { CommercialOfferHeaderBridgeProvider } from "@/pages/commercial-offer-create/CommercialOfferHeaderBridge";
 
 export const AppLayout = () => (
   <div className="app-shell">
-    <AppHeader />
-    <Outlet />
+    <CommercialOfferHeaderBridgeProvider>
+      <AppHeader />
+      <Outlet />
+    </CommercialOfferHeaderBridgeProvider>
   </div>
 );

@@ -1,7 +1,14 @@
 import pytest
-from core.parsers.text_parser import parse_order_from_text, length_dm_to_m, normalize_dimension
-from core.models.plate import PlateOrder
-from core.exceptions import PlateParseError
+
+try:
+    from core.parsers.text_parser import parse_order_from_text, length_dm_to_m, normalize_dimension
+    from core.models.plate import PlateOrder
+    from core.exceptions import PlateParseError
+except ImportError as exc:
+    pytest.skip(
+        f"Архивные тесты парсера: нет core.parsers.text_parser / core.models.plate (OPT-010): {exc}",
+        allow_module_level=True,
+    )
 
 def test_length_dm_to_m():
     assert length_dm_to_m("38") == 3.78

@@ -24,10 +24,16 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Импортируем то, что тестируем
+from core.optimization.result_contract import is_optimization_success
 from core.optimization import (  # noqa: E402
     _build_residual_balance_constraints,
     optimize_with_cascading_longitudinal_cuts,
     verify_coverage,
+)
+from core.optimization.geometry import (  # noqa: E402
+    GeometryConfig,
+    generate_primary_cut_options_2d,
+    generate_secondary_cut_options_2d,
 )
 from core.config_and_data import canonical_plate_key  # noqa: E402
 
@@ -175,6 +181,32 @@ def test_residual_balance_allows_only_load_code_downgrade():
     assert pulp.value(x_sec[11]) == 0
 
 
+def test_geometry_generates_representative_narrowing_option():
+    demand = {
+        (6.0, 720, 8): 1,
+        (6.0, 460, 8): 1,
+    }
+
+    primary_result = generate_primary_cut_options_2d(
+        demand_2d=demand,
+        order_info_list={},
+        order_info_getter=lambda _order_info_list, _key: {},
+        config=GeometryConfig(plate_width=1200, min_useful_width=200, tolerance_width=20),
+    )
+    secondary_options = generate_secondary_cut_options_2d(
+        primary_options=primary_result.options,
+        demand_2d=demand,
+        config=GeometryConfig(plate_width=1200, min_useful_width=200, tolerance_width=20),
+    )
+
+    assert any(
+        opt["type"] == "narrowing"
+        and opt["source_rest"] == 480
+        and opt["output_width"] == 460
+        for opt in secondary_options
+    )
+
+
 # ---------- integration: golden cases ----------------------------------------
 
 @pytest.mark.parametrize(
@@ -225,7 +257,7 @@ def test_optimizer_covers_demand_for_golden_cases(case_name, orders_2d):
     verify_coverage.ok должен быть True (включая post-correction safety net).
     """
     result = optimize_with_cascading_longitudinal_cuts(orders_2d=orders_2d)
-    assert result, f"{case_name}: оптимизатор вернул пустой результат"
+    assert is_optimization_success(result), f"{case_name}: оптимизатор не вернул успешный план"
 
     demand = _demand_from_orders(orders_2d)
     cov = verify_coverage(
@@ -255,7 +287,7 @@ def test_optimizer_does_not_overproduce(case_name, orders_2d, max_units_factor):
     относительно demand_total. Это защита от случайной регрессии.
     """
     result = optimize_with_cascading_longitudinal_cuts(orders_2d=orders_2d)
-    assert result, f"{case_name}: оптимизатор вернул пустой результат"
+    assert is_optimization_success(result), f"{case_name}: оптимизатор не вернул успешный план"
 
     demand = _demand_from_orders(orders_2d)
     demand_total = sum(demand.values())
@@ -278,7 +310,7 @@ def test_optimizer_competing_lengths_no_loss():
         {"length": 4.79, "width": 1200, "qty": 17, "load_code": 8, "kp_id": 1},
     ]
     result = optimize_with_cascading_longitudinal_cuts(orders_2d=orders_2d)
-    assert result, "оптимизатор вернул пустой результат"
+    assert is_optimization_success(result), "оптимизатор не вернул успешный план"
 
     demand = _demand_from_orders(orders_2d)
     cov = verify_coverage(

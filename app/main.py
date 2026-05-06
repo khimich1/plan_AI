@@ -4,12 +4,14 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.v1.router import router as api_v1_router
 from app.core.settings import get_settings
 from app.repositories.auth_repository import AuthRepository
+from app.services.draft_store import DraftStoreLockTimeout
 from app.web.router import router as web_router
 from core.logging_config import setup_logging
 
@@ -43,6 +45,17 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(DraftStoreLockTimeout)
+    async def _draft_store_lock_handler(
+        _request: Request, _exc: DraftStoreLockTimeout
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "Черновик временно занят другим запросом. Повторите попытку."
+            },
+        )
 
     @app.get("/health", tags=["health"])
     def root_health() -> dict:

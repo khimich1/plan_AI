@@ -7,14 +7,32 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Iterable
 
 from app.core.settings import get_settings
+from app.schemas.commercial import WizardNextRequiredAction, WizardStepId
 from app.repositories.kp_repository import KpRepository
 from app.repositories.manager_repository import ManagerRepository
+from app.services.commercial_calculation_service import CommercialCalculationService
 from app.services.commercial_service import CommercialService
-from app.services.draft_store import DraftStore
+from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from app.services.execution_terms_service import ExecutionTermsService
 from app.services.file_generation_service import FileGenerationService
-from core.commercial_offer_xlsx import calculate_total_cost
 from core.ocr_gpt import recognize_text_smart
+
+
+_ALLOWED_OCR_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf"})
+
+
+def _safe_ocr_temp_suffix(image_filename: str | None) -> str:
+    """Use only a whitelisted extension from the upload basename; never user-controlled path segments."""
+    raw = (image_filename or "").strip()
+    if not raw:
+        return ".jpg"
+    base = Path(raw).name
+    if ".." in base or "/" in base or "\\" in base:
+        return ".jpg"
+    suffix = Path(base).suffix.lower()
+    if suffix in _ALLOWED_OCR_IMAGE_SUFFIXES:
+        return suffix
+    return ".jpg"
 
 
 class CommercialWorkflowService:
@@ -34,6 +52,156 @@ class CommercialWorkflowService:
         self.manager_repository = ManagerRepository()
         self.kp_repository = KpRepository()
         self.execution_terms_service = ExecutionTermsService()
+        self.calculation_service = CommercialCalculationService()
+
+    def _wide_lines_blocking(self, metadata: dict[str, Any]) -> bool:
+        return self.calculation_service.wide_lines_blocking(metadata)
+
+    def _meta_ready_for_calculate(self, metadata: dict[str, Any]) -> bool:
+        return self.calculation_service.meta_ready_for_calculate(metadata)
+
+    def _normalize_stored_step(self, metadata: dict[str, Any]) -> WizardStepId:
+        raw = str(metadata.get("current_step") or "").strip().lower()
+        aliases = {"wide_plates": WizardStepId.wide_plates.value, "calculate": WizardStepId.client.value}
+        raw = aliases.get(raw, raw)
+        try:
+            return WizardStepId(raw) if raw else WizardStepId.plates
+        except ValueError:
+            return WizardStepId.plates
+
+    def _wizard_step_after_plate_snapshot(self, metadata: dict[str, Any], order_data: list[Any]) -> WizardStepId:
+        if not order_data:
+            return WizardStepId.plates
+        if self._wide_lines_blocking(metadata):
+            return WizardStepId.wide_plates
+        return WizardStepId.plates
+
+    def _persist_wizard_step(self, draft_id: str, step: WizardStepId) -> None:
+        self.draft_store.update_metadata(draft_id, current_step=step.value)
+
+    def infer_wizard_current_step(self, payload: dict[str, Any]) -> WizardStepId:
+        """Эффективный шаг для UI: хранимый шаг + защита от «перепрыгивания» узких плит + валидность result."""
+        metadata = dict(payload.get("metadata") or {})
+        order_data = payload.get("order_data") or []
+        stored = self._normalize_stored_step(metadata)
+
+        if stored == WizardStepId.result:
+            if (
+                order_data
+                and not self._wide_lines_blocking(metadata)
+                and self._meta_ready_for_calculate(metadata)
+            ):
+                return WizardStepId.result
+            return WizardStepId.client
+
+        if order_data and self._wide_lines_blocking(metadata):
+            if stored in (WizardStepId.manager, WizardStepId.client, WizardStepId.result):
+                return WizardStepId.wide_plates
+            if stored == WizardStepId.wide_plates:
+                return WizardStepId.wide_plates
+
+        return stored
+
+    def _infer_next_required_action(
+        self,
+        payload: dict[str, Any],
+        effective_step: WizardStepId,
+    ) -> WizardNextRequiredAction:
+        metadata = dict(payload.get("metadata") or {})
+        order_data = payload.get("order_data") or []
+
+        if not order_data:
+            return WizardNextRequiredAction.ingest_plates
+
+        if self._wide_lines_blocking(metadata):
+            return WizardNextRequiredAction.resolve_wide_plates
+
+        if not metadata.get("manager_id"):
+            return WizardNextRequiredAction.select_manager
+
+        if not self._meta_ready_for_calculate(metadata):
+            return WizardNextRequiredAction.complete_client_terms
+
+        if effective_step == WizardStepId.result:
+            return WizardNextRequiredAction.none
+
+        return WizardNextRequiredAction.post_calculate
+
+    def _infer_can_proceed_to(
+        self,
+        payload: dict[str, Any],
+        effective_step: WizardStepId,
+        next_action: WizardNextRequiredAction,
+    ) -> list[WizardStepId]:
+        metadata = dict(payload.get("metadata") or {})
+        order_data = payload.get("order_data") or []
+
+        if effective_step == WizardStepId.plates:
+            if not order_data:
+                return []
+            if self._wide_lines_blocking(metadata):
+                return [WizardStepId.wide_plates]
+            return [WizardStepId.manager]
+
+        if effective_step == WizardStepId.wide_plates:
+            return []
+
+        if effective_step == WizardStepId.manager:
+            if metadata.get("manager_id"):
+                return [WizardStepId.client]
+            return []
+
+        if effective_step == WizardStepId.client:
+            if next_action == WizardNextRequiredAction.post_calculate:
+                return []
+            return []
+
+        return []
+
+    def _collect_wizard_validation_errors(
+        self,
+        payload: dict[str, Any],
+        next_action: WizardNextRequiredAction,
+    ) -> list[str]:
+        """Сообщения, согласованные с проверками ``calculate_draft`` / ``next_required_action``."""
+        metadata = dict(payload.get("metadata") or {})
+        order_data = payload.get("order_data") or []
+
+        if next_action == WizardNextRequiredAction.ingest_plates:
+            return ["Список плит пустой."]
+        if next_action == WizardNextRequiredAction.resolve_wide_plates:
+            return ["Сначала обработайте плиты шире 12 дм."]
+        if next_action == WizardNextRequiredAction.select_manager:
+            return ["Выберите менеджера."]
+        if next_action == WizardNextRequiredAction.complete_client_terms:
+            errors: list[str] = []
+            if not order_data:
+                errors.append("Список плит пустой.")
+            if metadata.get("wide_plate_lines") and not metadata.get("wide_plates_resolved"):
+                errors.append("Сначала обработайте плиты шире 12 дм.")
+            if not metadata.get("manager_id"):
+                errors.append("Выберите менеджера.")
+            if not str(metadata.get("client_name", "")).strip():
+                errors.append("Укажите клиента.")
+            if metadata.get("conditions_mode") == "custom":
+                if not str(metadata.get("delivery_conditions", "")).strip():
+                    errors.append("Укажите условия поставки.")
+                if not str(metadata.get("payment_conditions", "")).strip():
+                    errors.append("Укажите условия оплаты.")
+            return errors
+        return []
+
+    def build_wizard_state(self, payload: dict[str, Any]) -> dict[str, Any]:
+        current = self.infer_wizard_current_step(payload)
+        next_action = self._infer_next_required_action(payload, current)
+        can_proceed = self._infer_can_proceed_to(payload, current, next_action)
+        validation_errors = self._collect_wizard_validation_errors(payload, next_action)
+        return {
+            "current_step": current,
+            "can_proceed_to": can_proceed,
+            "next_required_action": next_action,
+            "validation_errors": validation_errors,
+        }
 
     async def create_draft(
         self,
@@ -41,6 +209,7 @@ class CommercialWorkflowService:
         text: str | None,
         image_bytes: bytes | None,
         image_filename: str | None,
+        owner_user_id: int,
     ) -> dict[str, Any]:
         source_text, source_metadata = await self._resolve_source_input(
             text=text,
@@ -59,6 +228,7 @@ class CommercialWorkflowService:
             plate_batches=[source_text["batch"]],
             wide_plates_resolved=not bool(preview.parse_result.wide_plate_lines),
             source_metadata=source_metadata,
+            owner_user_id=owner_user_id,
         )
         draft_id = self.draft_store.save_preview(
             order=preview.parse_result.order,
@@ -66,6 +236,12 @@ class CommercialWorkflowService:
             order_data=preview.order_data,
             metadata=metadata,
         )
+        payload_snap = self._load_draft_or_raise(draft_id)
+        plates_step = self._wizard_step_after_plate_snapshot(
+            dict(payload_snap.get("metadata", {})),
+            payload_snap["order_data"],
+        )
+        self._persist_wizard_step(draft_id, plates_step)
         return self.get_draft_details(draft_id)
 
     async def create_draft_from_form(
@@ -79,11 +255,13 @@ class CommercialWorkflowService:
         discount_percent: float = 0.0,
         delivery_conditions: str = "",
         payment_conditions: str = "",
+        owner_user_id: int,
     ) -> dict[str, Any]:
         draft = await self.create_draft(
             text=text,
             image_bytes=image_bytes,
             image_filename=image_filename,
+            owner_user_id=owner_user_id,
         )
         conditions_mode = "custom" if delivery_conditions.strip() or payment_conditions.strip() else "standard"
         return self.update_draft_meta(
@@ -144,6 +322,12 @@ class CommercialWorkflowService:
             order_data=preview.order_data,
             metadata=next_metadata,
         )
+        payload_snap = self._load_draft_or_raise(draft_id)
+        plates_step = self._wizard_step_after_plate_snapshot(
+            dict(payload_snap.get("metadata", {})),
+            payload_snap["order_data"],
+        )
+        self._persist_wizard_step(draft_id, plates_step)
         return self.get_draft_details(draft_id)
 
     def resolve_wide_plates(self, draft_id: str, decisions: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -237,6 +421,7 @@ class CommercialWorkflowService:
             order_data=preview.order_data,
             metadata=next_metadata,
         )
+        self._persist_wizard_step(draft_id, WizardStepId.manager)
         return self.get_draft_details(draft_id)
 
     def update_draft_meta(
@@ -251,7 +436,9 @@ class CommercialWorkflowService:
         payment_conditions: str | None = None,
         logistics_cost: float | None = None,
     ) -> dict[str, Any]:
-        self._load_draft_or_raise(draft_id)
+        payload_before = self._load_draft_or_raise(draft_id)
+        prev_step = self._normalize_stored_step(dict(payload_before.get("metadata") or {}))
+
         updates: dict[str, Any] = {}
         if manager_id is not None:
             manager = self.manager_repository.get_manager(manager_id)
@@ -283,38 +470,54 @@ class CommercialWorkflowService:
                 raise ValueError("Стоимость логистики не может быть отрицательной.")
             updates["logistics_cost"] = float(logistics_cost)
         if updates:
-            updates["current_step"] = "calculate"
             self.draft_store.update_metadata(draft_id, **updates)
+
+        payload_after = self._load_draft_or_raise(draft_id)
+        md = dict(payload_after.get("metadata") or {})
+
+        financial_keys = {"discount_percent", "logistics_cost"}
+        if updates:
+            if prev_step == WizardStepId.result and set(updates.keys()).issubset(financial_keys):
+                self._persist_wizard_step(draft_id, WizardStepId.result)
+            elif "manager_id" in updates and not (
+                {"client_name", "conditions_mode", "delivery_conditions", "payment_conditions"} & set(updates.keys())
+            ):
+                self._persist_wizard_step(draft_id, WizardStepId.manager)
+            elif self._meta_ready_for_calculate(md):
+                self._persist_wizard_step(draft_id, WizardStepId.client)
+            elif md.get("manager_id"):
+                self._persist_wizard_step(draft_id, WizardStepId.client)
+            else:
+                self._persist_wizard_step(draft_id, WizardStepId.manager)
+
         return self.get_draft_details(draft_id)
 
     def calculate_draft(self, draft_id: str) -> dict[str, Any]:
         details = self.get_draft_details(draft_id)
         metadata = details["metadata"]
-        if details["order_data"] == []:
-            raise ValueError("Список плит пустой.")
-        if metadata.get("wide_plate_lines") and not metadata.get("wide_plates_resolved"):
-            raise ValueError("Сначала обработайте плиты шире 12 дм.")
-        if not metadata.get("manager_id"):
-            raise ValueError("Выберите менеджера.")
-        if not str(metadata.get("client_name", "")).strip():
-            raise ValueError("Укажите клиента.")
-        if metadata.get("conditions_mode") == "custom":
-            if not str(metadata.get("delivery_conditions", "")).strip():
-                raise ValueError("Укажите условия поставки.")
-            if not str(metadata.get("payment_conditions", "")).strip():
-                raise ValueError("Укажите условия оплаты.")
-        self.draft_store.update_metadata(draft_id, current_step="result")
+        self.calculation_service.validate_calculate_prerequisites(
+            order_data=list(details["order_data"]),
+            metadata=dict(metadata),
+        )
+        self.draft_store.update_metadata(draft_id, current_step=WizardStepId.result.value)
         return self.get_draft_details(draft_id)
 
     def get_draft_details(self, draft_id: str) -> dict[str, Any]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
-        totals = calculate_total_cost(
+        totals = self.calculation_service.compute_totals(
             payload["order_data"],
-            float(metadata.get("discount_percent", 0.0) or 0.0),
+            discount_percent=float(metadata.get("discount_percent", 0.0) or 0.0),
             logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
         )
-        public_metadata = {key: value for key, value in metadata.items() if key != "breakdown_tables"}
+        public_metadata = {
+            key: value
+            for key, value in metadata.items()
+            if key not in ("breakdown_tables", "owner_user_id")
+        }
+        wizard_state = self.build_wizard_state(payload)
+        public_metadata["current_step"] = wizard_state["current_step"].value
+
         return {
             "draft_id": draft_id,
             "order": payload["order"].to_dict(),
@@ -322,9 +525,14 @@ class CommercialWorkflowService:
                 "result": payload["optimization_context"].optimization_result,
                 "total_plates": payload["optimization_context"].total_plates,
                 "total_cost": payload["optimization_context"].total_cost,
+                "status": payload["optimization_context"].optimization_status,
+                "success": payload["optimization_context"].optimization_success,
+                "error_code": payload["optimization_context"].optimization_error_code,
+                "error_message": payload["optimization_context"].optimization_error_message,
             },
             "order_data": payload["order_data"],
             "metadata": public_metadata,
+            "wizard_state": wizard_state,
             "files": self._normalize_generated_files(metadata.get("generated_files", [])),
             "saved_offer": self._normalize_saved_offer(metadata.get("saved_offer")),
             "totals": totals,
@@ -371,7 +579,7 @@ class CommercialWorkflowService:
                     discount_percent=discount_percent,
                     logistics_cost=logistics_cost,
                 )
-                files_by_kind[file_type] = self._build_generated_file(file_type, output_path)
+                files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
             elif file_type == "xlsx":
                 output_path = self.settings.outputs_dir / f"{file_stem}.xlsx"
                 self.file_generation_service.generate_offer_xlsx(
@@ -388,7 +596,7 @@ class CommercialWorkflowService:
                     payment_conditions=payment_conditions,
                     logistics_cost=logistics_cost,
                 )
-                files_by_kind[file_type] = self._build_generated_file(file_type, output_path)
+                files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
             elif file_type == "breakdown":
                 breakdown_tables = list(metadata.get("breakdown_tables") or [])
                 if not breakdown_tables:
@@ -398,7 +606,7 @@ class CommercialWorkflowService:
                     breakdown_tables=breakdown_tables,
                     output_path=str(output_path),
                 )
-                files_by_kind[file_type] = self._build_generated_file(file_type, output_path)
+                files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
             elif file_type == "schema":
                 visualization_result = self.file_generation_service.generate_visualization(
                     order=payload["order"],
@@ -408,7 +616,7 @@ class CommercialWorkflowService:
                 if isinstance(visualization_result, tuple) and len(visualization_result) >= 2:
                     schema_path = Path(str(visualization_result[1]))
                     if schema_path.exists():
-                        files_by_kind[file_type] = self._build_generated_file(file_type, schema_path)
+                        files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, schema_path)
 
         merged_files = [files_by_kind[key] for key in self.DEFAULT_FILE_TYPES if key in files_by_kind]
         self.draft_store.update_metadata(draft_id, generated_files=merged_files)
@@ -456,9 +664,9 @@ class CommercialWorkflowService:
             current_save_mode=save_mode,
             execution_terms=execution_terms,
         )
-        totals = calculate_total_cost(
+        totals = self.calculation_service.compute_totals(
             payload["order_data"],
-            float(metadata.get("discount_percent", 0.0) or 0.0),
+            discount_percent=float(metadata.get("discount_percent", 0.0) or 0.0),
             logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
         )
         offer_identity = self._build_offer_identity_payload(draft_id)
@@ -520,7 +728,7 @@ class CommercialWorkflowService:
         image_bytes: bytes,
         image_filename: str | None,
     ) -> tuple[str, dict[str, Any]]:
-        suffix = Path(image_filename or "upload.jpg").suffix or ".jpg"
+        suffix = _safe_ocr_temp_suffix(image_filename)
         with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
             tmp_file.write(image_bytes)
             tmp_path = Path(tmp_file.name)
@@ -549,7 +757,10 @@ class CommercialWorkflowService:
         }
 
     def _load_draft_or_raise(self, draft_id: str) -> dict[str, Any]:
-        payload = self.draft_store.load_preview(draft_id)
+        try:
+            payload = self.draft_store.load_preview(draft_id)
+        except UnsafeDraftIdError:
+            raise FileNotFoundError(f"Draft '{draft_id}' not found.") from None
         if payload is None:
             raise FileNotFoundError(f"Draft '{draft_id}' not found.")
         return payload
@@ -617,6 +828,7 @@ class CommercialWorkflowService:
         plate_batches: list[dict[str, Any]],
         wide_plates_resolved: bool,
         source_metadata: dict[str, Any],
+        owner_user_id: int | None = None,
     ) -> dict[str, Any]:
         metadata = dict(base_metadata)
         metadata.update(
@@ -639,9 +851,7 @@ class CommercialWorkflowService:
                 "plate_batches": plate_batches,
                 "wide_plates_resolved": wide_plates_resolved,
                 "last_source_filename": last_source_filename,
-                "current_step": "wide_plates"
-                if preview.parse_result.wide_plate_lines and not wide_plates_resolved
-                else metadata.get("current_step", "manager"),
+                "current_step": WizardStepId.plates.value,
                 "saved_offer": None,
                 "generated_files": [],
                 "current_save_mode": None,
@@ -659,6 +869,8 @@ class CommercialWorkflowService:
         metadata.setdefault("delivery_conditions", "")
         metadata.setdefault("payment_conditions", "")
         metadata.setdefault("logistics_cost", 0.0)
+        if owner_user_id is not None:
+            metadata["owner_user_id"] = int(owner_user_id)
         return metadata
 
     def _normalize_file_types(self, file_types: Iterable[str] | None) -> list[str]:
@@ -687,12 +899,13 @@ class CommercialWorkflowService:
             "file_stem": file_stem,
         }
 
-    def _build_generated_file(self, kind: str, path: Path) -> dict[str, str]:
+    def _build_generated_file(self, draft_id: str, kind: str, path: Path) -> dict[str, str]:
+        name = path.name
         return {
             "kind": kind,
-            "filename": path.name,
+            "filename": name,
             "display_name": self.FILE_LABELS[kind],
-            "download_url": f"/api/v1/commercial/files/{path.name}",
+            "download_url": f"/api/v1/commercial/files/{name}?draft_id={draft_id}",
         }
 
     def _normalize_generated_files(self, items: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
@@ -707,7 +920,9 @@ class CommercialWorkflowService:
                     "kind": kind,
                     "filename": filename,
                     "display_name": str(item.get("display_name") or self.FILE_LABELS[kind]),
-                    "download_url": str(item.get("download_url") or f"/api/v1/commercial/files/{filename}"),
+                    "download_url": str(
+                        item.get("download_url") or f"/api/v1/commercial/files/{filename}"
+                    ),
                 }
             )
         return normalized
@@ -775,6 +990,10 @@ class CommercialWorkflowService:
             return []
         preview = self.commercial_service.generate_preview(text=replacement_text)
         return list(preview.parse_result.normalized_lines)
+
+    def get_or_generate_file(self, safe_filename: str) -> Path:
+        """Path under configured ``outputs_dir`` for a generated file basename (no subpaths)."""
+        return self._resolve_generated_file(safe_filename)
 
     def _resolve_generated_file(self, filename: str) -> Path:
         return self.settings.outputs_dir / Path(filename).name

@@ -1,49 +1,30 @@
 import { useState } from "react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
-import { draftStorage } from "@/features/commercial-offer/store/draftStorage";
+import { NavLink, useHref, useLocation, useNavigate } from "react-router-dom";
+import { useCommercialDraftHeaderBridge } from "@/pages/commercial-offer-create/CommercialOfferHeaderBridge";
 import { useAuth } from "@/features/auth/model/AuthProvider";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
-import { useCurrentUserQuery } from "@/features/auth/hooks/useCurrentUserQuery";
 import { DbManagementModal } from "@/features/admin/components/DbManagementModal";
 
-const NEW_OFFER_PATH = "/commercial-offer/new";
-const ARCHIVE_PATH = "/commercial-offer/archive";
+const NEW_OFFER_PATH = "/new";
+const ARCHIVE_PATH = "/archive";
 const PRODUCTION_PATH = "/production";
 
-const hasDraft = (state: ReturnType<typeof useWizardDraftStore>["state"]): boolean => {
-  if (state.draftId) {
-    return true;
-  }
-  if (state.sourceText && state.sourceText.trim().length > 0) {
-    return true;
-  }
-  if (state.selectedImageName) {
-    return true;
-  }
-  if (state.managerId || state.clientName || state.lastSaveResult) {
-    return true;
-  }
-  return false;
-};
-
 export const AppHeader = () => {
-  const { state, dispatch } = useWizardDraftStore();
+  const { hasDraft, resetDraft } = useCommercialDraftHeaderBridge();
   const { user, logout, isLoggingOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const newOfferHref = useHref(NEW_OFFER_PATH);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [dbModalOpen, setDbModalOpen] = useState(false);
-  const currentUser = useCurrentUserQuery();
-  const isAdmin = currentUser.data?.role === "admin";
+  const isAdmin = user?.role === "admin";
 
   const onLogoutClick = async () => {
     try {
       await logout();
     } finally {
-      dispatch({ type: "reset" });
-      draftStorage.clear();
+      resetDraft();
       navigate("/login", { replace: true });
     }
   };
@@ -53,7 +34,7 @@ export const AppHeader = () => {
     if (location.pathname === NEW_OFFER_PATH) {
       return;
     }
-    if (hasDraft(state)) {
+    if (hasDraft) {
       setConfirmOpen(true);
       return;
     }
@@ -65,9 +46,8 @@ export const AppHeader = () => {
     navigate(NEW_OFFER_PATH);
   };
 
-  const resetDraft = () => {
-    dispatch({ type: "reset" });
-    draftStorage.clear();
+  const onResetDraftAndGoNew = () => {
+    resetDraft();
     setConfirmOpen(false);
     navigate(NEW_OFFER_PATH, { replace: true });
   };
@@ -86,7 +66,7 @@ export const AppHeader = () => {
         </div>
         <nav className="app-nav">
           <a
-            href={NEW_OFFER_PATH}
+            href={newOfferHref}
             onClick={onNewOfferClick}
             className={
               location.pathname === NEW_OFFER_PATH ? "app-nav__link app-nav__link--active" : "app-nav__link"
@@ -172,7 +152,7 @@ export const AppHeader = () => {
           <Button variant="secondary" onClick={continueDraft}>
             Продолжить
           </Button>
-          <Button variant="danger" onClick={resetDraft}>
+          <Button variant="danger" onClick={onResetDraftAndGoNew}>
             Начать заново
           </Button>
         </div>

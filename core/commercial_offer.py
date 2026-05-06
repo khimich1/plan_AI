@@ -181,8 +181,9 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
         Цена плиты в рублях
     """
     try:
-        # Преобразуем в дециметры для поиска в базе
-        length_dm = int(round(length_m * 10))
+        from core.price_db import length_m_to_price_length_dm
+
+        length_dm = length_m_to_price_length_dm(length_m)
         
         # Определяем код нагрузки (8 = 800 кг/м², 10 = 1000 кг/м²)
         load_code = load_class // 100
