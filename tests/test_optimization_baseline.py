@@ -207,6 +207,35 @@ def test_geometry_generates_representative_narrowing_option():
     )
 
 
+def test_geometry_secondary_pieces_capped_when_primary_already_emits_same_width():
+    """
+    Плита 1200: первичный direct 300+900 даёт одну 300 мм; из остатка 900 недопустимо
+    нарезать три 300 мм (1+3=4 с одной базовой) — максимум две в вторичке (итого 3).
+    """
+    demand = {(6.0, 300, 8): 4}
+    cfg = GeometryConfig(plate_width=1200, min_useful_width=200, tolerance_width=20)
+    primary_result = generate_primary_cut_options_2d(
+        demand_2d=demand,
+        order_info_list={},
+        order_info_getter=lambda _order_info_list, _key: {},
+        config=cfg,
+    )
+    secondary_options = generate_secondary_cut_options_2d(
+        primary_options=primary_result.options,
+        demand_2d=demand,
+        config=cfg,
+    )
+    bad = [
+        o
+        for o in secondary_options
+        if o.get("type") == "multiple"
+        and int(o.get("source_rest") or 0) == 900
+        and int(o.get("output_width") or 0) == 300
+        and int(o.get("pieces") or 1) >= 3
+    ]
+    assert not bad, f"unexpected 3+ secondary strips from 900 after primary 300: {bad}"
+
+
 # ---------- integration: golden cases ----------------------------------------
 
 @pytest.mark.parametrize(

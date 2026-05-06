@@ -16,6 +16,11 @@ OrderInfoGetter: TypeAlias = Callable[[dict, tuple], dict]
 # waste values below; keep the constant for backward compatibility.
 KERF_WIDTH_MM = 0
 
+# С одной исходной плиты по ширине дорожки (базовая ширина, напр. 1200 мм) нельзя
+# получить больше этого числа готовых полос одной искомой ширины: первичный «main»
+# плюс вторичные из остатка (см. direct 300+900 + 3×300 из 900 → 4, недопустимо).
+MAX_PRODUCT_SLABS_PER_BASE_WIDTH = 3
+
 NARROWING_TABLE: list[tuple[int, int, int]] = [
     (480, 460, 20),
     (500, 460, 40),
@@ -51,6 +56,45 @@ def _canonical_length(length: float | int | str | None) -> float:
         return round(float(length), 2)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _primary_main_equals_target_for_rest(
+    primary_options: list[CutOption],
+    source_length: float,
+    source_rest_mm: int,
+    target_width_mm: int,
+) -> bool:
+    """
+    True, если среди первичных опций есть рез с тем же остатком source_rest_mm и длиной,
+    дающий уже одну полосу шириной target_width_mm (поле main).
+    """
+    sl = _canonical_length(source_length)
+    for o in primary_options:
+        if _canonical_length(o.get("length")) != sl:
+            continue
+        if int(o.get("rest") or 0) != int(source_rest_mm):
+            continue
+        if int(o.get("main") or 0) == int(target_width_mm):
+            return True
+    return False
+
+
+def _max_secondary_equal_width_pieces(
+    primary_options: list[CutOption],
+    source_length: float,
+    source_rest_mm: int,
+    target_width_mm: int,
+) -> int:
+    """
+    Верхняя граница числа полос ширины target_width_mm, нарезаемых из остатка
+    source_rest_mm, с учётом лимита MAX_PRODUCT_SLABS_PER_BASE_WIDTH на одну базовую плиту.
+    """
+    cap = MAX_PRODUCT_SLABS_PER_BASE_WIDTH
+    if _primary_main_equals_target_for_rest(
+        primary_options, source_length, source_rest_mm, target_width_mm
+    ):
+        cap = max(1, cap - 1)
+    return cap
 
 
 def build_narrowing_source_index(
@@ -215,6 +259,10 @@ def generate_raw_secondary_cut_options_2d(
         for (target_length, target_width, target_load_code), _qty in demand_2d.items():
             if _canonical_length(target_length) == _canonical_length(source_length) and target_width <= source_width:
                 max_pieces = source_width // target_width
+                _cap = _max_secondary_equal_width_pieces(
+                    primary_options, source_length, source_width, target_width
+                )
+                max_pieces = min(max_pieces, _cap)
                 for pieces in range(1, max_pieces + 1):
                     waste = source_width - (pieces * target_width)
                     max_waste_fraction = 0.8 if pieces == 1 else 0.5
@@ -236,7 +284,10 @@ def generate_raw_secondary_cut_options_2d(
                         sec_id += 1
 
             if target_length < source_length - 0.1 and target_width <= source_width:
-                pieces = source_width // target_width
+                _cap = _max_secondary_equal_width_pieces(
+                    primary_options, source_length, source_width, target_width
+                )
+                pieces = min(source_width // target_width, _cap)
                 if pieces >= 1:
                     waste_width = source_width - (pieces * target_width)
                     waste_length = (source_length - target_length) * 1000
@@ -409,7 +460,15 @@ def generate_secondary_cut_options_1d(
                     break
 
             for target_w_candidate in target_widths:
-                num_pieces = rest_w // target_w_candidate
+                max_geom = rest_w // target_w_candidate
+                _cap = MAX_PRODUCT_SLABS_PER_BASE_WIDTH
+                if any(
+                    int(o.get("main") or 0) == int(target_w_candidate)
+                    and int(o.get("rest") or 0) == int(rest_w)
+                    for o in primary_cut_options
+                ):
+                    _cap = max(1, MAX_PRODUCT_SLABS_PER_BASE_WIDTH - 1)
+                num_pieces = min(max_geom, _cap)
                 if num_pieces >= 2:
                     waste = rest_w - (target_w_candidate * num_pieces)
                     if waste < rest_w * 0.5:
