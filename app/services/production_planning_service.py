@@ -23,7 +23,7 @@ from core.optimization.result_contract import is_optimization_success
 from core.plan_commit import PlanCommitError, commit_plan_plates
 from core.serialization import strip_plate_audit_from_plan
 from core.debug_paths import get_debug_log_path
-from bot.handlers import plan_manager
+from app.planning import plan_manager
 from core import kp_db
 from core.reinforcement_db import get_reinforcement
 

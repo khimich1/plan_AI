@@ -10,7 +10,7 @@ from app.services.day_view_service import build_day_view_detail
 from app.services.optimization_service import OptimizationService
 from app.services.production_completion_service import ProductionCompletionService
 from app.services.production_planning_service import ProductionPlanningService
-from bot.handlers import plan_manager
+from app.planning import plan_manager
 
 MAX_TRACKS_PER_DAY = plan_manager.MAX_TRACKS_PER_DAY
 

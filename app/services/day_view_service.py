@@ -10,7 +10,7 @@ import copy
 import logging
 from typing import Any
 
-from bot.handlers import plan_manager
+from app.planning import plan_manager
 from core import plate_name as plate_name_utils
 from core.debug_paths import get_debug_log_path
 
