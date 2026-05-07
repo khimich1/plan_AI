@@ -14,10 +14,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 pytest.importorskip("pulp")
 
-from core.optimization._implementation import (  # noqa: E402
-    _opt_1d_pulp_nonneg_qty,
-    _optimize_1d_widths_only,
-)
+from core.optimization._implementation import _optimize_1d_widths_only  # noqa: E402
+from core.optimization.pulp_qty import _opt_1d_pulp_nonneg_qty  # noqa: E402
 
 
 def test_opt_1d_pulp_nonneg_qty_rounds_and_zero():

@@ -1,0 +1,224 @@
+def _secondary_geom_cut_key(length_m: object, rest_or_source_mm: object) -> tuple[float, int]:
+    """Ключ (длина м, остаток мм) для secondary_cuts_info / legacy-lookup.
+
+    Нормализует float/int чтобы (2.7, 880) и (2.7, 880.0) не давали промах dict.
+    """
+    return (round(float(length_m), 2), int(round(float(rest_or_source_mm))))
+
+
+def _canonical_target_order_key_tok(tok: object | None) -> tuple | None:
+    """Хешируемый ключ заказа для слияния вторичных с одним parent_instance_id."""
+    if tok is None:
+        return None
+    try:
+        L, w, lc = tok[0], tok[1], tok[2]  # type: ignore[index]
+        return (round(float(L), 2), int(round(float(w))), int(round(float(lc))))
+    except (TypeError, ValueError, IndexError):
+        return (repr(tok),)
+
+
+def _secondary_merge_key(tok: object | None, geom_key: tuple[float, int]) -> tuple[tuple | None, tuple[float, int]]:
+    return (_canonical_target_order_key_tok(tok), geom_key)
+
+
+def _merge_atomic_secondaries_by_shared_parent(
+    *,
+    secondary_cuts_by_parent: dict[str, list[dict]],
+    logger: object,
+) -> None:
+    """
+    Несколько строк secondary_cuts с одним parent_instance_id → один variant с суммой
+    pattern-сегментов и secondary_instance_ids, чтобы один проход split в фазе C навесил всех.
+    """
+    max_segments_warn = 8
+    for pid, bucket in list(secondary_cuts_by_parent.items()):
+        grouped: dict[tuple, list[dict]] = defaultdict(list)
+        for variant in bucket:
+            gk = variant.get("geom_key")
+            if gk is None:
+                grouped[(None, "__no_geom__", id(variant))].append(variant)
+                continue
+            mk = _secondary_merge_key(variant.get("target_order_key"), gk)
+            grouped[mk].append(variant)
+
+        new_bucket: list[dict] = []
+        for _mk, grp in grouped.items():
+            atomic = [v for v in grp if len(v.get("pattern") or []) == 1]
+            non_atomic = [v for v in grp if len(v.get("pattern") or []) != 1]
+
+            if len(atomic) > 1:
+                atomic.sort(key=lambda x: str(x.get("secondary_instance_id") or ""))
+                merged_segments: list[dict] = []
+                sec_ids: list[object] = []
+                widths: set[float] = set()
+                for v in atomic:
+                    for seg in v.get("pattern") or []:
+                        merged_segments.append(seg.copy())
+                    sec_ids.append(v.get("secondary_instance_id"))
+                    for seg in v.get("pattern") or []:
+                        widths.add(float(seg.get("width_mm", 0)))
+                if len(widths) > 1:
+                    logger.warning(
+                        "[LAYOUT_SEQUENCE] skip merge parent=%s: inconsistent width_mm in atomic group %s",
+                        pid,
+                        widths,
+                    )
+                    for v in atomic:
+                        sid = v.get("secondary_instance_id")
+                        if sid is not None and not v.get("secondary_instance_ids"):
+                            v["secondary_instance_ids"] = [sid]
+                        new_bucket.append(v)
+                else:
+                    if len(merged_segments) > max_segments_warn:
+                        logger.warning(
+                            "[LAYOUT_SEQUENCE] merged %s secondary segments under parent=%s merge_key=%s — "
+                            "check plan vs physics (max sane strip count)",
+                            len(merged_segments),
+                            pid,
+                            _mk,
+                        )
+                    merged_variant = {
+                        "pattern": merged_segments,
+                        "qty": 1,
+                        "used": 0,
+                        "target_order_key": atomic[0].get("target_order_key"),
+                        "parent_instance_id": pid,
+                        "geom_key": atomic[0].get("geom_key"),
+                        "secondary_instance_ids": sec_ids,
+                        "secondary_instance_id": sec_ids[0] if sec_ids else None,
+                    }
+                    new_bucket.append(merged_variant)
+            elif len(atomic) == 1:
+                solo = atomic[0]
+                sid = solo.get("secondary_instance_id")
+                if sid is not None and not solo.get("secondary_instance_ids"):
+                    solo["secondary_instance_ids"] = [sid]
+                new_bucket.append(solo)
+            new_bucket.extend(non_atomic)
+
+        secondary_cuts_by_parent[pid] = new_bucket
+
+
+def _append_parent_variants_to_secondary_cuts_info(
+    *,
+    secondary_cuts_info: dict,
+    secondary_cuts_by_parent: dict[str, list[dict]],
+) -> None:
+    """После слияния parent-bucket — добавить merged variant в геометрический индекс."""
+    for _pid, lst in secondary_cuts_by_parent.items():
+        for v in lst:
+            gk = v.get("geom_key")
+            if gk is None:
+                continue
+            if gk not in secondary_cuts_info:
+                secondary_cuts_info[gk] = []
+            secondary_cuts_info[gk].append(v)
+
+
+def _plan_stock_width_mm(plan: dict) -> int:
+    """Ширина заготовки для варианта A (остаток = stock − выход)."""
+    explicit = plan.get("plate_width_mm")
+    if explicit is not None:
+        try:
+            return int(round(float(explicit)))
+        except (TypeError, ValueError):
+            pass
+    return 1200
+
+
+def _extract_orphan_secondaries_as_synthetic_primary_cuts(
+    *,
+    secondary_cuts_info: dict,
+    plan: dict,
+    plate_width_mm: int,
+    normalize_load_code: Callable[..., Any] | None = None,
+) -> list[dict]:
+    """
+    Вторичные без parent_instance_id убираем из гео-индекса и представляем как
+    строки первичного реза (ширина = выход, rest = stock − ширина).
+    """
+    _nlc = normalize_load_code if normalize_load_code is not None else cfg.normalize_load_code
+    synthetic: list[dict] = []
+    sec_rows_by_id: dict[str, dict] = {}
+    for row in plan.get("secondary_cuts") or []:
+        sid = row.get("secondary_instance_id")
+        if sid is not None:
+            sec_rows_by_id[str(sid)] = row
+    assign_by_id: dict[str, dict] = {}
+    for a in plan.get("plate_assignments") or []:
+        if a.get("source") == "secondary" and a.get("unit_id") is not None:
+            assign_by_id[str(a["unit_id"])] = a
+
+    for gk in list(secondary_cuts_info.keys()):
+        kept: list[dict] = []
+        for v in secondary_cuts_info[gk]:
+            if v.get("parent_instance_id"):
+                kept.append(v)
+                continue
+            sid = v.get("secondary_instance_id")
+            if sid is None:
+                continue
+            sid_s = str(sid)
+            pat = v.get("pattern") or []
+            if not pat:
+                continue
+            seg0 = pat[0]
+            width_mm = int(round(float(seg0.get("width_mm") or 0)))
+            if width_mm <= 0 or width_mm >= plate_width_mm:
+                kept.append(v)
+                continue
+            rest_mm = int(plate_width_mm - width_mm)
+            if rest_mm <= 0:
+                kept.append(v)
+                continue
+            row = sec_rows_by_id.get(sid_s, {})
+            assign = assign_by_id.get(sid_s, {})
+            tok = v.get("target_order_key")
+            if tok and len(tok) > 2:
+                lc = _nlc(tok[2], default=8)
+            else:
+                lc = _nlc(row.get("load_code") or assign.get("load_code", 8))
+            _tl = seg0.get("target_length")
+            if _tl is not None:
+                try:
+                    length_m = float(_tl)
+                except (TypeError, ValueError):
+                    length_m = float(gk[0])
+            else:
+                length_m = float(gk[0])
+            _len_fallback = row.get("lengths")
+            if _len_fallback:
+                if isinstance(_len_fallback, (list, tuple)) and _len_fallback:
+                    try:
+                        length_m = float(_len_fallback[0])
+                    except (TypeError, ValueError):
+                        pass
+            elif assign.get("length") is not None:
+                try:
+                    length_m = float(assign["length"])
+                except (TypeError, ValueError):
+                    pass
+
+            synthetic.append({
+                "width": width_mm,
+                "rest": rest_mm,
+                "qty": 1,
+                "lengths": [length_m],
+                "load_code": lc,
+                "kp_id": row.get("kp_id") if row.get("kp_id") is not None else assign.get("kp_id"),
+                "customer": row.get("customer") if row.get("customer") is not None else assign.get("customer"),
+                "kp_date": row.get("kp_date") if row.get("kp_date") is not None else assign.get("kp_date"),
+                "plate_name": row.get("plate_name") if row.get("plate_name") is not None else assign.get("plate_name"),
+                "primary_instance_id": sid,
+                "skip_secondary_attachment": True,
+                "ignore_transverse": True,
+                "emulated_primary_from_secondary": True,
+                "emulated_secondary_units": max(1, len(pat)),
+                "identity_match_type": row.get("identity_match_type") or assign.get("identity_match_type"),
+            })
+        if kept:
+            secondary_cuts_info[gk] = kept
+        else:
+            del secondary_cuts_info[gk]
+
+    return synthetic

@@ -4,7 +4,12 @@ import sys
 import types
 
 from ._implementation import *
-from ._implementation import __all__ as __all__
+from ._implementation import __all__ as _impl_all
+
+# Публичная точка входа (OPT-007): после загрузки графа подмодулей — без цикла _implementation → orchestrator (DIP-001).
+from .orchestrator import optimize_with_cascading_longitudinal_cuts
+
+__all__ = (*_impl_all, "optimize_with_cascading_longitudinal_cuts")
 
 
 class _OptimizationModule(types.ModuleType):

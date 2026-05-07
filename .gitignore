@@ -67,6 +67,8 @@ Outputs/
 
 # Временная папка бота
 bot/tmp/
+# Метаданные планов (локальное состояние)
+plans_metadata.json
 tmp/
 
 # Frontend (Vite / npm): зависимости и сборка

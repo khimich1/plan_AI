@@ -12,6 +12,12 @@ from viz_modules.procurement import build_procurement_items
 
 
 def test_40_vs_40_0_not_merged():
+    # Изоляция от чужого OPT_* из других тестов в том же процессе pytest
+    import core.optimization as optimization
+
+    optimization.OPT_CASCADING_PLAN.clear()
+    optimization.OPT_CASCADING_PLAN_BY_LOAD.clear()
+
     test_order = """
 Плиты ПБ 40-12-8п 4 шт
 Плиты ПБ 40,0-12-8п 6 шт

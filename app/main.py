@@ -45,6 +45,12 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
+    # После CORS: внешний слой на входе — отдельное состояние заказа на каждый запрос (S1).
+    from app.middleware.plate_runtime_isolation import (
+        PlateMutableRuntimeIsolationMiddleware,
+    )
+
+    app.add_middleware(PlateMutableRuntimeIsolationMiddleware)
 
     @app.exception_handler(DraftStoreLockTimeout)
     async def _draft_store_lock_handler(

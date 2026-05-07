@@ -10,7 +10,7 @@ import core.config_and_data as cfg
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
 from core.optimization import verify_coverage
-from core.optimization._implementation import _batch_sizes_for_secondary_z_sec
+from core.optimization.secondary_batches import _batch_sizes_for_secondary_z_sec
 from core.plate_line_parser import parse_line
 
 LINES = """
