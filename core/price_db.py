@@ -1,12 +1,24 @@
+import math
 import os
 import sqlite3
 from typing import Dict, Optional
+
+
 from .debug_paths import get_debug_log_path
 
 try:
     import pandas as pd
 except Exception:
     pd = None
+
+
+def length_m_to_price_length_dm(length_m: float) -> int:
+    """
+    Длина плиты в метрах → целый ключ length_dm в БД цен (дециметры, с потолком).
+
+    Например 2.73 м → 28 дм, чтобы совпадать с прайсом, где длина в дм округляется вверх.
+    """
+    return int(math.ceil(round(float(length_m) * 10.0, 12)))
 
 
 # Путь к базе данных в корне проекта (на уровень выше core/)
@@ -137,7 +149,7 @@ def get_price(length_m: float, load_code: float | int = 8, db_path: str = DEFAUL
     import time
 
     init_schema(db_path)
-    length_dm = int(round(length_m * 10))
+    length_dm = length_m_to_price_length_dm(length_m)
     
     # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: округляем нагрузку вниз (12.5 → 12)
     # В базе цен нет 12.5, используем цену 12

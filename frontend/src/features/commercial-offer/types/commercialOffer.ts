@@ -1,4 +1,24 @@
 export type WizardStepId = "plates" | "wide-plates" | "manager" | "client" | "result";
+
+/** Синхронизировано с app.schemas.commercial.WizardNextRequiredAction */
+export type WizardNextRequiredAction =
+  | "none"
+  | "ingest_plates"
+  | "resolve_wide_plates"
+  | "select_manager"
+  | "complete_client_terms"
+  | "post_calculate";
+
+/** Серверный контракт оркестрации (`CommercialWizardState` / OpenAPI `wizard_state`). */
+export type CommercialWizardState = {
+  current_step: WizardStepId;
+  can_proceed_to: WizardStepId[];
+  next_required_action: WizardNextRequiredAction;
+  validation_errors: string[];
+};
+
+export type CommercialWizardStateResponse = CommercialWizardState;
+
 export type PlateInputMode = "append" | "replace";
 export type ConditionsMode = "standard" | "custom";
 export type SaveMode = "database" | "archive" | "skip";
@@ -95,6 +115,7 @@ export type CommercialDraftDetails = {
   };
   order_data: Array<Record<string, unknown>>;
   metadata: CommercialDraftMetadata;
+  wizard_state: CommercialWizardState;
   files: CommercialGeneratedFile[];
   saved_offer: CommercialSavedOffer | null;
   totals: {

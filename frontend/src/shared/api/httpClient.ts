@@ -19,12 +19,51 @@ const buildUrl = (path: string): string => {
   return `${env.apiBaseUrl}${normalizedPath}`;
 };
 
-const parseError = async (response: Response): Promise<never> => {
-  let detail = "Запрос завершился ошибкой.";
+const looksLikeJson = (contentType: string, body: string): boolean => {
+  const t = contentType.toLowerCase();
+  if (t.includes("application/json") || t.includes("application/problem+json")) {
+    return true;
+  }
+  const s = body.trimStart();
+  return s.startsWith("{") || s.startsWith("[");
+};
+
+const parseResponseJson = async <T>(response: Response, path: string): Promise<T> => {
+  const text = await response.text();
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (!looksLikeJson(contentType, text)) {
+    const hint =
+      text.trimStart().startsWith("<") || contentType.includes("text/html")
+        ? " Похоже на HTML (часто SPA Vite без proxy на /api): проверьте server.proxy и что бэкенд слушает порт из Vite."
+        : "";
+    throw new ApiError(
+      `Ожидался JSON для ${path}, получен «${contentType || "нет Content-Type"}».${hint}`,
+      response.status,
+    );
+  }
   try {
-    const payload = (await response.json()) as { detail?: string };
-    if (typeof payload.detail === "string" && payload.detail.trim()) {
-      detail = payload.detail;
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(`Не удалось разобрать JSON для ${path}.`, response.status);
+  }
+};
+
+const parseError = async (response: Response, path: string): Promise<never> => {
+  let detail = "Запрос завершился ошибкой.";
+  const contentType = response.headers.get("Content-Type") ?? "";
+  try {
+    const text = await response.text();
+    if (looksLikeJson(contentType, text)) {
+      try {
+        const payload = JSON.parse(text) as { detail?: string };
+        if (typeof payload.detail === "string" && payload.detail.trim()) {
+          detail = payload.detail;
+        }
+      } catch {
+        detail = response.statusText || detail;
+      }
+    } else if (text.trimStart().startsWith("<") || contentType.includes("text/html")) {
+      detail = `Сервер вернул HTML вместо JSON (${response.status}) для ${path}. Проверьте URL API и прокси dev-сервера.`;
     }
   } catch {
     detail = response.statusText || detail;
@@ -52,14 +91,14 @@ const request = async <TResponse>(path: string, options: RequestOptions = {}): P
     if (response.status === 401) {
       handleUnauthorized(path);
     }
-    return parseError(response);
+    return parseError(response, path);
   }
 
   if (response.status === 204) {
     return undefined as TResponse;
   }
 
-  return (await response.json()) as TResponse;
+  return parseResponseJson<TResponse>(response, path);
 };
 
 export type DownloadResult = {
@@ -100,7 +139,7 @@ const downloadRequest = async (
     if (response.status === 401) {
       handleUnauthorized(path);
     }
-    return parseError(response);
+    return parseError(response, path);
   }
   const blob = await response.blob();
   const filename = extractFilename(response, fallbackFilename);

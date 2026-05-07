@@ -8,8 +8,9 @@ import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { getErrorMessage } from "@/shared/lib/apiError";
+import { Spinner } from "@/shared/ui/Spinner";
 
-const DEFAULT_REDIRECT = "/commercial-offer/new";
+const DEFAULT_REDIRECT = "/new";
 
 const loginSchema = z.object({
   username: z.string().trim().min(1, "Введите логин"),
@@ -29,7 +30,17 @@ export const LoginPage = () => {
   });
 
   if (isLoading) {
-    return null;
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <Spinner />
+      </div>
+    );
   }
 
   if (user) {

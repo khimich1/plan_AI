@@ -12,77 +12,113 @@
 - ПОПЕРЕЧНЫЙ РЕЗ: режет поперёк, уменьшает ДЛИНУ (6.0м → 3.0м + 3.0м)
 """
 # Относительные импорты внутри core/
-import os as _os
+import logging
 from pathlib import Path as _Path
-from . import config_and_data as cfg
-from .config_and_data import canonical_plate_key
-from .debug_paths import get_debug_log_path
-from .price_db import get_price
-from dataclasses import dataclass
+from typing import Any, Callable
 
-_DEBUG_LOG_COMMON = get_debug_log_path("debug.log")
-_DEBUG_LOG_5b5324 = get_debug_log_path("debug-5b5324.log")
+from core import config_and_data as cfg
+from core.config_and_data import canonical_plate_key
+from core.debug_paths import PROJECT_ROOT, get_debug_log_path
+from dataclasses import dataclass
+from core.optimization.geometry import (
+    GeometryConfig,
+    KERF_WIDTH_MM,
+    NARROWING_TABLE,
+    _canonical_length,
+    filter_secondary_cut_options_2d,
+    generate_primary_cut_options_1d,
+    generate_primary_cut_options_2d,
+    generate_raw_secondary_cut_options_2d,
+    generate_secondary_cut_options_1d,
+)
+from core.optimization.ffd_packing import (
+    Piece,
+    Track,
+    first_fit_decreasing,
+    optimize_tracks,
+    pack_tracks,
+)
+from core.optimization.debug_log import (
+    _DEBUG_LOG_5b5324,
+    _DEBUG_LOG_COMMON,
+    _dbg_open_append,
+    _opt_debug_enabled,
+)
+from core.optimization.order_dispatch import (
+    _build_proportional_slot_lists,
+    _get_next_order_info,
+    _next_slot_info,
+    _peek_order_info,
+    build_order_info_list,
+)
+from core.optimization.ilp_model import (
+    _build_residual_balance_constraints,
+    _residual_phys_key,
+    build_two_d_cutting_ilp,
+)
+from core.optimization.logging_utils import order_line_for_console
+from core.optimization.result_contract import (
+    ERROR_EMPTY_ORDERS_1D,
+    ERROR_EMPTY_ORDERS_2D,
+    ERROR_PULP_MISSING,
+    ERROR_SOLVER_INFEASIBLE,
+    ERROR_SOLVER_UNDEFINED,
+    is_optimization_success,
+    opt_error,
+    opt_ok,
+)
+
 _DEBUG_AGENT_LOG_EBB546 = get_debug_log_path("debug-ebb546.log")
 _DEBUG_RUNTIME_LOG_648532 = get_debug_log_path("debug-648532.log")
 _DEBUG_LOG_2D5C43 = get_debug_log_path("debug-2d5c43.log")
 _DEBUG_RUNTIME_SESSION_ID_648532 = "648532"
 
+_OPT_1D_LOG = logging.getLogger(__name__)
+
+
+def _opt_1d_pulp_nonneg_qty(
+    pulp_value_fn: Callable[[Any], Any],
+    var: Any,
+    *,
+    context: str,
+) -> int:
+    """
+    Целое qty ≥ 0 из решённой PuLP-переменной (ветка 1D).
+
+    ``None`` от value() → 0 и предупреждение (нестабильное/частичное решение без молчаливой порчи списка).
+    Ошибки преобразования и сбои value() логируются и превращаются в ValueError.
+    """
+    try:
+        raw = pulp_value_fn(var)
+    except Exception as exc:
+        _OPT_1D_LOG.exception(
+            "[OPT_1D] pulp.value() выбросил исключение для %s",
+            context,
+        )
+        raise ValueError(f"pulp.value failed for {context}") from exc
+    if raw is None:
+        _OPT_1D_LOG.warning(
+            "[OPT_1D] %s: value() вернул None после решения — qty=0",
+            context,
+        )
+        return 0
+    try:
+        qty = int(round(float(raw)))
+    except (TypeError, ValueError, OverflowError) as exc:
+        _OPT_1D_LOG.error(
+            "[OPT_1D] %s: не удалось преобразовать value=%r в int",
+            context,
+            raw,
+            exc_info=True,
+        )
+        raise ValueError(f"invalid pulp value for {context}: {raw!r}") from exc
+    if qty < 0:
+        _OPT_1D_LOG.error("[OPT_1D] %s: отрицательное qty=%s", context, qty)
+        raise ValueError(f"negative qty for {context}: {qty}")
+    return qty
+
 
 # ==================== ХЕЛПЕРЫ ОПТИМИЗАЦИИ ====================
-
-def _canonical_length(length) -> float:
-    """
-    Каноническая длина (метры, round до 2 знаков).
-    Используется как единый формат сравнения длин в ILP-модели,
-    чтобы убрать float-tolerance с риском дрейфа при round-trip через JSON.
-    """
-    try:
-        return round(float(length), 2)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _opt_debug_enabled() -> bool:
-    """
-    Включены ли подробные debug-логи оптимизатора.
-    По умолчанию выключены: дебаг-регионы пишут в файлы только при OPT_DEBUG_LOG=1.
-    Это нужно для честных замеров и чтобы prod не засорял диск.
-    """
-    return _os.environ.get("OPT_DEBUG_LOG", "").strip() in ("1", "true", "True", "yes", "on")
-
-
-class _DbgNullFile:
-    """
-    No-op file handle: используется как заглушка для debug-логов,
-    когда OPT_DEBUG_LOG выключен. Поддерживает и контекст-менеджер,
-    и прямой `.write(...)` без `with`.
-    """
-
-    def write(self, *_args, **_kwargs):
-        return 0
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args, **_kwargs):
-        return False
-
-
-_DBG_NULL_FILE = _DbgNullFile()
-
-
-def _dbg_open_append(path):
-    """
-    Append-handle для debug-логов оптимизатора.
-    При OPT_DEBUG_LOG=0 возвращает no-op handle, поэтому никакая запись не идёт.
-    Никогда не бросает исключений: при ошибке открытия — тоже no-op.
-    """
-    if not _opt_debug_enabled():
-        return _DBG_NULL_FILE
-    try:
-        return open(path, 'a', encoding='utf-8')
-    except Exception:
-        return _DBG_NULL_FILE
 
 
 def verify_coverage(
@@ -139,109 +175,6 @@ def verify_coverage(
     }
 
 
-def _residual_phys_key(length, rest_width) -> tuple[float, int]:
-    """Physical residual band key shared by optimizer constraints and parent fallback."""
-    return (_canonical_length(length), int(round(float(rest_width or 0))))
-
-
-def _build_residual_balance_constraints(
-    *,
-    prob,
-    primary_options: list[dict],
-    secondary_options: list[dict],
-    x_prim: dict,
-    x_sec: dict,
-) -> dict:
-    """
-    Enforce residual supply/consumption with downgrade load-code policy.
-
-    A primary residual with higher/equal load_code may serve secondary demand with
-    lower/equal load_code. The reverse is forbidden by cumulative constraints.
-    """
-    from pulp import lpSum
-
-    supply_by_phys: dict[tuple[float, int], dict[float | int, list[int]]] = defaultdict(lambda: defaultdict(list))
-    demand_by_phys: dict[tuple[float, int], dict[float | int, list[int]]] = defaultdict(lambda: defaultdict(list))
-
-    for opt in primary_options:
-        rest_w = opt.get('rest', 0)
-        if rest_w > 0 and opt.get('type') != 'solid':
-            phys = _residual_phys_key(opt.get('length'), rest_w)
-            prim_lc = cfg.normalize_load_code(opt.get('load_code', 8), default=8)
-            opt['load_code'] = prim_lc
-            supply_by_phys[phys][prim_lc].append(opt['id'])
-
-    for opt in secondary_options:
-        target_key = opt.get('target_order_key', (0, 0, 8))
-        sec_lc = target_key[2] if len(target_key) == 3 else 8
-        sec_lc = cfg.normalize_load_code(sec_lc, default=8)
-        phys = _residual_phys_key(opt.get('source_length'), opt.get('source_rest'))
-        demand_by_phys[phys][sec_lc].append(opt['id'])
-
-    constraint_count = 0
-    blocked_no_supply = 0
-    rests_for_objective: dict = {}
-
-    for phys, demand_by_lc in demand_by_phys.items():
-        supply_by_lc = supply_by_phys.get(phys, {})
-        if not supply_by_lc:
-            for opt_ids in demand_by_lc.values():
-                for opt_id in opt_ids:
-                    prob += x_sec[opt_id] == 0, f"residual_no_supply_sec_{opt_id}"
-                    blocked_no_supply += 1
-            continue
-
-        produced_all = [opt_id for ids in supply_by_lc.values() for opt_id in ids]
-        consumed_all = [opt_id for ids in demand_by_lc.values() for opt_id in ids]
-        rests_for_objective[(phys[0], phys[1], "all")] = {
-            'produced': produced_all,
-            'consumed': consumed_all,
-        }
-
-        levels = sorted(set(supply_by_lc.keys()) | set(demand_by_lc.keys()), reverse=True)
-        for level in levels:
-            consumed = [
-                opt_id
-                for target_lc, opt_ids in demand_by_lc.items()
-                if target_lc >= level
-                for opt_id in opt_ids
-            ]
-            produced = [
-                opt_id
-                for prim_lc, opt_ids in supply_by_lc.items()
-                if prim_lc >= level
-                for opt_id in opt_ids
-            ]
-            if consumed:
-                prob += (
-                    lpSum(x_sec[i] for i in consumed) <= lpSum(x_prim[i] for i in produced),
-                    f"residual_balance_L{phys[0]}_R{phys[1]}_LC{level}",
-                )
-                constraint_count += 1
-
-    try:
-        import json as _json
-        import time as _time
-
-        with _dbg_open_append(_DEBUG_LOG_COMMON) as _f:
-            _f.write(_json.dumps({
-                "hypothesisId": "residual_balance_constraints_added",
-                "location": "optimization.py:_build_residual_balance_constraints",
-                "message": "Residual balance constraints with downgrade load-code policy",
-                "data": {
-                    "constraints_added": constraint_count,
-                    "blocked_secondary_without_supply": blocked_no_supply,
-                    "physical_supply_keys": len(supply_by_phys),
-                    "physical_demand_keys": len(demand_by_phys),
-                },
-                "timestamp": int(_time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-    return rests_for_objective
-
-
 def _debug_runtime_write_648532(
     run_id: str,
     hypothesis_id: str,
@@ -277,11 +210,6 @@ def _debug_runtime_write_648532(
 
 # ==================== КОНФИГУРАЦИЯ ОПТИМИЗАЦИИ ====================
 
-# Ширина пропила (в мм) - НЕ используется в расчётах
-# Пропил косвенно учитывается в таблице NARROWING_TABLE через значения narrowing
-# Формально для совместимости оставляем константу, но не применяем в расчётах
-KERF_WIDTH_MM = 0
-
 @dataclass
 class OptimizationConfig:
     """
@@ -311,13 +239,15 @@ OLD_CONFIG = OptimizationConfig(
     secondary_reuse_bonus=-500.0
 )
 
-# ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ОПТИМИЗАЦИИ ====================
+# ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ОПТИМИЗАЦИИ (TLS + прокси, см. context.py) ====================
 
-OPT_WIDTH_PRIORITY = []  # приоритет ширин: ['0_32','0_46','0_70','0_72','0_86']
-OPT_PLAN = {}  # результат полной оптимизации: как закрывать спрос
-OPT_CASCADING_PLAN = {}  # результат каскадной оптимизации с вторичными резами
-OPT_CASCADING_PLAN_BY_LOAD = {}  # результат каскадной оптимизации, СГРУППИРОВАННЫЙ ПО НАГРУЗКЕ
-LOAD_TO_REINFORCEMENT_MAP = {}  # маппинг: load_code → [reinforcement_keys] для поиска плана по нагрузке
+from core.optimization.context import (
+    LOAD_TO_REINFORCEMENT_MAP,
+    OPT_CASCADING_PLAN,
+    OPT_CASCADING_PLAN_BY_LOAD,
+    OPT_PLAN,
+    OPT_WIDTH_PRIORITY,
+)
 
 
 # ==================== ЛЕГАСИ-АДАПТЕРЫ ====================
@@ -419,8 +349,13 @@ def optimize_cuts_pulp(orders: dict | None = None) -> dict:
             if plates:
                 orders[width_mm] = len(plates)
 
-    result = optimize_with_cascading_longitudinal_cuts(orders=orders) if orders else {}
-    if result:
+    if not orders:
+        return opt_error(
+            ERROR_EMPTY_ORDERS_1D,
+            "Нет исходных заказов по ширине для optimize_cuts_pulp.",
+        )
+    result = optimize_with_cascading_longitudinal_cuts(orders=orders)
+    if is_optimization_success(result):
         OPT_PLAN.clear()
         OPT_PLAN.update(result)
     return result
@@ -428,238 +363,22 @@ def optimize_cuts_pulp(orders: dict | None = None) -> dict:
 
 # ==================== СОВРЕМЕННЫЕ ФУНКЦИИ ОПТИМИЗАЦИИ ====================
 
-def _get_next_order_info(order_info_list: dict, key: tuple) -> dict:
-    """
-    Возвращает информацию о следующем КП с qty_remaining > 0 и уменьшает счётчик.
-    
-    Простыми словами:
-    - Ищет в списке записей для данного (length, width, load_code) первую запись, 
-      у которой ещё есть неназначенные плиты (qty_remaining > 0)
-    - Уменьшает счётчик qty_remaining на 1
-    - Возвращает копию информации о КП
-    
-    Args:
-        order_info_list: словарь {(length, width, load_code): [список записей КП]}
-        key: кортеж (length, width, load_code)
-    
-    Returns:
-        dict: информация о КП (kp_id, customer, kp_date, plate_name, load_code) или пустой словарь
-    """
-    # #region agent log (session 5b5324) _get_next_order_info entry
-    try:
-        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-            _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:entry", "message": "key requested", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    entries = order_info_list.get(key, [])
-    for entry in entries:
-        if entry.get('qty_remaining', 0) > 0:
-            entry['qty_remaining'] -= 1
-            out = {
-                'kp_id': entry.get('kp_id'),
-                'customer': entry.get('customer'),
-                'kp_date': entry.get('kp_date'),
-                'plate_name': entry.get('plate_name'),
-                'load_code': entry.get('load_code'),
-                'reinforcement': entry.get('reinforcement'),
-                'identity_match_type': 'exact'
-            }
-            # #region agent log (session 5b5324) _get_next_order_info return exact
-            try:
-                with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-                    _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "exact match", "data": {"match_type": "exact", "kp_id": out.get("kp_id"), "plate_name": (out.get("plate_name") or "")[:60]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-            # #endregion
-            return out
-    # Fallback по (length, width) без load_code — ищем любой ключ с теми же длиной и шириной
-    if len(key) == 3:
-        length, width, load_code = key
-        for candidate_key, candidate_entries in order_info_list.items():
-            if len(candidate_key) >= 2 and candidate_key[0] == length and candidate_key[1] == width:
-                for entry in candidate_entries:
-                    if entry.get('qty_remaining', 0) > 0:
-                        entry['qty_remaining'] -= 1
-                        try:
-                            _req_lc = key[2] if len(key) >= 3 else None
-                            _found_lc = candidate_key[2] if len(candidate_key) >= 3 else None
-                            with _dbg_open_append(_DEBUG_LOG_COMMON) as _f:
-                                _f.write(__import__('json').dumps({
-                                    "hypothesisId": "H2_fallback",
-                                    "location": "optimization.py:_get_next_order_info",
-                                    "message": "fallback used (length, width)",
-                                    "data": {
-                                        "requested_key": list(key),
-                                        "found_key": list(candidate_key),
-                                        "fallback_reason": "load_code_mismatch",
-                                        "requested_load_code": _req_lc,
-                                        "found_load_code": _found_lc,
-                                        "kp_id": entry.get('kp_id'),
-                                        "plate_name": (entry.get('plate_name') or '')[:50]
-                                    },
-                                    "timestamp": __import__('time').time()
-                                }, ensure_ascii=False) + '\n')
-                        except Exception:
-                            pass
-                        out_fb = {
-                            'kp_id': entry.get('kp_id'),
-                            'customer': entry.get('customer'),
-                            'kp_date': entry.get('kp_date'),
-                            'plate_name': entry.get('plate_name'),
-                            'load_code': entry.get('load_code'),
-                            'reinforcement': entry.get('reinforcement'),
-                            'identity_match_type': 'fallback_same_length_width'
-                        }
-                        # #region agent log (session 5b5324) fallback_same_length_width
-                        try:
-                            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-                                _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_same_length_width", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_fb.get("kp_id"), "plate_name": (out_fb.get("plate_name") or "")[:60]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-                        except Exception:
-                            pass
-                        # #endregion
-                        return out_fb
-        # Fallback по «соседней» длине (±0.02 м), та же ширина и load_code (61,2↔61,1; 59,8↔59,9)
-        # Иначе при конкурирующих длинах решатель даёт общий объём, список по точной длине кончается —
-        # плиты получают kp_id из opt (первый КП), а в БД они в другом КП и не списываются.
-        LEN_TOL = 0.02
-        for candidate_key, candidate_entries in order_info_list.items():
-            if len(candidate_key) < 3:
-                continue
-            c_len, c_width, c_lc = candidate_key[0], candidate_key[1], candidate_key[2]
-            if abs(c_len - length) <= LEN_TOL and c_width == width and c_lc == load_code:
-                for entry in candidate_entries:
-                    if entry.get('qty_remaining', 0) > 0:
-                        entry['qty_remaining'] -= 1
-                        out_n = {
-                            'kp_id': entry.get('kp_id'),
-                            'customer': entry.get('customer'),
-                            'kp_date': entry.get('kp_date'),
-                            'plate_name': entry.get('plate_name'),
-                            'load_code': entry.get('load_code'),
-                            'reinforcement': entry.get('reinforcement'),
-                            'identity_match_type': 'fallback_neighbor_length'
-                        }
-                        # #region agent log (session 5b5324) fallback_neighbor_length
-                        try:
-                            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-                                _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_neighbor_length", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_n.get("kp_id"), "plate_name": (out_n.get("plate_name") or "")[:60]}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-                        except Exception:
-                            pass
-                        # #endregion
-                        return out_n
-    # #region agent log (session 5b5324) _get_next_order_info return empty
-    try:
-        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-            _f.write(__import__('json').dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "empty", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    return {}
 
-
-def _build_proportional_slot_lists(
-    orders_2d: list,
-    demand_2d: dict,
-) -> tuple:
+def _batch_sizes_for_secondary_z_sec(qty: int, pieces: int) -> list[int]:
     """
-    Строит пропорциональные слоты атрибуции по ключу (length, width, load_code).
-    Возвращает (slot_lists, slot_cursors).
-    slot_lists[key] — список из demand_2d[key] атрибуций, пропорционально qty заказов
-    (floor + остаток по убыванию qty). Курсоры инициализированы в 0.
+    Разбиение qty строк выхода z_sec на батчи: один родительский остаток на батч
+    длиной до pieces (ограничение cap_sec в ILP: sum z_sec <= x_sec * pieces).
+
+    Examples: qty=3, pieces=2 -> [2, 1].
     """
-    groups: dict = {}
-    for order in orders_2d:
-        key = (order['length'], order['width'], order.get('load_code', 800))
-        groups.setdefault(key, []).append(order)
-
-    slot_lists: dict = {}
-    for key, need in demand_2d.items():
-        entries = groups.get(key, [])
-        total_qty = sum(o.get('qty', 1) for o in entries)
-        if total_qty == 0:
-            slot_lists[key] = []
-            continue
-        shares = [int(need * o.get('qty', 1) / total_qty) for o in entries]
-        remainder = need - sum(shares)
-        for idx in sorted(range(len(entries)), key=lambda i: -entries[i].get('qty', 1)):
-            if remainder <= 0:
-                break
-            shares[idx] += 1
-            remainder -= 1
-        slots = []
-        for entry, share in zip(entries, shares):
-            info = {
-                k: entry.get(k)
-                for k in ('kp_id', 'customer', 'kp_date', 'plate_name', 'load_code', 'reinforcement')
-            }
-            slots.extend([info] * share)
-        slot_lists[key] = slots
-
-    cursors = {key: 0 for key in slot_lists}
-    return slot_lists, cursors
-
-
-def _next_slot_info(
-    slot_lists: dict,
-    slot_cursors: dict,
-    key: tuple,
-) -> dict:
-    """
-    Возвращает следующую атрибуцию по ключу из предрасчитанных слотов и сдвигает курсор.
-    При исчерпании слотов возвращает пустой dict, чтобы не дублировать identity.
-    """
-    slots = slot_lists.get(key, [])
-    idx = slot_cursors.get(key, 0)
-    if not slots or idx >= len(slots):
-        return {}
-    entry = dict(slots[idx])
-    entry['identity_match_type'] = 'slot_proportional'
-    slot_cursors[key] = idx + 1
-    return entry
-
-
-def _peek_order_info(order_info_list: dict, key: tuple) -> dict:
-    """
-    Возвращает информацию о первом КП с qty_remaining > 0 БЕЗ уменьшения счётчика.
-    
-    Используется для получения информации при создании primary_options,
-    когда ещё не известно, будет ли опция использована.
-    
-    Args:
-        order_info_list: словарь {(length, width, load_code): [список записей КП]}
-        key: кортеж (length, width, load_code)
-    
-    Returns:
-        dict: информация о КП (включая load_code) или пустой словарь
-    """
-    entries = order_info_list.get(key, [])
-    for entry in entries:
-        if entry.get('qty_remaining', 0) > 0:
-            return {
-                'kp_id': entry.get('kp_id'),
-                'customer': entry.get('customer'),
-                'kp_date': entry.get('kp_date'),
-                'plate_name': entry.get('plate_name'),
-                'load_code': entry.get('load_code'),
-                'reinforcement': entry.get('reinforcement')
-            }
-    # Fallback по (length, width) без load_code
-    if len(key) == 3:
-        length, width, _ = key
-        for candidate_key, candidate_entries in order_info_list.items():
-            if len(candidate_key) >= 2 and candidate_key[0] == length and candidate_key[1] == width:
-                for entry in candidate_entries:
-                    if entry.get('qty_remaining', 0) > 0:
-                        return {
-                            'kp_id': entry.get('kp_id'),
-                            'customer': entry.get('customer'),
-                            'kp_date': entry.get('kp_date'),
-                            'plate_name': entry.get('plate_name'),
-                            'load_code': entry.get('load_code'),
-                            'reinforcement': entry.get('reinforcement')
-                        }
-    return {}
+    p = max(1, int(pieces or 1))
+    sizes: list[int] = []
+    offset = 0
+    while offset < qty:
+        b = min(p, qty - offset)
+        sizes.append(b)
+        offset += b
+    return sizes
 
 
 def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
@@ -694,18 +413,44 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     if opt_config is None:
         opt_config = DEFAULT_CONFIG
     try:
-        from pulp import LpProblem, LpMinimize, LpVariable, LpInteger, lpSum, value, PULP_CBC_CMD, LpStatus
+        from pulp import PULP_CBC_CMD, LpStatus, value
     except ImportError:
         print('[OPT_2D] PuLP не установлен.')
-        return {}
-    
+        return opt_error(
+            ERROR_PULP_MISSING,
+            "PuLP не установлен — 2D ILP недоступен.",
+        )
+
     if not orders_2d:
-        return {}
+        return opt_error(ERROR_EMPTY_ORDERS_2D, "Пустой список заказов orders_2d.")
+    
+    # #region agent log
+    try:
+        import json as _aj
+        import time as _at
+        with open(_Path(__file__).resolve().parent.parent / "debug-7e420e.log", "a", encoding="utf-8") as _lf:
+            _lf.write(
+                _aj.dumps(
+                    {
+                        "sessionId": "7e420e",
+                        "hypothesisId": "H_OPT_ENTER",
+                        "location": "optimization.py:_optimize_2d_with_lengths:entry",
+                        "message": "2D ILP optimizer entered (fresh plan build)",
+                        "data": {"n_orders": len(orders_2d), "plate_width": int(plate_width)},
+                        "timestamp": int(_at.time() * 1000),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # #endregion
     
     print(f"\n[OPT_2D] === ПОЛНАЯ 2D ОПТИМИЗАЦИЯ ===")
     print(f"[OPT_2D] Заказ:")
     for order in orders_2d:
-        print(f"  {order['qty']}x {order['length']}м x {order['width']}мм")
+        print(order_line_for_console(order))
     
     # 1. ПОДГОТОВКА: Группируем спрос по (length, width, load_code)
     # Используем canonical_plate_key — единый формат ключей во всём проекте.
@@ -721,24 +466,8 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         except Exception:
             pass
     # #endregion
-    # 1.5 НОВОЕ: Создаём маппинг (length, width, load_code) -> СПИСОК информации о КП
-    # Используем canonical_plate_key — тот же формат, что в demand_2d.
-    order_info_list = {}  # {(length_round2, width_int_mm, load_code_norm): [список записей]}
-    for order in orders_2d:
-        load_code = cfg.normalize_load_code(order.get('load_code', 800))
-        key = canonical_plate_key(order['length'], order['width'], load_code)
-        if key not in order_info_list:
-            order_info_list[key] = []
-        # Добавляем запись для КАЖДОГО заказа с qty_remaining
-        order_info_list[key].append({
-            'kp_id': order.get('kp_id'),
-            'customer': order.get('customer', 'неизвестно'),
-            'kp_date': order.get('kp_date', 'неизвестно'),
-            'plate_name': order.get('plate_name', ''),
-            'load_code': load_code,
-            'reinforcement': order.get('reinforcement', 0),
-            'qty_remaining': order.get('qty', 1)  # Сколько плит этого КП осталось назначить
-        })
+    # 1.5 НОВОЕ: маппинг (length, width, load_code) -> список записей КП (тот же формат ключей, что demand_2d).
+    order_info_list = build_order_info_list(orders_2d, cfg)
 
     slot_lists, slot_cursors = _build_proportional_slot_lists(orders_2d, demand_2d)
     # #region agent log (session 5b5324) после построения slot_lists
@@ -789,108 +518,24 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     tolerance_length = 0
 
     # 2. ГЕНЕРАЦИЯ ОПЦИЙ ПЕРВИЧНЫХ РЕЗОВ (с длинами!)
-    primary_options = []
-    option_id = 0
-    
-    # Таблица сужений (из таблицы допустимых резов)
-    # Формат: (исходная_ширина_остатка, целевая_ширина, отход)
-    # ВАЖНО: Значения остатков рассчитаны БЕЗ явного учёта пропила в коде
-    # Пропил косвенно учтён через значения narrowing (разница между source_rest и target_w)
-    NARROWING_TABLE = [
-        (480, 460, 20),   # Остаток 480мм → 460мм (из реза 720+480)
-        (500, 460, 40),   # Остаток 500мм → 460мм (из реза 700+500)
-        (495, 460, 35),   # Остаток 495мм → 460мм (из реза 720+495 или 700+495)
-        (740, 720, 20),   # Остаток 740мм → 720мм (из реза 460+740)
-        (690, 660, 30),   # Остаток 690мм → 660мм (из реза 460+690)
-        (890, 860, 30),   # Остаток 890мм → 860мм (из реза 320+890)
-        (495, 480, 15),   # Остаток 495мм → 480мм
-    ]
-    
-    # Создаём обратный индекс: для каждой целевой ширины -> список (основная_ширина, ширина_остатка, отход)
-    target_to_sources = {}  # {460: [(720, 480, 20), (700, 500, 40), ...]}
-    for source_rest, target_w, waste in NARROWING_TABLE:
-        if target_w not in target_to_sources:
-            target_to_sources[target_w] = []
-        # Ищем, из какого первичного реза получается source_rest
-        main_w = plate_width - source_rest
-        if 200 <= main_w <= 1000:  # Разумный диапазон для основной части
-            target_to_sources[target_w].append((main_w, source_rest, waste))
-    
+    geometry_config = GeometryConfig(
+        plate_width=plate_width,
+        min_useful_width=min_useful_width,
+        tolerance_width=tolerance_width,
+    )
+    primary_result = generate_primary_cut_options_2d(
+        demand_2d=demand_2d,
+        order_info_list=order_info_list,
+        order_info_getter=_peek_order_info,
+        config=geometry_config,
+    )
+    primary_options = primary_result.raw_options
+    solid_widths = primary_result.solid_widths
+
     print(f"[OPT_2D] Таблица narrowing создана: {len(NARROWING_TABLE)} правил")
-    for target_w, sources in target_to_sources.items():
+    for target_w, sources in primary_result.target_to_sources.items():
         print(f"  {target_w}мм можно получить через: {sources}")
-    
-    solid_widths = sorted(set([plate_width, 1080]))
 
-    for (length, width, load_code), qty in demand_2d.items():
-        # Получаем информацию о КП для этой плиты (без уменьшения счётчика)
-        # ИСПРАВЛЕНИЕ: Ключ теперь включает load_code
-        order_info = _peek_order_info(order_info_list, (length, width, load_code))
-        option_load_code = cfg.normalize_load_code(
-            order_info.get('load_code', load_code) if order_info else load_code,
-            default=8,
-        )
-        
-        # Вариант 1: Плита БЕЗ реза (ширины из списка solid_widths)
-        # Эти ширины НЕ РЕЖУТСЯ и используются как есть
-        if width in solid_widths:
-            primary_options.append({
-                'id': option_id,
-                'length': length,
-                'main': width,
-                'rest': 0,
-                'type': 'solid',  # Без резов
-                'load_code': option_load_code,  # load_code нормализован: 800 -> 8
-                'kp_id': order_info.get('kp_id'),
-                'customer': order_info.get('customer'),
-                'kp_date': order_info.get('kp_date'),
-                'plate_name': order_info.get('plate_name')
-            })
-            option_id += 1
-
-        # Вариант 2: Плита С ПРЯМЫМ резом (ширина < исходной плиты)
-        elif width < plate_width:
-            # Пропил косвенно учтён в таблице NARROWING_TABLE
-            rest = plate_width - width
-            # Создаём вариант для ЛЮБОЙ ширины
-            # Если rest < min_useful_width, остаток просто пойдёт в отход
-            primary_options.append({
-                'id': option_id,
-                'length': length,
-                'main': width,
-                'rest': rest,
-                'type': 'direct',  # Прямой рез
-                'load_code': option_load_code,  # load_code нормализован: 800 -> 8
-                'kp_id': order_info.get('kp_id'),
-                'customer': order_info.get('customer'),
-                'kp_date': order_info.get('kp_date'),
-                'plate_name': order_info.get('plate_name')
-            })
-            option_id += 1
-            
-            # НОВОЕ! Вариант 3: Плита через НЕПРЯМОЙ рез (с narrowing остатка)
-            # Ищем, можно ли получить эту ширину через сужение остатка от ДРУГОГО реза
-            if width in target_to_sources:
-                for main_w, rest_w, waste in target_to_sources[width]:
-                    # Создаём первичный рез main_w + rest_w
-                    # Остаток rest_w потом автоматически сузится до width
-                    if main_w != width and rest_w >= min_useful_width:  # Не дублируем прямой рез
-                        primary_options.append({
-                            'id': option_id,
-                            'length': length,
-                            'main': main_w,           # Например, 720мм (основная часть)
-                            'rest': rest_w,           # Например, 480мм (остаток)
-                            'type': 'indirect',       # Непрямой рез через narrowing
-                            'target_width': width,    # Целевая ширина: 460мм (что нужно)
-                            'narrowing_waste': waste, # Отход при сужении: 20мм
-                            'load_code': option_load_code,  # load_code нормализован: 800 -> 8
-                            'kp_id': order_info.get('kp_id'),
-                            'customer': order_info.get('customer'),
-                            'kp_date': order_info.get('kp_date'),
-                            'plate_name': order_info.get('plate_name')
-                        })
-                        option_id += 1
-    
     print(f"[OPT_2D] Опций первичных резов (до фильтрации): {len(primary_options)}")
     # #region agent log (2d5c43) Plan B: опции для 5.1/320 и 6/530 до фильтра
     try:
@@ -903,26 +548,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         pass
     # #endregion
     # 2.5 ФИЛЬТРАЦИЯ ПЕРВИЧНЫХ ОПЦИЙ (Улучшение 4: убираем заведомо невыгодные)
-    filtered_primary = []
-    for opt in primary_options:
-        # Правило 1 УДАЛЕНО: теперь плиты с маленьким остатком (< min_useful_width) 
-        # тоже создаются, а остаток просто идёт в отход
-        
-        # Правило 2: Пропускаем indirect, если есть direct с тем же результатом
-        if opt.get('type') == 'indirect':
-            target_w = opt.get('target_width')
-            has_direct = any(
-                o['type'] == 'direct' and 
-                o['main'] == target_w and
-                _canonical_length(o['length']) == _canonical_length(opt['length'])
-                for o in primary_options
-            )
-            if has_direct:
-                continue
-        
-        filtered_primary.append(opt)
-    
-    primary_options = filtered_primary
+    primary_options = primary_result.options
     print(f"[OPT_2D] После фильтрации осталось: {len(primary_options)} первичных опций")
     # #region agent log (2d5c43) Plan B: опции для 320/530 после фильтра
     try:
@@ -935,261 +561,17 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         pass
     # #endregion
     # 3. ГЕНЕРАЦИЯ ОПЦИЙ ВТОРИЧНЫХ РЕЗОВ (2D: длина + ширина!)
-    secondary_options = []
-    
-    # Собираем все возможные остатки (length, rest_width)
-    possible_rests = {}  # {(length, rest_width): [source_option_ids]}
-    for opt in primary_options:
-        key = (opt['length'], opt['rest'])
-        if key not in possible_rests:
-            possible_rests[key] = []
-        possible_rests[key].append(opt['id'])
-    
-    sec_id = 0
-    for (source_length, source_width), source_ids in possible_rests.items():
-        # Пропускаем остатки нулевой ширины (плиты 1200мм без резов)
-        if source_width < min_useful_width:
-            continue
-        
-        # Для каждого остатка проверяем все целевые (length, width, load_code)
-        # ИСПРАВЛЕНИЕ: Теперь ключ включает load_code
-        for (target_length, target_width, target_load_code), qty in demand_2d.items():
-            
-            # Вариант A: Множественная резка по ширине (одинаковая длина)
-            # ВАЖНО: Нельзя получить больше, чем есть! target_width <= source_width
-            if _canonical_length(target_length) == _canonical_length(source_length) and target_width <= source_width:
-                # РАНЬШЕ: брали только максимум кусков (pieces = source_width // target_width)
-                # ТЕПЕРЬ: перебираем все варианты от 1 до max_pieces, чтобы можно было
-                # получать 1, 2, ... плит из одного остатка (например, 0.88 → 1×0.32 с хвостом 0.56)
-                max_pieces = source_width // target_width
-                for pieces in range(1, max_pieces + 1):
-                    waste = source_width - (pieces * target_width)
-                    # Отбрасываем варианты с слишком большим отходом.
-                    # Для случаев с ОДНОЙ плитой позволяем больше отхода (до 80%),
-                    # чтобы не выкидывать схему 0.88 → 0.32 + 0.56.
-                    max_waste_fraction = 0.8 if pieces == 1 else 0.5
-                    if waste <= source_width * max_waste_fraction:
-                        secondary_options.append({
-                            'id': sec_id,
-                            'source_length': source_length,
-                            'source_rest': source_width,
-                            'output_length': target_length,
-                            'output_width': target_width,
-                            'pieces': pieces,
-                            'waste': waste,
-                            'type': 'multiple',
-                            'source_ids': source_ids,
-                            'target_order_key': (target_length, target_width, target_load_code)  # ИСПРАВЛЕНИЕ: Добавляем load_code
-                        })
-                        sec_id += 1
-
-            
-            # Вариант A2: Комбинированная резка (множественная по ширине + поперечная по длине)
-            # Это позволяет резать остаток 5.6м × 880мм → 2× 3.31м × 320мм
-            # ВАЖНО: Нельзя получить больше, чем есть! target_width <= source_width
-            if target_length < source_length - 0.1 and target_width <= source_width:  # Целевая длина КОРОЧЕ остатка
-                pieces = source_width // target_width
-                if pieces >= 1:
-                    # Проверяем, что целевая длина влезает хотя бы раз
-                    waste_width = source_width - (pieces * target_width)
-                    waste_length = (source_length - target_length) * 1000  # в мм
-                    
-                    if waste_width < source_width * 0.5:
-                        secondary_options.append({
-                            'id': sec_id,
-                            'source_length': source_length,
-                            'source_rest': source_width,
-                            'output_length': target_length,  # КОРОЧЕ остатка!
-                            'output_width': target_width,
-                            'pieces': pieces,  # Кусков по ширине
-                            'waste': waste_width,
-                            'length_waste': waste_length,
-                            'type': 'multiple_transverse',  # Комбинированный тип
-                            'source_ids': source_ids,
-                            'target_order_key': (target_length, target_width, target_load_code)  # ИСПРАВЛЕНИЕ: Добавляем load_code
-                        })
-                        sec_id += 1
-            
-            # Вариант B: Сужение (narrowing)
-            if (_canonical_length(target_length) == _canonical_length(source_length) and
-                target_width < source_width <= target_width + 100):
-                waste = source_width - target_width
-                if waste <= 100:
-                    secondary_options.append({
-                        'id': sec_id,
-                        'source_length': source_length,
-                        'source_rest': source_width,
-                        'output_length': target_length,
-                        'output_width': target_width,
-                        'pieces': 1,
-                        'waste': waste,
-                        'type': 'narrowing',
-                        'source_ids': source_ids,
-                        'target_order_key': (target_length, target_width, target_load_code)  # ИСПРАВЛЕНИЕ: Добавляем load_code
-                    })
-                    sec_id += 1
-            
-            # Вариант C: Поперечный рез (transverse cut)
-            # ВАЖНО: Нельзя получить больше, чем есть! target_width <= source_width
-            # (раньше проверяли abs(target_width - source_width) <= tolerance_width, 
-            #  что позволяло target_width > source_width на 20мм — это баг!)
-            if (target_length < source_length - 0.1 and
-                target_width <= source_width and
-                source_width - target_width <= tolerance_width):
-                length_waste = (source_length - target_length) * 1000  # в мм
-                secondary_options.append({
-                    'id': sec_id,
-                    'source_length': source_length,
-                    'source_rest': source_width,
-                    'output_length': target_length,
-                    'output_width': target_width,
-                    'pieces': 1,
-                    'waste': 0,
-                    'length_waste': length_waste,
-                    'type': 'transverse',
-                    'source_ids': source_ids,
-                    'target_order_key': (target_length, target_width, target_load_code)  # ИСПРАВЛЕНИЕ: Добавляем load_code
-                })
-                sec_id += 1
-    
+    secondary_options = generate_raw_secondary_cut_options_2d(
+        primary_options=primary_options,
+        demand_2d=demand_2d,
+        config=geometry_config,
+    )
     print(f"[OPT_2D] Опций вторичных резов (до фильтрации): {len(secondary_options)}")
-    
+
     # 3.5 ФИЛЬТРАЦИЯ ВТОРИЧНЫХ ОПЦИЙ (Улучшение 4: убираем дубликаты и невыгодные)
-    filtered_secondary = []
-    seen_combinations = set()
-    
-    for opt in secondary_options:
-        # Правило 3: Убираем дубликаты (одинаковые варианты).
-        # ВАЖНО: учитываем также количество кусков (pieces), чтобы варианты
-        # 0.88 → 1×0.32 и 0.88 → 2×0.32 не считались одинаковыми.
-        key = (
-            opt['source_length'], 
-            opt['source_rest'], 
-            opt['output_length'], 
-            opt['output_width'], 
-            opt['type'],
-            opt.get('pieces', 1),
-            opt.get('target_order_key'),
-        )
-        
-        if key in seen_combinations:
-            continue
-        seen_combinations.add(key)
-        
-        # Правило 4: Пропускаем варианты с огромными отходами.
-        # Для случаев с ОДНОЙ плитой (pieces == 1) позволяем до 80% площади отхода,
-        # иначе — как раньше, 30%.
-        waste_width = opt.get('waste', 0)
-        waste_length = opt.get('length_waste', 0)
-        
-        source_area = opt['source_length'] * opt['source_rest']
-        waste_area = (waste_width * opt['source_length']) + (waste_length * opt['source_rest'] / 1000.0)
-        
-        max_waste_fraction_area = 0.8 if opt.get('pieces', 1) == 1 else 0.3
-        if opt['type'] != 'multiple_transverse' and waste_area > source_area * max_waste_fraction_area:
-            continue
-        
-        # Правило 5: Пропускаем transverse с отходами > 50% длины
-        if opt['type'] == 'transverse':
-            waste_fraction = waste_length / (opt['source_length'] * 1000) if opt['source_length'] > 0 else 0
-            if waste_fraction > 0.5:
-                continue
-        
-        filtered_secondary.append(opt)
-    
-    secondary_options = filtered_secondary
+    secondary_options = filter_secondary_cut_options_2d(secondary_options)
     print(f"[OPT_2D] После фильтрации осталось: {len(secondary_options)} вторичных опций")
     
-    # 4. СОЗДАНИЕ ILP МОДЕЛИ
-    prob = LpProblem("2D_Optimization", LpMinimize)
-    
-    # Переменные
-    x_prim = {opt['id']: LpVariable(f"prim_{opt['id']}", lowBound=0, cat=LpInteger) 
-              for opt in primary_options}
-    x_sec = {opt['id']: LpVariable(f"sec_{opt['id']}", lowBound=0, cat=LpInteger) 
-             for opt in secondary_options}
-    
-    # 5. ASSIGNMENT-MODEL: пары совместимости (opt × demand_key) и z-переменные
-    #
-    # Идея: вместо "сумма всех источников >= qty" с группировкой по frozenset,
-    # вводим явные переменные распределения z_prim[(p, d)] / z_sec[(s, d)] —
-    # сколько штук производства от опции p (или s) идёт на закрытие конкретного
-    # спроса d. Это:
-    #   * убирает двойной счёт переменных между разными группами,
-    #   * полностью решает tolerance-edge cases на этапе построения пар,
-    #   * делает покрытие точным (`demand_d == q_d`) — нет ни потерь, ни лишнего,
-    #   * избавляет от костылей вроде demand_598665_min и пост-коррекции,
-    #     которые лечили симптомы старой "flow + group-surplus" модели.
-    primary_options_by_id = {o['id']: o for o in primary_options}
-    secondary_options_by_id = {o['id']: o for o in secondary_options}
-
-    dk_list = list(demand_2d.keys())
-    dk_to_idx = {dk: i for i, dk in enumerate(dk_list)}
-    primary_pairs_per_dk: dict = {dk: [] for dk in dk_list}    # dk -> [opt_id]
-    secondary_pairs_per_dk: dict = {dk: [] for dk in dk_list}  # dk -> [opt_id]
-    solid_pairs_per_dk: dict = {dk: [] for dk in dk_list}      # dk -> [opt_id] (solid only)
-    no_sources_keys: list = []  # [(dk, qty), ...] — для совместимости с force-add safety net
-
-    for dk in dk_list:
-        target_length, target_width, target_load_code = dk
-        for opt in primary_options:
-            if (_canonical_length(opt['length']) != _canonical_length(target_length)
-                    or opt.get('load_code', 800) != target_load_code):
-                continue
-            opt_type = opt.get('type')
-            if opt_type in ('direct', 'solid'):
-                if abs(opt['main'] - target_width) <= demand_tolerance_width:
-                    primary_pairs_per_dk[dk].append(opt['id'])
-                    if opt_type == 'solid' and target_width in solid_widths:
-                        solid_pairs_per_dk[dk].append(opt['id'])
-            elif opt_type == 'indirect':
-                if abs(opt.get('target_width', 0) - target_width) <= demand_tolerance_width:
-                    primary_pairs_per_dk[dk].append(opt['id'])
-
-        for opt in secondary_options:
-            opt_target_key = opt.get('target_order_key', (0, 0, 800))
-            opt_target_load = opt_target_key[2] if len(opt_target_key) == 3 else 800
-            if (_canonical_length(opt['output_length']) == _canonical_length(target_length)
-                    and abs(opt['output_width'] - target_width) <= demand_tolerance_width
-                    and opt_target_load == target_load_code):
-                secondary_pairs_per_dk[dk].append(opt['id'])
-
-        if not primary_pairs_per_dk[dk] and not secondary_pairs_per_dk[dk]:
-            no_sources_keys.append((dk, demand_2d[dk]))
-            import logging as _no_src_log
-            _no_src_log.getLogger(__name__).error(
-                "[OPT_2D] ❌ НЕТ ИСТОЧНИКОВ для плиты: %sм x %sмм (load=%s) x%dшт — закроется через unmet/post-correction",
-                target_length, target_width, target_load_code, demand_2d[dk],
-            )
-
-    # 5.1 Z-переменные распределения (assignment) и slack
-    z_prim: dict = {}      # (opt_id, dk) -> LpVariable, штук primary p, идущих на спрос d
-    z_sec: dict = {}       # (opt_id, dk) -> LpVariable, штук secondary s, идущих на спрос d
-    slack_solid: dict = {} # dk -> LpVariable: недопокрытие solid-priority (мягкий приоритет)
-    unmet: dict = {}       # dk -> LpVariable: глобальный дефицит (последний рубеж)
-
-    for dk in dk_list:
-        di = dk_to_idx[dk]
-        for opt_id in primary_pairs_per_dk[dk]:
-            z_prim[(opt_id, dk)] = LpVariable(
-                f"z_prim_{opt_id}_d{di}", lowBound=0, cat=LpInteger,
-            )
-        for opt_id in secondary_pairs_per_dk[dk]:
-            z_sec[(opt_id, dk)] = LpVariable(
-                f"z_sec_{opt_id}_d{di}", lowBound=0, cat=LpInteger,
-            )
-        if solid_pairs_per_dk[dk]:
-            slack_solid[dk] = LpVariable(
-                f"slack_solid_d{di}", lowBound=0, cat=LpInteger,
-            )
-        unmet[dk] = LpVariable(f"unmet_d{di}", lowBound=0, cat=LpInteger)
-
-    # Сохранения для post-solve диагностики (вместо россыпи _dbg_*)
-    _opt_to_demands = {}  # для logger ниже: opt_id -> [(dk, qty), ...]
-    for dk, opt_ids in primary_pairs_per_dk.items():
-        for oid in opt_ids:
-            _opt_to_demands.setdefault(oid, []).append((dk, demand_2d[dk]))
-
     def _norm_key(k):
         if not k or len(k) < 2:
             return (0, 0, 800)
@@ -1198,58 +580,31 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             lc = 8
         return (round(float(k[0]), 2), int(k[1]), lc)
 
-    # 5.2 demand_d == q_d: точное закрытие спроса (assignment-вид).
-    # Equality важно: одновременно "не теряем" (>=) и "не плодим" (<=).
-    # При полном отсутствии источников спрос закроется через unmet[d] (см. 5.1)
-    # с очень большим штрафом, чтобы модель никогда не была infeasible.
-    for dk in dk_list:
-        qty = demand_2d[dk]
-        parts = [z_prim[(oid, dk)] for oid in primary_pairs_per_dk[dk]]
-        parts += [z_sec[(oid, dk)] for oid in secondary_pairs_per_dk[dk]]
-        parts.append(unmet[dk])
-        prob += lpSum(parts) == qty, f"demand_d{dk_to_idx[dk]}"
-
-    # 5.3 cap_prim: sum_d z_prim[p,d] <= x_p — производство ограничивает назначения
-    prim_to_dks: dict = {}
-    for _dk, _opts in primary_pairs_per_dk.items():
-        for _oid in _opts:
-            prim_to_dks.setdefault(_oid, []).append(_dk)
-    for _oid, _dks in prim_to_dks.items():
-        prob += (
-            lpSum(z_prim[(_oid, _dk)] for _dk in _dks) <= x_prim[_oid],
-            f"cap_prim_{_oid}",
-        )
-
-    # 5.4 cap_sec: sum_d z_sec[s,d] <= x_sec[s] * pieces_s
-    sec_to_dks: dict = {}
-    for _dk, _opts in secondary_pairs_per_dk.items():
-        for _oid in _opts:
-            sec_to_dks.setdefault(_oid, []).append(_dk)
-    for _oid, _dks in sec_to_dks.items():
-        _pieces = secondary_options_by_id[_oid].get('pieces', 1)
-        prob += (
-            lpSum(z_sec[(_oid, _dk)] for _dk in _dks) <= x_sec[_oid] * _pieces,
-            f"cap_sec_{_oid}",
-        )
-
-    # 5.5 SOFT solid-priority: solid-плиты — приоритет для полных ширин (1200/1080),
-    # но через slack_solid + штраф в objective, не через hard >=. Это убирает риск
-    # infeasibility при нехватке solid-опций и оставляет видимый сигнал в логах.
-    for _dk, _solid_ids in solid_pairs_per_dk.items():
-        if not _solid_ids:
-            continue
-        _qty = demand_2d[_dk]
-        prob += (
-            lpSum(z_prim[(oid, _dk)] for oid in _solid_ids) + slack_solid[_dk] >= _qty,
-            f"solid_priority_d{dk_to_idx[_dk]}",
-        )
-    
-    if no_sources_keys:
-        import logging as _no_src_summary_log
-        _no_src_summary_log.getLogger(__name__).warning(
-            "[OPT_2D] no_sources: %d ключей, %d плит — закроются через unmet/post-correction",
-            len(no_sources_keys), sum(q for _, q in no_sources_keys),
-        )
+    # 4–7. ILP: переменные, ограничения, целевая функция (см. ilp_model)
+    ilp = build_two_d_cutting_ilp(
+        demand_2d=demand_2d,
+        primary_options=primary_options,
+        secondary_options=secondary_options,
+        solid_widths=solid_widths,
+        plate_width=plate_width,
+        demand_tolerance_width=demand_tolerance_width,
+        opt_config=opt_config,
+    )
+    prob = ilp.prob
+    x_prim = ilp.x_prim
+    x_sec = ilp.x_sec
+    z_prim = ilp.z_prim
+    z_sec = ilp.z_sec
+    slack_solid = ilp.slack_solid
+    unmet = ilp.unmet
+    dk_list = ilp.dk_list
+    dk_to_idx = ilp.dk_to_idx
+    primary_pairs_per_dk = ilp.primary_pairs_per_dk
+    secondary_pairs_per_dk = ilp.secondary_pairs_per_dk
+    solid_pairs_per_dk = ilp.solid_pairs_per_dk
+    primary_options_by_id = ilp.primary_options_by_id
+    secondary_options_by_id = ilp.secondary_options_by_id
+    no_sources_keys = ilp.no_sources_keys
     # #region agent log
     try:
         import json as _agent_json
@@ -1281,82 +636,6 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     except Exception:
         pass
     # #endregion
-    # 6. ОГРАНИЧЕНИЯ: баланс физических остатков с downgrade load-code policy.
-    # Остаток плиты с большим/equal load_code может закрывать меньший/equal заказ,
-    # но обратное запрещено кумулятивными ограничениями по каждому уровню.
-    rests_by_lkey = _build_residual_balance_constraints(
-        prob=prob,
-        primary_options=primary_options,
-        secondary_options=secondary_options,
-        x_prim=x_prim,
-        x_sec=x_sec,
-    )
-    
-    # 7. ЦЕЛЕВАЯ ФУНКЦИЯ
-    # Структура: cost_prim + cost_sec + waste + unused_rests + plates_priority
-    #            + M_SOLID*slack_solid + M_UNMET*unmet
-    # Иерархия штрафов: M_UNMET (1e7) >> M_SOLID (1e5) >> цены (1e3..1e4).
-    # M_UNMET — последний рубеж: оплачиваем дефицит, чтобы модель никогда не была
-    # infeasible. M_SOLID > цены, чтобы solid-priority доминировал в выборе типа реза,
-    # но при отсутствии solid-опций solver не падал.
-    M_UNMET = 1e7
-    M_SOLID = 1e5
-
-    obj_terms: list = []
-
-    # 7.1 Стоимость первичных резов (цена плиты + продольный рез)
-    print(f"[OPT_2D] Расчёт стоимости первичных резов...")
-    for opt in primary_options:
-        plate_price = get_price(opt['length'], 8, cfg.PRICE_DB_PATH) or 10000
-        cut_cost = (cfg.LONG_CUT_PRICE_PER_M * opt['length']
-                    if opt['type'] in ('direct', 'indirect') else 0)
-        obj_terms.append(x_prim[opt['id']] * (plate_price + cut_cost))
-
-    # 7.2 Стоимость вторичных резов (продольный + поперечный)
-    for opt in secondary_options:
-        if opt['type'] in ('narrowing', 'multiple', 'multiple_transverse'):
-            obj_terms.append(x_sec[opt['id']] * cfg.LONG_CUT_PRICE_PER_M * opt['source_length'])
-        if opt['type'] in ('transverse', 'multiple_transverse'):
-            obj_terms.append(x_sec[opt['id']] * cfg.TRANSVERSE_CUT_PRICE)
-
-    # 7.3 Штраф за неиспользованные остатки (rest produced, но не consumed)
-    for rkey, rec in rests_by_lkey.items():
-        if not (rec['produced'] and rec['consumed']):
-            continue
-        unused_expr = (lpSum(x_prim[i] for i in rec['produced'])
-                       - lpSum(x_sec[i] for i in rec['consumed']))
-        base_price = get_price(rkey[0], 6, cfg.PRICE_DB_PATH) or 5000
-        rest_price = base_price * (rkey[1] / float(plate_width))
-        obj_terms.append(unused_expr * rest_price * opt_config.unused_rest_penalty_coeff)
-
-    # 7.4 Штраф за отходы (геометрический): waste по ширине и по длине, ~1000 руб/м²
-    for opt in secondary_options:
-        waste_w = opt.get('waste', 0)
-        if waste_w > 0:
-            waste_area_m2 = (waste_w / 1000.0) * opt['source_length']
-            obj_terms.append(x_sec[opt['id']] * waste_area_m2 * 1000)
-        waste_l = opt.get('length_waste', 0)
-        if waste_l > 0:
-            waste_area_m2 = (waste_l / 1000.0) * (opt['source_rest'] / 1000.0)
-            obj_terms.append(x_sec[opt['id']] * waste_area_m2 * 1000)
-
-    # 7.5 Бонус за переиспользование остатков (опционально через config)
-    if opt_config.secondary_reuse_bonus:
-        for opt in secondary_options:
-            obj_terms.append(x_sec[opt['id']] * opt_config.secondary_reuse_bonus)
-
-    # 7.6 Мягкий приоритет: меньше исходных плит = лучше (избегаем "раздутого" плана).
-    obj_terms.append(lpSum(x_prim.values()) * 5000.0)
-
-    # 7.7 Slack-штрафы — последняя линия защиты модели от infeasibility.
-    if slack_solid:
-        obj_terms.append(M_SOLID * lpSum(slack_solid.values()))
-    if unmet:
-        obj_terms.append(M_UNMET * lpSum(unmet.values()))
-
-    print(f"[OPT_2D] Конфиг: unused_penalty={opt_config.unused_rest_penalty_coeff}, "
-          f"reuse_bonus={opt_config.secondary_reuse_bonus}")
-    prob += lpSum(t for t in obj_terms if t != 0)
 
     # 8. РЕШЕНИЕ
     print(f"[OPT_2D] Запуск решателя: {len(primary_options)} primary, "
@@ -1381,7 +660,16 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         # чтобы upstream мог корректно отреагировать.
         if _solver_status in ('Infeasible', 'Undefined'):
             print(f"[OPT_2D] ⚠️ Решение не найдено! Статус: {_solver_status}")
-            return {}
+            _code = (
+                ERROR_SOLVER_UNDEFINED
+                if _solver_status == "Undefined"
+                else ERROR_SOLVER_INFEASIBLE
+            )
+            return opt_error(
+                _code,
+                f"Решатель завершился со статусом {_solver_status}.",
+                solver_status=_solver_status,
+            )
 
     # 8.2 Диагностика slack/unmet — ВИДИМЫЙ сигнал, что safety net сработал.
     _slack_total = int(round(sum((value(s) or 0) for s in slack_solid.values())))
@@ -1456,7 +744,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         pass
     # #endregion
     # 9. ИЗВЛЕЧЕНИЕ РЕЗУЛЬТАТОВ
-    from .plate_audit import PlateAudit as _PlateAudit
+    from core.plate_audit import PlateAudit as _PlateAudit
     import logging as _log_mod
     _audit = _PlateAudit(orders_2d)  # checkpoint "input" создаётся автоматически
     _audit.checkpoint("demand_2d", demand_2d)
@@ -1519,6 +807,41 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
                 ))
             result['total_plates'] += 1
 
+    # #region agent log
+    try:
+        import json as _aj
+        import time as _at
+        _geom_prim_counts: dict[str, int] = {}
+        for _pc in planned_primary_cuts:
+            if _pc.get("rest", 0) <= 0:
+                continue
+            _L0 = _canonical_length(_pc["lengths"][0]) if _pc.get("lengths") else 0.0
+            _rk = f"{_L0}_{int(round(float(_pc['rest'])))}"
+            _geom_prim_counts[_rk] = _geom_prim_counts.get(_rk, 0) + 1
+        _opt_queue_lens_before_sec = {str(k): len(v) for k, v in _primary_instances_by_opt_id.items() if v}
+        with open(_Path(__file__).resolve().parent.parent / "debug-7e420e.log", "a", encoding="utf-8") as _lf:
+            _lf.write(
+                _aj.dumps(
+                    {
+                        "sessionId": "7e420e",
+                        "hypothesisId": "H_OPT_PRIMARY_GEOM",
+                        "location": "optimization.py:after_z_prim_planned_primary",
+                        "message": "primary splits count by (len_m, rest_mm); opt_id queues before any secondary pop",
+                        "data": {
+                            "n_planned_primary": len(planned_primary_cuts),
+                            "geom_split_counts": _geom_prim_counts,
+                            "opt_id_queue_nonempty": _opt_queue_lens_before_sec,
+                        },
+                        "timestamp": int(_at.time() * 1000),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # #endregion
+
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
     # Требования завода:
     # 1. Первая плита ДОЛЖНА быть целой (без реза, rest=0)
@@ -1579,46 +902,129 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
         opt = secondary_options_by_id[opt_id]
         target_length, target_width, target_load_code = dk
         target_load_code = cfg.normalize_load_code(target_load_code, default=8)
-        for _ in range(qty):
-            parent_instance_id = None
-            for source_opt_id in opt.get('source_ids') or []:
+        pieces = max(1, int(opt.get("pieces") or 1))
+        if qty % pieces != 0:
+            import logging as _batch_qty_log
+
+            _batch_qty_log.getLogger(__name__).warning(
+                "[OPT_2D] z_sec qty=%d not divisible by pieces=%d for sec_opt_id=%s dk=%s — "
+                "last chunk batched as one parental rest",
+                qty,
+                pieces,
+                opt_id,
+                list(dk) if isinstance(dk, (list, tuple)) else dk,
+            )
+
+        def _pop_parent_for_secondary_rest() -> str | None:
+            nonlocal _orphan_recovered_geometry
+            parent_id: str | None = None
+            for source_opt_id in opt.get("source_ids") or []:
                 queue = _primary_instances_by_opt_id.get(source_opt_id) or []
                 if queue:
-                    parent_instance_id = queue.pop(0)
-                    _remove_primary_instance_from_geom(parent_instance_id)
+                    parent_id = queue.pop(0)
+                    _remove_primary_instance_from_geom(parent_id)
                     break
-            if not parent_instance_id:
-                pool = _primary_instances_by_geom_lc.get(
-                    _residual_phys_key(opt.get('source_length'), opt.get('source_rest'))
-                ) or []
+            if not parent_id:
+                pool = (
+                    _primary_instances_by_geom_lc.get(
+                        _residual_phys_key(opt.get("source_length"), opt.get("source_rest"))
+                    )
+                    or []
+                )
                 for idx, (prim_lc, source_opt_id, instance_id) in enumerate(pool):
                     if cfg.normalize_load_code(prim_lc, default=8) >= target_load_code:
-                        parent_instance_id = instance_id
+                        parent_id = instance_id
                         del pool[idx]
                         opt_queue = _primary_instances_by_opt_id.get(source_opt_id) or []
                         if instance_id in opt_queue:
                             opt_queue.remove(instance_id)
                         _orphan_recovered_geometry += 1
                         break
+            return parent_id
+
+        batch_sizes_list = _batch_sizes_for_secondary_z_sec(qty, pieces)
+        z_block_offset = 0
+        for batch_index, batch_size in enumerate(batch_sizes_list):
+            _q_before = {
+                str(_soid): len(_primary_instances_by_opt_id.get(_soid) or [])
+                for _soid in (opt.get("source_ids") or [])
+            }
+            parent_instance_id = _pop_parent_for_secondary_rest()
+            _q_mid = {
+                str(_soid): len(_primary_instances_by_opt_id.get(_soid) or [])
+                for _soid in (opt.get("source_ids") or [])
+            }
             if not parent_instance_id:
-                _secondary_parent_missing += 1
-            secondary_instance_id = f"sec-{_next_secondary_instance_id}"
-            _next_secondary_instance_id += 1
-            planned_secondary_cuts.append({
-                'source': opt['source_rest'],
-                'cuts': [opt['output_width']],
-                'qty': 1,
-                'pieces': 1,
-                'waste': opt.get('waste', 0),
-                'type': opt['type'],
-                'source_lengths': [opt['source_length']],
-                'lengths': [opt['output_length']],
-                'target_order_key': dk,
-                'load_code': target_load_code,
-                'parent_instance_id': parent_instance_id,
-                'secondary_instance_id': secondary_instance_id,
-                'source_opt_ids': list(opt.get('source_ids') or []),
-            })
+                _secondary_parent_missing += batch_size
+            for _ in range(batch_size):
+                secondary_instance_id = f"sec-{_next_secondary_instance_id}"
+                _next_secondary_instance_id += 1
+                # #region agent log
+                try:
+                    import json as _aj
+                    import time as _at
+
+                    _q_after = {
+                        str(_soid): len(_primary_instances_by_opt_id.get(_soid) or [])
+                        for _soid in (opt.get("source_ids") or [])
+                    }
+                    with open(
+                        _Path(__file__).resolve().parent.parent / "debug-7e420e.log",
+                        "a",
+                        encoding="utf-8",
+                    ) as _lf:
+                        _lf.write(
+                            _aj.dumps(
+                                {
+                                    "sessionId": "7e420e",
+                                    "hypothesisId": "H_OPT_SEC_PARENT_POP",
+                                    "location": "optimization.py:z_sec_parent_assignment",
+                                    "message": "z_sec output row shares parent within pieces-batch",
+                                    "data": {
+                                        "sec_opt_id": opt_id,
+                                        "pieces": pieces,
+                                        "batch_index": batch_index,
+                                        "batch_size": batch_size,
+                                        "batch_offset_in_z_block": z_block_offset,
+                                        "source_length": opt.get("source_length"),
+                                        "source_rest": opt.get("source_rest"),
+                                        "target_order_key": list(dk)
+                                        if isinstance(dk, (list, tuple))
+                                        else dk,
+                                        "source_ids": list(opt.get("source_ids") or []),
+                                        "queue_lens_before_pop": _q_before,
+                                        "queue_remaining_after_parent_pop": _q_mid,
+                                        "queue_remaining_by_source_opt_id": _q_after,
+                                        "parent_instance_id": parent_instance_id,
+                                        "secondary_instance_id": secondary_instance_id,
+                                        "sec_type": opt.get("type"),
+                                    },
+                                    "timestamp": int(_at.time() * 1000),
+                                },
+                                ensure_ascii=False,
+                                default=str,
+                            )
+                            + "\n"
+                        )
+                except Exception:
+                    pass
+                # #endregion
+                planned_secondary_cuts.append({
+                    "source": opt["source_rest"],
+                    "cuts": [opt["output_width"]],
+                    "qty": 1,
+                    "pieces": 1,
+                    "waste": opt.get("waste", 0),
+                    "type": opt["type"],
+                    "source_lengths": [opt["source_length"]],
+                    "lengths": [opt["output_length"]],
+                    "target_order_key": dk,
+                    "load_code": target_load_code,
+                    "parent_instance_id": parent_instance_id,
+                    "secondary_instance_id": secondary_instance_id,
+                    "source_opt_ids": list(opt.get("source_ids") or []),
+                })
+            z_block_offset += batch_size
 
     result['secondary_cuts'] = planned_secondary_cuts
     if _orphan_recovered_geometry or _secondary_parent_missing:
@@ -1628,6 +1034,43 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             _orphan_recovered_geometry,
             _secondary_parent_missing,
         )
+
+    # #region agent log
+    try:
+        import json as _aj
+        import time as _at
+        _null_parent = sum(1 for c in planned_secondary_cuts if not c.get("parent_instance_id"))
+        _by_geom = {}
+        for c in planned_secondary_cuts:
+            if c.get("parent_instance_id"):
+                continue
+            sl = c.get("source_lengths") or []
+            _L = _canonical_length(sl[0]) if sl else None
+            _src = c.get("source")
+            _gk = f"{_L}_{int(round(float(_src)))}" if _L is not None and _src is not None else "?"
+            _by_geom[_gk] = _by_geom.get(_gk, 0) + 1
+        with open(_Path(__file__).resolve().parent.parent / "debug-7e420e.log", "a", encoding="utf-8") as _lf:
+            _lf.write(
+                _aj.dumps(
+                    {
+                        "sessionId": "7e420e",
+                        "hypothesisId": "H_OPT_SEC_SUMMARY",
+                        "location": "optimization.py:after_planned_secondary_cuts",
+                        "message": "secondary cuts: null parent count and breakdown by geom key",
+                        "data": {
+                            "n_secondary": len(planned_secondary_cuts),
+                            "null_parent_count": _null_parent,
+                            "null_parent_by_source_geom_key": _by_geom,
+                        },
+                        "timestamp": int(_at.time() * 1000),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # #endregion
 
     # #region agent log
     try:
@@ -1964,6 +1407,89 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
             'unit_id': cut.get('secondary_instance_id'),
             'parent_unit_id': cut.get('parent_instance_id'),
         })
+    # #region agent log (ef42ae: H1 оптимизатор дал вторичку без родителя; H3 «ошибочно вторичный» по watchlist)
+    try:
+        import json as _ef42_json
+        import time as _ef42_time
+
+        _sec_asg = [p for p in result["plate_assignments"] if p.get("source") == "secondary"]
+        _null_par = [p for p in _sec_asg if not p.get("parent_unit_id")]
+        _watch_subs = ("25,4-3", "63,9-5,3", "42,6-5,3", "25,4-3,0", "63,9-5,3-10")
+        _watch_sec = [
+            {
+                "unit_id": p.get("unit_id"),
+                "parent_unit_id": p.get("parent_unit_id"),
+                "length": p.get("length"),
+                "width": p.get("width"),
+                "plate_name": (p.get("plate_name") or "")[:160],
+                "identity_match_type": p.get("identity_match_type"),
+            }
+            for p in _sec_asg
+            if any(s in str(p.get("plate_name") or "") for s in _watch_subs)
+        ]
+        _prim_asg = [p for p in result["plate_assignments"] if p.get("source") != "secondary"]
+        _watch_prim = [
+            {
+                "length": p.get("length"),
+                "width": p.get("width"),
+                "plate_name": (p.get("plate_name") or "")[:160],
+                "source": p.get("source"),
+            }
+            for p in _prim_asg
+            if any(s in str(p.get("plate_name") or "") for s in _watch_subs)
+        ]
+        _raw_sec_no_parent = [
+            {
+                "secondary_instance_id": c.get("secondary_instance_id"),
+                "parent_instance_id": c.get("parent_instance_id"),
+                "target_order_key": list(c["target_order_key"])
+                if isinstance(c.get("target_order_key"), tuple)
+                else c.get("target_order_key"),
+                "lengths": c.get("lengths"),
+                "cuts": c.get("cuts"),
+            }
+            for c in (result.get("secondary_cuts") or [])
+            if not c.get("parent_instance_id")
+        ][:120]
+        with open(PROJECT_ROOT / "debug-ef42ae.log", "a", encoding="utf-8") as _ef42_f:
+            _ef42_f.write(
+                _ef42_json.dumps(
+                    {
+                        "sessionId": "ef42ae",
+                        "hypothesisId": "H1_H3",
+                        "location": "core/optimization/_implementation.py:after_secondary_plate_assignments",
+                        "message": "secondary assignments: parent null count, raw secondary_cuts without parent, SKU watchlist primary vs secondary",
+                        "data": {
+                            "n_secondary_assignments": len(_sec_asg),
+                            "n_secondary_null_parent": len(_null_par),
+                            "n_raw_secondary_cuts": len(result.get("secondary_cuts") or []),
+                            "raw_secondary_no_parent_count": len(
+                                [c for c in (result.get("secondary_cuts") or []) if not c.get("parent_instance_id")]
+                            ),
+                            "null_parent_assignments_head": [
+                                {
+                                    "unit_id": p.get("unit_id"),
+                                    "parent_unit_id": p.get("parent_unit_id"),
+                                    "length": p.get("length"),
+                                    "width": p.get("width"),
+                                    "plate_name": (p.get("plate_name") or "")[:120],
+                                }
+                                for p in _null_par[:100]
+                            ],
+                            "raw_secondary_no_parent_head": _raw_sec_no_parent,
+                            "watchlist_secondary": _watch_sec,
+                            "watchlist_primary_rows": _watch_prim[:60],
+                        },
+                        "timestamp": int(_ef42_time.time() * 1000),
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # #endregion
     # #region agent log (session 5b5324) после вторичных резов
     try:
         _sec_count = sum(1 for p in result['plate_assignments'] if p.get('source') == 'secondary')
@@ -2036,7 +1562,7 @@ def _optimize_2d_with_lengths(orders_2d: list, plate_width: int = 1200,
     except Exception:
         pass
     # #endregion
-    return result
+    return opt_ok(result, partial=(_solver_status != "Optimal"))
 
 
 def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200, 
@@ -2066,10 +1592,13 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
         )
     except ImportError:
         print('[OPT_CASCADING] PuLP не установлен, пропускаем.')
-        return {}
-    
+        return opt_error(
+            ERROR_PULP_MISSING,
+            "PuLP не установлен — 1D оптимизация недоступна.",
+        )
+
     if not orders:
-        return {}
+        return opt_error(ERROR_EMPTY_ORDERS_1D, "Пустой словарь заказов по ширине (1D).")
     
     # Преобразуем заказы в список ширин с количеством
     target_widths = sorted(orders.keys())
@@ -2079,80 +1608,20 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
     
     # Генерируем все возможные варианты первичных резов (из плиты заданной ширины)
     # Для каждой целевой ширины создаём варианты: target_width + остаток
-    primary_cut_options = []
-    solid_widths = sorted(set([plate_width, 1080]))
-    for target_w in target_widths:
-        if target_w in solid_widths:
-            primary_cut_options.append({
-                'id': f'prim_{target_w}',
-                'main': target_w,
-                'rest': 0,
-            })
-            continue
+    primary_cut_options = generate_primary_cut_options_1d(
+        target_widths=target_widths,
+        plate_width=plate_width,
+        min_useful_width=min_useful_width,
+    )
 
-        # Пропил косвенно учтён в таблице NARROWING_TABLE
-        rest_w = plate_width - target_w
-        if rest_w >= min_useful_width:  # Остаток достаточно большой
-            primary_cut_options.append({
-                'id': f'prim_{target_w}',
-                'main': target_w,
-                'rest': rest_w,
-            })
-    
     # Генерируем варианты вторичных резов (из остатков)
     # Для каждого возможного остатка смотрим, на какие ширины его можно разрезать
-    secondary_cut_options = []
+    secondary_cut_options = generate_secondary_cut_options_1d(
+        primary_cut_options=primary_cut_options,
+        target_widths=target_widths,
+        tolerance=tolerance,
+    )
     possible_rests = set(opt['rest'] for opt in primary_cut_options if opt['rest'] > 0)
-    
-    for rest_w in possible_rests:
-        # Пробуем разрезать остаток на 2 части
-        for target_w1 in target_widths:
-            target_w2 = rest_w - target_w1
-            # Проверяем, подходит ли вторая часть для какой-то из целевых ширин
-            for target_w2_candidate in target_widths:
-                if abs(target_w2 - target_w2_candidate) <= tolerance:
-                    secondary_cut_options.append({
-                        'id': f'sec_{rest_w}_to_{target_w1}_{target_w2_candidate}',
-                        'source_rest': rest_w,
-                        'output1': target_w1,
-                        'output2': target_w2_candidate,
-                        'waste': abs(rest_w - target_w1 - target_w2_candidate),
-                    })
-                    break
-            
-            # Также проверяем вариант: остаток целиком режем на несколько одинаковых частей
-            # Например, 880 мм → 2 части по 320 мм (остаток 240 мм)
-            for target_w_candidate in target_widths:
-                # Считаем, сколько частей нужной ширины влезет в остаток
-                num_pieces = rest_w // target_w_candidate
-                if num_pieces >= 2:  # Минимум 2 куска, иначе не выгодно
-                    waste = rest_w - (target_w_candidate * num_pieces)
-                    if waste < rest_w * 0.5:  # Отход < 50% остатка (разумное ограничение)
-                        secondary_cut_options.append({
-                            'id': f'sec_{rest_w}_to_{num_pieces}x{target_w_candidate}',
-                            'source_rest': rest_w,
-                            'output1': target_w_candidate,
-                            'output2': 0,  # вторая "часть" не используется
-                            'pieces': num_pieces,
-                            'waste': waste,
-                        })
-                        # Не ставим break - проверяем все варианты
-            
-            # НОВАЯ ЛОГИКА: Сужение (narrowing) - из остатка делаем ОДНУ плиту с небольшим отходом
-            # Например, 340 мм → 320 мм (отход 20 мм)
-            for target_w_candidate in target_widths:
-                if target_w_candidate < rest_w <= target_w_candidate + 100:  # Остаток чуть больше целевой ширины
-                    waste = rest_w - target_w_candidate
-                    # Разрешаем сужение до 100 мм (но лучше меньше)
-                    if waste <= 100:
-                        secondary_cut_options.append({
-                            'id': f'sec_{rest_w}_narrow_to_{target_w_candidate}',
-                            'source_rest': rest_w,
-                            'output1': target_w_candidate,
-                            'output2': 0,
-                            'pieces': 1,  # Только ОДНА плита
-                            'waste': waste,
-                        })
     
     print(f"[DEBUG] Найдено вариантов вторичных резов: {len(secondary_cut_options)}")
     for opt in secondary_cut_options[:3]:  # Показываем первые 3
@@ -2279,7 +1748,16 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
             _solver_status_1d,
         )
         if _solver_status_1d in ('Infeasible', 'Undefined'):
-            return {}
+            _code = (
+                ERROR_SOLVER_UNDEFINED
+                if _solver_status_1d == "Undefined"
+                else ERROR_SOLVER_INFEASIBLE
+            )
+            return opt_error(
+                _code,
+                f"1D решатель: {_solver_status_1d}.",
+                solver_status=_solver_status_1d,
+            )
 
     _unmet_total_1d = int(round(sum((value(u) or 0) for u in unmet_w.values())))
     if _unmet_total_1d > 0:
@@ -2299,35 +1777,29 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
     }
     
     for i, opt in enumerate(primary_cut_options):
-        try:
-            qty = int(round(value(x_prim[i])))
-            if qty > 0:
-                result['primary_cuts'].append({
-                    'width': opt['main'],
-                    'rest': opt['rest'],
-                    'qty': qty,
-                })
-                result['total_plates'] += qty
-        except:
-            pass
-    
+        qty = _opt_1d_pulp_nonneg_qty(value, x_prim[i], context=f"x_prim[{i}]")
+        if qty > 0:
+            result['primary_cuts'].append({
+                'width': opt['main'],
+                'rest': opt['rest'],
+                'qty': qty,
+            })
+            result['total_plates'] += qty
+
     for i, opt in enumerate(secondary_cut_options):
-        try:
-            qty = int(round(value(x_sec[i])))
-            if qty > 0:
-                cuts = [opt['output1']]
-                if opt['output2'] > 0:
-                    cuts.append(opt['output2'])
-                result['secondary_cuts'].append({
-                    'source': opt['source_rest'],
-                    'cuts': cuts,
-                    'pieces': opt.get('pieces', 1),
-                    'qty': qty,
-                    'waste': opt.get('waste', 0),
-                })
-                result['waste_width'] += opt.get('waste', 0) * qty
-        except:
-            pass
+        qty = _opt_1d_pulp_nonneg_qty(value, x_sec[i], context=f"x_sec[{i}]")
+        if qty > 0:
+            cuts = [opt['output1']]
+            if opt['output2'] > 0:
+                cuts.append(opt['output2'])
+            result['secondary_cuts'].append({
+                'source': opt['source_rest'],
+                'cuts': cuts,
+                'pieces': opt.get('pieces', 1),
+                'qty': qty,
+                'waste': opt.get('waste', 0),
+            })
+            result['waste_width'] += opt.get('waste', 0) * qty
     
     # ========== НОВАЯ ЛОГИКА: СОРТИРОВКА ДЛЯ ПРОИЗВОДСТВА ==========
     # Требования завода:
@@ -2372,185 +1844,50 @@ def _optimize_1d_widths_only(orders: dict, plate_width: int = 1200,
         result['total_plates'] * long_cut_cost +  # первичные резы
         len(result['secondary_cuts']) * long_cut_cost  # вторичные резы
     )
-    
-    return result
+
+    return opt_ok(result, partial=(_solver_status_1d != "Optimal"))
 
 
-def optimize_with_cascading_longitudinal_cuts(orders: dict = None, 
-                                               orders_2d: list = None,
-                                               plate_width: int = 1200, 
-                                               min_useful_width: int = 200,
-                                               opt_config: OptimizationConfig = None) -> dict:
-    """
-    Универсальная оптимизация с каскадными резами (PUBLIC API).
-    
-    АВТОМАТИЧЕСКИ ВЫБИРАЕТ РЕЖИМ на основе входных данных:
-    
-    Режим 1D (старый, обратная совместимость):
-        >>> result = optimize_with_cascading_longitudinal_cuts(
-        ...     orders={320: 14, 860: 9}
-        ... )
-        # Оптимизирует по ШИРИНАМ, длины присваиваются позже
-    
-    Режим 2D (новый, полная оптимизация):
-        >>> result = optimize_with_cascading_longitudinal_cuts(
-        ...     orders_2d=[
-        ...         {'length': 5.6, 'width': 320, 'qty': 11},
-        ...         {'length': 6.63, 'width': 860, 'qty': 4}
-        ...     ]
-        ... )
-        # Полная 2D оптимизация (длина + ширина) в ILP модели
-    
-    Args:
-        orders: {width: qty} — спрос по ширинам (для режима 1D)
-        orders_2d: [{'length', 'width', 'qty'}] — спрос 2D (для режима 2D)
-        plate_width: ширина исходной плиты (1200 мм)
-        min_useful_width: минимальная полезная ширина остатка
-        opt_config: конфигурация параметров оптимизации (штрафы, бонусы)
-    
-    Returns:
-        dict с результатами оптимизации:
-            {
-                'primary_cuts': [...],
-                'secondary_cuts': [...],
-                'total_plates': int,
-                'plate_assignments': [...],  # только для режима 2D
-                ...
-            }
-    """
-    
-    # АВТООПРЕДЕЛЕНИЕ РЕЖИМА
-    if orders_2d is not None and len(orders_2d) > 0:
-        # ===== РЕЖИМ 2D (НОВЫЙ) =====
-        print("[OPT] Режим: ПОЛНАЯ 2D оптимизация (длина + ширина)")
-        return _optimize_2d_with_lengths(orders_2d, plate_width, min_useful_width, opt_config)
-    
-    elif orders is not None and len(orders) > 0:
-        # ===== РЕЖИМ 1D (СТАРЫЙ) =====
-        print("[OPT] Режим: 1D оптимизация (только ширина, обратная совместимость)")
-        return _optimize_1d_widths_only(orders, plate_width, min_useful_width)
-    
-    else:
-        print("[OPT] ⚠️ Не указаны ни orders, ни orders_2d!")
-        return {}
+# Публичный API: оркестратор; реэкспорт на уровень пакета через __init__.py (OPT-008).
+from core.optimization.orchestrator import optimize_with_cascading_longitudinal_cuts  # noqa: E402
 
 
-# ==================== FFD ОПТИМИЗАЦИЯ РАСКРОЯ ДОРОЖЕК ====================
-
-from dataclasses import dataclass, field
-
-
-@dataclass
-class Piece:
-    """Кусок плиты для укладки в дорожку"""
-    length_m: float
-    qty: int
-    kind: str              # 'standard' | 'addon'
-    load_class: float
-    width_m: float = 1.196
-
-
-@dataclass
-class Track:
-    """Дорожка (линия производства)"""
-    width_m: float = 1.196
-    total_m: float = 0.0
-    pieces: list = field(default_factory=list)
-    leftover_m: float = 0.0
-
-
-def first_fit_decreasing(
-    pieces: list[Piece],
-    stock_len_m: float = 9.88
-) -> list[Track]:
-    """
-    Алгоритм First Fit Decreasing для оптимизации раскроя
-    Минимизирует количество дорожек (плит-заготовок)
-    
-    Args:
-        pieces: Список Piece объектов (куски для размещения)
-        stock_len_m: Длина заготовки (максимальная длина плиты)
-        
-    Returns:
-        Список Track объектов (дорожек) с размещёнными кусками
-    """
-    pool = []
-    
-    # Сортируем по убыванию длины (FFD алгоритм)
-    sorted_pieces = sorted(pieces, key=lambda x: x.length_m, reverse=True)
-    
-    # Развёртываем количество в отдельные элементы
-    expanded = []
-    for p in sorted_pieces:
-        for _ in range(p.qty):
-            expanded.append(Piece(p.length_m, 1, p.kind, p.load_class, p.width_m))
-    
-    # Размещаем каждый кусок
-    for piece in expanded:
-        placed = False
-        
-        # Пробуем поместить в существующие дорожки
-        for track in pool:
-            if track.total_m + piece.length_m <= stock_len_m:
-                track.pieces.append(piece)
-                track.total_m += piece.length_m
-                placed = True
-                break
-        
-        # Если не поместился, создаём новую дорожку
-        if not placed:
-            track = Track()
-            track.pieces.append(piece)
-            track.total_m = piece.length_m
-            pool.append(track)
-    
-    # Вычисляем остатки
-    for track in pool:
-        track.leftover_m = stock_len_m - track.total_m
-    
-    return pool
-
-
-def optimize_tracks(
-    items: list,
-    stock_len_m: float = 9.88
-) -> dict:
-    """
-    Оптимизирует размещение плит в дорожки
-    
-    Args:
-        items: Список позиций [{'length_m': float, 'qty': int, 'kind': str, 'load_class': float}, ...]
-        stock_len_m: Длина заготовки (максимальная длина)
-        
-    Returns:
-        Словарь с результатами оптимизации
-    """
-    pieces = []
-    
-    for item in items:
-        pieces.append(Piece(
-            length_m=item.get('length_m', 0),
-            qty=item.get('qty', 1),
-            kind=item.get('kind', 'standard'),
-            load_class=item.get('load_class', 8.0),
-            width_m=item.get('width_m', 1.196)
-        ))
-    
-    tracks = first_fit_decreasing(pieces, stock_len_m)
-    
-    # Статистика
-    total_tracks = len(tracks)
-    total_used = sum(t.total_m for t in tracks)
-    total_leftover = sum(t.leftover_m for t in tracks)
-    efficiency = (total_used / (total_tracks * stock_len_m) * 100) if total_tracks > 0 else 0
-    
-    return {
-        'tracks': tracks,
-        'total_tracks': total_tracks,
-        'total_used_m': round(total_used, 2),
-        'total_leftover_m': round(total_leftover, 2),
-        'efficiency_pct': round(efficiency, 1),
-        'stock_length_m': stock_len_m
-    }
-
-
+__all__ = (
+    "DEFAULT_CONFIG",
+    "GeometryConfig",
+    "KERF_WIDTH_MM",
+    "LOAD_TO_REINFORCEMENT_MAP",
+    "NARROWING_TABLE",
+    "OLD_CONFIG",
+    "OPT_CASCADING_PLAN",
+    "OPT_CASCADING_PLAN_BY_LOAD",
+    "OPT_PLAN",
+    "OPT_WIDTH_PRIORITY",
+    "OptimizationConfig",
+    "Piece",
+    "Track",
+    "apply_width_optimization",
+    "build_order_info_list",
+    "build_two_d_cutting_ilp",
+    "filter_secondary_cut_options_2d",
+    "first_fit_decreasing",
+    "generate_primary_cut_options_1d",
+    "generate_primary_cut_options_2d",
+    "generate_raw_secondary_cut_options_2d",
+    "generate_secondary_cut_options_1d",
+    "optimize_cuts_pulp",
+    "optimize_tracks",
+    "optimize_with_cascading_longitudinal_cuts",
+    "pack_tracks",
+    "verify_coverage",
+    "_append_actions",
+    "_build_proportional_slot_lists",
+    "_build_residual_balance_constraints",
+    "_get_next_order_info",
+    "_group_plate_lengths",
+    "_next_slot_info",
+    "_optimize_1d_widths_only",
+    "_optimize_2d_with_lengths",
+    "_peek_order_info",
+    "_residual_phys_key",
+)

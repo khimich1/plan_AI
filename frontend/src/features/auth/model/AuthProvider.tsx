@@ -45,7 +45,8 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
   const value = useMemo<AuthContextValue>(
     () => ({
       user: meQuery.data ?? null,
-      isLoading: meQuery.isLoading,
+      // v5: isLoading = isPending && isFetching — при коротком окне «pending + idle» редирект мог сработать до завершения me
+      isLoading: meQuery.isPending,
       isAuthenticated: Boolean(meQuery.data),
       isLoggingIn: loginMutation.isPending,
       isLoggingOut: logoutMutation.isPending,
@@ -59,7 +60,7 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
     }),
     [
       meQuery.data,
-      meQuery.isLoading,
+      meQuery.isPending,
       loginMutation,
       logoutMutation,
     ],

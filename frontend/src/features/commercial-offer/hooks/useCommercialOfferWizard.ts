@@ -1,3 +1,4 @@
+import { useCallback, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
@@ -14,11 +15,6 @@ export const useCommercialOfferWizard = () => {
     queryFn: commercialOfferApi.getManagers,
   });
 
-  const syncDraft = (draft: CommercialDraftDetails) => {
-    dispatch({ type: "hydrate-draft", payload: draft });
-    queryClient.setQueryData(draftQueryKey(draft.draft_id), draft);
-  };
-
   const draftQuery = useQuery({
     queryKey: draftQueryKey(state.draftId),
     enabled: Boolean(state.draftId),
@@ -28,18 +24,44 @@ export const useCommercialOfferWizard = () => {
       }
       return commercialOfferApi.getDraft(state.draftId);
     },
-    onSuccess: syncDraft,
   });
+
+  useEffect(() => {
+    if (draftQuery.data) {
+      dispatch({ type: "hydrate-draft", payload: draftQuery.data });
+    }
+  }, [draftQuery.data, dispatch]);
+
+  const invalidateDraft = useCallback(
+    (draftId: string) => {
+      void queryClient.invalidateQueries({ queryKey: draftQueryKey(draftId) });
+    },
+    [queryClient],
+  );
+
+  const setDraftCache = useCallback(
+    (draftId: string, draft: CommercialDraftDetails) => {
+      queryClient.setQueryData(draftQueryKey(draftId), draft);
+    },
+    [queryClient],
+  );
 
   const createDraftMutation = useMutation({
     mutationFn: commercialOfferApi.createDraft,
-    onSuccess: syncDraft,
+    onSuccess: (draft) => {
+      dispatch({ type: "hydrate-draft", payload: draft });
+      setDraftCache(draft.draft_id, draft);
+      invalidateDraft(draft.draft_id);
+    },
   });
 
   const updatePlatesMutation = useMutation({
     mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
       commercialOfferApi.updateDraftPlates(draftId, { text, image, mode }),
-    onSuccess: syncDraft,
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
   });
 
   const resolveWidePlatesMutation = useMutation({
@@ -50,7 +72,10 @@ export const useCommercialOfferWizard = () => {
       draftId: string;
       decisions: Array<{ sourceLine: string; action: WidePlateAction; replacementText: string }>;
     }) => commercialOfferApi.resolveWidePlates(draftId, decisions),
-    onSuccess: syncDraft,
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
   });
 
   const updateMetaMutation = useMutation({
@@ -82,25 +107,24 @@ export const useCommercialOfferWizard = () => {
         paymentConditions,
         logisticsCost,
       }),
-    onSuccess: syncDraft,
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
   });
 
   const calculateMutation = useMutation({
     mutationFn: (draftId: string) => commercialOfferApi.calculateDraft(draftId),
-    onSuccess: syncDraft,
+    onSuccess: (draft, draftId) => {
+      setDraftCache(draftId, draft);
+      invalidateDraft(draftId);
+    },
   });
 
   const generateFilesMutation = useMutation({
     mutationFn: (draftId: string) => commercialOfferApi.generateFiles(draftId),
-    onSuccess: async (payload) => {
-      if (!state.draftId || !state.lastDraft) {
-        return;
-      }
-      const mergedDraft: CommercialDraftDetails = {
-        ...state.lastDraft,
-        files: payload.files,
-      };
-      syncDraft(mergedDraft);
+    onSettled: (_data, _error, draftId) => {
+      invalidateDraft(draftId);
     },
   });
 
@@ -114,12 +138,9 @@ export const useCommercialOfferWizard = () => {
       mode: SaveMode;
       executionTermsInput?: string;
     }) => commercialOfferApi.saveDraft(draftId, { mode, executionTermsInput }),
-    onSuccess: async (result) => {
+    onSuccess: (result, variables) => {
       dispatch({ type: "set-save-result", payload: result });
-      if (state.draftId) {
-        const freshDraft = await commercialOfferApi.getDraft(state.draftId);
-        syncDraft(freshDraft);
-      }
+      invalidateDraft(variables.draftId);
     },
   });
 

@@ -19,6 +19,7 @@ from app.core.settings import get_settings
 from app.domain.enums import PlateStatus
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
+from core.optimization.result_contract import is_optimization_success
 from core.plan_commit import PlanCommitError, commit_plan_plates
 from core.serialization import strip_plate_audit_from_plan
 from core.debug_paths import get_debug_log_path
@@ -617,7 +618,10 @@ class ProductionPlanningService:
                 )
 
             self._log_unmapped_optimizer_assignments(optimization_result)
-            if not optimization_result or optimization_result.get("total_plates", 0) == 0:
+            if (
+                not is_optimization_success(optimization_result)
+                or optimization_result.get("total_plates", 0) == 0
+            ):
                 return [], optimization_result
 
             from core.visualization import LayoutIntegrityError, split_sequence_into_tracks
@@ -829,6 +833,50 @@ class ProductionPlanningService:
             a for uid, a in assignments_by_unit_id.items()
             if uid not in present_unit_ids
         ]
+        # #region agent log (ef42ae: H2 родитель есть, но unit не попал в tracks — layout; H5 состав FALLBACK)
+        try:
+            import json as _ef42_json
+            import time as _ef42_time
+
+            _root = Path(__file__).resolve().parents[2]
+            if missing_assignments:
+                _n_sec = sum(1 for a in missing_assignments if a.get("source") == "secondary")
+                _n_nullp = sum(1 for a in missing_assignments if not a.get("parent_unit_id"))
+                with open(_root / "debug-ef42ae.log", "a", encoding="utf-8") as _ef42_f:
+                    _ef42_f.write(
+                        _ef42_json.dumps(
+                            {
+                                "sessionId": "ef42ae",
+                                "hypothesisId": "H2_H5",
+                                "location": "app/services/production_planning_service.py:_build_assignment_gap_fallback_tracks",
+                                "message": "FALLBACK track_gap: assignments missing from built tracks",
+                                "data": {
+                                    "n_missing": len(missing_assignments),
+                                    "n_missing_secondary": _n_sec,
+                                    "n_missing_secondary_null_parent": _n_nullp,
+                                    "missing_detail": [
+                                        {
+                                            "unit_id": a.get("unit_id"),
+                                            "parent_unit_id": a.get("parent_unit_id"),
+                                            "source": a.get("source"),
+                                            "length": a.get("length"),
+                                            "width": a.get("width"),
+                                            "plate_name": (a.get("plate_name") or "")[:160],
+                                            "load_code": a.get("load_code"),
+                                        }
+                                        for a in missing_assignments[:250]
+                                    ],
+                                },
+                                "timestamp": int(_ef42_time.time() * 1000),
+                            },
+                            ensure_ascii=False,
+                            default=str,
+                        )
+                        + "\n"
+                    )
+        except Exception:
+            pass
+        # #endregion
         fallback_tracks: list[dict[str, Any]] = []
         for assignment in missing_assignments:
             source = str(assignment.get("source") or "")

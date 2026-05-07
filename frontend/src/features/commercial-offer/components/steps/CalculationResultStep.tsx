@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import type { CommercialDraftDetails, CommercialSaveResult, SaveMode } from "@/features/commercial-offer/types/commercialOffer";
-import { deliveryServiceTotalRub } from "@/features/commercial-offer/utils/cargoDeliveryPricing";
 import { DownloadFilesSection } from "@/features/commercial-offer/components/DownloadFilesSection";
 import { SaveOfferSection } from "@/features/commercial-offer/components/SaveOfferSection";
 import { Alert } from "@/shared/ui/Alert";
@@ -47,19 +46,9 @@ export const CalculationResultStep = ({
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [logisticsError, setLogisticsError] = useState<string | null>(null);
   const totalWeight = draft.order_data.reduce((acc, item) => acc + (toNumber(item.weight) ?? 0), 0);
-  const discountPercent = toNumber(draft.metadata.discount_percent) ?? 0;
-  const discountFactor = 1 - Math.min(Math.max(discountPercent, 0), 100) / 100;
-  const tripCost = Math.max(toNumber(draft.metadata.logistics_cost) ?? 0, 0);
-  // Цены в позициях уже с НДС; скидка уменьшает сумму плит; доставка — стоимость рейса × число рейсов по общему весу.
-  const platesTotalWithVat = draft.order_data.reduce((acc, item) => {
-    const qty = toNumber(item.qty) ?? 0;
-    const unitPrice = toNumber(item.unit_price) ?? 0;
-    return acc + qty * unitPrice;
-  }, 0);
-  const platesAfterDiscount = platesTotalWithVat * discountFactor;
-  const vat22FromPlates = platesAfterDiscount * 0.22;
-  const deliveryServiceTotal = deliveryServiceTotalRub(tripCost, totalWeight);
-  const grandTotal = platesAfterDiscount + deliveryServiceTotal;
+  const serverSubtotal = draft.totals.subtotal;
+  const serverVat = draft.totals.vat_amount;
+  const serverTotalWithVat = draft.totals.total_with_vat;
 
   useEffect(() => {
     setDiscountDraft(String(draft.metadata.discount_percent ?? 0));
@@ -119,8 +108,9 @@ export const CalculationResultStep = ({
         <SummaryCell label="Менеджер" value={draft.metadata.manager_name || "Не выбран"} />
         <SummaryCell label="Позиций" value={String(draft.order_data.length)} />
         <SummaryCell label="Количество" value={String(draft.totals.total_qty ?? 0)} />
-        <SummaryCell label="(НДС 22%)" value={formatNumber(draft.totals.vat_amount ?? 0)} />
-        <SummaryCell label="Общая стоимость" value={formatNumber(draft.totals.total_with_vat ?? 0)} />
+        <SummaryCell label="Сумма без НДС" value={formatTotalsMoney(serverSubtotal)} />
+        <SummaryCell label="НДС" value={formatTotalsMoney(serverVat)} />
+        <SummaryCell label="Сумма с НДС" value={formatTotalsMoney(serverTotalWithVat)} />
       </div>
     </Card>
 
@@ -179,7 +169,8 @@ export const CalculationResultStep = ({
           }}
         >
           <SummaryCell label="Общий вес (кг)" value={formatNumber(totalWeight)} />
-          <SummaryCell label="(НДС 22%)" value={formatNumber(vat22FromPlates)} />
+          <SummaryCell label="Стоимость без НДС" value={formatTotalsMoney(serverSubtotal)} />
+          <SummaryCell label="НДС" value={formatTotalsMoney(serverVat)} />
           <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
             <FieldWrapper label="Стоимость рейса" error={logisticsError}>
               <div style={{ position: "relative" }}>
@@ -216,7 +207,7 @@ export const CalculationResultStep = ({
               </div>
             </FieldWrapper>
           </div>
-          <SummaryCell label="Общая стоимость" value={formatNumber(grandTotal)} />
+          <SummaryCell label="Стоимость с НДС" value={formatTotalsMoney(serverTotalWithVat)} />
         </div>
         <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
           <FieldWrapper label="Скидка (%)" error={discountError}>
@@ -309,4 +300,12 @@ const formatSum = (qtyValue: unknown, unitPriceValue: unknown): string => {
     return "0";
   }
   return (qty * unitPrice).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+};
+
+/** Серверные итоги (`draft.totals`): не пересчитываем НДС на клиенте. */
+const formatTotalsMoney = (value: number | undefined): string => {
+  if (value === undefined || Number.isNaN(value)) {
+    return "—";
+  }
+  return value.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
 };

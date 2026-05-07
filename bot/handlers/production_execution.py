@@ -29,6 +29,7 @@ from core.config_and_data import PlateOrder, canonical_plate_key
 import core.optimization as optimization
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
+from core.optimization.result_contract import is_optimization_success
 from core.debug_paths import get_debug_log_path
 
 from ..keyboards import main_menu_kb, calendar_days_kb
@@ -635,7 +636,10 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             AppPlateOrder.from_orders_2d(orders_2d),
         )
         optimization_result = optimization_context.optimization_result
-        if not optimization_result or optimization_result.get('total_plates', 0) == 0:
+        if (
+            not is_optimization_success(optimization_result)
+            or optimization_result.get("total_plates", 0) == 0
+        ):
             await message.answer(
                 "❌ Оптимизация не дала результатов.",
                 reply_markup=main_menu_kb()

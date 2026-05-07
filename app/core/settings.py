@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BOT_DIR = PROJECT_ROOT / "bot"
@@ -59,6 +62,31 @@ class Settings(BaseSettings):
     drafts_dir: Path = Field(default=PROJECT_ROOT / ".app_data" / "drafts")
     frontend_dist_dir: Path = Field(default=PROJECT_ROOT / "frontend" / "dist")
 
+    # single_instance: локальные каталоги, горизонтальное масштабирование без sticky/session affinity
+    # не поддерживается. shared_volume: оператор монтирует один и тот же том на все реплики для
+    # drafts_dir и outputs_dir (NFS/EFS/Azure Files и т.п.).
+    app_storage_layout: Literal["single_instance", "shared_volume"] = Field(
+        default="single_instance",
+        alias="APP_STORAGE_LAYOUT",
+    )
+    draft_store_lock_timeout_seconds: float = Field(
+        default=60.0,
+        alias="DRAFT_STORE_LOCK_TIMEOUT_SECONDS",
+        ge=1.0,
+        le=600.0,
+    )
+
+    commercial_upload_max_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        alias="COMMERCIAL_UPLOAD_MAX_BYTES",
+        ge=1024,
+    )
+    commercial_ocr_uploads_per_hour: int = Field(
+        default=10,
+        alias="COMMERCIAL_OCR_UPLOADS_PER_HOUR",
+        ge=1,
+    )
+
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
 
@@ -100,5 +128,21 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     settings = Settings()
     settings.ensure_directories()
+    _logger.info(
+        "App storage: layout=%s drafts_dir=%s outputs_dir=%s",
+        settings.app_storage_layout,
+        settings.drafts_dir,
+        settings.outputs_dir,
+    )
+    if (
+        settings.app_env.lower() == "production"
+        and settings.app_storage_layout == "single_instance"
+    ):
+        _logger.warning(
+            "APP_STORAGE_LAYOUT=single_instance: при нескольких репликах без sticky-сессий "
+            "черновики и файлы могут быть недоступны с другого узла. Для горизонтального "
+            "масштабирования смонтируйте общий том для DRAFTS_DIR и OUTPUTS_DIR и установите "
+            "APP_STORAGE_LAYOUT=shared_volume, либо ограничьтесь одним воркером."
+        )
     return settings
 

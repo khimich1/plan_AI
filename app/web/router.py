@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.core.settings import get_settings
-from app.dependencies.auth import get_current_user, require_roles
+from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER, get_current_user, require_roles
+from app.dependencies.commercial_draft import check_draft_ownership
 from app.repositories.auth_repository import AuthRepository
 from app.security.session import create_session_token
 from app.services.commercial_service import CommercialService
+from app.services.commercial_upload_validation import prepare_commercial_ocr_upload
 from app.services.commercial_workflow_service import CommercialWorkflowService
 from app.services.production_service import ProductionService
 from core.exceptions import PlateParseError
@@ -841,7 +843,7 @@ def managers_page(user: dict = Depends(require_roles("admin", "manager", "produc
 
 
 @router.get("/web/offers", response_class=HTMLResponse)
-def offers_page(user: dict = Depends(require_roles("admin", "manager"))) -> HTMLResponse:
+def offers_page(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> HTMLResponse:
     offers = ProductionService().kp_repository.list_offers(limit=100)
     rows = "".join(
         f"<tr><td>{item.get('kp_id')}</td><td>{escape(str(item.get('creation_date', '')))}</td><td>{escape(item.get('customer_name', '') or '')}</td><td>{escape(item.get('manager_name', '') or '')}</td><td>{escape(item.get('status', '') or '')}</td><td>{item.get('total_amount') or 0}</td></tr>"
@@ -857,14 +859,14 @@ def offers_page(user: dict = Depends(require_roles("admin", "manager"))) -> HTML
 
 
 @router.get("/web/offers/new", response_class=HTMLResponse)
-def new_offer_page(user: dict = Depends(require_roles("admin", "manager"))) -> HTMLResponse:
+def new_offer_page(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> HTMLResponse:
     _ = user
     return RedirectResponse("/commercial-offer/new", status_code=303)
 
 
 @router.post("/web/offers/new", response_model=None)
 async def new_offer_submit(
-    user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
     text: str = Form(default=""),
     manager_id: str = Form(default=""),
     client_name: str = Form(default=""),
@@ -898,25 +900,27 @@ async def new_offer_submit(
             values=values,
         )
 
-    if image and image.content_type and not image.content_type.startswith("image/"):
-        return _render_offer_form(
-            user=user,
-            managers=managers,
-            error="Поддерживаются только изображения.",
-            values=values,
+    try:
+        image_bytes, image_name = await prepare_commercial_ocr_upload(
+            image=image,
+            user_id=int(user["id"]),
         )
+    except HTTPException as exc:
+        msg = exc.detail if isinstance(exc.detail, str) else "Ошибка загрузки файла."
+        return _render_offer_form(user=user, managers=managers, error=msg, values=values)
 
     workflow = CommercialWorkflowService()
     try:
         draft = await workflow.create_draft_from_form(
             text=text,
-            image_bytes=await image.read() if image else None,
-            image_filename=image.filename if image else None,
+            image_bytes=image_bytes,
+            image_filename=image_name,
             manager_id=parsed_manager_id,
             client_name=client_name,
             discount_percent=parsed_discount,
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
+            owner_user_id=int(user["id"]),
         )
     except (PlateParseError, ValueError) as exc:
         return _render_offer_form(user=user, managers=managers, error=str(exc), values=values)
@@ -926,8 +930,12 @@ async def new_offer_submit(
 @router.get("/web/offers/drafts/{draft_id}", response_class=HTMLResponse)
 def offer_draft_page(
     draft_id: str,
-    user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
 ) -> HTMLResponse:
+    try:
+        check_draft_ownership(draft_id, user)
+    except HTTPException:
+        return _page("Draft not found", _nav(user) + "<h1>Черновик не найден</h1>")
     workflow = CommercialWorkflowService()
     try:
         draft = workflow.get_draft_details(draft_id)
@@ -939,8 +947,12 @@ def offer_draft_page(
 @router.post("/web/offers/drafts/{draft_id}/generate-files")
 def generate_offer_draft_files(
     draft_id: str,
-    user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
 ) -> RedirectResponse:
+    try:
+        check_draft_ownership(draft_id, user)
+    except HTTPException:
+        return RedirectResponse("/web/offers", status_code=303)
     workflow = CommercialWorkflowService()
     try:
         workflow.generate_files(draft_id)
@@ -952,8 +964,12 @@ def generate_offer_draft_files(
 @router.post("/web/offers/drafts/{draft_id}/save")
 def save_offer_draft(
     draft_id: str,
-    user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
 ) -> RedirectResponse:
+    try:
+        check_draft_ownership(draft_id, user)
+    except HTTPException:
+        return RedirectResponse("/web/offers", status_code=303)
     workflow = CommercialWorkflowService()
     try:
         workflow.save_offer(draft_id)
@@ -974,13 +990,13 @@ def production_page(user: dict = Depends(require_roles("admin", "production"))) 
 
 
 @router.get("/commercial-offer")
-def commercial_offer_root(user: dict = Depends(require_roles("admin", "manager"))) -> RedirectResponse:
+def commercial_offer_root(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> RedirectResponse:
     _ = user
     return RedirectResponse("/commercial-offer/new", status_code=303)
 
 
 @router.get("/commercial-offer/new", response_class=HTMLResponse)
-def commercial_offer_spa(user: dict = Depends(require_roles("admin", "manager"))) -> HTMLResponse:
+def commercial_offer_spa(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> HTMLResponse:
     _ = user
     return _render_frontend_shell()
 
@@ -988,7 +1004,7 @@ def commercial_offer_spa(user: dict = Depends(require_roles("admin", "manager"))
 @router.get("/commercial-offer/assets/{asset_path:path}")
 def commercial_offer_assets(
     asset_path: str,
-    user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
 ) -> FileResponse:
     _ = user
     target = _resolve_frontend_asset(asset_path)

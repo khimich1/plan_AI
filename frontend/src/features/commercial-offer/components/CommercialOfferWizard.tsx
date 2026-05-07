@@ -1,38 +1,30 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
+import { WIZARD_STEP_ORDER, wizardStepIndex } from "@/features/commercial-offer/lib/wizardStepOrder";
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
 import { WidePlateReviewStep } from "@/features/commercial-offer/components/steps/WidePlateReviewStep";
 import { ManagerStep } from "@/features/commercial-offer/components/steps/ManagerStep";
 import { ClientConditionsStep } from "@/features/commercial-offer/components/steps/ClientConditionsStep";
 import { CalculationResultStep } from "@/features/commercial-offer/components/steps/CalculationResultStep";
-import type { CommercialDraftDetails, WidePlateAction, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
+import type { WidePlateAction, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { Alert } from "@/shared/ui/Alert";
-
-const getNextStepFromDraft = (draft: CommercialDraftDetails): WizardStepId => {
-  if (draft.metadata.wide_plate_lines.length > 0 && !draft.metadata.wide_plates_resolved) {
-    return "wide-plates";
-  }
-  if (!draft.metadata.manager_id) {
-    return "manager";
-  }
-  if (!draft.metadata.client_name) {
-    return "client";
-  }
-  return "result";
-};
+import { Button } from "@/shared/ui/Button";
+import { Spinner } from "@/shared/ui/Spinner";
 
 export const CommercialOfferWizard = () => {
   const {
     state,
     dispatch,
     managersQuery,
+    draftQuery,
     currentDraft,
     createDraftMutation,
     updatePlatesMutation,
     resolveWidePlatesMutation,
     updateMetaMutation,
+    calculateMutation,
     generateFilesMutation,
     saveDraftMutation,
   } = useCommercialOfferWizard();
@@ -40,6 +32,17 @@ export const CommercialOfferWizard = () => {
   const [stepError, setStepError] = useState<string | null>(null);
 
   const managers = managersQuery.data?.items ?? [];
+
+  useEffect(() => {
+    const step = state.currentStep;
+    if (!WIZARD_STEP_ORDER.includes(step)) {
+      dispatch({ type: "set-step", step: "plates" });
+      return;
+    }
+    if ((step === "wide-plates" || step === "result") && !state.draftId) {
+      dispatch({ type: "set-step", step: "plates" });
+    }
+  }, [state.currentStep, state.draftId, dispatch]);
 
   const resetSource = () => {
     setSelectedImage(null);
@@ -89,13 +92,24 @@ export const CommercialOfferWizard = () => {
 
   const handleProcess = () => {
     setStepError(null);
-    if (!currentDraft) {
-      setStepError("Сначала обработайте список плит.");
+    if (!currentDraft?.wizard_state) {
+      setStepError("Нет состояния мастера с сервера. Обновите черновик.");
       return;
     }
-    dispatch({ type: "set-step", step: getNextStepFromDraft(currentDraft) });
+    const next = currentDraft.wizard_state.can_proceed_to[0];
+    if (!next) {
+      const serverMsgs = (currentDraft.wizard_state.validation_errors ?? []).filter(Boolean);
+      if (serverMsgs.length > 0) {
+        setStepError(serverMsgs.join(" "));
+      } else if (currentDraft.wizard_state.next_required_action === "ingest_plates") {
+        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
+      } else {
+        setStepError("Сервер не разрешает переход на следующий шаг. Проверьте данные и повторите запрос.");
+      }
+      return;
+    }
+    dispatch({ type: "set-step", step: next });
   };
-
   const handleWideSubmit = async (): Promise<boolean> => {
     if (!currentDraft?.draft_id) {
       return false;
@@ -155,12 +169,25 @@ export const CommercialOfferWizard = () => {
         deliveryConditions: payload.deliveryConditions,
         paymentConditions: payload.paymentConditions,
       });
-      dispatch({ type: "set-step", step: "result" });
+      const calculated = await calculateMutation.mutateAsync(currentDraft.draft_id);
+      const ws = calculated.wizard_state;
+      if (ws.current_step !== "result") {
+        const msgs = (ws.validation_errors ?? []).filter(Boolean);
+        setStepError(
+          msgs.length > 0
+            ? msgs.join(" ")
+            : "Сервер не перевёл черновик на шаг результата. Проверьте данные клиента и условия.",
+        );
+        return;
+      }
+      dispatch({
+        type: "set-step",
+        step: ws.current_step,
+      });
     } catch (error) {
       setStepError(getErrorMessage(error));
     }
   };
-
   const handleGenerateFiles = async () => {
     if (!currentDraft?.draft_id) {
       return;
@@ -199,6 +226,11 @@ export const CommercialOfferWizard = () => {
         draftId: currentDraft.draft_id,
         discountPercent,
       });
+      const calculated = await calculateMutation.mutateAsync(currentDraft.draft_id);
+      const msgs = (calculated.wizard_state.validation_errors ?? []).filter(Boolean);
+      if (msgs.length > 0) {
+        setStepError(msgs.join(" "));
+      }
     } catch (error) {
       setStepError(getErrorMessage(error));
     }
@@ -214,6 +246,11 @@ export const CommercialOfferWizard = () => {
         draftId: currentDraft.draft_id,
         logisticsCost,
       });
+      const calculated = await calculateMutation.mutateAsync(currentDraft.draft_id);
+      const msgs = (calculated.wizard_state.validation_errors ?? []).filter(Boolean);
+      if (msgs.length > 0) {
+        setStepError(msgs.join(" "));
+      }
     } catch (error) {
       setStepError(getErrorMessage(error));
     }
@@ -229,15 +266,18 @@ export const CommercialOfferWizard = () => {
     if (step === "plates") {
       return true;
     }
-    if (!currentDraft) {
+    if (!currentDraft?.wizard_state) {
       return false;
     }
-    if (step === "wide-plates") {
-      return currentDraft.metadata.wide_plate_lines.length > 0 && !currentDraft.metadata.wide_plates_resolved;
+    const ws = currentDraft.wizard_state;
+    if (step === state.currentStep) {
+      return true;
     }
-    return true;
+    if (wizardStepIndex(step) < wizardStepIndex(ws.current_step)) {
+      return true;
+    }
+    return ws.can_proceed_to.includes(step);
   };
-
   const handleSidebarStepClick = (step: WizardStepId) => {
     if (!canNavigateToStep(step)) {
       if (!currentDraft && step !== "plates") {
@@ -295,7 +335,7 @@ export const CommercialOfferWizard = () => {
         onBack={() =>
           dispatch({
             type: "set-step",
-            step: currentDraft?.metadata.wide_plate_lines.length ? "wide-plates" : "plates",
+            step: currentDraft?.metadata?.wide_plate_lines?.length ? "wide-plates" : "plates",
           })
         }
         onNext={handleManagerSubmit}
@@ -309,7 +349,7 @@ export const CommercialOfferWizard = () => {
           paymentConditions: state.paymentConditions,
         }}
         errorMessage={stepError}
-        isPending={updateMetaMutation.isPending}
+        isPending={updateMetaMutation.isPending || calculateMutation.isPending}
         onBack={() => dispatch({ type: "set-step", step: "manager" })}
         onSubmit={handleClientSubmit}
       />
@@ -326,18 +366,73 @@ export const CommercialOfferWizard = () => {
         onGenerateFiles={handleGenerateFiles}
         onExecutionTermsChange={(value) => dispatch({ type: "set-execution-terms", value })}
         onSave={handleSave}
-        isUpdatingDiscount={updateMetaMutation.isPending}
+        isUpdatingDiscount={updateMetaMutation.isPending || calculateMutation.isPending}
         onDiscountSubmit={handleDiscountSubmit}
         onLogisticsCostSubmit={handleLogisticsCostSubmit}
       />
     ) : null;
+
+  const renderDraftStepFallback = () => {
+    if (!state.draftId) {
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <Spinner /> Восстанавливаю шаг мастера…
+        </div>
+      );
+    }
+    if (draftQuery.isPending || draftQuery.isFetching) {
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <Spinner /> Загружаю черновик…
+        </div>
+      );
+    }
+    if (draftQuery.isError) {
+      return (
+        <div style={{ display: "grid", gap: "1rem" }}>
+          <Alert tone="error">{getErrorMessage(draftQuery.error)}</Alert>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            <Button type="button" onClick={() => void draftQuery.refetch()}>
+              Повторить
+            </Button>
+            <Button type="button" variant="secondary" onClick={handleCreateNewOffer}>
+              Начать заново
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div style={{ display: "grid", gap: "1rem" }}>
+        <Alert tone="error">
+          Черновик недоступен. Проверьте сеть и авторизацию или начните новое коммерческое предложение.
+        </Alert>
+        <Button type="button" onClick={handleCreateNewOffer}>
+          Начать заново
+        </Button>
+      </div>
+    );
+  };
+
+  const resolvedStepContent =
+    currentStepContent ??
+    (state.currentStep === "wide-plates" || state.currentStep === "result"
+      ? renderDraftStepFallback()
+      : (
+          <div style={{ display: "grid", gap: "1rem" }}>
+            <Alert tone="error">Некорректное состояние мастера.</Alert>
+            <Button type="button" onClick={handleCreateNewOffer}>
+              Сбросить и начать сначала
+            </Button>
+          </div>
+        ));
 
   return (
     <div style={{ display: "grid", gap: "1.25rem" }}>
       {managersQuery.error && <Alert tone="error">{getErrorMessage(managersQuery.error)}</Alert>}
 
       <div className="wizard-shell">
-        <div className="wizard-main">{currentStepContent}</div>
+        <div className="wizard-main">{resolvedStepContent}</div>
 
         <aside className="wizard-sidebar">
           <div className="wizard-sidebar__inner">

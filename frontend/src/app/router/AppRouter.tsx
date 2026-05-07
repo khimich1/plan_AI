@@ -6,16 +6,20 @@ import { CommercialOfferCreatePage } from "@/pages/commercial-offer-create/Comme
 import { CommercialOfferArchivePage } from "@/pages/commercial-offer-archive/CommercialOfferArchivePage";
 import { ProductionPage } from "@/pages/production/ProductionPage";
 
+const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, "");
+
 export const AppRouter = () => (
-  <BrowserRouter>
+  <BrowserRouter basename={routerBasename}>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
-          <Route path="/commercial-offer/new" element={<CommercialOfferCreatePage />} />
-          <Route path="/commercial-offer/archive" element={<CommercialOfferArchivePage />} />
-          <Route path="/production" element={<ProductionPage />} />
-          <Route path="*" element={<Navigate to="/commercial-offer/new" replace />} />
+          {/* Относительные сегменты: в RR7 надёжнее вложенности под pathless layout + basename */}
+          <Route index element={<Navigate to="/new" replace />} />
+          <Route path="new" element={<CommercialOfferCreatePage />} />
+          <Route path="archive" element={<CommercialOfferArchivePage />} />
+          <Route path="production" element={<ProductionPage />} />
+          <Route path="*" element={<Navigate to="/new" replace />} />
         </Route>
       </Route>
     </Routes>
