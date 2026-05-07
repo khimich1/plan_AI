@@ -36,7 +36,7 @@ from app.services.day_view_service import (
     _aggregate_plates_for_track,
     _build_smart_lookup,
 )
-from bot.handlers import plan_manager
+from app.planning import plan_manager
 
 logger = logging.getLogger(__name__)
 

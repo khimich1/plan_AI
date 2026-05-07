@@ -2,9 +2,9 @@
 
 Закрывают баг, когда календарь показывал «3/5 занято», а Drawer — «на этот
 день не запланировано дорожек»: два агрегатора в
-``bot.handlers.plan_manager`` опирались на разные источники truth
+``app.planning.plan_manager`` опирались на разные источники truth
 (``saved_tracks_count`` vs фактический массив ``tracks``). После фикса
-оба используют :func:`bot.handlers.plan_manager.count_day_tracks`.
+оба используют :func:`app.planning.plan_manager.count_day_tracks`.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from bot.handlers import plan_manager
+from app.planning import plan_manager
 
 
 def test_count_day_tracks_returns_len_of_tracks():
@@ -31,7 +31,7 @@ def test_count_day_tracks_ignores_stale_saved_tracks_count(caplog):
     """Рассинхрон: saved_tracks_count=3, но tracks пустой → считаем 0."""
     day_data = {"tracks": [], "saved_tracks_count": 3}
 
-    with caplog.at_level("WARNING", logger="bot.handlers.plan_manager"):
+    with caplog.at_level("WARNING", logger="app.planning.plan_manager"):
         result = plan_manager.count_day_tracks(day_data)
 
     assert result == 0

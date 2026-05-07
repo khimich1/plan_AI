@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.settings import get_settings
-from bot.handlers import plan_manager
+from app.planning import plan_manager
 from core import kp_db
 
 
@@ -126,9 +126,18 @@ def main() -> int:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="Применить возврат. Без флага выполняется только dry-run.",
+        help=(
+            "Применить возврат только для одного плана (--plan-id обязателен). "
+            "Без флага — dry-run по всем планам с зависшими плитами."
+        ),
     )
     args = parser.parse_args()
+
+    if args.apply and not args.plan_id:
+        parser.error(
+            "--apply требует явный --plan-id (один план). "
+            "Массовый возврат для всех планов отключён; без --plan-id используйте dry-run."
+        )
 
     recover_stuck_plan_plates(
         db_path=str(args.db_path),

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.core.settings import get_settings
-from bot.handlers import plan_manager
+from app.planning import plan_manager
 
 
 class PlanRepository:

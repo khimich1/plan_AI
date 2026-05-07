@@ -218,7 +218,7 @@ class ArchiveService:
         Собирает сводную диаграмму Ганта по всем сохранённым планам.
         Импорт plan_manager отложен, чтобы бэкенд запускался без bot-окружения.
         """
-        from bot.handlers.plan_manager import get_all_plans_gantt_data  # локальный импорт
+        from app.planning.plan_manager import get_all_plans_gantt_data  # локальный импорт
 
         gantt_data = await asyncio.to_thread(get_all_plans_gantt_data)
         if not gantt_data:
