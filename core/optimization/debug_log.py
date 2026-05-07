@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Shared debug logging helpers for the optimization package (no ILP / PuLP)."""
+"""Shared debug logging helpers for the optimization package (no ILP / PuLP).
+
+Implementation-specific paths and session writers live in
+``optimization_debug_impl`` (imported only from ``_implementation``).
+"""
 
 from __future__ import annotations
 

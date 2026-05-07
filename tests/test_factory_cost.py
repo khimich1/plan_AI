@@ -194,10 +194,10 @@ def test_parser_integration():
     print("\n[TEST] Интеграция с существующим парсером...")
     
     # Импортируем парсер
-    from core.config import (
+    from core.config_and_data import (
         parse_load_code_from_name,
         get_load_code_for_plate,
-        make_plate_name
+        make_plate_name,
     )
     
     # Тест 1: Парсинг нагрузки из названия

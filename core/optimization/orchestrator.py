@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.optimization.context import optimization_context_scope
+from core.optimization.optimize_1d_widths import _optimize_1d_widths_only
+from core.optimization.optimize_2d.with_lengths import _optimize_2d_with_lengths
+from core.optimization.ports.order_data import PlateOrderDataPort
 from core.optimization.result_contract import ERROR_NO_INPUT, opt_error
 from core.optimization.validation import validate_optimize_entrypoint
 
@@ -19,6 +23,7 @@ def optimize_with_cascading_longitudinal_cuts(
     plate_width: int = 1200,
     min_useful_width: int = 200,
     opt_config: Any = None,
+    order_data: PlateOrderDataPort | None = None,
 ) -> dict:
     """
     Универсальная оптимизация с каскадными резами (PUBLIC API).
@@ -36,19 +41,24 @@ def optimize_with_cascading_longitudinal_cuts(
         min_useful_width=min_useful_width,
     )
 
-    # Ленивый импорт пакета — избегаем циклов при загрузке оркестратора и реализации.
-    import core.optimization as pkg
+    # OPT-005 / A1: каждый прогон — своё состояние OPT_* (ContextVar + TLS), иначе
+    # повторные вызовы на одном потоке (в т.ч. пул asyncio.to_thread) делят словари плана.
+    with optimization_context_scope():
+        # Точки входа тянем напрямую из модулей 1D/2D (DIP-001): без ленивого импорта пакета
+        # и без обратной дуги orchestrator ↔ _implementation.
 
-    if orders_2d is not None and len(orders_2d) > 0:
-        print("[OPT] Режим: ПОЛНАЯ 2D оптимизация (длина + ширина)")
-        return pkg._optimize_2d_with_lengths(orders_2d, plate_width, min_useful_width, opt_config)
+        if orders_2d is not None and len(orders_2d) > 0:
+            print("[OPT] Режим: ПОЛНАЯ 2D оптимизация (длина + ширина)")
+            return _optimize_2d_with_lengths(
+                orders_2d, plate_width, min_useful_width, opt_config, order_data
+            )
 
-    if orders is not None and len(orders) > 0:
-        print("[OPT] Режим: 1D оптимизация (только ширина, обратная совместимость)")
-        return pkg._optimize_1d_widths_only(orders, plate_width, min_useful_width)
+        if orders is not None and len(orders) > 0:
+            print("[OPT] Режим: 1D оптимизация (только ширина, обратная совместимость)")
+            return _optimize_1d_widths_only(orders, plate_width, min_useful_width, order_data)
 
-    print("[OPT] ⚠️ Не указаны ни orders, ни orders_2d!")
-    return opt_error(
-        ERROR_NO_INPUT,
-        "Не переданы orders (1D) и orders_2d (2D): нечего оптимизировать.",
-    )
+        print("[OPT] ⚠️ Не указаны ни orders, ни orders_2d!")
+        return opt_error(
+            ERROR_NO_INPUT,
+            "Не переданы orders (1D) и orders_2d (2D): нечего оптимизировать.",
+        )

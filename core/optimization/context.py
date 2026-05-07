@@ -1,34 +1,77 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Потоколокальное хранилище глобального состояния оптимизатора (OPT-005).
+Хранилище состояния оптимизатора OPT_* (OPT-005 + asyncio-изоляция).
 
-Мутабельные «глобали» вида OPT_PLAN раньше были общими на весь процесс и при
-параллельных вызовах давали гонки. Здесь у каждого потока свой набор dict/list.
+По умолчанию — отдельный набор dict/list на поток (threading.local). Если задан
+ContextVar (см. ``bind_optimization_context_state`` / ``optimization_context_scope``),
+он имеет приоритет в пределах текущей asyncio-задачи (как ``plate_runtime_state``
+для заказа плит).
+
 Снаружи по-прежнему используются имена OPT_PLAN, … — см. прокси и
-core.optimization._OptimizationModule.__setattr__.
+``core.optimization._OptimizationModule.__setattr__``.
 """
 
 from __future__ import annotations
 
+import contextvars
 import copy
 import threading
 from collections.abc import Iterator, MutableMapping, MutableSequence
+from contextlib import contextmanager
 from typing import Any
 
 
 _tls = threading.local()
 
+_opt_cv: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "optimization_context_state", default=None
+)
+
+
+def new_optimization_context_state() -> dict[str, Any]:
+    """Пустое состояние OPT для привязки к asyncio-задаче (или тестам)."""
+    return {
+        "opt_plan": {},
+        "opt_cascading_plan": {},
+        "opt_cascading_plan_by_load": {},
+        "opt_width_priority": [],
+        "load_to_reinforcement_map": {},
+    }
+
+
+def bind_optimization_context_state(
+    state: dict[str, Any],
+) -> contextvars.Token[dict[str, Any] | None]:
+    """Привязать OPT-словарь к текущей задаче (вернуть token для reset)."""
+    return _opt_cv.set(state)
+
+
+def reset_optimization_context_state(
+    token: contextvars.Token[dict[str, Any] | None],
+) -> None:
+    _opt_cv.reset(token)
+
+
+@contextmanager
+def optimization_context_scope(
+    state: dict[str, Any] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Изоляция прогона оптимизации / раскладки в asyncio (или явный bind в sync)."""
+    s = state if state is not None else new_optimization_context_state()
+    tok = bind_optimization_context_state(s)
+    try:
+        yield s
+    finally:
+        reset_optimization_context_state(tok)
+
 
 def _ensure() -> dict[str, Any]:
+    bound = _opt_cv.get()
+    if bound is not None:
+        return bound
     if not hasattr(_tls, "state"):
-        _tls.state = {
-            "opt_plan": {},
-            "opt_cascading_plan": {},
-            "opt_cascading_plan_by_load": {},
-            "opt_width_priority": [],
-            "load_to_reinforcement_map": {},
-        }
+        _tls.state = new_optimization_context_state()
     return _tls.state
 
 
@@ -184,3 +227,5 @@ OPT_CASCADING_PLAN = _ThreadLocalDictProxy("opt_cascading_plan")
 OPT_CASCADING_PLAN_BY_LOAD = _ThreadLocalDictProxy("opt_cascading_plan_by_load")
 OPT_WIDTH_PRIORITY = _ThreadLocalListProxy("opt_width_priority")
 LOAD_TO_REINFORCEMENT_MAP = _ThreadLocalDictProxy("load_to_reinforcement_map")
+
+# Снимок плана для layout: см. ``layout_runtime_snapshot.OptPlanFrozenSnapshot.capture_from_context``.

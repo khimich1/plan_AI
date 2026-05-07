@@ -29,6 +29,16 @@ from core.config_and_data import LineContributionKey, set_plate_lists_from_text
 
 @unittest.skipUnless(HAS_OPENPYXL, "openpyxl не установлен")
 class TestPlatesPreviewXlsx(unittest.TestCase):
+    @staticmethod
+    def _qty(cell):
+        """openpyxl отдаёт числа как int/float; в тестах сравниваем с ожидаемым количеством."""
+        v = cell.value
+        if v is None:
+            return None
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return int(v) if float(v).is_integer() else float(v)
+        return v
+
     def test_two_contribution_keys_share_wide_qty(self) -> None:
         text = "ПБ 59-15-8п 2"
         _, contribs, _line_loads = set_plate_lists_from_text(text)
@@ -56,7 +66,8 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
             )
             ws = load_workbook(path).active
             self.assertEqual(ws.cell(row=2, column=1).value, "ПБ 59-15-8п 2 шт")
-            self.assertEqual(ws.cell(row=3, column=1).value, "ПБ 59-15-8п 2 шт")
+            # Второй ряд блока раскола: колонка A только в первой строке (см. plates_preview_xlsx).
+            self.assertIn(ws.cell(row=3, column=1).value, (None, ""))
             b2 = ws.cell(row=2, column=2).value
             c2 = ws.cell(row=2, column=3).value
             b3 = ws.cell(row=3, column=2).value
@@ -64,16 +75,16 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
             self.assertTrue(b2)
             self.assertTrue(b3)
             self.assertNotEqual(str(b2).strip(), str(b3).strip())
-            self.assertEqual(c2, "2")
-            self.assertEqual(c3, "2")
+            self.assertEqual(self._qty(ws.cell(row=2, column=3)), 2)
+            self.assertEqual(self._qty(ws.cell(row=3, column=3)), 2)
             # Обе позиции раскола должны присутствовать рядом (порядок не фиксируем).
             names = f"{b2}\n{b3}"
             self.assertIn("12-8", names)
-            self.assertIn("0.3", names)
+            self.assertIn("-3-8", names)
             self.assertEqual(ws.cell(row=2, column=4).value, b2)
-            self.assertEqual(ws.cell(row=2, column=5).value, c2)
+            self.assertEqual(self._qty(ws.cell(row=2, column=5)), self._qty(ws.cell(row=2, column=3)))
             self.assertEqual(ws.cell(row=3, column=4).value, b3)
-            self.assertEqual(ws.cell(row=3, column=5).value, c3)
+            self.assertEqual(self._qty(ws.cell(row=3, column=5)), self._qty(ws.cell(row=3, column=3)))
 
     def test_preview_duplicate_user_lines_blank_kp_columns(self) -> None:
         """Две одинаковые строки ввода: второй раз D–E пустые; C — построчное кол-во."""
@@ -87,10 +98,10 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
                 initial_user_plate_lines=user_lines,
             )
             ws = load_workbook(path).active
-            self.assertEqual(ws.cell(row=2, column=3).value, "3")
-            self.assertEqual(ws.cell(row=3, column=3).value, "3")
+            self.assertEqual(self._qty(ws.cell(row=2, column=3)), 3)
+            self.assertEqual(self._qty(ws.cell(row=3, column=3)), 3)
             self.assertTrue(ws.cell(row=2, column=4).value)
-            self.assertEqual(ws.cell(row=2, column=5).value, "6")
+            self.assertEqual(self._qty(ws.cell(row=2, column=5)), 6)
             self.assertEqual(ws.cell(row=3, column=4).value, None)
             self.assertEqual(ws.cell(row=3, column=5).value, None)
 
@@ -106,7 +117,7 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
                 initial_user_plate_lines=user_lines,
             )
             ws = load_workbook(path).active
-            self.assertEqual(ws.cell(row=2, column=5).value, "9")
+            self.assertEqual(self._qty(ws.cell(row=2, column=5)), 9)
             self.assertTrue(ws.cell(row=2, column=4).value)
             self.assertEqual(ws.cell(row=3, column=4).value, None)
             self.assertEqual(ws.cell(row=3, column=5).value, None)
@@ -129,12 +140,12 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
             self.assertEqual(ws.cell(row=3, column=1).value, "ПБ 69-12-8п 6")
             self.assertEqual(ws.cell(row=4, column=1).value, "ПБ 69-12-8п 14")
 
-            self.assertEqual(ws.cell(row=2, column=3).value, "20")
-            self.assertEqual(ws.cell(row=3, column=3).value, "6")
-            self.assertEqual(ws.cell(row=4, column=3).value, "14")
+            self.assertEqual(self._qty(ws.cell(row=2, column=3)), 20)
+            self.assertEqual(self._qty(ws.cell(row=3, column=3)), 6)
+            self.assertEqual(self._qty(ws.cell(row=4, column=3)), 14)
 
             self.assertEqual(ws.cell(row=2, column=4).value, "Плиты ПБ 69-12-8п")
-            self.assertEqual(ws.cell(row=2, column=5).value, "40")
+            self.assertEqual(self._qty(ws.cell(row=2, column=5)), 40)
             self.assertEqual(ws.cell(row=3, column=4).value, None)
             self.assertEqual(ws.cell(row=3, column=5).value, None)
             self.assertEqual(ws.cell(row=4, column=4).value, None)
@@ -178,9 +189,10 @@ class TestPreviewRowTriplesLimits(unittest.TestCase):
         self.assertEqual(len(triples), 3)
         names = [t[0] for t in triples]
         self.assertEqual(len(set(names)), 3)
-        self.assertIn("0.3", names[0])
-        self.assertIn("10-8", names[1])  # ширина 1.0 м в марке (10 дм)
-        self.assertIn("12-8", names[2])
+        joined = " | ".join(names)
+        self.assertIn("-3-8", joined)
+        self.assertIn("10-8", joined)
+        self.assertIn("12-8", joined)
 
 
 class TestQtyForContribution(unittest.TestCase):

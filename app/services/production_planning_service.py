@@ -624,11 +624,13 @@ class ProductionPlanningService:
             ):
                 return [], optimization_result
 
+            from core.optimization.layout_runtime_snapshot import build_layout_runtime_snapshot
             from core.visualization import LayoutIntegrityError, split_sequence_into_tracks
             from viz_modules.layout_sequence import build_layout_sequence
 
             with self.optimization_service.legacy_runtime(context):
-                seq = build_layout_sequence()
+                _layout_rt = build_layout_runtime_snapshot()
+                seq = build_layout_sequence(runtime=_layout_rt)
                 try:
                     all_tracks_list = split_sequence_into_tracks(
                         seq,

@@ -245,8 +245,8 @@ def test_normalize_empty_and_single():
 def test_end_to_end_catalog_mark():
     print("\n=== test_end_to_end_catalog_mark ===")
     text = "ПБ 59.12-8Вр1400-25"
-    unparsed = cfg.set_plate_lists_from_text(text)
-    assert not unparsed, f"Нераспознанных строк не должно быть: {unparsed}"
+    unparsed_lines, _, _ = cfg.set_plate_lists_from_text(text)
+    assert not unparsed_lines, f"Нераспознанных строк не должно быть: {unparsed_lines}"
 
     # Ожидаем: длина 5.9м (59дм), ширина 1.2м (12дм), нагрузка 8
     plates = cfg.PLATES_1_2
@@ -269,8 +269,8 @@ def test_end_to_end_catalog_mark():
 def test_end_to_end_catalog_no_suffix():
     print("\n=== test_end_to_end_catalog_no_suffix ===")
     text = "ПБ56.05-10 3"
-    unparsed = cfg.set_plate_lists_from_text(text)
-    assert not unparsed, f"Нераспознанных строк: {unparsed}"
+    unparsed_lines, _, _ = cfg.set_plate_lists_from_text(text)
+    assert not unparsed_lines, f"Нераспознанных строк: {unparsed_lines}"
 
     # Ожидаем: длина 5.6м (56дм), ширина 0.5м (5дм), нагрузка 10, qty=3
     found = [
@@ -289,8 +289,8 @@ def test_end_to_end_canonical_unchanged():
     print("\n=== test_end_to_end_canonical_unchanged ===")
     # Обычный ввод должен работать точно так же, как раньше
     text = "ПБ 66,2-12-8п 6"
-    unparsed = cfg.set_plate_lists_from_text(text)
-    assert not unparsed, f"Нераспознанных строк: {unparsed}"
+    unparsed_lines, _, _ = cfg.set_plate_lists_from_text(text)
+    assert not unparsed_lines, f"Нераспознанных строк: {unparsed_lines}"
 
     found = [
         (k, v) for k, v in cfg.PLATE_LOAD_DETAILS.items()
@@ -309,8 +309,8 @@ def test_end_to_end_mixed_order():
         "ПБ56.05-10 3\n"
         "ПБ 66,2-12-8п 6"
     )
-    unparsed = cfg.set_plate_lists_from_text(text)
-    assert not unparsed, f"Нераспознанных строк: {unparsed}"
+    unparsed_lines, _, _ = cfg.set_plate_lists_from_text(text)
+    assert not unparsed_lines, f"Нераспознанных строк: {unparsed_lines}"
 
     total = sum(cfg.PLATE_LOAD_DETAILS.values())
     _assert_eq(total, 14, "итого 5+3+6=14 плит")

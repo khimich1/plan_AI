@@ -24,12 +24,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core.optimization import (  # noqa: E402
     Piece,
     Track,
-    _canonical_length,
     first_fit_decreasing,
     optimize_tracks,
     optimize_with_cascading_longitudinal_cuts,
     verify_coverage,
 )
+from core.optimization.geometry import _canonical_length  # noqa: E402
+from core.optimization.result_contract import ERROR_NO_INPUT  # noqa: E402
 
 
 class TestCanonicalLength:
@@ -108,9 +109,10 @@ class TestVerifyCoverageSemantics:
 
 
 class TestOptimizeWithCascadingEmptyPublicApi:
-    def test_empty_inputs_yield_empty_dict(self, capsys) -> None:
+    def test_empty_inputs_yield_structured_error(self, capsys) -> None:
         out = optimize_with_cascading_longitudinal_cuts(orders=None, orders_2d=None)
-        assert out == {}
+        assert out.get("_opt_status") == "error"
+        assert out.get("_opt_error_code") == ERROR_NO_INPUT
 
         captured = capsys.readouterr()
         assert "Не указаны" in captured.out or "orders" in captured.out.lower()

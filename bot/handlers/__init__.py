@@ -1,5 +1,7 @@
 """Регистрация всех обработчиков бота"""
 from aiogram import Dispatcher
+
+from bot.middleware.plate_runtime_isolation import PlateMutableRuntimeIsolationMiddleware
 from . import (
     main, instructions, kp, comparison, commercial, export, admin, pb_info, archive,
     production_planning, production_plans_list, production_create, production_calendar,
@@ -10,6 +12,7 @@ from . import (
 
 def register_all_handlers(dp: Dispatcher):
     """Регистрируем все роутеры в правильном порядке"""
+    dp.update.middleware(PlateMutableRuntimeIsolationMiddleware())
     dp.include_router(main.router)
     dp.include_router(instructions.router)  # Роутер инструкций
     dp.include_router(kp.router)

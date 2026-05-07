@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-from types import ModuleType
 from typing import Any, Mapping
 
 from core.config_and_data import canonical_plate_key
+from core.optimization.ports.order_data import PlateOrderDataPort
 
 from core.optimization.debug_log import (
     _DEBUG_LOG_5b5324,
@@ -18,15 +18,15 @@ from core.optimization.debug_log import (
 
 def build_order_info_list(
     orders_2d: list[Mapping[str, Any]],
-    cfg: ModuleType,
+    order_data: PlateOrderDataPort,
 ) -> dict[tuple[Any, ...], list[dict[str, Any]]]:
     """
     Маппинг (length, width, load_code) → список записей КП с qty_remaining.
-    Ключи в формате canonical_plate_key; load_code через cfg.normalize_load_code.
+    Ключи в формате canonical_plate_key; load_code через order_data.normalize_load_code.
     """
     order_info_list: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for order in orders_2d:
-        load_code = cfg.normalize_load_code(order.get("load_code", 800))
+        load_code = order_data.normalize_load_code(order.get("load_code", 800))
         key = canonical_plate_key(order["length"], order["width"], load_code)
         if key not in order_info_list:
             order_info_list[key] = []
