@@ -146,6 +146,10 @@ class DayPlateInfo(BaseModel):
     # В БД load_class может быть, например, 1250 -> код 12.5.
     # Поэтому принимаем числовой код как int/float.
     load_code: float | int | None = None
+    write_off_completed: bool = Field(
+        default=False,
+        description="Позиция показана из снимка после списания (completed_plates / журнал).",
+    )
 
 
 class DayTrackDetail(BaseModel):

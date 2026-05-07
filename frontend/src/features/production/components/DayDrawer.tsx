@@ -386,24 +386,31 @@ export const DayDrawer = ({
                           );
                           const rejectedQty = rejectedByPlate[key] ?? 0;
                           const completedQty = Math.max(plate.qty - rejectedQty, 0);
+                          const plateWrittenOff = Boolean(plate.write_off_completed);
                           const controlsDisabled =
-                            plan.completed || completeMutation.isPending;
+                            plan.completed ||
+                            completeMutation.isPending ||
+                            plateWrittenOff;
 
                           return (
-                            <tr key={`${track.track_number}-${index}`}>
+                            <tr
+                              key={`${track.track_number}-${index}`}
+                              className={
+                                plateWrittenOff ? "day-plates-table__row--written-off" : undefined
+                              }
+                            >
                               <td>
-                                <strong>{plate.plate_name || "—"}</strong>
-                                {plate.kp_id && (
-                                  <span
-                                    style={{
-                                      color: "#98a2b3",
-                                      marginLeft: 6,
-                                      fontSize: "0.8rem",
-                                    }}
-                                  >
+                                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                                  <strong>{plate.plate_name || "—"}</strong>
+                                  {plateWrittenOff && (
+                                    <span className="day-plate-badge day-plate-badge--done">Списано</span>
+                                  )}
+                                </div>
+                                {plate.kp_id ? (
+                                  <div style={{ color: "#98a2b3", marginTop: 2, fontSize: "0.8rem" }}>
                                     КП {plate.kp_id}
-                                  </span>
-                                )}
+                                  </div>
+                                ) : null}
                               </td>
                               <td>
                                 {formatLengthM(plate.length_m)} м ×{" "}

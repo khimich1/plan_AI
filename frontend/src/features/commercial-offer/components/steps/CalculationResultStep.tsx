@@ -88,7 +88,7 @@ export const CalculationResultStep = ({
         <Button type="button" variant="ghost" onClick={onBack}>
           Назад
         </Button>
-        <Button type="button" onClick={onCreateNew}>
+        <Button type="button" variant="danger" onClick={onCreateNew}>
           Создать новое КП
         </Button>
       </div>

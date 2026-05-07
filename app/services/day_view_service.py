@@ -134,9 +134,8 @@ def _aggregate_plates_for_track_from_db(
 ) -> list[dict[str, Any]]:
     """P5: строит plates_info по items с kp_plate_id, читая данные из БД.
 
-    Возвращает список словарей в том же формате, что и
-    :func:`_aggregate_plates_for_track`. Все плиты «реальные» — есть запись
-    в kp_plates, поэтому complete_day гарантированно их найдёт.
+    Формат как у :func:`_aggregate_plates_for_track`, плюс учёт строк, исчезнувших
+    из ``kp_plates`` после ``complete_day`` (см. :func:`_load_db_rows_for_plan_day`).
     """
     plates: list[dict[str, Any]] = []
 
@@ -187,6 +186,7 @@ def _aggregate_plates_for_track_from_db(
                 "length_dm_raw": row.get("length_dm_raw") or "",
                 "is_secondary": bool(is_secondary),
                 "kp_plate_id": int(plate_id),
+                "write_off_completed": bool(row.get("is_completed_snapshot")),
             }
         )
 
@@ -219,12 +219,30 @@ def _track_has_plate_ids(track: dict) -> bool:
 def _load_db_rows_for_plan_day(
     db_path: str, plan_id: str, day_number: int
 ) -> dict[int, dict[str, Any]]:
-    """Загружает строки kp_plates для (plan_id, day_number) status='в плане'.
+    """Загружает данные плит для (plan_id, day_number) из kp_plates и доснимок списанных.
 
-    Возвращает ``{plate_id: {plate_name, length_m, width_m, load_class, ...}}``.
-    Используется в новом пути ``_aggregate_plates_for_track_from_db``.
+    Живые строки: ``kp_plates`` со status ``в плане``. После ``complete_day`` часть
+    id исчезает из ``kp_plates``, но остаётся в ``plate_status_log`` + ``completed_plates`` —
+    такие позиции подмешиваем обратно, чтобы веб-список дня не «обнулялся» после списания.
     """
     import sqlite3 as _sql
+
+    def _kp_offer_meta(kp_id: int) -> tuple[str, str]:
+        cur.execute(
+            """
+            SELECT customer_name, execution_terms
+            FROM KP_offers
+            WHERE kp_id = ?
+            LIMIT 1
+            """,
+            (kp_id,),
+        )
+        meta = cur.fetchone()
+        if meta is None:
+            return "неизвестно", "неизвестно"
+        customer = meta["customer_name"] if meta["customer_name"] else None
+        terms = meta["execution_terms"] if meta["execution_terms"] else None
+        return (customer or "неизвестно", terms or "неизвестно")
 
     rows: dict[int, dict[str, Any]] = {}
     with _sql.connect(db_path) as conn:
@@ -253,7 +271,68 @@ def _load_db_rows_for_plan_day(
                 "customer": row["customer_name"],
                 "kp_date": row["execution_terms"],
                 "reinforcement": 0,
+                "is_completed_snapshot": False,
             }
+
+        cur.execute(
+            """
+            SELECT plate_id, kp_id, plate_name, SUM(qty) AS moved_qty
+            FROM plate_status_log
+            WHERE plan_id = ? AND day_number = ?
+              AND to_status = 'completed'
+              AND reason = 'completed'
+              AND plate_id IS NOT NULL
+            GROUP BY plate_id, kp_id, plate_name
+            """,
+            (plan_id, day_number),
+        )
+        for slog in cur.fetchall():
+            pid = int(slog["plate_id"])
+            if pid in rows:
+                continue
+            ky = int(slog["kp_id"] or 0)
+            pname = slog["plate_name"] or ""
+            if ky <= 0:
+                continue
+            cur.execute(
+                """
+                SELECT length_m, width_m, load_class
+                FROM completed_plates
+                WHERE kp_id = ? AND plate_name = ? AND production_day = ?
+                LIMIT 1
+                """,
+                (ky, pname, day_number),
+            )
+            dim = cur.fetchone()
+            customer, kp_date = _kp_offer_meta(ky)
+            if dim is None:
+                rows[pid] = {
+                    "kp_id": ky,
+                    "plate_name": pname,
+                    "length_m": 0.0,
+                    "width_m": 0.0,
+                    "load_class": 800,
+                    "qty": int(slog["moved_qty"] or 0),
+                    "length_dm_raw": "",
+                    "customer": customer,
+                    "kp_date": kp_date,
+                    "reinforcement": 0,
+                    "is_completed_snapshot": True,
+                }
+            else:
+                rows[pid] = {
+                    "kp_id": ky,
+                    "plate_name": pname,
+                    "length_m": dim["length_m"],
+                    "width_m": dim["width_m"],
+                    "load_class": dim["load_class"],
+                    "qty": int(slog["moved_qty"] or 0),
+                    "length_dm_raw": "",
+                    "customer": customer,
+                    "kp_date": kp_date,
+                    "reinforcement": 0,
+                    "is_completed_snapshot": True,
+                }
     return rows
 
 

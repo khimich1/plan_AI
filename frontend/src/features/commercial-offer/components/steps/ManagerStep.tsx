@@ -11,7 +11,7 @@ type ManagerStepProps = {
   isPending: boolean;
   onSelect: (managerId: number) => void;
   onBack: () => void;
-  onNext: () => void;
+  onNext: () => void | Promise<void>;
 };
 
 export const ManagerStep = ({
@@ -34,7 +34,13 @@ export const ManagerStep = ({
           <Button type="button" variant="ghost" onClick={onBack}>
             Назад
           </Button>
-          <Button type="button" onClick={onNext} disabled={isPending || !selectedManagerId}>
+          <Button
+            type="button"
+            onClick={() => {
+              void Promise.resolve(onNext());
+            }}
+            disabled={isPending || !selectedManagerId}
+          >
             {isPending ? "Сохраняем..." : "Далее"}
           </Button>
         </div>

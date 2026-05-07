@@ -78,6 +78,17 @@ def populated_db(admin_settings: Settings) -> Path:
             "INSERT INTO kp_files (kp_id, file_path) VALUES (?, '/tmp/x.xlsx')",
             (kp_id,),
         )
+        cur.execute(
+            """
+            INSERT INTO plate_status_log (
+                plate_id, kp_id, plate_name, plan_id, day_number,
+                from_status, to_status, qty, reason
+            )
+            VALUES (1, ?, 'ПБ 78-12-8п', 'plan_test', 1,
+                    'в плане', 'completed', 1, 'completed')
+            """,
+            (kp_id,),
+        )
         conn.commit()
     return Path(db_path)
 
@@ -139,6 +150,7 @@ def test_reset_full_clears_all_plate_tables_and_plans(
     assert _table_count(populated_db, "plate_rests") == 0
     assert _table_count(populated_db, "kp_files") == 0
     assert _table_count(populated_db, "kp_meta") == 0
+    assert _table_count(populated_db, "plate_status_log") == 0
 
     assert not admin_settings.current_plan_path.exists()
     assert not admin_settings.plans_metadata_path.exists()

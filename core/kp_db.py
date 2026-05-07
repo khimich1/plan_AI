@@ -1187,6 +1187,7 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
     Простыми словами:
     - Удаляет ВСЕ КП (и в работе, и выполненные, и отклонённые)
     - Удаляет ВСЕ плиты (и невыполненные, и выполненные)
+    - Удаляет журнал переходов статусов ``plate_status_log``
     - Удаляет ВСЕ остатки от резки
     - Сбрасывает счётчики AUTOINCREMENT
     - Это как полностью очистить завод от всех заказов и начать с нуля
@@ -1222,9 +1223,13 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         
         cur.execute('SELECT COUNT(*) FROM kp_meta')
         meta_count = cur.fetchone()[0]
+
+        cur.execute('SELECT COUNT(*) FROM plate_status_log')
+        status_log_count = cur.fetchone()[0]
         
         # Удаляем все записи из всех таблиц
         # Порядок важен: сначала зависимые таблицы, потом основную
+        cur.execute('DELETE FROM plate_status_log')
         cur.execute('DELETE FROM kp_plates')
         cur.execute('DELETE FROM completed_plates')
         cur.execute('DELETE FROM plate_rests')
@@ -1236,7 +1241,8 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         cur.execute('''
             DELETE FROM sqlite_sequence 
             WHERE name IN ('KP_offers', 'kp_plates', 'completed_plates', 
-                          'plate_rests', 'kp_files', 'kp_meta')
+                          'plate_rests', 'kp_files', 'kp_meta',
+                          'plate_status_log')
         ''')
         
         conn.commit()
@@ -1248,7 +1254,16 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
             'plate_rests': rests_count,
             'kp_files': files_count,
             'kp_meta': meta_count,
-            'total': kp_count + plates_count + completed_count + rests_count + files_count + meta_count
+            'plate_status_log': status_log_count,
+            'total': (
+                kp_count
+                + plates_count
+                + completed_count
+                + rests_count
+                + files_count
+                + meta_count
+                + status_log_count
+            ),
         }
         
         print(f"[DB] ✅ ПОЛНАЯ ОЧИСТКА ВСЕХ ДАННЫХ О ПЛИТАХ:")
@@ -1258,6 +1273,7 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         print(f"  - Удалено остатков: {rests_count}")
         print(f"  - Удалено файлов: {files_count}")
         print(f"  - Удалено метаданных: {meta_count}")
+        print(f"  - Удалено записей журнала статусов: {status_log_count}")
         print(f"  - ВСЕГО ЗАПИСЕЙ: {result['total']}")
         
         return result
