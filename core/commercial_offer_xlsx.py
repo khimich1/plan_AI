@@ -22,8 +22,18 @@ except ImportError:
 
 # Единый расчёт веса строки КП (plate_weights → approximate)
 try:
+    from .cargo_delivery_pricing import (
+        cargo_delivery_trips_count,
+        delivery_service_charge_rub,
+        total_order_cargo_weight_kg,
+    )
     from .kp_plate_weight import resolve_kp_line_weight_kg
 except ImportError:
+    from cargo_delivery_pricing import (
+        cargo_delivery_trips_count,
+        delivery_service_charge_rub,
+        total_order_cargo_weight_kg,
+    )
     from kp_plate_weight import resolve_kp_line_weight_kg
 
 
@@ -98,22 +108,29 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
 
 def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0) -> Dict:
     """
-    Рассчитывает общую стоимость заказа
-    
+    Рассчитывает общую стоимость заказа.
+
+    Цены unit_price считаются уже с НДС. Скидка применяется к сумме плит.
+    НДС (22%) для отображения: сумма плит после скидки × 0,22 (без начисления поверх итога).
+    Итог к оплате: сумма плит после скидки + услуга по доставке грузов
+    (стоимость рейса × ceil(масса кг / 18600); в сумму НДС по плитам не входит).
+
     Args:
         order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
         discount_percent: процент скидки (0-100)
-        logistics_cost: транспортные расходы без НДС, без применения скидки
-    
+        logistics_cost: стоимость одного рейса (итог доставки умножается на число рейсов)
+
     Returns:
-        Словарь с итоговыми суммами
+        Словарь с итоговыми суммами; subtotal = total_with_vat − vat_amount (для сумм subtotal+vat=total).
     """
     total_qty = 0
-    plates_cost_without_vat = 0.0  # Сумма плит без НДС
-    
+    plates_total_with_vat = 0.0
+    discount = min(max(float(discount_percent or 0.0), 0.0), 100.0)
+    discount_factor = 1.0 - discount / 100.0
+
     for item in order_data:
         qty = item.get('qty', 0)
-        
+
         # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
         if 'unit_price' in item and item['unit_price'] is not None:
             unit_price = item['unit_price']
@@ -123,21 +140,20 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, lo
             width_m = item.get('width_m', 0)
             load_class = item.get('load_class', 800)
             unit_price = get_plate_price(length_m, width_m, load_class)
-        
-        # Применяем скидку к цене (если указана)
-        discounted_price = unit_price * (1 - discount_percent / 100)
-        
-        # Считаем сумму по позиции без НДС.
+
+        discounted_price = float(unit_price) * discount_factor
         item_cost = discounted_price * qty
-        
+
         total_qty += qty
-        plates_cost_without_vat += item_cost
-    
-    logistics_cost = max(0.0, float(logistics_cost or 0.0))
-    subtotal = round(plates_cost_without_vat + logistics_cost, 2)
-    vat_amount = round(subtotal * 0.22, 2)
-    total_with_vat = round(subtotal + vat_amount, 2)
-    
+        plates_total_with_vat += item_cost
+
+    trip_cost = max(0.0, float(logistics_cost or 0.0))
+    cargo_kg = total_order_cargo_weight_kg(order_data)
+    delivery_total = delivery_service_charge_rub(trip_cost, cargo_kg)
+    vat_amount = round(plates_total_with_vat * 0.22, 2)
+    total_with_vat = round(plates_total_with_vat + delivery_total, 2)
+    subtotal = round(total_with_vat - vat_amount, 2)
+
     return {
         'total_qty': total_qty,
         'subtotal': subtotal,
@@ -198,7 +214,7 @@ def generate_commercial_offer_xlsx(
         delivery_conditions: условия поставки (строка 28, если указано)
         payment_conditions: условия оплаты (строка 29, если указано)
         kp_db_id: номер КП из базы данных (если КП сохранен в БД)
-        logistics_cost: транспортные расходы без НДС, без применения скидки
+        logistics_cost: стоимость одного рейса (без НДС по плитам; итог по формуле рейсов)
     
     Returns:
         BytesIO буфер с XLSX файлом
@@ -297,17 +313,20 @@ def generate_commercial_offer_xlsx(
             'Сумма': discounted_price * qty  # Сначала вставим значение, потом заменим на формулу
         })
     
-    logistics_cost = max(0.0, float(logistics_cost or 0.0))
-    if logistics_cost > 0:
+    trip_cost = max(0.0, float(logistics_cost or 0.0))
+    delivery_trips = cargo_delivery_trips_count(total_weight)
+    has_delivery_line = trip_cost > 0 and delivery_trips > 0
+    if has_delivery_line:
+        delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
         table_data.append(
             {
                 '№': len(table_data) + 1,
-                'Наименование': 'Транспортные расходы',
-                'Кол-во': 1,
-                'Ед.': 'усл',
+                'Наименование': 'Услуга по доставке грузов',
+                'Кол-во': delivery_trips,
+                'Ед.': 'рейс',
                 'Вес(кг)': 0.0,
-                'Цена': logistics_cost,
-                'Сумма': logistics_cost,
+                'Цена': trip_cost,
+                'Сумма': delivery_total,
             }
         )
 
@@ -468,14 +487,13 @@ def generate_commercial_offer_xlsx(
         # Добавляем итоговые строки
         summary_row = table_header_row + table_rows_count + 2
         
-        # Итоговая сумма без НДС: сумма позиций после скидки + логистика.
+        # Итого по таблице: сумма позиций (цены с НДС) + услуга доставки при наличии.
         subtotal_row = summary_row
         worksheet.merge_cells(f'A{subtotal_row}:F{subtotal_row}')
         worksheet[f'A{subtotal_row}'] = f"Всего наименований {total_items}, общим весом {total_weight:,.3f} кг."
         worksheet[f'A{subtotal_row}'].font = summary_font
         worksheet[f'A{subtotal_row}'].alignment = left_align
-        
-        # Формула для подсчёта суммы без НДС.
+
         first_data_row = table_header_row + 1
         last_data_row = table_header_row + table_rows_count
         subtotal_cell = worksheet[f'G{subtotal_row}']
@@ -483,14 +501,15 @@ def generate_commercial_offer_xlsx(
         subtotal_cell.font = summary_font
         subtotal_cell.number_format = '#,##0.00'
         subtotal_cell.alignment = right_align
-        
-        # НДС 22% начисляется поверх суммы без НДС.
+
+        # НДС 22% только от суммы плит (без строки «Услуга по доставке грузов»).
+        last_plate_row = last_data_row - 1 if has_delivery_line else last_data_row
         vat_row = summary_row + 1
         worksheet.merge_cells(f'A{vat_row}:F{vat_row}')
         worksheet[f'A{vat_row}'] = "в том числе НДС (22%)"
         worksheet[f'A{vat_row}'].font = summary_font
         worksheet[f'A{vat_row}'].alignment = left_align
-        worksheet[f'G{vat_row}'] = f"=G{subtotal_row}*0.22"
+        worksheet[f'G{vat_row}'] = f"=SUM(G{first_data_row}:G{last_plate_row})*0.22"
         worksheet[f'G{vat_row}'].font = summary_font
         worksheet[f'G{vat_row}'].number_format = '#,##0.00'
         worksheet[f'G{vat_row}'].alignment = right_align

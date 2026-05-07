@@ -24,6 +24,7 @@ def _make_raw(**overrides: Any) -> dict:
         "subtotal": 1000.0,
         "vat_amount": 220.0,
         "total_amount": 1220.0,
+        "logistics_cost": 0.0,
         "delivery_conditions": "Самовывоз",
         "payment_conditions": "100% предоплата",
         "execution_terms": "",
@@ -101,6 +102,50 @@ def test_update_discount_not_found(tmp_path: Path) -> None:
         service.update_discount(1, 10)
 
 
+def test_update_logistics_cost_not_found(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.update_logistics_cost.return_value = False
+    service = _make_service(repository, tmp_path)
+
+    with pytest.raises(ArchiveNotFoundError):
+        service.update_logistics_cost(1, 100.0)
+
+
+def test_update_logistics_cost_calls_repository_and_returns_details(tmp_path: Path) -> None:
+    """После успешного апдейта возвращаются детали с logistics_cost из свежего снимка БД (get_by_id)."""
+    repository = MagicMock()
+    repository.update_logistics_cost.return_value = True
+    repository.get_by_id.return_value = _make_raw(
+        discount_percent=0.0,
+        subtotal=607.0,
+        vat_amount=143.0,
+        total_amount=750.0,
+        logistics_cost=100.0,
+        plates=[
+            {
+                "position_number": 1,
+                "plate_name": "ПБ",
+                "length_m": 1.0,
+                "width_m": 1.0,
+                "qty": 65,
+                "load_class": 800,
+                "unit_price": 10.0,
+                "discounted_price": 10.0,
+                "unit_weight": 0.0,
+                "total_weight": 0.0,
+            }
+        ],
+    )
+    service = _make_service(repository, tmp_path)
+
+    details = service.update_logistics_cost(42, 100.0)
+
+    repository.update_logistics_cost.assert_called_once_with(42, 100.0)
+    assert details.logistics_cost == 100.0
+    assert details.finance.total_amount == 750.0
+    assert details.delivery_service_total_rub == pytest.approx(100.0)
+
+
 def test_move_to_production_requires_archived_status(tmp_path: Path) -> None:
     repository = MagicMock()
     repository.get_by_id.return_value = _make_raw(status="в работе")
@@ -126,6 +171,64 @@ def test_move_to_production_happy_path(tmp_path: Path) -> None:
     assert details.execution_terms == "01.04.2026"
     repository.update_execution_date.assert_called_once_with(42, "01.04.2026")
     repository.update_status.assert_called_once_with(42, "в работе")
+
+
+def test_move_to_production_normalizes_iso_date(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.side_effect = [
+        _make_raw(status="в архиве"),
+        _make_raw(status="в работе", execution_terms="05.06.2026"),
+    ]
+    repository.update_execution_date.return_value = True
+    repository.update_status.return_value = True
+    service = _make_service(repository, tmp_path)
+
+    service.move_to_production(42, "2026-06-05")
+
+    repository.update_execution_date.assert_called_once_with(42, "05.06.2026")
+
+
+def test_move_to_production_normalizes_ddmmyyyy(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.side_effect = [
+        _make_raw(status="в архиве"),
+        _make_raw(status="в работе", execution_terms="05.06.2026"),
+    ]
+    repository.update_execution_date.return_value = True
+    repository.update_status.return_value = True
+    service = _make_service(repository, tmp_path)
+
+    service.move_to_production(42, "05.06.2026")
+
+    repository.update_execution_date.assert_called_once_with(42, "05.06.2026")
+
+
+def test_move_to_production_normalizes_five_days(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime as dt_cls
+
+    base = dt_cls(2026, 5, 31, 12, 0, 0)
+
+    class FixedNowDatetime(dt_cls):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(base.year, base.month, base.day, base.hour, base.minute, base.second)
+
+    monkeypatch.setattr("core.execution_terms.datetime", FixedNowDatetime)
+    repository = MagicMock()
+    repository.get_by_id.side_effect = [
+        _make_raw(status="в архиве"),
+        _make_raw(status="в работе", execution_terms="05.06.2026"),
+    ]
+    repository.update_execution_date.return_value = True
+    repository.update_status.return_value = True
+    service = _make_service(repository, tmp_path)
+
+    service.move_to_production(42, "5 дней")
+
+    repository.update_execution_date.assert_called_once_with(42, "05.06.2026")
 
 
 def test_parse_execution_terms_formats() -> None:

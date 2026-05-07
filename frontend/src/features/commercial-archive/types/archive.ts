@@ -46,6 +46,12 @@ export type ArchiveOfferDetails = {
   delivery_conditions: string | null;
   payment_conditions: string | null;
   finance: ArchiveOfferFinance;
+  /** Стоимость одного рейса — то же поле, что logistics_cost при создании КП. */
+  logistics_cost: number;
+  /** Масса груза (кг) по тем же правилам, что PDF/XLSX (resolve_kp_line_weight_kg на бэкенде). */
+  total_cargo_weight_kg: number;
+  /** Строка «Услуга по доставке грузов» = logistics_cost × число рейсов. */
+  delivery_service_total_rub: number;
   plates: ArchivePlateItem[];
   completion_percentage: number | null;
 };

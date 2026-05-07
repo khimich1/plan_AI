@@ -14,6 +14,7 @@ from app.schemas.archive import (
     ArchiveSection,
     MoveToProductionRequest,
     UpdateDiscountRequest,
+    UpdateLogisticsCostRequest,
 )
 from app.services.archive_service import (
     ArchiveNotFoundError,
@@ -121,6 +122,21 @@ def update_archive_discount(
 ) -> ArchiveOfferDetails:
     try:
         return service.update_discount(kp_id, payload.discount)
+    except ArchiveNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ArchiveValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.patch("/{kp_id}/logistics-cost", response_model=ArchiveOfferDetails)
+def update_archive_logistics_cost(
+    kp_id: int,
+    payload: UpdateLogisticsCostRequest,
+    _user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> ArchiveOfferDetails:
+    try:
+        return service.update_logistics_cost(kp_id, payload.logistics_cost)
     except ArchiveNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ArchiveValidationError as exc:

@@ -71,7 +71,7 @@ export const CalculationResultStep = ({
   const handleApplyLogisticsCost = async () => {
     const parsed = toNumber(logisticsCostDraft);
     if (parsed === null || parsed < 0) {
-      setLogisticsError("Стоимость логистики должна быть числом не меньше 0.");
+      setLogisticsError("Стоимость рейса должна быть числом не меньше 0.");
       return;
     }
     setLogisticsError(null);
@@ -88,7 +88,7 @@ export const CalculationResultStep = ({
         <Button type="button" variant="ghost" onClick={onBack}>
           Назад
         </Button>
-        <Button type="button" onClick={onCreateNew}>
+        <Button type="button" variant="danger" onClick={onCreateNew}>
           Создать новое КП
         </Button>
       </div>
@@ -172,13 +172,13 @@ export const CalculationResultStep = ({
           <SummaryCell label="Стоимость без НДС" value={formatTotalsMoney(serverSubtotal)} />
           <SummaryCell label="НДС" value={formatTotalsMoney(serverVat)} />
           <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
-            <FieldWrapper label="Стоимость логистики" error={logisticsError}>
+            <FieldWrapper label="Стоимость рейса" error={logisticsError}>
               <div style={{ position: "relative" }}>
                 <input
                   value={logisticsCostDraft}
                   onChange={(event) => setLogisticsCostDraft(event.target.value)}
                   inputMode="decimal"
-                  placeholder="Введите стоимость"
+                  placeholder="Стоимость одного рейса"
                   style={{
                     width: "100%",
                     border: "1px solid #d0d5dd",

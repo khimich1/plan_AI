@@ -23,6 +23,7 @@ class KpRepository:
         manager_name: str,
         creation_date: str | None = None,
         discount_percent: float = 0.0,
+        logistics_cost: float = 0.0,
         delivery_conditions: str = "",
         payment_conditions: str = "",
         execution_terms: str = "",
@@ -37,6 +38,7 @@ class KpRepository:
             customer_name=customer_name,
             manager_name=manager_name,
             discount_percent=discount_percent,
+            logistics_cost=logistics_cost,
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
             execution_terms=execution_terms,
@@ -68,6 +70,9 @@ class KpRepository:
 
     def update_offer_discount(self, kp_id: int, discount_percent: float) -> bool:
         return kp_db.update_kp_discount(kp_id, discount_percent, self.db_path)
+
+    def update_offer_logistics_cost(self, kp_id: int, logistics_cost: float) -> bool:
+        return kp_db.update_kp_logistics_cost(kp_id, logistics_cost, self.db_path)
 
     def update_offer_status(self, kp_id: int, status: str) -> bool:
         return kp_db.update_kp_status(kp_id, status, self.db_path)

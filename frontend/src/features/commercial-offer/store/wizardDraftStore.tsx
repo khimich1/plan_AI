@@ -8,7 +8,23 @@ import {
   type PropsWithChildren,
 } from "react";
 import { draftStorage } from "@/features/commercial-offer/store/draftStorage";
+import { WIZARD_STEP_ORDER } from "@/features/commercial-offer/lib/wizardStepOrder";
 import type { CommercialDraftDetails, CommercialSaveResult, WizardStepId, WizardStoreState } from "@/features/commercial-offer/types/commercialOffer";
+
+const mergeWizardStepWithServer = (local: WizardStepId, server: WizardStepId | undefined): WizardStepId => {
+  if (!server || !WIZARD_STEP_ORDER.includes(server)) {
+    return local;
+  }
+  const li = WIZARD_STEP_ORDER.indexOf(local);
+  const si = WIZARD_STEP_ORDER.indexOf(server);
+  if (li < 0) {
+    return server;
+  }
+  if (si < 0) {
+    return local;
+  }
+  return WIZARD_STEP_ORDER[Math.max(li, si)];
+};
 
 type WizardDraftAction =
   | { type: "set-step"; step: WizardStepId }
@@ -79,13 +95,19 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
       return {
         ...state,
         draftId: action.payload.draft_id,
-        currentStep: action.payload.wizard_state?.current_step ?? state.currentStep,
+        currentStep: mergeWizardStepWithServer(
+          state.currentStep,
+          action.payload.wizard_state?.current_step,
+        ),
         managerId: action.payload.metadata.manager_id,
         clientName: action.payload.metadata.client_name,
         discountPercent: action.payload.metadata.discount_percent,
         conditionsMode: action.payload.metadata.conditions_mode,
         deliveryConditions: action.payload.metadata.delivery_conditions,
         paymentConditions: action.payload.metadata.payment_conditions,
+        executionTermsInput:
+          (action.payload.metadata.execution_terms || action.payload.saved_offer?.execution_terms || "").trim() ||
+          state.executionTermsInput,
         lastDraft: action.payload,
       };
     case "set-save-result":

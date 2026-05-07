@@ -173,6 +173,13 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
             conn.commit()
         except sqlite3.OperationalError:
             pass  # колонка уже существует
+
+        # Стоимость одного рейса (логистика), как в draft metadata logistics_cost / PDF/XLSX
+        try:
+            cur.execute("ALTER TABLE KP_offers ADD COLUMN logistics_cost REAL DEFAULT 0")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
         
         # Таблица 3: kp_files - Файлы XLSX
         # kp_id - связь с KP_offers
@@ -608,6 +615,7 @@ def save_kp_to_db(
     payment_conditions: Optional[str] = None,
     execution_terms: Optional[str] = None,
     status: str = 'в работе',
+    logistics_cost: float = 0.0,
     db_path: str = DEFAULT_DB
 ) -> int:
     """
@@ -629,6 +637,7 @@ def save_kp_to_db(
         payment_conditions: условия оплаты
         execution_terms: сроки выполнения
         status: статус КП (по умолчанию "в работе")
+        logistics_cost: стоимость одного рейса для строки «Услуга по доставке грузов»
         db_path: путь к базе данных
     
     Возвращает:
@@ -638,9 +647,10 @@ def save_kp_to_db(
     
     # 🔥 ИСПРАВЛЕНИЕ: Используем ту же функцию расчета, что и в XLSX
     # Это гарантирует, что суммы в БД и в XLSX файле будут одинаковыми
+    trip_logistics = max(0.0, float(logistics_cost or 0.0))
     try:
         from core.commercial_offer_xlsx import calculate_total_cost
-        totals = calculate_total_cost(order_data, discount_percent)
+        totals = calculate_total_cost(order_data, discount_percent, logistics_cost=trip_logistics)
         subtotal = totals['subtotal']
         vat_amount = totals['vat_amount']
         total_amount = totals['total_with_vat']
@@ -668,12 +678,12 @@ def save_kp_to_db(
             INSERT INTO KP_offers (
                 creation_date, customer_name, manager_name, discount_percent,
                 subtotal, vat_amount, total_amount,
-                delivery_conditions, payment_conditions, execution_terms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                delivery_conditions, payment_conditions, execution_terms, logistics_cost
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             creation_date, customer_name, manager_name, discount_percent,
             subtotal, vat_amount, total_amount,
-            delivery_conditions, payment_conditions, execution_terms
+            delivery_conditions, payment_conditions, execution_terms, trip_logistics,
         ))
         
         # Получаем порядковый номер созданного КП
@@ -757,11 +767,15 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
         conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         
-        cur.execute('SELECT discount_percent FROM KP_offers WHERE kp_id = ?', (kp_id,))
+        cur.execute(
+            'SELECT discount_percent, COALESCE(logistics_cost, 0) FROM KP_offers WHERE kp_id = ?',
+            (kp_id,),
+        )
         row = cur.fetchone()
         if not row:
             return False
         current_discount = row[0] or 0.0
+        logistics_saved = max(0.0, float(row[1] or 0.0))
         
         cur.execute(
             'SELECT id, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price FROM kp_plates WHERE kp_id = ? ORDER BY position_number',
@@ -793,7 +807,7 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
                 'weight': weight,
             })
         
-        totals = calculate_total_cost(order_data, new_discount)
+        totals = calculate_total_cost(order_data, new_discount, logistics_cost=logistics_saved)
         subtotal = totals['subtotal']
         vat_amount = totals['vat_amount']
         total_amount = totals['total_with_vat']
@@ -818,6 +832,87 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
                 (new_disc_price, up, pid)
             )
         
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def update_kp_logistics_cost(kp_id: int, logistics_cost: float, db_path: str = DEFAULT_DB) -> bool:
+    """
+    Обновляет стоимость одного рейса (поле KP_offers.logistics_cost) и пересчитывает
+    суммы KP_offers согласно calculate_total_cost (как при генерации PDF/XLSX КП).
+    Цены по плитам не меняются.
+    """
+    trip = max(0.0, float(logistics_cost or 0.0))
+    init_schema(db_path)
+    try:
+        from core.commercial_offer_xlsx import calculate_total_cost
+    except ImportError:
+        return False
+
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT discount_percent FROM KP_offers WHERE kp_id = ?",
+            (kp_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return False
+        current_discount = float(row[0] or 0.0)
+
+        cur.execute(
+            "SELECT id, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, "
+            "discounted_price, unit_price FROM kp_plates WHERE kp_id = ? ORDER BY position_number",
+            (kp_id,),
+        )
+        plates = cur.fetchall()
+        if not plates:
+            return False
+
+        order_data: list[dict] = []
+        for p in plates:
+            pid, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price_col = p
+            if unit_price_col is not None and unit_price_col > 0:
+                unit_price = float(unit_price_col)
+            else:
+                factor = 1.0 - (current_discount / 100.0)
+                if factor <= 0:
+                    factor = 1.0
+                unit_price = (discounted_price or 0) / factor
+            weight = total_weight if total_weight is not None and total_weight > 0 else (unit_weight or 0) * (qty or 0)
+            order_data.append(
+                {
+                    "name": plate_name or "",
+                    "length_m": length_m or 0,
+                    "width_m": width_m or 0,
+                    "qty": qty or 0,
+                    "load_class": load_class or 800,
+                    "unit_price": unit_price,
+                    "weight": weight,
+                }
+            )
+
+        totals = calculate_total_cost(order_data, current_discount, logistics_cost=trip)
+        subtotal = totals["subtotal"]
+        vat_amount = totals["vat_amount"]
+        total_amount = totals["total_with_vat"]
+
+        cur.execute(
+            """
+            UPDATE KP_offers
+            SET logistics_cost = ?, subtotal = ?, vat_amount = ?, total_amount = ?
+            WHERE kp_id = ?
+            """,
+            (trip, subtotal, vat_amount, total_amount, kp_id),
+        )
+
         conn.commit()
         return True
     except Exception:
@@ -1092,6 +1187,7 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
     Простыми словами:
     - Удаляет ВСЕ КП (и в работе, и выполненные, и отклонённые)
     - Удаляет ВСЕ плиты (и невыполненные, и выполненные)
+    - Удаляет журнал переходов статусов ``plate_status_log``
     - Удаляет ВСЕ остатки от резки
     - Сбрасывает счётчики AUTOINCREMENT
     - Это как полностью очистить завод от всех заказов и начать с нуля
@@ -1127,9 +1223,13 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         
         cur.execute('SELECT COUNT(*) FROM kp_meta')
         meta_count = cur.fetchone()[0]
+
+        cur.execute('SELECT COUNT(*) FROM plate_status_log')
+        status_log_count = cur.fetchone()[0]
         
         # Удаляем все записи из всех таблиц
         # Порядок важен: сначала зависимые таблицы, потом основную
+        cur.execute('DELETE FROM plate_status_log')
         cur.execute('DELETE FROM kp_plates')
         cur.execute('DELETE FROM completed_plates')
         cur.execute('DELETE FROM plate_rests')
@@ -1141,7 +1241,8 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         cur.execute('''
             DELETE FROM sqlite_sequence 
             WHERE name IN ('KP_offers', 'kp_plates', 'completed_plates', 
-                          'plate_rests', 'kp_files', 'kp_meta')
+                          'plate_rests', 'kp_files', 'kp_meta',
+                          'plate_status_log')
         ''')
         
         conn.commit()
@@ -1153,7 +1254,16 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
             'plate_rests': rests_count,
             'kp_files': files_count,
             'kp_meta': meta_count,
-            'total': kp_count + plates_count + completed_count + rests_count + files_count + meta_count
+            'plate_status_log': status_log_count,
+            'total': (
+                kp_count
+                + plates_count
+                + completed_count
+                + rests_count
+                + files_count
+                + meta_count
+                + status_log_count
+            ),
         }
         
         print(f"[DB] ✅ ПОЛНАЯ ОЧИСТКА ВСЕХ ДАННЫХ О ПЛИТАХ:")
@@ -1163,6 +1273,7 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         print(f"  - Удалено остатков: {rests_count}")
         print(f"  - Удалено файлов: {files_count}")
         print(f"  - Удалено метаданных: {meta_count}")
+        print(f"  - Удалено записей журнала статусов: {status_log_count}")
         print(f"  - ВСЕГО ЗАПИСЕЙ: {result['total']}")
         
         return result

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EXECUTION_TERMS_PARSE_ERROR, tryNormalizeExecutionTerms } from "@/shared/lib/executionTerms";
 
 export const plateSubmissionSchema = z
   .object({
@@ -40,11 +41,36 @@ export const saveOfferSchema = z
     executionTermsInput: z.string().trim(),
   })
   .superRefine((value, ctx) => {
-    if (value.mode === "database" && !value.executionTermsInput) {
+    if (value.mode === "skip") {
+      return;
+    }
+    const trimmed = value.executionTermsInput.trim();
+    if (value.mode === "archive") {
+      if (!trimmed) {
+        return;
+      }
+      if (tryNormalizeExecutionTerms(trimmed) === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["executionTermsInput"],
+          message: EXECUTION_TERMS_PARSE_ERROR,
+        });
+      }
+      return;
+    }
+    if (!trimmed) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["executionTermsInput"],
         message: "Укажите срок изготовления.",
+      });
+      return;
+    }
+    if (tryNormalizeExecutionTerms(trimmed) === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["executionTermsInput"],
+        message: EXECUTION_TERMS_PARSE_ERROR,
       });
     }
   });

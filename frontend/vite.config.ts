@@ -6,6 +6,11 @@ const base = "/commercial-offer/";
 
 export default defineConfig({
   base,
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    globals: false,
+  },
   plugins: [
     {
       name: "redirect-root-to-base",

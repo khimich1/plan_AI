@@ -467,7 +467,7 @@ class CommercialWorkflowService:
             updates["payment_conditions"] = payment_conditions.strip()
         if logistics_cost is not None:
             if logistics_cost < 0:
-                raise ValueError("Стоимость логистики не может быть отрицательной.")
+                raise ValueError("Стоимость рейса не может быть отрицательной.")
             updates["logistics_cost"] = float(logistics_cost)
         if updates:
             self.draft_store.update_metadata(draft_id, **updates)
@@ -644,6 +644,7 @@ class CommercialWorkflowService:
             customer_name=str(metadata.get("client_name", "") or "Клиент"),
             manager_name=str(metadata.get("manager_name", "") or ""),
             discount_percent=float(metadata.get("discount_percent", 0.0) or 0.0),
+            logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
             delivery_conditions=str(metadata.get("delivery_conditions", "") or ""),
             payment_conditions=str(metadata.get("payment_conditions", "") or ""),
             execution_terms=execution_terms,
@@ -693,9 +694,11 @@ class CommercialWorkflowService:
                 save_mode="database",
             )
         if normalized_mode == "archive":
+            raw = (execution_terms_input or "").strip()
+            execution_terms = self.execution_terms_service.normalize(raw) if raw else ""
             return self.save_offer(
                 draft_id,
-                execution_terms="",
+                execution_terms=execution_terms,
                 status="в архиве",
                 save_mode="archive",
             )

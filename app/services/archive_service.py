@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -17,8 +16,10 @@ from app.schemas.archive import (
     ArchiveOfferListItem,
     ArchivePlateItem,
 )
+from core.execution_terms import normalize_execution_terms_to_ddmmyyyy
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
+from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
 from core.gantt_excel import create_gantt_excel
 
 
@@ -109,6 +110,15 @@ class ArchiveService:
             )
         return self.get_details(kp_id)
 
+    def update_logistics_cost(self, kp_id: int, logistics_cost: float) -> ArchiveOfferDetails:
+        """Обновляет «стоимость рейса» (поле KP_offers.logistics_cost) и суммы заказа."""
+        trip = max(0.0, float(logistics_cost or 0.0))
+        if not self.repository.update_logistics_cost(kp_id, trip):
+            raise ArchiveNotFoundError(
+                f"Не удалось обновить стоимость рейса. КП №{kp_id} не найдено или пустое."
+            )
+        return self.get_details(kp_id)
+
     def delete_offer(self, kp_id: int) -> None:
         if not self.repository.delete(kp_id):
             raise ArchiveNotFoundError(f"КП №{kp_id} уже удалено или не существует")
@@ -160,6 +170,7 @@ class ArchiveService:
         customer_name = raw.get("customer_name")
         manager_name = raw.get("manager_name")
         discount_percent = float(raw.get("discount_percent") or 0)
+        logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
 
         if kind == "pdf":
             buffer = await asyncio.to_thread(
@@ -173,6 +184,7 @@ class ArchiveService:
                 manager_email=None,
                 discount_percent=discount_percent,
                 kp_db_id=kp_id,
+                logistics_cost=logistics_cost,
             )
             filename = f"КП_{kp_id}.pdf"
         elif kind == "xlsx":
@@ -189,6 +201,7 @@ class ArchiveService:
                 delivery_conditions=raw.get("delivery_conditions"),
                 payment_conditions=raw.get("payment_conditions"),
                 kp_db_id=kp_id,
+                logistics_cost=logistics_cost,
             )
             filename = f"КП_{kp_id}.xlsx"
         else:
@@ -240,6 +253,11 @@ class ArchiveService:
             except Exception:
                 logger.exception("Ошибка получения %% выполнения для КП %s", kp_id)
 
+        order_data = self._order_data_from_kp_info(raw)
+        logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
+        total_cargo_weight_kg = float(total_order_cargo_weight_kg(order_data))
+        delivery_total = delivery_service_charge_rub(logistics_cost, total_cargo_weight_kg)
+
         return ArchiveOfferDetails(
             kp_id=kp_id,
             creation_date=raw.get("creation_date"),
@@ -255,6 +273,9 @@ class ArchiveService:
                 total_amount=float(raw.get("total_amount") or 0),
                 discount_percent=float(raw.get("discount_percent") or 0),
             ),
+            logistics_cost=logistics_cost,
+            total_cargo_weight_kg=total_cargo_weight_kg,
+            delivery_service_total_rub=delivery_total,
             plates=plates,
             completion_percentage=completion,
         )
@@ -312,30 +333,10 @@ class ArchiveService:
 
     @staticmethod
     def _parse_execution_terms(raw: str) -> str:
-        value = (raw or "").strip()
-        if not value:
-            raise ArchiveValidationError("Укажите срок изготовления")
-
-        for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
-            try:
-                dt = datetime.strptime(value, fmt)
-                return dt.strftime("%d.%m.%Y")
-            except ValueError:
-                continue
-
-        match_days = re.search(r"(\d+)\s*(?:дн|день|дней|day|days)", value, re.IGNORECASE)
-        if match_days:
-            days = int(match_days.group(1))
-            return (datetime.now() + timedelta(days=days)).strftime("%d.%m.%Y")
-
-        match_weeks = re.search(r"(\d+)\s*(?:нед|недел|недели|week|weeks)", value, re.IGNORECASE)
-        if match_weeks:
-            weeks = int(match_weeks.group(1))
-            return (datetime.now() + timedelta(weeks=weeks)).strftime("%d.%m.%Y")
-
-        raise ArchiveValidationError(
-            "Не удалось распознать срок. Используйте формат ДД.ММ.ГГГГ, ГГГГ-ММ-ДД, 'N дней' или 'N недель'."
-        )
+        try:
+            return normalize_execution_terms_to_ddmmyyyy(raw)
+        except ValueError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
 
 
 def _nullable_float(value: object) -> float | None:

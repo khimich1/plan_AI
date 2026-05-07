@@ -41,6 +41,8 @@ export interface DayPlateInfo {
   qty: number;
   reinforcement: number;
   load_code: number | null;
+  /** Позиция из снимка после списания (остаётся в списке дня). */
+  write_off_completed?: boolean;
 }
 
 export interface DayTrackDetail {

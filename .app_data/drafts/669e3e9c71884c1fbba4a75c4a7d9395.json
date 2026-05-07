@@ -1,0 +1,4878 @@
+{
+  "order": {
+    "plates_1_2": [
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      7.8,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6,
+      6.6
+    ],
+    "plates_1_5_to_1_2": [],
+    "plates_1_0": [],
+    "plates_1_08": [],
+    "plates_0_46": [],
+    "plates_0_32": [],
+    "plates_0_72": [],
+    "plates_0_70": [],
+    "plates_0_86": [],
+    "plates_0_74": [],
+    "plates_0_88": [],
+    "plates_0_48": [],
+    "plates_0_50": [],
+    "plates_0_34": [],
+    "plate_load_details": [
+      [
+        [
+          7.8,
+          1.2,
+          8.0,
+          "78"
+        ],
+        20
+      ],
+      [
+        [
+          6.6,
+          1.2,
+          8.0,
+          "66"
+        ],
+        40
+      ]
+    ],
+    "plate_length_dm_raw": [
+      [
+        [
+          7.8,
+          1.2,
+          8.0,
+          "78"
+        ],
+        "78"
+      ],
+      [
+        [
+          6.6,
+          1.2,
+          8.0,
+          "66"
+        ],
+        "66"
+      ]
+    ],
+    "plate_exact_widths": [
+      [
+        [
+          7.8,
+          "plates_1_2"
+        ],
+        1.2
+      ],
+      [
+        [
+          6.6,
+          "plates_1_2"
+        ],
+        1.2
+      ]
+    ],
+    "nomenclature_cache": [
+      [
+        [
+          7.8,
+          1.2,
+          8.0,
+          "78"
+        ],
+        {
+          "canonical_name": "Плиты ПБ 78-12-8п",
+          "nomenclature_id": "8db430ae-f1a1-11e9-8f4e-04d9f5387845"
+        }
+      ],
+      [
+        [
+          6.6,
+          1.2,
+          8.0,
+          "66"
+        ],
+        {
+          "canonical_name": "Плиты ПБ 66-12-8п",
+          "nomenclature_id": "3c9d46e1-ee4d-11e9-8f4e-04d9f5387845"
+        }
+      ]
+    ],
+    "longitudinal_cuts": 0,
+    "length_trims": 0,
+    "unused_strips_0_3_m_total": 0.0,
+    "scrap_strips_0_2_m_total": 0.0,
+    "usable_strips_0_74_m_total": 0,
+    "usable_strips_0_88_m_total": 0,
+    "usable_strips_0_48_m_total": 0,
+    "usable_strips_0_50_m_total": 0,
+    "usable_strips_0_34_m_total": 0,
+    "scrap_strips_0_12_m_total": 0,
+    "waste_area_m2": 0.0
+  },
+  "optimization": {
+    "optimization_result": {
+      "primary_cuts": [
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-1",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-2",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-3",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-4",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-5",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-6",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-7",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-8",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-9",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-10",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-11",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-12",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-13",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-14",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-15",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-16",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-17",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-18",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-19",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            7.8
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            7.8,
+            1200,
+            8
+          ],
+          "source_opt_id": 0,
+          "primary_instance_id": "prim-20",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-21",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-22",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-23",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-24",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-25",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-26",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-27",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-28",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-29",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-30",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-31",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-32",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-33",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-34",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-35",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-36",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-37",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-38",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-39",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-40",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-41",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-42",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-43",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-44",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-45",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-46",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-47",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-48",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-49",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-50",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-51",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-52",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-53",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-54",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-55",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-56",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-57",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-58",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-59",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        },
+        {
+          "width": 1200,
+          "demand_width": 1200,
+          "rest": 0,
+          "qty": 1,
+          "lengths": [
+            6.6
+          ],
+          "load_code": 8.0,
+          "assignment_key": [
+            6.6,
+            1200,
+            8
+          ],
+          "source_opt_id": 1,
+          "primary_instance_id": "prim-60",
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "identity_match_type": "slot_proportional"
+        }
+      ],
+      "secondary_cuts": [],
+      "total_plates": 60,
+      "plate_assignments": [
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-1",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-2",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-3",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-4",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-5",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-6",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-7",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-8",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-9",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-10",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-11",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-12",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-13",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-14",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-15",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-16",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-17",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-18",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-19",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 7.8,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-20",
+          "parent_unit_id": null,
+          "source_opt_id": 0
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-21",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-22",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-23",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-24",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-25",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-26",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-27",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-28",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-29",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-30",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-31",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-32",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-33",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-34",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-35",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-36",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-37",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-38",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-39",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-40",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-41",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-42",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-43",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-44",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-45",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-46",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-47",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-48",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-49",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-50",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-51",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-52",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-53",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-54",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-55",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-56",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-57",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-58",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-59",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "source": "primary",
+          "rest_width": 0,
+          "kp_id": null,
+          "customer": null,
+          "kp_date": null,
+          "plate_name": null,
+          "load_code": 8.0,
+          "identity_match_type": "slot_proportional",
+          "unit_id": "prim-60",
+          "parent_unit_id": null,
+          "source_opt_id": 1
+        }
+      ],
+      "orders_requested": [
+        {
+          "length": 7.8,
+          "width": 1200,
+          "qty": 20,
+          "load_code": 8.0,
+          "length_dm_raw": "78"
+        },
+        {
+          "length": 6.6,
+          "width": 1200,
+          "qty": 40,
+          "load_code": 8.0,
+          "length_dm_raw": "66"
+        }
+      ],
+      "rests_created": [],
+      "rests_used": [],
+      "_coverage_summary": {
+        "demand_total": 60,
+        "covered_total": 60,
+        "missing": {},
+        "surplus": {},
+        "ok": true
+      },
+      "loads_in_group": [
+        8
+      ]
+    },
+    "plan_by_load": {
+      "all": {
+        "primary_cuts": [
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-1",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-2",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-3",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-4",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-5",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-6",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-7",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-8",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-9",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-10",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-11",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-12",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-13",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-14",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-15",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-16",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-17",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-18",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-19",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              7.8
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              7.8,
+              1200,
+              8
+            ],
+            "source_opt_id": 0,
+            "primary_instance_id": "prim-20",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-21",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-22",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-23",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-24",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-25",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-26",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-27",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-28",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-29",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-30",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-31",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-32",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-33",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-34",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-35",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-36",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-37",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-38",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-39",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-40",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-41",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-42",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-43",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-44",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-45",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-46",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-47",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-48",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-49",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-50",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-51",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-52",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-53",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-54",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-55",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-56",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-57",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-58",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-59",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          },
+          {
+            "width": 1200,
+            "demand_width": 1200,
+            "rest": 0,
+            "qty": 1,
+            "lengths": [
+              6.6
+            ],
+            "load_code": 8.0,
+            "assignment_key": [
+              6.6,
+              1200,
+              8
+            ],
+            "source_opt_id": 1,
+            "primary_instance_id": "prim-60",
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "identity_match_type": "slot_proportional"
+          }
+        ],
+        "secondary_cuts": [],
+        "total_plates": 60,
+        "plate_assignments": [
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-1",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-2",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-3",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-4",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-5",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-6",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-7",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-8",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-9",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-10",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-11",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-12",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-13",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-14",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-15",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-16",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-17",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-18",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-19",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 7.8,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-20",
+            "parent_unit_id": null,
+            "source_opt_id": 0
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-21",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-22",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-23",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-24",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-25",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-26",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-27",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-28",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-29",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-30",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-31",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-32",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-33",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-34",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-35",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-36",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-37",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-38",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-39",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-40",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-41",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-42",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-43",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-44",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-45",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-46",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-47",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-48",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-49",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-50",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-51",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-52",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-53",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-54",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-55",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-56",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-57",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-58",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-59",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "source": "primary",
+            "rest_width": 0,
+            "kp_id": null,
+            "customer": null,
+            "kp_date": null,
+            "plate_name": null,
+            "load_code": 8.0,
+            "identity_match_type": "slot_proportional",
+            "unit_id": "prim-60",
+            "parent_unit_id": null,
+            "source_opt_id": 1
+          }
+        ],
+        "orders_requested": [
+          {
+            "length": 7.8,
+            "width": 1200,
+            "qty": 20,
+            "load_code": 8.0,
+            "length_dm_raw": "78"
+          },
+          {
+            "length": 6.6,
+            "width": 1200,
+            "qty": 40,
+            "load_code": 8.0,
+            "length_dm_raw": "66"
+          }
+        ],
+        "rests_created": [],
+        "rests_used": [],
+        "_coverage_summary": {
+          "demand_total": 60,
+          "covered_total": 60,
+          "missing": {},
+          "surplus": {},
+          "ok": true
+        },
+        "loads_in_group": [
+          8
+        ]
+      }
+    },
+    "load_to_reinforcement_map": {
+      "8": [
+        "all"
+      ]
+    }
+  },
+  "order_data": [
+    {
+      "name": "Плиты ПБ 78-12-8п",
+      "length_m": 7.8,
+      "length_dm_raw": "78",
+      "width_m": 1.2,
+      "qty": 20,
+      "load_class": 800,
+      "unit_price": 30305.0,
+      "weight": 53040.0,
+      "nomenclature_id": "8db430ae-f1a1-11e9-8f4e-04d9f5387845"
+    },
+    {
+      "name": "Плиты ПБ 66-12-8п",
+      "length_m": 6.6,
+      "length_dm_raw": "66",
+      "width_m": 1.2,
+      "qty": 40,
+      "load_class": 800,
+      "unit_price": 22821.0,
+      "weight": 89760.0,
+      "nomenclature_id": "3c9d46e1-ee4d-11e9-8f4e-04d9f5387845"
+    }
+  ],
+  "metadata": {
+    "source_type": "text",
+    "original_text": "ПБ 78-12-8п 20\r\nПБ 66-12-8п 40",
+    "ocr_text": "",
+    "input_text": "ПБ 78-12-8п 20\r\nПБ 66-12-8п 40",
+    "accumulated_text": "ПБ 78-12-8п 20\r\nПБ 66-12-8п 40",
+    "warnings": [],
+    "unparsed_lines": [],
+    "normalized_text": "ПБ 78-12-8п 20\nПБ 66-12-8п 40",
+    "normalized_lines": [
+      "ПБ 78-12-8п 20",
+      "ПБ 66-12-8п 40"
+    ],
+    "wide_plate_lines": [],
+    "diagnostics": [
+      {
+        "raw_input": "ПБ 78-12-8п 20",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 78-12-8п 20"
+      },
+      {
+        "raw_input": "ПБ 66-12-8п 40",
+        "parse_stage": "tolerant_pbpk",
+        "recognized_by": "parser",
+        "validation_status": "ok",
+        "normalized_input": "ПБ 66-12-8п 40"
+      }
+    ],
+    "breakdown_tables": [
+      {
+        "name": "Плиты ПБ 66-12-8п",
+        "rows": [
+          [
+            "Базовая цена (1,20м)",
+            "22 821,00 × (1,20 / 1.2)",
+            "22 821,00 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "22 821,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "22 821,00 руб"
+          ],
+          [
+            "За 40 плит",
+            "22 821,00 × 40",
+            "912 840,00 руб"
+          ]
+        ]
+      },
+      {
+        "name": "Плиты ПБ 78-12-8п",
+        "rows": [
+          [
+            "Базовая цена (1,20м)",
+            "30 305,00 × (1,20 / 1.2)",
+            "30 305,00 руб"
+          ],
+          [
+            "ИТОГО за 1 плиту",
+            "",
+            "30 305,00 руб"
+          ],
+          [
+            "Округлено",
+            "",
+            "30 305,00 руб"
+          ],
+          [
+            "За 20 плит",
+            "30 305,00 × 20",
+            "606 100,00 руб"
+          ]
+        ]
+      }
+    ],
+    "price_rows_count": 2,
+    "breakdown_tables_count": 2,
+    "total_sum": 1518940.0,
+    "plate_batches": [
+      {
+        "source_type": "text",
+        "original_text": "ПБ 78-12-8п 20\r\nПБ 66-12-8п 40",
+        "normalized_text": "ПБ 78-12-8п 20\r\nПБ 66-12-8п 40",
+        "ocr_text": "",
+        "filename": ""
+      }
+    ],
+    "wide_plates_resolved": true,
+    "last_source_filename": "",
+    "current_step": "calculate",
+    "saved_offer": {
+      "kp_id": 2,
+      "status": "в архиве",
+      "mode": "archive",
+      "execution_terms": "",
+      "saved_at": "2026-05-05T13:30:07"
+    },
+    "generated_files": [
+      {
+        "kind": "pdf",
+        "filename": "kp_669e3e9c_20260505_132715.pdf",
+        "display_name": "Коммерческое предложение (PDF)",
+        "download_url": "/api/v1/commercial/files/kp_669e3e9c_20260505_132715.pdf"
+      },
+      {
+        "kind": "xlsx",
+        "filename": "kp_669e3e9c_20260505_133006.xlsx",
+        "display_name": "Коммерческое предложение (XLSX)",
+        "download_url": "/api/v1/commercial/files/kp_669e3e9c_20260505_133006.xlsx"
+      },
+      {
+        "kind": "breakdown",
+        "filename": "kp_669e3e9c_20260505_130829_breakdown.xlsx",
+        "display_name": "Детальная разбивка (XLSX)",
+        "download_url": "/api/v1/commercial/files/kp_669e3e9c_20260505_130829_breakdown.xlsx"
+      },
+      {
+        "kind": "schema",
+        "filename": "Схема_Дорожки_1-5_20260505_130830_209081_КЗ.pdf",
+        "display_name": "Схема раскладки (PDF)",
+        "download_url": "/api/v1/commercial/files/Схема_Дорожки_1-5_20260505_130830_209081_КЗ.pdf"
+      }
+    ],
+    "current_save_mode": "archive",
+    "execution_terms": "",
+    "ocr_recognition_mode": "full_gpt",
+    "ocr_cost_usd": 0.003725,
+    "ocr_plates": [
+      {
+        "raw_name": "ПБ 78-12-8п",
+        "normalized_candidate": "ПБ 78-12-8п",
+        "qty": 2,
+        "confidence": 0.95,
+        "issues": []
+      },
+      {
+        "raw_name": "ПБ 66-12-8п",
+        "normalized_candidate": "ПБ 66-12-8п",
+        "qty": 4,
+        "confidence": 0.95,
+        "issues": []
+      }
+    ],
+    "manager_id": 2,
+    "manager_name": "Зубов Алексей Юрьевич",
+    "manager_phone": "79621872265",
+    "manager_email": "zubov@gbkstart.ru",
+    "client_name": "ООО Сальса",
+    "discount_percent": 100.0,
+    "conditions_mode": "standard",
+    "delivery_conditions": "",
+    "payment_conditions": "",
+    "logistics_cost": 5000.0
+  }
+}

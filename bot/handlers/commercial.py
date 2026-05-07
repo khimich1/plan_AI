@@ -6,7 +6,7 @@ import sys
 import math
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any
 from collections import defaultdict
 
@@ -31,6 +31,7 @@ from core.db_config import PB_DB_PATH
 from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
 from core import kp_db
+from core.execution_terms import parse_execution_terms_to_datetime
 from core.exceptions import PlateParseError, FileGenerationError
 from core.debug_paths import get_debug_log_path
 
@@ -1952,46 +1953,8 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     """
     execution_terms_input = message.text.strip()
     logger.debug(f"Получены сроки: {execution_terms_input}")
-    
-    # === ПАРСИМ СРОКИ И ВЫЧИСЛЯЕМ ДАТУ ДЕДЛАЙНА ===
-    from datetime import timedelta
-    import re
-    
-    deadline_date = None
-    
-    # ИСПРАВЛЕНИЕ: Сначала пробуем распознать ДАТУ (чтобы "01.02.2026" не распознавалось как "1 день")
-    # Вариант 1: Формат ДД.ММ.ГГГГ (например: "01.02.2026")
-    try:
-        deadline_date = datetime.strptime(execution_terms_input, '%d.%m.%Y')
-        logger.debug(f"Распознана дата (ДД.ММ.ГГГГ): {deadline_date.strftime('%d.%m.%Y')}")
-    except ValueError:
-        pass
-    
-    # Вариант 2: Формат ГГГГ-ММ-ДД (например: "2026-02-01")
-    if not deadline_date:
-        try:
-            deadline_date = datetime.strptime(execution_terms_input, '%Y-%m-%d')
-            logger.debug(f"Распознана дата (ГГГГ-ММ-ДД): {deadline_date.strftime('%d.%m.%Y')}")
-        except ValueError:
-            pass
-    
-    # Вариант 3: Пользователь ввёл количество дней (например: "14", "14 дней", "30дней")
-    if not deadline_date:
-        match_days = re.search(r'(\d+)\s*(?:дн|день|дней|day|days)', execution_terms_input, re.IGNORECASE)
-        if match_days:
-            days = int(match_days.group(1))
-            deadline_date = datetime.now() + timedelta(days=days)
-            logger.debug(f"Распознано {days} дней, дедлайн: {deadline_date.strftime('%d.%m.%Y')}")
-    
-    # Вариант 4: Пользователь ввёл количество недель (например: "2 недели", "3week")
-    if not deadline_date:
-        match_weeks = re.search(r'(\d+)\s*(?:нед|недел|недели|week|weeks)', execution_terms_input, re.IGNORECASE)
-        if match_weeks:
-            weeks = int(match_weeks.group(1))
-            deadline_date = datetime.now() + timedelta(weeks=weeks)
-            logger.debug(f"Распознано {weeks} недель, дедлайн: {deadline_date.strftime('%d.%m.%Y')}")
-    
-    # Если не удалось распознать, используем 14 дней по умолчанию
+
+    deadline_date = parse_execution_terms_to_datetime(execution_terms_input)
     if not deadline_date:
         deadline_date = datetime.now() + timedelta(days=14)
         await message.answer(
@@ -1999,7 +1962,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
             f"Использую значение по умолчанию: 14 дней\n"
             f"Дедлайн: {deadline_date.strftime('%d.%m.%Y')}"
         )
-    
+
     # Форматируем дату для сохранения в БД
     execution_terms = deadline_date.strftime('%d.%m.%Y')
     logger.debug(f"Итоговая дата дедлайна: {execution_terms}")

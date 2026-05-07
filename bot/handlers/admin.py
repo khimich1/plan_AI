@@ -455,6 +455,7 @@ async def confirm_db_clear(callback: CallbackQuery):
             f"  • Остатки: {result_db['plate_rests']}\n"
             f"  • Файлы: {result_db['kp_files']}\n"
             f"  • Метаданные: {result_db['kp_meta']}\n"
+            f"  • Журнал статусов плит: {result_db['plate_status_log']}\n"
             f"  • **Итого записей БД: {result_db['total']}**\n\n"
             f"📅 Удалено файлов планов:\n"
             f"  • Текущий план: {result_plans['current_plan']}\n"

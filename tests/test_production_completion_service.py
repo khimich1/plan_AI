@@ -360,6 +360,54 @@ def test_rejected_plates_visible_in_next_planning(planning_service, tmp_plita):
     assert rebuilt["summary"]["selected_plates_count"] == 3
 
 
+def test_day_view_write_off_completed_false_before_complete_true_after_snapshot(
+    planning_service,
+    tmp_plita,
+):
+    """До complete_day плиты из kp_plates без флага списания; после — снимок с write_off_completed."""
+    from app.services.day_view_service import build_day_view_detail
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    before = build_day_view_detail("2026-04-21", db_path=tmp_plita)
+    assert before is not None
+    before_plates = [
+        p
+        for block in before["plans"]
+        if block["plan_id"] == plan_id
+        for tr in block["tracks"]
+        for p in (tr.get("plates_info") or [])
+    ]
+    assert before_plates, "плиты должны отображаться до списания дня"
+    assert all(not p.get("write_off_completed") for p in before_plates), (
+        f"живые строки kp_plates не помечаются write_off_completed: {before_plates}"
+    )
+
+    service = _make_production_service(planning_service, tmp_plita)
+    result = service.complete_day(plan_id=plan_id, target_date="2026-04-21")
+    assert result["completed"] is True
+    assert result["moved_plates"] == 3
+
+    after = build_day_view_detail("2026-04-21", db_path=tmp_plita)
+    assert after is not None
+    after_plates = [
+        p
+        for block in after["plans"]
+        if block["plan_id"] == plan_id
+        for tr in block["tracks"]
+        for p in (tr.get("plates_info") or [])
+    ]
+    assert after_plates, "после complete_day day_view реаттачит плиты из журнала/снимка"
+    assert all(p.get("write_off_completed") is True for p in after_plates), (
+        f"позиции со снимка должны быть write_off_completed=True: {after_plates}"
+    )
+
+
 def test_kp_marked_done_only_when_no_remaining_plates(planning_service, tmp_plita):
     """С браком КП остаётся 'в работе'; без брака — становится 'выполнено'."""
     # 1) С полным браком → 'в работе'

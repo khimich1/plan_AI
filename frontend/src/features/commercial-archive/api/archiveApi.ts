@@ -26,6 +26,13 @@ export const archiveApi = {
       { "Content-Type": "application/json" },
     ),
 
+  updateLogisticsCost: (kpId: number, logisticsCost: number) =>
+    httpClient.patch<ArchiveOfferDetails>(
+      `${BASE}/${kpId}/logistics-cost`,
+      JSON.stringify({ logistics_cost: logisticsCost }),
+      { "Content-Type": "application/json" },
+    ),
+
   delete: (kpId: number) => httpClient.delete<void>(`${BASE}/${kpId}`),
 
   moveToProduction: (kpId: number, executionTerms: string) =>
