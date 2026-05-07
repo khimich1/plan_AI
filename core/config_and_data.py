@@ -2,22 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 Конфигурация и данные проекта:
-- Константы (размеры дорожки, цены резов)
-- Глобальные списки плит
+- Константы (размеры дорожки, цены резов) и ``get_config()`` → :class:`core.config.app_settings.AppConfig`
+- Глобальные списки плит (legacy-имена PLATES_* / PLATE_* через PEP 562 ``__getattr__`` → рантайм)
 - Парсинг текста пользователя
+
+Мутабельные имена заказа не назначаются через ``cfg.NAME = ...``; только чтение и in-place мутация объектов.
 """
 import math
 import re
-import sys
 import logging
-import types
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
-# Импортируем пользовательские исключения
-from .exceptions import PlateParseError
-from .plate_line_parser import parse_line
-from .plate_validation import validate_plate_values
 from .debug_paths import get_debug_log_path
 from .project_paths import (
     BASE_DIR,
@@ -35,717 +30,46 @@ from .plate_runtime_state import (
     plate_mutable_runtime_scope,
     reset_plate_mutable_runtime,
 )
+from .config.app_settings import AppConfig, get_config
+from .config.constants import (
+    LONG_CUT_PRICE_PER_M,
+    TRACK_LENGTH_M,
+    TRACK_WIDTH_M,
+    TRANSVERSE_CUT_PRICE,
+    WEIGHT_KG_PER_DM2,
+    length_dm_to_m,
+    normalize_dimension,
+    parse_pb_width_to_m,
+)
+from .domain.plate_order import (
+    PlateOrder,
+    get_current_plate_order,
+    normalize_load_code,
+)
+from .parsing.plate_lists import (
+    LineContributionKey,
+    _clear_all_plate_lists,
+    _recompute_totals_from_lists,
+    get_last_parse_diagnostics,
+    set_plate_lists_from_text,
+)
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
 _DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
 _DEBUG_LOG_B59370 = get_debug_log_path("debug-b59370.log")
 
-# ==================== КОНСТАНТЫ ====================
-
-TRACK_LENGTH_M = 101.0
-TRACK_WIDTH_M = 1.2
-
 # Пути и env: см. core.project_paths / core.project_settings (реэкспорт для обратной совместимости).
-
-# Стоимость резов
-LONG_CUT_PRICE_PER_M = 460.0  # Продольный рез, руб/пог.м
-TRANSVERSE_CUT_PRICE = 1200.0  # Поперечный (или скошенный) рез, руб/шт
-
-# Вес 1 дм длины при ширине 1 дм, кг.
-WEIGHT_KG_PER_DM2 = 2.83333333
-
-# Длина из марки ПБ: целое без запятой/точки = номинал в дм → длина = номинал / 10 м (без вычета 20 мм)
-def length_dm_to_m(Ldm_str: str) -> float:
-    """
-    Переводит строку длины из марки ПБ в метры.
-    - Нет запятой/точки (например "38") → номинал в дм: длина = номинал / 10 м (38 → 3.8 м).
-    - Есть запятая/точка ("38,0", "75,5") → точное значение: парсим в целые мм, затем одно деление на 1000.
-    """
-    s = (Ldm_str or "").strip().replace(" ", "")
-    if "," in s or "." in s:
-        # Ветка с запятой/точкой: разбираем строку без float, считаем длину в целых мм
-        parts = s.replace(",", ".").split(".")
-        if len(parts) != 2:
-            try:
-                return round(float(s.replace(",", ".")) / 10.0, 3)
-            except ValueError:
-                return 0.0
-        try:
-            int_part = int(parts[0].strip())
-            frac_str = (parts[1].strip() or "0")[:3]  # не более 3 знаков
-            frac_part = int(frac_str) if frac_str else 0
-            denom = 10 ** len(frac_str)  # 1, 10, 100
-            # Длина в мм: value_dm = int_part + frac_part/denom, length_mm = value_dm * 100
-            # Целочисленно: (int_part * denom + frac_part) * 100 // denom
-            length_mm = (int_part * denom + frac_part) * 100 // denom
-        except ValueError:
-            return 0.0
-        if length_mm < 0:
-            return 0.0
-        return round(length_mm / 1000.0, 3)
-    try:
-        nominal_dm = int(float(s))
-    except ValueError:
-        return 0.0
-    # Номинал в дм → длина в метрах без вычета 20 мм (69 → 6.9 м)
-    return round(nominal_dm / 10.0, 3)
-
-
-def normalize_dimension(value_str: str) -> float:
-    """
-    Нормализует размер из строки в дециметры.
-
-    Примеры:
-    - "5,30" -> 5.3
-    - "530" -> 5.3 (введены мм без разделителя)
-    - "6.65" -> 6.65
-    """
-    clean = value_str.strip().replace(" ", "").replace(",", ".")
-    try:
-        val = float(clean)
-    except ValueError:
-        return 0.0
-
-    # Диапазон значений, которые чаще всего вводят как мм без запятой:
-    # 530 -> 5.30 дм, 665 -> 6.65 дм.
-    if 20.0 < val < 1000.0:
-        val = val / 100.0
-        logger.debug(
-            "normalize_dimension: применили /100 для значения, похожего на мм: %s -> %s",
-            value_str.strip(),
-            val,
-        )
-    return val
-
-
-def parse_pb_width_to_m(width_str: str) -> float:
-    """
-    Парсит ширину из марки ПБ/ПК (часть W в L-W-N) в метры.
-
-    Правила:
-    - 0.2/0.3 (или 0,2/0,3) считаются уже метрами (спец-ленты).
-    - Остальные значения интерпретируются как дециметры и делятся на 10.
-    """
-    width_raw = normalize_dimension(width_str)
-    if width_raw <= 0:
-        return 0.0
-    if abs(width_raw - 0.3) < 1e-6 or abs(width_raw - 0.2) < 1e-6:
-        return round(width_raw, 3)
-    return round(width_raw / 10.0, 3)
 
 # ==================== МУТАБЕЛЬНОЕ СОСТОЯНИЕ ЗАКАЗА (PLATE-CTX-001) ====================
 # Списки PLATES_* / PLATE_LOAD_DETAILS и связанные структуры живут в
 # core.plate_runtime_state (thread-local + опциональный ContextVar для asyncio).
-# Доступ через атрибуты этого модуля — см. _ConfigDataModule в конце файла.
+# Доступ через атрибуты этого модуля — см. ``__getattr__`` в конце файла (PEP 562).
 
 
 # ==================== КЛАСС ЗАКАЗА (PlateOrder) ====================
-
-@dataclass
-class PlateOrder:
-    """
-    Данные заказа плит: списки по ширине, карта нагрузок, точные ширины, итоги.
-    Используется для изоляции заказа по пользователю (хранение в FSM state, передача в оптимизацию/визуализацию).
-    """
-    plates_1_2: List[float] = field(default_factory=list)
-    plates_1_5_to_1_2: List[float] = field(default_factory=list)
-    plates_1_0: List[float] = field(default_factory=list)
-    plates_1_08: List[float] = field(default_factory=list)
-    plates_0_46: List[float] = field(default_factory=list)
-    plates_0_32: List[float] = field(default_factory=list)
-    plates_0_72: List[float] = field(default_factory=list)
-    plates_0_70: List[float] = field(default_factory=list)
-    plates_0_86: List[float] = field(default_factory=list)
-    plates_0_74: List[float] = field(default_factory=list)
-    plates_0_88: List[float] = field(default_factory=list)
-    plates_0_48: List[float] = field(default_factory=list)
-    plates_0_50: List[float] = field(default_factory=list)
-    plates_0_34: List[float] = field(default_factory=list)
-    plate_load_details: Dict[Tuple[float, float, Union[int, float], str], int] = field(default_factory=dict)
-    plate_length_dm_raw: Dict[Tuple[float, float, Union[int, float], str], str] = field(default_factory=dict)
-    plate_exact_widths: Dict[Tuple[float, str], float] = field(default_factory=dict)
-    longitudinal_cuts: int = 0
-    length_trims: int = 0
-    unused_strips_0_3_m_total: float = 0.0
-    scrap_strips_0_2_m_total: float = 0.0
-    usable_strips_0_74_m_total: float = 0.0
-    usable_strips_0_88_m_total: float = 0.0
-    usable_strips_0_48_m_total: float = 0.0
-    usable_strips_0_50_m_total: float = 0.0
-    usable_strips_0_34_m_total: float = 0.0
-    scrap_strips_0_12_m_total: float = 0.0
-    waste_area_m2: float = 0.0
-
-    def to_dict(self) -> dict:
-        """Сериализация для FSM state (JSON-совместимые ключи)."""
-        return {
-            "plates_1_2": list(self.plates_1_2),
-            "plates_1_5_to_1_2": list(self.plates_1_5_to_1_2),
-            "plates_1_0": list(self.plates_1_0),
-            "plates_1_08": list(self.plates_1_08),
-            "plates_0_46": list(self.plates_0_46),
-            "plates_0_32": list(self.plates_0_32),
-            "plates_0_72": list(self.plates_0_72),
-            "plates_0_70": list(self.plates_0_70),
-            "plates_0_86": list(self.plates_0_86),
-            "plates_0_74": list(self.plates_0_74),
-            "plates_0_88": list(self.plates_0_88),
-            "plates_0_48": list(self.plates_0_48),
-            "plates_0_50": list(self.plates_0_50),
-            "plates_0_34": list(self.plates_0_34),
-            "plate_load_details": [[list(k), v] for k, v in self.plate_load_details.items()],
-            "plate_length_dm_raw": [[list(k), v] for k, v in self.plate_length_dm_raw.items()],
-            "plate_exact_widths": [[list(k), v] for k, v in self.plate_exact_widths.items()],
-            "longitudinal_cuts": self.longitudinal_cuts,
-            "length_trims": self.length_trims,
-            "unused_strips_0_3_m_total": self.unused_strips_0_3_m_total,
-            "scrap_strips_0_2_m_total": self.scrap_strips_0_2_m_total,
-            "usable_strips_0_74_m_total": self.usable_strips_0_74_m_total,
-            "usable_strips_0_88_m_total": self.usable_strips_0_88_m_total,
-            "usable_strips_0_48_m_total": self.usable_strips_0_48_m_total,
-            "usable_strips_0_50_m_total": self.usable_strips_0_50_m_total,
-            "usable_strips_0_34_m_total": self.usable_strips_0_34_m_total,
-            "scrap_strips_0_12_m_total": self.scrap_strips_0_12_m_total,
-            "waste_area_m2": self.waste_area_m2,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "PlateOrder":
-        """Восстановление из FSM state."""
-        def _parse_load_key(k_list):
-            """Конвертирует список [length, width, load_code] или [length, width, load_code, ldr] в 4-кортеж."""
-            ldr = str(k_list[3]).strip() if len(k_list) > 3 and k_list[3] is not None else ""
-            return (float(k_list[0]), float(k_list[1]), float(k_list[2]) if isinstance(k_list[2], (int, float)) else int(k_list[2]), ldr)
-
-        load_details = {}
-        for k_list, v in d.get("plate_load_details", []):
-            load_details[_parse_load_key(k_list)] = int(v)
-        length_dm_raw = {}
-        for k_list, v in d.get("plate_length_dm_raw", []):
-            key = _parse_load_key(k_list)
-            length_dm_raw[key] = str(v) if v is not None else ""
-        exact_widths = {}
-        for k_list, v in d.get("plate_exact_widths", []):
-            exact_widths[(float(k_list[0]), str(k_list[1]))] = float(v)
-        return cls(
-            plates_1_2=list(d.get("plates_1_2", [])),
-            plates_1_5_to_1_2=list(d.get("plates_1_5_to_1_2", [])),
-            plates_1_0=list(d.get("plates_1_0", [])),
-            plates_1_08=list(d.get("plates_1_08", [])),
-            plates_0_46=list(d.get("plates_0_46", [])),
-            plates_0_32=list(d.get("plates_0_32", [])),
-            plates_0_72=list(d.get("plates_0_72", [])),
-            plates_0_70=list(d.get("plates_0_70", [])),
-            plates_0_86=list(d.get("plates_0_86", [])),
-            plates_0_74=list(d.get("plates_0_74", [])),
-            plates_0_88=list(d.get("plates_0_88", [])),
-            plates_0_48=list(d.get("plates_0_48", [])),
-            plates_0_50=list(d.get("plates_0_50", [])),
-            plates_0_34=list(d.get("plates_0_34", [])),
-            plate_load_details=load_details,
-            plate_length_dm_raw=length_dm_raw,
-            plate_exact_widths=exact_widths,
-            longitudinal_cuts=int(d.get("longitudinal_cuts", 0)),
-            length_trims=int(d.get("length_trims", 0)),
-            unused_strips_0_3_m_total=float(d.get("unused_strips_0_3_m_total", 0)),
-            scrap_strips_0_2_m_total=float(d.get("scrap_strips_0_2_m_total", 0)),
-            usable_strips_0_74_m_total=float(d.get("usable_strips_0_74_m_total", 0)),
-            usable_strips_0_88_m_total=float(d.get("usable_strips_0_88_m_total", 0)),
-            usable_strips_0_48_m_total=float(d.get("usable_strips_0_48_m_total", 0)),
-            usable_strips_0_50_m_total=float(d.get("usable_strips_0_50_m_total", 0)),
-            usable_strips_0_34_m_total=float(d.get("usable_strips_0_34_m_total", 0)),
-            scrap_strips_0_12_m_total=float(d.get("scrap_strips_0_12_m_total", 0)),
-            waste_area_m2=float(d.get("waste_area_m2", 0)),
-        )
-
-    @classmethod
-    def from_orders_2d(cls, orders_2d: List[Dict]) -> "PlateOrder":
-        """Строит заказ из списка dict с ключами length, width (мм), qty, load_code (как в state/плане)."""
-        order = cls()
-        # Распределение по ширине (мм) -> список для добавления длин
-        width_to_list = {
-            1200: order.plates_1_2,
-            1080: order.plates_1_08,
-            1000: order.plates_1_0,
-            320: order.plates_0_32,
-            460: order.plates_0_46,
-            700: order.plates_0_70,
-            720: order.plates_0_72,
-            860: order.plates_0_86,
-            880: order.plates_0_88,
-            740: order.plates_0_74,
-            480: order.plates_0_48,
-            500: order.plates_0_50,
-            340: order.plates_0_34,
-        }
-        for p in orders_2d:
-            length = float(p["length"])
-            width_mm = int(p["width"])
-            width_m = width_mm / 1000.0
-            qty = int(p.get("qty", 1))
-            load_code = normalize_load_code(p.get("load_code", 8), default=8)
-            ldr = (p.get("length_dm_raw") or "").strip()
-            key = (round(length, 3), round(width_m, 3), load_code, ldr)
-            order.plate_load_details[key] = order.plate_load_details.get(key, 0) + qty
-            order.plate_length_dm_raw[key] = ldr
-            # Ближайшая стандартная ширина для раскладки по спискам
-            w = width_mm
-            if w in width_to_list:
-                lst = width_to_list[w]
-            elif 1020 <= w <= 1080:
-                lst = order.plates_1_08
-            elif 260 <= w <= 320:
-                lst = order.plates_0_32
-            elif 460 <= w <= 530:
-                lst = order.plates_0_46
-            elif 660 <= w <= 720:
-                lst = order.plates_0_72 if w >= 710 else order.plates_0_70
-            elif 860 <= w <= 920:
-                lst = order.plates_0_86
-            else:
-                lst = order.plates_1_2 if abs(width_m - 1.2) < 0.01 else None
-            if lst is not None:
-                for _ in range(qty):
-                    lst.append(length)
-        order._recompute_totals()
-        return order
-
-    def _recompute_totals(self) -> None:
-        """Пересчитывает итоговые поля из списков плит."""
-        self.longitudinal_cuts = (
-            len(self.plates_1_5_to_1_2) + len(self.plates_1_0) +
-            len(self.plates_1_08) + len(self.plates_0_46) +
-            len(self.plates_0_32) + len(self.plates_0_72) + len(self.plates_0_70) + len(self.plates_0_86)
-        )
-        self.length_trims = 0
-        self.unused_strips_0_3_m_total = 0.0
-        self.scrap_strips_0_2_m_total = 0.0
-        self.usable_strips_0_74_m_total = round(sum(self.plates_0_46), 1)
-        self.usable_strips_0_88_m_total = round(sum(self.plates_0_32), 1)
-        self.usable_strips_0_48_m_total = round(sum(self.plates_0_72), 1)
-        self.usable_strips_0_50_m_total = round(sum(self.plates_0_70), 1)
-        self.usable_strips_0_34_m_total = round(sum(self.plates_0_86), 1)
-        self.scrap_strips_0_12_m_total = round(sum(self.plates_1_08), 1)
-        self.waste_area_m2 = round(0.12 * self.scrap_strips_0_12_m_total, 2)
-
-    def to_orders_2d(self) -> List[Dict]:
-        """Список dict {length, width, qty, load_code, length_dm_raw} для оптимизатора и state."""
-        out = []
-        for key, qty in self.plate_load_details.items():
-            length, width_m, load_code = key[0], key[1], key[2]
-            ldr = key[3] if len(key) > 3 else self.plate_length_dm_raw.get(key, "")
-            out.append({
-                "length": length,
-                "width": int(round(width_m * 1000)),
-                "qty": qty,
-                "load_code": load_code,
-                "length_dm_raw": ldr,
-            })
-        return out
-
-    def apply_to_globals(self) -> None:
-        """Записывает данные заказа в потоколокальное / контекстное состояние cfg."""
-        rt = get_plate_mutable_runtime()
-        rt.plate_load_details.clear()
-        rt.plate_load_details.update(self.plate_load_details)
-        rt.plate_length_dm_raw.clear()
-        rt.plate_length_dm_raw.update(self.plate_length_dm_raw)
-        rt.plate_nomenclature_cache.clear()
-        try:
-            from core.kp_db import fill_plate_nomenclature_cache
-            fill_plate_nomenclature_cache()
-        except Exception as _e:
-            import logging as _logging
-            _logging.getLogger(__name__).warning(f"Не удалось заполнить PLATE_NOMENCLATURE_CACHE: {_e}")
-        rt.plates_1_2 = list(self.plates_1_2)
-        rt.plates_1_5_to_1_2 = list(self.plates_1_5_to_1_2)
-        rt.plates_1_0 = list(self.plates_1_0)
-        rt.plates_1_08 = list(self.plates_1_08)
-        rt.plates_0_46 = list(self.plates_0_46)
-        rt.plates_0_32 = list(self.plates_0_32)
-        rt.plates_0_72 = list(self.plates_0_72)
-        rt.plates_0_70 = list(self.plates_0_70)
-        rt.plates_0_86 = list(self.plates_0_86)
-        rt.plates_0_74 = list(self.plates_0_74)
-        rt.plates_0_88 = list(self.plates_0_88)
-        rt.plates_0_48 = list(self.plates_0_48)
-        rt.plates_0_50 = list(self.plates_0_50)
-        rt.plates_0_34 = list(self.plates_0_34)
-        rt.plate_exact_widths.clear()
-        rt.plate_exact_widths.update(self.plate_exact_widths)
-        rt.longitudinal_cuts = self.longitudinal_cuts
-        rt.length_trims = self.length_trims
-        rt.unused_strips_0_3_m_total = self.unused_strips_0_3_m_total
-        rt.scrap_strips_0_2_m_total = self.scrap_strips_0_2_m_total
-        rt.usable_strips_0_74_m_total = self.usable_strips_0_74_m_total
-        rt.usable_strips_0_88_m_total = self.usable_strips_0_88_m_total
-        rt.usable_strips_0_48_m_total = self.usable_strips_0_48_m_total
-        rt.usable_strips_0_50_m_total = self.usable_strips_0_50_m_total
-        rt.usable_strips_0_34_m_total = self.usable_strips_0_34_m_total
-        rt.scrap_strips_0_12_m_total = self.scrap_strips_0_12_m_total
-        rt.waste_area_m2 = self.waste_area_m2
-
-
-def get_current_plate_order() -> PlateOrder:
-    """Строит PlateOrder из текущего потоколокального / контекстного состояния."""
-    rt = get_plate_mutable_runtime()
-    return PlateOrder(
-        plates_1_2=list(rt.plates_1_2),
-        plates_1_5_to_1_2=list(rt.plates_1_5_to_1_2),
-        plates_1_0=list(rt.plates_1_0),
-        plates_1_08=list(rt.plates_1_08),
-        plates_0_46=list(rt.plates_0_46),
-        plates_0_32=list(rt.plates_0_32),
-        plates_0_72=list(rt.plates_0_72),
-        plates_0_70=list(rt.plates_0_70),
-        plates_0_86=list(rt.plates_0_86),
-        plates_0_74=list(rt.plates_0_74),
-        plates_0_88=list(rt.plates_0_88),
-        plates_0_48=list(rt.plates_0_48),
-        plates_0_50=list(rt.plates_0_50),
-        plates_0_34=list(rt.plates_0_34),
-        plate_load_details=dict(rt.plate_load_details),
-        plate_length_dm_raw=dict(rt.plate_length_dm_raw),
-        plate_exact_widths=dict(rt.plate_exact_widths),
-        longitudinal_cuts=int(rt.longitudinal_cuts),
-        length_trims=int(rt.length_trims),
-        unused_strips_0_3_m_total=float(rt.unused_strips_0_3_m_total),
-        scrap_strips_0_2_m_total=float(rt.scrap_strips_0_2_m_total),
-        usable_strips_0_74_m_total=float(rt.usable_strips_0_74_m_total),
-        usable_strips_0_88_m_total=float(rt.usable_strips_0_88_m_total),
-        usable_strips_0_48_m_total=float(rt.usable_strips_0_48_m_total),
-        usable_strips_0_50_m_total=float(rt.usable_strips_0_50_m_total),
-        usable_strips_0_34_m_total=float(rt.usable_strips_0_34_m_total),
-        scrap_strips_0_12_m_total=float(rt.scrap_strips_0_12_m_total),
-        waste_area_m2=float(rt.waste_area_m2),
-    )
-
-
-def get_last_parse_diagnostics() -> list[dict[str, Any]]:
-    """Возвращает диагностику последнего запуска set_plate_lists_from_text()."""
-    return list(get_plate_mutable_runtime().last_parse_diagnostics)
-
-
-# ==================== ФУНКЦИИ ПАРСИНГА ====================
-
-def _clear_all_plate_lists():
-    """Очищает списки плит в текущем рантайме заказа."""
-    get_plate_mutable_runtime().clear_plate_lists()
-
-
-def _recompute_totals_from_lists():
-    """Пересчитывает итоговые поля рантайма на основе списков плит."""
-    get_plate_mutable_runtime()._recompute_totals_from_lists()
-
-
-# Ключ для сопоставления строки ввода с позициями заказа / order_data:
-# длина и ширина в метрах, код нагрузки (или None для размерных строк без марки), сырой фрагмент длины из марки.
-LineContributionKey = Tuple[float, float, Optional[float], str]
-
-
-def set_plate_lists_from_text(
-    user_text: str,
-) -> tuple[list[str], list[list[LineContributionKey]], list[dict[tuple, int]]]:
-    """Парсит свободный текст пользователя и заполняет списки PLATES_*.
-
-    Поддерживаемые форматы (регистр не важен, пробелы опциональны):
-      - Размеры через «x» или «×»: «1.2×3.39 — 2 шт», «0,32x6,63 - 4»
-      - Марка ПБ/ПК: «ПБ 78-12-8п 3», «Плиты ПБ 78-12-8п», «ПБ78-12-8п 5», «ПК 80-12-8 7»
-        Длина и ширина в дециметрах (78 => 7.8 м, 12 => 1.2 м), нагрузка — после последнего дефиса (8п, 10п и т.д.)
-      - Количество: после марки, опционально «шт» («8п 5», «8п 5 шт», «8п — 5»)
-    Неизвестные ширины и нераспознанные строки возвращаются в списке нераспознанных.
-
-    Returns:
-        (unparsed_lines, line_contributions, line_plate_load_details): нераспознанные строки;
-        для каждой строки ``lines`` — список ключей вклада; для каждой строки — словарь
-        накопленных количеств по тем же ключам, что ``PLATE_LOAD_DETAILS``, только для этой строки ввода.
-
-    Raises:
-        PlateParseError: Если текст пустой или после разбивки не осталось валидных строк.
-    """
-    if not user_text or not user_text.strip():
-        logger.warning("Получен пустой текст заказа")
-        raise PlateParseError(
-            "Текст заказа пустой. Пожалуйста, введите список плит.\n"
-            "Пример: ПБ 78-12-8п 5 шт"
-        )
-    
-    _clear_all_plate_lists()
-    rt = get_plate_mutable_runtime()
-    rt.last_parse_diagnostics.clear()
-
-    # Нормализация: конвертация каталожных марок (ПБ 59.12-8Вр1400-25 → ПБ 59-12-8п)
-    # и других нестандартных вариантов записи перед основным парсингом.
-    _processing_text = user_text
-    try:
-        from .plate_text_normalizer import normalize_order_text
-        _norm = normalize_order_text(user_text)
-        if _norm.warnings:
-            for _w in _norm.warnings[:10]:
-                logger.info("Нормализатор: %s", _w)
-        if _norm.normalized_text.strip():
-            _processing_text = _norm.normalized_text
-    except Exception as _norm_err:
-        logger.warning("Ошибка нормализатора, используем исходный текст: %s", _norm_err)
-
-    # Нормализация: единый символ умножения, неразрывные пробелы как обычные
-    text = (_processing_text or '').replace('\u00d7', 'x').replace('×', 'x')
-    text = text.replace('\u00a0', ' ')
-    lines = [re.sub(r'\s+', ' ', l).strip() for l in re.split(r'[\n;]+', text) if l.strip()]
-    line_contributions: list[list[LineContributionKey]] = [[] for _ in lines]
-    line_plate_load_details: list[dict[tuple, int]] = [{} for _ in lines]
-
-    def _record_contribution(line_idx: int, length_m: float, width_m: float, load_code: Optional[float], ldr: str) -> None:
-        if line_idx < 0 or line_idx >= len(line_contributions):
-            return
-        line_contributions[line_idx].append(
-            (round(float(length_m), 3), round(float(width_m), 3), load_code, (ldr or "").strip())
-        )
-
-    # Дополнительная проверка после разбивки на строки
-    if not lines:
-        logger.warning("После разбивки не осталось валидных строк")
-        raise PlateParseError(
-            "Не удалось найти ни одной строки с плитами.\n"
-            "Проверьте формат ввода."
-        )
-
-    def add_items(
-        width_m: float,
-        length_m: float,
-        qty: int,
-        load_code: int = None,
-        length_dm_raw: str = None,
-        line_idx: Optional[int] = None,
-    ):
-        """
-        Добавляет плиты в соответствующий глобальный список по ширине.
-
-        Если ширина не попадает ни в один из «жёстких» диапазонов,
-        используем правило: берём ближайший МЕНЬШИЙ допустимый рез
-        (включая остаточные ширины) и повторно вызываем add_items
-        уже с притянутой шириной.
-        
-        Args:
-            width_m: ширина плиты в метрах
-            length_m: длина плиты в метрах
-            qty: количество плит
-            load_code: нагрузка (6, 8, 10, 12, 13 и т.д.) - опционально
-            length_dm_raw: исходная строка длины из марки (например "59,81") для различения плит
-            line_idx: индекс строки заказа (для line_contributions); None — не писать вклад
-        """
-        # ЗАЩИТА: Проверяем адекватность размеров
-        # Если размеры слишком большие (вероятно, ошибка OCR распознал мм как дм)
-        # то игнорируем эту плиту
-        if width_m > 20.0 or length_m > 200.0:
-            logger.warning(
-                f"Пропущена плита с неадекватными размерами: {length_m}м × {width_m}м. "
-                f"Возможно, OCR распознал мм как дм."
-            )
-            return
-        
-        if width_m <= 0 or length_m <= 0:
-            logger.warning(f"Пропущена плита с нулевыми размерами: {length_m}м × {width_m}м")
-            return
-
-        # Защита от зависаний: слишком большое количество может «повесить» бот,
-        # потому что ниже мы добавляем в списки по 1 штуке в цикле.
-        if qty is None or qty <= 0:
-            logger.warning(f"Пропущена плита с некорректным количеством: qty={qty}")
-            return
-        if qty > 500:
-            logger.warning(f"Пропущена строка с слишком большим количеством плит: qty={qty}")
-            return
-        # Специальная обработка плит 1.5 м → заменяем на 1.2 м + 0.3 м
-        if 1.45 <= width_m <= 1.55:  # 1.5 м (диапазон ±50 мм)
-            length_rounded = round(float(length_m), 3)
-            # Добавляем плиту 1.2 м
-            for _ in range(max(0, qty)):
-                rt.plates_1_2.append(length_rounded)
-                # Сохраняем точную ширину 1.2м
-                rt.plate_exact_widths[(length_rounded, 'PLATES_1_2')] = 1.2
-            # Добавляем плиту 0.3 м (записываем в PLATES_0_32)
-            for _ in range(max(0, qty)):
-                rt.plates_0_32.append(length_rounded)
-                # Сохраняем точную ширину 0.3м (попадает в диапазон 0.26-0.32)
-                rt.plate_exact_widths[(length_rounded, 'PLATES_0_32')] = 0.3
-            ldr_norm = (length_dm_raw or "").strip()
-            if load_code is not None and load_code > 0:
-                width_rounded = round(width_m, 3)
-                key_new = (length_rounded, width_rounded, load_code, ldr_norm)
-                rt.plate_load_details[key_new] = rt.plate_load_details.get(key_new, 0) + qty
-                rt.plate_length_dm_raw[key_new] = ldr_norm
-                if line_idx is not None and 0 <= line_idx < len(line_plate_load_details):
-                    _ld = line_plate_load_details[line_idx]
-                    _ld[key_new] = _ld.get(key_new, 0) + qty
-                if line_idx is not None:
-                    lc = float(load_code)
-                    _record_contribution(line_idx, length_rounded, 1.2, lc, ldr_norm)
-                    _record_contribution(line_idx, length_rounded, 0.3, lc, ldr_norm)
-            elif line_idx is not None:
-                _record_contribution(line_idx, length_rounded, 1.2, None, ldr_norm)
-                _record_contribution(line_idx, length_rounded, 0.3, None, ldr_norm)
-            return
-
-        target = None
-        target_name = None  # Имя списка для сохранения точной ширины
-        
-        # Стандартные ширины плит
-        if 1.15 <= width_m <= 1.25:
-            target = rt.plates_1_2
-            target_name = 'PLATES_1_2'
-        elif 0.98 <= width_m <= 1.02:
-            target = rt.plates_1_0
-            target_name = 'PLATES_1_0'
-        elif 1.02 <= width_m <= 1.08:   # по таблице завода: рез 1020–1080 мм
-            target = rt.plates_1_08
-            target_name = 'PLATES_1_08'
-        # Основные части (по таблице допустимых резов: 260-320, 460-530, 660-720, 860-920):
-        elif 0.26 <= width_m <= 0.32:    # 260-320 мм
-            target = rt.plates_0_32
-            target_name = 'PLATES_0_32'
-        elif 0.46 <= width_m <= 0.53:    # 460-530 мм
-            target = rt.plates_0_46
-            target_name = 'PLATES_0_46'
-        elif 0.66 <= width_m <= 0.71:    # 660-710 мм → PLATES_0_70
-            target = rt.plates_0_70
-            target_name = 'PLATES_0_70'
-        elif 0.71 < width_m <= 0.72:     # 710-720 мм → PLATES_0_72
-            target = rt.plates_0_72
-            target_name = 'PLATES_0_72'
-        elif 0.86 <= width_m <= 0.92:    # 860-920 мм
-            target = rt.plates_0_86
-            target_name = 'PLATES_0_86'
-        # Остатки по таблице завода (добор): остаток от 860–920 = 260–320 (попадает в 0_32 выше)
-        # 340 мм по таблице не входит в допустимый остаток — не выделяем отдельно
-        elif 0.47 < width_m <= 0.49:     # ~480 мм (остаток от 720)
-            target = rt.plates_0_48
-            target_name = 'PLATES_0_48'
-        elif 0.49 < width_m <= 0.51:     # ~500 мм (остаток от 700)
-            target = rt.plates_0_50
-            target_name = 'PLATES_0_50'
-        # По таблице остаток от реза 460–530 = 660–720 мм (попадает в 0_70/0_72 выше), 740 не используем
-        elif 0.87 < width_m <= 0.89:     # ~880 мм (остаток от 320)
-            target = rt.plates_0_88
-            target_name = 'PLATES_0_88'
-        else:
-            # Здесь ширина не попала ни в один диапазон.
-            # Применяем правило: «берём меньший рез».
-            # Допустимые ширины по таблице завода (информ. письмо): резы 260–320, 460–530, 660–720, 860–920, 1020–1080 мм
-            STANDARD_WIDTHS = [
-                0.20, 0.30,            # специальные ленты
-                0.32,                  # рез 300 (-40;+20) = 260–320
-                0.46, 0.48,            # рез 500 и остаток
-                0.50, 0.53,            # остаток ~500 и рез до 530
-                0.70, 0.72,            # рез 700 и остаток (740 по таблице не отдельный остаток)
-                0.86, 0.88, 0.92,      # рез 900 и остатки
-                1.00, 1.02, 1.08, 1.20,  # рез 1020–1080 (1.02–1.08), целая 1.2
-            ]
-            # Берём максимальную стандартную ширину, не превышающую фактическую
-            candidates = [w for w in STANDARD_WIDTHS if w <= width_m + 1e-6]
-            if not candidates:
-                # Слишком узкая или совсем нестандартная плита — игнорируем
-                return
-            snapped_width = max(candidates)
-
-            # Рекурсивный вызов с притянутой шириной, чтобы сработали диапазоны выше.
-            add_items(snapped_width, length_m, qty, load_code, length_dm_raw=length_dm_raw, line_idx=line_idx)
-            return
-
-        # Добавляем плиты в список и сохраняем точную ширину (длина с точностью 3 знака)
-        length_rounded = round(float(length_m), 3)
-        for _ in range(max(0, qty)):
-            target.append(length_rounded)
-            
-            # Сохраняем точную ширину для этой плиты
-            if target_name:
-                key = (length_rounded, target_name)
-                rt.plate_exact_widths[key] = round(width_m, 3)
-        
-        # Сохраняем нагрузку (если указана) в PLATE_LOAD_DETAILS и raw в PLATE_LENGTH_DM_RAW
-        width_rounded = round(width_m, 3)
-        ldr_norm = (length_dm_raw or "").strip()
-        if load_code is not None and load_code > 0:
-            key_new = (length_rounded, width_rounded, load_code, ldr_norm)
-            rt.plate_load_details[key_new] = rt.plate_load_details.get(key_new, 0) + qty
-            rt.plate_length_dm_raw[key_new] = ldr_norm
-            if line_idx is not None and 0 <= line_idx < len(line_plate_load_details):
-                _ld = line_plate_load_details[line_idx]
-                _ld[key_new] = _ld.get(key_new, 0) + qty
-            if line_idx is not None:
-                _record_contribution(line_idx, length_rounded, width_rounded, float(load_code), ldr_norm)
-        elif line_idx is not None:
-            _record_contribution(line_idx, length_rounded, width_rounded, None, ldr_norm)
-
-    # Список нераспознанных строк для отчёта пользователю
-    unparsed_lines = []
-
-    for line_idx, raw in enumerate(lines):
-        parsed = False
-        parsed_line = parse_line(raw)
-        diag: dict[str, Any] = {
-            "raw_input": raw,
-            "parse_stage": parsed_line.stage,
-            "recognized_by": "parser",
-        }
-
-        if not parsed_line.parsed:
-            diag["validation_status"] = "failed"
-            diag["reason_code"] = parsed_line.reason_code or "pattern_not_matched"
-            diag["rejection_reason"] = parsed_line.reason_text or "строка не распознана"
-            rt.last_parse_diagnostics.append(diag)
-            unparsed_lines.append(f"{raw} (пропущено: {diag['rejection_reason']})")
-            continue
-
-        validation = validate_plate_values(parsed_line.width_m, parsed_line.length_m, parsed_line.qty)
-        if not validation.ok:
-            diag["validation_status"] = "failed"
-            diag["reason_code"] = validation.reason_code
-            diag["rejection_reason"] = validation.reason_text
-            rt.last_parse_diagnostics.append(diag)
-            unparsed_lines.append(f"{raw} (пропущено: {validation.reason_text})")
-            continue
-
-        add_items(
-            parsed_line.width_m,
-            parsed_line.length_m,
-            parsed_line.qty,
-            parsed_line.load_code,
-            length_dm_raw=parsed_line.length_dm_raw,
-            line_idx=line_idx,
-        )
-        parsed = True
-        diag["validation_status"] = "ok"
-        diag["normalized_input"] = raw
-        rt.last_parse_diagnostics.append(diag)
-        if parsed:
-            continue
-
-    _recompute_totals_from_lists()
-
-    # Заполняем кэш номенклатуры один раз по всем ключам PLATE_LOAD_DETAILS + PLATE_LENGTH_DM_RAW
-    try:
-        from core.kp_db import fill_plate_nomenclature_cache
-        fill_plate_nomenclature_cache()
-    except Exception as _e:
-        logger.warning(f"Не удалось заполнить PLATE_NOMENCLATURE_CACHE: {_e}")
-
-    # Логируем нераспознанные строки для отладки
-    if unparsed_lines:
-        logger.warning(
-            f"Парсинг завершён с {len(unparsed_lines)} нераспознанными строками. "
-            f"Всего строк обработано: {len(lines)}"
-        )
-        for i, line in enumerate(unparsed_lines[:5], 1):  # Показываем первые 5
-            logger.debug(f"  Нераспознанная строка {i}: {line}")
-        if len(unparsed_lines) > 5:
-            logger.debug(f"  ... и ещё {len(unparsed_lines) - 5} строк")
-    else:
-        logger.info(f"Парсинг завершён успешно. Обработано строк: {len(lines)}")
-    
-    return unparsed_lines, line_contributions, line_plate_load_details
-
+# PlateOrder, get_current_plate_order, normalize_load_code реализованы в core.domain.plate_order
+# и реэкспортируются выше для from core.config_and_data import ...
 
 def format_reinforcement_from_load_code(load_code: float | int) -> str:
     """Преобразует код нагрузки (8/10/12/12.5/11/6...) в суффикс вида '8п', '10п', '12п', '12,5п'.
@@ -967,35 +291,6 @@ def extract_length_dm_raw_from_plate_name(plate_name: str) -> str | None:
     return raw if raw else None
 
 
-def normalize_load_code(value, default: int = 8):
-    """
-    Нормализует код нагрузки к единому формату (6/8/10/12/12.5/16...).
-    
-    Примеры:
-    - 800 -> 8
-    - 1200 -> 12
-    - 12.0 -> 12
-    - "8" -> 8
-    - None/ошибка -> default
-    """
-    if value is None:
-        return default
-    try:
-        val = float(value)
-    except Exception:
-        return default
-    
-    if val >= 100:
-        val = val / 100.0
-    
-    # Если почти целое — возвращаем int
-    if abs(val - round(val)) < 1e-6:
-        return int(round(val))
-    
-    # Оставляем дробный код (например, 12.5)
-    return round(val, 1)
-
-
 def canonical_plate_key(length, width, load_code) -> tuple:
     """
     Единственный способ создать ключ плиты во всём проекте.
@@ -1133,19 +428,13 @@ def clear_plate_metadata() -> None:
     get_plate_mutable_runtime().plate_metadata.clear()
 
 
-class _ConfigDataModule(types.ModuleType):
-    """Прокси мутабельных имён PLATES_* / PLATE_* к потоколокальному / контекстному рантайму."""
-
-    def __getattr__(self, name: str) -> Any:
-        if name in MUTABLE_LEGACY_NAMES:
-            return getattr(get_plate_mutable_runtime(), MUTABLE_ATTR_MAP[name])
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name in MUTABLE_LEGACY_NAMES:
-            setattr(get_plate_mutable_runtime(), MUTABLE_ATTR_MAP[name], value)
-            return
-        super().__setattr__(name, value)
+def __getattr__(name: str) -> Any:
+    if name in MUTABLE_LEGACY_NAMES:
+        return getattr(get_plate_mutable_runtime(), MUTABLE_ATTR_MAP[name])
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-sys.modules[__name__].__class__ = _ConfigDataModule
+def __dir__() -> list[str]:
+    names = set(globals().keys())
+    names.update(MUTABLE_LEGACY_NAMES)
+    return sorted(names)
