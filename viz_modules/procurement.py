@@ -9,10 +9,12 @@
 import re
 from collections import Counter
 
+import math
+
 import core.config_and_data as cfg
 from core.debug_paths import get_debug_log_path
 from core.optimization import OPT_PLAN
-from core.price_db import get_price
+from core.price_db import get_price, length_m_to_price_length_dm
 from .price_utils import find_price_for_plate
 
 WIDE_WIDTH_M = 1.2
@@ -20,6 +22,25 @@ WIDE_EPS = 1e-6
 _DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
 _DEBUG_LOG_A9176E = get_debug_log_path("debug-a9176e.log")
 _DEBUG_LOG_DB7A51 = get_debug_log_path("debug-db7a51.log")
+
+
+def _find_price_for_plate_production_fallback(
+    price_table: dict,
+    length_m: float,
+    load_code: int | float = 8,
+) -> float | None:
+    """XLSX fallback для производственной сметы (build_*_production): ключ длины как в таблице prices."""
+    length_dm_key = length_m_to_price_length_dm(length_m)
+    try:
+        load_code_int = int(math.floor(load_code)) if load_code is not None else 8
+    except (TypeError, ValueError):
+        load_code_int = 8
+    if length_dm_key in price_table and load_code_int in price_table[length_dm_key]:
+        return price_table[length_dm_key][load_code_int]
+    for tbl_dm, loads in price_table.items():
+        if abs(tbl_dm - length_dm_key) <= 1 and load_code_int in loads:
+            return loads[load_code_int]
+    return None
 
 
 def _is_wide_width(width_m: float, *, threshold_m: float = WIDE_WIDTH_M, eps: float = WIDE_EPS) -> bool:
@@ -766,7 +787,11 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8):
             # Fallback: если нет в БД, используем старый метод
             db_price = get_price(L, load_code, cfg.PRICE_DB_PATH)
             use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
-            find_price = find_price_for_plate(price_table, L, load_code) if use_fallback else None
+            find_price = (
+                _find_price_for_plate_production_fallback(price_table, L, load_code)
+                if use_fallback
+                else None
+            )
             base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
             if base_price_1_2m > 0:
                 width_factor = W / 1.2
@@ -1501,7 +1526,11 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
             # Fallback
             db_price = get_price(length, load_code, cfg.PRICE_DB_PATH)
             use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
-            find_price = find_price_for_plate(price_table, length, load_code) if use_fallback else None
+            find_price = (
+                _find_price_for_plate_production_fallback(price_table, length, load_code)
+                if use_fallback
+                else None
+            )
             base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
             if base_price_1_2m > 0:
                 width_factor = width_m / 1.2

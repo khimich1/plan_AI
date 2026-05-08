@@ -14,8 +14,8 @@ class PlanRepository:
     def get_active_plan_id(self) -> str | None:
         return plan_manager.get_active_plan_id()
 
-    def set_active_plan(self, plan_id: str) -> None:
-        plan_manager.set_active_plan(plan_id)
+    def set_active_plan(self, plan_id: str) -> bool:
+        return plan_manager.set_active_plan(plan_id)
 
     def load_plan(self, plan_id: str) -> dict | None:
         return plan_manager.load_plan(plan_id)

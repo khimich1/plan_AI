@@ -71,6 +71,10 @@ bot/tmp/
 plans_metadata.json
 tmp/
 
+# Локальные JSON-планы производства и их метаданные (генерируются ботом/сервисом)
+bot/data/plans/
+bot/data/plans_metadata.json
+
 # Frontend (Vite / npm): зависимости и сборка
 node_modules/
 dist/

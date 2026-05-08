@@ -403,7 +403,9 @@ export const DayDrawer = ({
                                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
                                   <strong>{plate.plate_name || "—"}</strong>
                                   {plateWrittenOff && (
-                                    <span className="day-plate-badge day-plate-badge--done">Списано</span>
+                                    <span className="day-plate-badge day-plate-badge--done">
+                                      (ГОТОВО)
+                                    </span>
                                   )}
                                 </div>
                                 {plate.kp_id ? (

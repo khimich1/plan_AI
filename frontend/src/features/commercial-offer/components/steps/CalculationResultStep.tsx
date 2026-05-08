@@ -156,21 +156,13 @@ export const CalculationResultStep = ({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(0, 2fr) minmax(220px, 1fr)",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
           gap: "0.75rem",
           alignItems: "start",
         }}
       >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: "0.75rem",
-          }}
-        >
+        <div style={{ display: "grid", gap: "0.75rem" }}>
           <SummaryCell label="Общий вес (кг)" value={formatNumber(totalWeight)} />
-          <SummaryCell label="Стоимость без НДС" value={formatTotalsMoney(serverSubtotal)} />
-          <SummaryCell label="НДС" value={formatTotalsMoney(serverVat)} />
           <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
             <FieldWrapper label="Стоимость рейса" error={logisticsError}>
               <div style={{ position: "relative" }}>
@@ -207,6 +199,9 @@ export const CalculationResultStep = ({
               </div>
             </FieldWrapper>
           </div>
+        </div>
+        <div style={{ display: "grid", gap: "0.75rem" }}>
+          <SummaryCell label="НДС" value={formatTotalsMoney(serverVat)} />
           <SummaryCell label="Стоимость с НДС" value={formatTotalsMoney(serverTotalWithVat)} />
         </div>
         <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>

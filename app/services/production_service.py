@@ -42,8 +42,9 @@ class ProductionService:
     def get_plan(self, plan_id: str) -> dict | None:
         return self.plan_repository.load_plan(plan_id)
 
-    def activate_plan(self, plan_id: str) -> dict:
-        self.plan_repository.set_active_plan(plan_id)
+    def activate_plan(self, plan_id: str) -> dict | None:
+        if not self.plan_repository.set_active_plan(plan_id):
+            return None
         return {"plan_id": plan_id, "active": True}
 
     def delete_plan(self, plan_id: str) -> dict:

@@ -106,7 +106,10 @@ def activate_plan(
     plan_id: str,
     _user: dict = Depends(require_roles("admin", "production")),
 ) -> dict:
-    return ProductionService().activate_plan(plan_id)
+    result = ProductionService().activate_plan(plan_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return result
 
 
 @router.get("/calendar")

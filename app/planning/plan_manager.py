@@ -9,6 +9,7 @@
 """
 import json
 import os
+import re
 import sys
 import logging
 from datetime import datetime, timedelta
@@ -33,6 +34,35 @@ PLANS_METADATA_PATH = BOT_DIR / "data" / "plans_metadata.json"
 
 # Глобальный максимум дорожек в день (константа для всех планов)
 MAX_TRACKS_PER_DAY = 5
+
+# Безопасное имя файла (stem): латиница, цифры, «-» и «_» (без /, \, ., пробелов)
+_PLAN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_MAX_PLAN_ID_LEN = 200
+
+
+class InvalidPlanIdError(ValueError):
+    """Недопустимый plan_id (в т.ч. попытка path traversal)."""
+
+
+def _validate_plan_id(plan_id: Optional[str]) -> None:
+    if not plan_id or not isinstance(plan_id, str):
+        raise InvalidPlanIdError("plan_id must be a non-empty string")
+    if len(plan_id) > _MAX_PLAN_ID_LEN or not _PLAN_ID_RE.fullmatch(plan_id):
+        raise InvalidPlanIdError(f"bad plan_id: {plan_id!r}")
+
+
+def _plans_dir_resolved() -> Path:
+    return PLANS_DIR.resolve()
+
+
+def _resolved_path_under_plans(candidate: Path, plans_root: Path) -> Path:
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(plans_root)
+    except ValueError:
+        logger.warning("[PLANS] Отклонён путь вне каталога планов: %s", resolved)
+        raise InvalidPlanIdError("path escapes plans directory") from None
+    return resolved
 
 
 def convert_lookup_keys_to_tuples(lookup_dict: dict) -> dict:
@@ -122,8 +152,11 @@ def save_plans_metadata(metadata: dict):
 
 
 def get_plan_path(plan_id: str) -> Path:
-    """Возвращает путь к файлу плана."""
-    return PLANS_DIR / f"{plan_id}.json"
+    """Возвращает абсолютный путь к файлу плана внутри PLANS_DIR."""
+    _validate_plan_id(plan_id)
+    plans_root = _plans_dir_resolved()
+    candidate = plans_root / f"{plan_id}.json"
+    return _resolved_path_under_plans(candidate, plans_root)
 
 
 def load_plan(plan_id: str) -> Optional[dict]:
@@ -136,7 +169,11 @@ def load_plan(plan_id: str) -> Optional[dict]:
     Returns:
         dict или None: Данные плана или None если не найден
     """
-    plan_path = get_plan_path(plan_id)
+    try:
+        plan_path = get_plan_path(plan_id)
+    except InvalidPlanIdError:
+        logger.warning("Отклонён недопустимый plan_id: %r", plan_id)
+        return None
     if not plan_path.exists():
         logger.warning(f"План {plan_id} не найден: {plan_path}")
         return None
@@ -173,7 +210,11 @@ def save_plan(plan_data: dict):
         logger.error("План не содержит ID!")
         return
     
-    plan_path = get_plan_path(plan_id)
+    try:
+        plan_path = get_plan_path(plan_id)
+    except InvalidPlanIdError:
+        logger.error("Недопустимый ID плана при сохранении: %r", plan_id)
+        return
     try:
         to_save = _make_plan_json_serializable(plan_data)
         with open(plan_path, 'w', encoding='utf-8') as f:
@@ -196,7 +237,10 @@ def delete_plan(plan_id: str) -> bool:
     Returns:
         bool: True если удаление успешно
     """
-    plan_path = get_plan_path(plan_id)
+    try:
+        plan_path = get_plan_path(plan_id)
+    except InvalidPlanIdError:
+        return False
     
     # === ВОЗВРАЩАЕМ ПЛИТЫ ПЛАНА В ПРОИЗВОДСТВО ===
     # Это нужно сделать ДО удаления файла плана,
@@ -241,17 +285,29 @@ def get_active_plan_id() -> Optional[str]:
     return metadata.get('active_plan_id')
 
 
-def set_active_plan(plan_id: str):
+def set_active_plan(plan_id: str) -> bool:
     """
-    Устанавливает план как активный.
-    
+    Устанавливает план как активный, только если JSON плана существует на диске.
+
     Args:
         plan_id: ID плана
+
+    Returns:
+        bool: True если активный план обновлён, False при невалидном id или отсутствии файла.
     """
+    try:
+        plan_path = get_plan_path(plan_id)
+    except InvalidPlanIdError:
+        logger.warning("set_active_plan: недопустимый plan_id %r", plan_id)
+        return False
+    if not plan_path.is_file():
+        logger.warning("set_active_plan: файл плана не найден %s", plan_path)
+        return False
     metadata = load_plans_metadata()
     metadata['active_plan_id'] = plan_id
     save_plans_metadata(metadata)
     logger.info(f"План {plan_id} установлен как активный")
+    return True
 
 
 def get_active_plan() -> Optional[dict]:
