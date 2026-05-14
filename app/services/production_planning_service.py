@@ -647,7 +647,11 @@ class ProductionPlanningService:
                 return [], optimization_result
 
             from core.optimization.layout_runtime_snapshot import build_layout_runtime_snapshot
-            from core.visualization import LayoutIntegrityError, split_sequence_into_tracks
+            from core.visualization import (
+                LayoutIntegrityError,
+                TrackLayoutInvariantError,
+                split_sequence_into_tracks,
+            )
             from viz_modules.layout_sequence import build_layout_sequence
 
             with self.optimization_service.legacy_runtime(context):
@@ -661,6 +665,10 @@ class ProductionPlanningService:
                 except LayoutIntegrityError as exc:
                     raise ProductionPlanBuildError(
                         f"Нарушена целостность раскладки дорожек: {exc}"
+                    ) from exc
+                except TrackLayoutInvariantError as exc:
+                    raise ProductionPlanBuildError(
+                        f"Не удалось разложить дорожки: нужна целая плита в начале — {exc}"
                     ) from exc
 
             # #region agent log

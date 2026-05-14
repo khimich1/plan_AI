@@ -92,20 +92,29 @@ def choose_best_separator(
     log: logging.Logger | None = None,
 ) -> int | None:
     """
-    Выбирает оптимальную плиту-разделитель по армированию (минимальное из оставшихся).
-
-    next_group зарезервирован для совместимости с вызовами; в текущей логике не используется.
+    Выбирает плиту-разделитель: сначала минимальное армирование среди оставшихся целых,
+    при равенстве — минимальный скачок к армированию следующей группы с резом (если передана).
     """
-    _ = next_group
     if not solid_list:
         return None
-    candidates = []
+    candidates: list[dict[str, Any]] = []
     for idx, plate in enumerate(solid_list):
         length = plate["lengths"][0] if plate.get("lengths") else 6.0
         width_mm = plate["width"]
         reinforcement = get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
         candidates.append({"index": idx, "length": length, "width_mm": width_mm, "reinforcement": reinforcement})
-    best = min(candidates, key=lambda x: x["reinforcement"])
+    min_reinf = min(c["reinforcement"] for c in candidates)
+    tier = [c for c in candidates if c["reinforcement"] == min_reinf]
+    next_reinf: float | None = None
+    if next_group:
+        try:
+            next_reinf = float(next_group[0].get("reinforcement", 999.0))
+        except (TypeError, ValueError):
+            next_reinf = None
+    if next_reinf is not None:
+        best = min(tier, key=lambda x: (abs(float(x["reinforcement"]) - next_reinf), x["index"]))
+    else:
+        best = min(tier, key=lambda x: x["index"])
     msg = (
         f"[VISUAL] ✅ Выбран разделитель с мин. армированием: {best['length']:.2f}м x {best['width_mm']}мм, "
         f"армирование {best['reinforcement']:.1f} кг/м"

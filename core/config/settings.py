@@ -93,6 +93,16 @@ class Settings(BaseSettings):
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
 
+    # Раскладка: жадное чередование целых и групп с резом по мин. армированию; сплиттер — согласованный выбор целых.
+    layout_greedy_reinf_merge: bool = Field(default=True, alias="LAYOUT_GREEDY_REINF_MERGE")
+    layout_track_reinf_preference: bool = Field(default=True, alias="LAYOUT_TRACK_REINF_PREFERENCE")
+    # Если True — при выборе целой для начала дорожки разрешить «фазу 2» без отсечения по армированию
+    # предыдущей дорожки (иначе — строгое правило может привести к TrackLayoutInvariantError).
+    layout_track_start_reinf_relaxation: bool = Field(
+        default=True,
+        alias="LAYOUT_TRACK_START_REINF_RELAXATION",
+    )
+
     @field_validator("cors_allowed_origins_raw", mode="before")
     @classmethod
     def parse_cors_allowed_origins_raw(cls, value: object) -> str:

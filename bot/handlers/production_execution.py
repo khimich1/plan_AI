@@ -912,7 +912,11 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         await message.answer("⏳ Подсчитываю дорожки...")
         
         from viz_modules.layout_sequence import build_layout_sequence
-        from core.visualization import LayoutIntegrityError, split_sequence_into_tracks
+        from core.visualization import (
+            LayoutIntegrityError,
+            TrackLayoutInvariantError,
+            split_sequence_into_tracks,
+        )
         from core.plate_audit import PlateAudit as _PlateAudit
 
         # Подхватываем audit из оптимизатора, если он там был создан
@@ -1008,6 +1012,12 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             logger.error("[BOT-PLAN] Ошибка целостности раскладки: %s", exc)
             await message.answer(
                 f"❌ Нарушена целостность раскладки дорожек: {exc}"
+            )
+            return
+        except TrackLayoutInvariantError as exc:
+            logger.error("[BOT-PLAN] Нарушены правила старта дорожки с целой плиты: %s", exc)
+            await message.answer(
+                f"❌ Невозможно разложить дорожки без целой плиты в начале: {exc}"
             )
             return
 
