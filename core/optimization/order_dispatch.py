@@ -13,6 +13,7 @@ from core.optimization.debug_log import (
     _DEBUG_LOG_5b5324,
     _DEBUG_LOG_COMMON,
     _dbg_open_append,
+    _opt_debug_enabled,
 )
 
 
@@ -38,6 +39,7 @@ def build_order_info_list(
             "load_code": load_code,
             "reinforcement": order.get("reinforcement", 0),
             "qty_remaining": order.get("qty", 1),
+            "concrete_grade": order.get("concrete_grade"),
         })
     return order_info_list
 
@@ -63,11 +65,12 @@ def _get_next_order_info(
         dict: информация о КП (kp_id, customer, kp_date, plate_name, load_code) или пустой словарь
     """
     # #region agent log (session 5b5324) _get_next_order_info entry
-    try:
-        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-            _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:entry", "message": "key requested", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+    if _opt_debug_enabled():
+        try:
+            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
+                _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:entry", "message": "key requested", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
     # #endregion
     entries = order_info_list.get(key, [])
     for entry in entries:
@@ -80,14 +83,16 @@ def _get_next_order_info(
                 "plate_name": entry.get("plate_name"),
                 "load_code": entry.get("load_code"),
                 "reinforcement": entry.get("reinforcement"),
+                "concrete_grade": entry.get("concrete_grade"),
                 "identity_match_type": "exact",
             }
             # #region agent log (session 5b5324) _get_next_order_info return exact
-            try:
-                with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-                    _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "exact match", "data": {"match_type": "exact", "kp_id": out.get("kp_id"), "plate_name": (out.get("plate_name") or "")[:60]}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
+            if _opt_debug_enabled():
+                try:
+                    with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
+                        _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "exact match", "data": {"match_type": "exact", "kp_id": out.get("kp_id"), "plate_name": (out.get("plate_name") or "")[:60]}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
             # #endregion
             return out
     # Fallback по (length, width) без load_code — ищем любой ключ с теми же длиной и шириной
@@ -98,27 +103,28 @@ def _get_next_order_info(
                 for entry in candidate_entries:
                     if entry.get("qty_remaining", 0) > 0:
                         entry["qty_remaining"] -= 1
-                        try:
-                            _req_lc = key[2] if len(key) >= 3 else None
-                            _found_lc = candidate_key[2] if len(candidate_key) >= 3 else None
-                            with _dbg_open_append(_DEBUG_LOG_COMMON) as _f:
-                                _f.write(__import__("json").dumps({
-                                    "hypothesisId": "H2_fallback",
-                                    "location": "optimization.py:_get_next_order_info",
-                                    "message": "fallback used (length, width)",
-                                    "data": {
-                                        "requested_key": list(key),
-                                        "found_key": list(candidate_key),
-                                        "fallback_reason": "load_code_mismatch",
-                                        "requested_load_code": _req_lc,
-                                        "found_load_code": _found_lc,
-                                        "kp_id": entry.get("kp_id"),
-                                        "plate_name": (entry.get("plate_name") or "")[:50],
-                                    },
-                                    "timestamp": __import__("time").time(),
-                                }, ensure_ascii=False) + "\n")
-                        except Exception:
-                            pass
+                        if _opt_debug_enabled():
+                            try:
+                                _req_lc = key[2] if len(key) >= 3 else None
+                                _found_lc = candidate_key[2] if len(candidate_key) >= 3 else None
+                                with _dbg_open_append(_DEBUG_LOG_COMMON) as _f:
+                                    _f.write(__import__("json").dumps({
+                                        "hypothesisId": "H2_fallback",
+                                        "location": "optimization.py:_get_next_order_info",
+                                        "message": "fallback used (length, width)",
+                                        "data": {
+                                            "requested_key": list(key),
+                                            "found_key": list(candidate_key),
+                                            "fallback_reason": "load_code_mismatch",
+                                            "requested_load_code": _req_lc,
+                                            "found_load_code": _found_lc,
+                                            "kp_id": entry.get("kp_id"),
+                                            "plate_name": (entry.get("plate_name") or "")[:50],
+                                        },
+                                        "timestamp": __import__("time").time(),
+                                    }, ensure_ascii=False) + "\n")
+                            except Exception:
+                                pass
                         out_fb = {
                             "kp_id": entry.get("kp_id"),
                             "customer": entry.get("customer"),
@@ -126,14 +132,16 @@ def _get_next_order_info(
                             "plate_name": entry.get("plate_name"),
                             "load_code": entry.get("load_code"),
                             "reinforcement": entry.get("reinforcement"),
+                            "concrete_grade": entry.get("concrete_grade"),
                             "identity_match_type": "fallback_same_length_width",
                         }
                         # #region agent log (session 5b5324) fallback_same_length_width
-                        try:
-                            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-                                _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_same_length_width", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_fb.get("kp_id"), "plate_name": (out_fb.get("plate_name") or "")[:60]}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
-                        except Exception:
-                            pass
+                        if _opt_debug_enabled():
+                            try:
+                                with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
+                                    _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_same_length_width", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_fb.get("kp_id"), "plate_name": (out_fb.get("plate_name") or "")[:60]}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+                            except Exception:
+                                pass
                         # #endregion
                         return out_fb
         # Fallback по «соседней» длине (±0.02 м), та же ширина и load_code (61,2↔61,1; 59,8↔59,9)
@@ -155,22 +163,25 @@ def _get_next_order_info(
                             "plate_name": entry.get("plate_name"),
                             "load_code": entry.get("load_code"),
                             "reinforcement": entry.get("reinforcement"),
+                            "concrete_grade": entry.get("concrete_grade"),
                             "identity_match_type": "fallback_neighbor_length",
                         }
                         # #region agent log (session 5b5324) fallback_neighbor_length
-                        try:
-                            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-                                _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_neighbor_length", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_n.get("kp_id"), "plate_name": (out_n.get("plate_name") or "")[:60]}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
-                        except Exception:
-                            pass
+                        if _opt_debug_enabled():
+                            try:
+                                with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
+                                    _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "fallback_neighbor_length", "data": {"requested_key": list(key), "found_key": list(candidate_key), "kp_id": out_n.get("kp_id"), "plate_name": (out_n.get("plate_name") or "")[:60]}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+                            except Exception:
+                                pass
                         # #endregion
                         return out_n
     # #region agent log (session 5b5324) _get_next_order_info return empty
-    try:
-        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-            _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "empty", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+    if _opt_debug_enabled():
+        try:
+            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
+                _f.write(__import__("json").dumps({"sessionId": "5b5324", "hypothesisId": "H_get_next", "location": "optimization:_get_next_order_info:return", "message": "empty", "data": {"key": list(key) if isinstance(key, tuple) else key}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
     # #endregion
     return {}
 
@@ -208,7 +219,7 @@ def _build_proportional_slot_lists(
         for entry, share in zip(entries, shares):
             info = {
                 k: entry.get(k)
-                for k in ("kp_id", "customer", "kp_date", "plate_name", "load_code", "reinforcement")
+                for k in ("kp_id", "customer", "kp_date", "plate_name", "load_code", "reinforcement", "concrete_grade")
             }
             slots.extend([info] * share)
         slot_lists[key] = slots
@@ -263,6 +274,7 @@ def _peek_order_info(
                 "plate_name": entry.get("plate_name"),
                 "load_code": entry.get("load_code"),
                 "reinforcement": entry.get("reinforcement"),
+                "concrete_grade": entry.get("concrete_grade"),
             }
     # Fallback по (length, width) без load_code
     if len(key) == 3:
@@ -278,5 +290,6 @@ def _peek_order_info(
                             "plate_name": entry.get("plate_name"),
                             "load_code": entry.get("load_code"),
                             "reinforcement": entry.get("reinforcement"),
+                            "concrete_grade": entry.get("concrete_grade"),
                         }
     return {}

@@ -161,6 +161,7 @@ def backfill_assignment_identity(
 
         assignment["kp_id"] = best_order.get("kp_id")
         assignment["plate_name"] = best_order.get("plate_name") or ""
+        assignment["concrete_grade"] = best_order.get("concrete_grade")
         assignment["identity_match_type"] = "backfilled"
         consumed[key][(int(assignment["kp_id"]), str(assignment["plate_name"]))] += 1
         backfilled += 1
@@ -295,6 +296,7 @@ def _attribute_one_item(
             continue
         item["kp_id"] = kp_id
         item["plate_name"] = plate_name
+        item["concrete_grade"] = best_order.get("concrete_grade")
         item["identity_match_type"] = "backfilled"
         consumed[key][(int(kp_id), str(plate_name))] += 1
         return True

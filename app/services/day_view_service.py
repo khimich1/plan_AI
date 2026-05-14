@@ -10,9 +10,11 @@ import copy
 import logging
 from typing import Any
 
+from app.core.settings import get_settings
 from app.planning import plan_manager
 from core import plate_name as plate_name_utils
 from core.debug_paths import get_debug_log_path
+from core.concrete_grade_resolver import resolve_concrete_grade_from_order
 
 logger = logging.getLogger(__name__)
 _DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
@@ -81,6 +83,7 @@ def _build_smart_lookup(
             "customer": "неизвестно",
             "plate_name": "",
             "reinforcement": 0,
+            "concrete_grade": "",
         }
 
     return lookup
@@ -187,6 +190,7 @@ def _aggregate_plates_for_track_from_db(
                 "is_secondary": bool(is_secondary),
                 "kp_plate_id": int(plate_id),
                 "write_off_completed": bool(row.get("is_completed_snapshot")),
+                "concrete_grade": row.get("concrete_grade") or "",
             }
         )
 
@@ -245,13 +249,31 @@ def _load_db_rows_for_plan_day(
         return (customer or "неизвестно", terms or "неизвестно")
 
     rows: dict[int, dict[str, Any]] = {}
+    pb_db = str(get_settings().pb_db_path)
+
+    def _cg_for_db_row(
+        plate_nm: Any, length_any: Any, load_cls: Any, explicit: Any
+    ) -> str:
+        s = str(explicit or "").strip()
+        if s:
+            return s
+        return resolve_concrete_grade_from_order(
+            {
+                "concrete_grade": None,
+                "plate_name": plate_nm or "",
+                "length": float(length_any or 0) or None,
+                "load_code": load_cls or 800,
+            },
+            db_path=pb_db,
+        )
+
     with _sql.connect(db_path) as conn:
         conn.row_factory = _sql.Row
         cur = conn.cursor()
         cur.execute(
             """
             SELECT p.id, p.kp_id, p.plate_name, p.length_m, p.width_m,
-                   p.load_class, p.qty, p.length_dm_raw,
+                   p.load_class, p.qty, p.length_dm_raw, p.concrete_grade,
                    k.customer_name, k.execution_terms
             FROM kp_plates p
             LEFT JOIN KP_offers k ON k.kp_id = p.kp_id
@@ -272,6 +294,12 @@ def _load_db_rows_for_plan_day(
                 "kp_date": row["execution_terms"],
                 "reinforcement": 0,
                 "is_completed_snapshot": False,
+                "concrete_grade": _cg_for_db_row(
+                    row["plate_name"],
+                    row["length_m"],
+                    row["load_class"],
+                    row["concrete_grade"],
+                ),
             }
 
         cur.execute(
@@ -318,6 +346,15 @@ def _load_db_rows_for_plan_day(
                     "kp_date": kp_date,
                     "reinforcement": 0,
                     "is_completed_snapshot": True,
+                    "concrete_grade": resolve_concrete_grade_from_order(
+                        {
+                            "concrete_grade": None,
+                            "plate_name": pname or "",
+                            "length": None,
+                            "load_code": 800,
+                        },
+                        db_path=pb_db,
+                    ),
                 }
             else:
                 rows[pid] = {
@@ -332,6 +369,15 @@ def _load_db_rows_for_plan_day(
                     "kp_date": kp_date,
                     "reinforcement": 0,
                     "is_completed_snapshot": True,
+                    "concrete_grade": resolve_concrete_grade_from_order(
+                        {
+                            "concrete_grade": None,
+                            "plate_name": pname or "",
+                            "length": dim["length_m"],
+                            "load_code": dim["load_class"],
+                        },
+                        db_path=pb_db,
+                    ),
                 }
     return rows
 
@@ -364,6 +410,15 @@ def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
         kp_id = info.get("kp_id")
         if kp_id is None and is_rescue and parent_item is not None:
             kp_id = parent_item.get("kp_id")
+
+        concrete_grade = (
+            str(info.get("concrete_grade") or "").strip()
+            or (
+                str(parent_item.get("concrete_grade") or "").strip()
+                if is_rescue and parent_item
+                else ""
+            )
+        )
 
         # P2: ключ агрегации использует canonical(plate_name) — «Плиты ПБ 45-12-6п»
         # и «ПБ 45-12-6п» считаются одной плитой и больше не дублируются.
@@ -400,6 +455,7 @@ def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
                 "load_code": load_code,
                 "length_dm_raw": length_dm_raw,
                 "is_secondary": bool(is_secondary),
+                "concrete_grade": concrete_grade,
             }
         )
 

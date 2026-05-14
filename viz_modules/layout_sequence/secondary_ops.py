@@ -221,6 +221,7 @@ def extract_orphan_secondaries_as_synthetic_primary_cuts(
                     "customer": row.get("customer") if row.get("customer") is not None else assign.get("customer"),
                     "kp_date": row.get("kp_date") if row.get("kp_date") is not None else assign.get("kp_date"),
                     "plate_name": row.get("plate_name") if row.get("plate_name") is not None else assign.get("plate_name"),
+                    "concrete_grade": row.get("concrete_grade") if row.get("concrete_grade") is not None else assign.get("concrete_grade"),
                     "primary_instance_id": sid,
                     "skip_secondary_attachment": True,
                     "ignore_transverse": True,

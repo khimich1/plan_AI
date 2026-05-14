@@ -30,6 +30,9 @@ def setup_logging(
     # Если логи уже настроены (например, при импорте в тестах) — не дублируем хендлеры.
     if root_logger.handlers:
         root_logger.setLevel(level)
+        from core.config.logging import configure_optimization_logging_from_env
+
+        configure_optimization_logging_from_env()
         return
 
     formatter = logging.Formatter(
@@ -58,4 +61,8 @@ def setup_logging(
     root_logger.setLevel(level)
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
+
+    from core.config.logging import configure_optimization_logging_from_env
+
+    configure_optimization_logging_from_env()
 

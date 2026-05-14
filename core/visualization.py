@@ -835,7 +835,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             logger.info(f"[ВИЗУАЛИЗАЦИЯ] Дорожка: макс. армирование {max_reinforcement:.1f} кг/м²")
     
     # === ЗАПОЛНЯЕМ ГЛОБАЛЬНУЮ КАРТУ МАКСИМАЛЬНОГО АРМИРОВАНИЯ ДЛЯ КАЖДОЙ ПЛИТЫ ===
-    # Это нужно для корректного расчёта переармирования в procurement.py
+    # Это нужно для корректного расчёта переармирования в viz_modules.procurement
     for track in tracks:
         track_max_reinf = track.get('max_reinforcement', 0)
         for item in track['items']:

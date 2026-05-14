@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from core.optimization.context import optimization_context_scope
@@ -15,6 +16,8 @@ from core.optimization.optimize_2d.with_lengths import _optimize_2d_with_lengths
 from core.optimization.ports.order_data import PlateOrderDataPort
 from core.optimization.result_contract import ERROR_NO_INPUT, opt_error
 from core.optimization.validation import validate_optimize_entrypoint
+
+logger = logging.getLogger(__name__)
 
 
 def optimize_with_cascading_longitudinal_cuts(
@@ -48,16 +51,16 @@ def optimize_with_cascading_longitudinal_cuts(
         # и без обратной дуги orchestrator ↔ _implementation.
 
         if orders_2d is not None and len(orders_2d) > 0:
-            print("[OPT] Режим: ПОЛНАЯ 2D оптимизация (длина + ширина)")
+            logger.info("[OPT] Режим: ПОЛНАЯ 2D оптимизация (длина + ширина)")
             return _optimize_2d_with_lengths(
                 orders_2d, plate_width, min_useful_width, opt_config, order_data
             )
 
         if orders is not None and len(orders) > 0:
-            print("[OPT] Режим: 1D оптимизация (только ширина, обратная совместимость)")
+            logger.info("[OPT] Режим: 1D оптимизация (только ширина, обратная совместимость)")
             return _optimize_1d_widths_only(orders, plate_width, min_useful_width, order_data)
 
-        print("[OPT] ⚠️ Не указаны ни orders, ни orders_2d!")
+        logger.warning("[OPT] Не указаны ни orders, ни orders_2d!")
         return opt_error(
             ERROR_NO_INPUT,
             "Не переданы orders (1D) и orders_2d (2D): нечего оптимизировать.",

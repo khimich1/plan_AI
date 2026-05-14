@@ -23,6 +23,7 @@ from core.optimization.result_contract import is_optimization_success
 from core.plan_commit import PlanCommitError, commit_plan_plates
 from core.serialization import strip_plate_audit_from_plan
 from core.debug_paths import get_debug_log_path
+from core.concrete_grade_resolver import enrich_orders_2d_concrete_grade, resolve_concrete_grade_from_order
 from app.planning import plan_manager
 from core import kp_db
 from core.reinforcement_db import get_reinforcement
@@ -425,7 +426,8 @@ class ProductionPlanningService:
                     placeholders = ",".join("?" * len(plate_ids))
                     cur.execute(
                         f"""
-                        SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
+                        SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw,
+                               COALESCE(concrete_grade, '') AS concrete_grade
                         FROM kp_plates
                         WHERE kp_id = ? AND status = ?
                           AND id IN ({placeholders})
@@ -436,7 +438,8 @@ class ProductionPlanningService:
                 else:
                     cur.execute(
                         """
-                        SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
+                        SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw,
+                               COALESCE(concrete_grade, '') AS concrete_grade
                         FROM kp_plates
                         WHERE kp_id = ? AND status = ?
                         """,
@@ -450,6 +453,7 @@ class ProductionPlanningService:
                     load_class = row[3] or 800
                     qty = int(row[4] or 0)
                     length_dm_raw = (row[5] or "") if len(row) > 5 else ""
+                    concrete_grade_raw = str(row[6] or "").strip() if len(row) > 6 else ""
                     if qty <= 0:
                         continue
 
@@ -472,6 +476,18 @@ class ProductionPlanningService:
                     if reinforcement is None:
                         reinforcement = 999.0
 
+                    concrete_grade = concrete_grade_raw
+                    if not concrete_grade:
+                        concrete_grade = resolve_concrete_grade_from_order(
+                            {
+                                "concrete_grade": None,
+                                "plate_name": plate_name or "",
+                                "length": length_m or 0.0,
+                                "load_code": load_code,
+                            },
+                            db_path=self.pb_db_path,
+                        )
+
                     plates[kp["date"]][reinforcement].append(
                         {
                             "plate_name": plate_name,
@@ -484,6 +500,7 @@ class ProductionPlanningService:
                             "kp_date": kp["date"].strftime("%d.%m.%Y"),
                             "customer": kp["customer"],
                             "length_dm_raw": length_dm_raw,
+                            "concrete_grade": concrete_grade,
                         }
                     )
 
@@ -518,6 +535,7 @@ class ProductionPlanningService:
                     "plate_name": plate.get("plate_name", ""),
                     "kp_id": plate.get("kp_id"),
                     "length_dm_raw": plate.get("length_dm_raw", "") or "",
+                    "concrete_grade": plate.get("concrete_grade"),
                 }
             )
 
@@ -546,6 +564,7 @@ class ProductionPlanningService:
                 "qty_remaining": order.get("qty", 1),
                 "kp_id": order.get("kp_id"),
                 "length_dm_raw": order.get("length_dm_raw", "") or "",
+                "concrete_grade": order.get("concrete_grade"),
             }
             plate_lookup_exact.setdefault((length_key, width_key), []).append(entry_exact)
 
@@ -558,6 +577,7 @@ class ProductionPlanningService:
                 "qty_remaining": order.get("qty", 1),
                 "kp_id": order.get("kp_id"),
                 "length_dm_raw": order.get("length_dm_raw", "") or "",
+                "concrete_grade": order.get("concrete_grade"),
             }
             plate_lookup_by_length.setdefault(length_key, []).append(entry_by_length)
 
@@ -577,6 +597,8 @@ class ProductionPlanningService:
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         if not orders_2d:
             return [], {}
+
+        enrich_orders_2d_concrete_grade(orders_2d, db_path=str(self.pb_db_path))
 
         from core.plate_attribution import (
             backfill_assignment_identity,

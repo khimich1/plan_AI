@@ -4,7 +4,7 @@
 Единый источник путей к базам данных проекта.
 Используется всеми модулями для доступа к pb.db и plita.db.
 """
-from app.core.settings import get_settings
+from core.config.settings import get_settings
 
 settings = get_settings()
 
