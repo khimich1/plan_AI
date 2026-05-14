@@ -160,6 +160,8 @@ class LayoutSequenceCfgSlice:
     make_plate_name: Callable[..., Any]
     format_reinforcement_from_load_code: Callable[[float | int], str]
     get_load_code_for_plate: Callable[[float, float, int], int]
+    layout_greedy_reinf_merge: bool = False
+    layout_track_reinf_preference: bool = False
 
     @classmethod
     def from_config_module(
@@ -168,10 +170,14 @@ class LayoutSequenceCfgSlice:
         *,
         plate_load_details: PlateLoadDetailsMap | None = None,
         plate_lists: LayoutPlateListsReadOnly | None = None,
+        layout_greedy_reinf_merge: bool | None = None,
+        layout_track_reinf_preference: bool | None = None,
     ) -> LayoutSequenceCfgSlice:
         details = plate_load_details if plate_load_details is not None else cfg.PLATE_LOAD_DETAILS
         frozen_details = _freeze_plate_load_details(details)
         lists = plate_lists if plate_lists is not None else LayoutPlateListsReadOnly.from_config_module(cfg)
+        greedy = False if layout_greedy_reinf_merge is None else layout_greedy_reinf_merge
+        track_pref = False if layout_track_reinf_preference is None else layout_track_reinf_preference
         return cls(
             plate_load_details=frozen_details,
             plate_lists=lists,
@@ -179,6 +185,8 @@ class LayoutSequenceCfgSlice:
             make_plate_name=cfg.make_plate_name,
             format_reinforcement_from_load_code=cfg.format_reinforcement_from_load_code,
             get_load_code_for_plate=_make_get_load_code_for_plate(frozen_details),
+            layout_greedy_reinf_merge=greedy,
+            layout_track_reinf_preference=track_pref,
         )
 
 
@@ -198,6 +206,8 @@ def build_layout_runtime_snapshot(
     plate_load_details: PlateLoadDetailsMap | dict[tuple[float, float, int, str], int] | None = None,
     plate_lists: LayoutPlateListsReadOnly | None = None,
     opt_snapshot: OptPlanFrozenSnapshot | None = None,
+    layout_greedy_reinf_merge: bool | None = None,
+    layout_track_reinf_preference: bool | None = None,
 ) -> LayoutRuntimeSnapshot:
     """
     Собрать снимок для раскладки. Вызывать из composition root после заполнения OPT TLS
@@ -208,6 +218,8 @@ def build_layout_runtime_snapshot(
     :param plate_load_details: переопределение карты нагрузок; иначе берётся из cfg.
     :param plate_lists: переопределение списков длин; иначе из cfg.
     :param opt_snapshot: явный снимок плана (тесты); иначе ``OptPlanFrozenSnapshot.capture_from_context()``.
+    :param layout_greedy_reinf_merge: переопределить флаг жадной перестановки; иначе из ``Settings``.
+    :param layout_track_reinf_preference: переопределить флаг сплиттера; иначе из ``Settings``.
     """
     if cfg is None:
         import core.config_and_data as _cfg
@@ -215,10 +227,25 @@ def build_layout_runtime_snapshot(
         cfg = _cfg
 
     snap = opt_snapshot if opt_snapshot is not None else OptPlanFrozenSnapshot.capture_from_context()
+    from core.config.settings import get_settings
+
+    _settings = get_settings()
+    _greedy = (
+        layout_greedy_reinf_merge
+        if layout_greedy_reinf_merge is not None
+        else _settings.layout_greedy_reinf_merge
+    )
+    _track_pref = (
+        layout_track_reinf_preference
+        if layout_track_reinf_preference is not None
+        else _settings.layout_track_reinf_preference
+    )
     layout_slice = LayoutSequenceCfgSlice.from_config_module(
         cfg,
         plate_load_details=plate_load_details,
         plate_lists=plate_lists,
+        layout_greedy_reinf_merge=_greedy,
+        layout_track_reinf_preference=_track_pref,
     )
     return LayoutRuntimeSnapshot(
         opt_snapshot=snap,

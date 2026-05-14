@@ -23,6 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core import kp_db
 from core.db_config import PB_DB_PATH, PLITA_DB_PATH
 from core.reinforcement_db import get_reinforcement
+from core.concrete_grade_resolver import enrich_orders_2d_concrete_grade
 from core.work_calendar import nth_working_day
 import core.config_and_data as cfg
 from core.config_and_data import PlateOrder, canonical_plate_key
@@ -261,14 +262,16 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             if plate_ids_for_kp and len(plate_ids_for_kp) > 0:
                 placeholders = ','.join('?' * len(plate_ids_for_kp))
                 cur.execute(f"""
-                    SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
+                    SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw,
+                           COALESCE(concrete_grade, '') AS concrete_grade
                     FROM kp_plates
                     WHERE kp_id = ? AND status = 'в производстве' AND id IN ({placeholders})
                     ORDER BY position_number, id
                 """, (kp_id,) + tuple(plate_ids_for_kp))
             else:
                 cur.execute("""
-                    SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw
+                    SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw,
+                           COALESCE(concrete_grade, '') AS concrete_grade
                     FROM kp_plates
                     WHERE kp_id = ? AND status = 'в производстве'
                 """, (kp_id,))
@@ -277,6 +280,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 # length_dm_raw может отсутствовать в старых БД — берём по индексу
                 plate_name, length_m, width_m, load_class, qty = row[0], row[1], row[2], row[3], row[4]
                 length_dm_raw = (row[5] or '') if len(row) > 5 else ''
+                cg_row = str(row[6] or '').strip() if len(row) > 6 else ''
                 load_code = cfg.normalize_load_code(load_class // 100)
                 # Коррекция ширины по названию: "-12-8п" / "-12-" = 12 дм = 1200 мм; если в БД ошибочно 0.665 — подставляем 1200
                 width_mm = round((width_m or 0) * 1000)
@@ -304,6 +308,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                     'kp_date': kp_date.strftime('%d.%m.%Y'),
                     'customer': kp_info['customer'],
                     'length_dm_raw': length_dm_raw,
+                    'concrete_grade': cg_row or None,
                 })
         
         # Создаём lookup-таблицы
@@ -472,7 +477,9 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 'plate_name': plate_data.get('plate_name', ''),
                 'kp_id': plate_data.get('kp_id'),
                 'length_dm_raw': plate_data.get('length_dm_raw', '') or '',
+                'concrete_grade': plate_data.get('concrete_grade'),
             })
+        enrich_orders_2d_concrete_grade(orders_2d, db_path=PB_DB_PATH)
         # #region agent log
         _targets = []
         for _o in orders_2d:
@@ -905,7 +912,11 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         await message.answer("⏳ Подсчитываю дорожки...")
         
         from viz_modules.layout_sequence import build_layout_sequence
-        from core.visualization import LayoutIntegrityError, split_sequence_into_tracks
+        from core.visualization import (
+            LayoutIntegrityError,
+            TrackLayoutInvariantError,
+            split_sequence_into_tracks,
+        )
         from core.plate_audit import PlateAudit as _PlateAudit
 
         # Подхватываем audit из оптимизатора, если он там был создан
@@ -1001,6 +1012,12 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             logger.error("[BOT-PLAN] Ошибка целостности раскладки: %s", exc)
             await message.answer(
                 f"❌ Нарушена целостность раскладки дорожек: {exc}"
+            )
+            return
+        except TrackLayoutInvariantError as exc:
+            logger.error("[BOT-PLAN] Нарушены правила старта дорожки с целой плиты: %s", exc)
+            await message.answer(
+                f"❌ Невозможно разложить дорожки без целой плиты в начале: {exc}"
             )
             return
 

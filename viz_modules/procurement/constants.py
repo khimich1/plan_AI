@@ -1,0 +1,2 @@
+WIDE_WIDTH_M = 1.2
+WIDE_EPS = 1e-6

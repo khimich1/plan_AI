@@ -8,8 +8,7 @@ Implementation-specific paths and session writers live in
 
 from __future__ import annotations
 
-import os as _os
-
+from core.config.logging import optimization_debug_active
 from core.debug_paths import get_debug_log_path
 
 _DEBUG_LOG_COMMON = get_debug_log_path("debug.log")
@@ -19,17 +18,17 @@ _DEBUG_LOG_5b5324 = get_debug_log_path("debug-5b5324.log")
 def _opt_debug_enabled() -> bool:
     """
     Включены ли подробные debug-логи оптимизатора.
-    По умолчанию выключены: дебаг-регионы пишут в файлы только при OPT_DEBUG_LOG=1.
-    Это нужно для честных замеров и чтобы prod не засорял диск.
+
+    См. :func:`core.config.logging.optimization_debug_active` (OPT_DEBUG_LOG или DEBUG
+    для логгера ``core.optimization``).
     """
-    return _os.environ.get("OPT_DEBUG_LOG", "").strip() in ("1", "true", "True", "yes", "on")
+    return optimization_debug_active()
 
 
 class _DbgNullFile:
     """
-    No-op file handle: используется как заглушка для debug-логов,
-    когда OPT_DEBUG_LOG выключен. Поддерживает и контекст-менеджер,
-    и прямой `.write(...)` без `with`.
+    No-op file handle: когда отладка оптимизатора выключена
+    (см. :func:`optimization_debug_active`). Поддерживает контекст-менеджер и `.write`.
     """
 
     def write(self, *_args, **_kwargs):
@@ -48,8 +47,8 @@ _DBG_NULL_FILE = _DbgNullFile()
 def _dbg_open_append(path):
     """
     Append-handle для debug-логов оптимизатора.
-    При OPT_DEBUG_LOG=0 возвращает no-op handle, поэтому никакая запись не идёт.
-    Никогда не бросает исключений: при ошибке открытия — тоже no-op.
+    Когда :func:`optimization_debug_active` даёт False — no-op handle,
+    без открытия файла. При ошибке открытия — тоже no-op.
     """
     if not _opt_debug_enabled():
         return _DBG_NULL_FILE

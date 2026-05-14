@@ -174,6 +174,12 @@ def init_schema(db_path: str = DEFAULT_DB) -> None:
         except sqlite3.OperationalError:
             pass  # колонка уже существует
 
+        try:
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN concrete_grade TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
         # Стоимость одного рейса (логистика), как в draft metadata logistics_cost / PDF/XLSX
         try:
             cur.execute("ALTER TABLE KP_offers ADD COLUMN logistics_cost REAL DEFAULT 0")
@@ -689,6 +695,9 @@ def save_kp_to_db(
         # Получаем порядковый номер созданного КП
         kp_id = cur.lastrowid
         
+        from core.concrete_grade_resolver import resolve_concrete_grade_from_order
+        from core.db_config import PB_DB_PATH
+
         # Сохраняем позиции (плиты)
         for idx, item in enumerate(order_data, start=1):
             qty = item.get('qty', 0)
@@ -700,6 +709,16 @@ def save_kp_to_db(
             # Точное название и nomenclature_id уже обогащены перед вызовом save_kp_to_db
             plate_name = item.get('name', '')
             nomenclature_id = item.get('nomenclature_id', None)
+
+            concrete_grade = resolve_concrete_grade_from_order(
+                {
+                    "concrete_grade": item.get("concrete_grade"),
+                    "plate_name": plate_name,
+                    "length": item.get("length_m", 0),
+                    "load_code": item.get("load_class", 800),
+                },
+                db_path=PB_DB_PATH,
+            )
             
             # Длина из КП сохраняется как есть; length_dm_raw — исходная строка из марки для поиска при списании.
             cur.execute('''
@@ -707,13 +726,14 @@ def save_kp_to_db(
                     kp_id, position_number, plate_name,
                     length_m, width_m, load_class,
                     qty, unit_weight, total_weight, discounted_price, unit_price,
-                    length_dm_raw, nomenclature_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    length_dm_raw, nomenclature_id, concrete_grade
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 kp_id, idx, plate_name,
                 item.get('length_m', 0), item.get('width_m', 0), item.get('load_class', 800),
                 qty, unit_weight, weight, discounted_price, unit_price,
-                item.get('length_dm_raw', '') or '', nomenclature_id
+                item.get('length_dm_raw', '') or '', nomenclature_id,
+                concrete_grade,
             ))
             
         # Сохраняем файл XLSX (если указан путь)
@@ -778,7 +798,7 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
         logistics_saved = max(0.0, float(row[1] or 0.0))
         
         cur.execute(
-            'SELECT id, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price FROM kp_plates WHERE kp_id = ? ORDER BY position_number',
+            'SELECT id, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price, COALESCE(concrete_grade, "") AS concrete_grade FROM kp_plates WHERE kp_id = ? ORDER BY position_number',
             (kp_id,)
         )
         plates = cur.fetchall()
@@ -787,7 +807,19 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
         
         order_data = []
         for p in plates:
-            pid, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price_col = p
+            (
+                pid,
+                plate_name,
+                length_m,
+                width_m,
+                load_class,
+                qty,
+                unit_weight,
+                total_weight,
+                discounted_price,
+                unit_price_col,
+                concrete_grade_col,
+            ) = p
             if unit_price_col is not None and unit_price_col > 0:
                 unit_price = float(unit_price_col)
             else:
@@ -805,6 +837,7 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
                 'load_class': load_class or 800,
                 'unit_price': unit_price,
                 'weight': weight,
+                'concrete_grade': (concrete_grade_col or '').strip() or None,
             })
         
         totals = calculate_total_cost(order_data, new_discount, logistics_cost=logistics_saved)
@@ -818,7 +851,19 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
         ''', (new_discount, subtotal, vat_amount, total_amount, kp_id))
         
         for p in plates:
-            pid, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price_col = p
+            (
+                pid,
+                plate_name,
+                length_m,
+                width_m,
+                load_class,
+                qty,
+                unit_weight,
+                total_weight,
+                discounted_price,
+                unit_price_col,
+                _conc2,
+            ) = p
             if unit_price_col is not None and unit_price_col > 0:
                 up = float(unit_price_col)
             else:
@@ -2534,7 +2579,8 @@ def mark_plates_as_planned(
         # ИСПРАВЛЕНО: Находим ВСЕ плиты со статусом 'в производстве' (без LIMIT 1)
         cur.execute('''
             SELECT id, qty, position_number, length_m, width_m, load_class,
-                   unit_weight, total_weight, discounted_price
+                   unit_weight, total_weight, discounted_price,
+                   COALESCE(concrete_grade, '') AS concrete_grade
             FROM kp_plates
             WHERE kp_id = ? AND plate_name = ? AND status = 'в производстве' AND qty > 0
             ORDER BY id
@@ -2553,7 +2599,7 @@ def mark_plates_as_planned(
                     "plate_name": plate_name,
                     "qty_to_plan_requested": qty_to_plan,
                     "rows_count": len(rows),
-                    "rows": [{"id": r[0], "qty": r[1], "length_m": r[3], "width_m": r[4], "load_class": r[5]} for r in rows],
+                    "rows": [{"id": r[0], "qty": r[1], "length_m": r[3], "width_m": r[4], "load_class": r[5], "concrete_grade": r[9] if len(r) > 9 else None} for r in rows],
                 },
             )
         # #endregion
@@ -2591,7 +2637,7 @@ def mark_plates_as_planned(
             if remaining_to_plan <= 0:
                 break
             
-            plate_id, current_qty, pos_num, length_m, width_m, load_class, unit_w, total_w, price = row
+            plate_id, current_qty, pos_num, length_m, width_m, load_class, unit_w, total_w, price, conc_grade = row
             
             if current_qty <= remaining_to_plan:
                 # Вся запись идет в план
@@ -2634,10 +2680,11 @@ def mark_plates_as_planned(
                 cur.execute('''
                     INSERT INTO kp_plates (
                         kp_id, position_number, plate_name, length_m, width_m, load_class,
-                        qty, unit_weight, total_weight, discounted_price, status, plan_id, day_number
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'в производстве', NULL, NULL)
+                        qty, unit_weight, total_weight, discounted_price, status, plan_id, day_number,
+                        concrete_grade
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'в производстве', NULL, NULL, ?)
                 ''', (kp_id, pos_num, plate_name, length_m, width_m, load_class,
-                      remaining_in_production, unit_w, total_w, price))
+                      remaining_in_production, unit_w, total_w, price, conc_grade or None))
                 _audit_append(
                     cur,
                     plate_id=plate_id,
@@ -2813,12 +2860,12 @@ def return_plates_to_production(
                     INSERT INTO kp_plates (
                         kp_id, position_number, plate_name, length_m, width_m,
                         load_class, qty, unit_weight, total_weight, discounted_price,
-                        status, plan_id
+                        status, plan_id, concrete_grade
                     )
                     SELECT
                         kp_id, position_number, plate_name, length_m, width_m,
                         load_class, ?, unit_weight, total_weight, discounted_price,
-                        'в производстве', NULL
+                        'в производстве', NULL, concrete_grade
                     FROM kp_plates WHERE id = ?
                 ''', (remaining_to_return, plate_id))
                 _audit_append(
@@ -3069,12 +3116,12 @@ def return_lost_plates_to_production(
                         INSERT INTO kp_plates (
                             kp_id, position_number, plate_name, length_m, width_m,
                             load_class, qty, unit_weight, total_weight, discounted_price,
-                            status, plan_id
+                            status, plan_id, concrete_grade
                         )
                         SELECT 
                             kp_id, position_number, plate_name, length_m, width_m,
                             load_class, ?, unit_weight, total_weight, discounted_price,
-                            'в производстве', NULL
+                            'в производстве', NULL, concrete_grade
                         FROM kp_plates WHERE id = ?
                     ''', (remaining_to_return, plate_id))
                     
@@ -3243,7 +3290,8 @@ def get_all_plates_in_production(db_path: str = DEFAULT_DB) -> List[Dict]:
                 p.status as plate_status,
                 p.plan_id,
                 ko.customer_name,
-                ko.execution_terms
+                ko.execution_terms,
+                p.concrete_grade AS concrete_grade
             FROM kp_plates p
             LEFT JOIN KP_offers ko ON p.kp_id = ko.kp_id
             LEFT JOIN kp_meta m ON p.kp_id = m.kp_id

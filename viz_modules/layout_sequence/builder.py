@@ -604,6 +604,7 @@ def build_layout_sequence(
                             "customer": customer,
                             "kp_date": kp_date,
                             "plate_name": plate_name_from_cut,
+                            "concrete_grade": cut.get("concrete_grade"),
                         }
                     )
                     vis.info(
@@ -666,6 +667,7 @@ def build_layout_sequence(
                                 "customer": customer,
                                 "kp_date": kp_date,
                                 "plate_name": plate_name_from_cut,
+                                "concrete_grade": cut.get("concrete_grade"),
                             }
                         )
                     else:
@@ -768,6 +770,7 @@ def build_layout_sequence(
                                 "customer": customer,
                                 "kp_date": kp_date,
                                 "plate_name": plate_name_from_cut,
+                                "concrete_grade": cut.get("concrete_grade"),
                             }
                         )
 

@@ -77,6 +77,8 @@ def _build_order_info_map(
         identity = (int(kp_id), plate_name)
         if identity in info_map:
             info_map[identity]["qty_remaining"] += int(order.get("qty", 1) or 0)
+            if not info_map[identity].get("concrete_grade") and order.get("concrete_grade"):
+                info_map[identity]["concrete_grade"] = order.get("concrete_grade")
         else:
             info_map[identity] = {
                 "kp_id": int(kp_id),
@@ -88,6 +90,7 @@ def _build_order_info_map(
                 "length": order.get("length"),
                 "width": order.get("width"),
                 "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
+                "concrete_grade": order.get("concrete_grade"),
             }
     return info_map
 
@@ -193,6 +196,7 @@ def _create_rescue_tracks_from_missing(
                 "customer": info.get("customer"),
                 "kp_date": info.get("kp_date"),
                 "plate_name": plate_name or None,
+                "concrete_grade": info.get("concrete_grade"),
                 "rescue_order_missing": False,
             })
             rescue_assignments.append({
@@ -206,6 +210,7 @@ def _create_rescue_tracks_from_missing(
                 "plate_name": plate_name or None,
                 "identity_match_type": "rescue",
                 "rescue_order_missing": False,
+                "concrete_grade": info.get("concrete_grade"),
             })
             current_len += length_canon
     _flush()

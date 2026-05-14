@@ -37,6 +37,91 @@ def _dispatch_agent_seq_debug(hypothesis_id: str, message: str, data: dict[str, 
     _ls_pkg._agent_seq_debug(hypothesis_id, message, data)
 
 
+def _primary_cut_tie_key(cut: dict[str, Any]) -> tuple[Any, ...]:
+    """Меньше ключ — предпочтительнее при равном армировании (стабильный tie-break, в т.ч. для плит без parent id)."""
+    pids = cut.get("primary_instance_ids") or []
+    pid_one = cut.get("primary_instance_id")
+    has_parent = 0 if (pid_one or pids) else 1
+    width = cut.get("width", 0)
+    rest = int(cut.get("rest", 0) or 0)
+    lengths = cut.get("lengths") or []
+    try:
+        length0 = float(lengths[0]) if lengths else 0.0
+    except (TypeError, ValueError, IndexError):
+        length0 = 0.0
+    pid_s = str(pid_one or (pids[0] if pids else "") or "")
+    return (has_parent, width, rest, length0, pid_s)
+
+
+def _solid_head_reinforcement(
+    cut: dict[str, Any],
+    reinforcement_map: dict[Any, Any],
+    normalize_load_code: Any,
+    hypothesis_debug_log: Any,
+) -> float:
+    length = cut["lengths"][0] if cut.get("lengths") else 6.0
+    width_mm = cut["width"]
+    lc = normalize_load_code(cut.get("load_code", 8))
+    r = get_reinforcement_from_map(
+        reinforcement_map, length, width_mm, lc, hypothesis_debug_log=hypothesis_debug_log
+    )
+    if r is not None:
+        return float(r)
+    return float(cut.get("reinforcement", 999.0))
+
+
+def _append_inter_group_separator(
+    ordered_cuts: list[dict[str, Any]],
+    solid_cuts_list: list[dict[str, Any]],
+    next_group: list[dict[str, Any]],
+    reinforcement_map: dict[Any, Any],
+    vis_log: logging.Logger,
+) -> None:
+    if not solid_cuts_list:
+        return
+    best_idx = choose_best_separator(solid_cuts_list, next_group, reinforcement_map, log=vis_log)
+    if best_idx is not None:
+        separator = solid_cuts_list.pop(best_idx)
+        separator["is_separator"] = True
+        ordered_cuts.append(separator)
+        vis_log.info("[VISUAL] ✓ Разделитель (is_separator=True): целая плита между группами")
+    else:
+        fallback_sep = solid_cuts_list.pop(0)
+        fallback_sep["is_separator"] = True
+        ordered_cuts.append(fallback_sep)
+        vis_log.info("[VISUAL] ✓ Разделитель: целая плита между группами (fallback, is_separator=True)")
+
+
+def _append_one_cut_group_to_ordered(
+    ordered_cuts: list[dict[str, Any]],
+    cut_group: list[dict[str, Any]],
+    group_index_1based: int,
+    solid_cuts_list: list[dict[str, Any]],
+    vis_log: logging.Logger,
+) -> None:
+    total_group_length = sum(cut["lengths"][0] * cut["qty"] for cut in cut_group if cut.get("lengths"))
+    vis_log.info(
+        f"[VISUAL] Группа резов #{group_index_1based}: width={cut_group[0]['width']}мм, "
+        f"rest={cut_group[0]['rest']}мм, типов={len(cut_group)}, длина={total_group_length:.1f}м"
+    )
+    if total_group_length > 90.0:
+        vis_log.info(
+            f"[VISUAL] ⚠️ Группа #{group_index_1based} слишком большая ({total_group_length:.1f}м > 90м), разбиваем на подгруппы"
+        )
+        subgroups = split_group_into_subgroups(cut_group, max_length=90.0, log=vis_log)
+        for j, subgroup in enumerate(subgroups):
+            ordered_cuts.extend(subgroup)
+            vis_log.info(f"[VISUAL]   Добавлена подгруппа #{group_index_1based}.{j+1}: {len(subgroup)} плит")
+            if j < len(subgroups) - 1 and solid_cuts_list:
+                separator = solid_cuts_list.pop(0)
+                separator["is_separator"] = True
+                ordered_cuts.append(separator)
+                vis_log.info("[VISUAL]   ✓ Разделитель между подгруппами: целая плита")
+    else:
+        ordered_cuts.extend(cut_group)
+        vis_log.info(f"[VISUAL] Добавлена группа резов #{group_index_1based} (влезает в дорожку)")
+
+
 def _build_sequence_from_plan(
     plan: dict[str, Any],
     plate_label_func: Any,
@@ -330,50 +415,73 @@ def _build_sequence_from_plan_impl(
         first_width = first_plate.get("width", 1200)
         vis_log.info(f"[VISUAL] ✓ Первая плита: целая {first_width}мм")
 
-    for i, cut_group in enumerate(cut_groups):
-        total_group_length = sum(
-            cut["lengths"][0] * cut["qty"] for cut in cut_group if cut.get("lengths")
-        )
-        vis_log.info(
-            f"[VISUAL] Группа резов #{i+1}: width={cut_group[0]['width']}мм, "
-            f"rest={cut_group[0]['rest']}мм, типов={len(cut_group)}, длина={total_group_length:.1f}м"
-        )
+    use_greedy = bool(layout_cfg.layout_greedy_reinf_merge)
+    if use_greedy and cut_groups:
+        vis_log.info("[VISUAL] Режим: жадное чередование целых и групп с резом по мин. армированию")
 
-        if total_group_length > 90.0:
-            vis_log.info(
-                f"[VISUAL] ⚠️ Группа #{i+1} слишком большая ({total_group_length:.1f}м > 90м), разбиваем на подгруппы"
+    if not use_greedy:
+        for i, cut_group in enumerate(cut_groups):
+            _append_one_cut_group_to_ordered(ordered_cuts, cut_group, i + 1, solid_cuts_list, vis_log)
+            if i < len(cut_groups) - 1 and solid_cuts_list:
+                _append_inter_group_separator(
+                    ordered_cuts,
+                    solid_cuts_list,
+                    cut_groups[i + 1],
+                    reinforcement_map,
+                    vis_log,
+                )
+        if solid_cuts_list:
+            ordered_cuts.extend(solid_cuts_list)
+            vis_log.info(f"[VISUAL] Добавлено {len(solid_cuts_list)} оставшихся целых плит в конец")
+    else:
+        last_was_cut_group = False
+        cut_idx = 0
+        while cut_idx < len(cut_groups) and solid_cuts_list:
+            cut_group = cut_groups[cut_idx]
+            head_solid = solid_cuts_list[0]
+            rs = _solid_head_reinforcement(
+                head_solid, reinforcement_map, _norm, hypothesis_log
             )
-            subgroups = split_group_into_subgroups(cut_group, max_length=90.0, log=vis_log)
-            for j, subgroup in enumerate(subgroups):
-                ordered_cuts.extend(subgroup)
-                vis_log.info(f"[VISUAL]   Добавлена подгруппа #{i+1}.{j+1}: {len(subgroup)} плит")
-                if j < len(subgroups) - 1 and solid_cuts_list:
-                    separator = solid_cuts_list.pop(0)
-                    separator["is_separator"] = True
-                    ordered_cuts.append(separator)
-                    vis_log.info("[VISUAL]   ✓ Разделитель между подгруппами: целая плита")
-        else:
-            ordered_cuts.extend(cut_group)
-            vis_log.info(f"[VISUAL] Добавлена группа резов #{i+1} (влезает в дорожку)")
-
-        if i < len(cut_groups) - 1 and solid_cuts_list:
-            next_group = cut_groups[i + 1]
-            best_idx = choose_best_separator(solid_cuts_list, next_group, reinforcement_map, log=vis_log)
-            if best_idx is not None:
-                separator = solid_cuts_list.pop(best_idx)
-                separator["is_separator"] = True
-                ordered_cuts.append(separator)
-                vis_log.info("[VISUAL] ✓ Разделитель (is_separator=True): целая плита между группами")
+            rg = float(cut_group[0].get("reinforcement", 999.0))
+            if rs < rg:
+                pick_solid = True
+            elif rs > rg:
+                pick_solid = False
             else:
-                if solid_cuts_list:
-                    fallback_sep = solid_cuts_list.pop(0)
-                    fallback_sep["is_separator"] = True
-                    ordered_cuts.append(fallback_sep)
-                    vis_log.info("[VISUAL] ✓ Разделитель: целая плита между группами (fallback, is_separator=True)")
+                ts = _primary_cut_tie_key(head_solid)
+                tg = _primary_cut_tie_key(cut_group[0])
+                if ts < tg:
+                    pick_solid = True
+                elif ts > tg:
+                    pick_solid = False
+                else:
+                    pick_solid = True
 
-    if solid_cuts_list:
-        ordered_cuts.extend(solid_cuts_list)
-        vis_log.info(f"[VISUAL] Добавлено {len(solid_cuts_list)} оставшихся целых плит в конец")
+            if pick_solid:
+                ordered_cuts.append(solid_cuts_list.pop(0))
+                last_was_cut_group = False
+                continue
+
+            if last_was_cut_group and solid_cuts_list:
+                _append_inter_group_separator(ordered_cuts, solid_cuts_list, cut_group, reinforcement_map, vis_log)
+                last_was_cut_group = False
+
+            _append_one_cut_group_to_ordered(ordered_cuts, cut_group, cut_idx + 1, solid_cuts_list, vis_log)
+            cut_idx += 1
+            last_was_cut_group = True
+
+        while cut_idx < len(cut_groups):
+            cut_group = cut_groups[cut_idx]
+            if last_was_cut_group and solid_cuts_list:
+                _append_inter_group_separator(ordered_cuts, solid_cuts_list, cut_group, reinforcement_map, vis_log)
+                last_was_cut_group = False
+            _append_one_cut_group_to_ordered(ordered_cuts, cut_group, cut_idx + 1, solid_cuts_list, vis_log)
+            cut_idx += 1
+            last_was_cut_group = True
+
+        if solid_cuts_list:
+            ordered_cuts.extend(solid_cuts_list)
+            vis_log.info(f"[VISUAL] Добавлено {len(solid_cuts_list)} оставшихся целых плит в конец")
 
     for oi, ocut in enumerate(ordered_cuts):
         if ocut.get("rest", 0) <= 0:

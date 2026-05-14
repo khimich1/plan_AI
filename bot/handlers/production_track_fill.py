@@ -69,6 +69,7 @@ def _plate_to_track_item(plate: dict) -> dict:
         'customer': plate.get('customer_name', ''),
         'kp_date': kp_date,
         'plate_name': plate.get('plate_name', ''),
+        'concrete_grade': plate.get('concrete_grade'),
     }
 
 

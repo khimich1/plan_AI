@@ -139,6 +139,7 @@ def _assignment_to_track_item(assignment: dict[str, Any]) -> dict[str, Any]:
         "plate_name": plate_name,
         "plate_uid": assignment.get("plate_uid"),
         "reconciled_from_assignment": True,
+        "concrete_grade": assignment.get("concrete_grade"),
     }
 
 

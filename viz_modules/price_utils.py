@@ -13,6 +13,7 @@ import sqlite3
 
 import core.config_and_data as cfg
 from core.debug_paths import get_debug_log_path
+from core.price_db import length_m_to_price_length_dm
 
 _DEBUG_LOG_DB7A51 = get_debug_log_path("debug-db7a51.log")
 
@@ -239,6 +240,25 @@ def find_price_for_plate(price_table: dict, length_m: float, load_code: int | fl
         pass
     # #endregion
     return result
+
+
+def _find_price_for_plate_production_fallback(
+    price_table: dict,
+    length_m: float,
+    load_code: int | float = 8,
+) -> float | None:
+    """XLSX fallback для производственной сметы: ключ длины через length_m_to_price_length_dm (ceil)."""
+    length_dm_key = length_m_to_price_length_dm(length_m)
+    try:
+        load_code_int = int(math.floor(load_code)) if load_code is not None else 8
+    except (TypeError, ValueError):
+        load_code_int = 8
+    if length_dm_key in price_table and load_code_int in price_table[length_dm_key]:
+        return price_table[length_dm_key][load_code_int]
+    for tbl_dm, loads in price_table.items():
+        if abs(tbl_dm - length_dm_key) <= 1 and load_code_int in loads:
+            return loads[load_code_int]
+    return None
 
 
 def load_cut_price_from_docx(path: str) -> float:

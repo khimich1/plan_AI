@@ -17,7 +17,7 @@ import os
 import re
 import sqlite3
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 try:
     import pandas as pd
@@ -250,6 +250,49 @@ def get_reinforcement(
                 row = cur.fetchone()
                 if row:
                     return float(row[0])
+    finally:
+        conn.close()
+    return None
+
+
+def get_concrete_grade_from_series(
+    length_m: float,
+    load_code: int | float,
+    *,
+    db_path: Path | str = DEFAULT_DB,
+    allow_fallback: bool = True,
+) -> Optional[str]:
+    """Марка бетона из pb_reinforcement_series (те же ключи, что для get_reinforcement)."""
+    length_dm = int(round(float(length_m) * 10))
+    load_code_int = int(float(load_code) + 0.5)
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT name FROM sqlite_master WHERE type='table' AND name='pb_reinforcement_series'"""
+        )
+        if not cur.fetchone():
+            return None
+        cur.execute(
+            """SELECT concrete_grade FROM pb_reinforcement_series WHERE length_dm=? AND load_code=?""",
+            (length_dm, load_code_int),
+        )
+        row = cur.fetchone()
+        if row and row[0]:
+            return str(row[0]).strip()
+        if allow_fallback:
+            cur.execute(
+                """
+                SELECT concrete_grade FROM pb_reinforcement_series
+                WHERE ABS(length_dm - ?) <= 1 AND load_code=?
+                ORDER BY ABS(length_dm - ?) LIMIT 1
+                """,
+                (length_dm, load_code_int, length_dm),
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                return str(row[0]).strip()
     finally:
         conn.close()
     return None

@@ -11,6 +11,7 @@ from core.optimization.debug_log import (
     _DEBUG_LOG_5b5324,
     _DEBUG_LOG_COMMON,
     _dbg_open_append,
+    _opt_debug_enabled,
 )
 from core.optimization.optimization_debug_impl import (
     _DEBUG_AGENT_LOG_EBB546,
@@ -45,43 +46,44 @@ def run_two_d_phase_finalize(
     _next_primary_instance_id = next_primary_instance_id
 
     # #region agent log
-    try:
-        import json as _agent_json
-        import time as _agent_time
+    if _opt_debug_enabled():
+        try:
+            import json as _agent_json
+            import time as _agent_time
 
-        with open(_DEBUG_AGENT_LOG_EBB546, "a", encoding="utf-8") as _agent_f:
-            _agent_f.write(
-                _agent_json.dumps(
-                    {
-                        "sessionId": "ebb546",
-                        "runId": "solver-localization",
-                        "hypothesisId": "O6",
-                        "location": "core/optimization/optimize_2d/finalize.py:solver_output_pre",
-                        "message": "Фактические primary/secondary перед PlateAudit solver_output",
-                        "data": {
-                            "primary_cuts_len": len(result.get("primary_cuts") or []),
-                            "secondary_cuts_len": len(result.get("secondary_cuts") or []),
-                            "total_for_audit": len(result.get("primary_cuts") or [])
-                            + len(result.get("secondary_cuts") or []),
-                            "secondary_sample": [
-                                {
-                                    "source": c.get("source"),
-                                    "cuts": c.get("cuts"),
-                                    "lengths": c.get("lengths"),
-                                    "target_order_key": c.get("target_order_key"),
-                                    "load_code": c.get("load_code"),
-                                }
-                                for c in (result.get("secondary_cuts") or [])[:20]
-                            ],
+            with _dbg_open_append(_DEBUG_AGENT_LOG_EBB546) as _agent_f:
+                _agent_f.write(
+                    _agent_json.dumps(
+                        {
+                            "sessionId": "ebb546",
+                            "runId": "solver-localization",
+                            "hypothesisId": "O6",
+                            "location": "core/optimization/optimize_2d/finalize.py:solver_output_pre",
+                            "message": "Фактические primary/secondary перед PlateAudit solver_output",
+                            "data": {
+                                "primary_cuts_len": len(result.get("primary_cuts") or []),
+                                "secondary_cuts_len": len(result.get("secondary_cuts") or []),
+                                "total_for_audit": len(result.get("primary_cuts") or [])
+                                + len(result.get("secondary_cuts") or []),
+                                "secondary_sample": [
+                                    {
+                                        "source": c.get("source"),
+                                        "cuts": c.get("cuts"),
+                                        "lengths": c.get("lengths"),
+                                        "target_order_key": c.get("target_order_key"),
+                                        "load_code": c.get("load_code"),
+                                    }
+                                    for c in (result.get("secondary_cuts") or [])[:20]
+                                ],
+                            },
+                            "timestamp": int(_agent_time.time() * 1000),
                         },
-                        "timestamp": int(_agent_time.time() * 1000),
-                    },
-                    ensure_ascii=False,
+                        ensure_ascii=False,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
-    except Exception:
-        pass
+        except Exception:
+            pass
     # #endregion
 
     # PlateAudit: checkpoint после сбора данных из solver (до пост-коррекции)
@@ -202,26 +204,27 @@ def run_two_d_phase_finalize(
 
         _log_mod2.getLogger(__name__).info("[AUDIT] Оптимизатор: потерь нет.\n%s", audit.summary())
     # #region agent log
-    try:
-        _missing_after_post = {}
-        for (_L, _W, _lc), _need in demand_2d.items():
-            _have = planned_coverage_by_key.get(norm_demand_key((_L, _W, _lc)), 0)
-            if _have < _need:
-                _missing_after_post[str([_L, _W, _lc])] = int(_need - _have)
-        _debug_runtime_write_648532(
-            "run1",
-            "H3_post_correction_balance",
-            "core/optimization/optimize_2d/finalize.py:post_correction",
-            "Demand minus planned coverage after post-correction",
-            {
-                "demand_total": int(sum(demand_2d.values())),
-                "planned_coverage_total": int(sum(planned_coverage_by_key.values())),
-                "missing_keys_after_post": _missing_after_post,
-                "missing_total_after_post": int(sum(_missing_after_post.values())),
-            },
-        )
-    except Exception:
-        pass
+    if _opt_debug_enabled():
+        try:
+            _missing_after_post = {}
+            for (_L, _W, _lc), _need in demand_2d.items():
+                _have = planned_coverage_by_key.get(norm_demand_key((_L, _W, _lc)), 0)
+                if _have < _need:
+                    _missing_after_post[str([_L, _W, _lc])] = int(_need - _have)
+            _debug_runtime_write_648532(
+                "run1",
+                "H3_post_correction_balance",
+                "core/optimization/optimize_2d/finalize.py:post_correction",
+                "Demand minus planned coverage after post-correction",
+                {
+                    "demand_total": int(sum(demand_2d.values())),
+                    "planned_coverage_total": int(sum(planned_coverage_by_key.values())),
+                    "missing_keys_after_post": _missing_after_post,
+                    "missing_total_after_post": int(sum(_missing_after_post.values())),
+                },
+            )
+        except Exception:
+            pass
     # #endregion
     result["_plate_audit"] = audit
 
@@ -252,69 +255,70 @@ def run_two_d_phase_finalize(
         )
 
     # #region agent log (2d5c43) H1,H2,H5: demand vs primary_cuts, 6m 530/1200
-    try:
-        _log_2d5c43 = _DEBUG_LOG_2D5C43
-        _demand_total = sum(demand_2d.values())
-        _target_keys = [(6.0, 1200, 8), (6.0, 530, 8), (5.1, 320, 8)]
-        _demand_by_key = {}
-        for k, q in demand_2d.items():
-            for tk in _target_keys:
-                if (
-                    abs(round(k[0], 2) - round(tk[0], 2)) <= 0.02
-                    and k[1] == tk[1]
-                    and (k[2] == tk[2] or k[2] == "8")
-                ):
-                    _demand_by_key[tuple(tk)] = _demand_by_key.get(tuple(tk), 0) + q
-                    break
-        _prim_total = len(result["primary_cuts"])
-        _prim_by_key = {tk: 0 for tk in _target_keys}
-        _prim_6_530_1200 = []
-        for c in result["primary_cuts"]:
-            L = round((c.get("lengths") or [0])[0], 2)
-            W = c.get("demand_width", c.get("width", 0))
-            lc = c.get("load_code", 8)
-            for tk in _target_keys:
-                if (
-                    abs(L - tk[0]) <= 0.02
-                    and W == tk[1]
-                    and (lc == tk[2] or lc == "8")
-                ):
-                    _prim_by_key[tk] = _prim_by_key.get(tk, 0) + 1
-                    break
-            if 5.98 <= L <= 6.02 and W in (530, 1200) and len(_prim_6_530_1200) < 25:
-                _prim_6_530_1200.append(
-                    {
-                        "length": L,
-                        "width": W,
-                        "rest": c.get("rest", 0),
-                        "plate_name": (c.get("plate_name") or "")[:60],
-                    }
-                )
-        _demand_by_key_ser = [list(k) + [v] for k, v in _demand_by_key.items()]
-        _prim_by_key_ser = [list(k) + [v] for k, v in _prim_by_key.items()]
-        with _dbg_open_append(_log_2d5c43) as _f:
-            _f.write(
-                __import__("json").dumps(
-                    {
-                        "sessionId": "2d5c43",
-                        "hypothesisId": "H1_H2_H5",
-                        "location": "core/optimization/optimize_2d/finalize.py:h1_h5",
-                        "message": "demand vs primary_cuts",
-                        "data": {
-                            "demand_total": _demand_total,
-                            "demand_by_key": _demand_by_key_ser,
-                            "primary_total": _prim_total,
-                            "primary_by_key": _prim_by_key_ser,
-                            "primary_6m_530_1200_sample": _prim_6_530_1200,
+    if _opt_debug_enabled():
+        try:
+            _log_2d5c43 = _DEBUG_LOG_2D5C43
+            _demand_total = sum(demand_2d.values())
+            _target_keys = [(6.0, 1200, 8), (6.0, 530, 8), (5.1, 320, 8)]
+            _demand_by_key = {}
+            for k, q in demand_2d.items():
+                for tk in _target_keys:
+                    if (
+                        abs(round(k[0], 2) - round(tk[0], 2)) <= 0.02
+                        and k[1] == tk[1]
+                        and (k[2] == tk[2] or k[2] == "8")
+                    ):
+                        _demand_by_key[tuple(tk)] = _demand_by_key.get(tuple(tk), 0) + q
+                        break
+            _prim_total = len(result["primary_cuts"])
+            _prim_by_key = {tk: 0 for tk in _target_keys}
+            _prim_6_530_1200 = []
+            for c in result["primary_cuts"]:
+                L = round((c.get("lengths") or [0])[0], 2)
+                W = c.get("demand_width", c.get("width", 0))
+                lc = c.get("load_code", 8)
+                for tk in _target_keys:
+                    if (
+                        abs(L - tk[0]) <= 0.02
+                        and W == tk[1]
+                        and (lc == tk[2] or lc == "8")
+                    ):
+                        _prim_by_key[tk] = _prim_by_key.get(tk, 0) + 1
+                        break
+                if 5.98 <= L <= 6.02 and W in (530, 1200) and len(_prim_6_530_1200) < 25:
+                    _prim_6_530_1200.append(
+                        {
+                            "length": L,
+                            "width": W,
+                            "rest": c.get("rest", 0),
+                            "plate_name": (c.get("plate_name") or "")[:60],
+                        }
+                    )
+            _demand_by_key_ser = [list(k) + [v] for k, v in _demand_by_key.items()]
+            _prim_by_key_ser = [list(k) + [v] for k, v in _prim_by_key.items()]
+            with _dbg_open_append(_log_2d5c43) as _f:
+                _f.write(
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "2d5c43",
+                            "hypothesisId": "H1_H2_H5",
+                            "location": "core/optimization/optimize_2d/finalize.py:h1_h5",
+                            "message": "demand vs primary_cuts",
+                            "data": {
+                                "demand_total": _demand_total,
+                                "demand_by_key": _demand_by_key_ser,
+                                "primary_total": _prim_total,
+                                "primary_by_key": _prim_by_key_ser,
+                                "primary_6m_530_1200_sample": _prim_6_530_1200,
+                            },
+                            "timestamp": __import__("time").time(),
                         },
-                        "timestamp": __import__("time").time(),
-                    },
-                    ensure_ascii=False,
+                        ensure_ascii=False,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
-    except Exception:
-        pass
+        except Exception:
+            pass
     # #endregion
     print(f"[OPT_2D] ✓ Целых плит в начале: {n_solid_primary_plates}")
     print(f"[OPT_2D] ✓ Плит с резом (сгруппировано): {n_cut_primary_plates}")
@@ -343,6 +347,7 @@ def run_two_d_phase_finalize(
         cut["kp_date"] = plate_info.get("kp_date") if plate_info else None
         cut["plate_name"] = plate_info.get("plate_name") if plate_info else None
         cut["identity_match_type"] = plate_info.get("identity_match_type") if plate_info else "slot_exhausted"
+        cut["concrete_grade"] = plate_info.get("concrete_grade") if plate_info else None
 
         for length in cut["lengths"]:
             result["plate_assignments"].append(
@@ -357,6 +362,7 @@ def run_two_d_phase_finalize(
                     "plate_name": cut.get("plate_name"),
                     "load_code": cut.get("load_code", 800),
                     "identity_match_type": cut.get("identity_match_type"),
+                    "concrete_grade": cut.get("concrete_grade"),
                     "unit_id": cut.get("primary_instance_id"),
                     "parent_unit_id": None,
                     "source_opt_id": cut.get("source_opt_id"),
@@ -373,7 +379,7 @@ def run_two_d_phase_finalize(
                     }
                 )
     # #region agent log: summary empty plate_info (H2)
-    if _empty_primary_keys:
+    if _empty_primary_keys and _opt_debug_enabled():
         try:
             _c = Counter(_empty_primary_keys)
             _summary = [{"key": list(k), "count": _c[k]} for k in sorted(_c.keys())]
@@ -400,35 +406,36 @@ def run_two_d_phase_finalize(
     # #endregion
 
     # #region agent log (session 5b5324) после пересборки primary plate_assignments
-    try:
-        _prim_sample = [
-            {
-                "kp_id": p.get("kp_id"),
-                "plate_name": (p.get("plate_name") or "")[:50],
-                "identity_match_type": p.get("identity_match_type"),
-            }
-            for p in result["plate_assignments"][:5]
-        ]
-        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-            _f.write(
-                __import__("json").dumps(
-                    {
-                        "sessionId": "5b5324",
-                        "hypothesisId": "H_primary_pa",
-                        "location": "core/optimization/optimize_2d/finalize.py:primary_pa",
-                        "message": "primary plate_assignments count and sample",
-                        "data": {
-                            "primary_plate_assignments_count": len(result["plate_assignments"]),
-                            "sample": _prim_sample,
+    if _opt_debug_enabled():
+        try:
+            _prim_sample = [
+                {
+                    "kp_id": p.get("kp_id"),
+                    "plate_name": (p.get("plate_name") or "")[:50],
+                    "identity_match_type": p.get("identity_match_type"),
+                }
+                for p in result["plate_assignments"][:5]
+            ]
+            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
+                _f.write(
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "5b5324",
+                            "hypothesisId": "H_primary_pa",
+                            "location": "core/optimization/optimize_2d/finalize.py:primary_pa",
+                            "message": "primary plate_assignments count and sample",
+                            "data": {
+                                "primary_plate_assignments_count": len(result["plate_assignments"]),
+                                "sample": _prim_sample,
+                            },
+                            "timestamp": __import__("time").time(),
                         },
-                        "timestamp": __import__("time").time(),
-                    },
-                    ensure_ascii=False,
+                        ensure_ascii=False,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
-    except Exception:
-        pass
+        except Exception:
+            pass
     # #endregion
 
     print(f"[OPT_2D] ✓ Создано остатков: {len(result['rests_created'])}")
@@ -452,7 +459,7 @@ def run_two_d_phase_finalize(
                 }
             )
         # #region agent log: secondary plate kp_id (H2, H5)
-        if not plate_info and target_key:
+        if _opt_debug_enabled() and not plate_info and target_key:
             try:
                 with _dbg_open_append(_DEBUG_LOG_COMMON) as _f:
                     _f.write(
@@ -484,6 +491,7 @@ def run_two_d_phase_finalize(
         cut["identity_match_type"] = (
             plate_info.get("identity_match_type") if plate_info else "secondary_unmapped"
         )
+        cut["concrete_grade"] = plate_info.get("concrete_grade") if plate_info else None
 
         result["plate_assignments"].append(
             {
@@ -497,225 +505,230 @@ def run_two_d_phase_finalize(
                 "plate_name": cut.get("plate_name"),
                 "load_code": cut.get("load_code", 800),
                 "identity_match_type": cut.get("identity_match_type"),
+                "concrete_grade": cut.get("concrete_grade"),
                 "unit_id": cut.get("secondary_instance_id"),
                 "parent_unit_id": cut.get("parent_instance_id"),
             }
         )
     # #region agent log (ef42ae: H1 оптимизатор дал вторичку без родителя; H3 «ошибочно вторичный» по watchlist)
-    try:
-        import json as _ef42_json
-        import time as _ef42_time
+    if _opt_debug_enabled():
+        try:
+            import json as _ef42_json
+            import time as _ef42_time
 
-        _sec_asg = [p for p in result["plate_assignments"] if p.get("source") == "secondary"]
-        _null_par = [p for p in _sec_asg if not p.get("parent_unit_id")]
-        _watch_subs = ("25,4-3", "63,9-5,3", "42,6-5,3", "25,4-3,0", "63,9-5,3-10")
-        _watch_sec = [
-            {
-                "unit_id": p.get("unit_id"),
-                "parent_unit_id": p.get("parent_unit_id"),
-                "length": p.get("length"),
-                "width": p.get("width"),
-                "plate_name": (p.get("plate_name") or "")[:160],
-                "identity_match_type": p.get("identity_match_type"),
-            }
-            for p in _sec_asg
-            if any(s in str(p.get("plate_name") or "") for s in _watch_subs)
-        ]
-        _prim_asg = [p for p in result["plate_assignments"] if p.get("source") != "secondary"]
-        _watch_prim = [
-            {
-                "length": p.get("length"),
-                "width": p.get("width"),
-                "plate_name": (p.get("plate_name") or "")[:160],
-                "source": p.get("source"),
-            }
-            for p in _prim_asg
-            if any(s in str(p.get("plate_name") or "") for s in _watch_subs)
-        ]
-        _raw_sec_no_parent = [
-            {
-                "secondary_instance_id": c.get("secondary_instance_id"),
-                "parent_instance_id": c.get("parent_instance_id"),
-                "target_order_key": list(c["target_order_key"])
-                if isinstance(c.get("target_order_key"), tuple)
-                else c.get("target_order_key"),
-                "lengths": c.get("lengths"),
-                "cuts": c.get("cuts"),
-            }
-            for c in (result.get("secondary_cuts") or [])
-            if not c.get("parent_instance_id")
-        ][:120]
-        with open(_DEBUG_LOG_EF42AE, "a", encoding="utf-8") as _ef42_f:
-            _ef42_f.write(
-                _ef42_json.dumps(
-                    {
-                        "sessionId": "ef42ae",
-                        "hypothesisId": "H1_H3",
-                        "location": "core/optimization/optimize_2d/finalize.py:ef42ae",
-                        "message": "secondary assignments: parent null count, raw secondary_cuts without parent, SKU watchlist primary vs secondary",
-                        "data": {
-                            "n_secondary_assignments": len(_sec_asg),
-                            "n_secondary_null_parent": len(_null_par),
-                            "n_raw_secondary_cuts": len(result.get("secondary_cuts") or []),
-                            "raw_secondary_no_parent_count": len(
-                                [
-                                    c
-                                    for c in (result.get("secondary_cuts") or [])
-                                    if not c.get("parent_instance_id")
-                                ]
-                            ),
-                            "null_parent_assignments_head": [
-                                {
-                                    "unit_id": p.get("unit_id"),
-                                    "parent_unit_id": p.get("parent_unit_id"),
-                                    "length": p.get("length"),
-                                    "width": p.get("width"),
-                                    "plate_name": (p.get("plate_name") or "")[:120],
-                                }
-                                for p in _null_par[:100]
-                            ],
-                            "raw_secondary_no_parent_head": _raw_sec_no_parent,
-                            "watchlist_secondary": _watch_sec,
-                            "watchlist_primary_rows": _watch_prim[:60],
+            _sec_asg = [p for p in result["plate_assignments"] if p.get("source") == "secondary"]
+            _null_par = [p for p in _sec_asg if not p.get("parent_unit_id")]
+            _watch_subs = ("25,4-3", "63,9-5,3", "42,6-5,3", "25,4-3,0", "63,9-5,3-10")
+            _watch_sec = [
+                {
+                    "unit_id": p.get("unit_id"),
+                    "parent_unit_id": p.get("parent_unit_id"),
+                    "length": p.get("length"),
+                    "width": p.get("width"),
+                    "plate_name": (p.get("plate_name") or "")[:160],
+                    "identity_match_type": p.get("identity_match_type"),
+                }
+                for p in _sec_asg
+                if any(s in str(p.get("plate_name") or "") for s in _watch_subs)
+            ]
+            _prim_asg = [p for p in result["plate_assignments"] if p.get("source") != "secondary"]
+            _watch_prim = [
+                {
+                    "length": p.get("length"),
+                    "width": p.get("width"),
+                    "plate_name": (p.get("plate_name") or "")[:160],
+                    "source": p.get("source"),
+                }
+                for p in _prim_asg
+                if any(s in str(p.get("plate_name") or "") for s in _watch_subs)
+            ]
+            _raw_sec_no_parent = [
+                {
+                    "secondary_instance_id": c.get("secondary_instance_id"),
+                    "parent_instance_id": c.get("parent_instance_id"),
+                    "target_order_key": list(c["target_order_key"])
+                    if isinstance(c.get("target_order_key"), tuple)
+                    else c.get("target_order_key"),
+                    "lengths": c.get("lengths"),
+                    "cuts": c.get("cuts"),
+                }
+                for c in (result.get("secondary_cuts") or [])
+                if not c.get("parent_instance_id")
+            ][:120]
+            with _dbg_open_append(_DEBUG_LOG_EF42AE) as _ef42_f:
+                _ef42_f.write(
+                    _ef42_json.dumps(
+                        {
+                            "sessionId": "ef42ae",
+                            "hypothesisId": "H1_H3",
+                            "location": "core/optimization/optimize_2d/finalize.py:ef42ae",
+                            "message": "secondary assignments: parent null count, raw secondary_cuts without parent, SKU watchlist primary vs secondary",
+                            "data": {
+                                "n_secondary_assignments": len(_sec_asg),
+                                "n_secondary_null_parent": len(_null_par),
+                                "n_raw_secondary_cuts": len(result.get("secondary_cuts") or []),
+                                "raw_secondary_no_parent_count": len(
+                                    [
+                                        c
+                                        for c in (result.get("secondary_cuts") or [])
+                                        if not c.get("parent_instance_id")
+                                    ]
+                                ),
+                                "null_parent_assignments_head": [
+                                    {
+                                        "unit_id": p.get("unit_id"),
+                                        "parent_unit_id": p.get("parent_unit_id"),
+                                        "length": p.get("length"),
+                                        "width": p.get("width"),
+                                        "plate_name": (p.get("plate_name") or "")[:120],
+                                    }
+                                    for p in _null_par[:100]
+                                ],
+                                "raw_secondary_no_parent_head": _raw_sec_no_parent,
+                                "watchlist_secondary": _watch_sec,
+                                "watchlist_primary_rows": _watch_prim[:60],
+                            },
+                            "timestamp": int(_ef42_time.time() * 1000),
                         },
-                        "timestamp": int(_ef42_time.time() * 1000),
-                    },
-                    ensure_ascii=False,
-                    default=str,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
-    except Exception:
-        pass
+        except Exception:
+            pass
     # #endregion
     # #region agent log (session 5b5324) после вторичных резов
-    try:
-        _sec_count = sum(1 for p in result["plate_assignments"] if p.get("source") == "secondary")
-        with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-            _f.write(
-                __import__("json").dumps(
-                    {
-                        "sessionId": "5b5324",
-                        "hypothesisId": "H_secondary",
-                        "location": "core/optimization/optimize_2d/finalize.py:secondary",
-                        "message": "secondary attributions and plate_assignments",
-                        "data": {
-                            "secondary_attribution_sample": _secondary_attribution_log[:40],
-                            "plate_assignments_total": len(result["plate_assignments"]),
-                            "secondary_count": _sec_count,
+    if _opt_debug_enabled():
+        try:
+            _sec_count = sum(1 for p in result["plate_assignments"] if p.get("source") == "secondary")
+            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
+                _f.write(
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "5b5324",
+                            "hypothesisId": "H_secondary",
+                            "location": "core/optimization/optimize_2d/finalize.py:secondary",
+                            "message": "secondary attributions and plate_assignments",
+                            "data": {
+                                "secondary_attribution_sample": _secondary_attribution_log[:40],
+                                "plate_assignments_total": len(result["plate_assignments"]),
+                                "secondary_count": _sec_count,
+                            },
+                            "timestamp": __import__("time").time(),
                         },
-                        "timestamp": __import__("time").time(),
-                    },
-                    ensure_ascii=False,
+                        ensure_ascii=False,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
-    except Exception:
-        pass
+        except Exception:
+            pass
     # #endregion
     # #region agent log
-    try:
-        _slot_exhausted_by_key = {}
-        if _empty_primary_keys:
-            _slot_exhausted_by_key["primary"] = {
-                str(list(k)): int(v) for k, v in Counter(_empty_primary_keys).items()
-            }
-        if _empty_secondary_keys:
-            _slot_exhausted_by_key["secondary"] = {
-                str(list(k)): int(v) for k, v in Counter(_empty_secondary_keys).items()
-            }
-        _slot_cursor_overview = []
-        for _k in list(slot_lists.keys())[:80]:
-            _slot_cursor_overview.append(
-                {
-                    "key": list(_k),
-                    "cursor": int(slot_cursors.get(_k, 0)),
-                    "slots": int(len(slot_lists.get(_k, []))),
+    if _opt_debug_enabled():
+        try:
+            _slot_exhausted_by_key = {}
+            if _empty_primary_keys:
+                _slot_exhausted_by_key["primary"] = {
+                    str(list(k)): int(v) for k, v in Counter(_empty_primary_keys).items()
                 }
+            if _empty_secondary_keys:
+                _slot_exhausted_by_key["secondary"] = {
+                    str(list(k)): int(v) for k, v in Counter(_empty_secondary_keys).items()
+                }
+            _slot_cursor_overview = []
+            for _k in list(slot_lists.keys())[:80]:
+                _slot_cursor_overview.append(
+                    {
+                        "key": list(_k),
+                        "cursor": int(slot_cursors.get(_k, 0)),
+                        "slots": int(len(slot_lists.get(_k, []))),
+                    }
+                )
+            _debug_runtime_write_648532(
+                "run1",
+                "H2_slot_exhaustion",
+                "core/optimization/optimize_2d/finalize.py:slot_exhaustion",
+                "Slot consumption and exhausted attribution keys",
+                {
+                    "plate_assignments_total": int(len(result.get("plate_assignments", []))),
+                    "empty_primary_count": int(len(_empty_primary_keys)),
+                    "empty_secondary_count": int(len(_empty_secondary_keys)),
+                    "slot_exhausted_by_key": _slot_exhausted_by_key,
+                    "slot_cursor_overview": _slot_cursor_overview,
+                },
             )
-        _debug_runtime_write_648532(
-            "run1",
-            "H2_slot_exhaustion",
-            "core/optimization/optimize_2d/finalize.py:slot_exhaustion",
-            "Slot consumption and exhausted attribution keys",
-            {
-                "plate_assignments_total": int(len(result.get("plate_assignments", []))),
-                "empty_primary_count": int(len(_empty_primary_keys)),
-                "empty_secondary_count": int(len(_empty_secondary_keys)),
-                "slot_exhausted_by_key": _slot_exhausted_by_key,
-                "slot_cursor_overview": _slot_cursor_overview,
-            },
-        )
-    except Exception:
-        pass
+        except Exception:
+            pass
     # #endregion
 
     print(f"[OPT_2D] OK! Готово! Использовано {result['total_plates']} плит")
     print(f"[OPT_2D] Создано {len(result['plate_assignments'])} готовых плит")
     print(f"[OPT_2D] Остатков использовано вторично: {len(result['rests_used'])}")
     # #region agent log: result counts (H5) + plates by key (H_rescue_trace)
-    try:
-        _dbg_open_append(_DEBUG_LOG_COMMON).write(
-            __import__("json").dumps(
-                {
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "H5",
-                    "location": "core/optimization/optimize_2d/finalize.py:h5",
-                    "message": "plate_assignments count",
-                    "data": {
-                        "len_plate_assignments": len(result["plate_assignments"]),
-                        "total_plates": result.get("total_plates", 0),
-                        "demand_sum": sum(demand_2d.values()),
+    if _opt_debug_enabled():
+        try:
+            _dbg_open_append(_DEBUG_LOG_COMMON).write(
+                __import__("json").dumps(
+                    {
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H5",
+                        "location": "core/optimization/optimize_2d/finalize.py:h5",
+                        "message": "plate_assignments count",
+                        "data": {
+                            "len_plate_assignments": len(result["plate_assignments"]),
+                            "total_plates": result.get("total_plates", 0),
+                            "demand_sum": sum(demand_2d.values()),
+                        },
+                        "timestamp": __import__("time").time() * 1000,
                     },
-                    "timestamp": __import__("time").time() * 1000,
-                },
-                ensure_ascii=False,
+                    ensure_ascii=False,
+                )
+                + "\n"
             )
-            + "\n"
-        )
-    except Exception:
-        pass
-    # Лог по ключам (length, width, load_code) — для сравнения с дорожками и РЕСКЬЮ (любые размеры).
-    try:
-        _norm_lc = getattr(cfg, "normalize_load_code", lambda x: int(x) if x is not None else 8)
-        _by_key = {}
-        for cut in result.get("primary_cuts", []):
-            lc = _norm_lc(cut.get("load_code", 8))
-            for L in cut.get("lengths", []):
-                k = (round(float(L), 2), int(cut.get("width", 0)), lc)
-                _by_key[k] = _by_key.get(k, 0) + 1
-        for cut in result.get("secondary_cuts", []):
-            lengths = cut.get("lengths", [])
-            widths = cut.get("cuts", [])
-            tk = cut.get("target_order_key")
-            lc = _norm_lc(tk[2] if isinstance(tk, (tuple, list)) and len(tk) > 2 else 8)
-            L = float(lengths[0]) if lengths else 0
-            W = (
-                int(widths[0])
-                if widths
-                else (int(tk[1]) if isinstance(tk, (tuple, list)) and len(tk) > 1 else 0)
-            )
-            if L and W:
-                k = (round(L, 2), W, lc)
-                _by_key[k] = _by_key.get(k, 0) + 1
-        _dbg_open_append(_DEBUG_LOG_COMMON).write(
-            __import__("json").dumps(
-                {
-                    "hypothesisId": "H_opt_plates_by_key",
-                    "location": "core/optimization/optimize_2d/finalize.py:by_key",
-                    "message": "optimizer output plates by (length, width, load_code)",
-                    "data": {
-                        "plates_by_key": {str(list(k)): v for k, v in _by_key.items()},
-                        "total": sum(_by_key.values()),
+        except Exception:
+            pass
+    if _opt_debug_enabled():
+        try:
+            _norm_lc = getattr(cfg, "normalize_load_code", lambda x: int(x) if x is not None else 8)
+            _by_key = {}
+            for cut in result.get("primary_cuts", []):
+                lc = _norm_lc(cut.get("load_code", 8))
+                for L in cut.get("lengths", []):
+                    k = (round(float(L), 2), int(cut.get("width", 0)), lc)
+                    _by_key[k] = _by_key.get(k, 0) + 1
+            for cut in result.get("secondary_cuts", []):
+                lengths = cut.get("lengths", [])
+                widths = cut.get("cuts", [])
+                tk = cut.get("target_order_key")
+                lc = _norm_lc(tk[2] if isinstance(tk, (tuple, list)) and len(tk) > 2 else 8)
+                L = float(lengths[0]) if lengths else 0
+                W = (
+                    int(widths[0])
+                    if widths
+                    else (int(tk[1]) if isinstance(tk, (tuple, list)) and len(tk) > 1 else 0)
+                )
+                if L and W:
+                    k = (round(L, 2), W, lc)
+                    _by_key[k] = _by_key.get(k, 0) + 1
+            _dbg_open_append(_DEBUG_LOG_COMMON).write(
+                __import__("json").dumps(
+                    {
+                        "hypothesisId": "H_opt_plates_by_key",
+                        "location": "core/optimization/optimize_2d/finalize.py:by_key",
+                        "message": "optimizer output plates by (length, width, load_code)",
+                        "data": {
+                            "plates_by_key": {str(list(k)): v for k, v in _by_key.items()},
+                            "total": sum(_by_key.values()),
+                        },
+                        "timestamp": __import__("time").time() * 1000,
                     },
-                    "timestamp": __import__("time").time() * 1000,
-                },
-                ensure_ascii=False,
+                    ensure_ascii=False,
+                )
+                + "\n"
             )
-            + "\n"
-        )
-    except Exception:
-        pass
+        except Exception:
+            pass
     # #endregion
     return opt_ok(result, partial=(solver_status != "Optimal"))
