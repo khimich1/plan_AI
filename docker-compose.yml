@@ -1,0 +1,42 @@
+# Локальный/серверный запуск веб-приложения.
+# Сборка: docker compose build
+# Запуск:  docker compose up -d
+#
+# Перед продакшеном создайте .env с секретами (см. комментарии ниже). Файл .env не коммитится.
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: plan-wed-web:local
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      # Пути под постоянный том (базы, черновики, планы, выгрузки)
+      PB_DB_PATH: /data/pb.db
+      PLITA_DB_PATH: /data/plita.db
+      DRAFTS_DIR: /data/drafts
+      OUTPUTS_DIR: /data/outputs
+      LOGS_DIR: /data/logs
+      PLANS_DIR: /data/plans
+      PLANS_METADATA_PATH: /data/plans_metadata.json
+      CURRENT_PLAN_PATH: /data/current_plan.json
+      # Календарь по умолчанию из образа; для правок на сервере перенесите файл в /data и задайте WORK_CALENDAR_PATH
+      # BACKEND_CORS_ALLOWED_ORIGINS: "https://your-domain.example"
+      # APP_SECRET_KEY: "..."
+      # OPENAI_API_KEY: "..."  # если нужен OCR
+      # Прайсы и резы лежат вне образа — смонтируйте каталог и укажите пути:
+      # PRICES_DIR: /knowledge
+      # PRICE_XLSX_PATH: /knowledge/ваш-прайс.xlsx
+      # CUTS_DOCX_PATH: /knowledge/ваш-резы.docx
+    volumes:
+      - web_data:/data
+      # Раскомментируйте, если каталог «банк знаний» есть на хосте:
+      # - ./банк знаний:/knowledge:ro
+    restart: unless-stopped
+
+volumes:
+  web_data:

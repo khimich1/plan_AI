@@ -1,0 +1,87 @@
+# Метаданные и история VCS (образ не нуждается в .git)
+.git/
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# Виртуальные окружения (никогда не копировать в контекст)
+.venv/
+venv/
+ENV/
+
+# Кэши и отчёты инструментов
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+
+# IDE / локальные настройки редактора
+.idea/
+.vscode/
+.cursor/
+
+# Документация и внутренние заметки (ускоряет build context)
+docs/
+ai_docs/
+описание изменений/
+*.md
+!README.md
+
+# Секреты и локальный env (передавать через -e / compose env_file на рантайме)
+.env
+*.env
+bot.env
+
+# Логи и отладка
+*.log
+logs/
+debug_logs/
+
+# Локальные БД и журналы SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# Клиентские / объёмные данные и выходы расчётов
+банк знаний/
+Визуализация_Раскладки/
+Outputs/
+tmp/
+bot/tmp/
+
+# Состояние бота и черновиков (монтировать томом на сервере)
+bot/data/plans/
+bot/data/plans_metadata.json
+.app_data/
+
+# Frontend: зависимости и кэш Vite
+frontend/node_modules/
+.vite/
+# Если в Dockerfile копируете уже собранный dist с хоста (COPY frontend/dist), удалите следующую строку.
+frontend/dist/
+
+# Тесты не нужны в runtime-образе; исключаем из контекста ускорения сборки
+tests/
+
+# Файлы сборки / оркестрации (не нужны внутри образа при COPY .)
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+compose*.yaml
+
+# Прочие локальные артефакты
+.DS_Store
+Thumbs.db
+~$*

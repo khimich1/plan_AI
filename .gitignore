@@ -85,3 +85,9 @@ dist/
 
 # AI-generated docs
 ai_docs/
+
+#json files
+.app_data/drafts/
+
+#.md файлы и описание всякой херни
+*.md
