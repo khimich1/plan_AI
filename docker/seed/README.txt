@@ -1,18 +1,23 @@
-Каталог для стартовых SQLite-файлов, которые попадут ВНУТРЬ образа при сборке Docker.
+Каталог для стартовых SQLite, которые ВПИСЫВАЮТСЯ В ОБРАЗ при команде docker compose build
+(контекст сборки копирует docker/seed/ в /app/docker/seed внутри образа).
 
-Как развернуть на сервере с готовыми БД:
-1) Скопируйте с рабочей машины сюда файлы:
-     pb.db
-     plita.db
-   (те же имена обязательны.)
+ВАЖНО:
+- Если на сервере только git pull + build БЕЗ ваших pb.db/plita.db в этом каталоге —
+  в образе не будет сидов, entrypoint нечего копировать в /data.
+- Файлы в /data при named volume (web_split_data) лежат в хранилище Docker, не в папке
+  репозитория на хосте. Проверка: docker compose -f docker-compose.split.yml run --rm backend ls -la /data
 
-2) Соберите образ: docker compose build  (или docker build …)
+Сценарий A — сиды в образе:
+  1) cp …/pb.db docker/seed/pb.db && cp …/plita.db docker/seed/plita.db
+  2) docker compose -f docker-compose.split.yml build
+  3) первый запуск на пустом томе: скопирует в /data/pb.db и /data/plita.db
+  Если контейнер уже создавал пустые БД — удалите том: docker compose … down -v и up снова.
 
-3) При первом запуске с пустым томом /data entrypoint скопирует эти файлы в пути из
-   переменных PB_DB_PATH и PLITA_DB_PATH (см. docker-compose.yml).
+Сценарий B — без пересборки, файлы на сервере:
+  В compose для backend замените том на привязку каталога, положите туда db:
+    volumes:
+      - ./data:/data
+  и скопируйте pb.db, plita.db в ./data/ на сервере.
 
-Если файлов здесь нет — контейнер стартует как раньше; plita.db может создаться пустой
-при инициализации схемы, для pb.db без данных часть функций будет неполной.
-
-По умолчанию *.db в корне репозитория не коммитятся; исключение в .gitignore позволяет
-хранить именно docker/seed/*.db в git только если осознанно нужно (избегайте утечки ПДн).
+Проверить, есть ли сиды в образе:
+  docker run --rm plan-wed-backend:split ls -la /app/docker/seed

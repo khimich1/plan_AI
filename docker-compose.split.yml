@@ -32,7 +32,13 @@ services:
       # Прайсы: смонтируйте том и выставьте пути через env
       # PRICES_DIR: /knowledge
     volumes:
-      # См. docker/seed/README.txt — стартовые БД в образе при первом пустом томе.
+      # Данные здесь НЕ в каталоге /plan_zavod — том Docker (docker volume inspect …).
+      # Варианты БД:
+      # 1) Перед build положить pb.db и plita.db в docker/seed/ (попадут в образ), первый запуск скопирует в /data.
+      # 2) Вместо named volume — привязка каталога на сервере (файлы видны на диске):
+      #    - ./data:/data
+      #    и скопируйте туда готовые pb.db и plita.db, затем up (пересборка не нужна).
+      # Если том уже создал пустые БД — для повторной заливки сидов: docker compose … down -v (сотрёт /data!)
       - web_split_data:/data
 
   frontend:
