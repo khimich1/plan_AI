@@ -1,9 +1,16 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+const rootDir = dirname(fileURLToPath(import.meta.url));
 const base = "/commercial-offer/";
 export default defineConfig({
     base,
+    test: {
+        environment: "jsdom",
+        setupFiles: ["./src/test/setup.ts"],
+        globals: false,
+    },
     plugins: [
         {
             name: "redirect-root-to-base",
@@ -31,7 +38,7 @@ export default defineConfig({
     ],
     resolve: {
         alias: {
-            "@": resolve(__dirname, "./src"),
+            "@": resolve(rootDir, "./src"),
         },
     },
     server: {

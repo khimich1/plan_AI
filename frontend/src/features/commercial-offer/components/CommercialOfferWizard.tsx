@@ -7,7 +7,7 @@ import { WidePlateReviewStep } from "@/features/commercial-offer/components/step
 import { ManagerStep } from "@/features/commercial-offer/components/steps/ManagerStep";
 import { ClientConditionsStep } from "@/features/commercial-offer/components/steps/ClientConditionsStep";
 import { CalculationResultStep } from "@/features/commercial-offer/components/steps/CalculationResultStep";
-import type { WidePlateAction, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
+import type { WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";

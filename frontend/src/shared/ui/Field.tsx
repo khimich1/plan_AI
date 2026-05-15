@@ -2,7 +2,7 @@ import type { CSSProperties, InputHTMLAttributes, PropsWithChildren, TextareaHTM
 
 type FieldWrapperProps = PropsWithChildren<{
   label: string;
-  error?: string;
+  error?: string | null;
   hint?: string;
 }>;
 

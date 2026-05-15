@@ -53,20 +53,19 @@ const baseMetadata = (): CommercialDraftDetails["metadata"] => ({
 });
 
 function makeDraft(overrides: Partial<CommercialDraftDetails>): CommercialDraftDetails {
+  const { metadata: metaOverrides, wizard_state: wizardOverrides, ...rest } = overrides;
   return {
     draft_id: "draft-test-1",
     order: {},
     optimization: { total_plates: 0, total_cost: 0 },
     order_data: [],
-    metadata: baseMetadata(),
-    wizard_state: { ...baseWizardState },
     files: [],
     saved_offer: null,
     totals: {},
     offer_identity: { offer_number: "", offer_date: "", file_stem: "" },
-    ...overrides,
-    metadata: { ...baseMetadata(), ...overrides.metadata },
-    wizard_state: { ...baseWizardState, ...overrides.wizard_state },
+    ...rest,
+    metadata: { ...baseMetadata(), ...metaOverrides },
+    wizard_state: { ...baseWizardState, ...wizardOverrides },
   };
 }
 

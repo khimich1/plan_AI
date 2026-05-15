@@ -1,6 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+const rootDir = dirname(fileURLToPath(import.meta.url));
 
 const base = "/commercial-offer/";
 
@@ -15,30 +19,32 @@ export default defineConfig({
     {
       name: "redirect-root-to-base",
       configureServer(server) {
-        server.middlewares.use((req, res, next) => {
-          const url = req.url?.split("?")[0] ?? "";
-          if (url === "/" || url === "") {
-            res.statusCode = 302;
-            res.setHeader("Location", base);
-            res.end();
-            return;
-          }
-          const baseNoSlash = base.replace(/\/$/, "");
-          if (url === baseNoSlash) {
-            res.statusCode = 302;
-            res.setHeader("Location", base);
-            res.end();
-            return;
-          }
-          next();
-        });
+        server.middlewares.use(
+          (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+            const url = req.url?.split("?")[0] ?? "";
+            if (url === "/" || url === "") {
+              res.statusCode = 302;
+              res.setHeader("Location", base);
+              res.end();
+              return;
+            }
+            const baseNoSlash = base.replace(/\/$/, "");
+            if (url === baseNoSlash) {
+              res.statusCode = 302;
+              res.setHeader("Location", base);
+              res.end();
+              return;
+            }
+            next();
+          },
+        );
       },
     },
     react(),
   ],
   resolve: {
     alias: {
-      "@": resolve(__dirname, "./src"),
+      "@": resolve(rootDir, "./src"),
     },
   },
   server: {
