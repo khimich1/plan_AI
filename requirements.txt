@@ -1,20 +1,28 @@
-aiogram==3.6.0
+# Зависимости для веб-сервера: uvicorn app.main:app (FastAPI + общий пакет core/).
+# SPA во frontend/: зависимости в frontend/package.json — ставятся в Dockerfile через npm ci, не через pip.
+# Telegram-бот: pip install -r requirements-bot.txt
+
 fastapi==0.111.0
-matplotlib>=3.5.0
-pandas>=1.3.0
-openpyxl>=3.0.0
-pydantic-settings==2.2.1
-pydantic==2.7.4
-pulp>=2.6.0
-python-multipart>=0.0.9
-python-docx>=0.8.11
-python-dotenv>=0.19.0
-reportlab>=4.0.0
 uvicorn>=0.30.0
+
+pydantic==2.7.4
+pydantic-settings==2.2.1
+python-dotenv>=0.19.0
+python-multipart>=0.0.9
+
 filelock>=3.13.0
 
-# Новые зависимости для системы расчёта ПБ ЖБК СТАРТ
-# (все остальные уже были в проекте)
+# Таблицы / прайсы / КП
+pandas>=1.3.0
+openpyxl>=3.0.0
+python-docx>=0.8.11
 
-# OCR для распознавания плит с фотографий
-openai>=1.0.0         # 🧠 GPT-4o Vision API
+# PDF и схемы раскладки
+reportlab>=4.0.0
+matplotlib>=3.5.0
+
+# ILP-раскрой (в образе должен быть CBC: см. coinor-cbc в Dockerfile)
+pulp>=2.6.0
+
+# OCR загрузки КП через GPT Vision (без пакета распознавание отключено в коде)
+openai>=1.0.0

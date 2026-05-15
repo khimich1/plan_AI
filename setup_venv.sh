@@ -21,8 +21,8 @@ source venv/bin/activate
 pip install --upgrade pip
 
 echo ""
-echo "=== 3. Установка зависимостей из requirements.txt ==="
-pip install -r requirements.txt
+echo "=== 3. Установка зависимостей (веб + бот: requirements-bot.txt) ==="
+pip install -r requirements-bot.txt
 
 echo ""
 echo "=== Готово! ==="

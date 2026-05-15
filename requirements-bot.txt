@@ -1,0 +1,5 @@
+# Запуск Telegram-бота: python run_bot.py
+# Общий код с вебом — сначала те же пакеты, что и у сервера.
+
+-r requirements.txt
+aiogram==3.6.0
