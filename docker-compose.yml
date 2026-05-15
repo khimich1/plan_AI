@@ -33,6 +33,8 @@ services:
       # PRICE_XLSX_PATH: /knowledge/ваш-прайс.xlsx
       # CUTS_DOCX_PATH: /knowledge/ваш-резы.docx
     volumes:
+      # Первый старт: если положить pb.db и plita.db в docker/seed/ до сборки образа,
+      # они скопируются в том при пустом /data (см. docker/seed/README.txt).
       - web_data:/data
       # Раскомментируйте, если каталог «банк знаний» есть на хосте:
       # - ./банк знаний:/knowledge:ro

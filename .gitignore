@@ -54,6 +54,9 @@ bot.env
 # База данных
 *.db
 pb.db
+# Опционально: закоммитьте стартовые копии для Docker (docker/seed/README.txt)
+!docker/seed/pb.db
+!docker/seed/plita.db
 # SQLite временные файлы
 *.db-shm
 *.db-wal

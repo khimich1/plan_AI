@@ -32,6 +32,7 @@ services:
       # Прайсы: смонтируйте том и выставьте пути через env
       # PRICES_DIR: /knowledge
     volumes:
+      # См. docker/seed/README.txt — стартовые БД в образе при первом пустом томе.
       - web_split_data:/data
 
   frontend:
