@@ -1,0 +1,49 @@
+# Два контейнера: Nginx (статика + прокси) + FastAPI.
+# Домен: http://zavodstart.ru/ — SPA по пути /commercial-offer/.
+#
+# Сборка: docker compose -f docker-compose.split.yml build
+# Запуск:  docker compose -f docker-compose.split.yml up -d
+#
+# На хостинге DNS A-запись zavodstart.ru → IP сервера; публикация порта 80 на frontend.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    image: plan-wed-backend:split
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      PB_DB_PATH: /data/pb.db
+      PLITA_DB_PATH: /data/plita.db
+      DRAFTS_DIR: /data/drafts
+      OUTPUTS_DIR: /data/outputs
+      LOGS_DIR: /data/logs
+      PLANS_DIR: /data/plans
+      PLANS_METADATA_PATH: /data/plans_metadata.json
+      CURRENT_PLAN_PATH: /data/current_plan.json
+      BACKEND_CORS_ALLOWED_ORIGINS: "http://zavodstart.ru,http://www.zavodstart.ru"
+      # OPENAI_API_KEY: "..."
+      # APP_SECRET_KEY: "..."
+      # Прайсы: смонтируйте том и выставьте пути через env
+      # PRICES_DIR: /knowledge
+    volumes:
+      - web_split_data:/data
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    image: plan-wed-frontend:split
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  web_split_data:
