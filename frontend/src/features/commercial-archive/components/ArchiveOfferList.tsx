@@ -8,6 +8,8 @@ type Props = {
   section: ArchiveSection;
   items: ArchiveOfferListItem[];
   onSelect: (kpId: number) => void;
+  sectionForItem?: (item: ArchiveOfferListItem) => ArchiveSection;
+  emptyMessage?: string;
 };
 
 const rowStyle: React.CSSProperties = {
@@ -38,7 +40,13 @@ const trailingMeta = (section: ArchiveSection, item: ArchiveOfferListItem): stri
   }
 };
 
-export const ArchiveOfferList = ({ section, items, onSelect }: Props) => {
+export const ArchiveOfferList = ({
+  section,
+  items,
+  onSelect,
+  sectionForItem,
+  emptyMessage = "В этом разделе пока нет КП.",
+}: Props) => {
   if (items.length === 0) {
     return (
       <div
@@ -51,7 +59,7 @@ export const ArchiveOfferList = ({ section, items, onSelect }: Props) => {
           textAlign: "center",
         }}
       >
-        В этом разделе пока нет КП.
+        {emptyMessage}
       </div>
     );
   }
@@ -59,9 +67,11 @@ export const ArchiveOfferList = ({ section, items, onSelect }: Props) => {
   return (
     <div style={{ display: "grid", gap: "0.6rem" }}>
       {items.map((item) => {
-        const trailing = trailingMeta(section, item);
+        const itemSection = sectionForItem ? sectionForItem(item) : section;
+        const trailing = trailingMeta(itemSection, item);
         const percentBadge =
-          (section === "in_production" || section === "completed") && item.completion_percentage !== null
+          (itemSection === "in_production" || itemSection === "completed") &&
+          item.completion_percentage !== null
             ? `${item.completion_percentage.toFixed(1)}%`
             : null;
 

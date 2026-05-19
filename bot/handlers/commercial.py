@@ -1817,9 +1817,17 @@ async def callback_kp_file_download(callback: CallbackQuery, state: FSMContext):
             await callback.message.answer("⏳ Генерирую PDF...")
             pdf_buffer = await asyncio.to_thread(
                 generate_commercial_offer_pdf,
-                order_data, offer_number, offer_date,
-                client_name, manager_name, manager_phone, manager_email,
-                discount_percent, kp_db_id
+                order_data,
+                offer_number,
+                offer_date,
+                customer_name=client_name,
+                manager_name=manager_name,
+                manager_phone=manager_phone,
+                manager_email=manager_email,
+                discount_percent=discount_percent,
+                kp_db_id=kp_db_id,
+                delivery_conditions=delivery_conditions or None,
+                payment_conditions=payment_conditions or None,
             )
             path = os.path.join(OUTPUTS_DIR_STR, f"КП_{offer_number}_{offer_date.replace('.', '')}.pdf")
             with open(path, 'wb') as f:

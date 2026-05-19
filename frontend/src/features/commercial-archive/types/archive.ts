@@ -56,9 +56,16 @@ export type ArchiveOfferDetails = {
   completion_percentage: number | null;
 };
 
+export type ArchiveSearchState =
+  | { kind: "number"; value: number }
+  | { kind: "customer"; value: string }
+  | null;
+
 export type ArchiveSearchResponse = {
-  found: boolean;
-  offer: ArchiveOfferDetails | null;
+  mode: "number" | "customer";
+  items: ArchiveOfferListItem[];
+  total: number;
+  truncated: boolean;
 };
 
 export type ProductionEstimate = {

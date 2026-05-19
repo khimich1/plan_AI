@@ -419,6 +419,8 @@ async def download_pdf(callback: CallbackQuery):
     customer_name = kp_info.get("customer_name")
     manager_name = kp_info.get("manager_name")
     discount_percent = kp_info.get("discount_percent") or 0
+    delivery_conditions = kp_info.get("delivery_conditions")
+    payment_conditions = kp_info.get("payment_conditions")
     try:
         pdf_buffer = await asyncio.to_thread(
             generate_commercial_offer_pdf,
@@ -431,6 +433,8 @@ async def download_pdf(callback: CallbackQuery):
             manager_email=None,
             discount_percent=discount_percent,
             kp_db_id=kp_id,
+            delivery_conditions=delivery_conditions,
+            payment_conditions=payment_conditions,
         )
         await callback.message.answer_document(
             BufferedInputFile(pdf_buffer.getvalue(), filename=f"КП_{kp_id}.pdf"),

@@ -578,6 +578,8 @@ class CommercialWorkflowService:
                     manager_email=manager_email,
                     discount_percent=discount_percent,
                     logistics_cost=logistics_cost,
+                    delivery_conditions=delivery_conditions or None,
+                    payment_conditions=payment_conditions or None,
                 )
                 files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
             elif file_type == "xlsx":

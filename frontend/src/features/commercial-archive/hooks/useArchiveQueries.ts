@@ -4,6 +4,7 @@ import type {
   ArchiveOfferDetails,
   ArchiveOfferListItem,
   ArchiveSearchResponse,
+  ArchiveSearchState,
   ArchiveSection,
   ProductionEstimate,
 } from "@/features/commercial-archive/types/archive";
@@ -12,7 +13,13 @@ export const archiveKeys = {
   all: ["archive"] as const,
   list: (section: ArchiveSection) => ["archive", "list", section] as const,
   detail: (kpId: number) => ["archive", "offer", kpId] as const,
-  search: (kpId: number | null) => ["archive", "search", kpId] as const,
+  search: (state: ArchiveSearchState) =>
+    [
+      "archive",
+      "search",
+      state?.kind ?? null,
+      state?.kind === "number" ? state.value : state?.kind === "customer" ? state.value : null,
+    ] as const,
   estimate: (kpId: number) => ["archive", "estimate", kpId] as const,
 };
 
@@ -30,11 +37,19 @@ export const useArchiveOfferQuery = (kpId: number | null) =>
     enabled: kpId !== null,
   });
 
-export const useArchiveSearchQuery = (kpId: number | null) =>
+export const useArchiveSearchQuery = (searchState: ArchiveSearchState) =>
   useQuery<ArchiveSearchResponse>({
-    queryKey: archiveKeys.search(kpId),
-    queryFn: () => archiveApi.searchByNumber(kpId as number),
-    enabled: kpId !== null,
+    queryKey: archiveKeys.search(searchState),
+    queryFn: () => {
+      if (searchState?.kind === "number") {
+        return archiveApi.search({ kpId: searchState.value });
+      }
+      if (searchState?.kind === "customer") {
+        return archiveApi.search({ customer: searchState.value });
+      }
+      throw new Error("Search state is empty");
+    },
+    enabled: searchState !== null,
   });
 
 export const useProductionEstimateQuery = (kpId: number | null) =>

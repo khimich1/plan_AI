@@ -51,6 +51,12 @@ def _debug_session_write(run_id: str, hypothesis_id: str, location: str, message
         pass
 
 
+def _sqlite_casefold(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value.casefold()
+
+
 def _connect(db_path: str) -> sqlite3.Connection:
     """
     Безопасное подключение к SQLite (plita.db).
@@ -61,6 +67,7 @@ def _connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA foreign_keys = ON')
+    conn.create_function("casefold", 1, _sqlite_casefold)
     return conn
 
 
@@ -3723,6 +3730,69 @@ def get_all_kp_list(db_path: str = DEFAULT_DB) -> Dict[str, List[Dict]]:
         
         return result
         
+    finally:
+        conn.close()
+
+
+def _escape_sql_like(value: str) -> str:
+    """Экранирует спецсимволы LIKE (% и _) в пользовательском вводе."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def search_kp_by_customer_name(
+    name: str,
+    limit: int = 50,
+    db_path: str = DEFAULT_DB,
+) -> tuple[List[Dict], int]:
+    """
+    Ищет КП по частичному совпадению имени заказчика (глобально, все статусы).
+
+    Returns:
+        (список строк для списка архива, общее число совпадений)
+    """
+    init_schema(db_path)
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        escaped = _escape_sql_like(name.strip())
+        pattern = f"%{escaped}%"
+        fetch_limit = limit + 1
+
+        base_select = """
+            SELECT
+                ko.kp_id,
+                ko.creation_date,
+                ko.customer_name,
+                ko.manager_name,
+                ko.discount_percent,
+                ko.subtotal,
+                ko.vat_amount,
+                ko.total_amount,
+                ko.execution_terms,
+                m.status
+            FROM KP_offers ko
+            LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
+            WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'
+        """
+
+        cur.execute(
+            f"{base_select} ORDER BY ko.kp_id DESC LIMIT ?",
+            (pattern, fetch_limit),
+        )
+        rows = [dict(row) for row in cur.fetchall()]
+
+        if len(rows) > limit:
+            cur.execute(
+                f"SELECT COUNT(*) AS cnt FROM KP_offers ko WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'",
+                (pattern,),
+            )
+            total = int(cur.fetchone()["cnt"])
+            return rows[:limit], total
+
+        return rows, len(rows)
     finally:
         conn.close()
 

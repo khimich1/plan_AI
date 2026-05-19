@@ -15,6 +15,7 @@ from app.schemas.archive import (
     ArchiveOfferFinance,
     ArchiveOfferListItem,
     ArchivePlateItem,
+    ArchiveSearchResponse,
 )
 from core.execution_terms import normalize_execution_terms_to_ddmmyyyy
 from core.commercial_offer import generate_commercial_offer_pdf
@@ -58,34 +59,7 @@ class ArchiveService:
 
     def list_offers(self, section: ArchiveSection) -> list[ArchiveOfferListItem]:
         raw_items = self.repository.list_by_section(section)
-        items: list[ArchiveOfferListItem] = []
-        for raw in raw_items:
-            kp_id = int(raw.get("kp_id") or 0)
-            completion = None
-            if section in ("in_production", "completed"):
-                try:
-                    completion = float(
-                        self.repository.get_completion_percentage(kp_id).get("percentage", 0.0)
-                    )
-                except Exception:
-                    logger.exception("Ошибка получения %% выполнения для КП %s", kp_id)
-                    completion = None
-            items.append(
-                ArchiveOfferListItem(
-                    kp_id=kp_id,
-                    creation_date=raw.get("creation_date"),
-                    customer_name=raw.get("customer_name"),
-                    manager_name=raw.get("manager_name"),
-                    discount_percent=float(raw.get("discount_percent") or 0),
-                    subtotal=float(raw.get("subtotal") or 0),
-                    vat_amount=float(raw.get("vat_amount") or 0),
-                    total_amount=float(raw.get("total_amount") or 0),
-                    execution_terms=raw.get("execution_terms") or None,
-                    status=raw.get("status") or None,
-                    completion_percentage=completion,
-                )
-            )
-        return items
+        return [self._to_list_item(raw) for raw in raw_items]
 
     def get_details(self, kp_id: int) -> ArchiveOfferDetails:
         raw = self.repository.get_by_id(kp_id)
@@ -93,11 +67,30 @@ class ArchiveService:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         return self._to_details(raw)
 
-    def search_by_number(self, kp_id: int) -> ArchiveOfferDetails | None:
-        raw = self.repository.get_by_id(kp_id)
-        if not raw:
-            return None
-        return self._to_details(raw)
+    def search(
+        self,
+        kp_id: int | None = None,
+        customer: str | None = None,
+    ) -> ArchiveSearchResponse:
+        if kp_id is not None:
+            raw = self.repository.get_by_id(kp_id)
+            items = [self._to_list_item(raw)] if raw else []
+            return ArchiveSearchResponse(
+                mode="number",
+                items=items,
+                total=len(items),
+                truncated=False,
+            )
+
+        name = (customer or "").strip()
+        rows, total = self.repository.search_by_customer_name(name, limit=50)
+        items = [self._to_list_item(raw) for raw in rows]
+        return ArchiveSearchResponse(
+            mode="customer",
+            items=items,
+            total=total,
+            truncated=total > 50,
+        )
 
     # ---------- Мутации ----------
 
@@ -185,6 +178,8 @@ class ArchiveService:
                 discount_percent=discount_percent,
                 kp_db_id=kp_id,
                 logistics_cost=logistics_cost,
+                delivery_conditions=raw.get("delivery_conditions"),
+                payment_conditions=raw.get("payment_conditions"),
             )
             filename = f"КП_{kp_id}.pdf"
         elif kind == "xlsx":
@@ -240,6 +235,32 @@ class ArchiveService:
         return Path(gantt_path)
 
     # ---------- helpers ----------
+
+    def _to_list_item(self, raw: dict) -> ArchiveOfferListItem:
+        kp_id = int(raw.get("kp_id") or 0)
+        status = raw.get("status") or None
+        completion = None
+        if status in ("в работе", "выполнено"):
+            try:
+                completion = float(
+                    self.repository.get_completion_percentage(kp_id).get("percentage", 0.0)
+                )
+            except Exception:
+                logger.exception("Ошибка получения %% выполнения для КП %s", kp_id)
+                completion = None
+        return ArchiveOfferListItem(
+            kp_id=kp_id,
+            creation_date=raw.get("creation_date"),
+            customer_name=raw.get("customer_name"),
+            manager_name=raw.get("manager_name"),
+            discount_percent=float(raw.get("discount_percent") or 0),
+            subtotal=float(raw.get("subtotal") or 0),
+            vat_amount=float(raw.get("vat_amount") or 0),
+            total_amount=float(raw.get("total_amount") or 0),
+            execution_terms=raw.get("execution_terms") or None,
+            status=status,
+            completion_percentage=completion,
+        )
 
     def _to_details(self, raw: dict) -> ArchiveOfferDetails:
         plates = [self._plate_item(p) for p in (raw.get("plates") or [])]

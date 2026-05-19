@@ -294,6 +294,9 @@ def test_generate_document_pdf(
     assert path.name == "КП_42.pdf"
     assert path.read_bytes() == b"%PDF-FAKE"
     fake_pdf.assert_called_once()
+    call_kwargs = fake_pdf.call_args.kwargs
+    assert call_kwargs["delivery_conditions"] == "Самовывоз"
+    assert call_kwargs["payment_conditions"] == "100% предоплата"
 
 
 def test_generate_document_rejects_empty_plates(tmp_path: Path) -> None:
@@ -303,3 +306,60 @@ def test_generate_document_rejects_empty_plates(tmp_path: Path) -> None:
 
     with pytest.raises(ArchiveValidationError):
         asyncio.run(service.generate_document(42, "xlsx"))
+
+
+def test_search_by_number_found(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.return_value = _make_raw(kp_id=42)
+    service = _make_service(repository, tmp_path)
+
+    result = service.search(kp_id=42)
+
+    assert result.mode == "number"
+    assert result.total == 1
+    assert result.items[0].kp_id == 42
+    assert result.truncated is False
+
+
+def test_search_by_number_not_found(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.return_value = None
+    service = _make_service(repository, tmp_path)
+
+    result = service.search(kp_id=999)
+
+    assert result.mode == "number"
+    assert result.total == 0
+    assert result.items == []
+
+
+def test_search_by_customer_delegates_to_repository(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.search_by_customer_name.return_value = (
+        [_make_raw(kp_id=10, customer_name="ООО Ромашка")],
+        1,
+    )
+    service = _make_service(repository, tmp_path)
+
+    result = service.search(customer="Ромашка")
+
+    assert result.mode == "customer"
+    assert result.total == 1
+    assert result.items[0].customer_name == "ООО Ромашка"
+    assert result.truncated is False
+    repository.search_by_customer_name.assert_called_once_with("Ромашка", limit=50)
+
+
+def test_search_by_customer_truncated_flag(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.search_by_customer_name.return_value = (
+        [_make_raw(kp_id=i) for i in range(50)],
+        60,
+    )
+    service = _make_service(repository, tmp_path)
+
+    result = service.search(customer="Тест")
+
+    assert result.truncated is True
+    assert result.total == 60
+    assert len(result.items) == 50
