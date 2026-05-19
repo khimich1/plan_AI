@@ -21,6 +21,9 @@ if [ "$(id -u)" = "0" ]; then
       echo "[entrypoint] Пропуск plita.db: нет $SEED_DIR/plita.db в образе. Иначе приложение создаст новую пустую БД при старте (init_schema)."
     fi
   fi
+  # Импорт core/config_and_data создаёт пути в /app/debug_logs — каталог должен быть доступен appuser.
+  mkdir -p /app/debug_logs
+  chown appuser:appuser /app/debug_logs
   chown -R appuser:appuser /data
   exec gosu appuser "$@"
 fi

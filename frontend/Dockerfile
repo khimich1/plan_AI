@@ -24,9 +24,10 @@ RUN npm run build
 FROM nginx:1.26-alpine
 
 COPY nginx.docker.conf /etc/nginx/conf.d/default.conf
+COPY nginx.app.locations.conf /etc/nginx/snippets/app.locations.conf
 COPY --from=build /src/dist/ /usr/share/nginx/html/commercial-offer/
 
-EXPOSE 80
+EXPOSE 80 443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget -qO- http://127.0.0.1/health >/dev/null 2>&1 || exit 1
+    CMD wget -qO- --no-check-certificate https://127.0.0.1/health >/dev/null 2>&1 || exit 1

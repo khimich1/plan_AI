@@ -22,11 +22,21 @@ def raise_parse_client_error(exc: BaseException, *, where: str) -> NoReturn:
     ) from None
 
 
-def raise_validation_client_error(exc: BaseException, *, where: str) -> NoReturn:
+def raise_validation_client_error(
+    exc: BaseException,
+    *,
+    where: str,
+    detail: str | None = None,
+) -> NoReturn:
     _log.warning("%s: validation error", where, exc_info=exc)
+    if detail is not None:
+        text = detail.strip()
+        client_detail = text if text else MSG_VALIDATION
+    else:
+        client_detail = MSG_VALIDATION
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail=MSG_VALIDATION,
+        detail=client_detail,
     ) from None
 
 

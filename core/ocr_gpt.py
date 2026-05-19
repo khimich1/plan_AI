@@ -8,6 +8,7 @@ import os
 import base64
 import json
 import re
+from pathlib import Path
 from typing import Optional, Dict, List, Any, Literal
 
 try:
@@ -53,7 +54,13 @@ async def recognize_text_smart(
     if not GPT_AVAILABLE:
         print("[OCR] ❌ GPT недоступен. Установите: pip install openai")
         return None
-    
+
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        raise ValueError(
+            "Для распознавания по фото задайте OPENAI_API_KEY в окружении backend "
+            "(docker-compose: сервис backend; локально: .env или экспорт переменной)."
+        )
+
     try:
         print("[OCR] 🧠 Запускаю GPT-4o Vision (платно)...")
         plates, cost = await recognize_with_gpt_vision(image_path)
@@ -87,6 +94,29 @@ async def recognize_text_smart(
         traceback.print_exc()
     
     return None
+
+
+def _image_mime_type(image_path: str, image_data: bytes) -> str:
+    """MIME для data: URL Vision API (PNG раньше ошибочно слали как image/jpeg)."""
+    if len(image_data) >= 8 and image_data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(image_data) >= 3 and image_data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(image_data) >= 12 and image_data.startswith(b"RIFF") and image_data[8:12] == b"WEBP":
+        return "image/webp"
+    if len(image_data) >= 6 and image_data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(image_data) >= 4 and image_data.startswith(b"%PDF"):
+        return "application/pdf"
+    suffix = Path(image_path).suffix.lower()
+    return {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".pdf": "application/pdf",
+    }.get(suffix, "image/jpeg")
 
 
 async def recognize_with_gpt_vision(image_path: str) -> tuple[List[Dict], float]:
@@ -127,7 +157,9 @@ async def recognize_with_gpt_vision(image_path: str) -> tuple[List[Dict], float]
     with open(image_path, "rb") as f:
         image_data = f.read()
         image_base64 = base64.b64encode(image_data).decode()
-    
+
+    mime_type = _image_mime_type(image_path, image_data)
+
     # Определяем размер для расчёта стоимости
     image_size_kb = len(image_data) / 1024
     print(f"[GPT] Размер изображения: {image_size_kb:.1f} КБ")
@@ -146,7 +178,7 @@ async def recognize_with_gpt_vision(image_path: str) -> tuple[List[Dict], float]
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_base64}",
+                            "url": f"data:{mime_type};base64,{image_base64}",
                             "detail": "high"  # Высокое качество для таблиц
                         }
                     }

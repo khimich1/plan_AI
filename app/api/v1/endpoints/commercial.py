@@ -78,7 +78,7 @@ async def create_commercial_draft(
     except PlateParseError as exc:
         raise_parse_client_error(exc, where="create_commercial_draft")
     except ValueError as exc:
-        raise_validation_client_error(exc, where="create_commercial_draft")
+        raise_validation_client_error(exc, where="create_commercial_draft", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="create_commercial_draft")
     return CommercialDraftDetailsResponse.model_validate(result)
@@ -111,7 +111,7 @@ async def update_commercial_draft_plates(
     except PlateParseError as exc:
         raise_parse_client_error(exc, where="update_commercial_draft_plates")
     except ValueError as exc:
-        raise_validation_client_error(exc, where="update_commercial_draft_plates")
+        raise_validation_client_error(exc, where="update_commercial_draft_plates", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="update_commercial_draft_plates")
     return CommercialDraftDetailsResponse.model_validate(result)
@@ -133,7 +133,7 @@ def resolve_draft_wide_plates(
     except PlateParseError as exc:
         raise_parse_client_error(exc, where="resolve_draft_wide_plates")
     except ValueError as exc:
-        raise_validation_client_error(exc, where="resolve_draft_wide_plates")
+        raise_validation_client_error(exc, where="resolve_draft_wide_plates", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="resolve_draft_wide_plates")
     return CommercialDraftDetailsResponse.model_validate(result)
@@ -159,7 +159,7 @@ def update_draft_meta(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
     except ValueError as exc:
-        raise_validation_client_error(exc, where="update_draft_meta")
+        raise_validation_client_error(exc, where="update_draft_meta", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="update_draft_meta")
     return CommercialDraftDetailsResponse.model_validate(result)
@@ -175,7 +175,7 @@ def calculate_draft(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
     except ValueError as exc:
-        raise_validation_client_error(exc, where="calculate_draft")
+        raise_validation_client_error(exc, where="calculate_draft", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="calculate_draft")
     return CommercialDraftDetailsResponse.model_validate(result)
@@ -263,7 +263,7 @@ async def create_draft_from_form(
     except PlateParseError as exc:
         raise_parse_client_error(exc, where="create_draft_from_form")
     except ValueError as exc:
-        raise_validation_client_error(exc, where="create_draft_from_form")
+        raise_validation_client_error(exc, where="create_draft_from_form", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="create_draft_from_form")
     return CommercialCreateFromFormResponse.model_validate(result)
@@ -280,7 +280,7 @@ def generate_draft_files(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
     except ValueError as exc:
-        raise_validation_client_error(exc, where="generate_draft_files")
+        raise_validation_client_error(exc, where="generate_draft_files", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="generate_draft_files")
     return CommercialGenerateFilesResponse(draft_id=draft_id, files=files)
@@ -301,7 +301,7 @@ def save_draft_offer(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
     except ValueError as exc:
-        raise_validation_client_error(exc, where="save_draft_offer")
+        raise_validation_client_error(exc, where="save_draft_offer", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="save_draft_offer")
     return CommercialSaveOfferResponse(draft_id=draft_id, **result)
