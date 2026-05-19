@@ -51,8 +51,10 @@ COMPANY_EMAIL = "info@zhbk.ru"
 # Путь к базе данных с ценами (абсолютный)
 DB_PATH = os.path.join(PROJECT_ROOT, "pb.db")
 
-# Путь к логотипу (абсолютный, чтобы работал из любой директории)
-LOGO_PATH = os.path.join(PROJECT_ROOT, "банк знаний", "ЖБЛСТАРТ.png")
+try:
+    from core.project_paths import resolve_commercial_offer_logo_path
+except ImportError:
+    from project_paths import resolve_commercial_offer_logo_path
 
 # Коэффициент скидки в процентах (0 = без скидки, 5 = скидка 5%, и т.д.)
 DISCOUNT_PERCENT = 0
@@ -224,8 +226,9 @@ def generate_commercial_offer_xlsx(
     
     buffer = io.BytesIO()
     
-    # Определяем, есть ли логотип (будет вставлен выше заголовка)
-    has_logo = os.path.exists(LOGO_PATH)
+    # Определяем, есть ли логотип (плашка; будет вставлен выше заголовка)
+    logo_path = resolve_commercial_offer_logo_path()
+    has_logo = logo_path is not None
     
     # Формируем заголовок документа
     # Если есть логотип, добавляем пустые строки для него
@@ -355,7 +358,7 @@ def generate_commercial_offer_xlsx(
         if has_logo and XLImage is not None:
             try:
                 # Создаем объект изображения
-                logo_img = XLImage(LOGO_PATH)
+                logo_img = XLImage(str(logo_path))
                 
                 # Масштабируем логотип (оригинал 1456x207)
                 # Делаем ширину больше для лучшей читаемости
