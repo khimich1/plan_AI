@@ -42,7 +42,9 @@ class CommercialWorkflowService:
         "breakdown": "Детальная разбивка (XLSX)",
         "schema": "Схема раскладки (PDF)",
     }
-    DEFAULT_FILE_TYPES = ("pdf", "xlsx", "breakdown", "schema")
+    # Схема раскладки (matplotlib) — отдельно: при включении в file_types на слабом VPS возможен OOM.
+    DEFAULT_FILE_TYPES = ("pdf", "xlsx", "breakdown")
+    ALL_FILE_TYPES = ("pdf", "xlsx", "breakdown", "schema")
 
     def __init__(self) -> None:
         self.settings = get_settings()
