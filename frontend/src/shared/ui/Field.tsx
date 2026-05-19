@@ -1,4 +1,4 @@
-import type { CSSProperties, InputHTMLAttributes, PropsWithChildren, TextareaHTMLAttributes } from "react";
+import { useCallback, useLayoutEffect, useRef, type CSSProperties, type InputHTMLAttributes, type PropsWithChildren, type TextareaHTMLAttributes } from "react";
 
 type FieldWrapperProps = PropsWithChildren<{
   label: string;
@@ -28,3 +28,40 @@ export const Input = (props: InputHTMLAttributes<HTMLInputElement>) => <input {.
 export const Textarea = (props: TextareaHTMLAttributes<HTMLTextAreaElement>) => (
   <textarea {...props} style={{ ...inputStyle, resize: "vertical", minHeight: 160 }} />
 );
+
+export const AutoResizeTextarea = ({ value, onChange, style, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) => {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  const adjustHeight = useCallback(() => {
+    const element = ref.current;
+    if (!element) {
+      return;
+    }
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    adjustHeight();
+  }, [value, adjustHeight]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={(event) => {
+        onChange?.(event);
+        adjustHeight();
+      }}
+      {...props}
+      style={{
+        ...inputStyle,
+        resize: "none",
+        overflow: "hidden",
+        minHeight: 0,
+        fontFamily: "Consolas, monospace",
+        ...style,
+      }}
+    />
+  );
+};

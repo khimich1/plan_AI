@@ -149,6 +149,7 @@ export type WizardStoreState = {
   currentStep: WizardStepId;
   sourceText: string;
   selectedImageName: string | null;
+  normalizedText: string;
   lastPlateMode: PlateInputMode;
   managerId: number | null;
   clientName: string;

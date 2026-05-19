@@ -70,10 +70,6 @@ class CommercialWorkflowService:
             return WizardStepId.plates
 
     def _wizard_step_after_plate_snapshot(self, metadata: dict[str, Any], order_data: list[Any]) -> WizardStepId:
-        if not order_data:
-            return WizardStepId.plates
-        if self._wide_lines_blocking(metadata):
-            return WizardStepId.wide_plates
         return WizardStepId.plates
 
     def _persist_wizard_step(self, draft_id: str, step: WizardStepId) -> None:
