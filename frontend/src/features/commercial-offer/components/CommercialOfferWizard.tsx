@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
+import { useRecognizedImagePreview } from "@/features/commercial-offer/hooks/useRecognizedImagePreview";
 import { WIZARD_STEP_ORDER, wizardStepIndex } from "@/features/commercial-offer/lib/wizardStepOrder";
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
@@ -30,6 +31,11 @@ export const CommercialOfferWizard = () => {
   } = useCommercialOfferWizard();
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [stepError, setStepError] = useState<string | null>(null);
+  const {
+    preview: recognizedImagePreview,
+    setPreviewFromFile,
+    clearPreview: clearRecognizedImagePreview,
+  } = useRecognizedImagePreview();
 
   const managers = managersQuery.data?.items ?? [];
 
@@ -69,19 +75,23 @@ export const CommercialOfferWizard = () => {
     }
 
     const sourceText = selectedImage ? "" : state.sourceText;
+    const imageForRecognition = selectedImage;
 
     try {
+      if (imageForRecognition) {
+        setPreviewFromFile(imageForRecognition);
+      }
       if (currentDraft?.draft_id) {
         await updatePlatesMutation.mutateAsync({
           draftId: currentDraft.draft_id,
           text: sourceText,
-          image: selectedImage,
+          image: imageForRecognition,
           mode,
         });
       } else {
         await createDraftMutation.mutateAsync({
           text: sourceText,
-          image: selectedImage,
+          image: imageForRecognition,
         });
       }
       resetSource();
@@ -276,6 +286,7 @@ export const CommercialOfferWizard = () => {
   const handleCreateNewOffer = () => {
     setStepError(null);
     setSelectedImage(null);
+    clearRecognizedImagePreview();
     dispatch({ type: "reset" });
   };
 
@@ -317,6 +328,8 @@ export const CommercialOfferWizard = () => {
         sourceText={state.sourceText}
         normalizedText={state.normalizedText}
         selectedImageName={state.selectedImageName}
+        recognizedImageUrl={recognizedImagePreview?.url ?? null}
+        recognizedImageName={recognizedImagePreview?.name ?? null}
         errorMessage={stepError}
         isRecognizing={createDraftMutation.isPending || updatePlatesMutation.isPending}
         onTextChange={handleSourceTextChange}

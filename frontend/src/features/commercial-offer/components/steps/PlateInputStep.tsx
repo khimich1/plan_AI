@@ -11,6 +11,8 @@ type PlateInputStepProps = {
   sourceText: string;
   normalizedText: string;
   selectedImageName: string | null;
+  recognizedImageUrl: string | null;
+  recognizedImageName: string | null;
   errorMessage: string | null;
   isRecognizing: boolean;
   onTextChange: (value: string) => void;
@@ -39,6 +41,8 @@ export const PlateInputStep = ({
   sourceText,
   normalizedText,
   selectedImageName,
+  recognizedImageUrl,
+  recognizedImageName,
   errorMessage,
   isRecognizing,
   onTextChange,
@@ -125,24 +129,51 @@ export const PlateInputStep = ({
       </Card>
 
       {draft && (
-        <>
-          <Card title="Нормализованный результат" subtitle="Это текст, который backend использует для расчёта.">
-            <AutoResizeTextarea
-              value={normalizedText}
-              onChange={(event) => onNormalizedTextChange(event.target.value)}
-              placeholder="Пока нет нормализованного текста."
-            />
-          </Card>
+        <div
+          style={{
+            display: "grid",
+            gap: "1rem",
+            gridTemplateColumns: recognizedImageUrl ? "repeat(auto-fit, minmax(280px, 1fr))" : "1fr",
+          }}
+        >
+          <div style={{ display: "grid", gap: "1rem", minWidth: 0 }}>
+            <Card title="Нормализованный результат" subtitle="Это текст, который backend использует для расчёта.">
+              <AutoResizeTextarea
+                value={normalizedText}
+                onChange={(event) => onNormalizedTextChange(event.target.value)}
+                placeholder="Пока нет нормализованного текста."
+              />
+            </Card>
 
-          <Card title="Предпросмотр обработанного списка">
-            <div style={{ display: "grid", gap: "0.75rem" }}>
-              <div>Позиции: {draft.order_data.length}</div>
-              <div>Предупреждения: {draft.metadata.warnings.length}</div>
-              <div>Нераспознанные строки: {draft.metadata.unparsed_lines.length}</div>
-              <div>Широкие плиты: {draft.metadata.wide_plate_lines.length}</div>
+            <Card title="Предпросмотр обработанного списка">
+              <div style={{ display: "grid", gap: "0.75rem" }}>
+                <div>Позиции: {draft.order_data.length}</div>
+                <div>Предупреждения: {draft.metadata.warnings.length}</div>
+                <div>Нераспознанные строки: {draft.metadata.unparsed_lines.length}</div>
+                <div>Широкие плиты: {draft.metadata.wide_plate_lines.length}</div>
+              </div>
+            </Card>
+          </div>
+
+          {recognizedImageUrl && (
+            <div style={{ position: "sticky", top: "5rem", alignSelf: "start" }}>
+              <Card title="Присланное изображение" subtitle={recognizedImageName ?? undefined}>
+                <img
+                  src={recognizedImageUrl}
+                  alt="Исходное изображение для распознавания"
+                  style={{
+                    width: "100%",
+                    maxHeight: "70vh",
+                    objectFit: "contain",
+                    borderRadius: 12,
+                    border: "1px solid #e4e7ec",
+                    background: "#f9fafb",
+                  }}
+                />
+              </Card>
             </div>
-          </Card>
-        </>
+          )}
+        </div>
       )}
     </StepLayout>
   );
