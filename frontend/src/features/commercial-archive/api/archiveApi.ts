@@ -16,8 +16,15 @@ export const archiveApi = {
 
   getById: (kpId: number) => httpClient.get<ArchiveOfferDetails>(`${BASE}/${kpId}`),
 
-  searchByNumber: (kpId: number) =>
-    httpClient.get<ArchiveSearchResponse>(`${BASE}/search?query=${encodeURIComponent(String(kpId))}`),
+  search: ({ kpId, customer }: { kpId?: number; customer?: string }) => {
+    const params = new URLSearchParams();
+    if (kpId !== undefined) {
+      params.set("kp_id", String(kpId));
+    } else if (customer !== undefined) {
+      params.set("customer", customer);
+    }
+    return httpClient.get<ArchiveSearchResponse>(`${BASE}/search?${params.toString()}`);
+  },
 
   updateDiscount: (kpId: number, discount: number) =>
     httpClient.patch<ArchiveOfferDetails>(

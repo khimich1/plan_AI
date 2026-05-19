@@ -86,5 +86,7 @@ class MoveToProductionRequest(BaseModel):
 
 
 class ArchiveSearchResponse(BaseModel):
-    found: bool
-    offer: ArchiveOfferDetails | None = None
+    mode: Literal["number", "customer"]
+    items: list[ArchiveOfferListItem] = Field(default_factory=list)
+    total: int = 0
+    truncated: bool = False

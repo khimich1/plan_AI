@@ -14,6 +14,7 @@ from app.schemas.archive import (
     ArchiveOfferDetails,
     ArchiveOfferFinance,
     ArchiveOfferListItem,
+    ArchiveSearchResponse,
 )
 from app.security.session import create_session_token
 
@@ -289,40 +290,186 @@ def test_move_to_production_validation_error(
     assert response.status_code == 400
 
 
-def test_search_found(
+def _fake_list_item(kp_id: int = 42, customer_name: str = "ООО Тест") -> ArchiveOfferListItem:
+    return ArchiveOfferListItem(
+        kp_id=kp_id,
+        creation_date="01.03.2026",
+        customer_name=customer_name,
+        manager_name="Иван",
+        discount_percent=5.0,
+        subtotal=1000,
+        vat_amount=220,
+        total_amount=1220,
+        status="в архиве",
+    )
+
+
+def _fake_search_response(
+    *,
+    mode: str = "number",
+    items: list[ArchiveOfferListItem] | None = None,
+    total: int | None = None,
+    truncated: bool = False,
+) -> ArchiveSearchResponse:
+    resolved_items = items if items is not None else [_fake_list_item()]
+    resolved_total = total if total is not None else len(resolved_items)
+    return ArchiveSearchResponse(
+        mode=mode,  # type: ignore[arg-type]
+        items=resolved_items,
+        total=resolved_total,
+        truncated=truncated,
+    )
+
+
+def test_search_by_number_found(
     client: TestClient,
     auth_cookie: dict[str, str],
     fake_service: MagicMock,
 ) -> None:
-    fake_service.search_by_number.return_value = _fake_details()
+    fake_service.search.return_value = _fake_search_response(mode="number")
 
     response = client.get(
-        "/api/v1/commercial/archive/search?query=42",
+        "/api/v1/commercial/archive/search?kp_id=42",
         cookies=auth_cookie,
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["found"] is True
-    assert payload["offer"]["kp_id"] == 42
+    assert payload["mode"] == "number"
+    assert payload["total"] == 1
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["kp_id"] == 42
+    fake_service.search.assert_called_once_with(kp_id=42)
 
 
-def test_search_not_found(
+def test_search_by_number_not_found(
     client: TestClient,
     auth_cookie: dict[str, str],
     fake_service: MagicMock,
 ) -> None:
-    fake_service.search_by_number.return_value = None
+    fake_service.search.return_value = _fake_search_response(mode="number", items=[], total=0)
 
     response = client.get(
-        "/api/v1/commercial/archive/search?query=999",
+        "/api/v1/commercial/archive/search?kp_id=999",
         cookies=auth_cookie,
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["found"] is False
-    assert payload["offer"] is None
+    assert payload["mode"] == "number"
+    assert payload["total"] == 0
+    assert payload["items"] == []
+
+
+def test_search_by_customer_returns_items(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.search.return_value = _fake_search_response(
+        mode="customer",
+        items=[_fake_list_item(10, "ООО Ромашка"), _fake_list_item(5, "ООО Ромашка-2")],
+        total=2,
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/search?customer=Ромашка",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "customer"
+    assert payload["total"] == 2
+    assert len(payload["items"]) == 2
+    fake_service.search.assert_called_once_with(customer="Ромашка")
+
+
+def test_search_by_customer_not_found(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.search.return_value = _fake_search_response(mode="customer", items=[], total=0)
+
+    response = client.get(
+        "/api/v1/commercial/archive/search?customer=Несуществующий",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 0
+    assert payload["items"] == []
+
+
+def test_search_customer_too_short_returns_400(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    response = client.get(
+        "/api/v1/commercial/archive/search?customer=А",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 400
+    assert "2" in response.json()["detail"]
+    fake_service.search.assert_not_called()
+
+
+def test_search_without_params_returns_422(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    response = client.get(
+        "/api/v1/commercial/archive/search",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 422
+    fake_service.search.assert_not_called()
+
+
+def test_search_both_params_prefers_kp_id(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.search.return_value = _fake_search_response(mode="number")
+
+    response = client.get(
+        "/api/v1/commercial/archive/search?kp_id=42&customer=Ромашка",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    fake_service.search.assert_called_once_with(kp_id=42)
+
+
+def test_search_customer_truncated_flag(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.search.return_value = _fake_search_response(
+        mode="customer",
+        items=[_fake_list_item(i, "ООО Тест") for i in range(50)],
+        total=73,
+        truncated=True,
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/search?customer=Тест",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["truncated"] is True
+    assert payload["total"] == 73
+    assert len(payload["items"]) == 50
 
 
 def test_download_file_returns_file(

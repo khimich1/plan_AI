@@ -306,6 +306,20 @@ def format_phone(phone: str) -> str:
     return phone
 
 
+def _format_delivery_conditions_text(delivery_conditions: Optional[str]) -> str:
+    text = (delivery_conditions or "").strip()
+    if text:
+        return f"1. Условия поставки: {text}"
+    return "1. Условия поставки:"
+
+
+def _format_payment_conditions_text(payment_conditions: Optional[str]) -> str:
+    text = (payment_conditions or "").strip()
+    if text:
+        return f"2. Условия оплаты: {text}"
+    return "2. Условия оплаты: Предварительная оплата в размере 100%"
+
+
 def generate_commercial_offer_pdf(
     order_data: List[Dict],
     offer_number: str,
@@ -317,6 +331,8 @@ def generate_commercial_offer_pdf(
     discount_percent: float = 0,
     kp_db_id: Optional[int] = None,
     logistics_cost: float = 0.0,
+    delivery_conditions: Optional[str] = None,
+    payment_conditions: Optional[str] = None,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -333,6 +349,8 @@ def generate_commercial_offer_pdf(
         discount_percent: процент скидки (0-100, по умолчанию 0)
         kp_db_id: номер КП из базы данных
         logistics_cost: стоимость одного рейса (без НДС по плитам; итог доставки = рейс × ceil(вес/18600))
+        delivery_conditions: условия поставки (пусто — только заголовок, как в XLSX)
+        payment_conditions: условия оплаты (пусто — стандартный текст 100% предоплаты)
     
     Note:
         Детальная разбивка компонентов НЕ включается в PDF.
@@ -665,8 +683,18 @@ def generate_commercial_offer_pdf(
     # Добавляем отступ после всего блока итогов
     story.append(Spacer(1, 4 * mm))
     
-    story.append(Paragraph("1.Условия поставки:", style_conditions))
-    story.append(Paragraph("2.Условия оплаты: Предварительная оплата в размере 100%", style_conditions))
+    story.append(
+        Paragraph(
+            escape(_format_delivery_conditions_text(delivery_conditions)),
+            style_conditions,
+        )
+    )
+    story.append(
+        Paragraph(
+            escape(_format_payment_conditions_text(payment_conditions)),
+            style_conditions,
+        )
+    )
     
     story.append(Spacer(1, 6 * mm))
     

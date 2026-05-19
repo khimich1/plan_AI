@@ -12,7 +12,11 @@ import {
   useArchiveListQuery,
   useArchiveSearchQuery,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
-import type { ArchiveSection } from "@/features/commercial-archive/types/archive";
+import type {
+  ArchiveOfferListItem,
+  ArchiveSearchState,
+  ArchiveSection,
+} from "@/features/commercial-archive/types/archive";
 import { getErrorMessage } from "@/shared/lib/apiError";
 
 const VALID_SECTIONS: readonly ArchiveSection[] = ["archived", "in_production", "completed"];
@@ -24,15 +28,38 @@ const parseSection = (value: string | null): ArchiveSection => {
   return "archived";
 };
 
+const sectionFromStatus = (item: ArchiveOfferListItem): ArchiveSection => {
+  switch (item.status) {
+    case "в архиве":
+      return "archived";
+    case "в работе":
+      return "in_production";
+    case "выполнено":
+      return "completed";
+    default:
+      return "archived";
+  }
+};
+
+const searchCardTitle = (searchState: ArchiveSearchState): string => {
+  if (!searchState) {
+    return "Поиск";
+  }
+  if (searchState.kind === "number") {
+    return `Поиск: КП №${searchState.value}`;
+  }
+  return `Поиск: «${searchState.value}»`;
+};
+
 export const CommercialOfferArchivePage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const section = parseSection(searchParams.get("section"));
 
   const [selectedKpId, setSelectedKpId] = useState<number | null>(null);
-  const [searchKpId, setSearchKpId] = useState<number | null>(null);
+  const [searchState, setSearchState] = useState<ArchiveSearchState>(null);
 
   const listQuery = useArchiveListQuery(section);
-  const searchQuery = useArchiveSearchQuery(searchKpId);
+  const searchQuery = useArchiveSearchQuery(searchState);
 
   useEffect(() => {
     if (!searchParams.get("section")) {
@@ -42,7 +69,7 @@ export const CommercialOfferArchivePage = () => {
 
   const onSectionChange = (next: ArchiveSection) => {
     setSearchParams({ section: next });
-    setSearchKpId(null);
+    setSearchState(null);
   };
 
   const filteredItems = useMemo(() => listQuery.data ?? [], [listQuery.data]);
@@ -70,51 +97,39 @@ export const CommercialOfferArchivePage = () => {
             <div style={{ display: "grid", gap: "0.75rem", flex: "1 0 320px" }}>
               <ArchiveSectionTabs value={section} onChange={onSectionChange} />
               <ArchiveSearchBar
-                activeQuery={searchKpId}
-                onSubmit={setSearchKpId}
-                onClear={() => setSearchKpId(null)}
+                activeQuery={searchState}
+                onSubmit={setSearchState}
+                onClear={() => setSearchState(null)}
               />
             </div>
             <CurrentPlanButton />
           </div>
         </Card>
 
-        {searchKpId !== null && (
-          <Card title={`Поиск по номеру: КП №${searchKpId}`}>
+        {searchState !== null && (
+          <Card title={searchCardTitle(searchState)}>
             {searchQuery.isPending && (
               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
                 <Spinner /> Ищу КП...
               </div>
             )}
             {searchQuery.isError && <Alert tone="error">{getErrorMessage(searchQuery.error)}</Alert>}
-            {searchQuery.data && !searchQuery.data.found && (
-              <Alert tone="warning">КП с номером {searchKpId} не найдено.</Alert>
+            {searchQuery.data && searchQuery.data.total === 0 && (
+              <Alert tone="warning">Ничего не найдено</Alert>
             )}
-            {searchQuery.data?.found && searchQuery.data.offer && (
-              <div style={{ display: "grid", gap: "0.5rem" }}>
-                <div>
-                  <strong>Клиент:</strong> {searchQuery.data.offer.customer_name || "—"}
-                </div>
-                <div>
-                  <strong>Статус:</strong> {searchQuery.data.offer.status || "—"}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedKpId(searchQuery.data!.offer!.kp_id)}
-                  style={{
-                    marginTop: "0.25rem",
-                    padding: "0.6rem 0.9rem",
-                    borderRadius: 12,
-                    border: "1px solid #2b5cff",
-                    background: "#2b5cff",
-                    color: "#ffffff",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    justifySelf: "start",
-                  }}
-                >
-                  Открыть карточку
-                </button>
+            {searchQuery.data && searchQuery.data.total > 0 && (
+              <div style={{ display: "grid", gap: "0.75rem" }}>
+                {searchQuery.data.truncated && (
+                  <Alert tone="warning">
+                    Показаны первые 50 из {searchQuery.data.total}
+                  </Alert>
+                )}
+                <ArchiveOfferList
+                  section={section}
+                  items={searchQuery.data.items}
+                  onSelect={(kpId) => setSelectedKpId(kpId)}
+                  sectionForItem={sectionFromStatus}
+                />
               </div>
             )}
           </Card>

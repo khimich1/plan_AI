@@ -128,6 +128,8 @@ class OffersService:
             manager_email=None,
             discount_percent=float(offer.get("discount_percent") or 0),
             kp_db_id=kp_id,
+            delivery_conditions=offer.get("delivery_conditions"),
+            payment_conditions=offer.get("payment_conditions"),
         )
         return (f"KP_{kp_id}.pdf", pdf_buffer.getvalue())
 

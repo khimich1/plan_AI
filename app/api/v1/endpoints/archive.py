@@ -42,13 +42,29 @@ def list_archive_offers(
 
 
 @router.get("/search", response_model=ArchiveSearchResponse)
-def search_offer_by_number(
-    query: int = Query(..., ge=1, description="Номер КП"),
+def search_archive_offers(
+    kp_id: int | None = Query(default=None, ge=1, description="Номер КП"),
+    customer: str | None = Query(default=None, max_length=128, description="Имя заказчика"),
     _user: dict = Depends(require_roles("admin", "manager")),
     service: ArchiveService = Depends(get_archive_service),
 ) -> ArchiveSearchResponse:
-    offer = service.search_by_number(query)
-    return ArchiveSearchResponse(found=offer is not None, offer=offer)
+    if kp_id is not None:
+        return service.search(kp_id=kp_id)
+
+    if customer is None or not customer.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Укажите номер КП или имя заказчика.",
+        )
+
+    trimmed = customer.strip()
+    if len(trimmed) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Имя заказчика должно содержать не менее 2 символов.",
+        )
+
+    return service.search(customer=trimmed)
 
 
 @router.get("/current-plan/gantt")

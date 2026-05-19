@@ -41,3 +41,6 @@ class KpArchiveRepository:
 
     def update_execution_date(self, kp_id: int, new_date: str) -> bool:
         return kp_db.update_kp_execution_date(kp_id, new_date, self.db_path)
+
+    def search_by_customer_name(self, name: str, limit: int = 50) -> tuple[list[dict], int]:
+        return kp_db.search_kp_by_customer_name(name, limit=limit, db_path=self.db_path)
