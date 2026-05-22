@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
+import { useRecognizedImagePreview } from "@/features/commercial-offer/hooks/useRecognizedImagePreview";
 import { WIZARD_STEP_ORDER, wizardStepIndex } from "@/features/commercial-offer/lib/wizardStepOrder";
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
@@ -30,6 +31,11 @@ export const CommercialOfferWizard = () => {
   } = useCommercialOfferWizard();
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [stepError, setStepError] = useState<string | null>(null);
+  const {
+    preview: recognizedImagePreview,
+    setPreviewFromFile,
+    clearPreview: clearRecognizedImagePreview,
+  } = useRecognizedImagePreview();
 
   const managers = managersQuery.data?.items ?? [];
 
@@ -69,19 +75,23 @@ export const CommercialOfferWizard = () => {
     }
 
     const sourceText = selectedImage ? "" : state.sourceText;
+    const imageForRecognition = selectedImage;
 
     try {
+      if (imageForRecognition) {
+        setPreviewFromFile(imageForRecognition);
+      }
       if (currentDraft?.draft_id) {
         await updatePlatesMutation.mutateAsync({
           draftId: currentDraft.draft_id,
           text: sourceText,
-          image: selectedImage,
+          image: imageForRecognition,
           mode,
         });
       } else {
         await createDraftMutation.mutateAsync({
           text: sourceText,
-          image: selectedImage,
+          image: imageForRecognition,
         });
       }
       resetSource();
@@ -90,18 +100,35 @@ export const CommercialOfferWizard = () => {
     }
   };
 
-  const handleProcess = () => {
+  const handleProcess = async () => {
     setStepError(null);
-    if (!currentDraft?.wizard_state) {
+    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
       setStepError("Нет состояния мастера с сервера. Обновите черновик.");
       return;
     }
-    const next = currentDraft.wizard_state.can_proceed_to[0];
+
+    let draft = currentDraft;
+    const editedNormalizedText = state.normalizedText.trim();
+    if (editedNormalizedText && editedNormalizedText !== draft.metadata.normalized_text) {
+      try {
+        draft = await updatePlatesMutation.mutateAsync({
+          draftId: draft.draft_id,
+          text: editedNormalizedText,
+          image: null,
+          mode: "replace",
+        });
+      } catch (error) {
+        setStepError(getErrorMessage(error));
+        return;
+      }
+    }
+
+    const next = draft.wizard_state.can_proceed_to[0];
     if (!next) {
-      const serverMsgs = (currentDraft.wizard_state.validation_errors ?? []).filter(Boolean);
+      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
       if (serverMsgs.length > 0) {
         setStepError(serverMsgs.join(" "));
-      } else if (currentDraft.wizard_state.next_required_action === "ingest_plates") {
+      } else if (draft.wizard_state.next_required_action === "ingest_plates") {
         setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
       } else {
         setStepError("Сервер не разрешает переход на следующий шаг. Проверьте данные и повторите запрос.");
@@ -259,6 +286,7 @@ export const CommercialOfferWizard = () => {
   const handleCreateNewOffer = () => {
     setStepError(null);
     setSelectedImage(null);
+    clearRecognizedImagePreview();
     dispatch({ type: "reset" });
   };
 
@@ -298,14 +326,18 @@ export const CommercialOfferWizard = () => {
       <PlateInputStep
         draft={currentDraft}
         sourceText={state.sourceText}
+        normalizedText={state.normalizedText}
         selectedImageName={state.selectedImageName}
+        recognizedImageUrl={recognizedImagePreview?.url ?? null}
+        recognizedImageName={recognizedImagePreview?.name ?? null}
         errorMessage={stepError}
         isRecognizing={createDraftMutation.isPending || updatePlatesMutation.isPending}
         onTextChange={handleSourceTextChange}
+        onNormalizedTextChange={(value) => dispatch({ type: "set-normalized-text", text: value })}
         onFileChange={handleImageSelect}
         onImagePaste={handleImageSelect}
         onRecognize={handleRecognize}
-        onProcess={handleProcess}
+        onProcess={() => void handleProcess()}
         onReset={handleCreateNewOffer}
       />
     ) : state.currentStep === "wide-plates" && currentDraft ? (

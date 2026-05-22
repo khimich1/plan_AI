@@ -104,7 +104,8 @@ export const commercialOfferApi = {
   generateFiles: (draftId: string, fileTypes?: CommercialGeneratedFile["kind"][]) =>
     httpClient.post<{ draft_id: string; files: CommercialGeneratedFile[] }>(
       `/api/v1/commercial/drafts/${draftId}/generate-files`,
-      JSON.stringify({ file_types: fileTypes ?? ["pdf", "xlsx", "breakdown", "schema"] }),
+      // Схема (matplotlib) тяжёлая и на VPS может убить backend по OOM — генерируем отдельно по запросу.
+      JSON.stringify({ file_types: fileTypes ?? ["pdf", "xlsx", "breakdown"] }),
       { "Content-Type": "application/json" },
     ),
 

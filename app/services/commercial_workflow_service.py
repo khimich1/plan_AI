@@ -42,7 +42,9 @@ class CommercialWorkflowService:
         "breakdown": "Детальная разбивка (XLSX)",
         "schema": "Схема раскладки (PDF)",
     }
-    DEFAULT_FILE_TYPES = ("pdf", "xlsx", "breakdown", "schema")
+    # Схема раскладки (matplotlib) — отдельно: при включении в file_types на слабом VPS возможен OOM.
+    DEFAULT_FILE_TYPES = ("pdf", "xlsx", "breakdown")
+    ALL_FILE_TYPES = ("pdf", "xlsx", "breakdown", "schema")
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -70,10 +72,6 @@ class CommercialWorkflowService:
             return WizardStepId.plates
 
     def _wizard_step_after_plate_snapshot(self, metadata: dict[str, Any], order_data: list[Any]) -> WizardStepId:
-        if not order_data:
-            return WizardStepId.plates
-        if self._wide_lines_blocking(metadata):
-            return WizardStepId.wide_plates
         return WizardStepId.plates
 
     def _persist_wizard_step(self, draft_id: str, step: WizardStepId) -> None:

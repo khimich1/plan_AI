@@ -23,12 +23,17 @@ const mergeWizardStepWithServer = (local: WizardStepId, server: WizardStepId | u
   if (si < 0) {
     return local;
   }
+  // After recognize, stay on plates until user clicks "Обработать"
+  if (local === "plates" && si > li) {
+    return local;
+  }
   return WIZARD_STEP_ORDER[Math.max(li, si)];
 };
 
 type WizardDraftAction =
   | { type: "set-step"; step: WizardStepId }
   | { type: "set-source"; text: string; imageName: string | null }
+  | { type: "set-normalized-text"; text: string }
   | { type: "set-manager"; managerId: number | null }
   | {
       type: "set-client-form";
@@ -55,6 +60,7 @@ const initialState: WizardStoreState = {
   currentStep: "plates",
   sourceText: "",
   selectedImageName: null,
+  normalizedText: "",
   lastPlateMode: "replace",
   managerId: null,
   clientName: "",
@@ -74,6 +80,8 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
       return { ...state, currentStep: action.step };
     case "set-source":
       return { ...state, sourceText: action.text, selectedImageName: action.imageName };
+    case "set-normalized-text":
+      return { ...state, normalizedText: action.text };
     case "set-manager":
       return { ...state, managerId: action.managerId };
     case "set-client-form":
@@ -108,6 +116,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         executionTermsInput:
           (action.payload.metadata.execution_terms || action.payload.saved_offer?.execution_terms || "").trim() ||
           state.executionTermsInput,
+        normalizedText: action.payload.metadata.normalized_text ?? "",
         lastDraft: action.payload,
       };
     case "set-save-result":
@@ -127,7 +136,13 @@ type WizardDraftContextValue = {
 const WizardDraftContext = createContext<WizardDraftContextValue | null>(null);
 
 export const WizardDraftProvider = ({ children }: PropsWithChildren) => {
-  const [state, dispatch] = useReducer(reducer, initialState, (value) => draftStorage.load() ?? value);
+  const [state, dispatch] = useReducer(reducer, initialState, (value) => {
+    const loaded = draftStorage.load();
+    if (!loaded) {
+      return value;
+    }
+    return { ...value, ...loaded, normalizedText: loaded.normalizedText ?? "" };
+  });
 
   useEffect(() => {
     draftStorage.save(state);

@@ -3,16 +3,20 @@ import type { CommercialDraftDetails, PlateInputMode } from "@/features/commerci
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
-import { FieldWrapper, Textarea } from "@/shared/ui/Field";
+import { AutoResizeTextarea, FieldWrapper, Textarea } from "@/shared/ui/Field";
 import { StepLayout } from "@/shared/ui/StepLayout";
 
 type PlateInputStepProps = {
   draft: CommercialDraftDetails | null;
   sourceText: string;
+  normalizedText: string;
   selectedImageName: string | null;
+  recognizedImageUrl: string | null;
+  recognizedImageName: string | null;
   errorMessage: string | null;
   isRecognizing: boolean;
   onTextChange: (value: string) => void;
+  onNormalizedTextChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
   onImagePaste: (file: File) => void;
   onRecognize: (mode: PlateInputMode) => void;
@@ -35,10 +39,14 @@ const createClipboardImageFile = (file: File) =>
 export const PlateInputStep = ({
   draft,
   sourceText,
+  normalizedText,
   selectedImageName,
+  recognizedImageUrl,
+  recognizedImageName,
   errorMessage,
   isRecognizing,
   onTextChange,
+  onNormalizedTextChange,
   onFileChange,
   onImagePaste,
   onRecognize,
@@ -68,6 +76,18 @@ export const PlateInputStep = ({
     <StepLayout
       title="Шаг 1. Ввод плит"
       description="Вставьте текст списка плит или загрузите фото/изображение таблицы."
+      footer={
+        draft ? (
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+            <Button type="button" variant="danger" onClick={onReset}>
+              Начать заново
+            </Button>
+            <Button type="button" variant="primary" onClick={onProcess} disabled={isRecognizing}>
+              Обработать
+            </Button>
+          </div>
+        ) : undefined
+      }
     >
       {errorMessage && <Alert tone="error">{errorMessage}</Alert>}
 
@@ -104,49 +124,56 @@ export const PlateInputStep = ({
                 Распознать и добавить
               </Button>
             )}
-            <Button
-              type="button"
-              variant={draft ? "primary" : "secondary"}
-              onClick={onProcess}
-              disabled={!draft || isRecognizing}
-            >
-              Обработать
-            </Button>
           </div>
         </div>
       </Card>
 
       {draft && (
-        <>
-          <Card title="Нормализованный результат" subtitle="Это текст, который backend использует для расчёта.">
-            <pre
-              style={{
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                fontFamily: "Consolas, monospace",
-                background: "#f8fafc",
-                padding: "1rem",
-                borderRadius: 14,
-              }}
-            >
-              {draft.metadata.normalized_text || "Пока нет нормализованного текста."}
-            </pre>
-          </Card>
+        <div
+          style={{
+            display: "grid",
+            gap: "1rem",
+            gridTemplateColumns: recognizedImageUrl ? "repeat(auto-fit, minmax(280px, 1fr))" : "1fr",
+          }}
+        >
+          <div style={{ display: "grid", gap: "1rem", minWidth: 0 }}>
+            <Card title="Нормализованный результат" subtitle="Это текст, который backend использует для расчёта.">
+              <AutoResizeTextarea
+                value={normalizedText}
+                onChange={(event) => onNormalizedTextChange(event.target.value)}
+                placeholder="Пока нет нормализованного текста."
+              />
+            </Card>
 
-          <Card title="Предпросмотр обработанного списка">
-            <div style={{ display: "grid", gap: "0.75rem" }}>
-              <div>Позиции: {draft.order_data.length}</div>
-              <div>Предупреждения: {draft.metadata.warnings.length}</div>
-              <div>Нераспознанные строки: {draft.metadata.unparsed_lines.length}</div>
-              <div>Широкие плиты: {draft.metadata.wide_plate_lines.length}</div>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.5rem" }}>
-                <Button type="button" variant="danger" onClick={onReset}>
-                  Начать заново
-                </Button>
+            <Card title="Предпросмотр обработанного списка">
+              <div style={{ display: "grid", gap: "0.75rem" }}>
+                <div>Позиции: {draft.order_data.length}</div>
+                <div>Предупреждения: {draft.metadata.warnings.length}</div>
+                <div>Нераспознанные строки: {draft.metadata.unparsed_lines.length}</div>
+                <div>Широкие плиты: {draft.metadata.wide_plate_lines.length}</div>
               </div>
+            </Card>
+          </div>
+
+          {recognizedImageUrl && (
+            <div style={{ position: "sticky", top: "5rem", alignSelf: "start" }}>
+              <Card title="Присланное изображение" subtitle={recognizedImageName ?? undefined}>
+                <img
+                  src={recognizedImageUrl}
+                  alt="Исходное изображение для распознавания"
+                  style={{
+                    width: "100%",
+                    maxHeight: "70vh",
+                    objectFit: "contain",
+                    borderRadius: 12,
+                    border: "1px solid #e4e7ec",
+                    background: "#f9fafb",
+                  }}
+                />
+              </Card>
             </div>
-          </Card>
-        </>
+          )}
+        </div>
       )}
     </StepLayout>
   );

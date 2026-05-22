@@ -61,8 +61,10 @@ BANK_CORR_ACCOUNT = "30101810500000000653"
 # Путь к базе данных с ценами (абсолютный)
 DB_PATH = os.path.join(PROJECT_ROOT, "pb.db")
 
-# Путь к логотипу (абсолютный, чтобы работал из любой директории)
-LOGO_PATH = os.path.join(PROJECT_ROOT, "банк знаний", "ЖБЛСТАРТ.png")
+try:
+    from core.project_paths import resolve_commercial_offer_logo_path
+except ImportError:
+    from project_paths import resolve_commercial_offer_logo_path
 
 # Коэффициент скидки в процентах (0 = без скидки, 5 = скидка 5%, и т.д.)
 DISCOUNT_PERCENT = 0
@@ -479,12 +481,13 @@ def generate_commercial_offer_pdf(
     
     story = []
     
-    # Логотип
-    if os.path.exists(LOGO_PATH):
+    # Логотип (плашка)
+    logo_path = resolve_commercial_offer_logo_path()
+    if logo_path is not None:
         try:
             logo_width = content_width
             logo_height = logo_width * (207 / 1456.0)
-            story.append(Image(LOGO_PATH, width=logo_width, height=logo_height))
+            story.append(Image(str(logo_path), width=logo_width, height=logo_height))
             story.append(Spacer(1, 4 * mm))
         except Exception as exc:
             print(f"Ошибка загрузки логотипа: {exc}")

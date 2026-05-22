@@ -89,7 +89,28 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
     cleanup();
   });
 
-  it("выбирает более поздний шаг по WIZARD_STEP_ORDER (сервер result при локальных plates)", async () => {
+  it("не переходит с plates на wide-plates после hydrate-draft (только через «Обработать»)", async () => {
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} />
+      </WizardDraftProvider>,
+    );
+
+    expect(screen.getByTestId("current-step")).toHaveTextContent("plates");
+
+    await act(async () => {
+      dispatchRef.current?.({
+        type: "hydrate-draft",
+        payload: makeDraft({
+          wizard_state: { ...baseWizardState, current_step: "wide-plates" },
+        }),
+      });
+    });
+
+    expect(screen.getByTestId("current-step")).toHaveTextContent("plates");
+  });
+
+  it("не поднимает шаг с plates до result при hydrate-draft (остаётся на plates)", async () => {
     render(
       <WizardDraftProvider>
         <Harness actionRef={dispatchRef} />
@@ -107,7 +128,7 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
       });
     });
 
-    expect(screen.getByTestId("current-step")).toHaveTextContent("result");
+    expect(screen.getByTestId("current-step")).toHaveTextContent("plates");
   });
 
   it("для обоих валидных шагов берёт максимум (local client, server manager → client)", async () => {
