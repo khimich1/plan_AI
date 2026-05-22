@@ -11,8 +11,28 @@ from app.services.optimization_service import OptimizationService
 from app.services.production_completion_service import ProductionCompletionService
 from app.services.production_planning_service import ProductionPlanningService
 from app.planning import plan_manager
+from core.plan_track_removal import TrackRemovalError
 
 MAX_TRACKS_PER_DAY = plan_manager.MAX_TRACKS_PER_DAY
+
+_TRACK_REMOVAL_HTTP_STATUS: dict[str, int] = {
+    "plan_not_found": 404,
+    "day_not_found": 404,
+    "day_already_completed": 409,
+    "invalid_track_index": 400,
+    "no_plate_identity": 400,
+    "incomplete_return": 409,
+    "db_return_failed": 500,
+    "plan_save_failed": 500,
+}
+
+
+class ProductionTrackRemovalError(Exception):
+    """Ошибка удаления дорожки из производственного плана."""
+
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class ProductionService:
@@ -168,4 +188,24 @@ class ProductionService:
     def is_working_day(self, target_date: str) -> bool:
         parsed = datetime.fromisoformat(target_date).date()
         return self.calendar_repository.is_working_day(parsed)
+
+    def remove_track(
+        self,
+        plan_id: str,
+        date: str,
+        track_index: int,
+        *,
+        actor: str | None = None,
+    ) -> dict[str, Any]:
+        try:
+            return plan_manager.remove_track_from_plan(
+                plan_id,
+                date,
+                track_index,
+                db_path=self.kp_repository.db_path,
+                actor=actor,
+            )
+        except TrackRemovalError as exc:
+            status_code = _TRACK_REMOVAL_HTTP_STATUS.get(exc.code or "", 500)
+            raise ProductionTrackRemovalError(exc.message, status_code=status_code) from exc
 

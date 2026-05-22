@@ -12,6 +12,7 @@ import type {
   KpCandidatesResponse,
   PlansMetadataResponse,
   RejectedPlateItem,
+  RemoveTrackResponse,
   WorkCalendarPayload,
 } from "@/features/production/types/production";
 
@@ -121,6 +122,21 @@ export const useCompleteDayMutation = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: productionKeys.all });
       queryClient.invalidateQueries({ queryKey: archiveKeys.all });
+    },
+  });
+};
+
+export const useDeleteTrackMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation<
+    RemoveTrackResponse,
+    Error,
+    { planId: string; date: string; trackIndex: number }
+  >({
+    mutationFn: ({ planId, date, trackIndex }) =>
+      productionApi.deleteTrack(planId, date, trackIndex),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: productionKeys.all });
     },
   });
 };

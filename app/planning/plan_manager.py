@@ -10,11 +10,12 @@
 import json
 import os
 import re
+import sqlite3
 import sys
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from core import kp_db
+from core.plan_track_removal import TrackRemovalError, collect_plate_returns_from_track
 from core.serialization import strip_plate_audit_from_plan
 from core.work_calendar import is_working_day, load_extra_workdays, load_holidays
 
@@ -42,6 +44,17 @@ _MAX_PLAN_ID_LEN = 200
 
 class InvalidPlanIdError(ValueError):
     """Недопустимый plan_id (в т.ч. попытка path traversal)."""
+
+
+class RemoveTrackResult(TypedDict, total=False):
+    """Результат удаления дорожки из плана."""
+
+    plan_id: str
+    date: str
+    track_index: int
+    plates_returned: int
+    saved_tracks_count: int
+    warnings: List[str]
 
 
 def _validate_plan_id(plan_id: Optional[str]) -> None:
@@ -197,31 +210,36 @@ def _make_plan_json_serializable(plan_data: dict) -> dict:
     return strip_plate_audit_from_plan(plan_data)
 
 
-def save_plan(plan_data: dict):
+def save_plan(plan_data: dict) -> bool:
     """
     Сохраняет план в файл.
     
     Args:
         plan_data: Данные плана (должен содержать 'id')
+
+    Returns:
+        bool: True при успешной записи на диск.
     """
     ensure_plans_dir()
     plan_id = plan_data.get('id')
     if not plan_id:
         logger.error("План не содержит ID!")
-        return
+        return False
     
     try:
         plan_path = get_plan_path(plan_id)
     except InvalidPlanIdError:
         logger.error("Недопустимый ID плана при сохранении: %r", plan_id)
-        return
+        return False
     try:
         to_save = _make_plan_json_serializable(plan_data)
         with open(plan_path, 'w', encoding='utf-8') as f:
             json.dump(to_save, f, ensure_ascii=False, indent=2)
         logger.info(f"План {plan_id} сохранён в {plan_path}")
+        return True
     except Exception as e:
         logger.exception(f"Ошибка сохранения плана {plan_id}: {e}")
+        return False
 
 
 def delete_plan(plan_id: str) -> bool:
@@ -1299,11 +1317,12 @@ def get_tracks_for_date_from_all_plans(date_key: str) -> Optional[dict]:
         
         # НОВОЕ: Добавляем информацию о плане-источнике к каждой дорожке
         plan_name = plan.get('name', f'План {plan_id}')
-        for track in day_tracks:
+        for idx, track in enumerate(day_tracks):
             if isinstance(track, dict):
                 track['source_plan_id'] = plan_id
                 track['source_plan_name'] = plan_name
-        
+                track['source_track_index'] = idx  # 0-based внутри плана
+
         all_tracks_for_date.extend(day_tracks)
         
         logger.info(f"[MULTI_PLAN] План {plan_id}: найдено {len(day_tracks)} дорожек на {date_key}")
@@ -1380,6 +1399,133 @@ def get_tracks_for_date_from_all_plans(date_key: str) -> Optional[dict]:
     }
 
 
+def remove_track_from_plan(
+    plan_id: str,
+    date_key: str,
+    track_index: int,
+    *,
+    db_path: str,
+    actor: Optional[str] = None,
+) -> RemoveTrackResult:
+    """
+    Удаляет одну дорожку из плана на указанную дату.
+
+    Порядок: сначала возврат плит в БД (транзакция), затем правка JSON-плана.
+    При ошибке БД JSON не изменяется.
+
+    Raises:
+        TrackRemovalError: план/день не найден, день завершён, неверный индекс,
+            нет идентичностей плит, неполный возврат в БД, ошибка БД,
+            ошибка сохранения JSON после успешного commit.
+    """
+    plan = load_plan(plan_id)
+    if not plan:
+        raise TrackRemovalError(
+            f"План {plan_id!r} не найден",
+            code="plan_not_found",
+        )
+
+    day = plan.get("days", {}).get(date_key)
+    if day is None:
+        raise TrackRemovalError(
+            f"День {date_key!r} не найден в плане {plan_id!r}",
+            code="day_not_found",
+        )
+
+    if day.get("completed"):
+        raise TrackRemovalError(
+            f"День {date_key!r} уже завершён — удаление дорожки невозможно",
+            code="day_already_completed",
+        )
+
+    tracks = day.get("tracks") or []
+    if track_index < 0 or track_index >= len(tracks):
+        raise TrackRemovalError(
+            f"Недопустимый track_index={track_index} (дорожек в дне: {len(tracks)})",
+            code="invalid_track_index",
+        )
+
+    track = tracks[track_index]
+    id_qty, legacy_identity_qty = collect_plate_returns_from_track(track)
+
+    if not id_qty and not legacy_identity_qty:
+        raise TrackRemovalError(
+            "В дорожке не найдено kp_plate_id и legacy-идентичностей — "
+            "удаление дорожки невозможно",
+            code="no_plate_identity",
+        )
+
+    expected_count = sum(id_qty.values()) + sum(legacy_identity_qty.values())
+
+    kp_db.init_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    plates_returned = 0
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        db_result = kp_db.return_plate_rows_for_plan(
+            plan_id,
+            id_qty,
+            db_path,
+            actor=actor,
+            legacy_identity_qty=legacy_identity_qty or None,
+            _external_conn=conn,
+        )
+        plates_returned = int(db_result.get("plates_returned") or 0)
+        db_warnings = db_result.get("warnings") or []
+        if db_warnings or plates_returned < expected_count:
+            conn.rollback()
+            detail = (
+                f"ожидалось вернуть {expected_count} плит(ы), "
+                f"фактически {plates_returned}"
+            )
+            if db_warnings:
+                detail = f"{detail}; предупреждения: {'; '.join(db_warnings)}"
+            raise TrackRemovalError(
+                f"Неполный возврат плит в производство: {detail}",
+                code="incomplete_return",
+            )
+        conn.commit()
+    except TrackRemovalError:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        logger.exception(
+            "[REMOVE_TRACK] Ошибка возврата плит plan_id=%s date=%s track_index=%s",
+            plan_id,
+            date_key,
+            track_index,
+        )
+        raise TrackRemovalError(
+            f"Не удалось вернуть плиты в производство: {exc}",
+            code="db_return_failed",
+        ) from exc
+    finally:
+        conn.close()
+
+    tracks.pop(track_index)
+    day["saved_tracks_count"] = len(tracks)
+    saved_tracks_count = day["saved_tracks_count"]
+
+    if not tracks:
+        del plan["days"][date_key]
+        saved_tracks_count = 0
+
+    if not save_plan(plan):
+        raise TrackRemovalError(
+            f"Плиты возвращены в БД, но не удалось сохранить план {plan_id!r} на диск",
+            code="plan_save_failed",
+        )
+    update_plan_metadata(plan)
+
+    return {
+        "plan_id": plan_id,
+        "date": date_key,
+        "track_index": track_index,
+        "plates_returned": plates_returned,
+        "saved_tracks_count": saved_tracks_count,
+    }
+
+
 __all__ = [
     "BOT_DIR",
     "MAX_TRACKS_PER_DAY",
@@ -1411,6 +1557,8 @@ __all__ = [
     "load_plan",
     "load_plans_metadata",
     "mark_day_completed",
+    "remove_track_from_plan",
+    "RemoveTrackResult",
     "save_plan",
     "save_plans_metadata",
     "set_active_plan",

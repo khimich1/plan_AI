@@ -7,6 +7,7 @@ import type {
   DayViewResponse,
   DeletePlanResponse,
   GlobalCalendarResponse,
+  RemoveTrackResponse,
   KpCandidatesResponse,
   PlansMetadataResponse,
   RejectedPlateItem,
@@ -28,6 +29,11 @@ export const productionApi = {
 
   deletePlan: (planId: string) =>
     httpClient.delete<DeletePlanResponse>(`${BASE}/plans/${encodeURIComponent(planId)}`),
+
+  deleteTrack: (planId: string, date: string, trackIndex: number) =>
+    httpClient.delete<RemoveTrackResponse>(
+      `${BASE}/plans/${encodeURIComponent(planId)}/days/${encodeURIComponent(date)}/tracks/${trackIndex}`,
+    ),
 
   buildPlan: (payload: BuildPlanRequest) =>
     httpClient.post<BuildPlanResponse>(

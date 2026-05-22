@@ -17,6 +17,7 @@
 
 import os
 import sqlite3
+from collections import Counter
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, TypedDict
 from core.debug_paths import get_debug_log_path
@@ -2906,6 +2907,223 @@ def return_plates_to_production(
         # Внешняя транзакция: пробрасываем исключение для отката caller'ом
         raise
     
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def return_plate_rows_for_plan(
+    plan_id: str,
+    id_qty: Counter[int, int],
+    db_path: str = DEFAULT_DB,
+    *,
+    actor: str | None = None,
+    reason: str = "track_removed",
+    legacy_identity_qty: Counter[tuple[int, str], int] | None = None,
+    _external_conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """
+    Возвращает указанные плиты из плана обратно в «в производстве» по kp_plates.id.
+
+    Основной путь — ``id_qty`` (plate_id → qty). Для legacy-планов без kp_plate_id
+    можно передать ``legacy_identity_qty`` ((kp_id, plate_name) → qty) с фильтром
+    ``plan_id``.
+
+    Возвращает статистику: ``plates_returned``, ``warnings``.
+    """
+    own_conn = _external_conn is None
+    if own_conn:
+        init_schema(db_path)
+        conn = _connect(db_path)
+    else:
+        conn = _external_conn
+
+    plates_returned = 0
+    warnings: List[str] = []
+
+    def _return_qty_from_row(
+        cur: sqlite3.Cursor,
+        *,
+        plate_id: int,
+        current_qty: int,
+        qty_to_return: int,
+        kp_id: int,
+        plate_name: str,
+    ) -> int:
+        nonlocal plates_returned
+        if qty_to_return <= 0 or current_qty <= 0:
+            return 0
+
+        if current_qty <= qty_to_return:
+            cur.execute('''
+                UPDATE kp_plates
+                SET status = 'в производстве', plan_id = NULL
+                WHERE id = ?
+            ''', (plate_id,))
+            _audit_append(
+                cur,
+                plate_id=plate_id,
+                kp_id=kp_id,
+                plate_name=plate_name,
+                plan_id=None,
+                day_number=None,
+                from_status='в плане',
+                to_status='в производстве',
+                qty=current_qty,
+                reason=reason,
+                actor=actor,
+            )
+            plates_returned += current_qty
+            return current_qty
+
+        new_qty_in_plan = current_qty - qty_to_return
+        cur.execute('''
+            UPDATE kp_plates
+            SET qty = ?
+            WHERE id = ?
+        ''', (new_qty_in_plan, plate_id))
+        cur.execute('''
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, qty, unit_weight, total_weight, discounted_price,
+                status, plan_id, concrete_grade
+            )
+            SELECT
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, ?, unit_weight, total_weight, discounted_price,
+                'в производстве', NULL, concrete_grade
+            FROM kp_plates WHERE id = ?
+        ''', (qty_to_return, plate_id))
+        _audit_append(
+            cur,
+            plate_id=plate_id,
+            kp_id=kp_id,
+            plate_name=plate_name,
+            plan_id=None,
+            day_number=None,
+            from_status='в плане',
+            to_status='в производстве',
+            qty=qty_to_return,
+            reason=reason,
+            actor=actor,
+        )
+        plates_returned += qty_to_return
+        return qty_to_return
+
+    def _fetch_planned_rows_by_identity(
+        cur: sqlite3.Cursor,
+        kp_id: int,
+        plate_name: str,
+    ) -> List[Tuple[int, int, int, str]]:
+        cur.execute('''
+            SELECT id, qty, kp_id, plate_name
+            FROM kp_plates
+            WHERE kp_id = ? AND plate_name = ? AND plan_id = ?
+              AND status = 'в плане' AND qty > 0
+            ORDER BY id
+        ''', (kp_id, plate_name, plan_id))
+        rows = cur.fetchall()
+        if rows:
+            return rows
+
+        from core import plate_name as _pn
+        canon = _pn.canonical(plate_name)
+        if not canon:
+            return []
+
+        cur.execute('''
+            SELECT id, qty, kp_id, plate_name
+            FROM kp_plates
+            WHERE kp_id = ? AND plan_id = ? AND status = 'в плане' AND qty > 0
+            ORDER BY id
+        ''', (kp_id, plan_id))
+        return [r for r in cur.fetchall() if _pn.canonical(r[3]) == canon]
+
+    try:
+        if own_conn:
+            conn.execute('PRAGMA foreign_keys = ON')
+        cur = conn.cursor()
+
+        for plate_id, qty_requested in id_qty.items():
+            qty_requested = int(qty_requested or 0)
+            if qty_requested <= 0:
+                continue
+
+            cur.execute('''
+                SELECT id, qty, kp_id, plate_name
+                FROM kp_plates
+                WHERE id = ? AND plan_id = ? AND status = 'в плане' AND qty > 0
+            ''', (plate_id, plan_id))
+            row = cur.fetchone()
+            if not row:
+                warnings.append(
+                    f"plate_id={plate_id}: не найдена в плане {plan_id!r} (статус «в плане»)"
+                )
+                continue
+
+            _pid, current_qty, kp_id, plate_name = row
+            if qty_requested > current_qty:
+                warnings.append(
+                    f"plate_id={plate_id}: запрошено {qty_requested}, доступно {current_qty}"
+                )
+            _return_qty_from_row(
+                cur,
+                plate_id=plate_id,
+                current_qty=current_qty,
+                qty_to_return=min(qty_requested, current_qty),
+                kp_id=kp_id,
+                plate_name=plate_name,
+            )
+
+        if legacy_identity_qty:
+            for (kp_id, plate_name), qty_requested in legacy_identity_qty.items():
+                qty_requested = int(qty_requested or 0)
+                if qty_requested <= 0:
+                    continue
+
+                rows = _fetch_planned_rows_by_identity(cur, int(kp_id), plate_name)
+                if not rows:
+                    warnings.append(
+                        f"КП #{kp_id}, {plate_name!r}: не найдена в плане {plan_id!r}"
+                    )
+                    continue
+
+                available = sum(r[1] for r in rows)
+                if qty_requested > available:
+                    warnings.append(
+                        f"КП #{kp_id}, {plate_name!r}: запрошено {qty_requested}, "
+                        f"доступно {available}"
+                    )
+
+                remaining = min(qty_requested, available)
+                for row in rows:
+                    if remaining <= 0:
+                        break
+                    row_id, row_qty, row_kp_id, row_plate_name = row
+                    take = min(remaining, row_qty)
+                    returned = _return_qty_from_row(
+                        cur,
+                        plate_id=row_id,
+                        current_qty=row_qty,
+                        qty_to_return=take,
+                        kp_id=row_kp_id,
+                        plate_name=row_plate_name,
+                    )
+                    remaining -= returned
+
+        if own_conn:
+            conn.commit()
+        return {"plates_returned": plates_returned, "warnings": warnings}
+
+    except Exception as e:
+        if own_conn:
+            conn.rollback()
+            return {
+                "plates_returned": 0,
+                "warnings": [f"ошибка возврата плит из плана: {e}"],
+            }
+        raise
+
     finally:
         if own_conn:
             conn.close()

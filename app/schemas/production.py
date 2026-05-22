@@ -77,6 +77,15 @@ class DeletePlanResponse(BaseModel):
     deleted: bool
 
 
+class RemoveTrackResponse(BaseModel):
+    plan_id: str
+    date: str
+    track_index: int
+    plates_returned: int
+    saved_tracks_count: int
+    warnings: list[str] | None = None
+
+
 class FillTargetItem(BaseModel):
     """Один пункт корзины дозаполнения: дата + сколько дорожек туда положить."""
 
@@ -156,6 +165,10 @@ class DayTrackDetail(BaseModel):
     """Одна дорожка на выбранную дату с агрегированными плитами."""
 
     track_number: int
+    plan_track_index: int = Field(
+        default=0,
+        description="0-based индекс дорожки внутри плана (для DELETE API).",
+    )
     length: float | None = None
     max_reinforcement: float = 0.0
     label: str | None = None
