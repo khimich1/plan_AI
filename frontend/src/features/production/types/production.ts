@@ -47,6 +47,8 @@ export interface DayPlateInfo {
 
 export interface DayTrackDetail {
   track_number: number;
+  /** 0-based индекс дорожки внутри плана (DELETE API). */
+  plan_track_index: number;
   length: number | null;
   max_reinforcement: number;
   label: string | null;
@@ -160,6 +162,15 @@ export interface BuildPlanResponse {
 export interface DeletePlanResponse {
   plan_id: string;
   deleted: boolean;
+}
+
+export interface RemoveTrackResponse {
+  plan_id: string;
+  date: string;
+  track_index: number;
+  plates_returned: number;
+  saved_tracks_count: number;
+  warnings?: string[] | null;
 }
 
 export interface WorkCalendarPayload {

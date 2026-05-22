@@ -22,11 +22,12 @@ from app.schemas.production import (
     DayViewDetailResponse,
     DeletePlanResponse,
     KpCandidatesResponse,
+    RemoveTrackResponse,
     SaveWorkCalendarRequest,
 )
 from app.services.production_planning_service import ProductionPlanBuildError
 from app.services.production_completion_service import ProductionCompletionError
-from app.services.production_service import ProductionService
+from app.services.production_service import ProductionService, ProductionTrackRemovalError
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,29 @@ def activate_plan(
     if not result:
         raise HTTPException(status_code=404, detail="Plan not found")
     return result
+
+
+@router.delete(
+    "/plans/{plan_id}/days/{date}/tracks/{track_index}",
+    response_model=RemoveTrackResponse,
+)
+def remove_track_from_plan(
+    plan_id: str,
+    date: str,
+    track_index: int,
+    user: dict = Depends(require_roles("admin", "production")),
+) -> RemoveTrackResponse:
+    actor = user.get("email") or user.get("login") or user.get("user_id")
+    try:
+        result = ProductionService().remove_track(
+            plan_id=plan_id,
+            date=date,
+            track_index=track_index,
+            actor=str(actor) if actor else None,
+        )
+    except ProductionTrackRemovalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return RemoveTrackResponse(**result)
 
 
 @router.get("/calendar")

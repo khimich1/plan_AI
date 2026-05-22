@@ -566,6 +566,7 @@ def build_day_view_detail(date_key: str, db_path: str | None = None) -> dict | N
         block["tracks"].append(
             {
                 "track_number": track_index,
+                "plan_track_index": int(track.get("source_track_index", 0)),
                 "length": track.get("length"),
                 "max_reinforcement": float(track.get("max_reinforcement") or 0),
                 "label": track.get("label"),

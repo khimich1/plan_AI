@@ -3,11 +3,12 @@ import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Spinner } from "@/shared/ui/Spinner";
-import { getErrorMessage } from "@/shared/lib/apiError";
+import { ApiError, getErrorMessage } from "@/shared/lib/apiError";
 import {
   useCompleteDayMutation,
   useDayDocumentMutation,
   useDayViewQuery,
+  useDeleteTrackMutation,
 } from "@/features/production/hooks/useProductionQueries";
 import type {
   DayInfo,
@@ -70,6 +71,9 @@ const makeRejectionKey = (
   plateIndex: number,
 ): string => `${planId}:${trackNumber}:${plateIndex}`;
 
+const countTrackPlates = (track: DayTrackDetail): number =>
+  track.plates_info.reduce((sum, plate) => sum + plate.qty, 0);
+
 export const DayDrawer = ({
   date,
   summary,
@@ -80,6 +84,7 @@ export const DayDrawer = ({
   const open = date !== null;
   const dayQuery = useDayViewQuery(date);
   const completeMutation = useCompleteDayMutation();
+  const deleteTrackMutation = useDeleteTrackMutation();
   const schemaMutation = useDayDocumentMutation("schema");
   const breakdownMutation = useDayDocumentMutation("breakdown");
   const formovkaMutation = useDayDocumentMutation("formovka");
@@ -196,14 +201,47 @@ export const DayDrawer = ({
     }
   };
 
+  const handleDeleteTrack = (plan: DayPlanBlock, track: DayTrackDetail) => {
+    if (!date || plan.completed) return;
+
+    const platesCount = countTrackPlates(track);
+    const platesHint =
+      platesCount > 0
+        ? `${platesCount} шт. плит вернётся в производство.`
+        : "Плиты с дорожки вернутся в производство.";
+    const confirmed = window.confirm(
+      `Удалить дорожку ${track.track_number}? ${platesHint}`,
+    );
+    if (!confirmed) return;
+
+    deleteTrackMutation.mutate({
+      planId: plan.plan_id,
+      date,
+      trackIndex: track.plan_track_index,
+    });
+  };
+
+  const isDeletingTrack = (planId: string, trackIndex: number): boolean =>
+    deleteTrackMutation.isPending &&
+    deleteTrackMutation.variables?.planId === planId &&
+    deleteTrackMutation.variables?.trackIndex === trackIndex;
+
   const anyDocumentLoading =
     schemaMutation.isPending ||
     breakdownMutation.isPending ||
     formovkaMutation.isPending;
   const completionResult =
     completeMutation.data?.date === date ? completeMutation.data : null;
+  const deleteTrackResult =
+    deleteTrackMutation.data?.date === date ? deleteTrackMutation.data : null;
   const completeErrorMessage = completeMutation.isError
     ? getErrorMessage(completeMutation.error)
+    : null;
+  const deleteTrackErrorMessage = deleteTrackMutation.isError
+    ? deleteTrackMutation.error instanceof ApiError &&
+      deleteTrackMutation.error.status === 409
+      ? "День уже завершён, удаление невозможно"
+      : getErrorMessage(deleteTrackMutation.error)
     : null;
 
   return (
@@ -319,6 +357,17 @@ export const DayDrawer = ({
             </Alert>
           )}
 
+          {deleteTrackResult && (
+            <Alert tone="success">
+              Дорожка удалена. В производство возвращено:{" "}
+              {deleteTrackResult.plates_returned} плит.
+            </Alert>
+          )}
+
+          {deleteTrackErrorMessage && (
+            <Alert tone="error">{deleteTrackErrorMessage}</Alert>
+          )}
+
           {plans.map((plan) => (
             <div className="day-plan-block" key={plan.plan_id}>
               <header className="day-plan-block__header">
@@ -355,9 +404,34 @@ export const DayDrawer = ({
 
               {plan.tracks.map((track) => (
                 <div className="day-track" key={`${plan.plan_id}-${track.track_number}`}>
-                  <div className="day-track__header">
-                    <div className="day-track__title">Дорожка {track.track_number}</div>
-                    <div className="day-track__meta">{formatSize(track)}</div>
+                  <div
+                    className="day-track__header"
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      gap: "0.75rem",
+                    }}
+                  >
+                    <div>
+                      <div className="day-track__title">Дорожка {track.track_number}</div>
+                      <div className="day-track__meta">{formatSize(track)}</div>
+                    </div>
+                    {!plan.completed && (
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleDeleteTrack(plan, track)}
+                        disabled={
+                          deleteTrackMutation.isPending ||
+                          completeMutation.isPending ||
+                          plan.completed
+                        }
+                      >
+                        {isDeletingTrack(plan.plan_id, track.plan_track_index)
+                          ? "Удаление…"
+                          : "Удалить дорожку"}
+                      </Button>
+                    )}
                   </div>
 
                   {track.plates_info.length === 0 ? (
