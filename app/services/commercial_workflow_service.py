@@ -15,7 +15,7 @@ from app.services.commercial_service import CommercialService
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from app.services.execution_terms_service import ExecutionTermsService
 from app.services.file_generation_service import FileGenerationService
-from core.ocr_gpt import recognize_text_smart
+from core.ocr_gpt import apply_plates_with_ai, recognize_text_smart
 
 
 _ALLOWED_OCR_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf"})
@@ -328,6 +328,95 @@ class CommercialWorkflowService:
         self._persist_wizard_step(draft_id, plates_step)
         return self.get_draft_details(draft_id)
 
+    async def apply_ai_plates_instruction(
+        self,
+        draft_id: str,
+        *,
+        instruction: str,
+        image_bytes: bytes | None,
+        image_filename: str | None,
+    ) -> dict[str, Any]:
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata", {}))
+        instruction_value = (instruction or "").strip()
+        if len(instruction_value) < 3:
+            raise ValueError("Инструкция для ИИ должна содержать минимум 3 символа.")
+
+        current_text = str(metadata.get("input_text", "") or "")
+        tmp_path: Path | None = None
+        try:
+            if image_bytes:
+                suffix = _safe_ocr_temp_suffix(image_filename)
+                with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                    tmp_file.write(image_bytes)
+                    tmp_path = Path(tmp_file.name)
+                result = await apply_plates_with_ai(
+                    current_plates_text=current_text,
+                    user_instruction=instruction_value,
+                    image_path=str(tmp_path),
+                )
+            else:
+                result = await apply_plates_with_ai(
+                    current_plates_text=current_text,
+                    user_instruction=instruction_value,
+                )
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+
+        recognized_text = str((result or {}).get("text", "")).strip()
+        if not recognized_text:
+            raise ValueError("ИИ не смог обработать список плит. Попробуйте уточнить инструкцию.")
+
+        source_metadata = {
+            "ai_applied": True,
+            "last_ai_instruction": instruction_value,
+            "ai_cost_usd": float((result or {}).get("cost_usd", 0.0) or 0.0),
+            "ai_method": str((result or {}).get("method") or "GPT-4o+ai"),
+            "ai_plates": list((result or {}).get("plates") or []),
+            "ocr_plates": list((result or {}).get("plates") or []),
+            "ocr_draft_plates": list((result or {}).get("draft_plates") or []),
+            "ocr_corrections": list((result or {}).get("corrections") or []),
+            "ocr_verify_applied": False,
+            "ocr_verify_failed": False,
+            "ocr_method": str((result or {}).get("method") or "GPT-4o+ai"),
+            "ocr_row_count_on_image": (result or {}).get("row_count_on_image"),
+        }
+        ai_batch = {
+            "source_type": "ai",
+            "original_text": instruction_value,
+            "normalized_text": recognized_text,
+            "ocr_text": recognized_text,
+            "filename": image_filename or "",
+        }
+        preview = self.commercial_service.generate_preview(text=recognized_text)
+        next_metadata = self._build_preview_metadata(
+            preview=preview,
+            base_metadata=metadata,
+            source_type="ai",
+            original_text=instruction_value,
+            ocr_text=recognized_text,
+            input_text=recognized_text,
+            last_source_filename=image_filename or "",
+            plate_batches=[ai_batch],
+            wide_plates_resolved=not bool(preview.parse_result.wide_plate_lines),
+            source_metadata=source_metadata,
+        )
+        self.draft_store.replace_preview(
+            draft_id,
+            order=preview.parse_result.order,
+            optimization_context=preview.optimization_context,
+            order_data=preview.order_data,
+            metadata=next_metadata,
+        )
+        payload_snap = self._load_draft_or_raise(draft_id)
+        plates_step = self._wizard_step_after_plate_snapshot(
+            dict(payload_snap.get("metadata", {})),
+            payload_snap["order_data"],
+        )
+        self._persist_wizard_step(draft_id, plates_step)
+        return self.get_draft_details(draft_id)
+
     def resolve_wide_plates(self, draft_id: str, decisions: Iterable[dict[str, Any]]) -> dict[str, Any]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
@@ -511,7 +600,7 @@ class CommercialWorkflowService:
         public_metadata = {
             key: value
             for key, value in metadata.items()
-            if key not in ("breakdown_tables", "owner_user_id")
+            if key not in ("breakdown_tables", "owner_user_id", "schema_file")
         }
         wizard_state = self.build_wizard_state(payload)
         public_metadata["current_step"] = wizard_state["current_step"].value
@@ -531,7 +620,7 @@ class CommercialWorkflowService:
             "order_data": payload["order_data"],
             "metadata": public_metadata,
             "wizard_state": wizard_state,
-            "files": self._normalize_generated_files(metadata.get("generated_files", [])),
+            "files": self._collect_draft_files(metadata, draft_id),
             "saved_offer": self._normalize_saved_offer(metadata.get("saved_offer")),
             "totals": totals,
             "offer_identity": self._build_offer_identity_payload(draft_id),
@@ -543,6 +632,11 @@ class CommercialWorkflowService:
         requested_types = self._normalize_file_types(file_types)
         generated_files = self._normalize_generated_files(metadata.get("generated_files", []))
         files_by_kind = {item["kind"]: item for item in generated_files}
+        schema_raw = metadata.get("schema_file")
+        if schema_raw and "schema" not in files_by_kind:
+            schema_items = self._normalize_generated_files([schema_raw])
+            if schema_items:
+                files_by_kind["schema"] = schema_items[0]
         order_data = payload["order_data"]
         manager_name = str(metadata.get("manager_name", "") or "")
         manager_phone = str(metadata.get("manager_phone", "") or "")
@@ -619,8 +713,11 @@ class CommercialWorkflowService:
                         files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, schema_path)
 
         merged_files = [files_by_kind[key] for key in self.DEFAULT_FILE_TYPES if key in files_by_kind]
-        self.draft_store.update_metadata(draft_id, generated_files=merged_files)
-        return merged_files
+        update_payload: dict[str, Any] = {"generated_files": merged_files}
+        if "schema" in files_by_kind:
+            update_payload["schema_file"] = files_by_kind["schema"]
+        self.draft_store.update_metadata(draft_id, **update_payload)
+        return [files_by_kind[key] for key in requested_types if key in files_by_kind]
 
     def save_offer(
         self,
@@ -746,6 +843,7 @@ class CommercialWorkflowService:
                 force_gpt=(recognition_mode == "full_gpt"),
                 show_cost=True,
                 mode=recognition_mode,
+                verify_enabled=self.settings.ocr_verify_enabled,
             )
         finally:
             tmp_path.unlink(missing_ok=True)
@@ -757,6 +855,12 @@ class CommercialWorkflowService:
             "ocr_recognition_mode": recognition_mode,
             "ocr_cost_usd": float((result or {}).get("cost_usd", 0.0) or 0.0),
             "ocr_plates": list((result or {}).get("plates") or []),
+            "ocr_draft_plates": list((result or {}).get("draft_plates") or []),
+            "ocr_corrections": list((result or {}).get("corrections") or []),
+            "ocr_verify_applied": bool((result or {}).get("verify_applied")),
+            "ocr_verify_failed": bool((result or {}).get("verify_failed")),
+            "ocr_method": str((result or {}).get("method") or "GPT-4o"),
+            "ocr_row_count_on_image": (result or {}).get("row_count_on_image"),
         }
 
     def _load_draft_or_raise(self, draft_id: str) -> dict[str, Any]:
@@ -910,6 +1014,21 @@ class CommercialWorkflowService:
             "display_name": self.FILE_LABELS[kind],
             "download_url": f"/api/v1/commercial/files/{name}?draft_id={draft_id}",
         }
+
+    def _collect_draft_files(self, metadata: dict[str, Any], draft_id: str) -> list[dict[str, str]]:
+        files = self._normalize_generated_files(metadata.get("generated_files", []))
+        schema_raw = metadata.get("schema_file")
+        if schema_raw:
+            schema_items = self._normalize_generated_files([schema_raw])
+            if schema_items and not any(item["kind"] == "schema" for item in files):
+                schema_item = schema_items[0]
+                filename = schema_item["filename"]
+                files.append(
+                    self._build_generated_file(draft_id, "schema", Path(filename))
+                    if "draft_id=" not in schema_item.get("download_url", "")
+                    else schema_item
+                )
+        return files
 
     def _normalize_generated_files(self, items: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
         normalized: list[dict[str, str]] = []

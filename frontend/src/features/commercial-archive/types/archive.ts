@@ -1,5 +1,5 @@
 export type ArchiveSection = "archived" | "in_production" | "completed";
-export type ArchiveFileKind = "pdf" | "xlsx";
+export type ArchiveFileKind = "pdf" | "xlsx" | "schema";
 
 export type ArchiveOfferListItem = {
   kp_id: number;

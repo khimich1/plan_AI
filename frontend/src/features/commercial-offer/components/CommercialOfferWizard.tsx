@@ -23,13 +23,16 @@ export const CommercialOfferWizard = () => {
     currentDraft,
     createDraftMutation,
     updatePlatesMutation,
+    applyAiPlatesMutation,
     resolveWidePlatesMutation,
     updateMetaMutation,
     calculateMutation,
     generateFilesMutation,
+    generateSchemaMutation,
     saveDraftMutation,
   } = useCommercialOfferWizard();
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [aiInstruction, setAiInstruction] = useState("");
   const [stepError, setStepError] = useState<string | null>(null);
   const {
     preview: recognizedImagePreview,
@@ -95,6 +98,34 @@ export const CommercialOfferWizard = () => {
         });
       }
       resetSource();
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleApplyAi = async () => {
+    setStepError(null);
+    const instruction = aiInstruction.trim();
+    if (!instruction) {
+      setStepError("Введите инструкцию для ИИ.");
+      return;
+    }
+    if (!currentDraft?.draft_id) {
+      setStepError("Сначала распознайте список плит, затем используйте ИИ.");
+      return;
+    }
+
+    try {
+      if (selectedImage) {
+        setPreviewFromFile(selectedImage);
+      }
+      await applyAiPlatesMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        instruction,
+        image: selectedImage,
+      });
+      resetSource();
+      setAiInstruction("");
     } catch (error) {
       setStepError(getErrorMessage(error));
     }
@@ -227,6 +258,18 @@ export const CommercialOfferWizard = () => {
     }
   };
 
+  const handleGenerateSchema = async () => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await generateSchemaMutation.mutateAsync(currentDraft.draft_id);
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
   const handleSave = async (payload: { mode: "database" | "archive" | "skip"; executionTermsInput: string }) => {
     if (!currentDraft?.draft_id) {
       return;
@@ -332,6 +375,10 @@ export const CommercialOfferWizard = () => {
         recognizedImageName={recognizedImagePreview?.name ?? null}
         errorMessage={stepError}
         isRecognizing={createDraftMutation.isPending || updatePlatesMutation.isPending}
+        isAiProcessing={applyAiPlatesMutation.isPending}
+        aiInstruction={aiInstruction}
+        onAiInstructionChange={setAiInstruction}
+        onApplyAi={() => void handleApplyAi()}
         onTextChange={handleSourceTextChange}
         onNormalizedTextChange={(value) => dispatch({ type: "set-normalized-text", text: value })}
         onFileChange={handleImageSelect}
@@ -390,12 +437,14 @@ export const CommercialOfferWizard = () => {
         draft={currentDraft}
         errorMessage={stepError}
         isGeneratingFiles={generateFilesMutation.isPending}
+        isGeneratingSchema={generateSchemaMutation.isPending}
         isSaving={saveDraftMutation.isPending}
         lastSaveResult={state.lastSaveResult}
         executionTermsInput={state.executionTermsInput}
         onBack={() => dispatch({ type: "set-step", step: "client" })}
         onCreateNew={handleCreateNewOffer}
         onGenerateFiles={handleGenerateFiles}
+        onGenerateSchema={handleGenerateSchema}
         onExecutionTermsChange={(value) => dispatch({ type: "set-execution-terms", value })}
         onSave={handleSave}
         isUpdatingDiscount={updateMetaMutation.isPending || calculateMutation.isPending}

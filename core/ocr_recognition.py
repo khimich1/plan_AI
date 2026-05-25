@@ -238,8 +238,10 @@ def clean_recognized_text(text: str) -> str:
         line_lower = line.lower()
         # Пропускаем строки-заголовки
         if any(word in line_lower for word in ['наименование', 'кол-во', 'товары', 'работы', 'услуги', 'цена', 'сумма', 'итого']):
-            # Но оставляем, если в строке есть маркировка плиты (ПБ/ПК + цифры)
-            if not re.search(r'п[бк]\s*\d+', line_lower):
+            # Но оставляем, если в строке есть маркировка плиты (ПБ/ПК + цифры или L-W-load)
+            has_pb_mark = re.search(r'п[бк]\s*\d+', line_lower)
+            has_bare_mark = re.match(r'^\d+[\.,]?\d*\s*-\s*\d', line_lower.strip())
+            if not has_pb_mark and not has_bare_mark:
                 continue
         filtered_lines.append(line)
     text = '\n'.join(filtered_lines)

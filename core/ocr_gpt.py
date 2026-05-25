@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Распознавание текста с изображений через GPT-4o Vision.
+Распознавание и редактирование списков плит через GPT-4o Vision.
+Один вызов GPT на операцию (OCR или инструкция пользователя).
 """
 
 import os
 import base64
 import json
+import logging
 import re
 from pathlib import Path
-from typing import Optional, Dict, List, Any, Literal
+from typing import Optional, Dict, List, Any, Literal, Tuple, Callable, Awaitable
+
+from core.plate_format_prompt import build_plate_parser_system_prompt
 
 try:
     from openai import AsyncOpenAI
@@ -18,82 +22,271 @@ except ImportError:
     GPT_AVAILABLE = False
     print("[GPT OCR] ⚠️ OpenAI не установлен. Установите: pip install openai")
 
+_logger = logging.getLogger(__name__)
 
-async def recognize_text_smart(
-    image_path: str, 
-    force_gpt: bool = False,
-    show_cost: bool = True,
-    mode: Literal["full_gpt", "hybrid"] = "full_gpt",
-) -> Optional[Dict]:
-    """
-    🧠 Распознавание через GPT-4o Vision.
-    
-    Аргументы:
-        image_path: путь к файлу изображения (jpg, png)
-        force_gpt: аргумент оставлен для обратной совместимости
-        show_cost: показывать стоимость в консоли
-        mode: аргумент оставлен для обратной совместимости
-        
-    Возвращает:
-        {
-            'text': str,           # Текст для парсера (в формате "ПБ XX-XX-Xп qty")
-            'plates': list,        # Список плит [{name, qty}]
-            'method': str,         # 'GPT-4o'
-            'confidence': float,   # Уверенность 0.0-1.0
-            'cost_usd': float      # Стоимость в $
-        }
-        или None если не удалось распознать
-    """
-    
-    # Аргументы сохраняем ради совместимости со старым API модуля.
-    _ = force_gpt
-    if mode == "hybrid":
-        print("[OCR] ℹ️ Режим hybrid отключен: используется только GPT-4o")
+_VERIFY_FAILED_CORRECTION = {
+    "action": "verify_failed",
+    "row_index": None,
+    "before": None,
+    "after": None,
+    "reason": "Повторная проверка не удалась, использован черновик первого этапа",
+}
 
-    # ============ Используем GPT-4o Vision ============
-    if not GPT_AVAILABLE:
-        print("[OCR] ❌ GPT недоступен. Установите: pip install openai")
+
+def _load_image_payload(image_path: str) -> Tuple[bytes, str, str]:
+    """Читает файл и возвращает (bytes, base64, mime_type)."""
+    with open(image_path, "rb") as f:
+        image_data = f.read()
+    image_base64 = base64.b64encode(image_data).decode()
+    mime_type = _image_mime_type(image_path, image_data)
+    return image_data, image_base64, mime_type
+
+
+def _estimate_cost_usd(tokens_used: int) -> float:
+    # GPT-4o: $2.50 за 1M токенов (упрощённая оценка по total_tokens)
+    return (tokens_used / 1_000_000) * 2.5
+
+
+def _plates_to_text(plates: List[Dict[str, Any]]) -> str:
+    text_lines: List[str] = []
+    for plate in plates:
+        candidate = (plate.get("normalized_candidate") or plate.get("raw_name") or "").strip()
+        qty = int(plate.get("qty", 1))
+        if candidate:
+            text_lines.append(f"{candidate} {qty}")
+    return "\n".join(text_lines)
+
+
+def _validate_plate_item(plate: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(plate, dict):
+        print(f"[GPT] ⚠️ Пропущена плита (не объект): {plate}")
         return None
 
-    if not os.getenv("OPENAI_API_KEY", "").strip():
+    raw_name = plate.get("raw_name") or plate.get("name")
+    normalized_candidate = plate.get("normalized_candidate") or raw_name
+    if not raw_name or "qty" not in plate:
+        print(f"[GPT] ⚠️ Пропущена плита (нет raw_name/name или qty): {plate}")
+        return None
+
+    try:
+        qty = int(plate["qty"])
+    except (ValueError, TypeError):
+        print(f"[GPT] ⚠️ Пропущена плита (qty не число): {plate}")
+        return None
+
+    confidence = plate.get("confidence", 0.95)
+    try:
+        confidence = max(0.0, min(1.0, float(confidence)))
+    except (ValueError, TypeError):
+        confidence = 0.95
+
+    issues = plate.get("issues") if isinstance(plate.get("issues"), list) else []
+    return {
+        "raw_name": str(raw_name).strip(),
+        "normalized_candidate": str(normalized_candidate).strip(),
+        "qty": qty,
+        "confidence": confidence,
+        "issues": issues,
+    }
+
+
+def _build_result_payload(
+    *,
+    plates: List[Dict[str, Any]],
+    draft_plates: List[Dict[str, Any]],
+    corrections: List[Dict[str, Any]],
+    row_count_on_image: Optional[int],
+    method: str,
+    verify_applied: bool,
+    verify_failed: bool,
+    cost_usd: float,
+) -> Dict[str, Any]:
+    confidences = [float(p.get("confidence", 0.95)) for p in plates]
+    avg_confidence = sum(confidences) / len(confidences) if confidences else 0.95
+    return {
+        "text": _plates_to_text(plates),
+        "plates": plates,
+        "draft_plates": draft_plates,
+        "corrections": corrections,
+        "row_count_on_image": row_count_on_image,
+        "method": method,
+        "verify_applied": verify_applied,
+        "verify_failed": verify_failed,
+        "confidence": avg_confidence,
+        "cost_usd": cost_usd,
+    }
+
+
+_OCR_USER_PROMPT = (
+    "Распознай таблицу на изображении. "
+    "Верни все строки данных сверху вниз, без заголовков таблицы."
+)
+
+
+def _require_openai_client() -> AsyncOpenAI:
+    if not GPT_AVAILABLE:
+        raise RuntimeError("GPT недоступен. Установите: pip install openai")
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
         raise ValueError(
             "Для распознавания по фото задайте OPENAI_API_KEY в окружении backend "
             "(docker-compose: сервис backend; локально: .env или экспорт переменной)."
         )
+    return AsyncOpenAI(api_key=api_key)
+
+
+async def _call_gpt_for_plates(
+    *,
+    user_text: str,
+    client: AsyncOpenAI,
+    image_base64: str | None = None,
+    mime_type: str | None = None,
+    max_tokens: int = 2500,
+) -> tuple[List[Dict[str, Any]], float]:
+    user_content: List[Dict[str, Any]] = [{"type": "text", "text": user_text}]
+    if image_base64 and mime_type:
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{image_base64}",
+                    "detail": "high",
+                },
+            }
+        )
+
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": build_plate_parser_system_prompt()},
+            {"role": "user", "content": user_content},
+        ],
+        max_tokens=max_tokens,
+        temperature=0.0,
+    )
+
+    result_text = response.choices[0].message.content or ""
+    plates = parse_gpt_response(result_text)
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    cost_usd = _estimate_cost_usd(tokens_used)
+    return plates, cost_usd
+
+
+async def recognize_text_smart(
+    image_path: str,
+    force_gpt: bool = False,
+    show_cost: bool = True,
+    mode: Literal["full_gpt", "hybrid"] = "full_gpt",
+    verify_enabled: Optional[bool] = None,
+    on_status: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Optional[Dict]:
+    """
+    Распознавание таблицы через один вызов GPT-4o Vision.
+
+    verify_enabled и on_status оставлены для обратной совместиости и игнорируются.
+    """
+    _ = (force_gpt, verify_enabled, on_status)
+    if mode == "hybrid":
+        print("[OCR] ℹ️ Режим hybrid отключен: используется только GPT-4o")
+
+    if not GPT_AVAILABLE:
+        print("[OCR] ❌ GPT недоступен. Установите: pip install openai")
+        return None
 
     try:
-        print("[OCR] 🧠 Запускаю GPT-4o Vision (платно)...")
-        plates, cost = await recognize_with_gpt_vision(image_path)
-        
-        if plates:
-            # Конвертируем структурированные элементы в текст для парсера.
-            text_lines = []
-            for p in plates:
-                candidate = (p.get("normalized_candidate") or p.get("raw_name") or "").strip()
-                qty = int(p.get("qty", 1))
-                if candidate:
-                    text_lines.append(f"{candidate} {qty}")
-            text = '\n'.join(text_lines)
-            
-            if show_cost:
-                rub_cost = cost * 75  # Примерный курс ₽
-                print(f"[OCR] 💰 Стоимость: ${cost:.4f} (~{rub_cost:.2f}₽)")
-            
-            print(f"[OCR] ✅ GPT распознал {len(plates)} плит(ы)")
-            return {
-                'text': text,
-                'plates': plates,
-                'method': 'GPT-4o',
-                'confidence': 0.95,  # GPT обычно очень точен
-                'cost_usd': cost
-            }
-    
+        client = _require_openai_client()
+        image_data, image_base64, mime_type = _load_image_payload(image_path)
+        image_size_kb = len(image_data) / 1024
+        print(f"[GPT] Размер изображения: {image_size_kb:.1f} КБ")
+
+        print("[OCR] GPT-4o Vision (один вызов)...")
+        plates, cost_usd = await _call_gpt_for_plates(
+            user_text=_OCR_USER_PROMPT,
+            client=client,
+            image_base64=image_base64,
+            mime_type=mime_type,
+        )
+
+        if not plates:
+            return None
+
+        if show_cost:
+            rub_cost = cost_usd * 75
+            print(f"[OCR] 💰 Стоимость: ${cost_usd:.4f} (~{rub_cost:.2f}₽)")
+
+        print(f"[OCR] ✅ Итого {len(plates)} строк(и), method=GPT-4o")
+        return _build_result_payload(
+            plates=plates,
+            draft_plates=plates,
+            corrections=[],
+            row_count_on_image=len(plates),
+            method="GPT-4o",
+            verify_applied=False,
+            verify_failed=False,
+            cost_usd=cost_usd,
+        )
+
     except Exception as e:
         print(f"[OCR] ❌ Ошибка GPT: {e}")
         import traceback
         traceback.print_exc()
-    
+
     return None
+
+
+async def apply_plates_with_ai(
+    *,
+    current_plates_text: str,
+    user_instruction: str,
+    image_path: str | None = None,
+    show_cost: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """
+    Применяет инструкцию пользователя к списку плит (опционально с изображением).
+    Один вызов GPT-4o, temperature=0.
+    """
+    instruction = (user_instruction or "").strip()
+    if not instruction:
+        raise ValueError("Инструкция для ИИ не может быть пустой.")
+
+    client = _require_openai_client()
+    current_text = (current_plates_text or "").strip() or "(пусто)"
+    user_text = (
+        f"Текущий список плит:\n{current_text}\n\n"
+        f"Инструкция пользователя:\n{instruction}"
+    )
+
+    image_base64: str | None = None
+    mime_type: str | None = None
+    if image_path:
+        _, image_base64, mime_type = _load_image_payload(image_path)
+
+    print("[AI] GPT-4o (один вызов, инструкция пользователя)...")
+    plates, cost_usd = await _call_gpt_for_plates(
+        user_text=user_text,
+        client=client,
+        image_base64=image_base64,
+        mime_type=mime_type,
+    )
+
+    if not plates:
+        return None
+
+    if show_cost:
+        rub_cost = cost_usd * 75
+        print(f"[AI] 💰 Стоимость: ${cost_usd:.4f} (~{rub_cost:.2f}₽)")
+
+    print(f"[AI] ✅ Итого {len(plates)} строк(и), method=GPT-4o+ai")
+    return _build_result_payload(
+        plates=plates,
+        draft_plates=plates,
+        corrections=[],
+        row_count_on_image=len(plates),
+        method="GPT-4o+ai",
+        verify_applied=False,
+        verify_failed=False,
+        cost_usd=cost_usd,
+    )
 
 
 def _image_mime_type(image_path: str, image_data: bytes) -> str:
@@ -119,232 +312,169 @@ def _image_mime_type(image_path: str, image_data: bytes) -> str:
     }.get(suffix, "image/jpeg")
 
 
-async def recognize_with_gpt_vision(image_path: str) -> tuple[List[Dict], float]:
-    """
-    Распознавание через GPT-4o Vision API
-    
-    Простыми словами:
-    1. Читаем картинку и превращаем в base64 (текстовый формат)
-    2. Отправляем GPT с умным промптом: "Найди все плиты в таблице"
-    3. GPT возвращает JSON со списком плит
-    4. Считаем примерную стоимость запроса
-    
-    Возвращает:
-        (список_плит, стоимость_в_долларах)
-        
-    Пример списка плит:
-        [
-            {"name": "ПБ 78-12-8п", "qty": 4},
-            {"name": "ПБ 66,2-12-8п", "qty": 6}
-        ]
-    """
-    
-    # Проверяем наличие API ключа
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise ValueError(
-            "❌ Не найден OPENAI_API_KEY!\n\n"
-            "Как исправить:\n"
-            "1. Создай файл .env в корне проекта\n"
-            "2. Добавь строку: OPENAI_API_KEY=sk-твой-ключ\n"
-            "3. Получить ключ можно на https://platform.openai.com/api-keys"
-        )
-    
-    # Создаём клиент OpenAI
-    client = AsyncOpenAI(api_key=api_key)
-    
-    # Читаем изображение и кодируем в base64
-    with open(image_path, "rb") as f:
-        image_data = f.read()
-        image_base64 = base64.b64encode(image_data).decode()
+async def recognize_with_gpt_vision(
+    image_path: str,
+    *,
+    client: Optional[AsyncOpenAI] = None,
+    image_base64: Optional[str] = None,
+    mime_type: Optional[str] = None,
+) -> tuple[List[Dict], float]:
+    """Legacy wrapper: один вызов GPT-4o Vision для OCR."""
+    if client is None:
+        client = _require_openai_client()
+    if image_base64 is None or mime_type is None:
+        _, image_base64, mime_type = _load_image_payload(image_path)
+    plates, cost_usd = await _call_gpt_for_plates(
+        user_text=_OCR_USER_PROMPT,
+        client=client,
+        image_base64=image_base64,
+        mime_type=mime_type,
+    )
+    return plates, cost_usd
 
-    mime_type = _image_mime_type(image_path, image_data)
 
-    # Определяем размер для расчёта стоимости
-    image_size_kb = len(image_data) / 1024
-    print(f"[GPT] Размер изображения: {image_size_kb:.1f} КБ")
-    
-    # Отправляем запрос к GPT-4o
+async def verify_plates_with_gpt_vision(
+    *,
+    image_base64: str,
+    mime_type: str,
+    draft_plates: List[Dict[str, Any]],
+    client: AsyncOpenAI,
+) -> tuple[Dict[str, Any], float]:
+    """
+    Этап 2 Verify: сверка черновика с изображением.
+    """
+    draft_json = json.dumps(draft_plates, ensure_ascii=False, indent=2)
+
     response = await client.chat.completions.create(
-        model="gpt-4o",  # Модель с поддержкой изображений
+        model="gpt-4o",
         messages=[
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "text", 
-                        "text": get_recognition_prompt()  # Умный промпт ниже
-                    },
+                    {"type": "text", "text": get_verification_prompt(draft_json)},
                     {
                         "type": "image_url",
                         "image_url": {
                             "url": f"data:{mime_type};base64,{image_base64}",
-                            "detail": "high"  # Высокое качество для таблиц
-                        }
-                    }
-                ]
+                            "detail": "high",
+                        },
+                    },
+                ],
             }
         ],
-        max_tokens=2000,  # Максимум токенов в ответе
-        temperature=0.1   # Низкая = более точные ответы
+        max_tokens=2500,
+        temperature=0.0,
     )
-    
-    # Парсим ответ GPT
-    result_text = response.choices[0].message.content
-    plates = parse_gpt_response(result_text)
-    
-    # Считаем стоимость
-    # GPT-4o: $2.50 за 1M входящих токенов
-    tokens_used = response.usage.total_tokens
-    cost_usd = (tokens_used / 1_000_000) * 2.5
-    
-    print(f"[GPT] Использовано токенов: {tokens_used}")
-    
-    return plates, cost_usd
+
+    result_text = response.choices[0].message.content or ""
+    verify_result = parse_verify_response(result_text)
+
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    cost_usd = _estimate_cost_usd(tokens_used)
+    print(
+        f"[GPT] Verify: токенов {tokens_used}, "
+        f"строк {len(verify_result.get('plates') or [])}, "
+        f"исправлений {len(verify_result.get('corrections') or [])}"
+    )
+
+    return verify_result, cost_usd
 
 
 def get_recognition_prompt() -> str:
-    """
-    Промпт для GPT — это инструкция, как распознавать плиты.
-    
-    Чем точнее промпт, тем лучше результат!
-    """
-    return """Ты OCR-система для таблиц железобетонных плит.
+    """Deprecated: используйте build_plate_parser_system_prompt()."""
+    return build_plate_parser_system_prompt()
 
-🎯 ТВОЯ ЗАДАЧА: Переписать таблицу БЕЗ ИНТЕРПРЕТАЦИИ
 
-Работай как КСЕРОКС - копируй символы точно как видишь, не думай о смысле!
+def get_verification_prompt(draft_json: str) -> str:
+    """Промпт этапа Verify — аудитор черновика по изображению."""
+    return f"""Ты аудитор OCR для таблицы железобетонных плит.
 
-📋 Формат вывода - ТОЛЬКО JSON массив объектов:
-[
-  {
-    "raw_name": "ПБ.19,6-12-10",
-    "normalized_candidate": "ПБ 19,6-12-10",
-    "qty": 7,
-    "confidence": 0.92,
-    "issues": []
-  }
-]
+На изображении — исходная таблица (колонки: наименование | количество).
+Ниже — результат ПЕРВОГО распознавания (может содержать ошибки):
 
-🔥 КРИТИЧЕСКИ ВАЖНО - ПОСИМВОЛЬНОЕ КОПИРОВАНИЕ:
+{draft_json}
 
-Представь, что переписываешь таблицу от руки в блокнот.
-Ты НЕ математик, ты НЕ думаешь о числах - ты просто КОПИРУЕШЬ текст!
+🎯 ЗАДАЧА: сверить КАЖДУЮ строку черновика с изображением и вернуть ИСПРАВЛЕННЫЙ список.
 
-✅ ПРАВИЛЬНО:
-• Видишь "Плиты ПБ 66,2-12-8п", qty=6 ->
-  {"raw_name":"ПБ 66,2-12-8п","normalized_candidate":"ПБ 66,2-12-8п","qty":6,"confidence":0.98,"issues":[]}
-• Видишь "ПБ.19,6-12-10", qty=7 ->
-  {"raw_name":"ПБ.19,6-12-10","normalized_candidate":"ПБ 19,6-12-10","qty":7,"confidence":0.92,"issues":["prefix_separator_dot"]}
+Работай как корректор, не как составитель:
+1. Посчитай строки данных на изображении (без заголовков «Наименование», «Кол-во», «Итого»).
+2. Если в черновике строк меньше или больше — добавь пропущенные / убери лишние.
+3. Для каждой строки проверь ПОСИМВОЛЬНО:
+   - normalized_candidate (марка плиты)
+   - qty (число в правой колонке)
+4. Особое внимание:
+   - похожие марки: 66,2-2,6-8п vs 66,2-9,2-8п vs 66,2-9,2-6п
+   - запятые и ",0": 52,0 ≠ 52
+   - нагрузка 6п vs 8п — разные изделия
+   - qty 1 vs 2 в узкой колонке
+5. НЕ упрощай числа, НЕ округляй, НЕ группируй одинаковые строки.
+6. Порядок строк — сверху вниз как на изображении.
 
-❌ НЕПРАВИЛЬНО (думаешь и упрощаешь):
-• "Плиты ПБ 66,2-12-8п" → "ПБ 66-12-8п" (ПОТЕРЯНА ЗАПЯТАЯ И ЦИФРА!)
-• "Плиты ПБ 61,0-12-8п" → "ПБ 61-12-8п" (ГДЕ ",0"?)
-• "Плиты ПБ 52,0-7,2-8п" → "ПБ 52-7,2-8п" (ГДЕ ПЕРВАЯ ",0"?)
-• "Плиты ПБ 21,5-10,2-8п" → "ПБ 22-10,2-8п" (ТЫ ОКРУГЛИЛ! НЕ НАДО!)
+Формат ответа — ТОЛЬКО JSON объект:
+{{
+  "row_count_on_image": 26,
+  "plates": [
+    {{
+      "raw_name": "...",
+      "normalized_candidate": "...",
+      "qty": 1,
+      "confidence": 0.98,
+      "issues": []
+    }}
+  ],
+  "corrections": [
+    {{
+      "action": "added|removed|changed_mark|changed_qty|reordered",
+      "row_index": 5,
+      "before": {{"normalized_candidate": "...", "qty": 1}},
+      "after": {{"normalized_candidate": "...", "qty": 2}},
+      "reason": "на изображении qty=2, в черновике было 1"
+    }}
+  ]
+}}
 
-📐 ЗАПОМНИ РАЗ И НАВСЕГДА:
-• "66,2" ≠ "66" (это РАЗНЫЕ числа!)
-• "61,0" ≠ "61" (это РАЗНЫЕ числа!)
-• "52,0" ≠ "52" (это РАЗНЫЕ числа!)
-• "21,5" ≠ "21" и ≠ "22" (это РАЗНЫЕ числа!)
+Если черновик полностью верен — plates совпадают, corrections = [].
+Верни ТОЛЬКО JSON, без текста до и после."""
 
-Да, математически 61,0 = 61, но в нашей системе это КРИТИЧНО РАЗНЫЕ коды плит!
-Плита "ПБ 61,0-12-8п" и "ПБ 61-12-8п" - это СОВЕРШЕННО РАЗНЫЕ изделия!
 
-⚙️ ПРАВИЛА:
-
-1. **КАЖДАЯ строка таблицы = отдельный элемент JSON**
-   (даже если "ПБ 28-12-8п" повторяется 5 раз - создай 5 элементов!)
-
-2. **Формат raw_name:** убери слово "Плиты" и лишние пробелы, но не изменяй цифры.
-3. **Формат normalized_candidate:** мягко нормализуй только префикс/пробелы (`ПБ.19,6` -> `ПБ 19,6`), не округляй числа.
-
-4. **Формат qty:** число из правой колонки (обычно 1-99)
-5. **Формат confidence:** число 0..1.
-6. **Формат issues:** список строк; пустой список, если проблем нет.
-
-7. **Порядок:** сверху вниз как в таблице
-
-8. **Пропускай только заголовки:** "Наименование", "Кол-во", "Итого"
-
-❌ КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
-• Упрощать: 66,2 → 66
-• Округлять: 21,5 → 22
-• Убирать нули: 52,0 → 52
-• Убирать десятичные: 10,2 → 10
-• Группировать повторяющиеся строки
-• Думать о смысле чисел (ты OCR, не математик!)
-
-💡 Если сомневаешься - копируй ДОСЛОВНО! Лучше лишняя запятая, чем потерянная!
-
-✅ Верни ТОЛЬКО JSON массив, без текста до и после!"""
+def _extract_json_from_response(response_text: str) -> str:
+    text = (response_text or "").strip()
+    object_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if object_match:
+        return object_match.group(1)
+    array_match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)
+    if array_match:
+        return array_match.group(1)
+    if text.startswith("{") or text.startswith("["):
+        return text
+    brace_match = re.search(r"(\{.*\})", text, re.DOTALL)
+    if brace_match:
+        return brace_match.group(1)
+    bracket_match = re.search(r"(\[.*\])", text, re.DOTALL)
+    if bracket_match:
+        return bracket_match.group(1)
+    return text
 
 
 def parse_gpt_response(response_text: str) -> List[Dict[str, Any]]:
-    """
-    Извлекает JSON из ответа GPT.
-    
-    GPT может вернуть:
-    - Чистый JSON: [{"name": "...", "qty": 4}]
-    - Обёрнутый в блок: ```json [...] ```
-    - С комментариями: "Вот результат: [...]"
-    
-    Эта функция находит JSON в любом случае.
-    """
-    
-    # Пытаемся найти JSON в блоке ```json ... ```
-    json_match = re.search(
-        r'```(?:json)?\s*(\[.*?\])\s*```',
-        response_text,
-        re.DOTALL  # Флаг для многострочного поиска
-    )
-    
-    if json_match:
-        response_text = json_match.group(1)
-    
+    """Извлекает JSON-массив плит из ответа GPT (этап Extract)."""
+    json_text = _extract_json_from_response(response_text)
+
     try:
-        # Парсим JSON
-        plates = json.loads(response_text)
-        
-        # Валидация: принимаем новый и legacy формат.
+        parsed = json.loads(json_text)
+        if isinstance(parsed, dict) and "plates" in parsed:
+            parsed = parsed["plates"]
+        if not isinstance(parsed, list):
+            print(f"[GPT] ⚠️ Ожидался JSON-массив, получено: {type(parsed)}")
+            return []
+
         validated_plates = []
-        for plate in plates:
-            if not isinstance(plate, dict):
-                print(f"[GPT] ⚠️ Пропущена плита (не объект): {plate}")
-                continue
-
-            raw_name = plate.get("raw_name") or plate.get("name")
-            normalized_candidate = plate.get("normalized_candidate") or raw_name
-            if not raw_name or "qty" not in plate:
-                print(f"[GPT] ⚠️ Пропущена плита (нет raw_name/name или qty): {plate}")
-                continue
-
-            try:
-                qty = int(plate["qty"])
-            except (ValueError, TypeError):
-                print(f"[GPT] ⚠️ Пропущена плита (qty не число): {plate}")
-                continue
-
-            confidence = plate.get("confidence", 0.95)
-            try:
-                confidence = max(0.0, min(1.0, float(confidence)))
-            except (ValueError, TypeError):
-                confidence = 0.95
-
-            issues = plate.get("issues") if isinstance(plate.get("issues"), list) else []
-            validated_plates.append(
-                {
-                    "raw_name": str(raw_name).strip(),
-                    "normalized_candidate": str(normalized_candidate).strip(),
-                    "qty": qty,
-                    "confidence": confidence,
-                    "issues": issues,
-                }
-            )
-        
+        for plate in parsed:
+            item = _validate_plate_item(plate)
+            if item:
+                validated_plates.append(item)
         return validated_plates
-    
+
     except json.JSONDecodeError as e:
         print(f"[GPT] ❌ Ошибка парсинга JSON: {e}")
         print(f"[GPT] Ответ GPT (первые 200 символов):")
@@ -352,37 +482,119 @@ def parse_gpt_response(response_text: str) -> List[Dict[str, Any]]:
         return []
 
 
-# ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
+def parse_verify_response(response_text: str) -> Dict[str, Any]:
+    """
+    Парсит ответ этапа Verify.
+    Поддерживает полный объект {{plates, corrections}} и legacy-массив plates.
+    """
+    json_text = _extract_json_from_response(response_text)
+
+    try:
+        parsed = json.loads(json_text)
+
+        if isinstance(parsed, list):
+            plates_raw = parsed
+            corrections: List[Dict[str, Any]] = []
+            row_count_on_image = len(plates_raw)
+        elif isinstance(parsed, dict):
+            plates_raw = parsed.get("plates") or []
+            corrections = parsed.get("corrections") if isinstance(parsed.get("corrections"), list) else []
+            row_count_raw = parsed.get("row_count_on_image")
+            try:
+                row_count_on_image = int(row_count_raw) if row_count_raw is not None else None
+            except (ValueError, TypeError):
+                row_count_on_image = None
+        else:
+            print(f"[GPT] ⚠️ Verify: неожиданный тип JSON: {type(parsed)}")
+            return {"plates": [], "corrections": [], "row_count_on_image": None}
+
+        validated_plates = []
+        for plate in plates_raw:
+            item = _validate_plate_item(plate)
+            if item:
+                validated_plates.append(item)
+
+        return {
+            "plates": validated_plates,
+            "corrections": corrections,
+            "row_count_on_image": row_count_on_image,
+        }
+
+    except json.JSONDecodeError as e:
+        print(f"[GPT] ❌ Verify: ошибка парсинга JSON: {e}")
+        print(f"[GPT] Ответ GPT (первые 200 символов):")
+        print(response_text[:200])
+        return {"plates": [], "corrections": [], "row_count_on_image": None}
+
+
+def format_corrections_for_user(
+    corrections: List[Dict[str, Any]],
+    *,
+    max_items: int = 8,
+) -> str:
+    """Краткий текст исправлений для Telegram."""
+    actionable = [
+        c for c in corrections
+        if c.get("action") != "verify_failed"
+    ]
+    if not actionable:
+        return ""
+
+    lines = [f"⚠️ Автоисправлено {len(actionable)} строк(и):"]
+    for idx, item in enumerate(actionable[:max_items], start=1):
+        action = item.get("action") or "changed"
+        row_index = item.get("row_index")
+        row_label = f"стр. {row_index}" if row_index is not None else f"#{idx}"
+
+        before = item.get("before") or {}
+        after = item.get("after") or {}
+        before_mark = before.get("normalized_candidate") or before.get("raw_name") or "—"
+        after_mark = after.get("normalized_candidate") or after.get("raw_name") or "—"
+        before_qty = before.get("qty")
+        after_qty = after.get("qty")
+
+        if action == "added":
+            mark = after_mark
+            qty = after_qty if after_qty is not None else "?"
+            lines.append(f"• {row_label}: добавлено «{mark} {qty}»")
+        elif action == "removed":
+            lines.append(f"• {row_label}: удалено «{before_mark}»")
+        elif action == "changed_qty":
+            lines.append(
+                f"• {row_label}: «{after_mark}» qty {before_qty} → {after_qty}"
+            )
+        elif action == "changed_mark":
+            lines.append(
+                f"• {row_label}: «{before_mark}» → «{after_mark}»"
+            )
+        elif action == "reordered":
+            lines.append(f"• {row_label}: изменён порядок")
+        else:
+            reason = item.get("reason") or action
+            lines.append(f"• {row_label}: {reason}")
+
+    if len(actionable) > max_items:
+        lines.append(f"• … и ещё {len(actionable) - max_items}")
+
+    return "\n".join(lines)
+
 
 def estimate_monthly_cost(photos_per_month: int) -> Dict[str, float]:
-    """
-    Оценка месячных затрат на OCR
-    
-    Аргументы:
-        photos_per_month: сколько фото в месяц обрабатываете
-        
-    Возвращает:
-        {'gpt_only': X, 'hybrid': X, 'photos': N}
-    """
-    
-    # Средняя стоимость одного фото через GPT-4o
-    avg_cost_per_photo = 0.002  # $0.002 = ~0.15₽
-    
+    """Оценка месячных затрат на OCR (один вызов GPT-4o)."""
+    avg_cost_per_photo = 0.002
+
     return {
-        'gpt_only': photos_per_month * avg_cost_per_photo,
-        'hybrid': photos_per_month * avg_cost_per_photo,
-        'photos': photos_per_month
+        "gpt_only": photos_per_month * avg_cost_per_photo,
+        "hybrid": photos_per_month * avg_cost_per_photo,
+        "photos": photos_per_month,
     }
 
 
-if __name__ == '__main__':
-    # Пример расчёта стоимости
-    print("💰 Оценка месячных затрат на OCR:")
+if __name__ == "__main__":
+    print("💰 Оценка месячных затрат на OCR (один вызов GPT-4o):")
     print("=" * 50)
-    
+
     for count in [100, 500, 1000, 5000]:
         costs = estimate_monthly_cost(count)
         print(f"\n📊 {count} фото в месяц:")
-        print(f"  • GPT-4o: ${costs['gpt_only']:.2f} (~{costs['gpt_only']*75:.0f}₽)")
-        print(f"  • Гибрид (как GPT-4o): ${costs['hybrid']:.2f} (~{costs['hybrid']*75:.0f}₽)")
-
+        print(f"  • GPT-4o: ${costs['gpt_only']:.2f} (~{costs['gpt_only'] * 75:.0f}₽)")

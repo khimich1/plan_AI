@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+from .plate_line_parser import match_bare_plate_line
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -243,6 +245,7 @@ def get_wide_plate_lines(text: str) -> List[Tuple[str, int]]:
     - Каталожная/стандартная марка: ПБ L-W-Nп, ПБ L.W-load и т.п.
       (разбор через parse_catalog_mark по нормализованной строке)
     - Канонический/OCR: ПБ L-W-N [qty] без «п» (например, вывод OCR/GPT)
+    - Марка без префикса: «71-15-8 2», «65,6-12-12,5 2»
     - Размерный формат W×L в метрах: «1.5×6.3 — 2 шт», «0.32×4.0 3»
       (ширина 1.5 м = 15 дм > 12)
 
@@ -312,7 +315,16 @@ def get_wide_plate_lines(text: str) -> List[Tuple[str, int]]:
                 result.append((raw, qty))
             continue
 
-        # 3) Попробовать размерный формат W×L (значения в метрах или дм)
+        # 3) Марка без префикса ПБ: L-W-load [qty]
+        bare = match_bare_plate_line(cleaned)
+        if bare:
+            _ldm, wdm_raw, _load, qty = bare
+            W_dm = _width_token_to_dm(wdm_raw)
+            if W_dm > 12:
+                result.append((raw, qty))
+            continue
+
+        # 4) Попробовать размерный формат W×L (значения в метрах или дм)
         m = _DIM_RE.search(cleaned.replace(",", "."))
         if m:
             try:
