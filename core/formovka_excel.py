@@ -17,12 +17,7 @@ except ImportError:
     print("[FORMOVKA] ⚠️ openpyxl не установлен. Установите: pip install openpyxl")
 
 
-# Путь к шаблону по умолчанию
-DEFAULT_TEMPLATE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "банк знаний",
-    "!КЗ ПБ Шаблон.xlsx"
-)
+from core.project_paths import resolve_formovka_template_path
 
 
 def create_formovka_excel(
@@ -56,10 +51,13 @@ def create_formovka_excel(
         print("[FORMOVKA] ❌ openpyxl не установлен")
         return None
     
-    # Используем шаблон по умолчанию если не указан
     if template_path is None:
-        template_path = DEFAULT_TEMPLATE
-    
+        resolved = resolve_formovka_template_path()
+        if resolved is None:
+            print("[FORMOVKA] ❌ Шаблон не найден (банк знаний/ или docker/assets/)")
+            return None
+        template_path = str(resolved)
+
     if not os.path.exists(template_path):
         print(f"[FORMOVKA] ❌ Шаблон не найден: {template_path}")
         return None

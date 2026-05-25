@@ -1,9 +1,10 @@
-import type { ChangeEvent, ClipboardEvent } from "react";
+import { useState, type ChangeEvent, type ClipboardEvent } from "react";
 import type { CommercialDraftDetails, PlateInputMode } from "@/features/commercial-offer/types/commercialOffer";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { AutoResizeTextarea, FieldWrapper, Textarea } from "@/shared/ui/Field";
+import { Modal } from "@/shared/ui/Modal";
 import { StepLayout } from "@/shared/ui/StepLayout";
 
 type PlateInputStepProps = {
@@ -53,6 +54,8 @@ export const PlateInputStep = ({
   onProcess,
   onReset,
 }: PlateInputStepProps) => {
+  const [isImageExpanded, setIsImageExpanded] = useState(false);
+
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     onFileChange(event.target.files?.[0] ?? null);
   };
@@ -129,50 +132,94 @@ export const PlateInputStep = ({
       </Card>
 
       {draft && (
-        <div
-          style={{
-            display: "grid",
-            gap: "1rem",
-            gridTemplateColumns: recognizedImageUrl ? "repeat(auto-fit, minmax(280px, 1fr))" : "1fr",
-          }}
-        >
-          <div style={{ display: "grid", gap: "1rem", minWidth: 0 }}>
-            <Card title="Нормализованный результат" subtitle="Это текст, который backend использует для расчёта.">
-              <AutoResizeTextarea
-                value={normalizedText}
-                onChange={(event) => onNormalizedTextChange(event.target.value)}
-                placeholder="Пока нет нормализованного текста."
-              />
-            </Card>
-
-            <Card title="Предпросмотр обработанного списка">
-              <div style={{ display: "grid", gap: "0.75rem" }}>
-                <div>Позиции: {draft.order_data.length}</div>
-                <div>Предупреждения: {draft.metadata.warnings.length}</div>
-                <div>Нераспознанные строки: {draft.metadata.unparsed_lines.length}</div>
-                <div>Широкие плиты: {draft.metadata.wide_plate_lines.length}</div>
-              </div>
-            </Card>
-          </div>
-
-          {recognizedImageUrl && (
-            <div style={{ position: "sticky", top: "5rem", alignSelf: "start" }}>
-              <Card title="Присланное изображение" subtitle={recognizedImageName ?? undefined}>
-                <img
-                  src={recognizedImageUrl}
-                  alt="Исходное изображение для распознавания"
-                  style={{
-                    width: "100%",
-                    maxHeight: "70vh",
-                    objectFit: "contain",
-                    borderRadius: 12,
-                    border: "1px solid #e4e7ec",
-                    background: "#f9fafb",
-                  }}
+        <div style={{ display: "grid", gap: "1rem" }}>
+          <div
+            style={{
+              display: "grid",
+              gap: "1rem",
+              alignItems: "start",
+              gridTemplateColumns: recognizedImageUrl ? "minmax(0, 0.75fr) minmax(460px, 1.25fr)" : "1fr",
+            }}
+          >
+            <div style={{ display: "grid", gap: "1rem", minWidth: 0 }}>
+              <Card title="Нормализованный результат" subtitle="Это текст, который backend использует для расчёта.">
+                <AutoResizeTextarea
+                  value={normalizedText}
+                  onChange={(event) => onNormalizedTextChange(event.target.value)}
+                  placeholder="Пока нет нормализованного текста."
                 />
               </Card>
+
+              <Card title="Предпросмотр обработанного списка">
+                <div style={{ display: "grid", gap: "0.75rem" }}>
+                  <div>Позиции: {draft.order_data.length}</div>
+                  <div>Предупреждения: {draft.metadata.warnings.length}</div>
+                  <div>Нераспознанные строки: {draft.metadata.unparsed_lines.length}</div>
+                  <div>Широкие плиты: {draft.metadata.wide_plate_lines.length}</div>
+                </div>
+              </Card>
             </div>
-          )}
+
+            {recognizedImageUrl && (
+              <div style={{ position: "sticky", top: "5rem", alignSelf: "start", minWidth: 0 }}>
+                <Card
+                  title="Присланное изображение"
+                  subtitle={
+                    recognizedImageName
+                      ? `${recognizedImageName} · нажмите для увеличения`
+                      : "Нажмите для увеличения"
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={() => setIsImageExpanded(true)}
+                    aria-label="Открыть изображение в полном размере"
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      padding: 0,
+                      border: "none",
+                      background: "transparent",
+                      cursor: "zoom-in",
+                    }}
+                  >
+                    <img
+                      src={recognizedImageUrl}
+                      alt="Исходное изображение для распознавания"
+                      style={{
+                        width: "100%",
+                        maxHeight: "min(800px, 80vh)",
+                        objectFit: "contain",
+                        borderRadius: 12,
+                        border: "1px solid #e4e7ec",
+                        background: "#f9fafb",
+                      }}
+                    />
+                  </button>
+                </Card>
+
+                <Modal
+                  open={isImageExpanded}
+                  onClose={() => setIsImageExpanded(false)}
+                  title={recognizedImageName ?? "Присланное изображение"}
+                  maxWidth={1440}
+                >
+                  <img
+                    src={recognizedImageUrl}
+                    alt="Исходное изображение для распознавания"
+                    style={{
+                      width: "100%",
+                      maxHeight: "calc(90vh - 5rem)",
+                      objectFit: "contain",
+                      borderRadius: 12,
+                      border: "1px solid #e4e7ec",
+                      background: "#f9fafb",
+                    }}
+                  />
+                </Modal>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </StepLayout>

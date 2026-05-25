@@ -7,6 +7,7 @@ import { FieldWrapper } from "@/shared/ui/Field";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
 import {
   useArchiveOfferQuery,
+  useArchiveDocumentMutation,
   useUpdateDiscountMutation,
   useUpdateLogisticsCostMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
@@ -39,6 +40,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
 
   const discountMutation = useUpdateDiscountMutation();
   const logisticsMutation = useUpdateLogisticsCostMutation();
+  const schemaMutation = useArchiveDocumentMutation("schema");
   const financePending = discountMutation.isPending || logisticsMutation.isPending;
 
   const offer = query.data;
@@ -330,6 +332,13 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
           <section style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "pdf"))}>📄 PDF</Button>
             <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "xlsx"))}>📊 XLSX</Button>
+            <Button
+              variant="secondary"
+              disabled={schemaMutation.isPending}
+              onClick={() => schemaMutation.mutate(offer.kp_id)}
+            >
+              {schemaMutation.isPending ? "Формируем…" : "📐 Схема"}
+            </Button>
             {offer.status === "в архиве" && (
               <Button variant="secondary" onClick={() => setMoveOpen(true)}>
                 🏭 В производство
@@ -339,6 +348,10 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               Удалить КП
             </Button>
           </section>
+
+          {schemaMutation.isError && (
+            <Alert tone="error">{getErrorMessage(schemaMutation.error)}</Alert>
+          )}
         </div>
       )}
 

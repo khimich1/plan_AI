@@ -68,6 +68,9 @@ class KpRepository:
     def get_offer(self, kp_id: int) -> dict | None:
         return kp_db.get_kp_by_id(kp_id, self.db_path)
 
+    def get_next_kp_number(self) -> int:
+        return kp_db.get_next_kp_number(self.db_path)
+
     def update_offer_discount(self, kp_id: int, discount_percent: float) -> bool:
         return kp_db.update_kp_discount(kp_id, discount_percent, self.db_path)
 

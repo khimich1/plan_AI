@@ -123,7 +123,7 @@ async def download_archive_document(
 
     media_type = (
         "application/pdf"
-        if kind == "pdf"
+        if kind in {"pdf", "schema"}
         else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     return FileResponse(path=path, filename=path.name, media_type=media_type)

@@ -308,6 +308,36 @@ def test_generate_document_rejects_empty_plates(tmp_path: Path) -> None:
         asyncio.run(service.generate_document(42, "xlsx"))
 
 
+def test_generate_document_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = MagicMock()
+    repository.get_by_id.return_value = _make_raw()
+    service = _make_service(repository, tmp_path)
+
+    schema_path = tmp_path / "Схема_test_КЗ.pdf"
+    schema_path.write_bytes(b"%PDF-SCHEMA")
+
+    class FakeContext:
+        optimization_success = True
+        optimization_error_message = None
+
+    monkeypatch.setattr(
+        "app.services.archive_service.OptimizationService.optimize",
+        lambda self, order, orders_2d=None: FakeContext(),
+    )
+    monkeypatch.setattr(
+        "app.services.archive_service.FileGenerationService.generate_visualization",
+        lambda self, **kwargs: (str(tmp_path / "schema.png"), str(schema_path)),
+    )
+
+    path = asyncio.run(service.generate_document(42, "schema"))
+
+    assert path.exists()
+    assert path.name == "КП_42_schema.pdf"
+    assert path.read_bytes() == b"%PDF-SCHEMA"
+
+
 def test_search_by_number_found(tmp_path: Path) -> None:
     repository = MagicMock()
     repository.get_by_id.return_value = _make_raw(kp_id=42)

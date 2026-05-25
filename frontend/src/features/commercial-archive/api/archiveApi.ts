@@ -55,5 +55,15 @@ export const archiveApi = {
   buildDocumentUrl: (kpId: number, kind: ArchiveFileKind): string =>
     resolveApiUrl(`${BASE}/${kpId}/files/${kind}`),
 
+  downloadDocument: (kpId: number, kind: ArchiveFileKind) => {
+    const fallbackName =
+      kind === "schema"
+        ? `КП_${kpId}_schema.pdf`
+        : kind === "pdf"
+          ? `КП_${kpId}.pdf`
+          : `КП_${kpId}.xlsx`;
+    return httpClient.download(`${BASE}/${kpId}/files/${kind}`, fallbackName);
+  },
+
   buildCurrentPlanUrl: (): string => resolveApiUrl(`${BASE}/current-plan/gantt`),
 };

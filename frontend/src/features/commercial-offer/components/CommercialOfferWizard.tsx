@@ -27,6 +27,7 @@ export const CommercialOfferWizard = () => {
     updateMetaMutation,
     calculateMutation,
     generateFilesMutation,
+    generateSchemaMutation,
     saveDraftMutation,
   } = useCommercialOfferWizard();
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
@@ -227,6 +228,18 @@ export const CommercialOfferWizard = () => {
     }
   };
 
+  const handleGenerateSchema = async () => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await generateSchemaMutation.mutateAsync(currentDraft.draft_id);
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
   const handleSave = async (payload: { mode: "database" | "archive" | "skip"; executionTermsInput: string }) => {
     if (!currentDraft?.draft_id) {
       return;
@@ -390,12 +403,14 @@ export const CommercialOfferWizard = () => {
         draft={currentDraft}
         errorMessage={stepError}
         isGeneratingFiles={generateFilesMutation.isPending}
+        isGeneratingSchema={generateSchemaMutation.isPending}
         isSaving={saveDraftMutation.isPending}
         lastSaveResult={state.lastSaveResult}
         executionTermsInput={state.executionTermsInput}
         onBack={() => dispatch({ type: "set-step", step: "client" })}
         onCreateNew={handleCreateNewOffer}
         onGenerateFiles={handleGenerateFiles}
+        onGenerateSchema={handleGenerateSchema}
         onExecutionTermsChange={(value) => dispatch({ type: "set-execution-terms", value })}
         onSave={handleSave}
         isUpdatingDiscount={updateMetaMutation.isPending || calculateMutation.isPending}

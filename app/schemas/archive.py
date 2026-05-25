@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 ArchiveSection = Literal["archived", "in_production", "completed"]
-ArchiveFileKind = Literal["pdf", "xlsx"]
+ArchiveFileKind = Literal["pdf", "xlsx", "schema"]
 
 
 class ArchiveOfferListItem(BaseModel):

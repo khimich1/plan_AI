@@ -511,7 +511,7 @@ class CommercialWorkflowService:
         public_metadata = {
             key: value
             for key, value in metadata.items()
-            if key not in ("breakdown_tables", "owner_user_id")
+            if key not in ("breakdown_tables", "owner_user_id", "predicted_kp_id")
         }
         wizard_state = self.build_wizard_state(payload)
         public_metadata["current_step"] = wizard_state["current_step"].value
@@ -531,10 +531,10 @@ class CommercialWorkflowService:
             "order_data": payload["order_data"],
             "metadata": public_metadata,
             "wizard_state": wizard_state,
-            "files": self._normalize_generated_files(metadata.get("generated_files", [])),
+            "files": self._collect_draft_files(metadata, draft_id),
             "saved_offer": self._normalize_saved_offer(metadata.get("saved_offer")),
             "totals": totals,
-            "offer_identity": self._build_offer_identity_payload(draft_id),
+            "offer_identity": self._build_offer_identity_payload(draft_id, metadata),
         }
 
     def generate_files(self, draft_id: str, file_types: Iterable[str] | None = None) -> list[dict[str, str]]:
@@ -543,6 +543,11 @@ class CommercialWorkflowService:
         requested_types = self._normalize_file_types(file_types)
         generated_files = self._normalize_generated_files(metadata.get("generated_files", []))
         files_by_kind = {item["kind"]: item for item in generated_files}
+        schema_raw = metadata.get("schema_file")
+        if schema_raw and "schema" not in files_by_kind:
+            schema_items = self._normalize_generated_files([schema_raw])
+            if schema_items:
+                files_by_kind["schema"] = schema_items[0]
         order_data = payload["order_data"]
         manager_name = str(metadata.get("manager_name", "") or "")
         manager_phone = str(metadata.get("manager_phone", "") or "")
@@ -552,7 +557,11 @@ class CommercialWorkflowService:
         delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
         payment_conditions = str(metadata.get("payment_conditions", "") or "")
         logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
-        offer_number, offer_date, file_stem = self._build_offer_identity(draft_id)
+        offer_number, offer_date, file_stem, kp_db_id = self._build_offer_identity(
+            draft_id,
+            metadata,
+            persist_predicted_kp_id=True,
+        )
 
         for file_type in requested_types:
             existing = files_by_kind.get(file_type)
@@ -578,6 +587,7 @@ class CommercialWorkflowService:
                     logistics_cost=logistics_cost,
                     delivery_conditions=delivery_conditions or None,
                     payment_conditions=payment_conditions or None,
+                    kp_db_id=kp_db_id,
                 )
                 files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
             elif file_type == "xlsx":
@@ -595,6 +605,7 @@ class CommercialWorkflowService:
                     delivery_conditions=delivery_conditions,
                     payment_conditions=payment_conditions,
                     logistics_cost=logistics_cost,
+                    kp_db_id=kp_db_id,
                 )
                 files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
             elif file_type == "breakdown":
@@ -619,8 +630,11 @@ class CommercialWorkflowService:
                         files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, schema_path)
 
         merged_files = [files_by_kind[key] for key in self.DEFAULT_FILE_TYPES if key in files_by_kind]
-        self.draft_store.update_metadata(draft_id, generated_files=merged_files)
-        return merged_files
+        update_payload: dict[str, Any] = {"generated_files": merged_files}
+        if "schema" in files_by_kind:
+            update_payload["schema_file"] = files_by_kind["schema"]
+        self.draft_store.update_metadata(draft_id, **update_payload)
+        return [files_by_kind[key] for key in requested_types if key in files_by_kind]
 
     def save_offer(
         self,
@@ -670,7 +684,8 @@ class CommercialWorkflowService:
             discount_percent=float(metadata.get("discount_percent", 0.0) or 0.0),
             logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
         )
-        offer_identity = self._build_offer_identity_payload(draft_id)
+        metadata["saved_offer"] = saved_offer
+        offer_identity = self._build_offer_identity_payload(draft_id, metadata)
         return {
             "saved_offer": saved_offer,
             "totals": totals,
@@ -887,15 +902,61 @@ class CommercialWorkflowService:
             raise ValueError("Не выбраны типы файлов для генерации.")
         return normalized
 
-    def _build_offer_identity(self, draft_id: str) -> tuple[str, str, str]:
-        now = datetime.now()
-        offer_number = f"WEB_{draft_id[:8].upper()}"
-        offer_date = now.strftime("%d.%m.%Y")
-        file_stem = f"kp_{draft_id[:8]}_{now.strftime('%Y%m%d_%H%M%S')}"
-        return offer_number, offer_date, file_stem
+    def _resolve_kp_number_for_draft(
+        self,
+        metadata: dict[str, Any],
+        draft_id: str,
+        *,
+        persist_predicted_kp_id: bool,
+    ) -> int:
+        saved = metadata.get("saved_offer") or {}
+        saved_id = saved.get("kp_id")
+        if saved_id is not None:
+            return int(saved_id)
 
-    def _build_offer_identity_payload(self, draft_id: str) -> dict[str, str]:
-        offer_number, offer_date, file_stem = self._build_offer_identity(draft_id)
+        predicted = metadata.get("predicted_kp_id")
+        if predicted is not None:
+            return int(predicted)
+
+        next_id = self.kp_repository.get_next_kp_number()
+        if persist_predicted_kp_id:
+            self.draft_store.update_metadata(draft_id, predicted_kp_id=next_id)
+            metadata["predicted_kp_id"] = next_id
+        return next_id
+
+    def _build_offer_identity(
+        self,
+        draft_id: str,
+        metadata: dict[str, Any] | None = None,
+        *,
+        persist_predicted_kp_id: bool = False,
+    ) -> tuple[str, str, str, int]:
+        if metadata is None:
+            payload = self._load_draft_or_raise(draft_id)
+            meta: dict[str, Any] = dict(payload.get("metadata") or {})
+        else:
+            meta = metadata
+        kp_id = self._resolve_kp_number_for_draft(
+            meta,
+            draft_id,
+            persist_predicted_kp_id=persist_predicted_kp_id,
+        )
+        now = datetime.now()
+        offer_number = str(kp_id)
+        offer_date = now.strftime("%d.%m.%Y")
+        file_stem = f"kp_{kp_id}_{now.strftime('%Y%m%d_%H%M%S')}"
+        return offer_number, offer_date, file_stem, kp_id
+
+    def _build_offer_identity_payload(
+        self,
+        draft_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        offer_number, offer_date, file_stem, _ = self._build_offer_identity(
+            draft_id,
+            metadata,
+            persist_predicted_kp_id=False,
+        )
         return {
             "offer_number": offer_number,
             "offer_date": offer_date,
@@ -910,6 +971,21 @@ class CommercialWorkflowService:
             "display_name": self.FILE_LABELS[kind],
             "download_url": f"/api/v1/commercial/files/{name}?draft_id={draft_id}",
         }
+
+    def _collect_draft_files(self, metadata: dict[str, Any], draft_id: str) -> list[dict[str, str]]:
+        files = self._normalize_generated_files(metadata.get("generated_files", []))
+        schema_raw = metadata.get("schema_file")
+        if schema_raw:
+            schema_items = self._normalize_generated_files([schema_raw])
+            if schema_items and not any(item["kind"] == "schema" for item in files):
+                schema_item = schema_items[0]
+                filename = schema_item["filename"]
+                files.append(
+                    self._build_generated_file(draft_id, "schema", Path(filename))
+                    if "draft_id=" not in schema_item.get("download_url", "")
+                    else schema_item
+                )
+        return files
 
     def _normalize_generated_files(self, items: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
         normalized: list[dict[str, str]] = []

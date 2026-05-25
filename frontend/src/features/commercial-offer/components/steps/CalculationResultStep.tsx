@@ -12,12 +12,14 @@ type CalculationResultStepProps = {
   draft: CommercialDraftDetails;
   errorMessage: string | null;
   isGeneratingFiles: boolean;
+  isGeneratingSchema: boolean;
   isSaving: boolean;
   lastSaveResult: CommercialSaveResult | null;
   executionTermsInput: string;
   onBack: () => void;
   onCreateNew: () => void;
   onGenerateFiles: () => void;
+  onGenerateSchema: () => void;
   onExecutionTermsChange: (value: string) => void;
   onSave: (payload: { mode: SaveMode; executionTermsInput: string }) => Promise<void>;
   isUpdatingDiscount: boolean;
@@ -29,12 +31,14 @@ export const CalculationResultStep = ({
   draft,
   errorMessage,
   isGeneratingFiles,
+  isGeneratingSchema,
   isSaving,
   lastSaveResult,
   executionTermsInput,
   onBack,
   onCreateNew,
   onGenerateFiles,
+  onGenerateSchema,
   onExecutionTermsChange,
   onSave,
   isUpdatingDiscount,
@@ -220,7 +224,13 @@ export const CalculationResultStep = ({
       </div>
     </Card>
 
-    <DownloadFilesSection draft={draft} isPending={isGeneratingFiles} onGenerate={onGenerateFiles} />
+    <DownloadFilesSection
+      draft={draft}
+      isPending={isGeneratingFiles}
+      isSchemaPending={isGeneratingSchema}
+      onGenerate={onGenerateFiles}
+      onGenerateSchema={onGenerateSchema}
+    />
 
     <SaveOfferSection
       draft={draft}

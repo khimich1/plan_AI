@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.visualization import visualize_plan
 from core.formovka_excel import create_formovka_files_for_tracks
+from core.project_paths import resolve_formovka_template_path
 import core.config_and_data as cfg
 from core.config_and_data import PlateOrder
 import core.optimization as optimization
@@ -987,7 +988,8 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
         
         # Создаем Excel-файлы формовки
         if formovka_tracks_data:
-            template_path = os.path.join(PROJECT_ROOT, "банк знаний", "!КЗ ПБ Шаблон.xlsx")
+            resolved_template = resolve_formovka_template_path()
+            template_path = str(resolved_template) if resolved_template else None
             date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
             
             formovka_files = await asyncio.to_thread(

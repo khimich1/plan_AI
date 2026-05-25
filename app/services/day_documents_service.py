@@ -30,6 +30,7 @@ import core.optimization as optimization
 from core.optimization.result_contract import is_optimization_success
 from core.config_and_data import PlateOrder
 from core.formovka_excel import create_formovka_files_for_tracks
+from core.project_paths import resolve_formovka_template_path
 from core.visualization import visualize_plan
 
 from app.services.day_view_service import (
@@ -39,9 +40,6 @@ from app.services.day_view_service import (
 from app.planning import plan_manager
 
 logger = logging.getLogger(__name__)
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FORMOVKA_TEMPLATE_PATH = PROJECT_ROOT / "банк знаний" / "!КЗ ПБ Шаблон.xlsx"
 
 # visualize_plan правит глобальные переменные — сериализуем вызовы,
 # чтобы не словить гонку при параллельных запросах.
@@ -206,7 +204,8 @@ async def generate_day_formovka(target_date: str) -> tuple[Path, Path]:
     tmp_dir = _make_tmp_dir(prefix=f"day_formovka_{target_date}_")
     try:
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        template_path = str(FORMOVKA_TEMPLATE_PATH) if FORMOVKA_TEMPLATE_PATH.exists() else None
+        resolved_template = resolve_formovka_template_path()
+        template_path = str(resolved_template) if resolved_template else None
 
         def _run_formovka() -> list[str]:
             return create_formovka_files_for_tracks(

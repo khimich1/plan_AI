@@ -128,6 +128,13 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
+  const generateSchemaMutation = useMutation({
+    mutationFn: (draftId: string) => commercialOfferApi.generateSchemaFiles(draftId),
+    onSettled: (_data, _error, draftId) => {
+      invalidateDraft(draftId);
+    },
+  });
+
   const saveDraftMutation = useMutation({
     mutationFn: ({
       draftId,
@@ -155,6 +162,7 @@ export const useCommercialOfferWizard = () => {
     updateMetaMutation,
     calculateMutation,
     generateFilesMutation,
+    generateSchemaMutation,
     saveDraftMutation,
     currentDraft: draftQuery.data ?? state.lastDraft,
   };

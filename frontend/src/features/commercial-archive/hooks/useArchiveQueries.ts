@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
 import type {
+  ArchiveFileKind,
   ArchiveOfferDetails,
   ArchiveOfferListItem,
   ArchiveSearchResponse,
@@ -8,6 +9,7 @@ import type {
   ArchiveSection,
   ProductionEstimate,
 } from "@/features/commercial-archive/types/archive";
+import { saveBlobAs } from "@/shared/lib/downloadFile";
 
 export const archiveKeys = {
   all: ["archive"] as const,
@@ -106,3 +108,13 @@ export const useMoveToProductionMutation = () => {
     },
   });
 };
+
+export const useArchiveDocumentMutation = (kind: ArchiveFileKind) =>
+  useMutation({
+    mutationKey: ["archive", "document", kind],
+    mutationFn: async (kpId: number) => {
+      const result = await archiveApi.downloadDocument(kpId, kind);
+      saveBlobAs(result.blob, result.filename);
+      return result;
+    },
+  });

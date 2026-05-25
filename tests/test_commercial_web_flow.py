@@ -960,3 +960,127 @@ def test_wizard_state_select_manager_validation_errors() -> None:
     state = wf.build_wizard_state(payload)
     assert state["next_required_action"] == WizardNextRequiredAction.select_manager
     assert state["validation_errors"] == ["Выберите менеджера."]
+
+
+def test_generate_files_returns_schema_when_requested(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = CommercialWorkflowService()
+    schema_path = tmp_path / "schema.pdf"
+    schema_path.write_bytes(b"%PDF-SCHEMA")
+    captured: dict[str, Any] = {}
+
+    def fake_load(_draft_id: str) -> dict[str, Any]:
+        order = PlateOrder()
+        return {
+            "order": order,
+            "optimization_context": OptimizationContext(order=order),
+            "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+            "metadata": {
+                "generated_files": [
+                    {"kind": "pdf", "filename": "kp.pdf", "display_name": "PDF", "download_url": ""},
+                ],
+            },
+        }
+
+    def fake_update_metadata(draft_id: str, **kwargs: Any) -> None:
+        captured["draft_id"] = draft_id
+        captured.update(kwargs)
+
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", fake_load)
+    monkeypatch.setattr(workflow.draft_store, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(
+        workflow.file_generation_service,
+        "generate_visualization",
+        lambda **kwargs: (str(tmp_path / "schema.png"), str(schema_path)),
+    )
+    monkeypatch.setattr(workflow, "_resolve_generated_file", lambda filename: tmp_path / filename)
+
+    result = workflow.generate_files("draft-schema", ("schema",))
+
+    assert len(result) == 1
+    assert result[0]["kind"] == "schema"
+    assert result[0]["filename"] == "schema.pdf"
+    assert len(captured["generated_files"]) == 1
+    assert captured["generated_files"][0]["kind"] == "pdf"
+    assert captured["schema_file"]["kind"] == "schema"
+
+
+def test_get_draft_details_includes_schema_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = CommercialWorkflowService()
+    order = PlateOrder()
+
+    def fake_load(_draft_id: str) -> dict[str, Any]:
+        return {
+            "order": order,
+            "optimization_context": OptimizationContext(order=order),
+            "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+            "metadata": {
+                "generated_files": [
+                    {"kind": "pdf", "filename": "kp.pdf", "display_name": "PDF", "download_url": ""},
+                ],
+                "schema_file": {
+                    "kind": "schema",
+                    "filename": "schema.pdf",
+                    "display_name": "Схема раскладки (PDF)",
+                    "download_url": "",
+                },
+                "manager_id": 1,
+                "client_name": "ООО А",
+                "conditions_mode": "standard",
+                "wide_plate_lines": [],
+                "wide_plates_resolved": True,
+                "current_step": "result",
+            },
+        }
+
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", fake_load)
+
+    details = workflow.get_draft_details("draft-schema")
+
+    kinds = [item["kind"] for item in details["files"]]
+    assert "pdf" in kinds
+    assert "schema" in kinds
+
+
+def test_build_offer_identity_uses_predicted_kp_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = CommercialWorkflowService()
+    metadata: dict[str, Any] = {}
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(workflow.kp_repository, "get_next_kp_number", lambda: 1188)
+    monkeypatch.setattr(
+        workflow.draft_store,
+        "update_metadata",
+        lambda draft_id, **kwargs: captured.update({"draft_id": draft_id, **kwargs}),
+    )
+
+    offer_number, _offer_date, file_stem, kp_id = workflow._build_offer_identity(
+        "draft-abc",
+        metadata,
+        persist_predicted_kp_id=True,
+    )
+
+    assert kp_id == 1188
+    assert offer_number == "1188"
+    assert file_stem.startswith("kp_1188_")
+    assert captured["predicted_kp_id"] == 1188
+    assert metadata["predicted_kp_id"] == 1188
+
+
+def test_build_offer_identity_prefers_saved_kp_id() -> None:
+    workflow = CommercialWorkflowService()
+    metadata = {"saved_offer": {"kp_id": 777}, "predicted_kp_id": 1188}
+
+    offer_number, _offer_date, _file_stem, kp_id = workflow._build_offer_identity(
+        "draft-abc",
+        metadata,
+    )
+
+    assert kp_id == 777
+    assert offer_number == "777"

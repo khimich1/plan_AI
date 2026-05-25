@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 from app.core.settings import get_settings
+from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.repositories.kp_archive_repository import ArchiveSection, KpArchiveRepository
 from app.schemas.archive import (
     ArchiveFileKind,
@@ -17,6 +19,9 @@ from app.schemas.archive import (
     ArchivePlateItem,
     ArchiveSearchResponse,
 )
+from app.services.day_documents_service import _visualize_lock
+from app.services.file_generation_service import FileGenerationService
+from app.services.optimization_service import OptimizationService
 from core.execution_terms import normalize_execution_terms_to_ddmmyyyy
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
@@ -49,11 +54,15 @@ class ArchiveService:
         self,
         repository: KpArchiveRepository | None = None,
         outputs_dir: Path | None = None,
+        optimization_service: OptimizationService | None = None,
+        file_generation_service: FileGenerationService | None = None,
     ) -> None:
         settings = get_settings()
         self.repository = repository or KpArchiveRepository()
         self.outputs_dir = outputs_dir or settings.outputs_dir
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
+        self.optimization_service = optimization_service or OptimizationService()
+        self.file_generation_service = file_generation_service or FileGenerationService()
 
     # ---------- Списки и карточка ----------
 
@@ -199,6 +208,40 @@ class ArchiveService:
                 logistics_cost=logistics_cost,
             )
             filename = f"КП_{kp_id}.xlsx"
+        elif kind == "schema":
+            orders_2d = self._orders_2d_from_kp_info(raw)
+            if not orders_2d:
+                raise ArchiveValidationError("В КП нет позиций для формирования схемы")
+            plate_order = AppPlateOrder.from_orders_2d(orders_2d)
+            context = await asyncio.to_thread(
+                self.optimization_service.optimize,
+                plate_order,
+                orders_2d=orders_2d,
+            )
+            if not context.optimization_success:
+                raise ArchiveValidationError(
+                    context.optimization_error_message or "Не удалось выполнить оптимизацию для схемы"
+                )
+
+            filename = f"КП_{kp_id}_schema.pdf"
+            target_path = self.outputs_dir / filename
+
+            async with _visualize_lock:
+                result = await asyncio.to_thread(
+                    self.file_generation_service.generate_visualization,
+                    order=plate_order,
+                    context=context,
+                    output_dir=str(self.outputs_dir),
+                )
+
+            if not isinstance(result, tuple) or len(result) < 2:
+                raise ArchiveValidationError("Не удалось создать схему раскладки")
+            schema_path = Path(str(result[1]))
+            if not schema_path.exists():
+                raise ArchiveValidationError("PDF со схемой не был создан")
+            if schema_path.resolve() != target_path.resolve():
+                await asyncio.to_thread(shutil.copy2, schema_path, target_path)
+            return target_path
         else:
             raise ArchiveValidationError(f"Неподдерживаемый тип файла: {kind}")
 
@@ -348,6 +391,31 @@ class ArchiveService:
                     "load_class": p.get("load_class") or 800,
                     "unit_price": float(unit_price),
                     "weight": weight or 0,
+                }
+            )
+        return result
+
+    @staticmethod
+    def _orders_2d_from_kp_info(kp_info: dict) -> list[dict]:
+        plates = kp_info.get("plates") or []
+        result: list[dict] = []
+        for plate in plates:
+            length_m = float(plate.get("length_m") or 0)
+            width_m = float(plate.get("width_m") or 1.2)
+            qty = int(plate.get("qty") or 0)
+            if length_m <= 0 or qty <= 0:
+                continue
+            load_class = int(plate.get("load_class") or 800)
+            load_code = max(1, load_class // 100)
+            result.append(
+                {
+                    "length": length_m,
+                    "width": int(round(width_m * 1000)),
+                    "qty": qty,
+                    "load_code": load_code,
+                    "length_dm_raw": "",
+                    "plate_name": plate.get("plate_name") or "",
+                    "kp_id": kp_info.get("kp_id"),
                 }
             )
         return result

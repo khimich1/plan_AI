@@ -109,6 +109,13 @@ export const commercialOfferApi = {
       { "Content-Type": "application/json" },
     ),
 
+  generateSchemaFiles: (draftId: string) =>
+    httpClient.post<{ draft_id: string; files: CommercialGeneratedFile[] }>(
+      `/api/v1/commercial/drafts/${draftId}/generate-files`,
+      JSON.stringify({ file_types: ["schema"] }),
+      { "Content-Type": "application/json" },
+    ),
+
   saveDraft: (draftId: string, payload: SaveDraftPayload) =>
     httpClient.post<CommercialSaveResult>(
       `/api/v1/commercial/drafts/${draftId}/save`,

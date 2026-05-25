@@ -493,3 +493,28 @@ def test_download_file_returns_file(
 
     assert response.status_code == 200
     assert response.content == b"%PDF-TEST"
+
+
+def test_download_schema_file_returns_pdf(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "КП_42_schema.pdf"
+    target.write_bytes(b"%PDF-SCHEMA")
+
+    async def fake_generate(kp_id: int, kind: str) -> Path:
+        assert kind == "schema"
+        return target
+
+    fake_service.generate_document = fake_generate  # type: ignore[assignment]
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/files/schema",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"%PDF-SCHEMA"
+    assert response.headers["content-type"].startswith("application/pdf")
