@@ -25,6 +25,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from core import kp_db
+from core.db_config import PLITA_DB_PATH
 from core.plan_track_removal import TrackRemovalError, collect_plate_returns_from_track
 from core.serialization import strip_plate_audit_from_plan
 from core.work_calendar import is_working_day, load_extra_workdays, load_holidays
@@ -263,7 +264,7 @@ def delete_plan(plan_id: str) -> bool:
     # === ВОЗВРАЩАЕМ ПЛИТЫ ПЛАНА В ПРОИЗВОДСТВО ===
     # Это нужно сделать ДО удаления файла плана,
     # чтобы плиты не "зависли" в статусе 'в плане'
-    db_path = str(_PROJECT_ROOT / "plita.db")
+    db_path = str(PLITA_DB_PATH)
     returned_count = kp_db.return_plan_plates_to_production(plan_id, db_path)
     if returned_count > 0:
         logger.info(f"При удалении плана {plan_id}: возвращено {returned_count} записей плит в производство")
