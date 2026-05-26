@@ -6,6 +6,12 @@ import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
+import {
+  formatOfferNumber,
+  formatOfferSum,
+  formatTotalsMoney,
+  toNumber,
+} from "@/features/commercial-offer/lib/formatOfferNumbers";
 import { StepLayout } from "@/shared/ui/StepLayout";
 
 type CalculationResultStepProps = {
@@ -141,13 +147,13 @@ export const CalculationResultStep = ({
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.qty ?? "")}</td>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>шт</td>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                  {formatNumber(item.weight)}
+                  {formatOfferNumber(item.weight)}
                 </td>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                  {formatNumber(item.unit_price)}
+                  {formatOfferNumber(item.unit_price)}
                 </td>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                  {formatSum(item.qty, item.unit_price)}
+                  {formatOfferSum(item.qty, item.unit_price)}
                 </td>
               </tr>
             ))}
@@ -166,7 +172,7 @@ export const CalculationResultStep = ({
         }}
       >
         <div style={{ display: "grid", gap: "0.75rem" }}>
-          <SummaryCell label="Общий вес (кг)" value={formatNumber(totalWeight)} />
+          <SummaryCell label="Общий вес (кг)" value={formatOfferNumber(totalWeight)} />
           <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
             <FieldWrapper label="Стоимость рейса" error={logisticsError}>
               <div style={{ position: "relative" }}>
@@ -275,42 +281,3 @@ const SummaryCell = ({ label, value }: { label: string; value: string }) => (
     <strong>{value}</strong>
   </div>
 );
-
-const toNumber = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const normalized = value.replace(/\s+/g, "").replace(",", ".");
-    const parsed = Number(normalized);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return null;
-};
-
-const formatNumber = (value: unknown): string => {
-  const parsed = toNumber(value);
-  if (parsed === null) {
-    return "0";
-  }
-  return parsed.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
-};
-
-const formatSum = (qtyValue: unknown, unitPriceValue: unknown): string => {
-  const qty = toNumber(qtyValue);
-  const unitPrice = toNumber(unitPriceValue);
-  if (qty === null || unitPrice === null) {
-    return "0";
-  }
-  return (qty * unitPrice).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
-};
-
-/** Серверные итоги (`draft.totals`): не пересчитываем НДС на клиенте. */
-const formatTotalsMoney = (value: number | undefined): string => {
-  if (value === undefined || Number.isNaN(value)) {
-    return "—";
-  }
-  return value.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
-};

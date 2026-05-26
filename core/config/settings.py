@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     bot_token: str | None = Field(default=None, alias="BOT_TOKEN")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     ocr_recognition_mode: str = Field(default="full_gpt", alias="OCR_RECOGNITION_MODE")
+    ocr_verify_enabled: bool = Field(default=True, alias="OCR_VERIFY_ENABLED")
     weight_source: str = Field(default="formula", alias="WEIGHT_SOURCE")
 
     pb_db_path: Path = Field(default=PROJECT_ROOT / "pb.db")

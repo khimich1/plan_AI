@@ -37,6 +37,25 @@ _LOAD_PLAIN_RE = re.compile(
     r"п[бк][\s\.,]*[\d\.,]+\s*-\s*[\d\.,]+\s*-\s*([\d\.,]+)",
     re.IGNORECASE,
 )
+BARE_PLATE_LINE_RE = re.compile(
+    r"^([\d\.,]+)\s*-\s*([\d\.,]+)\s*-\s*([\d\.,]+)\s*(?:п\b)?"
+    r"(?:\s*[-—–]\s*)?(?:\s*(?P<qty>\d+)\s*(?:шт\.?\b)?)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def match_bare_plate_line(line: str) -> Optional[tuple[str, str, str, int]]:
+    """
+    Разбирает строку формата «L-W-load [qty]» без префикса ПБ/ПК.
+
+    Returns:
+        (length_dm_raw, width_dm_raw, load_raw, qty) или None.
+    """
+    m = BARE_PLATE_LINE_RE.match((line or "").strip())
+    if not m:
+        return None
+    qty = int(m.group("qty")) if m.group("qty") else 1
+    return m.group(1), m.group(2), m.group(3), qty
 
 
 def _length_dm_to_m(ldm_str: str) -> float:
@@ -117,45 +136,77 @@ def parse_line(raw_line: str) -> LineParseResult:
 
     # 2) Марка ПБ/ПК
     m_mark = _PLATE_MARK_RE.search(s_lower)
-    if not m_mark:
-        return LineParseResult(False, "unparsed", reason_code="pattern_not_matched", reason_text="не совпал формат строки")
+    if m_mark:
+        ldm_str = m_mark.group(1)
+        wdm_str = m_mark.group(2)
+        length_m = _length_dm_to_m(ldm_str)
+        width_m = _parse_pb_width_to_m(wdm_str)
+        if length_m <= 0 or width_m <= 0:
+            return LineParseResult(
+                False,
+                "tolerant_pbpk",
+                reason_code="dimension_parse_failed",
+                reason_text="не удалось распознать длину/ширину",
+            )
 
-    ldm_str = m_mark.group(1)
-    wdm_str = m_mark.group(2)
-    length_m = _length_dm_to_m(ldm_str)
-    width_m = _parse_pb_width_to_m(wdm_str)
-    if length_m <= 0 or width_m <= 0:
+        qty = 1
+        qty_match = _QTY_AFTER_LOAD_DASH_RE.search(s_lower) or _QTY_AFTER_LOAD_RE.search(s_lower) or _QTY_END_RE.search(s_lower)
+        if qty_match:
+            try:
+                qty = int(qty_match.group(1))
+            except Exception:
+                qty = 1
+
+        load_code: Optional[float] = None
+        load_match = _LOAD_WITH_P_RE.search(s_lower) or _LOAD_PLAIN_RE.search(s_lower)
+        if load_match:
+            try:
+                load_val = float(load_match.group(1).replace(",", "."))
+                if load_val > 0:
+                    load_code = load_val
+            except Exception:
+                load_code = None
+
         return LineParseResult(
-            False,
-            "tolerant_pbpk",
-            reason_code="dimension_parse_failed",
-            reason_text="не удалось распознать длину/ширину",
+            parsed=True,
+            stage="tolerant_pbpk",
+            width_m=round(width_m, 3),
+            length_m=round(length_m, 3),
+            qty=qty,
+            load_code=load_code,
+            length_dm_raw=ldm_str.strip() if ldm_str else "",
         )
 
-    qty = 1
-    qty_match = _QTY_AFTER_LOAD_DASH_RE.search(s_lower) or _QTY_AFTER_LOAD_RE.search(s_lower) or _QTY_END_RE.search(s_lower)
-    if qty_match:
-        try:
-            qty = int(qty_match.group(1))
-        except Exception:
-            qty = 1
+    # 3) Марка без префикса ПБ: L-W-load [qty]
+    bare = match_bare_plate_line(s)
+    if bare:
+        ldm_str, wdm_str, load_str, qty = bare
+        length_m = _length_dm_to_m(ldm_str)
+        width_m = _parse_pb_width_to_m(wdm_str)
+        if length_m <= 0 or width_m <= 0:
+            return LineParseResult(
+                False,
+                "bare_lwd",
+                reason_code="dimension_parse_failed",
+                reason_text="не удалось распознать длину/ширину",
+            )
 
-    load_code: Optional[float] = None
-    load_match = _LOAD_WITH_P_RE.search(s_lower) or _LOAD_PLAIN_RE.search(s_lower)
-    if load_match:
+        load_code: Optional[float] = None
         try:
-            load_val = float(load_match.group(1).replace(",", "."))
+            load_val = float(load_str.replace(",", "."))
             if load_val > 0:
                 load_code = load_val
         except Exception:
             load_code = None
 
-    return LineParseResult(
-        parsed=True,
-        stage="tolerant_pbpk",
-        width_m=round(width_m, 3),
-        length_m=round(length_m, 3),
-        qty=qty,
-        load_code=load_code,
-        length_dm_raw=ldm_str.strip() if ldm_str else "",
-    )
+        return LineParseResult(
+            parsed=True,
+            stage="bare_lwd",
+            width_m=round(width_m, 3),
+            length_m=round(length_m, 3),
+            qty=qty,
+            load_code=load_code,
+            length_dm_raw=ldm_str.strip(),
+        )
+
+    return LineParseResult(False, "unparsed", reason_code="pattern_not_matched", reason_text="не совпал формат строки")

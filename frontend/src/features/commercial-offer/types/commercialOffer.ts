@@ -44,7 +44,7 @@ export type WidePlateLine = {
 };
 
 export type PlateBatch = {
-  source_type: "text" | "image";
+  source_type: "text" | "image" | "ai";
   original_text: string;
   normalized_text: string;
   ocr_text: string;
@@ -72,8 +72,16 @@ export type CommercialSavedOffer = {
   saved_at: string;
 };
 
+export type OcrCorrection = {
+  action: string;
+  row_index?: number | null;
+  before?: { normalized_candidate?: string; qty?: number } | null;
+  after?: { normalized_candidate?: string; qty?: number } | null;
+  reason?: string;
+};
+
 export type CommercialDraftMetadata = {
-  source_type: "text" | "image" | null;
+  source_type: "text" | "image" | "ai" | null;
   original_text: string;
   ocr_text: string;
   input_text: string;
@@ -99,10 +107,17 @@ export type CommercialDraftMetadata = {
   plate_batches: PlateBatch[];
   wide_plates_resolved: boolean;
   last_source_filename: string;
+  ai_applied?: boolean;
+  last_ai_instruction?: string;
   current_step: string;
   current_save_mode: SaveMode | null;
   execution_terms: string;
   logistics_cost: number;
+  ocr_method?: string;
+  ocr_verify_applied?: boolean;
+  ocr_verify_failed?: boolean;
+  ocr_corrections?: OcrCorrection[];
+  ocr_row_count_on_image?: number | null;
 };
 
 export type CommercialDraftDetails = {

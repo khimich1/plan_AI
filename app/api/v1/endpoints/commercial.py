@@ -117,6 +117,37 @@ async def update_commercial_draft_plates(
     return CommercialDraftDetailsResponse.model_validate(result)
 
 
+@router.post("/drafts/{draft_id}/plates/ai", response_model=CommercialDraftDetailsResponse)
+async def apply_ai_plates_to_draft(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    instruction: str = Form(...),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    workflow = CommercialWorkflowService()
+    try:
+        result = await workflow.apply_ai_plates_instruction(
+            draft_id,
+            instruction=instruction,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except PlateParseError as exc:
+        raise_parse_client_error(exc, where="apply_ai_plates_to_draft")
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="apply_ai_plates_to_draft", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="apply_ai_plates_to_draft")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
 @router.post("/drafts/{draft_id}/wide-plates/resolve", response_model=CommercialDraftDetailsResponse)
 def resolve_draft_wide_plates(
     payload: CommercialWidePlatesResolveRequest,

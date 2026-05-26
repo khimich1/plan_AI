@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, BeforeValidator, Field
 
 CommercialFileKind = Literal["pdf", "xlsx", "breakdown", "schema"]
-CommercialSourceType = Literal["text", "image"]
+CommercialSourceType = Literal["text", "image", "ai"]
 CommercialConditionsMode = Literal["standard", "custom"]
 CommercialPlateUpdateMode = Literal["append", "replace"]
 CommercialWidePlateAction = Literal["confirm", "exclude", "replace"]
@@ -141,10 +141,17 @@ class CommercialDraftMetadata(BaseModel):
     plate_batches: list[CommercialPlateBatch] = Field(default_factory=list)
     wide_plates_resolved: bool = False
     last_source_filename: str = ""
+    ai_applied: bool = False
+    last_ai_instruction: str = ""
     current_step: WizardStepCoerced = WizardStepId.plates
     current_save_mode: CommercialSaveMode | None = None
     execution_terms: str = ""
     logistics_cost: float = 0.0
+    ocr_method: str = ""
+    ocr_verify_applied: bool = False
+    ocr_verify_failed: bool = False
+    ocr_corrections: list[dict[str, Any]] = Field(default_factory=list)
+    ocr_row_count_on_image: int | None = None
 
 
 class CommercialDraftDetailsResponse(BaseModel):
