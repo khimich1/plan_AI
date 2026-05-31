@@ -16,6 +16,7 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
   const rows = buildKpPreviewRows(draft);
   const wideLines = draft.metadata.wide_plate_lines ?? [];
   const unparsedLines = draft.metadata.unparsed_lines ?? [];
+  const warnings = draft.metadata.warnings ?? [];
   const showWideAlert = wideLines.length > 0 && !draft.metadata.wide_plates_resolved;
   const normalizedTextChanged =
     normalizedText.trim() !== (draft.metadata.normalized_text ?? "").trim() && normalizedText.trim().length > 0;
@@ -31,6 +32,16 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
             {wideLines.length}{" "}
             {wideLines.length === 1 ? "нестандартная позиция" : "нестандартных позиций"} в распознанном тексте —
             состав предварительный, проверка на шаге 2.
+          </Alert>
+        )}
+
+        {warnings.length > 0 && (
+          <Alert tone="warning">
+            <div style={{ display: "grid", gap: "0.35rem" }}>
+              {warnings.map((warning) => (
+                <div key={warning}>{warning}</div>
+              ))}
+            </div>
           </Alert>
         )}
 

@@ -31,3 +31,21 @@ def test_parse_plate_text_bare_format_without_pb_prefix():
     assert result.order.plate_load_details
     assert sum(result.order.plate_load_details.values()) == 10
 
+
+def test_parse_plate_text_lwh_mm_format_emits_load_warning():
+    service = PlateParserService()
+    text = "\n".join(
+        [
+            "3880x1200x220 7",
+            "3880x710x220 1",
+            "4880x1200x220 5",
+            "4880x720x220 1",
+        ]
+    )
+
+    result = service.parse_plate_text(text)
+
+    assert not result.unparsed_lines
+    assert sum(result.order.plate_load_details.values()) == 14
+    assert any("Проверьте нагрузку" in warning for warning in result.warnings)
+    assert any(d.get("load_assumed") is True for d in result.diagnostics)
