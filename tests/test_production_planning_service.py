@@ -82,6 +82,7 @@ def planning_service(tmp_plita, monkeypatch):
         if not orders_2d:
             return [], {}
         order = orders_2d[0]
+        order_qty = int(order.get("qty") or 1)
         items = [
             {
                 "kp_id": order["kp_id"],
@@ -90,11 +91,11 @@ def planning_service(tmp_plita, monkeypatch):
                 "width": order["width"],
                 "load_code": order["load_code"],
             }
-            for _ in range(3)
+            for _ in range(order_qty)
         ]
         tracks = [{"label": "ОСНОВНАЯ", "items": items}]
         optimization_result = {
-            "total_plates": 3,
+            "total_plates": order_qty,
             "plate_assignments": [
                 {
                     "source": "primary",
@@ -104,7 +105,7 @@ def planning_service(tmp_plita, monkeypatch):
                     "width": order["width"],
                     "load_code": order["load_code"],
                 }
-                for _ in range(3)
+                for _ in range(order_qty)
             ],
         }
         return tracks, optimization_result
@@ -174,6 +175,152 @@ def test_optimization_service_preserves_identity_orders(monkeypatch):
     assert counts["primary"] == {(1, PLATE_NAME): 2}
     assert unmapped["primary"] == []
     assert unmapped["secondary"] == []
+
+
+@pytest.fixture
+def tmp_plita_qty7(tmp_path):
+    """КП с одной строкой kp_plates qty=7 для теста частичного планирования."""
+    db_path = str(tmp_path / "plita_qty7.db")
+    kp_db.init_schema(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO KP_offers (kp_id, creation_date, execution_terms, customer_name) "
+            "VALUES (1, '2026-01-01', '21.04.2026', 'ТестКлиент')"
+        )
+        conn.execute(
+            "INSERT INTO kp_meta (kp_id, status) VALUES (1, 'в работе')"
+        )
+        conn.execute(
+            """
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, qty, status
+            ) VALUES (1, 1, ?, 6.0, 1.2, 800, 7, 'в производстве')
+            """,
+            (PLATE_NAME,),
+        )
+        plate_id = conn.execute(
+            "SELECT id FROM kp_plates WHERE kp_id = 1"
+        ).fetchone()[0]
+        conn.commit()
+    return db_path, int(plate_id)
+
+
+@pytest.fixture
+def planning_service_qty7(tmp_plita_qty7, tmp_path, monkeypatch):
+    """ProductionPlanningService на БД с qty=7."""
+    from app.services.production_planning_service import ProductionPlanningService
+
+    db_path, _plate_id = tmp_plita_qty7
+    service = ProductionPlanningService(
+        plita_db_path=db_path,
+        pb_db_path=db_path,
+    )
+
+    def fake_optimize(self, *, orders_2d):
+        if not orders_2d:
+            return [], {}
+        order = orders_2d[0]
+        order_qty = int(order.get("qty") or 1)
+        items = [
+            {
+                "kp_id": order["kp_id"],
+                "plate_name": order["plate_name"],
+                "length": order["length"],
+                "width": order["width"],
+                "load_code": order["load_code"],
+            }
+            for _ in range(order_qty)
+        ]
+        tracks = [{"label": "ОСНОВНАЯ", "items": items}]
+        optimization_result = {
+            "total_plates": order_qty,
+            "plate_assignments": [
+                {
+                    "source": "primary",
+                    "kp_id": order["kp_id"],
+                    "plate_name": order["plate_name"],
+                    "length": order["length"],
+                    "width": order["width"],
+                    "load_code": order["load_code"],
+                }
+                for _ in range(order_qty)
+            ],
+        }
+        return tracks, optimization_result
+
+    monkeypatch.setattr(
+        ProductionPlanningService,
+        "_run_optimization_and_split",
+        fake_optimize,
+    )
+    monkeypatch.setattr(
+        "app.services.production_planning_service.get_reinforcement",
+        lambda **kwargs: 999.0,
+    )
+    return service
+
+
+def _sum_qty_by_status(db_path: str, status: str) -> int:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM kp_plates WHERE kp_id = 1 AND plate_name = ? AND status = ?",
+            (PLATE_NAME, status),
+        ).fetchone()
+    return int(row[0])
+
+
+def test_build_plan_partial_plate_qty(planning_service_qty7, tmp_plita_qty7):
+    """Урезание qty (7→3): в плане 3, остаток 4 остаётся «в производстве»."""
+    db_path, plate_id = tmp_plita_qty7
+
+    first = planning_service_qty7.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="kp",
+        selected_kp_ids=[1],
+        selected_plate_ids={1: [plate_id]},
+        selected_plate_qty={1: {plate_id: 3}},
+    )
+    assert first["plan"]["id"]
+    assert first["summary"]["selected_plates_count"] == 3
+
+    assert _sum_qty_by_status(db_path, "в плане") == 3
+    assert _sum_qty_by_status(db_path, "в производстве") == 4
+
+    # После split остаток — новая строка kp_plates с другим id (как в UI после reload).
+    with sqlite3.connect(db_path) as conn:
+        remainder_id = conn.execute(
+            "SELECT id FROM kp_plates WHERE kp_id = 1 AND status = 'в производстве'"
+        ).fetchone()[0]
+
+    second = planning_service_qty7.build_plan(
+        start_date="2026-04-22",
+        tracks_count=3,
+        filter_method="kp",
+        selected_kp_ids=[1],
+        selected_plate_ids={1: [remainder_id]},
+        selected_plate_qty={1: {remainder_id: 4}},
+    )
+    assert second["plan"]["id"]
+    assert _sum_qty_by_status(db_path, "в плане") == 7
+    assert _sum_qty_by_status(db_path, "в производстве") == 0
+
+
+def test_build_plan_rejects_qty_above_available(planning_service_qty7, tmp_plita_qty7):
+    from app.services.production_planning_service import ProductionPlanBuildError
+
+    _, plate_id = tmp_plita_qty7
+    with pytest.raises(ProductionPlanBuildError, match="доступно 7"):
+        planning_service_qty7.build_plan(
+            start_date="2026-04-21",
+            tracks_count=3,
+            filter_method="kp",
+            selected_kp_ids=[1],
+            selected_plate_ids={1: [plate_id]},
+            selected_plate_qty={1: {plate_id: 10}},
+        )
 
 
 def test_build_plan_marks_plates_and_second_call_fails(planning_service, tmp_plita):

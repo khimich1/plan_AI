@@ -60,6 +60,7 @@ class ProductionPlanningService:
         filter_method: FilterMethod,
         selected_kp_ids: list[int] | None = None,
         selected_plate_ids: dict[int, list[int]] | None = None,
+        selected_plate_qty: dict[int, dict[int, int]] | None = None,
         active_plan_id: str | None = None,
         plan_name: str | None = None,
         fill_targets: list[dict[str, Any]] | None = None,
@@ -94,6 +95,7 @@ class ProductionPlanningService:
         plates_by_date_reinforcement = self._load_plates_for_kps(
             kp_list=kp_list,
             selected_plate_ids=selected_plate_ids or {},
+            selected_plate_qty=selected_plate_qty or {},
         )
 
         selected_plates = self._flatten_plates(plates_by_date_reinforcement)
@@ -405,11 +407,27 @@ class ProductionPlanningService:
         except ValueError:
             return datetime.now()
 
+    @staticmethod
+    def _qty_override_for_plate(
+        selected_plate_qty: dict[int, dict[int, int]],
+        kp_id: int,
+        plate_id: int,
+    ) -> int | None:
+        """Возвращает qty из запроса или None, если override не задан."""
+        by_kp = selected_plate_qty.get(kp_id) or selected_plate_qty.get(str(kp_id))
+        if not by_kp:
+            return None
+        raw = by_kp.get(plate_id) if plate_id in by_kp else by_kp.get(str(plate_id))
+        if raw is None:
+            return None
+        return int(raw)
+
     def _load_plates_for_kps(
         self,
         *,
         kp_list: list[dict[str, Any]],
         selected_plate_ids: dict[int, list[int]],
+        selected_plate_qty: dict[int, dict[int, int]],
     ) -> dict[datetime, dict[float, list[dict[str, Any]]]]:
         plates: dict[datetime, dict[float, list[dict[str, Any]]]] = defaultdict(
             lambda: defaultdict(list)
@@ -426,7 +444,7 @@ class ProductionPlanningService:
                     placeholders = ",".join("?" * len(plate_ids))
                     cur.execute(
                         f"""
-                        SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw,
+                        SELECT id, plate_name, length_m, width_m, load_class, qty, length_dm_raw,
                                COALESCE(concrete_grade, '') AS concrete_grade
                         FROM kp_plates
                         WHERE kp_id = ? AND status = ?
@@ -438,22 +456,38 @@ class ProductionPlanningService:
                 else:
                     cur.execute(
                         """
-                        SELECT plate_name, length_m, width_m, load_class, qty, length_dm_raw,
+                        SELECT id, plate_name, length_m, width_m, load_class, qty, length_dm_raw,
                                COALESCE(concrete_grade, '') AS concrete_grade
                         FROM kp_plates
                         WHERE kp_id = ? AND status = ?
+                        ORDER BY position_number, id
                         """,
                         (kp_id, PlateStatus.IN_PRODUCTION.value),
                     )
 
                 for row in cur.fetchall():
-                    plate_name = row[0]
-                    length_m = row[1]
-                    width_m = row[2]
-                    load_class = row[3] or 800
-                    qty = int(row[4] or 0)
-                    length_dm_raw = (row[5] or "") if len(row) > 5 else ""
-                    concrete_grade_raw = str(row[6] or "").strip() if len(row) > 6 else ""
+                    plate_id = int(row[0])
+                    plate_name = row[1]
+                    length_m = row[2]
+                    width_m = row[3]
+                    load_class = row[4] or 800
+                    db_qty = int(row[5] or 0)
+                    length_dm_raw = (row[6] or "") if len(row) > 6 else ""
+                    concrete_grade_raw = str(row[7] or "").strip() if len(row) > 7 else ""
+
+                    qty_override = self._qty_override_for_plate(
+                        selected_plate_qty, kp_id, plate_id
+                    )
+                    if qty_override is not None:
+                        if qty_override > db_qty:
+                            raise ProductionPlanBuildError(
+                                f"КП #{kp_id}, плита #{plate_id}: запрошено {qty_override}, "
+                                f"доступно {db_qty}."
+                            )
+                        qty = qty_override
+                    else:
+                        qty = db_qty
+
                     if qty <= 0:
                         continue
 
@@ -497,6 +531,7 @@ class ProductionPlanningService:
                             "qty": qty,
                             "reinforcement": reinforcement,
                             "kp_id": kp_id,
+                            "kp_plate_id": plate_id,
                             "kp_date": kp["date"].strftime("%d.%m.%Y"),
                             "customer": kp["customer"],
                             "length_dm_raw": length_dm_raw,

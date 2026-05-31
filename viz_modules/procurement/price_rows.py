@@ -117,6 +117,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8, deps: Procu
         rest_cost = trim['rest_cost']
         rest_used = trim['rest_used']
         waste_cost = trim['waste_cost']
+        transverse_remainder_cost = trim['transverse_remainder_cost']
         trans_cuts += trim['trans_cuts']
         trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
 
@@ -145,7 +146,14 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8, deps: Procu
             qty=qty,
         )
 
-        unit_price = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost
+        unit_price = (
+            base_price
+            + long_cut_cost
+            + trans_cut_cost
+            + rest_cost
+            + waste_cost
+            + transverse_remainder_cost
+        )
         weight = cfg.approximate_weight_kg(L, W)
         row_sum = unit_price * qty
         total += row_sum
@@ -290,6 +298,7 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8, 
         rest_cost = trim['rest_cost']
         waste_cost = trim['waste_cost']
         rest_used = trim['rest_used']
+        transverse_remainder_cost = trim['transverse_remainder_cost']
         trans_cuts += trim['trans_cuts']
         trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
 
@@ -348,7 +357,15 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8, 
                 rearm_cost = rearm_diff * L * 0.170 * 80 * (width_mm / 1200.0)
                 print(f'[PRODUCTION PRICING] {name}: переармирование (остаток использован) = ({max_reinforcement:.1f} - {reinforcement:.1f}) × {L} × 0.170 × 80 × ({width_mm} / 1200) = {rearm_cost:.2f} руб')
 
-        unit_price = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost + rearm_cost
+        unit_price = (
+            base_price
+            + long_cut_cost
+            + trans_cut_cost
+            + rest_cost
+            + waste_cost
+            + transverse_remainder_cost
+            + rearm_cost
+        )
         weight = cfg.approximate_weight_kg(L, W)
         row_sum = unit_price * qty
         total += row_sum

@@ -12,6 +12,13 @@ import {
   useKpCandidatesQuery,
   useWorkCalendarQuery,
 } from "@/features/production/hooks/useProductionQueries";
+import {
+  allPlatesLengthM,
+  estimateFromLengthM,
+  estimateKpSelection,
+  selectedLengthM,
+  type ProductionEstimate,
+} from "@/features/production/lib/productionEstimate";
 import type {
   FillTargetItem,
   FilterMethod,
@@ -64,6 +71,9 @@ export const CreatePlanWizard = ({
   const [selectedPlatesByKp, setSelectedPlatesByKp] = useState<
     Record<number, number[]>
   >({});
+  const [selectedPlateQtyByKp, setSelectedPlateQtyByKp] = useState<
+    Record<number, Record<number, number>>
+  >({});
   const [expandedKpIds, setExpandedKpIds] = useState<Set<number>>(new Set());
   const [planName, setPlanName] = useState<string>("");
   const [calendarMonth, setCalendarMonth] = useState<Date>(() =>
@@ -78,7 +88,7 @@ export const CreatePlanWizard = ({
   const occupancyQuery = useDayOccupancyQuery();
   const calendarQuery = useGlobalCalendarQuery();
   const workCalendar = useWorkCalendarQuery();
-  const candidatesQuery = useKpCandidatesQuery(step === 3 && filterMethod === "kp");
+  const candidatesQuery = useKpCandidatesQuery(step === 3);
   const buildMutation = useBuildPlanMutation();
 
   const occupancy = occupancyQuery.data?.occupancy ?? {};
@@ -106,36 +116,94 @@ export const CreatePlanWizard = ({
     }
   }, [fillRequest, onFillRequestConsumed]);
 
+  const defaultQtyMap = (kp: KpCandidateItem, plateIds: number[]) => {
+    const map: Record<number, number> = {};
+    for (const plate of kp.plates) {
+      if (plateIds.includes(plate.id)) {
+        map[plate.id] = plate.qty;
+      }
+    }
+    return map;
+  };
+
   const toggleKp = (kp: KpCandidateItem) => {
     setSelectedPlatesByKp((prev) => {
       const next = { ...prev };
       if (kp.kp_id in next) {
         delete next[kp.kp_id];
+        setSelectedPlateQtyByKp((q) => {
+          const qn = { ...q };
+          delete qn[kp.kp_id];
+          return qn;
+        });
       } else {
-        next[kp.kp_id] = kp.plates.map((p) => p.id);
+        const ids = kp.plates.map((p) => p.id);
+        next[kp.kp_id] = ids;
+        setSelectedPlateQtyByKp((q) => ({
+          ...q,
+          [kp.kp_id]: defaultQtyMap(kp, ids),
+        }));
       }
       return next;
     });
   };
 
   const togglePlate = (kp: KpCandidateItem, plateId: number) => {
+    const plate = kp.plates.find((p) => p.id === plateId);
     setSelectedPlatesByKp((prev) => {
       const next = { ...prev };
       const current = next[kp.kp_id];
       if (current === undefined) {
         next[kp.kp_id] = [plateId];
+        if (plate) {
+          setSelectedPlateQtyByKp((q) => ({
+            ...q,
+            [kp.kp_id]: { ...(q[kp.kp_id] ?? {}), [plateId]: plate.qty },
+          }));
+        }
       } else if (current.includes(plateId)) {
         const filtered = current.filter((id) => id !== plateId);
         if (filtered.length === 0) {
           delete next[kp.kp_id];
+          setSelectedPlateQtyByKp((q) => {
+            const qn = { ...q };
+            delete qn[kp.kp_id];
+            return qn;
+          });
         } else {
           next[kp.kp_id] = filtered;
+          setSelectedPlateQtyByKp((q) => {
+            const perKp = { ...(q[kp.kp_id] ?? {}) };
+            delete perKp[plateId];
+            return { ...q, [kp.kp_id]: perKp };
+          });
         }
       } else {
         next[kp.kp_id] = [...current, plateId];
+        if (plate) {
+          setSelectedPlateQtyByKp((q) => ({
+            ...q,
+            [kp.kp_id]: { ...(q[kp.kp_id] ?? {}), [plateId]: plate.qty },
+          }));
+        }
       }
       return next;
     });
+  };
+
+  const setPlateQty = (kp: KpCandidateItem, plateId: number, rawQty: number) => {
+    const plate = kp.plates.find((p) => p.id === plateId);
+    if (!plate) {
+      return;
+    }
+    const clamped = Math.max(1, Math.min(plate.qty, Math.round(rawQty) || 1));
+    setSelectedPlateQtyByKp((prev) => ({
+      ...prev,
+      [kp.kp_id]: {
+        ...(prev[kp.kp_id] ?? {}),
+        [plateId]: clamped,
+      },
+    }));
   };
 
   const toggleExpand = (kpId: number) => {
@@ -151,6 +219,78 @@ export const CreatePlanWizard = ({
   };
 
   const isFillMode = fillTargets !== null;
+
+  const tracksPerDay =
+    isFillMode && fillTargets && fillTargets.length > 0
+      ? Math.max(...fillTargets.map((t) => t.tracks))
+      : tracksCount;
+  const tracksPerDaySource: "шаг 2" | "дозаполнение" =
+    isFillMode && fillTargets && fillTargets.length > 0
+      ? "дозаполнение"
+      : "шаг 2";
+
+  const selectionEstimate = useMemo((): ProductionEstimate | null => {
+    const items = candidatesQuery.data?.items;
+    if (!items?.length) {
+      return null;
+    }
+    if (filterMethod === "all") {
+      const length = items.reduce((sum, kp) => sum + allPlatesLengthM(kp), 0);
+      if (length <= 0) {
+        return null;
+      }
+      return estimateFromLengthM(length, tracksPerDay);
+    }
+    let totalLength = 0;
+    for (const kp of items) {
+      const ids = selectedPlatesByKp[kp.kp_id];
+      if (!ids?.length) {
+        continue;
+      }
+      totalLength += selectedLengthM(
+        kp,
+        ids,
+        selectedPlateQtyByKp[kp.kp_id] ?? {},
+      );
+    }
+    if (totalLength <= 0) {
+      return null;
+    }
+    return estimateFromLengthM(totalLength, tracksPerDay);
+  }, [
+    candidatesQuery.data,
+    filterMethod,
+    selectedPlatesByKp,
+    selectedPlateQtyByKp,
+    tracksPerDay,
+  ]);
+
+  const estimateByKpId = useMemo(() => {
+    const map = new Map<number, ProductionEstimate | null>();
+    const items = candidatesQuery.data?.items;
+    if (!items) {
+      return map;
+    }
+    for (const kp of items) {
+      const ids = selectedPlatesByKp[kp.kp_id] ?? [];
+      map.set(
+        kp.kp_id,
+        estimateKpSelection(
+          kp,
+          ids,
+          selectedPlateQtyByKp[kp.kp_id] ?? {},
+          tracksPerDay,
+        ),
+      );
+    }
+    return map;
+  }, [
+    candidatesQuery.data,
+    selectedPlatesByKp,
+    selectedPlateQtyByKp,
+    tracksPerDay,
+  ]);
+
   const canProceedStep1 = Boolean(startDate);
   const canProceedStep2 = tracksCount >= 1 && tracksCount <= 50;
   const hasAnyPlateSelected =
@@ -198,6 +338,39 @@ export const CreatePlanWizard = ({
       }
     }
 
+    let selectedPlateQty: Record<number, Record<number, number>> | undefined;
+    if (filterMethod === "kp" && candidatesQuery.data) {
+      const candidatesByKp = new Map(
+        candidatesQuery.data.items.map((kp) => [kp.kp_id, kp]),
+      );
+      const qtyPayload: Record<number, Record<number, number>> = {};
+      for (const [kpIdStr, plateIds] of Object.entries(selectedPlatesByKp)) {
+        if (plateIds.length === 0) {
+          continue;
+        }
+        const kpId = Number(kpIdStr);
+        const kp = candidatesByKp.get(kpId);
+        if (!kp) {
+          continue;
+        }
+        const perPlate: Record<number, number> = {};
+        for (const plateId of plateIds) {
+          const plate = kp.plates.find((p) => p.id === plateId);
+          if (!plate) {
+            continue;
+          }
+          perPlate[plateId] =
+            selectedPlateQtyByKp[kpId]?.[plateId] ?? plate.qty;
+        }
+        if (Object.keys(perPlate).length > 0) {
+          qtyPayload[kpId] = perPlate;
+        }
+      }
+      if (Object.keys(qtyPayload).length > 0) {
+        selectedPlateQty = qtyPayload;
+      }
+    }
+
     // В режиме fill_targets бэк сам пересчитает start_date / tracks_count из
     // массива таргетов. Передаём здесь min(date) и max(tracks), чтобы запрос
     // прошёл базовую Pydantic-валидацию (start_date != "", tracks_count >= 1).
@@ -213,6 +386,7 @@ export const CreatePlanWizard = ({
         filter_method: filterMethod,
         selected_kp_ids: filterMethod === "kp" ? selectedKpIds : undefined,
         selected_plate_ids: partialPlateIds,
+        selected_plate_qty: selectedPlateQty,
         plan_name: planName.trim() ? planName.trim() : undefined,
         fill_targets: fillTargets ?? undefined,
       },
@@ -220,6 +394,7 @@ export const CreatePlanWizard = ({
         onSuccess: () => {
           setStep(1);
           setSelectedPlatesByKp({});
+          setSelectedPlateQtyByKp({});
           setExpandedKpIds(new Set());
           setPlanName("");
           setFillTargets(null);
@@ -233,6 +408,7 @@ export const CreatePlanWizard = ({
     setFillTargets(null);
     setStep(1);
     setSelectedPlatesByKp({});
+    setSelectedPlateQtyByKp({});
     setExpandedKpIds(new Set());
     onCancelFill?.();
   };
@@ -388,6 +564,25 @@ export const CreatePlanWizard = ({
             </div>
           </FieldWrapper>
 
+          {candidatesQuery.isLoading && (
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <Spinner /> Загрузка данных для оценки…
+            </div>
+          )}
+
+          {selectionEstimate && (
+            <ProductionEstimateAlert
+              estimate={selectionEstimate}
+              tracksPerDay={tracksPerDay}
+              tracksPerDaySource={tracksPerDaySource}
+              label={
+                filterMethod === "all"
+                  ? "Оценка по всем КП в работе"
+                  : "Оценка выбранного"
+              }
+            />
+          )}
+
           {filterMethod === "kp" && (
             <div style={{ border: "1px solid #e4e7ec", borderRadius: 14, overflow: "hidden" }}>
               {candidatesQuery.isLoading && (
@@ -412,6 +607,8 @@ export const CreatePlanWizard = ({
                       <th style={thStyle}>Выполнено</th>
                       <th style={thStyle}>В плане</th>
                       <th style={thStyle}>Длина, м</th>
+                      <th style={thStyle}>≈ дор.</th>
+                      <th style={thStyle}>≈ дн.</th>
                       <th style={thStyle}>Плиты</th>
                     </tr>
                   </thead>
@@ -419,7 +616,7 @@ export const CreatePlanWizard = ({
                     {candidatesQuery.data.items.length === 0 && (
                       <tr>
                         <td
-                          colSpan={9}
+                          colSpan={11}
                           style={{ padding: "1rem", textAlign: "center", color: "#475467" }}
                         >
                           Нет КП в работе с неразмещёнными плитами.
@@ -428,12 +625,33 @@ export const CreatePlanWizard = ({
                     )}
                     {candidatesQuery.data.items.map((kp) => {
                       const totalPlates = kp.plates.length;
+                      const totalQty = kp.plates.reduce((s, p) => s + p.qty, 0);
                       const selected = selectedPlatesByKp[kp.kp_id];
-                      const selectedCount = selected?.length ?? 0;
-                      const isChecked = selectedCount === totalPlates && totalPlates > 0;
+                      const selectedIds = selected ?? [];
+                      const selectedCount = selectedIds.length;
+                      const qtyByPlate = selectedPlateQtyByKp[kp.kp_id] ?? {};
+                      const selectedQty = selectedIds.reduce((sum, id) => {
+                        const plate = kp.plates.find((p) => p.id === id);
+                        if (!plate) {
+                          return sum;
+                        }
+                        return sum + (qtyByPlate[id] ?? plate.qty);
+                      }, 0);
+                      const hasPartialQty = kp.plates.some((p) => {
+                        if (!selectedIds.includes(p.id)) {
+                          return false;
+                        }
+                        return (qtyByPlate[p.id] ?? p.qty) < p.qty;
+                      });
+                      const isChecked =
+                        selectedCount === totalPlates &&
+                        totalPlates > 0 &&
+                        !hasPartialQty;
                       const isIndeterminate =
-                        selectedCount > 0 && selectedCount < totalPlates;
+                        (selectedCount > 0 && selectedCount < totalPlates) ||
+                        hasPartialQty;
                       const isExpanded = expandedKpIds.has(kp.kp_id);
+                      const rowEstimate = estimateByKpId.get(kp.kp_id) ?? null;
                       return (
                         <ExpandableKpRow
                           key={kp.kp_id}
@@ -441,11 +659,17 @@ export const CreatePlanWizard = ({
                           isExpanded={isExpanded}
                           isChecked={isChecked}
                           isIndeterminate={isIndeterminate}
-                          selectedCount={selectedCount}
-                          selectedIds={selected ?? []}
+                          selectedQty={selectedQty}
+                          totalQty={totalQty}
+                          selectedIds={selectedIds}
+                          plateQtyById={qtyByPlate}
+                          rowEstimate={rowEstimate}
                           onToggleKp={() => toggleKp(kp)}
                           onToggleExpand={() => toggleExpand(kp.kp_id)}
                           onTogglePlate={(plateId) => togglePlate(kp, plateId)}
+                          onSetPlateQty={(plateId, qty) =>
+                            setPlateQty(kp, plateId, qty)
+                          }
                         />
                       );
                     })}
@@ -518,16 +742,40 @@ const subTdStyle = {
   color: "#1d2939",
 };
 
+type ProductionEstimateAlertProps = {
+  estimate: ProductionEstimate;
+  tracksPerDay: number;
+  tracksPerDaySource: "шаг 2" | "дозаполнение";
+  label: string;
+};
+
+const ProductionEstimateAlert = ({
+  estimate,
+  tracksPerDay,
+  tracksPerDaySource,
+  label,
+}: ProductionEstimateAlertProps) => (
+  <Alert tone="info">
+    {label}: ~{estimate.estimated_tracks} дорожек, ~{estimate.estimated_days} дней
+    (суммарная длина {estimate.total_length_m.toFixed(1)} м, при {tracksPerDay} дор./день —{" "}
+    {tracksPerDaySource}).
+  </Alert>
+);
+
 type ExpandableKpRowProps = {
   kp: KpCandidateItem;
   isExpanded: boolean;
   isChecked: boolean;
   isIndeterminate: boolean;
-  selectedCount: number;
+  selectedQty: number;
+  totalQty: number;
   selectedIds: number[];
+  plateQtyById: Record<number, number>;
+  rowEstimate: ProductionEstimate | null;
   onToggleKp: () => void;
   onToggleExpand: () => void;
   onTogglePlate: (plateId: number) => void;
+  onSetPlateQty: (plateId: number, qty: number) => void;
 };
 
 const ExpandableKpRow = ({
@@ -535,11 +783,15 @@ const ExpandableKpRow = ({
   isExpanded,
   isChecked,
   isIndeterminate,
-  selectedCount,
+  selectedQty,
+  totalQty,
   selectedIds,
+  plateQtyById,
+  rowEstimate,
   onToggleKp,
   onToggleExpand,
   onTogglePlate,
+  onSetPlateQty,
 }: ExpandableKpRowProps) => {
   const checkboxRef = useRef<HTMLInputElement | null>(null);
   const totalPlates = kp.plates.length;
@@ -590,15 +842,21 @@ const ExpandableKpRow = ({
         <td style={tdStyle}>{kp.in_plan_pct.toFixed(0)}%</td>
         <td style={tdStyle}>{kp.total_length_m.toFixed(1)}</td>
         <td style={tdStyle}>
+          {rowEstimate ? `~${rowEstimate.estimated_tracks}` : "—"}
+        </td>
+        <td style={tdStyle}>
+          {rowEstimate ? `~${rowEstimate.estimated_days}` : "—"}
+        </td>
+        <td style={tdStyle}>
           <span style={{ color: isIndeterminate ? "#b54708" : "#101828" }}>
-            {selectedCount}/{totalPlates}
+            {selectedQty}/{totalQty}
           </span>
         </td>
       </tr>
       {isExpanded && (
         <tr style={{ background: "#fafbff" }}>
           <td style={{ padding: 0 }} />
-          <td colSpan={8} style={{ padding: "0.5rem 0.75rem 0.85rem" }}>
+          <td colSpan={10} style={{ padding: "0.5rem 0.75rem 0.85rem" }}>
             {totalPlates === 0 ? (
               <div style={{ color: "#475467" }}>
                 У этой КП нет плит со статусом «в производстве».
@@ -618,6 +876,7 @@ const ExpandableKpRow = ({
                 <tbody>
                   {kp.plates.map((plate) => {
                     const plateChecked = selectedSet.has(plate.id);
+                    const displayQty = plateQtyById[plate.id] ?? plate.qty;
                     return (
                       <tr key={plate.id} style={{ borderTop: "1px solid #eef2f6" }}>
                         <td style={subTdStyle}>
@@ -630,7 +889,18 @@ const ExpandableKpRow = ({
                         <td style={subTdStyle}>{plate.plate_name || "—"}</td>
                         <td style={subTdStyle}>{plate.length_m.toFixed(2)}</td>
                         <td style={subTdStyle}>{plate.width_m.toFixed(2)}</td>
-                        <td style={subTdStyle}>{plate.qty}</td>
+                        <td style={subTdStyle}>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={plate.qty}
+                            value={displayQty}
+                            disabled={!plateChecked}
+                            onChange={(e) =>
+                              onSetPlateQty(plate.id, Number(e.target.value))
+                            }
+                          />
+                        </td>
                         <td style={subTdStyle}>
                           {plate.load_class !== null ? plate.load_class : "—"}
                         </td>

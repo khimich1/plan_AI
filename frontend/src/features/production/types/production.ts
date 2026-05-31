@@ -141,6 +141,8 @@ export interface BuildPlanRequest {
   filter_method: FilterMethod;
   selected_kp_ids?: number[];
   selected_plate_ids?: Record<number, number[]>;
+  /** КП → id строки kp_plates → количество для этого плана (не больше qty в БД). */
+  selected_plate_qty?: Record<number, Record<number, number>>;
   active_plan_id?: string | null;
   plan_name?: string | null;
   fill_targets?: FillTargetItem[];

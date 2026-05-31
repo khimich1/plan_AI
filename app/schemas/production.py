@@ -99,6 +99,7 @@ class BuildPlanRequest(BaseModel):
     filter_method: Literal["all", "kp"]
     selected_kp_ids: list[int] = Field(default_factory=list)
     selected_plate_ids: dict[int, list[int]] = Field(default_factory=dict)
+    selected_plate_qty: dict[int, dict[int, int]] = Field(default_factory=dict)
     active_plan_id: str | None = None
     plan_name: str | None = None
     fill_targets: list[FillTargetItem] | None = None
@@ -107,6 +108,19 @@ class BuildPlanRequest(BaseModel):
     @classmethod
     def _unique_kp_ids(cls, value: list[int]) -> list[int]:
         return list(dict.fromkeys(value))
+
+    @field_validator("selected_plate_qty")
+    @classmethod
+    def _validate_selected_plate_qty(
+        cls, value: dict[int, dict[int, int]]
+    ) -> dict[int, dict[int, int]]:
+        for kp_id, plates in value.items():
+            for plate_id, qty in plates.items():
+                if int(qty) < 1:
+                    raise ValueError(
+                        f"Количество плиты #{plate_id} (КП #{kp_id}) должно быть не меньше 1"
+                    )
+        return value
 
     @field_validator("fill_targets")
     @classmethod
