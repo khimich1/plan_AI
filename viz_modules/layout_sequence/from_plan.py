@@ -16,6 +16,7 @@ from viz_modules.layout_sequence.debug_trace import append_json_line, layout_seq
 from viz_modules.layout_sequence.deps import LayoutSequenceDeps
 from viz_modules.layout_sequence.helpers import (
     choose_best_separator,
+    choose_closest_solid,
     ensure_sequence_layout_uid,
     get_reinforcement_from_map,
     split_group_into_subgroups,
@@ -76,10 +77,18 @@ def _append_inter_group_separator(
     next_group: list[dict[str, Any]],
     reinforcement_map: dict[Any, Any],
     vis_log: logging.Logger,
+    *,
+    reinforcement_order: str = "asc",
 ) -> None:
     if not solid_cuts_list:
         return
-    best_idx = choose_best_separator(solid_cuts_list, next_group, reinforcement_map, log=vis_log)
+    best_idx = choose_best_separator(
+        solid_cuts_list,
+        next_group,
+        reinforcement_map,
+        reinforcement_order=reinforcement_order,  # type: ignore[arg-type]
+        log=vis_log,
+    )
     if best_idx is not None:
         separator = solid_cuts_list.pop(best_idx)
         separator["is_separator"] = True
@@ -92,12 +101,34 @@ def _append_inter_group_separator(
         vis_log.info("[VISUAL] ✓ Разделитель: целая плита между группами (fallback, is_separator=True)")
 
 
+def _append_closest_solid_before_group(
+    ordered_cuts: list[dict[str, Any]],
+    solid_cuts_list: list[dict[str, Any]],
+    cut_group: list[dict[str, Any]],
+    reinforcement_map: dict[Any, Any],
+    vis_log: logging.Logger,
+) -> None:
+    if not solid_cuts_list:
+        return
+    rg = float(cut_group[0].get("reinforcement", 999.0))
+    best_idx = choose_closest_solid(solid_cuts_list, rg, reinforcement_map, log=vis_log)
+    if best_idx is not None:
+        ordered_cuts.append(solid_cuts_list.pop(best_idx))
+        vis_log.info(
+            "[VISUAL] ✓ Match-greedy: целая с близкой нагрузкой (%.1f кг/м) перед группой резов",
+            rg,
+        )
+
+
 def _append_one_cut_group_to_ordered(
     ordered_cuts: list[dict[str, Any]],
     cut_group: list[dict[str, Any]],
     group_index_1based: int,
     solid_cuts_list: list[dict[str, Any]],
     vis_log: logging.Logger,
+    *,
+    reinforcement_order: str = "asc",
+    reinforcement_map: dict[Any, Any] | None = None,
 ) -> None:
     total_group_length = sum(cut["lengths"][0] * cut["qty"] for cut in cut_group if cut.get("lengths"))
     vis_log.info(
@@ -113,7 +144,15 @@ def _append_one_cut_group_to_ordered(
             ordered_cuts.extend(subgroup)
             vis_log.info(f"[VISUAL]   Добавлена подгруппа #{group_index_1based}.{j+1}: {len(subgroup)} плит")
             if j < len(subgroups) - 1 and solid_cuts_list:
-                separator = solid_cuts_list.pop(0)
+                if reinforcement_order == "desc" and reinforcement_map is not None:
+                    next_subgroup = subgroups[j + 1]
+                    target_reinf = float(next_subgroup[0].get("reinforcement", 999.0))
+                    sep_idx = choose_closest_solid(
+                        solid_cuts_list, target_reinf, reinforcement_map, log=vis_log
+                    )
+                    separator = solid_cuts_list.pop(sep_idx if sep_idx is not None else 0)
+                else:
+                    separator = solid_cuts_list.pop(0)
                 separator["is_separator"] = True
                 ordered_cuts.append(separator)
                 vis_log.info("[VISUAL]   ✓ Разделитель между подгруппами: целая плита")
@@ -349,7 +388,13 @@ def _build_sequence_from_plan_impl(
             )
             or 999.0
         )
-    solid_cuts.sort(key=lambda x: (x.get("reinforcement", 999.0), -x["lengths"][0] if x.get("lengths") else 0))
+    solid_cuts.sort(
+        key=lambda x: (
+            (-x.get("reinforcement", 999.0), -(x["lengths"][0] if x.get("lengths") else 0))
+            if layout_cfg.layout_reinforcement_order == "desc"
+            else (x.get("reinforcement", 999.0), -x["lengths"][0] if x.get("lengths") else 0)
+        )
+    )
 
     cut_with_rest_raw = [cut for cut in all_primary_cuts if cut["rest"] > 0]
     if synthetic_orphan_primary_cuts:
@@ -368,7 +413,11 @@ def _build_sequence_from_plan_impl(
 
     cut_with_rest = sorted(
         cut_with_rest_raw,
-        key=lambda x: (x.get("reinforcement", 999.0), x["width"], x["rest"]),
+        key=lambda x: (
+            (-x.get("reinforcement", 999.0), x["width"], x["rest"])
+            if layout_cfg.layout_reinforcement_order == "desc"
+            else (x.get("reinforcement", 999.0), x["width"], x["rest"])
+        ),
     )
 
     vis_log.info(f"[VISUAL] Разделение: {len(solid_cuts)} типов целых плит, {len(cut_with_rest)} типов с резом")
@@ -415,13 +464,31 @@ def _build_sequence_from_plan_impl(
         first_width = first_plate.get("width", 1200)
         vis_log.info(f"[VISUAL] ✓ Первая плита: целая {first_width}мм")
 
-    use_greedy = bool(layout_cfg.layout_greedy_reinf_merge)
-    if use_greedy and cut_groups:
-        vis_log.info("[VISUAL] Режим: жадное чередование целых и групп с резом по мин. армированию")
+    _reinf_order = layout_cfg.layout_reinforcement_order
+    use_asc_greedy = bool(layout_cfg.layout_greedy_reinf_merge) and _reinf_order == "asc"
+    use_desc_match = _reinf_order == "desc"
 
-    if not use_greedy:
+    if use_asc_greedy and cut_groups:
+        vis_log.info("[VISUAL] Режим: жадное чередование целых и групп с резом по мин. армированию")
+    elif use_desc_match and cut_groups:
+        vis_log.info(
+            "[VISUAL] Режим desc: match-greedy — целая с близкой нагрузкой перед группой резов"
+        )
+
+    if use_desc_match:
         for i, cut_group in enumerate(cut_groups):
-            _append_one_cut_group_to_ordered(ordered_cuts, cut_group, i + 1, solid_cuts_list, vis_log)
+            _append_closest_solid_before_group(
+                ordered_cuts, solid_cuts_list, cut_group, reinforcement_map, vis_log
+            )
+            _append_one_cut_group_to_ordered(
+                ordered_cuts,
+                cut_group,
+                i + 1,
+                solid_cuts_list,
+                vis_log,
+                reinforcement_order=_reinf_order,
+                reinforcement_map=reinforcement_map,
+            )
             if i < len(cut_groups) - 1 and solid_cuts_list:
                 _append_inter_group_separator(
                     ordered_cuts,
@@ -429,6 +496,30 @@ def _build_sequence_from_plan_impl(
                     cut_groups[i + 1],
                     reinforcement_map,
                     vis_log,
+                    reinforcement_order=_reinf_order,
+                )
+        if solid_cuts_list:
+            ordered_cuts.extend(solid_cuts_list)
+            vis_log.info(f"[VISUAL] Добавлено {len(solid_cuts_list)} оставшихся целых плит в конец")
+    elif not use_asc_greedy:
+        for i, cut_group in enumerate(cut_groups):
+            _append_one_cut_group_to_ordered(
+                ordered_cuts,
+                cut_group,
+                i + 1,
+                solid_cuts_list,
+                vis_log,
+                reinforcement_order=_reinf_order,
+                reinforcement_map=reinforcement_map,
+            )
+            if i < len(cut_groups) - 1 and solid_cuts_list:
+                _append_inter_group_separator(
+                    ordered_cuts,
+                    solid_cuts_list,
+                    cut_groups[i + 1],
+                    reinforcement_map,
+                    vis_log,
+                    reinforcement_order=_reinf_order,
                 )
         if solid_cuts_list:
             ordered_cuts.extend(solid_cuts_list)
@@ -463,19 +554,41 @@ def _build_sequence_from_plan_impl(
                 continue
 
             if last_was_cut_group and solid_cuts_list:
-                _append_inter_group_separator(ordered_cuts, solid_cuts_list, cut_group, reinforcement_map, vis_log)
+                _append_inter_group_separator(
+                    ordered_cuts, solid_cuts_list, cut_group, reinforcement_map, vis_log,
+                    reinforcement_order=_reinf_order,
+                )
                 last_was_cut_group = False
 
-            _append_one_cut_group_to_ordered(ordered_cuts, cut_group, cut_idx + 1, solid_cuts_list, vis_log)
+            _append_one_cut_group_to_ordered(
+                ordered_cuts,
+                cut_group,
+                cut_idx + 1,
+                solid_cuts_list,
+                vis_log,
+                reinforcement_order=_reinf_order,
+                reinforcement_map=reinforcement_map,
+            )
             cut_idx += 1
             last_was_cut_group = True
 
         while cut_idx < len(cut_groups):
             cut_group = cut_groups[cut_idx]
             if last_was_cut_group and solid_cuts_list:
-                _append_inter_group_separator(ordered_cuts, solid_cuts_list, cut_group, reinforcement_map, vis_log)
+                _append_inter_group_separator(
+                    ordered_cuts, solid_cuts_list, cut_group, reinforcement_map, vis_log,
+                    reinforcement_order=_reinf_order,
+                )
                 last_was_cut_group = False
-            _append_one_cut_group_to_ordered(ordered_cuts, cut_group, cut_idx + 1, solid_cuts_list, vis_log)
+            _append_one_cut_group_to_ordered(
+                ordered_cuts,
+                cut_group,
+                cut_idx + 1,
+                solid_cuts_list,
+                vis_log,
+                reinforcement_order=_reinf_order,
+                reinforcement_map=reinforcement_map,
+            )
             cut_idx += 1
             last_was_cut_group = True
 

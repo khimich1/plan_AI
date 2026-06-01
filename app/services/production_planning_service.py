@@ -64,6 +64,7 @@ class ProductionPlanningService:
         active_plan_id: str | None = None,
         plan_name: str | None = None,
         fill_targets: list[dict[str, Any]] | None = None,
+        layout_reinforcement_order: str = "asc",
     ) -> dict[str, Any]:
         """Собирает план по заданным фильтрам.
 
@@ -144,7 +145,8 @@ class ProductionPlanningService:
         # #endregion
 
         all_tracks_list, optimization_result = self._run_optimization_and_split(
-            orders_2d=orders_2d
+            orders_2d=orders_2d,
+            layout_reinforcement_order=layout_reinforcement_order,
         )
         if not all_tracks_list:
             raise ProductionPlanBuildError("Оптимизация не дала результата.")
@@ -204,6 +206,7 @@ class ProductionPlanningService:
             precomputed_tracks_by_day=precomputed_tracks_by_day,
         )
         plan_id = plan["id"]
+        plan["layout_reinforcement_order"] = layout_reinforcement_order
 
         # P5: собираем tracks_by_day из готового plan'а — там tracks уже
         # разложены по датам и имеют day_number в day-ноде. Прокидываем
@@ -628,7 +631,10 @@ class ProductionPlanningService:
         return orders_2d, plate_lookup_exact, plate_lookup_by_length
 
     def _run_optimization_and_split(
-        self, *, orders_2d: list[dict[str, Any]]
+        self,
+        *,
+        orders_2d: list[dict[str, Any]],
+        layout_reinforcement_order: str = "asc",
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         if not orders_2d:
             return [], {}
@@ -690,7 +696,9 @@ class ProductionPlanningService:
             from viz_modules.layout_sequence import build_layout_sequence
 
             with self.optimization_service.legacy_runtime(context):
-                _layout_rt = build_layout_runtime_snapshot()
+                _layout_rt = build_layout_runtime_snapshot(
+                    layout_reinforcement_order=layout_reinforcement_order,  # type: ignore[arg-type]
+                )
                 seq = build_layout_sequence(runtime=_layout_rt)
                 try:
                     all_tracks_list = split_sequence_into_tracks(

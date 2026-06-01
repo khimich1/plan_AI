@@ -93,6 +93,9 @@ class FillTargetItem(BaseModel):
     tracks: int = Field(ge=1, le=50)
 
 
+LayoutReinforcementOrder = Literal["asc", "desc"]
+
+
 class BuildPlanRequest(BaseModel):
     start_date: str
     tracks_count: int = Field(ge=1, le=50)
@@ -103,6 +106,7 @@ class BuildPlanRequest(BaseModel):
     active_plan_id: str | None = None
     plan_name: str | None = None
     fill_targets: list[FillTargetItem] | None = None
+    layout_reinforcement_order: LayoutReinforcementOrder = "asc"
 
     @field_validator("selected_kp_ids")
     @classmethod

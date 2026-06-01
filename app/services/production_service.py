@@ -99,6 +99,7 @@ class ProductionService:
         active_plan_id: str | None = None,
         plan_name: str | None = None,
         fill_targets: list[dict[str, Any]] | None = None,
+        layout_reinforcement_order: str = "asc",
     ) -> dict[str, Any]:
         return self.planning_service.build_plan(
             start_date=start_date,
@@ -110,6 +111,7 @@ class ProductionService:
             active_plan_id=active_plan_id,
             plan_name=plan_name,
             fill_targets=fill_targets,
+            layout_reinforcement_order=layout_reinforcement_order,
         )
 
     def get_calendar(self) -> dict | None:

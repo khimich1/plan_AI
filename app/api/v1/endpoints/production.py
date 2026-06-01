@@ -69,6 +69,7 @@ def build_plan_from_filters(
                 if payload.fill_targets
                 else None
             ),
+            layout_reinforcement_order=payload.layout_reinforcement_order,
         )
     except ProductionPlanBuildError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))

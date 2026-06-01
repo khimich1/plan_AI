@@ -312,7 +312,7 @@ export const CreatePlanWizard = ({
       ". Лишние плиты остаются «в производстве»."
     : undefined;
 
-  const handleSubmit = () => {
+  const handleSubmit = (order: "asc" | "desc" = "asc") => {
     const selectedKpIds = Object.entries(selectedPlatesByKp)
       .filter(([, ids]) => ids.length > 0)
       .map(([kpId]) => Number(kpId));
@@ -389,6 +389,7 @@ export const CreatePlanWizard = ({
         selected_plate_qty: selectedPlateQty,
         plan_name: planName.trim() ? planName.trim() : undefined,
         fill_targets: fillTargets ?? undefined,
+        layout_reinforcement_order: order,
       },
       {
         onSuccess: () => {
@@ -690,23 +691,43 @@ export const CreatePlanWizard = ({
             </Alert>
           )}
 
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            {isFillMode ? (
-              <Button variant="ghost" onClick={handleCancelFill}>
-                ← К календарю
-              </Button>
-            ) : (
-              <Button variant="ghost" onClick={() => setStep(2)}>
-                ← Назад
-              </Button>
-            )}
-            <Button onClick={handleSubmit} disabled={!canSubmit}>
-              {buildMutation.isPending
-                ? "Строим план…"
-                : isFillMode
-                  ? "Запустить дозаполнение"
-                  : "Запустить планирование"}
-            </Button>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            <p style={{ margin: 0, fontSize: "0.85rem", color: "#667085" }}>
+              Режим «сильные первыми»: сильные группы и первая плита первыми; перед каждой
+              группой резов подбирается целая с ближайшей нагрузкой. Экспериментальный режим —
+              возможен рост переармирования ранних дорожек.
+            </p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              {isFillMode ? (
+                <Button variant="ghost" onClick={handleCancelFill}>
+                  ← К календарю
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={() => setStep(2)}>
+                  ← Назад
+                </Button>
+              )}
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <Button
+                  variant="secondary"
+                  onClick={() => handleSubmit("desc")}
+                  disabled={!canSubmit}
+                >
+                  {buildMutation.isPending
+                    ? "Строим план…"
+                    : isFillMode
+                      ? "Дозаполнение: сильные первыми"
+                      : "Планирование: сильные первыми"}
+                </Button>
+                <Button onClick={() => handleSubmit("asc")} disabled={!canSubmit}>
+                  {buildMutation.isPending
+                    ? "Строим план…"
+                    : isFillMode
+                      ? "Запустить дозаполнение"
+                      : "Запустить планирование"}
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       )}

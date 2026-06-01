@@ -135,6 +135,8 @@ export interface FillTargetItem {
   tracks: number;
 }
 
+export type LayoutReinforcementOrder = "asc" | "desc";
+
 export interface BuildPlanRequest {
   start_date: string;
   tracks_count: number;
@@ -146,6 +148,8 @@ export interface BuildPlanRequest {
   active_plan_id?: string | null;
   plan_name?: string | null;
   fill_targets?: FillTargetItem[];
+  /** asc — слабые первыми (по умолчанию); desc — сильные первыми (экспериментальный режим). */
+  layout_reinforcement_order?: LayoutReinforcementOrder;
 }
 
 export interface BuildPlanSummary {

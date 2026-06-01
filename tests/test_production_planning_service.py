@@ -77,7 +77,7 @@ def planning_service(tmp_plita, monkeypatch):
         pb_db_path=tmp_plita,  # reinforcement через series — не используется в тесте
     )
 
-    def fake_optimize(self, *, orders_2d):
+    def fake_optimize(self, *, orders_2d, layout_reinforcement_order="asc"):
         """Симулирует успешную оптимизацию: 3 плиты → 1 дорожка."""
         if not orders_2d:
             return [], {}
@@ -144,7 +144,7 @@ def test_optimization_service_preserves_identity_orders(monkeypatch):
     ]
     captured: dict[str, list[dict]] = {}
 
-    def fake_optimize(*, orders_2d):
+    def fake_optimize(*, orders_2d, **kwargs):
         captured["orders_2d"] = orders_2d
         order = orders_2d[0]
         return {
@@ -218,7 +218,7 @@ def planning_service_qty7(tmp_plita_qty7, tmp_path, monkeypatch):
         pb_db_path=db_path,
     )
 
-    def fake_optimize(self, *, orders_2d):
+    def fake_optimize(self, *, orders_2d, **kwargs):
         if not orders_2d:
             return [], {}
         order = orders_2d[0]
@@ -348,6 +348,18 @@ def test_build_plan_marks_plates_and_second_call_fails(planning_service, tmp_pli
             tracks_count=3,
             filter_method="all",
         )
+
+
+def test_build_plan_desc_reinforcement_order_smoke(planning_service, tmp_plita):
+    """build_plan с layout_reinforcement_order=desc не падает и сохраняет режим в плане."""
+    result = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+        layout_reinforcement_order="desc",
+    )
+    assert result["plan"]["id"]
+    assert result["plan"].get("layout_reinforcement_order") == "desc"
 
 
 def test_complete_day_moves_plates_and_marks_kp_completed(planning_service, tmp_plita):
@@ -557,7 +569,7 @@ def test_full_cycle_no_stuck_plates(tmp_plita, monkeypatch):
         )
         conn.commit()
 
-    def fake_optimize_with_secondary(self, *, orders_2d):
+    def fake_optimize_with_secondary(self, *, orders_2d, **kwargs):
         if not orders_2d:
             return [], {}
         primary_order = next(o for o in orders_2d if int(round(float(o["width"]))) == 1200)

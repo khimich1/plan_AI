@@ -83,7 +83,7 @@ def planning_service(tmp_plita, monkeypatch):
         pb_db_path=tmp_plita,
     )
 
-    def fake_optimize(self, *, orders_2d):
+    def fake_optimize(self, *, orders_2d, **kwargs):
         if not orders_2d:
             return [], {}
         order = orders_2d[0]
@@ -333,7 +333,7 @@ def test_kp_plates_day_view_invariant_with_secondary_cuts(tmp_plita, monkeypatch
 
     from app.services.production_planning_service import ProductionPlanningService
 
-    def fake_optimize_with_secondary(self, *, orders_2d):
+    def fake_optimize_with_secondary(self, *, orders_2d, **kwargs):
         if not orders_2d:
             return [], {}
         primary_order = next(
