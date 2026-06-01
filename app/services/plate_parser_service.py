@@ -11,7 +11,7 @@ from app.repositories.kp_repository import KpRepository
 from core import config_and_data as legacy_cfg
 from core.exceptions import PlateParseError
 from core.kp_db import lookup_nomenclature_by_plate_name
-from core.plate_line_parser import parse_line
+from core.plate_line_parser import build_lwh_mm_load_warning, parse_line
 from core.plate_text_normalizer import get_wide_plate_lines, normalize_order_text
 from core.plate_validation import validate_plate_values
 
@@ -44,6 +44,7 @@ class PlateParserService:
         unparsed_lines: list[str] = []
         line_contributions: list[list[tuple[float, float, float | None, str]]] = [[] for _ in lines]
         line_plate_load_details: list[dict[tuple, int]] = [{} for _ in lines]
+        lwh_mm_assumed_lines: list[str] = []
 
         def record_contribution(
             line_idx: int,
@@ -171,12 +172,18 @@ class PlateParserService:
             )
             diagnostic["validation_status"] = "ok"
             diagnostic["normalized_input"] = raw
+            if parsed_line.load_assumed:
+                diagnostic["load_assumed"] = True
+                diagnostic["load_warning_code"] = "lwh_mm_default_load"
+                lwh_mm_assumed_lines.append(raw)
             diagnostics.append(diagnostic)
 
         order.recompute_totals()
         self._fill_nomenclature_cache(order)
 
         warnings = list(normalization.warnings)
+        if lwh_mm_assumed_lines:
+            warnings.append(build_lwh_mm_load_warning(lwh_mm_assumed_lines))
         if unparsed_lines:
             warnings.append(f"Не удалось распознать строк: {len(unparsed_lines)}")
 

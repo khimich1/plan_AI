@@ -232,12 +232,15 @@ async def receive_plates_list(message: Message, state: FSMContext):
     is_photo = False
     raw_plate_lines: list[str] = []
     ocr_plates_snapshot: list[dict[str, Any]] = []
+    ocr_draft_plates: list[dict[str, Any]] = []
+    ocr_corrections: list[dict[str, Any]] = []
+    ocr_verify_failed = False
     initial_user_plate_lines: list[str] = []
     ocr_raw_text: str = ""
 
     if message.photo:
         is_photo = True
-        await message.answer("📸 Фото получено! Распознаю через GPT-4o...")
+        status_msg = await message.answer("📸 Фото получено! Распознаю через GPT-4o...")
 
         photo = message.photo[-1]
         user_id = message.from_user.id
@@ -247,7 +250,12 @@ async def receive_plates_list(message: Message, state: FSMContext):
         try:
             await message.bot.download(photo, destination=photo_path)
 
-            from core.ocr_gpt import recognize_text_smart
+            from core.ocr_gpt import format_corrections_for_user, recognize_text_smart
+
+            async def _ocr_status(stage: str) -> None:
+                if stage == "verify":
+                    await status_msg.edit_text("🔍 Проверяю распознанный список...")
+
             recognition_mode = os.getenv("OCR_RECOGNITION_MODE", "full_gpt").strip().lower()
             if recognition_mode not in {"full_gpt", "hybrid"}:
                 recognition_mode = "full_gpt"
@@ -255,7 +263,8 @@ async def receive_plates_list(message: Message, state: FSMContext):
                 photo_path,
                 force_gpt=(recognition_mode == "full_gpt"),
                 show_cost=True,
-                mode=recognition_mode,  # full_gpt (по умолчанию) или hybrid
+                mode=recognition_mode,
+                on_status=_ocr_status,
             )
 
             if result and result.get('text'):
@@ -267,7 +276,11 @@ async def receive_plates_list(message: Message, state: FSMContext):
                     if ln.strip()
                 ]
                 ocr_plates_snapshot = list(result.get("plates") or [])
+                ocr_draft_plates = list(result.get("draft_plates") or [])
+                ocr_corrections = list(result.get("corrections") or [])
+                ocr_verify_failed = bool(result.get("verify_failed"))
                 cost = result.get('cost_usd', 0)
+                method = result.get("method") or "GPT-4o"
                 recognized_count = sum(p.get('qty', 1) for p in result.get('plates', []))
 
                 cost_note = ""
@@ -275,7 +288,19 @@ async def receive_plates_list(message: Message, state: FSMContext):
                     rub_cost = cost * 75
                     cost_note = f"\n\n💰 Стоимость распознавания: ${cost:.4f} (~{rub_cost:.2f}₽)"
 
-                await message.answer(f"✅ Распознано через GPT-4o Vision{cost_note}")
+                corrections_note = format_corrections_for_user(ocr_corrections)
+                if corrections_note:
+                    corrections_note = f"\n\n{corrections_note}"
+                verify_failed_note = ""
+                if ocr_verify_failed:
+                    verify_failed_note = (
+                        "\n\n⚠️ Повторная проверка не удалась — проверьте список вручную."
+                    )
+
+                await message.answer(
+                    f"✅ Распознано через {method}{cost_note}"
+                    f"{corrections_note}{verify_failed_note}"
+                )
             else:
                 await message.answer(
                     "❌ Не удалось распознать текст на фото.\n"
@@ -393,6 +418,9 @@ async def receive_plates_list(message: Message, state: FSMContext):
         is_photo=is_photo,
         raw_plate_lines=raw_plate_lines,
         ocr_plates_snapshot=ocr_plates_snapshot,
+        ocr_draft_plates=ocr_draft_plates,
+        ocr_corrections=ocr_corrections,
+        ocr_verify_failed=ocr_verify_failed,
         initial_user_plate_lines=initial_user_plate_lines,
         ocr_raw_text=ocr_raw_text,
     )
@@ -418,6 +446,8 @@ def _build_wide_plates_replacement_example(wide_plate_lines: list[str]) -> str:
     Формирует пример замены для плит шириной >12 дм:
     ПБ L-15-8п 2 -> ПБ L-12-8п 2 + ПБ L-3,0-8п 2.
     """
+    from core.plate_line_parser import match_bare_plate_line
+
     pb_line_re = re.compile(
         r"(?i)\b(?P<prefix>п[бк])\s*"
         r"(?P<length>[\d,.]+)\s*-\s*"
@@ -430,13 +460,21 @@ def _build_wide_plates_replacement_example(wide_plate_lines: list[str]) -> str:
     for raw_line in wide_plate_lines:
         line = raw_line.strip()
         match = pb_line_re.search(line)
-        if not match:
-            continue
+        if match:
+            prefix = match.group("prefix").upper()
+            length_part = match.group("length").replace(".", ",")
+            load_part = match.group("load").replace(".", ",")
+            qty = (match.group("qty") or "").strip()
+        else:
+            bare = match_bare_plate_line(line)
+            if not bare:
+                continue
+            prefix = "ПБ"
+            length_part, _width_part, load_part_raw, qty_int = bare
+            length_part = length_part.replace(".", ",")
+            load_part = load_part_raw.replace(".", ",")
+            qty = str(qty_int) if qty_int > 1 else ""
 
-        prefix = match.group("prefix").upper()
-        length_part = match.group("length").replace(".", ",")
-        load_part = match.group("load").replace(".", ",")
-        qty = (match.group("qty") or "").strip()
         qty_suffix = f" {qty}" if qty else ""
 
         example_blocks.append(
@@ -565,6 +603,9 @@ async def continue_kp_plates_callback(callback: CallbackQuery, state: FSMContext
         wide_plate_lines=[],
         raw_plate_lines=[],
         ocr_plates_snapshot=[],
+        ocr_draft_plates=[],
+        ocr_corrections=[],
+        ocr_verify_failed=False,
         ocr_raw_text="",
         plates_text="",
         initial_user_plate_lines=[],

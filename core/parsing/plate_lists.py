@@ -9,7 +9,7 @@ from typing import Any, Optional, Tuple
 
 from ..domain.plate_order import _try_fill_plate_nomenclature_cache
 from ..exceptions import PlateParseError
-from ..plate_line_parser import parse_line
+from ..plate_line_parser import build_lwh_mm_load_warning, parse_line
 from ..plate_runtime_state import get_plate_mutable_runtime
 from ..plate_validation import validate_plate_values
 from ..runtime import NomenclatureCacheFiller
@@ -47,6 +47,7 @@ def set_plate_lists_from_text(
       - Размеры через «x» или «×»: «1.2×3.39 — 2 шт», «0,32x6,63 - 4»
       - Марка ПБ/ПК: «ПБ 78-12-8п 3», «Плиты ПБ 78-12-8п», «ПБ78-12-8п 5», «ПК 80-12-8 7»
         Длина и ширина в дециметрах (78 => 7.8 м, 12 => 1.2 м), нагрузка — после последнего дефиса (8п, 10п и т.д.)
+      - Марка без префикса ПБ: «71-12-8 3», «65,6-12-12,5 2», «71-9,20-8 1»
       - Количество: после марки, опционально «шт» («8п 5», «8п 5 шт», «8п — 5»)
     Неизвестные ширины и нераспознанные строки возвращаются в списке нераспознанных.
 
@@ -284,6 +285,7 @@ def set_plate_lists_from_text(
 
     # Список нераспознанных строк для отчёта пользователю
     unparsed_lines = []
+    lwh_mm_assumed_lines: list[str] = []
 
     for line_idx, raw in enumerate(lines):
         parsed = False
@@ -322,9 +324,16 @@ def set_plate_lists_from_text(
         parsed = True
         diag["validation_status"] = "ok"
         diag["normalized_input"] = raw
+        if parsed_line.load_assumed:
+            diag["load_assumed"] = True
+            diag["load_warning_code"] = "lwh_mm_default_load"
+            lwh_mm_assumed_lines.append(raw)
         rt.last_parse_diagnostics.append(diag)
         if parsed:
             continue
+
+    if lwh_mm_assumed_lines:
+        logger.warning(build_lwh_mm_load_warning(lwh_mm_assumed_lines))
 
     _recompute_totals_from_lists()
 

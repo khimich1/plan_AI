@@ -55,6 +55,20 @@ const createMultipartPayload = ({ text, image, mode }: DraftCreatePayload & { mo
   return formData;
 };
 
+type ApplyAiPlatesPayload = {
+  instruction: string;
+  image: File | null;
+};
+
+const createAiMultipartPayload = ({ instruction, image }: ApplyAiPlatesPayload) => {
+  const formData = new FormData();
+  formData.append("instruction", instruction.trim());
+  if (image) {
+    formData.append("image", image);
+  }
+  return formData;
+};
+
 export const commercialOfferApi = {
   getManagers: () => httpClient.get<ManagersResponse>("/api/v1/managers"),
 
@@ -65,6 +79,12 @@ export const commercialOfferApi = {
     httpClient.patch<CommercialDraftDetails>(
       `/api/v1/commercial/drafts/${draftId}/plates`,
       createMultipartPayload(payload),
+    ),
+
+  applyAiPlates: (draftId: string, payload: ApplyAiPlatesPayload) =>
+    httpClient.post<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/plates/ai`,
+      createAiMultipartPayload(payload),
     ),
 
   resolveWidePlates: (draftId: string, decisions: WidePlateDecisionPayload[]) =>

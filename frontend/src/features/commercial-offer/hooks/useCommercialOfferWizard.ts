@@ -64,6 +64,23 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
+  const applyAiPlatesMutation = useMutation({
+    mutationFn: ({
+      draftId,
+      instruction,
+      image,
+    }: {
+      draftId: string;
+      instruction: string;
+      image: File | null;
+    }) => commercialOfferApi.applyAiPlates(draftId, { instruction, image }),
+    onSuccess: (draft, variables) => {
+      dispatch({ type: "hydrate-draft", payload: draft });
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
   const resolveWidePlatesMutation = useMutation({
     mutationFn: ({
       draftId,
@@ -158,6 +175,7 @@ export const useCommercialOfferWizard = () => {
     draftQuery,
     createDraftMutation,
     updatePlatesMutation,
+    applyAiPlatesMutation,
     resolveWidePlatesMutation,
     updateMetaMutation,
     calculateMutation,

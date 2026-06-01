@@ -23,6 +23,7 @@ export const CommercialOfferWizard = () => {
     currentDraft,
     createDraftMutation,
     updatePlatesMutation,
+    applyAiPlatesMutation,
     resolveWidePlatesMutation,
     updateMetaMutation,
     calculateMutation,
@@ -31,6 +32,7 @@ export const CommercialOfferWizard = () => {
     saveDraftMutation,
   } = useCommercialOfferWizard();
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [aiInstruction, setAiInstruction] = useState("");
   const [stepError, setStepError] = useState<string | null>(null);
   const {
     preview: recognizedImagePreview,
@@ -96,6 +98,34 @@ export const CommercialOfferWizard = () => {
         });
       }
       resetSource();
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleApplyAi = async () => {
+    setStepError(null);
+    const instruction = aiInstruction.trim();
+    if (!instruction) {
+      setStepError("Введите инструкцию для ИИ.");
+      return;
+    }
+    if (!currentDraft?.draft_id) {
+      setStepError("Сначала распознайте список плит, затем используйте ИИ.");
+      return;
+    }
+
+    try {
+      if (selectedImage) {
+        setPreviewFromFile(selectedImage);
+      }
+      await applyAiPlatesMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        instruction,
+        image: selectedImage,
+      });
+      resetSource();
+      setAiInstruction("");
     } catch (error) {
       setStepError(getErrorMessage(error));
     }
@@ -345,6 +375,10 @@ export const CommercialOfferWizard = () => {
         recognizedImageName={recognizedImagePreview?.name ?? null}
         errorMessage={stepError}
         isRecognizing={createDraftMutation.isPending || updatePlatesMutation.isPending}
+        isAiProcessing={applyAiPlatesMutation.isPending}
+        aiInstruction={aiInstruction}
+        onAiInstructionChange={setAiInstruction}
+        onApplyAi={() => void handleApplyAi()}
         onTextChange={handleSourceTextChange}
         onNormalizedTextChange={(value) => dispatch({ type: "set-normalized-text", text: value })}
         onFileChange={handleImageSelect}

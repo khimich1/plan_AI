@@ -15,7 +15,7 @@ from app.services.commercial_service import CommercialService
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from app.services.execution_terms_service import ExecutionTermsService
 from app.services.file_generation_service import FileGenerationService
-from core.ocr_gpt import recognize_text_smart
+from core.ocr_gpt import apply_plates_with_ai, recognize_text_smart
 
 
 _ALLOWED_OCR_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf"})
@@ -328,6 +328,95 @@ class CommercialWorkflowService:
         self._persist_wizard_step(draft_id, plates_step)
         return self.get_draft_details(draft_id)
 
+    async def apply_ai_plates_instruction(
+        self,
+        draft_id: str,
+        *,
+        instruction: str,
+        image_bytes: bytes | None,
+        image_filename: str | None,
+    ) -> dict[str, Any]:
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata", {}))
+        instruction_value = (instruction or "").strip()
+        if len(instruction_value) < 3:
+            raise ValueError("Инструкция для ИИ должна содержать минимум 3 символа.")
+
+        current_text = str(metadata.get("input_text", "") or "")
+        tmp_path: Path | None = None
+        try:
+            if image_bytes:
+                suffix = _safe_ocr_temp_suffix(image_filename)
+                with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                    tmp_file.write(image_bytes)
+                    tmp_path = Path(tmp_file.name)
+                result = await apply_plates_with_ai(
+                    current_plates_text=current_text,
+                    user_instruction=instruction_value,
+                    image_path=str(tmp_path),
+                )
+            else:
+                result = await apply_plates_with_ai(
+                    current_plates_text=current_text,
+                    user_instruction=instruction_value,
+                )
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+
+        recognized_text = str((result or {}).get("text", "")).strip()
+        if not recognized_text:
+            raise ValueError("ИИ не смог обработать список плит. Попробуйте уточнить инструкцию.")
+
+        source_metadata = {
+            "ai_applied": True,
+            "last_ai_instruction": instruction_value,
+            "ai_cost_usd": float((result or {}).get("cost_usd", 0.0) or 0.0),
+            "ai_method": str((result or {}).get("method") or "GPT-4o+ai"),
+            "ai_plates": list((result or {}).get("plates") or []),
+            "ocr_plates": list((result or {}).get("plates") or []),
+            "ocr_draft_plates": list((result or {}).get("draft_plates") or []),
+            "ocr_corrections": list((result or {}).get("corrections") or []),
+            "ocr_verify_applied": False,
+            "ocr_verify_failed": False,
+            "ocr_method": str((result or {}).get("method") or "GPT-4o+ai"),
+            "ocr_row_count_on_image": (result or {}).get("row_count_on_image"),
+        }
+        ai_batch = {
+            "source_type": "ai",
+            "original_text": instruction_value,
+            "normalized_text": recognized_text,
+            "ocr_text": recognized_text,
+            "filename": image_filename or "",
+        }
+        preview = self.commercial_service.generate_preview(text=recognized_text)
+        next_metadata = self._build_preview_metadata(
+            preview=preview,
+            base_metadata=metadata,
+            source_type="ai",
+            original_text=instruction_value,
+            ocr_text=recognized_text,
+            input_text=recognized_text,
+            last_source_filename=image_filename or "",
+            plate_batches=[ai_batch],
+            wide_plates_resolved=not bool(preview.parse_result.wide_plate_lines),
+            source_metadata=source_metadata,
+        )
+        self.draft_store.replace_preview(
+            draft_id,
+            order=preview.parse_result.order,
+            optimization_context=preview.optimization_context,
+            order_data=preview.order_data,
+            metadata=next_metadata,
+        )
+        payload_snap = self._load_draft_or_raise(draft_id)
+        plates_step = self._wizard_step_after_plate_snapshot(
+            dict(payload_snap.get("metadata", {})),
+            payload_snap["order_data"],
+        )
+        self._persist_wizard_step(draft_id, plates_step)
+        return self.get_draft_details(draft_id)
+
     def resolve_wide_plates(self, draft_id: str, decisions: Iterable[dict[str, Any]]) -> dict[str, Any]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
@@ -511,7 +600,7 @@ class CommercialWorkflowService:
         public_metadata = {
             key: value
             for key, value in metadata.items()
-            if key not in ("breakdown_tables", "owner_user_id", "predicted_kp_id")
+            if key not in ("breakdown_tables", "owner_user_id", "predicted_kp_id", "schema_file")
         }
         wizard_state = self.build_wizard_state(payload)
         public_metadata["current_step"] = wizard_state["current_step"].value
@@ -761,6 +850,7 @@ class CommercialWorkflowService:
                 force_gpt=(recognition_mode == "full_gpt"),
                 show_cost=True,
                 mode=recognition_mode,
+                verify_enabled=self.settings.ocr_verify_enabled,
             )
         finally:
             tmp_path.unlink(missing_ok=True)
@@ -772,6 +862,12 @@ class CommercialWorkflowService:
             "ocr_recognition_mode": recognition_mode,
             "ocr_cost_usd": float((result or {}).get("cost_usd", 0.0) or 0.0),
             "ocr_plates": list((result or {}).get("plates") or []),
+            "ocr_draft_plates": list((result or {}).get("draft_plates") or []),
+            "ocr_corrections": list((result or {}).get("corrections") or []),
+            "ocr_verify_applied": bool((result or {}).get("verify_applied")),
+            "ocr_verify_failed": bool((result or {}).get("verify_failed")),
+            "ocr_method": str((result or {}).get("method") or "GPT-4o"),
+            "ocr_row_count_on_image": (result or {}).get("row_count_on_image"),
         }
 
     def _load_draft_or_raise(self, draft_id: str) -> dict[str, Any]:
