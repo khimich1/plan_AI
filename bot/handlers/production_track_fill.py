@@ -35,8 +35,8 @@ from .plan_manager import (
 
 router = Router()
 
-MIN_TRACK_LENGTH = 96.0
 MAX_TRACK_LENGTH = 101.0
+TRACK_TOP_UP_EPS = 0.01
 PLATES_PAGE_SIZE = 8
 DEFAULT_DB = str(PROJECT_ROOT / "plita.db")
 
@@ -104,7 +104,7 @@ async def handle_fill_underfilled_tracks(callback: CallbackQuery, state: FSMCont
             if not plan:
                 continue
             plan_name = plan.get('name', plan_id)
-            for u in get_underfilled_tracks(plan, min_length=MIN_TRACK_LENGTH, max_length=MAX_TRACK_LENGTH):
+            for u in get_underfilled_tracks(plan, max_length=MAX_TRACK_LENGTH, eps=TRACK_TOP_UP_EPS):
                 u = dict(u)
                 u['plan_id'] = plan_id
                 u['plan_name'] = plan_name
@@ -121,14 +121,14 @@ async def handle_fill_underfilled_tracks(callback: CallbackQuery, state: FSMCont
             await callback.message.answer("❌ План не найден.")
             await callback.answer()
             return
-        underfilled = get_underfilled_tracks(plan, min_length=MIN_TRACK_LENGTH, max_length=MAX_TRACK_LENGTH)
+        underfilled = get_underfilled_tracks(plan, max_length=MAX_TRACK_LENGTH, eps=TRACK_TOP_UP_EPS)
         for u in underfilled:
             u.setdefault('plan_id', plan_id)
             u.setdefault('plan_name', plan.get('name', plan_id))
 
     if not underfilled:
         await callback.message.answer(
-            "✅ Недозаполненных дорожек не найдено (все дорожки не короче 96 м)."
+            "✅ Недозаполненных дорожек не найдено (все дорожки заполнены до лимита 101 м)."
         )
         await callback.answer()
         return

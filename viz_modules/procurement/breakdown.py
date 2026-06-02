@@ -186,7 +186,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
             if trim.get('long_cut_meterage', 0) <= 0 and width_m < 1.15:
                 print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
                 rest_width_mm = 1200 - width_mm
-                if rest_width_mm > 0 and base_price_1_2m > 0:
+                if rest_width_mm > cfg.MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
                     rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
                     print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
                 else:
@@ -579,7 +579,7 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
             if trim.get('long_cut_meterage', 0) <= 0 and width_m < 1.15:
                 print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
                 rest_width_mm = 1200 - width_mm
-                if rest_width_mm > 0 and base_price_1_2m > 0:
+                if rest_width_mm > cfg.MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
                     rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
                     print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
                 else:

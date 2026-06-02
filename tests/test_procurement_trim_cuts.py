@@ -132,13 +132,13 @@ def test_primary_665_one_plate() -> None:
 
 def test_secondary_665_transverse_at_25() -> None:
     t = _trim(2.5, 665, qty=1)
-    assert t["total_cuts_for_this_size"] == 1
-    assert t["long_cut_meterage"] == pytest.approx(2.8)
-    assert t["long_cut_cost"] == pytest.approx(460.0 * 2.8)
+    assert t["total_cuts_for_this_size"] == 0
+    assert t["long_cut_meterage"] == pytest.approx(0.0)
+    assert t["long_cut_cost"] == pytest.approx(0.0)
     assert t["trans_cuts"] == pytest.approx(1.0)
     expected_trans_rem = BASE_1_2M_28 * (665 / 1200.0) * (0.3 / 2.5)
     assert t["transverse_remainder_cost"] == pytest.approx(expected_trans_rem)
-    assert t["waste_cost"] == pytest.approx((5 / 1200.0) * BASE_1_2M_28)
+    assert t["waste_cost"] == pytest.approx(0.0)
 
 
 def test_primary_720_transverse_at_206() -> None:
@@ -209,9 +209,9 @@ def test_secondary_530_from_remainder() -> None:
     }
     t = _trim(2.8, 530, qty=1, plan=plan)
     assert t["primary_matched"] is False
-    assert t["total_cuts_for_this_size"] == 1
-    assert t["long_cut_meterage"] == pytest.approx(2.8)
-    assert t["waste_cost"] == pytest.approx((5 / 1200.0) * BASE_1_2M_28)
+    assert t["total_cuts_for_this_size"] == 0
+    assert t["long_cut_meterage"] == pytest.approx(0.0)
+    assert t["waste_cost"] == pytest.approx(0.0)
 
 
 def test_same_width_cascade_530_qty2() -> None:
@@ -334,7 +334,7 @@ def test_no_double_waste_between_primary_and_secondary_pair() -> None:
     t530 = _trim(2.8, 530, qty=1, plan=plan)
     t665 = _trim(2.8, 665, qty=1, plan=plan)
     assert t530["waste_cost"] == pytest.approx(0.0)
-    assert t665["waste_cost"] == pytest.approx((5 / 1200.0) * BASE_1_2M_28)
+    assert t665["waste_cost"] == pytest.approx(0.0)
 
 
 def test_order_total_cut_costs() -> None:
@@ -348,7 +348,7 @@ def test_order_total_cut_costs() -> None:
     total_trans = sum(
         _trim(l, w, q, plan)["trans_cuts"] * TRANSVERSE_PRICE for l, w, q in rows
     )
-    assert total_long == pytest.approx(4 * 460.0 * 2.8)
+    assert total_long == pytest.approx(3 * 460.0 * 2.8)
     assert total_trans == pytest.approx(TRANSVERSE_PRICE)
 
 
@@ -363,7 +363,7 @@ def test_order_total_cut_costs_instance_rows() -> None:
     total_trans = sum(
         _trim(l, w, q, plan)["trans_cuts"] * TRANSVERSE_PRICE for l, w, q in rows
     )
-    assert total_long == pytest.approx(4 * 460.0 * 2.8)
+    assert total_long == pytest.approx(3 * 460.0 * 2.8)
     assert total_trans == pytest.approx(TRANSVERSE_PRICE)
 
 
