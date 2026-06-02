@@ -104,16 +104,22 @@ def _apply_secondary_cut(
 
     sec_qty = int(sec_cut.get('qty', 0) or 0)
     sec_pieces = int(sec_cut.get('pieces', 1) or 1)
-    current_cuts = sec_qty * sec_pieces
-    total_cuts_for_this_size += current_cuts
-    total_plates_from_cuts += current_cuts
+    sec_cuts_list = sec_cut.get('cuts', []) or []
+    kept_pieces = sec_pieces + max(0, len(sec_cuts_list) - 1)
 
     src_lens = sec_cut.get('source_lengths', []) or []
     src_len = float(src_lens[0]) if src_lens else length
-    long_cut_meterage += current_cuts * src_len
 
     waste_w_mm = float(sec_cut.get('waste', 0) or 0)
-    if waste_w_mm > 0 and base_price_1_2m > 0 and qty > 0:
+    internal_cuts = (kept_pieces - 1) + (
+        1 if waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM else 0
+    )
+
+    total_plates_from_cuts += sec_qty * kept_pieces
+    total_cuts_for_this_size += sec_qty * internal_cuts
+    long_cut_meterage += sec_qty * internal_cuts * src_len
+
+    if waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0 and qty > 0:
         cost_of_waste_piece = (waste_w_mm / 1200.0) * base_price_1_2m
         waste_cost += (cost_of_waste_piece * sec_qty) / qty
         waste_terms.append((waste_w_mm, sec_qty))
@@ -362,17 +368,18 @@ def _calc_trim_components(
             primary_matched = True
             prim_qty = int(prim_cut.get('qty', 0) or 0)
             prim_len = _cut_length_from_lengths(prim_cut.get('lengths', []), length)
-            total_cuts_for_this_size += prim_qty
             total_plates_from_cuts += prim_qty
-            long_cut_meterage += prim_qty * prim_len
             long_cut_length_display = prim_len
 
             primary_rest_width_mm = int(prim_cut.get('rest', 0) or 0)
+            if primary_rest_width_mm > cfg.MIN_BILLABLE_TRIM_MM:
+                total_cuts_for_this_size += prim_qty
+                long_cut_meterage += prim_qty * prim_len
             matched_primary.append((prim_qty, prim_len, primary_rest_width_mm))
 
         if matched_primary:
             for prim_qty, prim_len, rest_mm in matched_primary:
-                if rest_mm > 0:
+                if rest_mm > cfg.MIN_BILLABLE_TRIM_MM:
                     key = (rest_mm, prim_len)
                     rest_groups[key] = rest_groups.get(key, 0) + prim_qty
 
