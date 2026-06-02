@@ -10,7 +10,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.config_and_data as _cfg  # noqa: F401
 
-from viz_modules.procurement.trim import _calc_trim_components, format_long_cut_calculation
+from viz_modules.procurement.trim import (
+    _calc_trim_components,
+    format_long_cut_calculation,
+    format_transverse_remainder_calculation,
+)
 
 LONG_CUT_PRICE = 460.0
 TRANSVERSE_PRICE = 1200.0
@@ -132,7 +136,59 @@ def test_secondary_665_transverse_at_25() -> None:
     assert t["long_cut_meterage"] == pytest.approx(2.8)
     assert t["long_cut_cost"] == pytest.approx(460.0 * 2.8)
     assert t["trans_cuts"] == pytest.approx(1.0)
-    assert t["waste_cost"] > 0
+    expected_trans_rem = BASE_1_2M_28 * (665 / 1200.0) * (0.3 / 2.5)
+    assert t["transverse_remainder_cost"] == pytest.approx(expected_trans_rem)
+    assert t["waste_cost"] == pytest.approx((5 / 1200.0) * BASE_1_2M_28)
+
+
+def test_primary_720_transverse_at_206() -> None:
+    """ПБ 20,6-7,2: primary 720 + поперечный рез 2,54→2,06 на основной полосе."""
+    base_1_2m = 7105.0
+    plan = {
+        "primary_cuts": [{"width": 720, "rest": 480, "qty": 3, "lengths": [2.06]}],
+        "secondary_cuts": [
+            {
+                "source": 720,
+                "source_lengths": [2.54],
+                "lengths": [2.06],
+                "cuts": [720],
+                "qty": 3,
+                "pieces": 1,
+                "type": "transverse",
+            },
+        ],
+    }
+    t = _calc_trim_components(
+        plan,
+        length=2.06,
+        width_mm=720,
+        qty=3,
+        base_price_1_2m=base_1_2m,
+        base_price=base_1_2m * (720 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    assert t["primary_matched"] is True
+    assert t["trans_cuts"] == pytest.approx(1.0)
+    expected = base_1_2m * (720 / 1200.0) * (0.48 / 2.06)
+    assert t["transverse_remainder_cost"] == pytest.approx(expected)
+    assert t["transverse_remainder_terms"] == [(0.48, 3)]
+
+
+def test_transverse_remainder_breakdown_label() -> None:
+    t = _trim(2.5, 665, qty=3)
+    label = format_transverse_remainder_calculation(
+        t,
+        3,
+        base_price_1_2m=BASE_1_2M_28,
+        width_m=665 / 1000.0,
+        length_m=2.5,
+    )
+    assert label is not None
+    assert "9 217,00" in label
+    assert "(0,67 / 1,2)" in label
+    assert "(0,30 / 2,50)" in label
+    assert "/ 3" in label
 
 
 def test_secondary_530_from_remainder() -> None:
@@ -156,6 +212,107 @@ def test_secondary_530_from_remainder() -> None:
     assert t["total_cuts_for_this_size"] == 1
     assert t["long_cut_meterage"] == pytest.approx(2.8)
     assert t["waste_cost"] == pytest.approx((5 / 1200.0) * BASE_1_2M_28)
+
+
+def test_same_width_cascade_530_qty2() -> None:
+    """ПБ 60-5,3 × 2: primary 530 + secondary 670→530+140 — оба реза и отход в одной строке."""
+    plan = {
+        "primary_cuts": [{"width": 530, "rest": 670, "qty": 1, "lengths": [6.0]}],
+        "secondary_cuts": [
+            {
+                "source": 670,
+                "source_lengths": [6.0],
+                "lengths": [6.0],
+                "cuts": [530],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 140,
+            },
+        ],
+    }
+    t = _trim(6.0, 530, qty=2, plan=plan)
+    assert t["primary_matched"] is True
+    assert t["rest_used"] is True
+    assert t["total_cuts_for_this_size"] == 2
+    assert t["long_cut_meterage"] == pytest.approx(12.0)
+    assert t["long_cut_cost"] == pytest.approx(2 * LONG_CUT_PRICE * 6.0 / 2)
+    assert t["waste_cost"] == pytest.approx((140 / 1200.0) * BASE_1_2M_28 / 2)
+    assert format_long_cut_calculation(t, 2) == "460 × 6,0 × 2 / 2"
+    assert t["waste_terms"] == [(140, 1)]
+
+
+def test_same_width_cascade_breakdown_labels() -> None:
+    """Строки разбивки КП: «Продольный рез» и «Отходы» для merged same-width."""
+    plan = {
+        "primary_cuts": [{"width": 530, "rest": 670, "qty": 1, "lengths": [6.0]}],
+        "secondary_cuts": [
+            {
+                "source": 670,
+                "source_lengths": [6.0],
+                "lengths": [6.0],
+                "cuts": [530],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 140,
+            },
+        ],
+    }
+    t = _trim(6.0, 530, qty=2, plan=plan)
+    long_label = format_long_cut_calculation(t, 2)
+    assert long_label is not None
+    assert "× 2 / 2" in long_label
+    waste_parts = []
+    for w_mm, n in t["waste_terms"]:
+        waste_parts.append(f"{int(w_mm)}×{n}" if n > 1 else str(int(w_mm)))
+    assert waste_parts == ["140"]
+    assert t["waste_cost"] > 0
+
+
+def test_same_width_cascade_no_regression_primary_qty2() -> None:
+    """primary 530×2: secondary 535→530 не привязывается (чужой source)."""
+    plan = {
+        "primary_cuts": [
+            {"width": 530, "rest": 670, "qty": 2, "lengths": [2.8]},
+            {"width": 665, "rest": 535, "qty": 1, "lengths": [2.8]},
+        ],
+        "secondary_cuts": [
+            {
+                "source": 535,
+                "source_lengths": [2.8],
+                "lengths": [2.8],
+                "cuts": [530],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 5,
+            },
+        ],
+    }
+    t = _trim(2.8, 530, qty=2, plan=plan)
+    assert t["total_cuts_for_this_size"] == 2
+    assert t["long_cut_meterage"] == pytest.approx(5.6)
+    assert t["waste_cost"] == pytest.approx(0.0)
+
+
+def test_same_width_cascade_qty3_primary2_secondary1() -> None:
+    """order qty=3: primary=2, secondary same-width=1."""
+    plan = {
+        "primary_cuts": [{"width": 530, "rest": 670, "qty": 2, "lengths": [6.0]}],
+        "secondary_cuts": [
+            {
+                "source": 670,
+                "source_lengths": [6.0],
+                "lengths": [6.0],
+                "cuts": [530],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 140,
+            },
+        ],
+    }
+    t = _trim(6.0, 530, qty=3, plan=plan)
+    assert t["total_cuts_for_this_size"] == 3
+    assert t["long_cut_meterage"] == pytest.approx(18.0)
+    assert t["waste_cost"] == pytest.approx((140 / 1200.0) * BASE_1_2M_28 / 3)
 
 
 def test_no_double_waste_between_primary_and_secondary_pair() -> None:

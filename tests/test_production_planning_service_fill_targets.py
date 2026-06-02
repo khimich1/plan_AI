@@ -79,7 +79,7 @@ def planning_service(tmp_plita, monkeypatch):
         pb_db_path=tmp_plita,
     )
 
-    def fake_optimize(self, *, orders_2d):
+    def fake_optimize(self, *, orders_2d, **kwargs):
         # 8 дорожек, по 1 плите в каждой — удобно проверять обрезание.
         if not orders_2d:
             return [], {}

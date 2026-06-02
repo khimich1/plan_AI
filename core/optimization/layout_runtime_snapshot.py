@@ -23,7 +23,7 @@ import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 from core.optimization.context import (
     LOAD_TO_REINFORCEMENT_MAP,
@@ -162,6 +162,7 @@ class LayoutSequenceCfgSlice:
     get_load_code_for_plate: Callable[[float, float, int], int]
     layout_greedy_reinf_merge: bool = False
     layout_track_reinf_preference: bool = False
+    layout_reinforcement_order: Literal["asc", "desc"] = "asc"
 
     @classmethod
     def from_config_module(
@@ -172,12 +173,16 @@ class LayoutSequenceCfgSlice:
         plate_lists: LayoutPlateListsReadOnly | None = None,
         layout_greedy_reinf_merge: bool | None = None,
         layout_track_reinf_preference: bool | None = None,
+        layout_reinforcement_order: Literal["asc", "desc"] | None = None,
     ) -> LayoutSequenceCfgSlice:
         details = plate_load_details if plate_load_details is not None else cfg.PLATE_LOAD_DETAILS
         frozen_details = _freeze_plate_load_details(details)
         lists = plate_lists if plate_lists is not None else LayoutPlateListsReadOnly.from_config_module(cfg)
         greedy = False if layout_greedy_reinf_merge is None else layout_greedy_reinf_merge
         track_pref = False if layout_track_reinf_preference is None else layout_track_reinf_preference
+        reinf_order: Literal["asc", "desc"] = (
+            layout_reinforcement_order if layout_reinforcement_order is not None else "asc"
+        )
         return cls(
             plate_load_details=frozen_details,
             plate_lists=lists,
@@ -187,6 +192,7 @@ class LayoutSequenceCfgSlice:
             get_load_code_for_plate=_make_get_load_code_for_plate(frozen_details),
             layout_greedy_reinf_merge=greedy,
             layout_track_reinf_preference=track_pref,
+            layout_reinforcement_order=reinf_order,
         )
 
 
@@ -208,6 +214,7 @@ def build_layout_runtime_snapshot(
     opt_snapshot: OptPlanFrozenSnapshot | None = None,
     layout_greedy_reinf_merge: bool | None = None,
     layout_track_reinf_preference: bool | None = None,
+    layout_reinforcement_order: Literal["asc", "desc"] | None = None,
 ) -> LayoutRuntimeSnapshot:
     """
     Собрать снимок для раскладки. Вызывать из composition root после заполнения OPT TLS
@@ -220,6 +227,7 @@ def build_layout_runtime_snapshot(
     :param opt_snapshot: явный снимок плана (тесты); иначе ``OptPlanFrozenSnapshot.capture_from_context()``.
     :param layout_greedy_reinf_merge: переопределить флаг жадной перестановки; иначе из ``Settings``.
     :param layout_track_reinf_preference: переопределить флаг сплиттера; иначе из ``Settings``.
+    :param layout_reinforcement_order: asc (слабые первыми) или desc (сильные первыми); при desc greedy принудительно OFF.
     """
     if cfg is None:
         import core.config_and_data as _cfg
@@ -230,11 +238,18 @@ def build_layout_runtime_snapshot(
     from core.config.settings import get_settings
 
     _settings = get_settings()
+    _reinf_order: Literal["asc", "desc"] = (
+        layout_reinforcement_order
+        if layout_reinforcement_order is not None
+        else _settings.layout_reinforcement_order
+    )
     _greedy = (
         layout_greedy_reinf_merge
         if layout_greedy_reinf_merge is not None
         else _settings.layout_greedy_reinf_merge
     )
+    if _reinf_order == "desc":
+        _greedy = False
     _track_pref = (
         layout_track_reinf_preference
         if layout_track_reinf_preference is not None
@@ -246,6 +261,7 @@ def build_layout_runtime_snapshot(
         plate_lists=plate_lists,
         layout_greedy_reinf_merge=_greedy,
         layout_track_reinf_preference=_track_pref,
+        layout_reinforcement_order=_reinf_order,
     )
     return LayoutRuntimeSnapshot(
         opt_snapshot=snap,

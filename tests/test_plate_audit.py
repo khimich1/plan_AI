@@ -74,7 +74,7 @@ def planning_service(tmp_plita, monkeypatch):
         pb_db_path=tmp_plita,
     )
 
-    def fake_optimize(self, *, orders_2d):
+    def fake_optimize(self, *, orders_2d, **kwargs):
         if not orders_2d:
             return [], {}
         order = orders_2d[0]
