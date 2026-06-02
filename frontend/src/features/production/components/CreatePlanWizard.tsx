@@ -3,6 +3,7 @@ import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
+import { ProductionEstimateAlert as EstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { Spinner } from "@/shared/ui/Spinner";
 import { MonthCalendarGrid } from "@/features/production/components/MonthCalendarGrid";
 import {
@@ -572,15 +573,16 @@ export const CreatePlanWizard = ({
           )}
 
           {selectionEstimate && (
-            <ProductionEstimateAlert
-              estimate={selectionEstimate}
-              tracksPerDay={tracksPerDay}
-              tracksPerDaySource={tracksPerDaySource}
+            <EstimateAlert
+              estimatedTracks={selectionEstimate.estimated_tracks}
+              estimatedDays={selectionEstimate.estimated_days}
+              totalLengthM={selectionEstimate.total_length_m}
               label={
                 filterMethod === "all"
                   ? "Оценка по всем КП в работе"
                   : "Оценка выбранного"
               }
+              context={`при ${tracksPerDay} дор./день - ${tracksPerDaySource}`}
             />
           )}
 
@@ -762,26 +764,6 @@ const subTdStyle = {
   fontSize: "0.86rem",
   color: "#1d2939",
 };
-
-type ProductionEstimateAlertProps = {
-  estimate: ProductionEstimate;
-  tracksPerDay: number;
-  tracksPerDaySource: "шаг 2" | "дозаполнение";
-  label: string;
-};
-
-const ProductionEstimateAlert = ({
-  estimate,
-  tracksPerDay,
-  tracksPerDaySource,
-  label,
-}: ProductionEstimateAlertProps) => (
-  <Alert tone="info">
-    {label}: ~{estimate.estimated_tracks} дорожек, ~{estimate.estimated_days} дней
-    (суммарная длина {estimate.total_length_m.toFixed(1)} м, при {tracksPerDay} дор./день —{" "}
-    {tracksPerDaySource}).
-  </Alert>
-);
 
 type ExpandableKpRowProps = {
   kp: KpCandidateItem;
