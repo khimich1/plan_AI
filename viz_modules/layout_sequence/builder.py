@@ -270,6 +270,8 @@ def build_layout_sequence(
         ensure_sequence_layout_uid(sequence, prefix="single")
         return sequence
 
+    # DEPRECATED / UNREACHABLE: дублирующий legacy-блок ниже никогда не выполняется —
+    # ветка выше уже возвращает sequence через _build_sequence_from_plan (см. layout_reinforcement_order).
     if OPT_CASCADING_PLAN and OPT_CASCADING_PLAN.get("primary_cuts"):
         vis.info("[VISUAL] OK: Используем каскадную оптимизацию для визуализации")
         vis.info(f"[VISUAL] Первичных резов: {len(OPT_CASCADING_PLAN.get('primary_cuts', []))}")

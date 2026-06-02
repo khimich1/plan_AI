@@ -135,15 +135,21 @@ export interface FillTargetItem {
   tracks: number;
 }
 
+export type LayoutReinforcementOrder = "asc" | "desc";
+
 export interface BuildPlanRequest {
   start_date: string;
   tracks_count: number;
   filter_method: FilterMethod;
   selected_kp_ids?: number[];
   selected_plate_ids?: Record<number, number[]>;
+  /** КП → id строки kp_plates → количество для этого плана (не больше qty в БД). */
+  selected_plate_qty?: Record<number, Record<number, number>>;
   active_plan_id?: string | null;
   plan_name?: string | null;
   fill_targets?: FillTargetItem[];
+  /** asc — слабые первыми (по умолчанию); desc — сильные первыми (экспериментальный режим). */
+  layout_reinforcement_order?: LayoutReinforcementOrder;
 }
 
 export interface BuildPlanSummary {

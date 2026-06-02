@@ -13,6 +13,7 @@ from .trim import (
     _calc_trim_components,
     apply_factory_strip_waste,
     format_long_cut_calculation,
+    format_transverse_remainder_calculation,
     resolve_long_cut_pricing,
 )
 
@@ -167,6 +168,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         rest_used = trim['rest_used']
         waste_cost = trim['waste_cost']
         waste_terms = trim['waste_terms']
+        transverse_remainder_cost = trim['transverse_remainder_cost']
         trans_cuts += trim['trans_cuts']
         trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
 
@@ -184,7 +186,7 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
             if trim.get('long_cut_meterage', 0) <= 0 and width_m < 1.15:
                 print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
                 rest_width_mm = 1200 - width_mm
-                if rest_width_mm > 0 and base_price_1_2m > 0:
+                if rest_width_mm > cfg.MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
                     rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
                     print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
                 else:
@@ -206,7 +208,14 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
             long_cut_cost = 0.0
 
         # ИТОГО за 1 плиту
-        total_per_unit = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost
+        total_per_unit = (
+            base_price
+            + long_cut_cost
+            + trans_cut_cost
+            + rest_cost
+            + waste_cost
+            + transverse_remainder_cost
+        )
         total_rounded = round(total_per_unit, 2)
         total_for_qty = total_rounded * qty
         
@@ -243,6 +252,23 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
                 "Поперечный рез",
                 trans_calc,
                 f"{trans_cut_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            ])
+
+        if transverse_remainder_cost > 0:
+            rem_terms = trim.get('transverse_remainder_terms') or []
+            rem_m = rem_terms[0][0] if rem_terms else 0.0
+            rem_label = f"{rem_m:.2f}".replace('.', ',')
+            trans_rem_calc = format_transverse_remainder_calculation(
+                trim,
+                qty,
+                base_price_1_2m=base_price_1_2m,
+                width_m=width_m,
+                length_m=length,
+            ) or ""
+            table_rows.append([
+                f"Остаток после поперечного реза ({rem_label}м)",
+                trans_rem_calc,
+                f"{transverse_remainder_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
             ])
         
         if rest_cost > 0:
@@ -535,6 +561,7 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
         rest_used = trim['rest_used']
         waste_cost = trim['waste_cost']
         waste_terms = trim['waste_terms']
+        transverse_remainder_cost = trim['transverse_remainder_cost']
         trans_cuts += trim['trans_cuts']
         trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
 
@@ -552,7 +579,7 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
             if trim.get('long_cut_meterage', 0) <= 0 and width_m < 1.15:
                 print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
                 rest_width_mm = 1200 - width_mm
-                if rest_width_mm > 0 and base_price_1_2m > 0:
+                if rest_width_mm > cfg.MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
                     rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
                     print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
                 else:
@@ -608,7 +635,15 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
                 print(f'[PRODUCTION BREAKDOWN] {name}: переармирование (остаток использован) = ({max_reinforcement:.1f} - {reinforcement:.1f}) × {length} × 0.170 × 80 × ({width_mm} / 1200) = {rearm_cost:.2f} руб')
 
         # ИТОГО
-        total_per_unit = base_price + long_cut_cost + trans_cut_cost + rest_cost + waste_cost + rearm_cost
+        total_per_unit = (
+            base_price
+            + long_cut_cost
+            + trans_cut_cost
+            + rest_cost
+            + waste_cost
+            + transverse_remainder_cost
+            + rearm_cost
+        )
         total_rounded = round(total_per_unit, 2)
         total_for_qty = total_rounded * qty
         
@@ -652,6 +687,23 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
                 "Поперечный рез",
                 trans_calc,
                 f"{trans_cut_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
+            ])
+
+        if transverse_remainder_cost > 0:
+            rem_terms = trim.get('transverse_remainder_terms') or []
+            rem_m = rem_terms[0][0] if rem_terms else 0.0
+            rem_label = f"{rem_m:.2f}".replace('.', ',')
+            trans_rem_calc = format_transverse_remainder_calculation(
+                trim,
+                qty,
+                base_price_1_2m=base_price_1_2m,
+                width_m=width_m,
+                length_m=length,
+            ) or ""
+            table_rows.append([
+                f"Остаток после поперечного реза ({rem_label}м)",
+                trans_rem_calc,
+                f"{transverse_remainder_cost:,.2f} руб".replace(',', ' ').replace('.', ',')
             ])
         
         if rest_cost > 0:

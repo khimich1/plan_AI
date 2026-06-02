@@ -33,6 +33,7 @@ from .plate_runtime_state import (
 from .config.app_settings import AppConfig, get_config
 from .config.constants import (
     LONG_CUT_PRICE_PER_M,
+    MIN_BILLABLE_TRIM_MM,
     TRACK_LENGTH_M,
     TRACK_WIDTH_M,
     TRANSVERSE_CUT_PRICE,

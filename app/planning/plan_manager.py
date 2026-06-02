@@ -777,6 +777,50 @@ def get_all_tracks_from_plan(plan: dict) -> list:
     return all_tracks
 
 
+def get_underfilled_tracks(
+    plan: dict,
+    *,
+    max_length: float = 101.0,
+    eps: float = 0.01,
+) -> list[dict]:
+    """Возвращает дорожки плана, которые можно дозаполнить до ``max_length`` м.
+
+    Args:
+        plan: Данные плана с ключом ``days``.
+        max_length: Жёсткий потолок длины дорожки (м).
+        eps: Допуск: дорожки с ``length >= max_length - eps`` считаются полными.
+
+    Returns:
+        Список записей с полями ``date_key``, ``day_number``, ``track_idx``,
+        ``track_length``, ``free_space``, ``max_reinforcement``, ``load_code``.
+    """
+    underfilled: list[dict] = []
+    sorted_days = sorted(plan.get("days", {}).items(), key=lambda x: x[0])
+
+    for date_key, day_data in sorted_days:
+        day_number = int(day_data.get("day_number") or 0)
+        for track_idx, track in enumerate(day_data.get("tracks") or []):
+            if not isinstance(track, dict):
+                continue
+            track_length = float(track.get("length") or 0)
+            free_space = round(max_length - track_length, 2)
+            if free_space <= eps:
+                continue
+            underfilled.append(
+                {
+                    "date_key": date_key,
+                    "day_number": day_number,
+                    "track_idx": track_idx,
+                    "track": track,
+                    "track_length": round(track_length, 2),
+                    "free_space": free_space,
+                    "max_reinforcement": float(track.get("max_reinforcement") or 0),
+                    "load_code": track.get("load_code", 8),
+                }
+            )
+    return underfilled
+
+
 def mark_day_completed(plan_id: str, date_key: str) -> bool:
     """
     Отмечает день как выполненный.

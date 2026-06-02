@@ -97,11 +97,21 @@ class Settings(BaseSettings):
     # Раскладка: жадное чередование целых и групп с резом по мин. армированию; сплиттер — согласованный выбор целых.
     layout_greedy_reinf_merge: bool = Field(default=True, alias="LAYOUT_GREEDY_REINF_MERGE")
     layout_track_reinf_preference: bool = Field(default=True, alias="LAYOUT_TRACK_REINF_PREFERENCE")
+    # Порядок армирования в sequence: asc (слабые первыми) или desc (сильные первыми).
+    layout_reinforcement_order: Literal["asc", "desc"] = Field(
+        default="asc",
+        alias="LAYOUT_REINFORCEMENT_ORDER",
+    )
     # Если True — при выборе целой для начала дорожки разрешить «фазу 2» без отсечения по армированию
     # предыдущей дорожки (иначе — строгое правило может привести к TrackLayoutInvariantError).
     layout_track_start_reinf_relaxation: bool = Field(
         default=True,
         alias="LAYOUT_TRACK_START_REINF_RELAXATION",
+    )
+    # Дозаполнение хвоста дорожки переносом solid-плит с последующих дорожек (до 101 м).
+    track_top_up_from_following: bool = Field(
+        default=True,
+        alias="TRACK_TOP_UP_FROM_FOLLOWING",
     )
 
     @field_validator("cors_allowed_origins_raw", mode="before")

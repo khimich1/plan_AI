@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from viz_modules.layout_sequence.debug_trace import append_json_line
 
@@ -84,33 +84,87 @@ def ensure_sequence_layout_uid(sequence: list | None, prefix: str = "seq") -> No
         item["layout_uid"] = str(unit_id) if unit_id else f"{prefix}:{idx}"
 
 
+def _solid_plate_reinforcement(
+    plate: dict[str, Any],
+    reinforcement_map: dict,
+) -> tuple[float, float, int]:
+    length = plate["lengths"][0] if plate.get("lengths") else 6.0
+    width_mm = plate["width"]
+    reinforcement = get_reinforcement_from_map(reinforcement_map, length, width_mm) or float(
+        plate.get("reinforcement", 999.0)
+    )
+    return length, width_mm, reinforcement
+
+
+def choose_closest_solid(
+    solid_list: list[dict[str, Any]],
+    target_reinf: float,
+    reinforcement_map: dict,
+    *,
+    log: logging.Logger | None = None,
+) -> int | None:
+    """Индекс целой с минимальным |reinforcement - target_reinf| (tie-break: меньший индекс)."""
+    if not solid_list:
+        return None
+    candidates: list[dict[str, Any]] = []
+    for idx, plate in enumerate(solid_list):
+        length, width_mm, reinforcement = _solid_plate_reinforcement(plate, reinforcement_map)
+        candidates.append(
+            {
+                "index": idx,
+                "length": length,
+                "width_mm": width_mm,
+                "reinforcement": reinforcement,
+            }
+        )
+    best = min(
+        candidates,
+        key=lambda x: (abs(float(x["reinforcement"]) - float(target_reinf)), x["index"]),
+    )
+    if log is not None:
+        log.info(
+            "[VISUAL] ✅ Выбрана ближайшая целая к %.1f кг/м: %.2fм x %sмм, армирование %.1f кг/м",
+            target_reinf,
+            best["length"],
+            best["width_mm"],
+            best["reinforcement"],
+        )
+    return best["index"]
+
+
 def choose_best_separator(
     solid_list: list[dict[str, Any]],
     next_group: list[dict[str, Any]],
     reinforcement_map: dict,
     *,
+    reinforcement_order: Literal["asc", "desc"] = "asc",
     log: logging.Logger | None = None,
 ) -> int | None:
     """
-    Выбирает плиту-разделитель: сначала минимальное армирование среди оставшихся целых,
-    при равенстве — минимальный скачок к армированию следующей группы с резом (если передана).
+    Выбирает плиту-разделитель: при asc — min tier + скачок к next_group;
+    при desc — глобально ближайшая по армированию к next_group.
     """
     if not solid_list:
         return None
-    candidates: list[dict[str, Any]] = []
-    for idx, plate in enumerate(solid_list):
-        length = plate["lengths"][0] if plate.get("lengths") else 6.0
-        width_mm = plate["width"]
-        reinforcement = get_reinforcement_from_map(reinforcement_map, length, width_mm) or 999.0
-        candidates.append({"index": idx, "length": length, "width_mm": width_mm, "reinforcement": reinforcement})
-    min_reinf = min(c["reinforcement"] for c in candidates)
-    tier = [c for c in candidates if c["reinforcement"] == min_reinf]
     next_reinf: float | None = None
     if next_group:
         try:
             next_reinf = float(next_group[0].get("reinforcement", 999.0))
         except (TypeError, ValueError):
             next_reinf = None
+
+    if reinforcement_order == "desc":
+        target = next_reinf if next_reinf is not None else min(
+            _solid_plate_reinforcement(p, reinforcement_map)[2] for p in solid_list
+        )
+        return choose_closest_solid(solid_list, target, reinforcement_map, log=log)
+
+    candidates: list[dict[str, Any]] = []
+    for idx, plate in enumerate(solid_list):
+        length, width_mm, reinforcement = _solid_plate_reinforcement(plate, reinforcement_map)
+        candidates.append({"index": idx, "length": length, "width_mm": width_mm, "reinforcement": reinforcement})
+    tier_reinf = min(c["reinforcement"] for c in candidates)
+    tier = [c for c in candidates if c["reinforcement"] == tier_reinf]
     if next_reinf is not None:
         best = min(tier, key=lambda x: (abs(float(x["reinforcement"]) - next_reinf), x["index"]))
     else:

@@ -19,6 +19,67 @@ def _width_matches_cut(width_mm: int, sec_cuts: list) -> bool:
     return any(abs(width_mm - int(cut_width)) <= 20 for cut_width in sec_cuts)
 
 
+def _transverse_remainder_unit_cost(
+    *,
+    base_price_1_2m: float,
+    width_mm: int,
+    remainder_m: float,
+    product_length_m: float,
+) -> float:
+    if remainder_m <= 0.01 or product_length_m <= 0 or base_price_1_2m <= 0:
+        return 0.0
+    return base_price_1_2m * (width_mm / 1200.0) * (remainder_m / product_length_m)
+
+
+def _append_transverse_remainder_term(
+    terms: list[tuple[float, int]],
+    remainder_m: float,
+    count: int,
+) -> None:
+    if remainder_m <= 0.01 or count <= 0:
+        return
+    rem_rounded = round(remainder_m, 2)
+    for idx, (existing_rem, existing_n) in enumerate(terms):
+        if abs(existing_rem - rem_rounded) < 0.01:
+            terms[idx] = (existing_rem, existing_n + count)
+            return
+    terms.append((rem_rounded, count))
+
+
+def _apply_transverse_remainder_from_cut(
+    *,
+    src_len: float,
+    product_length: float,
+    sec_qty: int,
+    qty: int,
+    base_price_1_2m: float,
+    width_mm: int,
+    transverse_remainder_cost: float,
+    transverse_remainder_terms: list[tuple[float, int]],
+    trans_cuts: float,
+    count_transverse_op: bool,
+) -> tuple[float, list[tuple[float, int]], float]:
+    if abs(src_len - product_length) <= 0.05:
+        return transverse_remainder_cost, transverse_remainder_terms, trans_cuts
+
+    if count_transverse_op and qty > 0:
+        trans_cuts += (1.0 * sec_qty) / qty
+
+    remainder_m = src_len - product_length
+    if remainder_m > 0.01 and qty > 0:
+        piece_cost = _transverse_remainder_unit_cost(
+            base_price_1_2m=base_price_1_2m,
+            width_mm=width_mm,
+            remainder_m=remainder_m,
+            product_length_m=product_length,
+        )
+        if piece_cost > 0:
+            transverse_remainder_cost += piece_cost * (sec_qty / qty)
+            _append_transverse_remainder_term(transverse_remainder_terms, remainder_m, sec_qty)
+
+    return transverse_remainder_cost, transverse_remainder_terms, trans_cuts
+
+
 def _apply_secondary_cut(
     sec_cut: dict,
     *,
@@ -36,37 +97,50 @@ def _apply_secondary_cut(
     waste_cost: float,
     waste_terms: list,
     trans_cuts: float,
-) -> tuple[int, int, float, float, list, float]:
+    transverse_remainder_cost: float,
+    transverse_remainder_terms: list[tuple[float, int]],
+) -> tuple[int, int, float, float, list, float, float, list[tuple[float, int]]]:
+    del base_price, load_code, price_table, deps  # kept for call-site compatibility
+
     sec_qty = int(sec_cut.get('qty', 0) or 0)
     sec_pieces = int(sec_cut.get('pieces', 1) or 1)
-    current_cuts = sec_qty * sec_pieces
-    total_cuts_for_this_size += current_cuts
-    total_plates_from_cuts += current_cuts
+    sec_cuts_list = sec_cut.get('cuts', []) or []
+    kept_pieces = sec_pieces + max(0, len(sec_cuts_list) - 1)
 
     src_lens = sec_cut.get('source_lengths', []) or []
     src_len = float(src_lens[0]) if src_lens else length
-    long_cut_meterage += current_cuts * src_len
 
     waste_w_mm = float(sec_cut.get('waste', 0) or 0)
-    if waste_w_mm > 0 and base_price_1_2m > 0 and qty > 0:
+    internal_cuts = (kept_pieces - 1) + (
+        1 if waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM else 0
+    )
+
+    total_plates_from_cuts += sec_qty * kept_pieces
+    total_cuts_for_this_size += sec_qty * internal_cuts
+    long_cut_meterage += sec_qty * internal_cuts * src_len
+
+    if waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0 and qty > 0:
         cost_of_waste_piece = (waste_w_mm / 1200.0) * base_price_1_2m
         waste_cost += (cost_of_waste_piece * sec_qty) / qty
         waste_terms.append((waste_w_mm, sec_qty))
 
     if src_lens:
-        if sec_cut.get('type') == 'transverse' or abs(src_len - length) > 0.05:
-            if qty > 0:
-                trans_cuts += (1.0 * sec_qty) / qty
-
-            len_waste = src_len - length
-            if len_waste > 0.01:
-                src_price_full = deps.get_price(src_len, load_code, deps.db_path)
-                if src_price_full is None:
-                    src_price_full = find_price_for_plate(price_table, src_len, load_code) or 0.0
-                src_price_width = src_price_full * (width_mm / 1200.0)
-                cost_len_waste = src_price_width - base_price
-                if cost_len_waste > 0 and qty > 0:
-                    waste_cost += cost_len_waste * (sec_qty / qty)
+        is_transverse = sec_cut.get('type') == 'transverse' or abs(src_len - length) > 0.05
+        if is_transverse:
+            transverse_remainder_cost, transverse_remainder_terms, trans_cuts = (
+                _apply_transverse_remainder_from_cut(
+                    src_len=src_len,
+                    product_length=length,
+                    sec_qty=sec_qty,
+                    qty=qty,
+                    base_price_1_2m=base_price_1_2m,
+                    width_mm=width_mm,
+                    transverse_remainder_cost=transverse_remainder_cost,
+                    transverse_remainder_terms=transverse_remainder_terms,
+                    trans_cuts=trans_cuts,
+                    count_transverse_op=True,
+                )
+            )
 
     return (
         total_cuts_for_this_size,
@@ -75,7 +149,178 @@ def _apply_secondary_cut(
         waste_cost,
         waste_terms,
         trans_cuts,
+        transverse_remainder_cost,
+        transverse_remainder_terms,
     )
+
+
+def _secondary_matches_primary_rest(
+    sec_cut: dict,
+    rest_groups: dict[tuple[int, float], int],
+) -> bool:
+    source = int(sec_cut.get('source', 0) or 0)
+    src_lens = sec_cut.get('source_lengths', []) or []
+    for (rest_mm, prim_len) in rest_groups:
+        if source != rest_mm:
+            continue
+        if _is_same_length(src_lens, prim_len):
+            return True
+    return False
+
+
+def _apply_cascade_secondary_for_primary(
+    *,
+    current_plan: dict,
+    rest_groups: dict[tuple[int, float], int],
+    matched_primary: list[tuple[int, float, int]],
+    length: float,
+    width_mm: int,
+    qty: int,
+    base_price_1_2m: float,
+    base_price: float,
+    load_code: int,
+    price_table: dict,
+    deps: ProcurementDeps,
+    total_cuts_for_this_size: int,
+    total_plates_from_cuts: int,
+    long_cut_meterage: float,
+    long_cut_length_display: float,
+    waste_cost: float,
+    waste_terms: list,
+    trans_cuts: float,
+    transverse_remainder_cost: float,
+    transverse_remainder_terms: list[tuple[float, int]],
+) -> tuple[int, int, float, float, float, list, float, float, list[tuple[float, int]]]:
+    """
+    Secondary-резы из остатков matched primary той же ширины, что строка заказа.
+
+    Нужно, когда primary и secondary дают одну марку в одной позиции (напр. 60-5,3 × 2).
+    """
+    primary_plate_qty = sum(prim_qty for prim_qty, _, _ in matched_primary)
+    remaining_slots = max(0, qty - primary_plate_qty)
+    if remaining_slots <= 0 or not rest_groups:
+        return (
+            total_cuts_for_this_size,
+            total_plates_from_cuts,
+            long_cut_meterage,
+            long_cut_length_display,
+            waste_cost,
+            waste_terms,
+            trans_cuts,
+            transverse_remainder_cost,
+            transverse_remainder_terms,
+        )
+
+    for sec_cut in current_plan.get('secondary_cuts') or []:
+        if remaining_slots <= 0:
+            break
+        if not _secondary_matches_primary_rest(sec_cut, rest_groups):
+            continue
+        if not _is_same_length(sec_cut.get('lengths', []), length):
+            continue
+        sec_cuts = sec_cut.get('cuts', []) or []
+        if not _width_matches_cut(width_mm, sec_cuts):
+            continue
+
+        sec_qty_available = int(sec_cut.get('qty', 0) or 0)
+        effective_qty = min(sec_qty_available, remaining_slots)
+        if effective_qty <= 0:
+            continue
+
+        src_lens = sec_cut.get('source_lengths', []) or []
+        if src_lens:
+            long_cut_length_display = float(src_lens[0])
+
+        sec_cut_effective = {**sec_cut, 'qty': effective_qty}
+        (
+            total_cuts_for_this_size,
+            total_plates_from_cuts,
+            long_cut_meterage,
+            waste_cost,
+            waste_terms,
+            trans_cuts,
+            transverse_remainder_cost,
+            transverse_remainder_terms,
+        ) = _apply_secondary_cut(
+            sec_cut_effective,
+            length=length,
+            width_mm=width_mm,
+            qty=qty,
+            base_price_1_2m=base_price_1_2m,
+            base_price=base_price,
+            load_code=load_code,
+            price_table=price_table,
+            deps=deps,
+            total_cuts_for_this_size=total_cuts_for_this_size,
+            total_plates_from_cuts=total_plates_from_cuts,
+            long_cut_meterage=long_cut_meterage,
+            waste_cost=waste_cost,
+            waste_terms=waste_terms,
+            trans_cuts=trans_cuts,
+            transverse_remainder_cost=transverse_remainder_cost,
+            transverse_remainder_terms=transverse_remainder_terms,
+        )
+        remaining_slots -= effective_qty
+
+    return (
+        total_cuts_for_this_size,
+        total_plates_from_cuts,
+        long_cut_meterage,
+        long_cut_length_display,
+        waste_cost,
+        waste_terms,
+        trans_cuts,
+        transverse_remainder_cost,
+        transverse_remainder_terms,
+    )
+
+
+def _apply_transverse_on_primary_strip(
+    *,
+    current_plan: dict,
+    rest_groups: dict[tuple[int, float], int],
+    length: float,
+    width_mm: int,
+    qty: int,
+    base_price_1_2m: float,
+    trans_cuts: float,
+    transverse_remainder_cost: float,
+    transverse_remainder_terms: list[tuple[float, int]],
+) -> tuple[float, float, list[tuple[float, int]]]:
+    """Поперечный рез на основной полосе primary (не из rest по ширине)."""
+    for sec_cut in current_plan.get('secondary_cuts') or []:
+        if _secondary_matches_primary_rest(sec_cut, rest_groups):
+            continue
+        if not _is_same_length(sec_cut.get('lengths', []), length):
+            continue
+        sec_cuts = sec_cut.get('cuts', []) or []
+        if not _width_matches_cut(width_mm, sec_cuts):
+            continue
+
+        src_lens = sec_cut.get('source_lengths', []) or []
+        if not src_lens:
+            continue
+        src_len = float(src_lens[0])
+        sec_qty = int(sec_cut.get('qty', 0) or 0)
+        if sec_qty <= 0:
+            continue
+
+        transverse_remainder_cost, transverse_remainder_terms, trans_cuts = (
+            _apply_transverse_remainder_from_cut(
+                src_len=src_len,
+                product_length=length,
+                sec_qty=sec_qty,
+                qty=qty,
+                base_price_1_2m=base_price_1_2m,
+                width_mm=width_mm,
+                transverse_remainder_cost=transverse_remainder_cost,
+                transverse_remainder_terms=transverse_remainder_terms,
+                trans_cuts=trans_cuts,
+                count_transverse_op=True,
+            )
+        )
+
+    return trans_cuts, transverse_remainder_cost, transverse_remainder_terms
 
 
 def _calc_trim_components(
@@ -93,8 +338,8 @@ def _calc_trim_components(
     """
     Единый расчёт резов/остатков/отходов.
 
-    Primary-продукт: только первичные резы + учёт остатка полосы.
-    Secondary-продукт: матч по cuts/lengths без привязки к primary width.
+    Primary-продукт: первичные резы + учёт остатка полосы + same-width cascade secondary.
+    Secondary-продукт (другая ширина): матч по cuts/lengths без primary width.
     """
     _deps = resolve_procurement_deps(deps)
     rest_cost = 0.0
@@ -103,11 +348,14 @@ def _calc_trim_components(
     waste_cost = 0.0
     waste_terms: list[tuple[float, int]] = []
     trans_cuts = 0.0
+    transverse_remainder_cost = 0.0
+    transverse_remainder_terms: list[tuple[float, int]] = []
     total_cuts_for_this_size = 0
     total_plates_from_cuts = 0
     long_cut_meterage = 0.0
     long_cut_length_display = length
     primary_matched = False
+    rest_groups: dict[tuple[int, float], int] = {}
 
     if current_plan and current_plan.get('primary_cuts'):
         matched_primary: list[tuple[int, float, int]] = []
@@ -120,18 +368,18 @@ def _calc_trim_components(
             primary_matched = True
             prim_qty = int(prim_cut.get('qty', 0) or 0)
             prim_len = _cut_length_from_lengths(prim_cut.get('lengths', []), length)
-            total_cuts_for_this_size += prim_qty
             total_plates_from_cuts += prim_qty
-            long_cut_meterage += prim_qty * prim_len
             long_cut_length_display = prim_len
 
             primary_rest_width_mm = int(prim_cut.get('rest', 0) or 0)
+            if primary_rest_width_mm > cfg.MIN_BILLABLE_TRIM_MM:
+                total_cuts_for_this_size += prim_qty
+                long_cut_meterage += prim_qty * prim_len
             matched_primary.append((prim_qty, prim_len, primary_rest_width_mm))
 
         if matched_primary:
-            rest_groups: dict[tuple[int, float], int] = {}
             for prim_qty, prim_len, rest_mm in matched_primary:
-                if rest_mm > 0:
+                if rest_mm > cfg.MIN_BILLABLE_TRIM_MM:
                     key = (rest_mm, prim_len)
                     rest_groups[key] = rest_groups.get(key, 0) + prim_qty
 
@@ -157,6 +405,53 @@ def _calc_trim_components(
             elif all_rests_used:
                 rest_used = True
                 rest_width_mm = 0
+
+            (
+                total_cuts_for_this_size,
+                total_plates_from_cuts,
+                long_cut_meterage,
+                long_cut_length_display,
+                waste_cost,
+                waste_terms,
+                trans_cuts,
+                transverse_remainder_cost,
+                transverse_remainder_terms,
+            ) = _apply_cascade_secondary_for_primary(
+                current_plan=current_plan,
+                rest_groups=rest_groups,
+                matched_primary=matched_primary,
+                length=length,
+                width_mm=width_mm,
+                qty=qty,
+                base_price_1_2m=base_price_1_2m,
+                base_price=base_price,
+                load_code=load_code,
+                price_table=price_table,
+                deps=_deps,
+                total_cuts_for_this_size=total_cuts_for_this_size,
+                total_plates_from_cuts=total_plates_from_cuts,
+                long_cut_meterage=long_cut_meterage,
+                long_cut_length_display=long_cut_length_display,
+                waste_cost=waste_cost,
+                waste_terms=waste_terms,
+                trans_cuts=trans_cuts,
+                transverse_remainder_cost=transverse_remainder_cost,
+                transverse_remainder_terms=transverse_remainder_terms,
+            )
+
+            trans_cuts, transverse_remainder_cost, transverse_remainder_terms = (
+                _apply_transverse_on_primary_strip(
+                    current_plan=current_plan,
+                    rest_groups=rest_groups,
+                    length=length,
+                    width_mm=width_mm,
+                    qty=qty,
+                    base_price_1_2m=base_price_1_2m,
+                    trans_cuts=trans_cuts,
+                    transverse_remainder_cost=transverse_remainder_cost,
+                    transverse_remainder_terms=transverse_remainder_terms,
+                )
+            )
 
     if not primary_matched and current_plan and current_plan.get('secondary_cuts'):
         sec_skip_length = 0
@@ -184,6 +479,8 @@ def _calc_trim_components(
                 waste_cost,
                 waste_terms,
                 trans_cuts,
+                transverse_remainder_cost,
+                transverse_remainder_terms,
             ) = _apply_secondary_cut(
                 sec_cut,
                 length=length,
@@ -200,6 +497,8 @@ def _calc_trim_components(
                 waste_cost=waste_cost,
                 waste_terms=waste_terms,
                 trans_cuts=trans_cuts,
+                transverse_remainder_cost=transverse_remainder_cost,
+                transverse_remainder_terms=transverse_remainder_terms,
             )
 
         if secondary_matches == 0 and (sec_skip_length > 0 or sec_skip_width > 0):
@@ -219,6 +518,8 @@ def _calc_trim_components(
         'waste_cost': waste_cost,
         'waste_terms': waste_terms,
         'trans_cuts': trans_cuts,
+        'transverse_remainder_cost': transverse_remainder_cost,
+        'transverse_remainder_terms': transverse_remainder_terms,
         'total_cuts_for_this_size': total_cuts_for_this_size,
         'total_plates_from_cuts': total_plates_from_cuts,
         'long_cut_meterage': long_cut_meterage,
@@ -307,3 +608,27 @@ def format_long_cut_calculation(trim: dict, qty: int) -> str | None:
     if qty > 1:
         return f"{price:.0f} × {avg_len:.1f} × {total:.0f} / {qty}".replace('.', ',')
     return f"{price:.0f} × {avg_len:.1f} × {total:.0f}".replace('.', ',')
+
+
+def format_transverse_remainder_calculation(
+    trim: dict,
+    qty: int,
+    *,
+    base_price_1_2m: float,
+    width_m: float,
+    length_m: float,
+) -> str | None:
+    """Формула остатка после поперечного реза для breakdown."""
+    terms = trim.get('transverse_remainder_terms') or []
+    if not terms or base_price_1_2m <= 0 or length_m <= 0:
+        return None
+
+    rem_m, _ = terms[0]
+    base_str = f"{base_price_1_2m:,.2f}".replace(',', ' ').replace('.', ',')
+    width_str = f"{width_m:.2f}".replace('.', ',')
+    rem_str = f"{rem_m:.2f}".replace('.', ',')
+    length_str = f"{length_m:.2f}".replace('.', ',')
+    expr = f"{base_str} × ({width_str} / 1,2) × ({rem_str} / {length_str})"
+    if qty > 1:
+        return f"{expr} / {qty}"
+    return expr

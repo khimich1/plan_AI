@@ -95,9 +95,11 @@ class ProductionService:
         filter_method: str,
         selected_kp_ids: list[int] | None = None,
         selected_plate_ids: dict[int, list[int]] | None = None,
+        selected_plate_qty: dict[int, dict[int, int]] | None = None,
         active_plan_id: str | None = None,
         plan_name: str | None = None,
         fill_targets: list[dict[str, Any]] | None = None,
+        layout_reinforcement_order: str = "asc",
     ) -> dict[str, Any]:
         return self.planning_service.build_plan(
             start_date=start_date,
@@ -105,9 +107,11 @@ class ProductionService:
             filter_method=filter_method,  # type: ignore[arg-type]
             selected_kp_ids=selected_kp_ids,
             selected_plate_ids=selected_plate_ids,
+            selected_plate_qty=selected_plate_qty,
             active_plan_id=active_plan_id,
             plan_name=plan_name,
             fill_targets=fill_targets,
+            layout_reinforcement_order=layout_reinforcement_order,
         )
 
     def get_calendar(self) -> dict | None:

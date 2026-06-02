@@ -20,10 +20,15 @@ class LineParseResult:
     qty: int = 1
     load_code: Optional[float] = None
     length_dm_raw: str = ""
+    load_assumed: bool = False
     reason_code: str = ""
     reason_text: str = ""
 
 
+_LWH_MM_RE = re.compile(
+    r"^(\d{3,5})\s*[xх×]\s*(\d{3,4})\s*[xх×]\s*(\d+)\s*(?:\s+(\d+)\s*(?:шт\.?)?)?\s*$",
+    re.IGNORECASE,
+)
 _WXL_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[xх]\s*(\d+(?:\.\d+)?)\D*(\d+)?", re.IGNORECASE)
 _PLATE_MARK_RE = re.compile(
     r"(?:плит[аы]?\s*)?\bп[бк][\s\.,]*([\d\.,]+)\s*-\s*([\d\.,]+)",
@@ -42,6 +47,21 @@ BARE_PLATE_LINE_RE = re.compile(
     r"(?:\s*[-—–]\s*)?(?:\s*(?P<qty>\d+)\s*(?:шт\.?\b)?)?\s*$",
     re.IGNORECASE,
 )
+
+LWH_MM_DEFAULT_LOAD_WARNING = (
+    "Строки формата «длина×ширина×толщина» (мм), например «3880x1200x220»: "
+    "нагрузка принята 8п по умолчанию. Проверьте нагрузку перед отправкой КП."
+)
+
+
+def build_lwh_mm_load_warning(source_lines: list[str]) -> str:
+    """Собирает агрегированное предупреждение о проверке нагрузки для формата Д×Ш×H (мм)."""
+    if not source_lines:
+        return LWH_MM_DEFAULT_LOAD_WARNING
+    if len(source_lines) <= 3:
+        return f"{LWH_MM_DEFAULT_LOAD_WARNING} ({', '.join(source_lines)})"
+    sample = ", ".join(source_lines[:3])
+    return f"{LWH_MM_DEFAULT_LOAD_WARNING} ({sample} и ещё {len(source_lines) - 3})"
 
 
 def match_bare_plate_line(line: str) -> Optional[tuple[str, str, str, int]]:
@@ -116,7 +136,28 @@ def parse_line(raw_line: str) -> LineParseResult:
     s_lower = s.lower()
     s_norm = s_lower.replace(",", ".")
 
-    # 1) WxL
+    # 1) Д×Ш×H в мм (3880x1200x220 [qty])
+    m_lwh_mm = _LWH_MM_RE.match(s_norm)
+    if m_lwh_mm:
+        length_mm = int(m_lwh_mm.group(1))
+        width_mm = int(m_lwh_mm.group(2))
+        if length_mm >= 300 and width_mm >= 300:
+            length_m = round(length_mm / 1000.0, 3)
+            width_m = round(width_mm / 1000.0, 3)
+            qty = int(m_lwh_mm.group(4)) if m_lwh_mm.group(4) else 1
+            length_dm_raw = f"{length_mm / 100:.1f}".replace(".", ",")
+            return LineParseResult(
+                parsed=True,
+                stage="strict_lwh_mm",
+                width_m=width_m,
+                length_m=length_m,
+                qty=qty,
+                load_code=8.0,
+                length_dm_raw=length_dm_raw,
+                load_assumed=True,
+            )
+
+    # 2) WxL
     m_wxl = _WXL_RE.search(s_norm)
     if m_wxl:
         first = float(m_wxl.group(1))
@@ -134,7 +175,7 @@ def parse_line(raw_line: str) -> LineParseResult:
             qty=qty,
         )
 
-    # 2) Марка ПБ/ПК
+    # 3) Марка ПБ/ПК
     m_mark = _PLATE_MARK_RE.search(s_lower)
     if m_mark:
         ldm_str = m_mark.group(1)
@@ -177,7 +218,7 @@ def parse_line(raw_line: str) -> LineParseResult:
             length_dm_raw=ldm_str.strip() if ldm_str else "",
         )
 
-    # 3) Марка без префикса ПБ: L-W-load [qty]
+    # 4) Марка без префикса ПБ: L-W-load [qty]
     bare = match_bare_plate_line(s)
     if bare:
         ldm_str, wdm_str, load_str, qty = bare

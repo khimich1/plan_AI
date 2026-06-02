@@ -10,6 +10,7 @@ TRACK_WIDTH_M = 1.2
 
 LONG_CUT_PRICE_PER_M = 460.0  # Продольный рез, руб/пог.м
 TRANSVERSE_CUT_PRICE = 1200.0  # Поперечный (или скошенный) рез, руб/шт
+MIN_BILLABLE_TRIM_MM = 20  # Остаток/отход ≤ 20 мм не тарифицируется и не требует реза
 
 WEIGHT_KG_PER_DM2 = 2.83333333
 
