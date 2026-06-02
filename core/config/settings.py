@@ -108,6 +108,11 @@ class Settings(BaseSettings):
         default=True,
         alias="LAYOUT_TRACK_START_REINF_RELAXATION",
     )
+    # Дозаполнение хвоста дорожки переносом solid-плит с последующих дорожек (до 101 м).
+    track_top_up_from_following: bool = Field(
+        default=True,
+        alias="TRACK_TOP_UP_FROM_FOLLOWING",
+    )
 
     @field_validator("cors_allowed_origins_raw", mode="before")
     @classmethod

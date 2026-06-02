@@ -302,7 +302,6 @@ def validate_track_integrity(
 def split_sequence_into_tracks(
     sequence: list,
     max_track_length: float = 101.0,
-    min_track_length: float = 96.0,
     strict_layout_integrity: bool = False,
     *,
     track_reinf_preference: bool | None = None,
@@ -322,7 +321,6 @@ def split_sequence_into_tracks(
                   - list[dict] с группами по нагрузкам [{'load_code', 'sequence', 'label'}, ...]
                   - list[dict] с плитами [{'length', 'mode', ...}, ...]
         max_track_length: Максимальная длина дорожки (101м)
-        min_track_length: Минимальная длина для закрытия дорожки (96м)
         track_reinf_preference: Если True — среди допустимых целых выбирать ближайшую по армированию
             к соседней плите с резом; None — из Settings (LAYOUT_TRACK_REINF_PREFERENCE).
         track_start_reinf_relaxation: Если True и строгое армирование не даёт целую для старта —
@@ -835,7 +833,6 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     """
     # Константы длины дорожки (определяем в начале, чтобы были доступны везде)
     MAX_TRACK_LENGTH = 101.0  # Максимальная длина дорожки (ЖЁСТКИЙ ЛИМИТ!)
-    MIN_TRACK_LENGTH = 96.0   # Минимальная длина дорожки для закрытия
     
     logger.info(f"Начало генерации визуализации. Директория: {output_dir}")
     
@@ -951,7 +948,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         except Exception:
             pass
         # #endregion
-        tracks = split_sequence_into_tracks(seq, MAX_TRACK_LENGTH, MIN_TRACK_LENGTH)
+        tracks = split_sequence_into_tracks(seq, MAX_TRACK_LENGTH)
         # #region agent log (95694e) количество 5.98/665 в дорожках после split (путь visualize_plan)
         try:
             _nt = 0

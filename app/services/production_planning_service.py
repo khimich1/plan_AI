@@ -714,6 +714,11 @@ class ProductionPlanningService:
                         f"Не удалось разложить дорожки: нужна целая плита в начале — {exc}"
                     ) from exc
 
+                if get_settings().track_top_up_from_following:
+                    from core.track_top_up import top_up_tracks_from_following
+
+                    top_up_tracks_from_following(all_tracks_list)
+
             # #region agent log
             try:
                 import json as _agent_json

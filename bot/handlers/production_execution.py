@@ -1021,6 +1021,13 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             )
             return
 
+        from core.config.settings import get_settings
+
+        if get_settings().track_top_up_from_following:
+            from core.track_top_up import top_up_tracks_from_following
+
+            top_up_tracks_from_following(all_tracks_list or [])
+
         # PlateAudit: checkpoint после split_sequence_into_tracks
         _handler_audit.checkpoint("tracks", all_tracks_list)
         # #region agent log
