@@ -1,5 +1,4 @@
 """Обработчики команд для работы с планами"""
-import asyncio
 import os
 import logging
 import sys
@@ -14,21 +13,26 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.plate_order_context import PlateOrderContext, run_in_order_context
 from core.visualization import visualize_plan
 from ..bot_config import OUTPUTS_DIR_STR
+from ..dependencies.plate_context import PlateOrderContextDep
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 
-@router.message(Command("build_plan"))
-async def cmd_build_plan(message: Message):
+@router.message(Command("build_plan"), PlateOrderContextDep())
+async def cmd_build_plan(message: Message, plate_order_ctx: PlateOrderContext):
     """Обработчик команды /build_plan"""
     await message.answer("⏳ Выполняю расчёт дорожки, подожди немного...")
     
     try:
-        # Запускаем расчёт в отдельном потоке
-        result_paths = await asyncio.to_thread(visualize_plan, OUTPUTS_DIR_STR)
+        result_paths = await run_in_order_context(
+            plate_order_ctx,
+            visualize_plan,
+            OUTPUTS_DIR_STR,
+        )
         
         if isinstance(result_paths, tuple) and len(result_paths) >= 2:
             png_path, pdf_path = result_paths

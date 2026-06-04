@@ -1,5 +1,4 @@
 """Обработчики оптимизации резов"""
-import asyncio
 import sys
 from pathlib import Path
 
@@ -14,15 +13,17 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.config_and_data as cfg
 from core.optimization import optimize_with_cascading_longitudinal_cuts
+from core.plate_order_context import PlateOrderContext, run_in_order_context
 
+from ..dependencies.plate_context import PlateOrderContextDep
 from ..keyboards import main_menu_kb
 
 router = Router()
 
 
-@router.message(Command("optimize"))
-@router.message(F.text == "Оптимизация резов")
-async def cmd_optimize(message: Message):
+@router.message(Command("optimize"), PlateOrderContextDep())
+@router.message(F.text == "Оптимизация резов", PlateOrderContextDep())
+async def cmd_optimize(message: Message, plate_order_ctx: PlateOrderContext):
     """Оптимизация раскроя с каскадными продольными резами"""
     await message.answer("⏳ Выполняю оптимизацию раскроя с учётом вторичных резов...")
     
@@ -58,8 +59,11 @@ async def cmd_optimize(message: Message):
             )
             return
         
-        # Запускаем оптимизацию в отдельном потоке
-        result = await asyncio.to_thread(optimize_with_cascading_longitudinal_cuts, orders)
+        result = await run_in_order_context(
+            plate_order_ctx,
+            optimize_with_cascading_longitudinal_cuts,
+            orders,
+        )
         
         if result and result.get('total_plates', 0) > 0:
             # Формируем красивый ответ

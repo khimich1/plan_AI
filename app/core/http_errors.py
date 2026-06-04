@@ -28,15 +28,13 @@ def raise_validation_client_error(
     where: str,
     detail: str | None = None,
 ) -> NoReturn:
-    _log.warning("%s: validation error", where, exc_info=exc)
     if detail is not None:
-        text = detail.strip()
-        client_detail = text if text else MSG_VALIDATION
+        _log.warning("%s: validation error (%s)", where, detail, exc_info=exc)
     else:
-        client_detail = MSG_VALIDATION
+        _log.warning("%s: validation error", where, exc_info=exc)
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail=client_detail,
+        detail=MSG_VALIDATION,
     ) from None
 
 

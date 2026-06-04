@@ -18,8 +18,10 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.gantt_excel import create_gantt_excel
-from core import kp_db
+from bot.services import kp_persistence as kp_db
 from core.debug_paths import get_debug_log_path
+
+from .debug_util import write_agent_debug, write_agent_debug_session
 from core.plan_commit import PlanCommitError, commit_plan_plates
 
 from ..keyboards import main_menu_kb, calendar_days_kb, production_menu_kb
@@ -314,8 +316,9 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                         _id_counts[f"{_kp}|{_name}"] += 1
                     else:
                         _without_identity += 1
-        with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
-            _agent_f.write(_agent_json.dumps({
+        write_agent_debug(
+            _DEBUG_AGENT_LOG,
+            {
                 "sessionId": "ebb546",
                 "runId": "bot-stage",
                 "hypothesisId": "B2",
@@ -330,7 +333,8 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                     "top_identity_counts": _id_counts.most_common(12),
                 },
                 "timestamp": int(_agent_time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
+            },
+        )
     except Exception:
         pass
     # #endregion
@@ -451,8 +455,9 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                             _id_counts[f"{_kp}|{_name}"] += 1
                         else:
                             _without_identity += 1
-            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
-                _agent_f.write(_agent_json.dumps({
+            write_agent_debug(
+                _DEBUG_AGENT_LOG,
+                {
                     "sessionId": "ebb546",
                     "runId": "bot-stage",
                     "hypothesisId": "B3",
@@ -471,7 +476,8 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                         "top_identity_counts": _id_counts.most_common(12),
                     },
                     "timestamp": int(_agent_time.time() * 1000),
-                }, ensure_ascii=False) + "\n")
+                },
+            )
         except Exception:
             pass
         # #endregion
@@ -518,8 +524,9 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                                 _id_counts[f"{_kp}|{_name}"] += 1
                             else:
                                 _without_identity += 1
-            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
-                _agent_f.write(_agent_json.dumps({
+            write_agent_debug(
+                _DEBUG_AGENT_LOG,
+                {
                     "sessionId": "ebb546",
                     "runId": "bot-stage",
                     "hypothesisId": "B4,B5",
@@ -535,7 +542,8 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
                         "top_identity_counts": _id_counts.most_common(12),
                     },
                     "timestamp": int(_agent_time.time() * 1000),
-                }, ensure_ascii=False) + "\n")
+                },
+            )
         except Exception:
             pass
         # #endregion

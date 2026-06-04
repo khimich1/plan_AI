@@ -17,6 +17,7 @@ from typing import Any, Literal
 import core.config_and_data as cfg
 from app.core.settings import get_settings
 from app.domain.enums import PlateStatus
+from app.domain.adapters.plate_order import to_core_order
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
 from core.optimization.result_contract import is_optimization_success
@@ -24,8 +25,10 @@ from core.plan_commit import PlanCommitError, commit_plan_plates
 from core.serialization import strip_plate_audit_from_plan
 from core.debug_paths import get_debug_log_path
 from core.concrete_grade_resolver import enrich_orders_2d_concrete_grade, resolve_concrete_grade_from_order
+from core.plate_order_context import PlateOrderContext
 from app.planning import plan_manager
-from core import kp_db
+from core import kp_db_plates
+from core.rest_matching_service import RestMatchingService
 from core.reinforcement_db import get_reinforcement
 
 logger = logging.getLogger(__name__)
@@ -51,6 +54,22 @@ class ProductionPlanningService:
         self.plita_db_path = str(plita_db_path or settings.plita_db_path)
         self.pb_db_path = str(pb_db_path or settings.pb_db_path)
         self.optimization_service = OptimizationService()
+
+    def find_matching_rests(
+        self,
+        *,
+        length_m: float,
+        width_mm: int,
+        qty_needed: int,
+        db_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Подбор остатков со склада для планирования."""
+        return RestMatchingService.find_matching_rests(
+            length_m=length_m,
+            width_mm=width_mm,
+            qty_needed=qty_needed,
+            db_path=db_path or self.plita_db_path,
+        )
 
     def build_plan(
         self,
@@ -81,8 +100,6 @@ class ProductionPlanningService:
             filter_method=filter_method,
             selected_kp_ids=selected_kp_ids,
         )
-
-        kp_db.init_schema(self.plita_db_path)
 
         kp_list = self._load_kp_list(
             filter_method=filter_method,
@@ -302,7 +319,7 @@ class ProductionPlanningService:
                 "[WEB-PLAN] Ошибка записи плана %s на диск: %s", plan_id, exc
             )
             try:
-                kp_db.return_plan_plates_to_production(plan_id, self.plita_db_path)
+                kp_db_plates.return_plan_plates_to_production(plan_id, self.plita_db_path)
             except Exception:
                 logger.exception(
                     "[WEB-PLAN] Не удалось откатить плиты для плана %s", plan_id
@@ -647,77 +664,70 @@ class ProductionPlanningService:
         )
 
         plate_order = AppPlateOrder.from_orders_2d(orders_2d)
+        core_order = to_core_order(plate_order)
 
-        # build_layout_sequence читает cfg.PLATE_LOAD_DETAILS; делаем временный snapshot
-        saved_plate_load_details = copy.deepcopy(cfg.PLATE_LOAD_DETAILS)
-        saved_plate_length_raw = copy.deepcopy(cfg.PLATE_LENGTH_DM_RAW)
-        try:
-            cfg.PLATE_LOAD_DETAILS.clear()
-            for key, qty in plate_order.plate_load_details.items():
-                length, width_m, load_code, raw = key
-                normalized_key = (length, width_m, int(float(load_code)), raw)
-                cfg.PLATE_LOAD_DETAILS[normalized_key] = int(qty)
-            cfg.PLATE_LENGTH_DM_RAW.clear()
-            for key, raw in plate_order.plate_length_dm_raw.items():
-                length, width_m, load_code, raw_val = key
-                cfg.PLATE_LENGTH_DM_RAW[(length, width_m, int(float(load_code)), raw_val)] = raw
+        plate_ctx = PlateOrderContext.fresh_empty()
+        plate_ctx.hydrate_from_order(core_order)
 
-            context = self.optimization_service.optimize(
-                plate_order,
-                orders_2d=orders_2d,
+        context = self.optimization_service.optimize(
+            plate_order,
+            orders_2d=orders_2d,
+        )
+        optimization_result = context.optimization_result or {}
+
+        # P8.1: backfill identity у plate_assignments, чтобы slot_exhausted
+        # / secondary_unmapped перестали быть блокером в plan_commit.
+        backfilled = backfill_assignment_identity(
+            optimization_result.get("plate_assignments", []) or [],
+            orders_2d,
+        )
+        if backfilled:
+            logger.info(
+                "[WEB-PLAN] Восстановлена identity у %s plate_assignments-записей",
+                backfilled,
             )
-            optimization_result = context.optimization_result or {}
 
-            # P8.1: backfill identity у plate_assignments, чтобы slot_exhausted
-            # / secondary_unmapped перестали быть блокером в plan_commit.
-            backfilled = backfill_assignment_identity(
-                optimization_result.get("plate_assignments", []) or [],
-                orders_2d,
+        self._log_unmapped_optimizer_assignments(optimization_result)
+        if (
+            not is_optimization_success(optimization_result)
+            or optimization_result.get("total_plates", 0) == 0
+        ):
+            return [], optimization_result
+
+        from core.optimization.layout_runtime_snapshot import (
+            build_layout_runtime_snapshot_from_plate_order_context,
+        )
+        from core.visualization import (
+            LayoutIntegrityError,
+            TrackLayoutInvariantError,
+            split_sequence_into_tracks,
+        )
+        from viz_modules.layout_sequence import build_layout_sequence
+
+        with self.optimization_service.bound_plate_order_context(plate_ctx, context):
+            _layout_rt = build_layout_runtime_snapshot_from_plate_order_context(
+                plate_ctx,
+                layout_reinforcement_order=layout_reinforcement_order,  # type: ignore[arg-type]
             )
-            if backfilled:
-                logger.info(
-                    "[WEB-PLAN] Восстановлена identity у %s plate_assignments-записей",
-                    backfilled,
-                )
+            seq = build_layout_sequence(runtime=_layout_rt)
+            try:
+                all_tracks_list = split_sequence_into_tracks(
+                    seq,
+                    strict_layout_integrity=True,
+                ) or []
+            except LayoutIntegrityError as exc:
+                raise ProductionPlanBuildError(
+                    f"Нарушена целостность раскладки дорожек: {exc}"
+                ) from exc
+            except TrackLayoutInvariantError as exc:
+                raise ProductionPlanBuildError(
+                    f"Не удалось разложить дорожки: нужна целая плита в начале — {exc}"
+                ) from exc
 
-            self._log_unmapped_optimizer_assignments(optimization_result)
-            if (
-                not is_optimization_success(optimization_result)
-                or optimization_result.get("total_plates", 0) == 0
-            ):
-                return [], optimization_result
+            if get_settings().track_top_up_from_following:
+                from core.track_top_up import top_up_tracks_from_following
 
-            from core.optimization.layout_runtime_snapshot import build_layout_runtime_snapshot
-            from core.visualization import (
-                LayoutIntegrityError,
-                TrackLayoutInvariantError,
-                split_sequence_into_tracks,
-            )
-            from viz_modules.layout_sequence import build_layout_sequence
-
-            with self.optimization_service.legacy_runtime(context):
-                _layout_rt = build_layout_runtime_snapshot(
-                    layout_reinforcement_order=layout_reinforcement_order,  # type: ignore[arg-type]
-                )
-                seq = build_layout_sequence(runtime=_layout_rt)
-                try:
-                    all_tracks_list = split_sequence_into_tracks(
-                        seq,
-                        strict_layout_integrity=True,
-                    ) or []
-                except LayoutIntegrityError as exc:
-                    raise ProductionPlanBuildError(
-                        f"Нарушена целостность раскладки дорожек: {exc}"
-                    ) from exc
-                except TrackLayoutInvariantError as exc:
-                    raise ProductionPlanBuildError(
-                        f"Не удалось разложить дорожки: нужна целая плита в начале — {exc}"
-                    ) from exc
-
-                if get_settings().track_top_up_from_following:
-                    from core.track_top_up import top_up_tracks_from_following
-
-                    top_up_tracks_from_following(all_tracks_list)
+                top_up_tracks_from_following(all_tracks_list)
 
             # #region agent log
             try:
@@ -805,11 +815,6 @@ class ProductionPlanningService:
             except Exception:
                 pass
             # #endregion
-        finally:
-            cfg.PLATE_LOAD_DETAILS.clear()
-            cfg.PLATE_LOAD_DETAILS.update(saved_plate_load_details)
-            cfg.PLATE_LENGTH_DM_RAW.clear()
-            cfg.PLATE_LENGTH_DM_RAW.update(saved_plate_length_raw)
 
         # P7/P8: подключаем общую с ботом RESCUE-логику. Без неё web-side
         # планирование молча теряло позиции, которых не хватало.

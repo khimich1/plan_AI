@@ -18,17 +18,19 @@ from aiogram.enums import ParseMode
 
 from bot.handlers import register_all_handlers
 from bot.bot_config import BOT_TOKEN, DB_PATH_STR
+from core.config.settings import get_settings
 
 # Настройка логирования (консоль + logs/bot.log)
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def init_database():
-    """Проверяет наличие базы данных"""
+    """Проверяет наличие базы данных и инициализирует схему plita.db."""
     try:
         db_path = DB_PATH_STR
         # Путь к plita.db (КП и плиты) — именно этот файл открывать в DB Browser
         plita_db_path = str(PROJECT_ROOT / "plita.db")
+        kp_db.ensure_schema(plita_db_path)
         logger.info(f"📂 База КП (plita.db): {plita_db_path}")
         
         if not os.path.exists(db_path):
@@ -41,8 +43,31 @@ def init_database():
         logger.error(f"❌ Ошибка проверки БД: {e}")
         # Не прерываем работу - база может быть создана позже
 
+def validate_bot_startup() -> bool:
+    """Fail-fast: settings (allowlist) must be valid before polling."""
+    try:
+        settings = get_settings()
+    except Exception as exc:
+        logger.error("❌ Конфигурация бота не прошла проверку: %s", exc)
+        return False
+    allowlist_count = len(settings.bot_telegram_allowlist)
+    logger.info(
+        "🔐 Bot auth: enabled=%s allowed_users=%s app_env=%s",
+        settings.bot_auth_enabled,
+        allowlist_count,
+        settings.app_env,
+    )
+    if not settings.bot_auth_enabled and settings.app_env.lower() != "production":
+        logger.warning(
+            "⚠️ BOT_AUTH_ENABLED=false — доступ открыт всем пользователям Telegram (только для разработки)"
+        )
+    return True
+
+
 async def main():
     """Основная функция запуска бота"""
+    if not validate_bot_startup():
+        return
     if not BOT_TOKEN:
         logger.error("❌ BOT_TOKEN не найден! Проверьте файл bot/bot.env")
         logger.error("💡 Получите токен у @BotFather в Telegram")

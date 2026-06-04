@@ -154,6 +154,16 @@ class CommercialDraftMetadata(BaseModel):
     ocr_row_count_on_image: int | None = None
 
 
+class CommercialBreakdownTable(BaseModel):
+    name: str
+    rows: list[list[str]] = Field(default_factory=list)
+
+
+class CommercialDraftBreakdownResponse(BaseModel):
+    draft_id: str
+    items: list[CommercialBreakdownTable] = Field(default_factory=list)
+
+
 class CommercialDraftDetailsResponse(BaseModel):
     draft_id: str
     order: dict[str, Any]

@@ -22,18 +22,22 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config_and_data import set_plate_lists_from_text, get_current_plate_order, PlateOrder, length_dm_to_m
+from core.config_and_data import set_plate_lists_from_text, length_dm_to_m
 import core.config_and_data as cfg
+from core.plate_order_context import PlateOrderContext, run_in_order_context
+from ..dependencies.plate_context import PlateOrderContextDep
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.kp_plate_weight import resolve_kp_line_weight_kg
 from core.db_config import PB_DB_PATH
 from core.reinforcement_db import get_reinforcement
 from core.visualization import visualize_plan
-from core import kp_db
+from bot.services import kp_persistence as kp_db
 from core.execution_terms import parse_execution_terms_to_datetime
 from core.exceptions import PlateParseError, FileGenerationError
 from core.debug_paths import get_debug_log_path
+
+from .debug_util import write_agent_debug, write_agent_debug_session
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -48,6 +52,30 @@ router = Router()
 
 # Лимит длины сообщения Telegram
 MAX_MESSAGE_LEN = 4096
+
+
+def _build_pricing_in_ctx(price_table, *, reinforcement_code: int = 8):
+    """Sync pricing pipeline (вызывать через ``run_in_order_context``)."""
+    from viz_modules.procurement import build_price_rows, build_component_breakdown, build_procurement_items
+
+    price_rows, total_sum = build_price_rows(price_table, reinforcement_code=reinforcement_code)
+    breakdown_tables = build_component_breakdown(price_table, price_rows)
+    procurement_items = build_procurement_items()
+    return price_rows, total_sum, breakdown_tables, procurement_items
+
+
+def _apply_opt_cache_to_ctx(plate_order_ctx: PlateOrderContext, cached: dict) -> None:
+    plate_order_ctx.load_optimization_snapshot(
+        optimization_result=cached.get("plan") or {},
+        plan_by_load=cached.get("by_load") or {},
+        load_to_reinforcement_map=cached.get("load_map") or {},
+    )
+
+
+def _recognized_plate_count(plate_order_ctx: PlateOrderContext, text: str) -> int:
+    """Парсит текст в bound runtime; считает плиты из ``ctx.plates``."""
+    set_plate_lists_from_text(text)
+    return sum(plate_order_ctx.plates.plate_load_details.values())
 
 # Кэш заказов пользователей
 ORDER_CACHE: Dict[int, list] = {}
@@ -172,7 +200,7 @@ async def select_manager_callback(callback: CallbackQuery, state: FSMContext):
     manager_id = int(callback.data.split("_")[-1])
     
     # Получаем данные менеджера из БД
-    from core.kp_db import get_manager_by_id
+    from bot.services.kp_persistence import get_manager_by_id
     manager = get_manager_by_id(manager_id)
     
     if not manager:
@@ -223,8 +251,12 @@ async def receive_client_name(message: Message, state: FSMContext):
     )
 
 
-@router.message(KPStates.waiting_plates_list)
-async def receive_plates_list(message: Message, state: FSMContext):
+@router.message(KPStates.waiting_plates_list, PlateOrderContextDep())
+async def receive_plates_list(
+    message: Message,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Шаг 1: Получаем список плит (текст или фото), показываем список и кнопку «Подтвердить»"""
 
     from core.plate_text_normalizer import get_wide_plate_lines, normalize_order_text
@@ -327,8 +359,7 @@ async def receive_plates_list(message: Message, state: FSMContext):
 
         # Парсим текст для подсчёта количества и проверки широких плит
         try:
-            set_plate_lists_from_text(plates_text)
-            recognized_count = sum(get_current_plate_order().plate_load_details.values())
+            recognized_count = _recognized_plate_count(plate_order_ctx, plates_text)
         except PlateParseError as e:
             logger.warning(f"[COMMERCIAL] Ошибка парсинга списка плит от пользователя {message.from_user.id}: {e}")
             await message.answer(
@@ -376,8 +407,7 @@ async def receive_plates_list(message: Message, state: FSMContext):
         initial_user_plate_lines = acc_lines + initial_user_plate_lines
 
     try:
-        set_plate_lists_from_text(plates_text_to_store)
-        recognized_count = sum(get_current_plate_order().plate_load_details.values())
+        recognized_count = _recognized_plate_count(plate_order_ctx, plates_text_to_store)
     except PlateParseError as merge_parse_exc:
         logger.warning(
             "[COMMERCIAL] Парсинг объединённого списка плит: %s",
@@ -635,8 +665,12 @@ async def replace_plates_list_callback(callback: CallbackQuery, state: FSMContex
     await _prompt_kp_step1_plates(callback.message)
 
 
-@router.message(KPStates.waiting_wide_plates_replacement)
-async def receive_wide_plates_replacement(message: Message, state: FSMContext):
+@router.message(KPStates.waiting_wide_plates_replacement, PlateOrderContextDep())
+async def receive_wide_plates_replacement(
+    message: Message,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Получаем список замен для плит шириной > 12 дм и формируем итоговый список"""
     import re as _re
 
@@ -740,8 +774,7 @@ async def receive_wide_plates_replacement(message: Message, state: FSMContext):
 
     # Считаем количество по итоговому списку
     try:
-        set_plate_lists_from_text(final_plates_text)
-        final_count = sum(get_current_plate_order().plate_load_details.values())
+        final_count = _recognized_plate_count(plate_order_ctx, final_plates_text)
     except PlateParseError:
         final_count = 0
 
@@ -788,8 +821,12 @@ async def receive_wide_plates_replacement(message: Message, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "skip_wide_plates", KPStates.waiting_wide_plates_replacement)
-async def skip_wide_plates_callback(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "skip_wide_plates", KPStates.waiting_wide_plates_replacement, PlateOrderContextDep())
+async def skip_wide_plates_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Пропускает все строки с плитами шире 12 дм (исключает их из заказа)."""
     await callback.answer()
 
@@ -820,8 +857,7 @@ async def skip_wide_plates_callback(callback: CallbackQuery, state: FSMContext):
     )
 
     try:
-        set_plate_lists_from_text(final_plates_text)
-        final_count = sum(get_current_plate_order().plate_load_details.values())
+        final_count = _recognized_plate_count(plate_order_ctx, final_plates_text)
     except PlateParseError:
         final_count = 0
 
@@ -984,19 +1020,25 @@ async def receive_delivery_conditions(message: Message, state: FSMContext):
     )
 
 
-@router.message(KPStates.waiting_payment_conditions)
-async def receive_payment_conditions_and_generate(message: Message, state: FSMContext):
+@router.message(KPStates.waiting_payment_conditions, PlateOrderContextDep())
+async def receive_payment_conditions_and_generate(
+    message: Message,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Получаем условия оплаты и генерируем документы"""
     payment_conditions = message.text.strip()
-    
-    # Сохраняем условия оплаты
+
     await state.update_data(payment_conditions=payment_conditions)
-    
-    # Переходим к генерации документов
-    await generate_all_documents(message, state)
+
+    await generate_all_documents(message, state, plate_order_ctx)
 
 
-async def generate_all_documents(message: Message, state: FSMContext):
+async def generate_all_documents(
+    message: Message,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Генерация всех документов с полученными данными"""
     # Получаем все данные из состояния
     data = await state.get_data()
@@ -1079,7 +1121,11 @@ async def generate_all_documents(message: Message, state: FSMContext):
             )
             
             try:
-                optimization_context = await asyncio.to_thread(optimization_service.optimize, order)
+                optimization_context = await run_in_order_context(
+                    plate_order_ctx,
+                    optimization_service.optimize,
+                    order,
+                )
                 optimization_result = optimization_context.optimization_result
                 if optimization_result and optimization_result.get('total_plates', 0) > 0:
                     OPT_PLAN_CACHE[message.from_user.id] = {
@@ -1100,48 +1146,20 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 # Продолжаем без оптимизации (цены будут посчитаны по старой логике)
         
         # Используем build_price_rows для получения правильных цен
-        from viz_modules.procurement import build_price_rows, build_component_breakdown, build_procurement_items
         from viz_modules.price_utils import load_price_table_from_xlsx
         
-        PlateOrder.from_dict(order.to_dict()).apply_to_globals()
+        plate_order_ctx.hydrate_from_order(order)
 
-        # Загружаем таблицу цен
         price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
-        
-        # Получаем строки сметы
+
         if orders_2d and message.from_user.id in OPT_PLAN_CACHE:
-            cached = OPT_PLAN_CACHE[message.from_user.id]
-            from app.domain.models.optimization_context import OptimizationContext
-            optimization_context = OptimizationContext(
-                order=order,
-                optimization_result=cached.get('plan') or {},
-                plan_by_load=cached.get('by_load') or {},
-                load_to_reinforcement_map=cached.get('load_map') or {},
-            )
-            with optimization_service.legacy_runtime(optimization_context):
-                price_rows, total_sum = await asyncio.to_thread(
-                    build_price_rows,
-                    price_table,
-                    reinforcement_code=8
-                )
-                breakdown_tables = await asyncio.to_thread(
-                    build_component_breakdown,
-                    price_table,
-                    price_rows
-                )
-                procurement_items = build_procurement_items()
-        else:
-            price_rows, total_sum = await asyncio.to_thread(
-                build_price_rows,
-                price_table,
-                reinforcement_code=8
-            )
-            breakdown_tables = await asyncio.to_thread(
-                build_component_breakdown,
-                price_table,
-                price_rows
-            )
-            procurement_items = build_procurement_items()
+            _apply_opt_cache_to_ctx(plate_order_ctx, OPT_PLAN_CACHE[message.from_user.id])
+
+        price_rows, total_sum, breakdown_tables, procurement_items = await run_in_order_context(
+            plate_order_ctx,
+            _build_pricing_in_ctx,
+            price_table,
+        )
 
         # Формируем order_data из того же источника, что и смета (build_procurement_items), чтобы не терять плиты
         order_data = []
@@ -1189,8 +1207,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 # #region agent log
                 try:
                     _log_path = _DEBUG_LOG_B59370
-                    with open(_log_path, 'a', encoding='utf-8') as _f:
-                        _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                    write_agent_debug(_log_path, {"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000})
                 except Exception:
                     pass
                 # #endregion
@@ -1220,8 +1237,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
             if 5.69 <= length_m <= 5.73:
                 try:
                     _log_path = _DEBUG_LOG_8E9428
-                    with open(_log_path, 'a', encoding='utf-8') as _f:
-                        _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_order_data", "location": "commercial:order_data_loop", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                    write_agent_debug(_log_path, {"sessionId": "8e9428", "hypothesisId": "H_order_data", "location": "commercial:order_data_loop", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000})
                 except Exception:
                     pass
             # #endregion
@@ -1230,8 +1246,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
                 try:
                     _parsed = (cfg.parse_name_to_sizes(matching_row[1]) if matching_row and len(matching_row) > 1 else (None, None))
                     _log_path = _DEBUG_LOG_A9176E
-                    with open(_log_path, 'a', encoding='utf-8') as _f:
-                        _f.write(__import__('json').dumps({"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                    write_agent_debug(_log_path, {"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000})
                 except Exception:
                     pass
             # #endregion
@@ -1271,15 +1286,26 @@ async def generate_all_documents(message: Message, state: FSMContext):
             return
         
         # 🆕 Обогащаем order_data точными названиями из prays_plity
-        from core.kp_db import enrich_order_data_with_nomenclature
+        from bot.services.kp_persistence import enrich_order_data_with_nomenclature
         order_data = await asyncio.to_thread(enrich_order_data_with_nomenclature, order_data)
 
         # #region agent log
         try:
             _od_total = sum(i.get('qty', 0) for i in order_data)
             _od_sample = [(i.get('name', '')[:30], round(i.get('length_m', 0), 3), i.get('qty')) for i in order_data[:3]]
-            open(_DEBUG_LOG, "a", encoding="utf-8").write(
-                __import__("json").dumps({"hypothesisId": "H3", "location": "commercial:order_data_from_price_rows", "message": "order_data after build_price_rows", "data": {"len_order_data": len(order_data), "total_qty": _od_total, "sample": _od_sample}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n"
+            write_agent_debug(
+                _DEBUG_LOG,
+                {
+                    "hypothesisId": "H3",
+                    "location": "commercial:order_data_from_price_rows",
+                    "message": "order_data after build_price_rows",
+                    "data": {
+                        "len_order_data": len(order_data),
+                        "total_qty": _od_total,
+                        "sample": _od_sample,
+                    },
+                    "timestamp": __import__("time").time() * 1000,
+                },
             )
         except Exception:
             pass
@@ -1292,7 +1318,7 @@ async def generate_all_documents(message: Message, state: FSMContext):
         offer_date = datetime.now().strftime("%d.%m.%Y")
         
         # 🆕 ПОЛУЧАЕМ СЛЕДУЮЩИЙ НОМЕР КП ИЗ БД
-        from core.kp_db import get_next_kp_number
+        from bot.services.kp_persistence import get_next_kp_number
         kp_db_id = get_next_kp_number()
         logger.debug(f"Предполагаемый номер КП из БД: {kp_db_id}")
 
@@ -1408,8 +1434,12 @@ async def generate_all_documents(message: Message, state: FSMContext):
 
 # === СТАРЫЙ ОБРАБОТЧИК (для обратной совместимости) ===
 
-@router.message(KPStates.waiting_for_commercial_offer)
-async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
+@router.message(KPStates.waiting_for_commercial_offer, PlateOrderContextDep())
+async def receive_order_and_generate_pdf(
+    message: Message,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Обработчик получения заказа и генерации PDF (старый обработчик)"""
     await message.answer("⏳ Формирую коммерческое предложение...")
     
@@ -1506,9 +1536,10 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 
                 try:
                     from core.optimization import optimize_with_cascading_longitudinal_cuts
-                    optimization_result = await asyncio.to_thread(
+                    optimization_result = await run_in_order_context(
+                        plate_order_ctx,
                         optimize_with_cascading_longitudinal_cuts,
-                        orders_2d=orders_2d
+                        orders_2d=orders_2d,
                     )
                     
                     if optimization_result and optimization_result.get('total_plates', 0) > 0:
@@ -1552,31 +1583,28 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 await message.answer("✅ Оптимизация завершена! Формирую документы...")
         
         # 🔥 ТЕПЕРЬ build_price_rows получит ОПТИМИЗИРОВАННЫЕ данные из OPT_CASCADING_PLAN_BY_LOAD!
-        from viz_modules.procurement import build_price_rows, build_component_breakdown, build_procurement_items, get_orders_from_opt_plan
         from viz_modules.price_utils import load_price_table_from_xlsx
-        
-        PlateOrder.from_dict(order.to_dict()).apply_to_globals()
 
-        # Загружаем таблицу цен для расчётов
+        plate_order_ctx.hydrate_from_order(order)
+        if optimization_results_by_reinforcement:
+            load_to_reinforcement_map: dict = {}
+            for reinforcement_key, result in optimization_results_by_reinforcement.items():
+                for load_code in result.get("loads_in_group", []):
+                    load_to_reinforcement_map.setdefault(load_code, []).append(reinforcement_key)
+            plate_order_ctx.load_optimization_snapshot(
+                optimization_result={},
+                plan_by_load=optimization_results_by_reinforcement,
+                load_to_reinforcement_map=load_to_reinforcement_map,
+            )
+
         price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
-        
-        # Получаем строки сметы с ПРАВИЛЬНЫМИ ценами (С УЧЁТОМ ОПТИМИЗАЦИИ!)
-        price_rows, total_sum = await asyncio.to_thread(
-            build_price_rows,
+
+        price_rows, total_sum, breakdown_tables, procurement_items = await run_in_order_context(
+            plate_order_ctx,
+            _build_pricing_in_ctx,
             price_table,
-            reinforcement_code=8
         )
-        
-        # Получаем детальную разбивку компонентов (для PDF)
-        breakdown_tables = await asyncio.to_thread(
-            build_component_breakdown,
-            price_table,
-            price_rows
-        )
-        
-        # Формируем order_data из того же источника, что и смета (build_procurement_items)
         order_data = []
-        procurement_items = build_procurement_items()
         for item in procurement_items:
             length_m = item['length']
             width_m = item['width']
@@ -1620,8 +1648,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 # #region agent log
                 try:
                     _log_path = _DEBUG_LOG_B59370
-                    with open(_log_path, 'a', encoding='utf-8') as _f:
-                        _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                    write_agent_debug(_log_path, {"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000})
                 except Exception:
                     pass
                 # #endregion
@@ -1651,8 +1678,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
             if 5.69 <= length_m <= 5.73:
                 try:
                     _log_path = _DEBUG_LOG_8E9428
-                    with open(_log_path, 'a', encoding='utf-8') as _f:
-                        _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_order_data_alt", "location": "commercial:order_data_loop_alt", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                    write_agent_debug(_log_path, {"sessionId": "8e9428", "hypothesisId": "H_order_data_alt", "location": "commercial:order_data_loop_alt", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000})
                 except Exception:
                     pass
             # #endregion
@@ -1661,8 +1687,7 @@ async def receive_order_and_generate_pdf(message: Message, state: FSMContext):
                 try:
                     _parsed = (cfg.parse_name_to_sizes(matching_row[1]) if matching_row and len(matching_row) > 1 else (None, None))
                     _log_path = _DEBUG_LOG_A9176E
-                    with open(_log_path, 'a', encoding='utf-8') as _f:
-                        _f.write(__import__('json').dumps({"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop_alt", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+                    write_agent_debug(_log_path, {"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop_alt", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000})
                 except Exception:
                     pass
             # #endregion
@@ -1811,8 +1836,12 @@ FILE_TYPE_CAPTIONS = {
 }
 
 
-@router.callback_query(F.data.startswith("kp_file_"))
-async def callback_kp_file_download(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith("kp_file_"), PlateOrderContextDep())
+async def callback_kp_file_download(
+    callback: CallbackQuery,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Генерирует и отправляет файл КП по нажатию кнопки. Если файл ещё не создан — создаёт."""
     await callback.answer()
     
@@ -1906,22 +1935,29 @@ async def callback_kp_file_download(callback: CallbackQuery, state: FSMContext):
                 await callback.message.answer("❌ Не удалось создать файл разбивки.")
                 
         elif file_type in ("schema", "schema_breakdown"):
-            # Восстанавливаем план оптимизации из кеша (для корректной схемы)
             user_id = callback.from_user.id
             if user_id in OPT_PLAN_CACHE:
-                import core.optimization as optimization
-                cached = OPT_PLAN_CACHE[user_id]
-                optimization.OPT_CASCADING_PLAN = cached.get('plan')
-                optimization.OPT_CASCADING_PLAN_BY_LOAD = cached.get('by_load', {})
-                optimization.LOAD_TO_REINFORCEMENT_MAP = cached.get('load_map', {})
-            
+                _apply_opt_cache_to_ctx(plate_order_ctx, OPT_PLAN_CACHE[user_id])
+
+            plate_order_dict = data.get("plate_order")
+            if plate_order_dict:
+                from app.domain.models.plate_order import PlateOrder as AppPlateOrder
+
+                plate_order_ctx.hydrate_from_order(
+                    AppPlateOrder.from_dict(plate_order_dict)
+                )
+
             schema_pdf_path = data.get('kp_schema_pdf_path')
             schema_breakdown_path = data.get('kp_schema_breakdown_path')
-            
+
             if (not schema_pdf_path or not os.path.exists(schema_pdf_path)) or \
                (file_type == "schema_breakdown" and (not schema_breakdown_path or not os.path.exists(schema_breakdown_path))):
                 await callback.message.answer("⏳ Генерирую схему раскладки...")
-                result_paths = await asyncio.to_thread(visualize_plan, OUTPUTS_DIR_STR)
+                result_paths = await run_in_order_context(
+                    plate_order_ctx,
+                    visualize_plan,
+                    OUTPUTS_DIR_STR,
+                )
                 if isinstance(result_paths, tuple) and len(result_paths) >= 2:
                     png_path, pdf_schema_path = result_paths
                     base = os.path.basename(png_path)
@@ -2068,22 +2104,20 @@ async def receive_execution_terms(message: Message, state: FSMContext):
     
     try:
         # Сохраняем КП в базу данных
-        kp_id = kp_db.save_kp_to_db(
+        kp_id = commercial_service.save_offer(
             creation_date=offer_date,
             order_data=order_data,
-            xlsx_file_path=xlsx_path,
+            xlsx_path=xlsx_path,
             customer_name=customer_name,
             manager_name=manager_name,
             discount_percent=discount_percent,
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
-            execution_terms=execution_terms,  # Теперь это дата в формате ДД.ММ.ГГГГ
-            status='в работе'
+            execution_terms=execution_terms,
+            status='в работе',
         )
         
-        # 🔥 ИСПРАВЛЕНИЕ: Используем ту же функцию расчета, что и в XLSX и в save_kp_to_db
-        # Получаем итоговую сумму из сохраненного КП (она уже рассчитана правильно)
-        kp_info = kp_db.get_kp_by_id(kp_id)
+        kp_info = commercial_service.get_offer(kp_id)
         if kp_info:
             total_amount = kp_info.get('total_amount', 0)
         else:
@@ -2211,21 +2245,20 @@ async def callback_save_kp_to_archive(callback: CallbackQuery, state: FSMContext
     
     try:
         # Сохраняем КП в базу данных со статусом "в архиве"
-        kp_id = kp_db.save_kp_to_db(
+        kp_id = commercial_service.save_offer(
             creation_date=offer_date,
             order_data=order_data,
-            xlsx_file_path=xlsx_path,
+            xlsx_path=xlsx_path,
             customer_name=customer_name,
             manager_name=manager_name,
             discount_percent=discount_percent,
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
-            execution_terms=None,  # БЕЗ СРОКОВ!
-            status='в архиве'  # СТАТУС АРХИВА!
+            execution_terms=None,
+            status='в архиве',
         )
         
-        # Получаем итоговую сумму из сохраненного КП
-        kp_info = kp_db.get_kp_by_id(kp_id)
+        kp_info = commercial_service.get_offer(kp_id)
         if kp_info:
             total_amount = kp_info.get('total_amount', 0)
         else:

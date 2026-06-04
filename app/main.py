@@ -26,6 +26,9 @@ async def lifespan(app: FastAPI):
             pass
     settings = get_settings()
     setup_logging(level=logging.INFO, log_dir=settings.logs_dir, log_filename="backend.log")
+    from core import kp_db
+
+    kp_db.ensure_schema(str(settings.plita_db_path))
     AuthRepository(str(settings.plita_db_path)).init_schema()
     app.state.settings = settings
     yield

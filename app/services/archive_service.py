@@ -22,6 +22,8 @@ from app.schemas.archive import (
 from app.services.day_documents_service import _visualize_lock
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
+from core.plate_order_context import PlateOrderContext, run_in_order_context
+from core.visualization import visualize_plan
 from core.execution_terms import normalize_execution_terms_to_ddmmyyyy
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
@@ -226,12 +228,18 @@ class ArchiveService:
             filename = f"КП_{kp_id}_schema.pdf"
             target_path = self.outputs_dir / filename
 
+            viz_ctx = PlateOrderContext.fresh_empty()
+            viz_ctx.hydrate_from_order(plate_order)
+            viz_ctx.load_optimization_snapshot(
+                optimization_result=context.optimization_result,
+                plan_by_load=context.plan_by_load,
+                load_to_reinforcement_map=context.load_to_reinforcement_map,
+            )
             async with _visualize_lock:
-                result = await asyncio.to_thread(
-                    self.file_generation_service.generate_visualization,
-                    order=plate_order,
-                    context=context,
-                    output_dir=str(self.outputs_dir),
+                result = await run_in_order_context(
+                    viz_ctx,
+                    visualize_plan,
+                    str(self.outputs_dir),
                 )
 
             if not isinstance(result, tuple) or len(result) < 2:

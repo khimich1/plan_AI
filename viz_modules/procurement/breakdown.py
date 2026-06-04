@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 
@@ -16,6 +17,50 @@ from .trim import (
     format_transverse_remainder_calculation,
     resolve_long_cut_pricing,
 )
+
+
+def _accumulate_order_counter(
+    order_counter: Counter,
+    plan_orders: list,
+    *,
+    reinforcement_code: int = 8,
+) -> None:
+    """Группирует строки заказа по (длина, ширина, нагрузка, номинал_длины).
+
+    Приоритет нагрузки: ``load_code`` на строке заказа (из плана оптимизатора),
+    иначе ``PLATE_LOAD_DETAILS``, иначе ``get_load_code_for_plate``.
+    """
+    for order in plan_orders:
+        length = round(float(order.get('length', 0)), 3)
+        width_val = order.get('width', 0)
+        width_mm = width_val if width_val > 5 else round(width_val * 1000)
+        width_m = width_mm / 1000.0
+        order_ldr = (order.get('length_dm_raw') or '').strip()
+        order_qty = order.get('qty', 1)
+
+        order_load = order.get('load_code')
+        if order_load is not None and order_load != '':
+            load_code = int(math.floor(float(order_load)))
+            order_counter[(length, width_mm, load_code, order_ldr, False)] += order_qty
+            continue
+
+        found_details = []
+        if cfg.PLATE_LOAD_DETAILS:
+            for key, q in cfg.PLATE_LOAD_DETAILS.items():
+                L, W, load = key[0], key[1], key[2]
+                key_ldr = key[3] if len(key) > 3 else ''
+                if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
+                    found_details.append((load, q, key_ldr))
+
+        if found_details and sum(q for _, q, _ in found_details) == order_qty:
+            for load_code, q, detail_ldr in found_details:
+                order_counter[(length, width_mm, load_code, detail_ldr, False)] += q
+        else:
+            load_code = cfg.get_load_code_for_plate(
+                length, width_m, default=(6 if width_m < 1.0 else reinforcement_code)
+            )
+            warning_flag = bool(found_details)
+            order_counter[(length, width_mm, load_code, order_ldr, warning_flag)] += order_qty
 
 
 def build_component_breakdown(price_table: dict, price_rows: list = None, reinforcement_code: int = 8, deps: ProcurementDeps | None = None):
@@ -82,34 +127,11 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
         plan_orders = all_orders
     
     print(f'[DEBUG] build_component_breakdown: найдено заказов: {len(plan_orders)}')
-    
-    # Группируем заказы по (длина, ширина, НАГРУЗКА, номинал_длины)
-    order_counter = Counter()
-    for order in plan_orders:
-        length = round(float(order.get('length', 0)), 3)
-        width_val = order.get('width', 0)
-        width_mm = width_val if width_val > 5 else round(width_val * 1000)  # round для корректного округления
-        width_m = width_mm / 1000.0
-        order_ldr = (order.get('length_dm_raw') or '').strip()
 
-        # Получаем нагрузку для этой плиты
-        found_details = []
-        if cfg.PLATE_LOAD_DETAILS:
-            for key, q in cfg.PLATE_LOAD_DETAILS.items():
-                L, W, load = key[0], key[1], key[2]
-                key_ldr = key[3] if len(key) > 3 else ''
-                if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
-                    found_details.append((load, q, key_ldr))
-
-        order_qty = order.get('qty', 1)
-
-        if found_details and sum(q for _, q, _ in found_details) == order_qty:
-            for load_code, q, detail_ldr in found_details:
-                order_counter[(length, width_mm, load_code, detail_ldr, False)] += q
-        else:
-            load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else reinforcement_code))
-            warning_flag = True if found_details else False
-            order_counter[(length, width_mm, load_code, order_ldr, warning_flag)] += order_qty
+    order_counter: Counter = Counter()
+    _accumulate_order_counter(
+        order_counter, plan_orders, reinforcement_code=reinforcement_code
+    )
 
     breakdown_tables = []
 
@@ -438,34 +460,11 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
             plan_orders = all_orders
     
     print(f'[DEBUG] build_component_breakdown_production: найдено заказов: {len(plan_orders)}')
-    
-    # Группируем заказы по (длина, ширина, НАГРУЗКА, номинал_длины)
-    order_counter = Counter()
-    for order in plan_orders:
-        length = round(float(order.get('length', 0)), 3)
-        width_val = order.get('width', 0)
-        width_mm = width_val if width_val > 5 else round(width_val * 1000)  # round для корректного округления
-        width_m = width_mm / 1000.0
-        order_ldr = (order.get('length_dm_raw') or '').strip()
 
-        # Получаем нагрузку для этой плиты
-        found_details = []
-        if cfg.PLATE_LOAD_DETAILS:
-            for key, q in cfg.PLATE_LOAD_DETAILS.items():
-                L, W, load = key[0], key[1], key[2]
-                key_ldr = key[3] if len(key) > 3 else ''
-                if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
-                    found_details.append((load, q, key_ldr))
-
-        order_qty = order.get('qty', 1)
-
-        if found_details and sum(q for _, q, _ in found_details) == order_qty:
-            for load_code, q, detail_ldr in found_details:
-                order_counter[(length, width_mm, load_code, detail_ldr, False)] += q
-        else:
-            load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else reinforcement_code))
-            warning_flag = True if found_details else False
-            order_counter[(length, width_mm, load_code, order_ldr, warning_flag)] += order_qty
+    order_counter: Counter = Counter()
+    _accumulate_order_counter(
+        order_counter, plan_orders, reinforcement_code=reinforcement_code
+    )
 
     # ШАГ 1: Определяем максимальное армирование
     # НОВОЕ: Используем PLATE_MAX_REINFORCEMENT_MAP если он заполнен (макс. армирование по дорожке)

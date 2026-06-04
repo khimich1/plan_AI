@@ -32,6 +32,7 @@ from core.optimization.context import (
     OPT_PLAN,
     OPT_WIDTH_PRIORITY,
 )
+from core.plate_runtime_state import PlateMutableRuntime
 from core.optimization.optimization_config import OptimizationConfig
 
 PlateLoadDetailsMap = Mapping[tuple[float, float, int, str], int]
@@ -103,6 +104,23 @@ class OptPlanFrozenSnapshot:
     def from_context(cls) -> OptPlanFrozenSnapshot:
         return cls.capture_from_context()
 
+    @classmethod
+    def from_optimization_state(cls, opt: dict[str, Any]) -> OptPlanFrozenSnapshot:
+        """Снимок OPT из ``PlateOrderContext.optimization`` без чтения TLS-прокси."""
+        return cls(
+            opt_plan=MappingProxyType(copy.deepcopy(dict(opt.get("opt_plan", {})))),
+            opt_cascading_plan=MappingProxyType(
+                copy.deepcopy(dict(opt.get("opt_cascading_plan", {})))
+            ),
+            opt_cascading_plan_by_load=MappingProxyType(
+                copy.deepcopy(dict(opt.get("opt_cascading_plan_by_load", {})))
+            ),
+            opt_width_priority=tuple(copy.deepcopy(list(opt.get("opt_width_priority", [])))),
+            load_to_reinforcement_map=MappingProxyType(
+                copy.deepcopy(dict(opt.get("load_to_reinforcement_map", {})))
+            ),
+        )
+
 
 OptPlanTlsHandles = OptPlanFrozenSnapshot
 
@@ -143,6 +161,25 @@ class LayoutPlateListsReadOnly:
             plates_0_48=_tuple_floats(cfg.PLATES_0_48),
             plates_0_50=_tuple_floats(cfg.PLATES_0_50),
             plates_0_34=_tuple_floats(cfg.PLATES_0_34),
+        )
+
+    @classmethod
+    def from_plate_runtime(cls, rt: PlateMutableRuntime) -> LayoutPlateListsReadOnly:
+        return cls(
+            plates_1_2=_tuple_floats(rt.plates_1_2),
+            plates_1_08=_tuple_floats(rt.plates_1_08),
+            plates_1_5_to_1_2=_tuple_floats(rt.plates_1_5_to_1_2),
+            plates_1_0=_tuple_floats(rt.plates_1_0),
+            plates_0_46=_tuple_floats(rt.plates_0_46),
+            plates_0_32=_tuple_floats(rt.plates_0_32),
+            plates_0_72=_tuple_floats(rt.plates_0_72),
+            plates_0_70=_tuple_floats(rt.plates_0_70),
+            plates_0_86=_tuple_floats(rt.plates_0_86),
+            plates_0_74=_tuple_floats(rt.plates_0_74),
+            plates_0_88=_tuple_floats(rt.plates_0_88),
+            plates_0_48=_tuple_floats(rt.plates_0_48),
+            plates_0_50=_tuple_floats(rt.plates_0_50),
+            plates_0_34=_tuple_floats(rt.plates_0_34),
         )
 
 
@@ -267,4 +304,24 @@ def build_layout_runtime_snapshot(
         opt_snapshot=snap,
         layout_cfg=layout_slice,
         optimization_config=optimization_config,
+    )
+
+
+def build_layout_runtime_snapshot_from_plate_order_context(
+    ctx: Any,
+    *,
+    optimization_config: OptimizationConfig | None = None,
+    layout_greedy_reinf_merge: bool | None = None,
+    layout_track_reinf_preference: bool | None = None,
+    layout_reinforcement_order: Literal["asc", "desc"] | None = None,
+) -> LayoutRuntimeSnapshot:
+    """Собрать снимок раскладки из явного ``PlateOrderContext`` (без legacy OPT_* assign)."""
+    return build_layout_runtime_snapshot(
+        plate_load_details=ctx.plates.plate_load_details,
+        plate_lists=LayoutPlateListsReadOnly.from_plate_runtime(ctx.plates),
+        opt_snapshot=OptPlanFrozenSnapshot.from_optimization_state(ctx.optimization),
+        optimization_config=optimization_config,
+        layout_greedy_reinf_merge=layout_greedy_reinf_merge,
+        layout_track_reinf_preference=layout_track_reinf_preference,
+        layout_reinforcement_order=layout_reinforcement_order,
     )

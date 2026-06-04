@@ -15,19 +15,54 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core import kp_db
+from bot.services import kp_persistence as kp_db
+from core.destructive_db_guard import DestructiveDbOperationBlocked
+from bot.security.audit import log_bot_security_event
+from bot.security.users import BotUser, has_role
 from ..keyboards import main_menu_kb, db_management_kb, db_clear_confirm_kb
 from ..states import AdminStates
 
 router = Router()
 
+_ADMIN_ONLY_MSG = "⛔ Только администратор может выполнить это действие."
+
+
+async def _ensure_admin_message(message: Message, bot_user: BotUser, *, action: str) -> bool:
+    if has_role(bot_user, "admin"):
+        return True
+    log_bot_security_event(
+        "access_denied",
+        telegram_id=bot_user.telegram_id,
+        role=bot_user.role,
+        action=action,
+    )
+    await message.answer(_ADMIN_ONLY_MSG, reply_markup=main_menu_kb(bot_user.role))
+    return False
+
+
+async def _ensure_admin_callback(callback: CallbackQuery, bot_user: BotUser, *, action: str) -> bool:
+    if has_role(bot_user, "admin"):
+        return True
+    log_bot_security_event(
+        "access_denied",
+        telegram_id=bot_user.telegram_id,
+        role=bot_user.role,
+        action=action,
+    )
+    if callback.message:
+        await callback.message.answer(_ADMIN_ONLY_MSG, reply_markup=main_menu_kb(bot_user.role))
+    await callback.answer("Недостаточно прав", show_alert=True)
+    return False
+
 
 @router.message(Command("delete_kp"))
-async def cmd_delete_kp(message: Message, state: FSMContext):
+async def cmd_delete_kp(message: Message, state: FSMContext, bot_user: BotUser):
     """
     Удаляет КП из базы данных по номеру.
     Использование: /delete_kp 5
     """
+    if not await _ensure_admin_message(message, bot_user, action="delete_kp"):
+        return
     args = message.text.split()
     
     if len(args) != 2:
@@ -35,7 +70,7 @@ async def cmd_delete_kp(message: Message, state: FSMContext):
             "❌ Неверный формат команды!\n\n"
             "Использование: /delete_kp <номер_КП>\n"
             "Пример: /delete_kp 5",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         return
     
@@ -44,7 +79,7 @@ async def cmd_delete_kp(message: Message, state: FSMContext):
     except ValueError:
         await message.answer(
             "❌ Номер КП должен быть числом!",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         return
     
@@ -54,7 +89,7 @@ async def cmd_delete_kp(message: Message, state: FSMContext):
     if not kp_info:
         await message.answer(
             f"❌ КП #{kp_id} не найдено в базе данных.",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         return
     
@@ -84,15 +119,17 @@ async def cmd_delete_kp(message: Message, state: FSMContext):
 
 
 @router.message(AdminStates.waiting_delete_confirmation)
-async def confirm_delete_kp(message: Message, state: FSMContext):
+async def confirm_delete_kp(message: Message, state: FSMContext, bot_user: BotUser):
     """Подтверждение удаления КП"""
+    if not await _ensure_admin_message(message, bot_user, action="confirm_delete_kp"):
+        return
     confirmation = message.text.strip().upper()
     
     if confirmation not in ['ДА', 'YES', 'Y']:
         await state.clear()
         await message.answer(
             "❌ Удаление отменено.",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         return
     
@@ -104,7 +141,7 @@ async def confirm_delete_kp(message: Message, state: FSMContext):
         await state.clear()
         await message.answer(
             "❌ Ошибка: не удалось получить номер КП.",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         return
     
@@ -118,22 +155,24 @@ async def confirm_delete_kp(message: Message, state: FSMContext):
             f"✅ **КП #{kp_id} успешно удалено из базы данных!**\n\n"
             f"Все связанные данные (плиты, файлы, метаданные) также удалены.",
             parse_mode="Markdown",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
     else:
         await message.answer(
             f"❌ Не удалось удалить КП #{kp_id}.\n"
             f"Возможно, оно уже было удалено ранее.",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
 
 
 @router.message(Command("list_kp"))
-async def cmd_list_kp(message: Message):
+async def cmd_list_kp(message: Message, bot_user: BotUser):
     """
     Показывает список всех КП в базе данных.
     Использование: /list_kp
     """
+    if not await _ensure_admin_message(message, bot_user, action="list_kp"):
+        return
     try:
         # Получаем все КП со статусом "в работе"
         kp_list_active = kp_db.get_all_kp_by_status('в работе')
@@ -174,21 +213,31 @@ async def cmd_list_kp(message: Message):
         
         response += "💡 Для удаления КП используйте: /delete_kp <номер>"
         
-        await message.answer(response, parse_mode="Markdown", reply_markup=main_menu_kb())
+        await message.answer(
+            response, parse_mode="Markdown", reply_markup=main_menu_kb(bot_user.role)
+        )
     
     except Exception as e:
         await message.answer(
             f"❌ Ошибка при получении списка КП: {str(e)}",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
 
 
 @router.message(Command("clear_all_kp"))
-async def cmd_clear_all_kp(message: Message, state: FSMContext):
+async def cmd_clear_all_kp(message: Message, state: FSMContext, bot_user: BotUser):
     """
     Полностью очищает все КП из базы данных.
     Использование: /clear_all_kp
     """
+    if not await _ensure_admin_message(message, bot_user, action="clear_all_kp"):
+        return
+    log_bot_security_event(
+        "destructive_started",
+        telegram_id=bot_user.telegram_id,
+        role=bot_user.role,
+        action="clear_all_kp",
+    )
     try:
         # Подсчитываем количество КП перед удалением
         kp_list_active = kp_db.get_all_kp_by_status('в работе')
@@ -201,7 +250,7 @@ async def cmd_clear_all_kp(message: Message, state: FSMContext):
         if total_count == 0:
             await message.answer(
                 "ℹ️ База данных уже пуста. Нечего удалять.",
-                reply_markup=main_menu_kb()
+                reply_markup=main_menu_kb(bot_user.role)
             )
             return
         
@@ -234,20 +283,22 @@ async def cmd_clear_all_kp(message: Message, state: FSMContext):
     except Exception as e:
         await message.answer(
             f"❌ Ошибка при проверке базы данных: {str(e)}",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
 
 
 @router.message(AdminStates.waiting_clear_all_confirmation)
-async def confirm_clear_all_kp(message: Message, state: FSMContext):
+async def confirm_clear_all_kp(message: Message, state: FSMContext, bot_user: BotUser):
     """Подтверждение полной очистки БД"""
+    if not await _ensure_admin_message(message, bot_user, action="confirm_clear_all_kp"):
+        return
     confirmation = message.text.strip().upper()
     
     if confirmation not in ['ДА', 'YES', 'Y']:
         await state.clear()
         await message.answer(
             "❌ Очистка отменена.",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         return
     
@@ -256,14 +307,16 @@ async def confirm_clear_all_kp(message: Message, state: FSMContext):
     expected_count = data.get('clear_all_count', 0)
     
     try:
-        # Выполняем полную очистку
         result = kp_db.clear_all_kp()
-        
         await state.clear()
-        
-        # Формируем отчёт
-        total_deleted = result.get('kp_offers', 0)
-        
+        log_bot_security_event(
+            "destructive_completed",
+            telegram_id=bot_user.telegram_id,
+            role=bot_user.role,
+            action="clear_all_kp",
+            kp_offers=result.get("kp_offers", 0),
+            kp_plates=result.get("kp_plates", 0),
+        )
         await message.answer(
             f"✅ **База данных полностью очищена!**\n\n"
             f"📊 Удалено:\n"
@@ -274,15 +327,20 @@ async def confirm_clear_all_kp(message: Message, state: FSMContext):
             f"🔄 Счётчики AUTOINCREMENT сброшены.\n"
             f"Новые КП будут начинаться с номера 1.",
             parse_mode="Markdown",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
-    
+    except DestructiveDbOperationBlocked as exc:
+        await state.clear()
+        await message.answer(
+            f"⛔ {exc}",
+            reply_markup=main_menu_kb(bot_user.role),
+        )
     except Exception as e:
         await state.clear()
         await message.answer(
             f"❌ Ошибка при очистке базы данных: {str(e)}\n\n"
             f"Попробуйте снова позже.",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         import logging
         logging.getLogger(__name__).exception(f"Ошибка при очистке базы данных: {e}")
@@ -291,19 +349,23 @@ async def confirm_clear_all_kp(message: Message, state: FSMContext):
 # ==================== НОВОЕ МЕНЮ УПРАВЛЕНИЯ БД ====================
 
 @router.message(F.text == "⚙️ Управление БД")
-async def btn_db_management(message: Message):
+async def btn_db_management(message: Message, bot_user: BotUser):
     """Обработчик кнопки 'Управление БД' из главного меню"""
+    if not await _ensure_admin_message(message, bot_user, action="db_management"):
+        return
     await message.answer(
         "⚙️ **Управление базой данных**\n\n"
         "Выберите действие:",
         parse_mode="Markdown",
-        reply_markup=db_management_kb()
+        reply_markup=db_management_kb(bot_user.role),
     )
 
 
 @router.callback_query(F.data == "db_stats")
-async def show_db_stats(callback: CallbackQuery):
+async def show_db_stats(callback: CallbackQuery, bot_user: BotUser):
     """Показывает статистику БД"""
+    if not await _ensure_admin_callback(callback, bot_user, action="db_stats"):
+        return
     try:
         stats = kp_db.get_db_stats()
         
@@ -321,21 +383,29 @@ async def show_db_stats(callback: CallbackQuery):
         await callback.message.answer(
             response,
             parse_mode="Markdown",
-            reply_markup=db_management_kb()
+            reply_markup=db_management_kb(bot_user.role)
         )
         await callback.answer()
     
     except Exception as e:
         await callback.message.answer(
             f"❌ Ошибка при получении статистики: {str(e)}",
-            reply_markup=db_management_kb()
+            reply_markup=db_management_kb(bot_user.role)
         )
         await callback.answer()
 
 
 @router.callback_query(F.data == "db_clear_all")
-async def request_db_clear(callback: CallbackQuery):
+async def request_db_clear(callback: CallbackQuery, bot_user: BotUser):
     """Запрос подтверждения полной очистки БД"""
+    if not await _ensure_admin_callback(callback, bot_user, action="db_clear_all"):
+        return
+    log_bot_security_event(
+        "destructive_started",
+        telegram_id=bot_user.telegram_id,
+        role=bot_user.role,
+        action="db_clear_all",
+    )
     try:
         stats = kp_db.get_db_stats()
         
@@ -345,7 +415,7 @@ async def request_db_clear(callback: CallbackQuery):
         if total == 0:
             await callback.message.answer(
                 "ℹ️ База данных уже пуста. Нечего удалять.",
-                reply_markup=db_management_kb()
+                reply_markup=db_management_kb(bot_user.role)
             )
             await callback.answer()
             return
@@ -378,7 +448,7 @@ async def request_db_clear(callback: CallbackQuery):
     except Exception as e:
         await callback.message.answer(
             f"❌ Ошибка при проверке БД: {str(e)}",
-            reply_markup=db_management_kb()
+            reply_markup=db_management_kb(bot_user.role)
         )
         await callback.answer()
 
@@ -437,14 +507,27 @@ def clear_all_plans_data():
 
 
 @router.callback_query(F.data == "db_clear_confirmed")
-async def confirm_db_clear(callback: CallbackQuery):
+async def confirm_db_clear(callback: CallbackQuery, bot_user: BotUser):
     """Подтверждение и выполнение полной очистки БД и планов"""
+    if not await _ensure_admin_callback(callback, bot_user, action="db_clear_confirmed"):
+        return
+    log_bot_security_event(
+        "destructive_started",
+        telegram_id=bot_user.telegram_id,
+        role=bot_user.role,
+        action="db_clear_confirmed",
+    )
     try:
-        # Выполняем полную очистку БД
         result_db = kp_db.clear_all_plates_data()
-        
-        # Выполняем очистку планов производства
         result_plans = clear_all_plans_data()
+        log_bot_security_event(
+            "destructive_completed",
+            telegram_id=bot_user.telegram_id,
+            role=bot_user.role,
+            action="db_clear_confirmed",
+            db_total=result_db.get("total", 0),
+            plan_files=result_plans.get("plan_files", 0),
+        )
         
         report = (
             "✅ **БАЗА ДАННЫХ И ПЛАНЫ ПОЛНОСТЬЮ ОЧИЩЕНЫ!**\n\n"
@@ -469,15 +552,22 @@ async def confirm_db_clear(callback: CallbackQuery):
         await callback.message.answer(
             report,
             parse_mode="Markdown",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         await callback.answer("✅ База и планы очищены!")
-    
+
+    except DestructiveDbOperationBlocked as exc:
+        await callback.message.answer(
+            f"⛔ {exc}",
+            reply_markup=db_management_kb(bot_user.role),
+        )
+        await callback.answer("⛔ Запрещено в production")
+
     except Exception as e:
         await callback.message.answer(
             f"❌ Ошибка при очистке БД: {str(e)}\n\n"
             f"Попробуйте снова позже.",
-            reply_markup=db_management_kb()
+            reply_markup=db_management_kb(bot_user.role)
         )
         await callback.answer("❌ Ошибка!")
         import logging
@@ -485,27 +575,29 @@ async def confirm_db_clear(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "db_clear_cancel")
-async def cancel_db_clear(callback: CallbackQuery):
+async def cancel_db_clear(callback: CallbackQuery, bot_user: BotUser):
     """Отмена очистки БД"""
+    if not await _ensure_admin_callback(callback, bot_user, action="db_clear_cancel"):
+        return
     await callback.message.answer(
         "❌ Очистка отменена. База данных не изменена.",
-        reply_markup=db_management_kb()
+        reply_markup=db_management_kb(bot_user.role)
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "db_back_to_menu")
-async def back_to_menu(callback: CallbackQuery):
+async def back_to_menu(callback: CallbackQuery, bot_user: BotUser):
     """Возврат в главное меню"""
     await callback.message.answer(
         "Возврат в главное меню",
-        reply_markup=main_menu_kb()
+        reply_markup=main_menu_kb(bot_user.role),
     )
     await callback.answer()
 
 
 @router.message(Command("recover_plates"))
-async def cmd_recover_plates(message: Message):
+async def cmd_recover_plates(message: Message, bot_user: BotUser):
     """
     Восстанавливает "застрявшие" плиты (статус 'в плане', но не в треках).
     Использование: /recover_plates
@@ -516,6 +608,8 @@ async def cmd_recover_plates(message: Message):
     - Они "застряли" в статусе "в плане" и недоступны для нового планирования
     - Эта команда возвращает их обратно в "в производстве"
     """
+    if not await _ensure_admin_message(message, bot_user, action="recover_plates"):
+        return
     try:
         # Сначала покажем, сколько плит застряло
         import sqlite3
@@ -538,7 +632,7 @@ async def cmd_recover_plates(message: Message):
             await message.answer(
                 "ℹ️ Застрявших плит не найдено.\n\n"
                 "Все плиты имеют корректный статус.",
-                reply_markup=main_menu_kb()
+                reply_markup=main_menu_kb(bot_user.role)
             )
             return
         
@@ -560,21 +654,23 @@ async def cmd_recover_plates(message: Message):
             f"Возвращено в производство: {recovered} записей\n\n"
             f"Теперь эти плиты снова доступны для планирования.",
             parse_mode="Markdown",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         
     except Exception as e:
         await message.answer(
             f"❌ Ошибка при восстановлении плит: {str(e)}",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(bot_user.role)
         )
         import logging
         logging.getLogger(__name__).exception(f"Ошибка при восстановлении плит: {e}")
 
 
 @router.callback_query(F.data == "db_view_rests")
-async def view_plate_rests(callback: CallbackQuery):
+async def view_plate_rests(callback: CallbackQuery, bot_user: BotUser):
     """Экспорт остатков в Excel файл"""
+    if not await _ensure_admin_callback(callback, bot_user, action="db_view_rests"):
+        return
     try:
         await callback.message.answer("⏳ Формирую отчёт по остаткам...")
         
@@ -584,7 +680,7 @@ async def view_plate_rests(callback: CallbackQuery):
         if not rests:
             await callback.message.answer(
                 "ℹ️ Остатков пока нет.",
-                reply_markup=db_management_kb()
+                reply_markup=db_management_kb(bot_user.role)
             )
             await callback.answer()
             return
@@ -679,7 +775,7 @@ async def view_plate_rests(callback: CallbackQuery):
                     f"Всего остатков: {len(rests)} записей\n"
                     f"Дата формирования: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
             parse_mode="Markdown",
-            reply_markup=db_management_kb()
+            reply_markup=db_management_kb(bot_user.role)
         )
         
         # Удаляем временный файл
@@ -690,6 +786,6 @@ async def view_plate_rests(callback: CallbackQuery):
     except Exception as e:
         await callback.message.answer(
             f"❌ Ошибка при формировании отчёта: {str(e)}",
-            reply_markup=db_management_kb()
+            reply_markup=db_management_kb(bot_user.role)
         )
         await callback.answer()

@@ -24,7 +24,7 @@ from app.core.settings import Settings, get_settings
 from app.repositories.plan_repository import PlanRepository
 from app.repositories.work_calendar_repository import WorkCalendarRepository
 from app.schemas.admin import DbResetReport, DbStatsResponse, RecoverPlatesResponse
-from core import kp_db
+from core import kp_db_offers, kp_db_plates
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class AdminService:
     # ---------- Stats ----------
 
     def get_stats(self) -> DbStatsResponse:
-        sqlite_stats = kp_db.get_db_stats(self.db_path)
+        sqlite_stats = kp_db_offers.get_db_stats(self.db_path)
         plans_metadata = self.plan_repository.list_metadata()
         plans = plans_metadata.get("plans") if isinstance(plans_metadata, dict) else None
         plans_count = len(plans) if isinstance(plans, list) else 0
@@ -72,7 +72,7 @@ class AdminService:
 
         Таблица ``app_users`` НЕ затрагивается — администратор не теряет сессию.
         """
-        sqlite_report = kp_db.clear_all_plates_data(self.db_path)
+        sqlite_report = kp_db_offers.clear_all_plates_data(self.db_path)
         plans_report = self._clear_all_plans()
         calendar_reset = self._reset_calendar()
         return DbResetReport(
@@ -87,7 +87,7 @@ class AdminService:
         НЕ трогает ``completed_plates`` и ``plate_rests``.
         Соответствует старой команде бота ``/clear_all_kp``.
         """
-        sqlite_report = kp_db.clear_all_kp(self.db_path)
+        sqlite_report = kp_db_offers.clear_all_kp(self.db_path)
         return DbResetReport(sqlite=_normalize_int_dict(sqlite_report))
 
     def reset_plans_only(self) -> DbResetReport:
@@ -104,7 +104,7 @@ class AdminService:
 
     def recover_stuck_plates(self) -> RecoverPlatesResponse:
         """Возвращает плиты из статуса 'в плане' в 'в производстве'."""
-        recovered = kp_db.recover_stuck_plates(self.db_path)
+        recovered = kp_db_plates.recover_stuck_plates(self.db_path)
         return RecoverPlatesResponse(recovered_records=int(recovered))
 
     # ---------- Internals ----------

@@ -24,11 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.domain.models.optimization_context import OptimizationContext
-from app.domain.models.plate_order import PlateOrder as AppPlateOrder
-import core.optimization as optimization
-from core.optimization.result_contract import is_optimization_success
-from core.config_and_data import PlateOrder
+from core.plate_order_context import PlateOrderContext, run_in_order_context
 from core.formovka_excel import create_formovka_files_for_tracks
 from core.visualization import visualize_plan
 
@@ -59,24 +55,10 @@ def _load_day_bundle(target_date: str) -> dict:
     return multi
 
 
-def _restore_optimization_globals(orders_2d: list, optimization_result: dict) -> None:
-    """Ставит глобальные переменные оптимизации, нужные `visualize_plan`."""
-    app_order = AppPlateOrder.from_orders_2d(orders_2d)
-    if orders_2d:
-        load_codes = sorted({p.get("load_code", 8) for p in orders_2d})
-        load_map = {code: ["all"] for code in load_codes}
-    else:
-        load_map = {8: ["all"]}
-    context = OptimizationContext(
-        order=app_order,
-        optimization_result=optimization_result,
-        plan_by_load={"all": optimization_result} if is_optimization_success(optimization_result) else {},
-        load_to_reinforcement_map=load_map,
-    )
-    optimization.OPT_CASCADING_PLAN = context.optimization_result
-    optimization.OPT_CASCADING_PLAN_BY_LOAD = context.plan_by_load
-    optimization.LOAD_TO_REINFORCEMENT_MAP = context.load_to_reinforcement_map
-    PlateOrder.from_dict(app_order.to_dict()).apply_to_globals()
+def _build_visualization_ctx(orders_2d: list, optimization_result: dict) -> PlateOrderContext:
+    ctx = PlateOrderContext.fresh_empty()
+    ctx.load_production_snapshot(orders_2d, optimization_result)
+    return ctx
 
 
 def _run_visualize(existing_tracks: list, output_dir: Path) -> tuple[str | None, str | None]:
@@ -155,13 +137,16 @@ async def generate_day_schema(target_date: str) -> tuple[Path, Path]:
     multi = _load_day_bundle(target_date)
     tmp_dir = _make_tmp_dir(prefix=f"day_schema_{target_date}_")
     try:
+        viz_ctx = _build_visualization_ctx(
+            multi.get("orders_2d", []),
+            multi.get("optimization_result", {}),
+        )
         async with _visualize_lock:
-            _restore_optimization_globals(
-                multi.get("orders_2d", []),
-                multi.get("optimization_result", {}),
-            )
-            result = await asyncio.to_thread(
-                _run_visualize, copy.deepcopy(multi["tracks"]), tmp_dir
+            result = await run_in_order_context(
+                viz_ctx,
+                _run_visualize,
+                copy.deepcopy(multi["tracks"]),
+                tmp_dir,
             )
         if not isinstance(result, tuple) or len(result) < 2:
             raise DayDocumentsError("visualize_plan не вернул PDF")
@@ -179,13 +164,16 @@ async def generate_day_breakdown(target_date: str) -> tuple[Path, Path]:
     multi = _load_day_bundle(target_date)
     tmp_dir = _make_tmp_dir(prefix=f"day_breakdown_{target_date}_")
     try:
+        viz_ctx = _build_visualization_ctx(
+            multi.get("orders_2d", []),
+            multi.get("optimization_result", {}),
+        )
         async with _visualize_lock:
-            _restore_optimization_globals(
-                multi.get("orders_2d", []),
-                multi.get("optimization_result", {}),
-            )
-            await asyncio.to_thread(
-                _run_visualize, copy.deepcopy(multi["tracks"]), tmp_dir
+            await run_in_order_context(
+                viz_ctx,
+                _run_visualize,
+                copy.deepcopy(multi["tracks"]),
+                tmp_dir,
             )
         breakdown = _find_breakdown(tmp_dir)
         if breakdown is None:

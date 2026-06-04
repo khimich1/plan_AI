@@ -82,7 +82,7 @@ def _sample_draft(draft_id: str = "draft-123") -> dict:
 
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
     monkeypatch.setattr(
         AuthRepository,
@@ -270,7 +270,7 @@ def test_draft_store_rejects_unsafe_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     monkeypatch.setenv("DRAFTS_DIR", str(tmp_path))
     get_settings.cache_clear()
     store = DraftStore()
@@ -293,7 +293,7 @@ def test_draft_store_accepts_safe_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     monkeypatch.setenv("DRAFTS_DIR", str(tmp_path))
     get_settings.cache_clear()
     DraftStore.validate_draft_id(safe_id)
@@ -310,7 +310,7 @@ def test_draft_store_validate_rejects_whitespace_only_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     monkeypatch.setenv("DRAFTS_DIR", str(tmp_path))
     get_settings.cache_clear()
     store = DraftStore()
@@ -337,7 +337,7 @@ def test_draft_store_get_path_rejects_symlink_escaping_base_dir(
     except OSError:
         pytest.skip("could not create symlink for DraftStore containment test")
 
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     monkeypatch.setenv("DRAFTS_DIR", str(drafts_dir))
     get_settings.cache_clear()
     store = DraftStore()
@@ -587,7 +587,7 @@ def test_download_generated_file_rejects_outside_outputs(
 
 @pytest.fixture()
 def client_two_users(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
     monkeypatch.setattr(
         AuthRepository,
@@ -638,6 +638,75 @@ def test_draft_idor_forbids_non_owner(
     client_two_users.cookies.set("app_session", token)
     response = client_two_users.get(f"/api/v1/commercial/drafts/{draft_id}")
     assert response.status_code == 403
+
+
+def test_get_draft_breakdown_returns_tables(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir()
+    monkeypatch.setenv("DRAFTS_DIR", str(drafts_dir))
+    get_settings.cache_clear()
+
+    draft_id = "e" * 32
+    plate_name = "Плиты ПБ 72,8-8-8п"
+    breakdown_rows = [
+        ["Базовая цена (0,80м)", "27 574,00 × (0,80 / 1.2)", "18 382,67 руб"],
+        ["Продольный рез", "460 × 7,3 × 1", "3 348,80 руб"],
+        ["ИТОГО за 1 плиту", "", "30 922,80 руб"],
+    ]
+    store = DraftStore()
+    order = PlateOrder()
+    store.replace_preview(
+        draft_id,
+        order=order,
+        optimization_context=OptimizationContext(order=order),
+        order_data=[{"name": plate_name, "qty": 1, "unit_price": 30922.8}],
+        metadata={
+            "owner_user_id": 1,
+            "breakdown_tables": [{"name": plate_name, "rows": breakdown_rows}],
+            "breakdown_tables_count": 1,
+        },
+    )
+
+    response = client.get(f"/api/v1/commercial/drafts/{draft_id}/breakdown")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["draft_id"] == draft_id
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["name"] == plate_name
+    assert len(payload["items"][0]["rows"]) == 3
+    assert payload["items"][0]["rows"][0][0] == "Базовая цена (0,80м)"
+
+
+def test_get_draft_breakdown_empty_when_no_tables(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir()
+    monkeypatch.setenv("DRAFTS_DIR", str(drafts_dir))
+    get_settings.cache_clear()
+
+    draft_id = "f" * 32
+    store = DraftStore()
+    order = PlateOrder()
+    store.replace_preview(
+        draft_id,
+        order=order,
+        optimization_context=OptimizationContext(order=order),
+        order_data=[],
+        metadata={"owner_user_id": 1},
+    )
+
+    response = client.get(f"/api/v1/commercial/drafts/{draft_id}/breakdown")
+    assert response.status_code == 200
+    assert response.json()["items"] == []
 
 
 def test_draft_idor_allows_owner(

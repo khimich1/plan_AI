@@ -5,7 +5,7 @@ from typing import Any
 
 from app.repositories.kp_repository import KpRepository
 from app.schemas.offers import CreateOfferRequest
-from core import kp_db
+from core.kp_persistence_service import KpPersistenceService
 from core.execution_terms import parse_execution_terms_to_datetime
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
@@ -55,7 +55,7 @@ class OffersService:
             execution_terms, used_default_execution_terms = self._parse_execution_terms(payload.execution_terms_input)
             status = "в работе"
 
-        kp_id = kp_db.save_kp_to_db(
+        kp_id = KpPersistenceService.save_kp_to_db(
             creation_date=payload.creation_date,
             order_data=[item.model_dump() for item in payload.order_data],
             customer_name=payload.customer_name,

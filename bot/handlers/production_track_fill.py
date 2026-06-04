@@ -18,7 +18,7 @@ PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.config_and_data as cfg
-from core import kp_db
+from bot.services import kp_persistence as kp_db
 
 from ..keyboards import calendar_days_kb
 from ..states import ProductionStates

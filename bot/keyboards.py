@@ -2,27 +2,24 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 
-def main_menu_kb() -> ReplyKeyboardMarkup:
-    """Главное меню бота"""
+def main_menu_kb(role: str | None = None) -> ReplyKeyboardMarkup:
+    """Главное меню бота. Управление БД — только для admin."""
+    third_row = [KeyboardButton(text="📖 Как работает бот")]
+    if role == "admin":
+        third_row.append(KeyboardButton(text="⚙️ Управление БД"))
     return ReplyKeyboardMarkup(
         keyboard=[
-            # Первая строка - 2 кнопки рядом
             [
                 KeyboardButton(text="📝 Создать КП"),
-                KeyboardButton(text="Планирование производства")
+                KeyboardButton(text="Планирование производства"),
             ],
-            # Вторая строка - 2 кнопки рядом
             [
                 KeyboardButton(text="📁 Архив"),
-                KeyboardButton(text="Информация о ПБ в работе")
+                KeyboardButton(text="Информация о ПБ в работе"),
             ],
-            # Третья строка - 2 кнопки рядом
-            [
-                KeyboardButton(text="📖 Как работает бот"),
-                KeyboardButton(text="⚙️ Управление БД")
-            ],
+            third_row,
         ],
-        resize_keyboard=True
+        resize_keyboard=True,
     )
 
 
@@ -556,23 +553,24 @@ def plates_completion_kb(plates_by_track: list, rejected_quantities: dict, activ
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def db_management_kb() -> InlineKeyboardMarkup:
+def db_management_kb(role: str | None = None) -> InlineKeyboardMarkup:
     """
-    Клавиатура для управления базой данных.
-    
-    Показывает опции:
-    - Очистка всех данных (КП, плиты, остатки)
-    - Просмотр остатков (экспорт в Excel)
-    - Статистика БД
+    Клавиатура для управления базой данных (только admin).
+    Деструктивные действия скрыты от не-admin ролей.
     """
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🗑️ Очистить все данные", callback_data="db_clear_all")],
-            [InlineKeyboardButton(text="📋 Просмотр остатков", callback_data="db_view_rests")],
-            [InlineKeyboardButton(text="📊 Статистика БД", callback_data="db_stats")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="db_back_to_menu")],
-        ]
-    )
+    rows: list[list[InlineKeyboardButton]] = []
+    if role == "admin":
+        rows.append(
+            [InlineKeyboardButton(text="🗑️ Очистить все данные", callback_data="db_clear_all")]
+        )
+        rows.extend(
+            [
+                [InlineKeyboardButton(text="📋 Просмотр остатков", callback_data="db_view_rests")],
+                [InlineKeyboardButton(text="📊 Статистика БД", callback_data="db_stats")],
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="db_back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def db_clear_confirm_kb() -> InlineKeyboardMarkup:

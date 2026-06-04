@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from app.dependencies.auth import get_current_user
 from app.repositories.auth_repository import AuthRepository
 from app.schemas.auth import LoginRequest
-from app.security.session import create_session_token
+from app.security.session import clear_session_cookie, create_session_token, set_session_cookie
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -23,20 +23,13 @@ def login(payload: LoginRequest, response: Response) -> dict:
             "role": user["role"],
         }
     )
-    response.set_cookie(
-        "app_session",
-        token,
-        httponly=True,
-        samesite="lax",
-        secure=False,
-        max_age=60 * 60 * 12,
-    )
+    set_session_cookie(response, token)
     return {"user": user}
 
 
 @router.post("/logout")
 def logout(response: Response) -> dict:
-    response.delete_cookie("app_session")
+    clear_session_cookie(response)
     return {"ok": True}
 
 

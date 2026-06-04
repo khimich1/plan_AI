@@ -29,7 +29,7 @@ def client(
     monkeypatch: pytest.MonkeyPatch,
     fake_service: MagicMock,
 ) -> TestClient:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
     monkeypatch.setattr(
         AuthRepository,

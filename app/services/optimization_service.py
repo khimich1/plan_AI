@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import warnings
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -10,6 +11,7 @@ from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.plate_order import PlateOrder
 from core.optimization import result_contract as _opt_contract
 from core.optimization import optimize_with_cascading_longitudinal_cuts
+from core.plate_order_context import PlateOrderContext
 
 
 class OptimizationService:
@@ -47,7 +49,29 @@ class OptimizationService:
         )
 
     @contextmanager
+    def bound_plate_order_context(
+        self,
+        plate_ctx: PlateOrderContext,
+        optimization_context: OptimizationContext,
+    ) -> Iterator[PlateOrderContext]:
+        """Привязать OPT-снимок к ``PlateOrderContext`` (предпочтительный путь A1)."""
+        plate_ctx.load_optimization_snapshot(
+            optimization_result=optimization_context.optimization_result,
+            plan_by_load=optimization_context.plan_by_load,
+            load_to_reinforcement_map=optimization_context.load_to_reinforcement_map,
+        )
+        with plate_ctx.bound():
+            yield plate_ctx
+
+    @contextmanager
     def legacy_runtime(self, context: OptimizationContext) -> Iterator[OptimizationContext]:
+        """Deprecated: используйте ``bound_plate_order_context`` + явный ``PlateOrderContext``."""
+        warnings.warn(
+            "OptimizationService.legacy_runtime() is deprecated; "
+            "use bound_plate_order_context(plate_ctx, optimization_context) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         snapshot = {
             "OPT_CASCADING_PLAN": copy.deepcopy(legacy_optimization.OPT_CASCADING_PLAN),
             "OPT_CASCADING_PLAN_BY_LOAD": copy.deepcopy(legacy_optimization.OPT_CASCADING_PLAN_BY_LOAD),
@@ -62,4 +86,3 @@ class OptimizationService:
             legacy_optimization.OPT_CASCADING_PLAN = snapshot["OPT_CASCADING_PLAN"]
             legacy_optimization.OPT_CASCADING_PLAN_BY_LOAD = snapshot["OPT_CASCADING_PLAN_BY_LOAD"]
             legacy_optimization.LOAD_TO_REINFORCEMENT_MAP = snapshot["LOAD_TO_REINFORCEMENT_MAP"]
-

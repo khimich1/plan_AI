@@ -17,8 +17,9 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core import kp_db
+from bot.services import kp_persistence as kp_db
 from core.config_and_data import TRACK_LENGTH_M
+from core.plate_order_context import PlateOrderContext
 from ..keyboards import (
     cancel_process_kb, production_filter_kb, main_menu_kb, tracks_choice_kb
 )
@@ -414,7 +415,11 @@ async def plan_kp_back(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "plan_kp_confirm", ProductionStates.selecting_kps)
-async def plan_kp_confirm(callback: CallbackQuery, state: FSMContext):
+async def plan_kp_confirm(
+    callback: CallbackQuery,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Подтвердить выбор КП и запустить планирование."""
     data = await state.get_data()
     selected = data.get('selected_kp_ids', [])
@@ -429,7 +434,7 @@ async def plan_kp_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(f"✅ Выбрано КП: {', '.join(map(str, sorted(selected_set)))}\n\n⏳ Загружаю плиты...")
     from .production_execution import load_and_plan_production
-    await load_and_plan_production(callback.message, state)
+    await load_and_plan_production(callback.message, state, plate_order_ctx)
     await callback.answer()
 
 
@@ -578,12 +583,16 @@ async def plan_plates_back(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "filter_all", ProductionStates.waiting_filter_method)
-async def filter_all(callback: CallbackQuery, state: FSMContext):
+async def filter_all(
+    callback: CallbackQuery,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Выбор всех КП в работе - сразу переходим к загрузке"""
     await state.update_data(filter_method='all')
     # Импортируем здесь, чтобы избежать циклических импортов
     from .production_execution import load_and_plan_production
-    await load_and_plan_production(callback.message, state)
+    await load_and_plan_production(callback.message, state, plate_order_ctx)
     await callback.answer()
 
 
@@ -635,7 +644,11 @@ async def filter_by_customer(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("customer_"), ProductionStates.waiting_filter_method)
-async def receive_customer_selection(callback: CallbackQuery, state: FSMContext):
+async def receive_customer_selection(
+    callback: CallbackQuery,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Обработчик выбора заказчика"""
     customer_name = callback.data.replace("customer_", "")
     
@@ -644,14 +657,18 @@ async def receive_customer_selection(callback: CallbackQuery, state: FSMContext)
     await callback.message.answer(f"✅ Заказчик: {customer_name}\n\n⏳ Загружаю плиты...")
     # Импортируем здесь, чтобы избежать циклических импортов
     from .production_execution import load_and_plan_production
-    await load_and_plan_production(callback.message, state)
+    await load_and_plan_production(callback.message, state, plate_order_ctx)
     await callback.answer()
 
 
 # === ОБРАБОТЧИКИ ВВОДА ДАТЫ (шаг 3 — по дате) ===
 
 @router.message(ProductionStates.waiting_date_number)
-async def receive_date_number_and_plan(message: Message, state: FSMContext):
+async def receive_date_number_and_plan(
+    message: Message,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """Парсим дату и запускаем планирование"""
     user_input = message.text.strip()
     
@@ -729,4 +746,4 @@ async def receive_date_number_and_plan(message: Message, state: FSMContext):
     
     # Импортируем здесь, чтобы избежать циклических импортов
     from .production_execution import load_and_plan_production
-    await load_and_plan_production(message, state)
+    await load_and_plan_production(message, state, plate_order_ctx)

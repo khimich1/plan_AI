@@ -6,7 +6,8 @@ from typing import Any
 
 from app.repositories.plan_repository import PlanRepository
 from app.services.day_view_service import build_day_view_detail
-from core import kp_db
+from app.services.plate_completion_service import PlateCompletionService
+from core import kp_db_plates, kp_db_rests, kp_db_schema
 
 
 class ProductionCompletionError(ValueError):
@@ -72,7 +73,6 @@ class ProductionCompletionService:
         # P0: вся цепочка списания (move → return_rejected → check_completion)
         # выполняется в ОДНОЙ транзакции. Любая ошибка → conn.rollback() и
         # БД остаётся в состоянии «до complete_day» (никаких полу-списанных плит).
-        kp_db.init_schema(self.db_path)
         conn = sqlite3.connect(self.db_path)
         try:
             conn.execute('PRAGMA journal_mode=WAL')
@@ -93,7 +93,7 @@ class ProductionCompletionService:
             total_moved = 0
             unmoved_plates: list[dict[str, Any]] = []
             for kp_id, plates in plates_by_kp.items():
-                move_result = kp_db.move_plates_to_completed(
+                move_result = PlateCompletionService.move_plates_to_completed(
                     kp_id,
                     plates,
                     day_number,
@@ -162,7 +162,7 @@ class ProductionCompletionService:
                 # без identity мы не можем сохранить, поэтому пишем под
                 # условный kp_id=0. Если миграция не позволяет — лог-warning.
                 try:
-                    kp_db.create_plate_rest(
+                    kp_db_rests.create_plate_rest(
                         kp_id=0,
                         source_plate_name=rest.get("plate_name") or "",
                         rest_width_mm=int(rest.get("width_mm") or 0),
@@ -182,7 +182,7 @@ class ProductionCompletionService:
             completed_kps: list[int] = []
             affected_kp_ids = set(plates_by_kp.keys()) | set(rejected_by_kp.keys())
             for kp_id in affected_kp_ids:
-                if kp_db.check_and_update_kp_completion(
+                if kp_db_plates.check_and_update_kp_completion(
                     kp_id, self.db_path, _external_conn=conn
                 ):
                     completed_kps.append(kp_id)
@@ -269,7 +269,7 @@ class ProductionCompletionService:
             qty = int(item.get("qty") or 0)
             if not kp_id or not plate_name or qty <= 0:
                 continue
-            ok = kp_db.return_plates_to_production(
+            ok = kp_db_plates.return_plates_to_production(
                 kp_id=int(kp_id),
                 plate_name=plate_name,
                 qty=qty,

@@ -19,6 +19,7 @@ def admin_settings(tmp_path: Path) -> Settings:
     plans_dir = tmp_path / "plans"
     plans_dir.mkdir()
     settings = Settings(
+        app_secret_key="test-secret-key-for-pytest-must-be-32-chars-min",
         plita_db_path=tmp_path / "plita.db",
         plans_dir=plans_dir,
         plans_metadata_path=tmp_path / "plans_metadata.json",

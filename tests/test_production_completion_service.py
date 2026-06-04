@@ -209,7 +209,13 @@ def test_unmoved_plates_do_not_mark_day_completed(
     )
     plan_id = built["plan"]["id"]
 
-    monkeypatch.setattr(kp_db, "move_plates_to_completed", lambda *args, **kwargs: 0)
+    from app.services.plate_completion_service import PlateCompletionService
+
+    monkeypatch.setattr(
+        PlateCompletionService,
+        "move_plates_to_completed",
+        lambda *args, **kwargs: 0,
+    )
 
     service = _make_production_service(planning_service, tmp_plita)
     with pytest.raises(

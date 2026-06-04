@@ -20,7 +20,7 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core import kp_db
+from bot.services import kp_persistence as kp_db
 from core.db_config import PB_DB_PATH, PLITA_DB_PATH
 from core.reinforcement_db import get_reinforcement
 from core.concrete_grade_resolver import enrich_orders_2d_concrete_grade
@@ -30,8 +30,12 @@ from core.config_and_data import PlateOrder, canonical_plate_key
 import core.optimization as optimization
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
+from app.services.production_planning_service import ProductionPlanningService
 from core.optimization.result_contract import is_optimization_success
+from core.plate_order_context import PlateOrderContext, run_in_order_context
 from core.debug_paths import get_debug_log_path
+
+from .debug_util import write_agent_debug, write_agent_debug_session
 
 from ..keyboards import main_menu_kb, calendar_days_kb
 from ..states import ProductionStates
@@ -58,62 +62,31 @@ _DEBUG_RUNTIME_SESSION_ID = "648532"
 
 
 def _debug_write(hypothesis_id, location, message, data):
-    """Пишет строку NDJSON в debug.log."""
-    try:
-        import time
-        line = json.dumps({
+    """Пишет строку NDJSON в debug.log (только при включённом agent debug)."""
+    import time
+
+    write_agent_debug(
+        _DEBUG_LOG,
+        {
             "hypothesisId": hypothesis_id,
             "location": location,
             "message": message,
             "data": data,
-            "timestamp": time.time() * 1000
-        }, ensure_ascii=False) + "\n"
-        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(line)
-    except Exception:
-        pass
+            "timestamp": time.time() * 1000,
+        },
+    )
 
-
-def _debug_session_write(run_id, hypothesis_id, location, message, data):
-    """Пишет NDJSON в debug-d7e22e.log для Debug Mode."""
-    try:
-        line = json.dumps({
-            "sessionId": "d7e22e",
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(__import__("time").time() * 1000),
-        }, ensure_ascii=False) + "\n"
-        with open(_DEBUG_SESSION_LOG, "a", encoding="utf-8") as f:
-            f.write(line)
-    except Exception:
-        pass
-
-
-def _debug_runtime_write(run_id, hypothesis_id, location, message, data):
-    """Пишет NDJSON в debug-73ca51.log для текущей debug-сессии."""
-    try:
-        line = json.dumps({
-            "sessionId": _DEBUG_RUNTIME_SESSION_ID,
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(__import__("time").time() * 1000),
-        }, ensure_ascii=False) + "\n"
-        with open(_DEBUG_RUNTIME_LOG, "a", encoding="utf-8") as f:
-            f.write(line)
-    except Exception:
-        pass
 
 router = Router()
 optimization_service = OptimizationService()
+production_planning_service = ProductionPlanningService()
 
 
-async def load_and_plan_production(message: Message, state: FSMContext):
+async def load_and_plan_production(
+    message: Message,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """
     Универсальная функция загрузки КП и планирования производства.
     Работает с разными способами фильтрации: date, kp, all, customer.
@@ -125,7 +98,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
     # === ЗАГРУЗКА КП В ЗАВИСИМОСТИ ОТ ФИЛЬТРА ===
     db_path = PLITA_DB_PATH
     pb_db_path = PB_DB_PATH
-    kp_db.init_schema(str(db_path))
+    kp_db.ensure_schema(str(db_path))
     
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -367,8 +340,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         # #region agent log H_366_loaded: плиты КП 2 после загрузки (до остатков)
         _sel_kp2 = [{"plate_name": p.get("plate_name"), "kp_id": p.get("kp_id"), "length": p.get("length"), "width": p.get("width"), "qty": p.get("qty")} for p in selected_plates if p.get("kp_id") == 2]
         try:
-            with open(_DEBUG_LOG, "a", encoding="utf-8") as _fl:
-                _fl.write(json.dumps({"hypothesisId": "H_366_loaded", "location": "production_execution:after_load_plates", "message": "Плиты КП №2 в selected_plates до остатков", "data": {"kp2_plates": _sel_kp2, "filter_method": filter_method, "kp_plate_ids_keys": list((kp_plate_ids or {}).keys())}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_366_loaded", "location": "production_execution:after_load_plates", "message": "Плиты КП №2 в selected_plates до остатков", "data": {"kp2_plates": _sel_kp2, "filter_method": filter_method, "kp_plate_ids_keys": list((kp_plate_ids or {}).keys())}, "timestamp": __import__("time").time()})
         except Exception:
             pass
         # #endregion
@@ -382,11 +354,11 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             width_mm = plate_data['width']
             qty_needed = plate_data['qty']
             
-            matching_rests = kp_db.find_matching_rests(
+            matching_rests = production_planning_service.find_matching_rests(
                 length_m=length_m,
                 width_mm=width_mm,
                 qty_needed=qty_needed,
-                db_path=plita_db_path
+                db_path=plita_db_path,
             )
             
             qty_from_rests = 0
@@ -493,12 +465,13 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                     "qty": _o.get("qty", 1),
                     "kp_id": _o.get("kp_id"),
                 })
-        _debug_session_write(
-            "run1",
-            "H1",
-            "production_execution:orders_2d_built",
-            "Target plates after parsing and loading",
-            {
+        write_agent_debug_session(
+            _DEBUG_SESSION_LOG,
+            run_id="run1",
+            hypothesis_id="H1",
+            location="production_execution:orders_2d_built",
+            message="Target plates after parsing and loading",
+            data={
                 "targets_count": len(_targets),
                 "targets": _targets,
                 "orders_total_qty": sum(int(x.get("qty", 0) or 0) for x in orders_2d),
@@ -509,8 +482,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         _log_366 = [{"plate_name": o.get("plate_name"), "kp_id": o.get("kp_id"), "length": o.get("length"), "width": o.get("width"), "qty": o.get("qty", 1)} for o in orders_2d if o.get("kp_id") == 2 and ("36,6" in (o.get("plate_name") or "") or "6,65" in (o.get("plate_name") or "") or (abs(float(o.get("length", 0)) - 3.66) < 0.01 and o.get("width") == 665))]
         if _log_366 or any(o.get("kp_id") == 2 for o in orders_2d):
             try:
-                with open(_DEBUG_LOG, "a", encoding="utf-8") as _f366:
-                    _f366.write(json.dumps({"hypothesisId": "H_366", "location": "production_execution:orders_2d_after_build", "message": "КП №2 и/или плита 36,6-6,65 в orders_2d", "data": {"kp2_orders": _log_366, "all_kp2_count": sum(1 for o in orders_2d if o.get("kp_id") == 2), "total_orders": len(orders_2d)}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+                write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_366", "location": "production_execution:orders_2d_after_build", "message": "КП №2 и/или плита 36,6-6,65 в orders_2d", "data": {"kp2_orders": _log_366, "all_kp2_count": sum(1 for o in orders_2d if o.get("kp_id") == 2), "total_orders": len(orders_2d)}, "timestamp": __import__("time").time()})
             except Exception:
                 pass
         # #endregion
@@ -524,15 +496,20 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             for o in orders_2d
             for _ in range(int(o.get('qty', 1) or 0))
         )
-        _debug_runtime_write(
-            "run1",
-            "H1_input_orders",
-            "production_execution:orders_2d_built",
-            "Demand snapshot before optimizer",
+        write_agent_debug(
+            _DEBUG_RUNTIME_LOG,
             {
-                "orders_total_qty": int(sum(int(o.get('qty', 0) or 0) for o in orders_2d)),
-                "orders_total_lines": len(orders_2d),
-                "orders_by_key": {str(list(k)): int(v) for k, v in _orders_by_key.items()},
+                "sessionId": _DEBUG_RUNTIME_SESSION_ID,
+                "runId": "run1",
+                "hypothesisId": "H1_input_orders",
+                "location": "production_execution:orders_2d_built",
+                "message": "Demand snapshot before optimizer",
+                "data": {
+                    "orders_total_qty": int(sum(int(o.get('qty', 0) or 0) for o in orders_2d)),
+                    "orders_total_lines": len(orders_2d),
+                    "orders_by_key": {str(list(k)): int(v) for k, v in _orders_by_key.items()},
+                },
+                "timestamp": int(__import__("time").time() * 1000),
             },
         )
         # #endregion
@@ -542,8 +519,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
             _n51 = _orders_by_key.get(_tk51, 0)
             _n58 = _orders_by_key.get(_tk58, 0)
-            with open(_log_476b25, "a", encoding="utf-8") as _f:
-                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_orders", "location": "production_execution:orders_2d_built", "message": "Chain step 1: demand for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "orders_2d"}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_476b25, {"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_orders", "location": "production_execution:orders_2d_built", "message": "Chain step 1: demand for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "orders_2d"}, "timestamp": __import__("time").time()})
         except Exception:
             pass
         # #endregion
@@ -569,16 +545,14 @@ async def load_and_plan_production(message: Message, state: FSMContext):
         _log_59_10 = [{"length": o["length"], "width": o["width"], "plate_name": o.get("plate_name", ""), "kp_id": o.get("kp_id"), "qty": o.get("qty", 1)} for o in orders_2d if 5.98 <= float(o.get("length", 0)) <= 6.0 and cfg.normalize_load_code(o.get("load_code", 8)) == 10]
         if _log_59_10:
             try:
-                with open(_DEBUG_LOG, "a", encoding="utf-8") as _f:
-                    _f.write(__import__("json").dumps({"hypothesisId": "H_59_10_source", "location": "production_execution:orders_2d_built", "message": "orders_2d: плиты 5.98-6м 10п (ширина для 59,9-12-10п)", "data": {"orders": _log_59_10}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+                write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_59_10_source", "location": "production_execution:orders_2d_built", "message": "orders_2d: плиты 5.98-6м 10п (ширина для 59,9-12-10п)", "data": {"orders": _log_59_10}, "timestamp": __import__("time").time()})
             except Exception:
                 pass
         # #endregion
         # #region agent log H_orders: плиты 61,2 и 59,8 в orders_2d при планировании
         _log_61_59 = [{"plate_name": o.get("plate_name", ""), "kp_id": o.get("kp_id"), "length": o.get("length"), "width": o.get("width"), "qty": o.get("qty", 1)} for o in orders_2d if ("61,2" in (o.get("plate_name") or "") or "59,8" in (o.get("plate_name") or ""))]
         try:
-            with open(_DEBUG_LOG, "a", encoding="utf-8") as _f:
-                _f.write(__import__("json").dumps({"hypothesisId": "H_orders", "location": "production_execution:orders_2d_built", "message": "Плиты 61,2 и 59,8 в orders_2d", "data": {"count": len(_log_61_59), "entries": _log_61_59}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_orders", "location": "production_execution:orders_2d_built", "message": "Плиты 61,2 и 59,8 в orders_2d", "data": {"count": len(_log_61_59), "entries": _log_61_59}, "timestamp": __import__("time").time()})
         except Exception:
             pass
         # #endregion
@@ -638,7 +612,8 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             plate_lookup_by_length[key].sort(key=lambda x: parse_date_for_sort(x.get('kp_date', '')))
         
         # Запуск оптимизации
-        optimization_context = await asyncio.to_thread(
+        optimization_context = await run_in_order_context(
+            plate_order_ctx,
             optimization_service.optimize,
             AppPlateOrder.from_orders_2d(orders_2d),
         )
@@ -742,17 +717,22 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             for p in all_assignments
             if p.get('source') == 'primary'
         )
-        _debug_runtime_write(
-            "run1",
-            "H2_optimizer_output",
-            "production_execution:after_optimizer",
-            "Optimizer demand vs produced(primary)",
+        write_agent_debug(
+            _DEBUG_RUNTIME_LOG,
             {
-                "input_plates": int(input_plates),
-                "output_primary": int(output_plates_primary),
-                "output_total_assignments": int(output_plates_total),
-                "missing_primary_keys": {str(list(k)): int(v) for k, v in (_ordered_debug - _produced_debug).items()},
-                "extra_primary_keys": {str(list(k)): int(v) for k, v in (_produced_debug - _ordered_debug).items()},
+                "sessionId": _DEBUG_RUNTIME_SESSION_ID,
+                "runId": "run1",
+                "hypothesisId": "H2_optimizer_output",
+                "location": "production_execution:after_optimizer",
+                "message": "Optimizer demand vs produced(primary)",
+                "data": {
+                    "input_plates": int(input_plates),
+                    "output_primary": int(output_plates_primary),
+                    "output_total_assignments": int(output_plates_total),
+                    "missing_primary_keys": {str(list(k)): int(v) for k, v in (_ordered_debug - _produced_debug).items()},
+                    "extra_primary_keys": {str(list(k)): int(v) for k, v in (_produced_debug - _ordered_debug).items()},
+                },
+                "timestamp": int(__import__("time").time() * 1000),
             },
         )
         # #endregion
@@ -773,8 +753,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                         _opt_counts[str(_tk)] = _opt_counts.get(str(_tk), 0) + 1
                         break
             _agent_log = _DEBUG_LOG_73B708
-            with open(_agent_log, 'a', encoding='utf-8') as _f:
-                _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_OPT", "location": "production_execution:after_optimizer", "message": "Plates by key at optimizer output", "data": {"target_keys": _target_keys, "counts": _opt_counts, "total_plate_assignments": len(_pa)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_agent_log, {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_OPT", "location": "production_execution:after_optimizer", "message": "Plates by key at optimizer output", "data": {"target_keys": _target_keys, "counts": _opt_counts, "total_plate_assignments": len(_pa)}, "timestamp": __import__('time').time()})
         except Exception:
             pass
         # #endregion
@@ -785,8 +764,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             _pa = optimization_result.get('plate_assignments', []) or []
             _n51 = sum(1 for p in _pa if p.get('source') == 'primary' and abs(round(float(p.get('length', 0)), 2) - 5.1) < 0.02 and int(round(float(p.get('width', 0)))) == 320 and cfg.normalize_load_code(p.get('load_code', 8)) == 8)
             _n58 = sum(1 for p in _pa if p.get('source') == 'primary' and abs(round(float(p.get('length', 0)), 2) - 5.8) < 0.02 and int(round(float(p.get('width', 0)))) == 320 and cfg.normalize_load_code(p.get('load_code', 8)) == 8)
-            with open(_log_476b25, "a", encoding="utf-8") as _f:
-                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_opt", "location": "production_execution:after_optimizer", "message": "Chain step 2: plate_assignments primary for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "plate_assignments_primary", "total_primary": sum(1 for p in _pa if p.get('source') == 'primary')}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_476b25, {"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_opt", "location": "production_execution:after_optimizer", "message": "Chain step 2: plate_assignments primary for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "plate_assignments_primary", "total_primary": sum(1 for p in _pa if p.get('source') == 'primary')}, "timestamp": __import__("time").time()})
         except Exception:
             pass
         # #endregion
@@ -867,16 +845,9 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             )
         
         # === ШАГ 5: ПОДГОТОВКА ДЛЯ ВИЗУАЛИЗАЦИИ ===
-        optimization.OPT_CASCADING_PLAN = optimization_result
-        
         all_loads = set(p['load_code'] for p in orders_2d)
+        plate_order_ctx.load_production_snapshot(orders_2d, optimization_result)
         optimization_result['loads_in_group'] = sorted(all_loads)
-        optimization.OPT_CASCADING_PLAN_BY_LOAD = {'all': optimization_result}
-        optimization.LOAD_TO_REINFORCEMENT_MAP = {
-            load_code: ['all'] for load_code in all_loads
-        }
-        
-        PlateOrder.from_orders_2d(orders_2d).apply_to_globals()
         
         # #region agent log (95694e) количество 5.98/665 в результате оптимизации (primary_cuts)
         try:
@@ -887,8 +858,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 _w = _c.get('width') or 1200
                 if abs(_L - 5.98) < 0.02 and _w == 665:
                     _n_opt += _c.get('qty', 1)
-            with open(_log_95694e, 'a', encoding='utf-8') as _f:
-                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_opt_598665", "location": "production_execution:after_optimization", "message": "count 5.98/665 in optimization_result primary_cuts", "data": {"count_598_665": _n_opt}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_opt_598665", "location": "production_execution:after_optimization", "message": "count 5.98/665 in optimization_result primary_cuts", "data": {"count_598_665": _n_opt}, "timestamp": __import__('time').time()})
         except Exception:
             pass
         # #endregion
@@ -903,8 +873,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                     _n_508320 += _c.get('qty', 1)
                 if abs(_L - 5.98) < 0.02 and _w == 530:
                     _n_598530 += _c.get('qty', 1)
-            with open(_log_95694e, 'a', encoding='utf-8') as _f:
-                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_opt_rescue", "location": "production_execution:after_optimization", "message": "count 5.08/320 and 5.98/530 in primary_cuts", "data": {"count_508_320": _n_508320, "count_598_530": _n_598530}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_opt_rescue", "location": "production_execution:after_optimization", "message": "count 5.08/320 and 5.98/530 in primary_cuts", "data": {"count_508_320": _n_508320, "count_598_530": _n_598530}, "timestamp": __import__('time').time()})
         except Exception:
             pass
         # #endregion
@@ -935,8 +904,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 _seq_total = len(seq) if seq else 0
                 _format = "flat"
             _agent_log = _DEBUG_LOG_73B708
-            with open(_agent_log, 'a', encoding='utf-8') as _f:
-                _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_LAYOUT_IN", "location": "production_execution:after_build_layout_sequence", "message": "Sequence vs plate_assignments count", "data": {"sequence_total": _seq_total, "plate_assignments_count": _pa_count, "format": _format, "diff": _seq_total - _pa_count}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_agent_log, {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_LAYOUT_IN", "location": "production_execution:after_build_layout_sequence", "message": "Sequence vs plate_assignments count", "data": {"sequence_total": _seq_total, "plate_assignments_count": _pa_count, "format": _format, "diff": _seq_total - _pa_count}, "timestamp": __import__('time').time()})
         except Exception:
             pass
         # #endregion
@@ -955,8 +923,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                                 n += 1
                 return n
             _n_seq = _count_598_665_in_seq(seq)
-            with open(_log_95694e, 'a', encoding='utf-8') as _f:
-                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_seq_598665", "location": "production_execution:after_build_layout", "message": "count 5.98/665 in sequence before split", "data": {"count_598_665": _n_seq}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_seq_598665", "location": "production_execution:after_build_layout", "message": "count 5.98/665 in sequence before split", "data": {"count_598_665": _n_seq}, "timestamp": __import__('time').time()})
         except Exception:
             pass
         # #endregion
@@ -974,8 +941,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                             _n508 += 1
                         if abs(L - 5.98) < 0.02 and w_mm == 530:
                             _n598 += 1
-            with open(_log_95694e, 'a', encoding='utf-8') as _f:
-                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_seq_rescue", "location": "production_execution:after_build_layout", "message": "count 5.08/320 and 5.98/530 in sequence before split", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_seq_rescue", "location": "production_execution:after_build_layout", "message": "count 5.08/320 and 5.98/530 in sequence before split", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()})
         except Exception:
             pass
         # #endregion
@@ -997,8 +963,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                             _n51 += 1
                         if abs(L - 5.8) < 0.02 and w_mm == 320 and lc == 8:
                             _n58 += 1
-            with open(_log_476b25, "a", encoding="utf-8") as _f:
-                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_seq", "location": "production_execution:after_build_layout_sequence", "message": "Chain step 3: items in sequence for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "layout_sequence"}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_476b25, {"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_seq", "location": "production_execution:after_build_layout_sequence", "message": "Chain step 3: items in sequence for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "layout_sequence"}, "timestamp": __import__("time").time()})
         except Exception:
             pass
         # #endregion
@@ -1066,8 +1031,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                             _n51 += 1
                         if abs(sL - 5.8) < 0.02 and sw == 320 and slc == 8:
                             _n58 += 1
-            with open(_log_476b25, "a", encoding="utf-8") as _f:
-                _f.write(json.dumps({"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_tracks", "location": "production_execution:after_split_tracks", "message": "Chain step 4: items in tracks for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "all_tracks_list"}, "timestamp": __import__("time").time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_476b25, {"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_tracks", "location": "production_execution:after_split_tracks", "message": "Chain step 4: items in tracks for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "all_tracks_list"}, "timestamp": __import__("time").time()})
         except Exception:
             pass
         # #endregion
@@ -1112,16 +1076,21 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             for o in orders_2d
         )
         _seq_counts, _tracks_counts = _count_keys_in_seq_and_tracks(_order_keys_set)
-        _debug_runtime_write(
-            "run1",
-            "H3_layout_split",
-            "production_execution:after_split_tracks",
-            "Counts by ordered keys in sequence and tracks",
+        write_agent_debug(
+            _DEBUG_RUNTIME_LOG,
             {
-                "ordered_keys_count": len(_order_keys_set),
-                "sequence_counts": {str(list(k)): int(v) for k, v in _seq_counts.items()},
-                "tracks_counts": {str(list(k)): int(v) for k, v in _tracks_counts.items()},
-                "lost_on_split_keys": {str(list(k)): int(v) for k, v in (_seq_counts - _tracks_counts).items()},
+                "sessionId": _DEBUG_RUNTIME_SESSION_ID,
+                "runId": "run1",
+                "hypothesisId": "H3_layout_split",
+                "location": "production_execution:after_split_tracks",
+                "message": "Counts by ordered keys in sequence and tracks",
+                "data": {
+                    "ordered_keys_count": len(_order_keys_set),
+                    "sequence_counts": {str(list(k)): int(v) for k, v in _seq_counts.items()},
+                    "tracks_counts": {str(list(k)): int(v) for k, v in _tracks_counts.items()},
+                    "lost_on_split_keys": {str(list(k)): int(v) for k, v in (_seq_counts - _tracks_counts).items()},
+                },
+                "timestamp": int(__import__("time").time() * 1000),
             },
         )
         # #endregion
@@ -1136,8 +1105,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                     w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
                     if abs(L - 5.98) < 0.02 and w_mm == 665:
                         _n_tracks += 1
-            with open(_log_95694e, 'a', encoding='utf-8') as _f:
-                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_598665", "location": "production_execution:after_split", "message": "count 5.98/665 in tracks after split", "data": {"count_598_665": _n_tracks}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_598665", "location": "production_execution:after_split", "message": "count 5.98/665 in tracks after split", "data": {"count_598_665": _n_tracks}, "timestamp": __import__('time').time()})
         except Exception:
             pass
         # #endregion
@@ -1154,8 +1122,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                         _n508 += 1
                     if abs(L - 5.98) < 0.02 and w_mm == 530:
                         _n598 += 1
-            with open(_log_95694e, 'a', encoding='utf-8') as _f:
-                _f.write(json.dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_rescue", "location": "production_execution:after_split", "message": "count 5.08/320 and 5.98/530 in tracks after split", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_rescue", "location": "production_execution:after_split", "message": "count 5.08/320 and 5.98/530 in tracks after split", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()})
         except Exception:
             pass
         # #endregion
@@ -1202,8 +1169,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                                 _track_counts[str(_tk)] = _track_counts.get(str(_tk), 0) + 1
                                 break
             _agent_log = _DEBUG_LOG_73B708
-            with open(_agent_log, 'a', encoding='utf-8') as _f:
-                _f.write(json.dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_TRACKS", "location": "production_execution:after_split_tracks", "message": "Plates by key in all_tracks_list", "data": {"target_keys": _target_keys, "counts": _track_counts}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
+            write_agent_debug(_agent_log, {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_TRACKS", "location": "production_execution:after_split_tracks", "message": "Plates by key in all_tracks_list", "data": {"target_keys": _target_keys, "counts": _track_counts}, "timestamp": __import__('time').time()})
         except Exception:
             pass
         # #endregion
@@ -1267,8 +1233,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 },
                 "timestamp": __import__('time').time(),
             }
-            with open(_agent_log, 'a', encoding='utf-8') as _fe:
-                _fe.write(json.dumps(_payload, ensure_ascii=False) + "\n")
+            write_agent_debug(_agent_log, _payload)
         except Exception:
             pass
         # #endregion
@@ -1297,8 +1262,7 @@ async def load_and_plan_production(message: Message, state: FSMContext):
             _payload = {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_E", "location": "production_execution:rescue_summary", "message": "Rescue/missing summary", "data": {"total_missing": _total_missing, "missing_keys_count": len(missing_counts) if missing_counts else 0, "missing_sample": _missing_sample, "rescue_tracks_added": rescue_tracks_added, "missing_key_to_orders": _missing_to_orders}, "timestamp": __import__('time').time()}
             if _log_err:
                 _payload["data"]["missing_key_to_orders_error"] = _log_err
-            with open(_agent_log, 'a', encoding='utf-8') as _fe:
-                _fe.write(json.dumps(_payload, ensure_ascii=False) + "\n")
+            write_agent_debug(_agent_log, _payload)
         except Exception:
             pass
         # #endregion
@@ -1505,8 +1469,9 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                 return _total, _without_identity, _counts
 
             _physical_total, _without_identity, _id_counts = _bot_count_physical(all_tracks_list)
-            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
-                _agent_f.write(_agent_json.dumps({
+            write_agent_debug(
+                _DEBUG_AGENT_LOG,
+                {
                     "sessionId": "ebb546",
                     "runId": "bot-stage",
                     "hypothesisId": "B1,B2",
@@ -1521,7 +1486,8 @@ async def load_and_plan_production(message: Message, state: FSMContext):
                         "top_identity_counts": _id_counts.most_common(15),
                     },
                     "timestamp": int(_agent_time.time() * 1000),
-                }, ensure_ascii=False) + "\n")
+                },
+            )
         except Exception:
             pass
         # #endregion

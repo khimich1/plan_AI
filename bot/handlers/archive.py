@@ -11,7 +11,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
-from core import kp_db
+from bot.services import kp_persistence as kp_db
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.execution_terms import parse_execution_terms_to_datetime

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.dependencies.auth import require_roles
 from app.schemas.admin import DbResetReport, DbStatsResponse, RecoverPlatesResponse
 from app.services.admin_service import AdminService
+from core.destructive_db_guard import DestructiveDbOperationBlocked
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,11 @@ def reset_full(
 ) -> DbResetReport:
     try:
         return service.reset_full()
+    except DestructiveDbOperationBlocked as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         logger.exception("[admin/reset-full] ошибка полного обнуления")
         raise HTTPException(
@@ -47,6 +53,11 @@ def reset_kp_only(
 ) -> DbResetReport:
     try:
         return service.reset_kp_only()
+    except DestructiveDbOperationBlocked as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         logger.exception("[admin/reset-kp-only] ошибка обнуления таблиц КП")
         raise HTTPException(

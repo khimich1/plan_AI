@@ -7,8 +7,11 @@ from fastapi.responses import FileResponse
 
 from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER
 from app.dependencies.commercial_draft import check_draft_ownership, verify_draft_ownership
+from app.dependencies.plate_context import get_plate_order_context
+from core.plate_order_context import PlateOrderContext
 from app.schemas.commercial import (
     CommercialCreateFromFormResponse,
+    CommercialDraftBreakdownResponse,
     CommercialDraftDetailsResponse,
     CommercialDraftMetaUpdateRequest,
     CommercialGenerateFilesRequest,
@@ -216,10 +219,11 @@ def calculate_draft(
 def generate_preview(
     payload: CommercialPreviewRequest,
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
 ) -> dict:
     service = CommercialService()
     try:
-        preview = service.generate_preview(text=payload.text)
+        preview = service.generate_preview(text=payload.text, plate_order_ctx=plate_order_ctx)
         draft_id = DraftStore().save_preview(
             order=preview.parse_result.order,
             optimization_context=preview.optimization_context,
@@ -373,4 +377,18 @@ def get_preview_draft(
     except Exception as exc:
         raise_unexpected_server_error(exc, where="get_preview_draft")
     return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.get("/drafts/{draft_id}/breakdown", response_model=CommercialDraftBreakdownResponse)
+def get_draft_breakdown(
+    draft_id: str = Depends(verify_draft_ownership),
+) -> CommercialDraftBreakdownResponse:
+    workflow = CommercialWorkflowService()
+    try:
+        result = workflow.get_draft_breakdown(draft_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="get_draft_breakdown")
+    return CommercialDraftBreakdownResponse.model_validate(result)
 

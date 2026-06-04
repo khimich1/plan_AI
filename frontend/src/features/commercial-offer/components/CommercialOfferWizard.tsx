@@ -20,6 +20,7 @@ export const CommercialOfferWizard = () => {
     dispatch,
     managersQuery,
     draftQuery,
+    breakdownQuery,
     currentDraft,
     createDraftMutation,
     updatePlatesMutation,
@@ -435,6 +436,8 @@ export const CommercialOfferWizard = () => {
     ) : state.currentStep === "result" && currentDraft ? (
       <CalculationResultStep
         draft={currentDraft}
+        breakdownTables={breakdownQuery.data?.items ?? []}
+        isBreakdownLoading={breakdownQuery.isPending || breakdownQuery.isFetching}
         errorMessage={stepError}
         isGeneratingFiles={generateFilesMutation.isPending}
         isGeneratingSchema={generateSchemaMutation.isPending}

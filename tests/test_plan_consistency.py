@@ -205,14 +205,13 @@ def test_complete_day_atomic_rollback(planning_service, tmp_plita, monkeypatch):
     snap_kp_before = _snapshot(tmp_plita, "kp_plates")
     snap_completed_before = _snapshot(tmp_plita, "completed_plates")
 
-    # Симулируем падение в середине списания: подменяем move_plates_to_completed
-    # на функцию, которая ВСЕГДА бросает после первого вызова.
-    original = kp_db.move_plates_to_completed
+    # Симулируем падение в середине списания.
+    from app.services.plate_completion_service import PlateCompletionService
 
     def boom(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(kp_db, "move_plates_to_completed", boom)
+    monkeypatch.setattr(PlateCompletionService, "move_plates_to_completed", boom)
 
     service = _make_production_service(planning_service, tmp_plita)
     with pytest.raises((ProductionCompletionError, RuntimeError)):

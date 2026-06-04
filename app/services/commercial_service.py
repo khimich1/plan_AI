@@ -7,12 +7,14 @@ from typing import Any
 from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.parse_result import ParseResult
 from app.domain.models.plate_order import PlateOrder
+from app.repositories.kp_repository import KpRepository
 from app.repositories.manager_repository import ManagerRepository
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
 from app.services.plate_parser_service import PlateParserService
 from core import config_and_data as cfg
-from core.kp_db import enrich_order_data_with_nomenclature
+from core.plate_order_context import PlateOrderContext
+from core.kp_db_nomenclature import enrich_order_data_with_nomenclature
 from core.kp_plate_weight import resolve_kp_line_weight_kg
 from viz_modules.price_utils import load_price_table_from_xlsx
 from viz_modules.procurement import build_component_breakdown, build_price_rows, build_procurement_items
@@ -31,6 +33,7 @@ class CommercialPreviewResult:
 class CommercialService:
     def __init__(self) -> None:
         self.manager_repository = ManagerRepository()
+        self.kp_repository = KpRepository()
         self.parser_service = PlateParserService()
         self.optimization_service = OptimizationService()
         self.file_generation_service = FileGenerationService()
@@ -46,17 +49,24 @@ class CommercialService:
         *,
         text: str | None = None,
         parse_result: ParseResult | None = None,
+        plate_order_ctx: PlateOrderContext | None = None,
     ) -> CommercialPreviewResult:
         current_parse_result = parse_result or self.parse(text or "")
         order = current_parse_result.order
         optimization_context = self.optimization_service.optimize(order)
 
-        with self.file_generation_service._legacy_order_context(order):
-            with self.optimization_service.legacy_runtime(optimization_context):
-                price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
-                price_rows, total_sum = build_price_rows(price_table, reinforcement_code=8)
-                breakdown_tables = build_component_breakdown(price_table, price_rows)
-                procurement_items = build_procurement_items()
+        ctx = plate_order_ctx or PlateOrderContext.fresh_empty()
+        ctx.hydrate_from_order(order)
+        ctx.load_optimization_snapshot(
+            optimization_result=optimization_context.optimization_result,
+            plan_by_load=optimization_context.plan_by_load,
+            load_to_reinforcement_map=optimization_context.load_to_reinforcement_map,
+        )
+        with ctx.bound():
+            price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
+            price_rows, total_sum = build_price_rows(price_table, reinforcement_code=8)
+            breakdown_tables = build_component_breakdown(price_table, price_rows)
+            procurement_items = build_procurement_items()
 
         order_data = self._build_order_data(
             procurement_items,
@@ -232,4 +242,35 @@ class CommercialService:
             if candidate in order_sequence:
                 return order_sequence[candidate]
         return default_order
+
+    def save_offer(
+        self,
+        *,
+        creation_date: str,
+        order_data: list[dict[str, Any]],
+        xlsx_path: str | None = None,
+        customer_name: str | None = None,
+        manager_name: str | None = None,
+        discount_percent: float = 0.0,
+        delivery_conditions: str | None = None,
+        payment_conditions: str | None = None,
+        execution_terms: str | None = None,
+        status: str = "в работе",
+    ) -> int:
+        """Сохранить КП в БД (тонкая обёртка над ``KpRepository`` для bot/web)."""
+        return self.kp_repository.save_offer(
+            creation_date=creation_date,
+            order_data=order_data,
+            xlsx_path=xlsx_path,
+            customer_name=customer_name,
+            manager_name=manager_name,
+            discount_percent=discount_percent,
+            delivery_conditions=delivery_conditions or "",
+            payment_conditions=payment_conditions or "",
+            execution_terms=execution_terms or "",
+            status=status,
+        )
+
+    def get_offer(self, kp_id: int) -> dict | None:
+        return self.kp_repository.get_offer(kp_id)
 

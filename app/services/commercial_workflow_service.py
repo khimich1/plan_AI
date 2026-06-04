@@ -16,6 +16,7 @@ from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from app.services.execution_terms_service import ExecutionTermsService
 from app.services.file_generation_service import FileGenerationService
 from core.ocr_gpt import apply_plates_with_ai, recognize_text_smart
+from core.plate_order_context import PlateOrderContext
 
 
 _ALLOWED_OCR_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf"})
@@ -589,6 +590,26 @@ class CommercialWorkflowService:
         self.draft_store.update_metadata(draft_id, current_step=WizardStepId.result.value)
         return self.get_draft_details(draft_id)
 
+    def get_draft_breakdown(self, draft_id: str) -> dict[str, Any]:
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata", {}))
+        raw_tables = metadata.get("breakdown_tables") or []
+        items: list[dict[str, Any]] = []
+        for table in raw_tables:
+            if not isinstance(table, dict):
+                continue
+            name = str(table.get("name", "") or "").strip()
+            rows_raw = table.get("rows") or []
+            rows: list[list[str]] = []
+            for row in rows_raw:
+                if isinstance(row, (list, tuple)):
+                    cells = [str(cell) for cell in row[:3]]
+                    while len(cells) < 3:
+                        cells.append("")
+                    rows.append(cells)
+            items.append({"name": name, "rows": rows})
+        return {"draft_id": draft_id, "items": items}
+
     def get_draft_details(self, draft_id: str) -> dict[str, Any]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
@@ -702,9 +723,11 @@ class CommercialWorkflowService:
                 )
                 files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
             elif file_type == "schema":
+                viz_ctx = PlateOrderContext.fresh_empty()
                 visualization_result = self.file_generation_service.generate_visualization(
                     order=payload["order"],
                     context=payload["optimization_context"],
+                    ctx=viz_ctx,
                     output_dir=str(self.settings.outputs_dir),
                 )
                 if isinstance(visualization_result, tuple) and len(visualization_result) >= 2:

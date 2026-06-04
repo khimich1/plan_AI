@@ -120,6 +120,16 @@ export type CommercialDraftMetadata = {
   ocr_row_count_on_image?: number | null;
 };
 
+export type BreakdownTable = {
+  name: string;
+  rows: string[][];
+};
+
+export type BreakdownResponse = {
+  draft_id: string;
+  items: BreakdownTable[];
+};
+
 export type CommercialDraftDetails = {
   draft_id: string;
   order: Record<string, unknown>;

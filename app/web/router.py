@@ -11,7 +11,7 @@ from app.core.settings import get_settings
 from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER, get_current_user, require_roles
 from app.dependencies.commercial_draft import check_draft_ownership
 from app.repositories.auth_repository import AuthRepository
-from app.security.session import create_session_token
+from app.security.session import clear_session_cookie, create_session_token, set_session_cookie
 from app.services.commercial_service import CommercialService
 from app.services.commercial_upload_validation import prepare_commercial_ocr_upload
 from app.services.commercial_workflow_service import CommercialWorkflowService
@@ -72,7 +72,7 @@ def _nav(user: dict) -> str:
         f'<a href="/web/managers">Менеджеры</a>'
         f'<a href="/web/offers">КП</a>'
         f'<a href="/web/production">Производство</a>'
-        f'<a href="/web/login">Выйти</a>'
+        f'<a href="/web/logout">Выйти</a>'
         f"</nav><hr>"
     )
 
@@ -202,7 +202,14 @@ def login_submit(username: str = Form(...), password: str = Form(...)) -> Redire
         return RedirectResponse("/web/login?error=Неверные+данные", status_code=303)
     token = create_session_token({"id": user["id"], "username": user["username"], "role": user["role"]})
     response = RedirectResponse("/web", status_code=303)
-    response.set_cookie("app_session", token, httponly=True, samesite="lax", max_age=60 * 60 * 12)
+    set_session_cookie(response, token)
+    return response
+
+
+@router.get("/web/logout")
+def web_logout() -> RedirectResponse:
+    response = RedirectResponse("/web/login", status_code=303)
+    clear_session_cookie(response)
     return response
 
 

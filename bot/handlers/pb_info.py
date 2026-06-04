@@ -13,7 +13,7 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core import kp_db
+from bot.services import kp_persistence as kp_db
 from ..keyboards import main_menu_kb, pb_info_kb, kp_production_details_kb
 from ..bot_config import OUTPUTS_DIR_STR
 from ..states import PBInfoStates

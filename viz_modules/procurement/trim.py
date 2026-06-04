@@ -1,9 +1,27 @@
 from __future__ import annotations
 
+import math
+
 import core.config_and_data as cfg
 from ..price_utils import find_price_for_plate
 from .plan_lookup import _is_same_length
 from .ports import ProcurementDeps, resolve_procurement_deps
+
+
+def _cut_load_key(cut: dict) -> int | None:
+    """Нормализованная нагрузка на строке реза; None — легаси-план без load_code."""
+    lc = cut.get('load_code')
+    if lc is None or lc == '':
+        return None
+    return int(math.floor(float(lc)))
+
+
+def _cut_matches_load(cut: dict, load_key: int) -> bool:
+    """True, если рез относится к той же нагрузке, что строка заказа (или load_code не задан)."""
+    cut_lc = _cut_load_key(cut)
+    if cut_lc is None:
+        return True
+    return cut_lc == load_key
 
 
 def _cut_length_from_lengths(lengths: list | None, default_length: float) -> float:
@@ -17,6 +35,119 @@ def _cut_length_from_lengths(lengths: list | None, default_length: float) -> flo
 
 def _width_matches_cut(width_mm: int, sec_cuts: list) -> bool:
     return any(abs(width_mm - int(cut_width)) <= 20 for cut_width in sec_cuts)
+
+
+def _secondary_output_width_mm(sec_cut: dict) -> int:
+    cuts = sec_cut.get('cuts', []) or []
+    if not cuts:
+        return 0
+    return int(cuts[0])
+
+
+def _used_rest_strip_qty_legacy(
+    current_plan: dict | None,
+    rest_mm: int,
+    prim_len: float,
+) -> int:
+    """Сколько полос rest_mm использовано (по qty secondary), легаси без parent_instance_id."""
+    if not current_plan:
+        return 0
+    used = 0
+    for sec_cut in current_plan.get('secondary_cuts') or []:
+        if int(sec_cut.get('source', 0) or 0) != rest_mm:
+            continue
+        if not _is_same_length(sec_cut.get('source_lengths', []), prim_len):
+            continue
+        used += int(sec_cut.get('qty', 0) or 0)
+    return used
+
+
+def _consumed_width_mm_on_rest_strip(
+    current_plan: dict | None,
+    rest_mm: int,
+    prim_len: float,
+    *,
+    parent_instance_id: str | None = None,
+) -> int:
+    """Суммарная ширина продукции с полосы rest_mm (все нагрузки — кросс-каскад).
+
+    Если задан ``parent_instance_id``, учитываются только secondary, привязанные к
+    этому первичному слэбу (иначе при нескольких слэбах с одинаковым rest все
+    secondary ошибочно суммируются).
+    """
+    if not current_plan:
+        return 0
+    total = 0
+    for sec_cut in current_plan.get('secondary_cuts') or []:
+        if int(sec_cut.get('source', 0) or 0) != rest_mm:
+            continue
+        if not _is_same_length(sec_cut.get('source_lengths', []), prim_len):
+            continue
+        if parent_instance_id:
+            sec_parent = sec_cut.get('parent_instance_id')
+            if sec_parent and sec_parent != parent_instance_id:
+                continue
+        out_w = _secondary_output_width_mm(sec_cut)
+        total += out_w * int(sec_cut.get('qty', 0) or 0)
+    return total
+
+
+def _cascade_qty_on_own_rest(
+    current_plan: dict | None,
+    rest_groups: dict[tuple[int, float], int],
+    load_key: int,
+    width_mm: int,
+    length: float,
+) -> int:
+    """Кол-во плит, полученных каскадом с полос остатка своего primary."""
+    if not current_plan or not rest_groups:
+        return 0
+    total = 0
+    for sec_cut in current_plan.get('secondary_cuts') or []:
+        if not _cut_matches_load(sec_cut, load_key):
+            continue
+        if not _secondary_matches_primary_rest(sec_cut, rest_groups):
+            continue
+        if not _is_same_length(sec_cut.get('lengths', []), length):
+            continue
+        sec_cuts = sec_cut.get('cuts', []) or []
+        if not _width_matches_cut(width_mm, sec_cuts):
+            continue
+        total += int(sec_cut.get('qty', 0) or 0)
+    return total
+
+
+def _has_same_load_cascade_on_rest(
+    current_plan: dict | None,
+    rest_groups: dict[tuple[int, float], int],
+    load_key: int,
+    width_mm: int,
+    length: float,
+) -> bool:
+    return _cascade_qty_on_own_rest(
+        current_plan, rest_groups, load_key, width_mm, length
+    ) > 0
+
+
+def _longitudinal_cuts_for_rest_secondary(
+    sec_cut: dict,
+    *,
+    min_one_cut_per_op: bool = False,
+) -> int:
+    """Резы на полосе остатка."""
+    sec_qty = int(sec_cut.get('qty', 0) or 0)
+    if sec_qty <= 0:
+        return 0
+    sec_pieces = int(sec_cut.get('pieces', 1) or 1)
+    sec_cuts_list = sec_cut.get('cuts', []) or []
+    kept_pieces = sec_pieces + max(0, len(sec_cuts_list) - 1)
+    waste_w_mm = float(sec_cut.get('waste', 0) or 0)
+    internal_cuts = (kept_pieces - 1) + (
+        1 if waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM else 0
+    )
+    if min_one_cut_per_op and int(sec_cut.get('source', 0) or 0) > cfg.MIN_BILLABLE_TRIM_MM:
+        return sec_qty * max(1, internal_cuts)
+    return sec_qty * internal_cuts
 
 
 def _transverse_remainder_unit_cost(
@@ -99,6 +230,7 @@ def _apply_secondary_cut(
     trans_cuts: float,
     transverse_remainder_cost: float,
     transverse_remainder_terms: list[tuple[float, int]],
+    charge_strip_waste: bool = True,
 ) -> tuple[int, int, float, float, list, float, float, list[tuple[float, int]]]:
     del base_price, load_code, price_table, deps  # kept for call-site compatibility
 
@@ -111,15 +243,21 @@ def _apply_secondary_cut(
     src_len = float(src_lens[0]) if src_lens else length
 
     waste_w_mm = float(sec_cut.get('waste', 0) or 0)
-    internal_cuts = (kept_pieces - 1) + (
-        1 if waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM else 0
+    cut_count = _longitudinal_cuts_for_rest_secondary(
+        sec_cut,
+        min_one_cut_per_op=not charge_strip_waste,
     )
 
     total_plates_from_cuts += sec_qty * kept_pieces
-    total_cuts_for_this_size += sec_qty * internal_cuts
-    long_cut_meterage += sec_qty * internal_cuts * src_len
+    total_cuts_for_this_size += cut_count
+    long_cut_meterage += cut_count * src_len
 
-    if waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0 and qty > 0:
+    if (
+        charge_strip_waste
+        and waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM
+        and base_price_1_2m > 0
+        and qty > 0
+    ):
         cost_of_waste_piece = (waste_w_mm / 1200.0) * base_price_1_2m
         waste_cost += (cost_of_waste_piece * sec_qty) / qty
         waste_terms.append((waste_w_mm, sec_qty))
@@ -211,9 +349,13 @@ def _apply_cascade_secondary_for_primary(
             transverse_remainder_terms,
         )
 
+    load_key = int(math.floor(float(load_code)))
+
     for sec_cut in current_plan.get('secondary_cuts') or []:
         if remaining_slots <= 0:
             break
+        if not _cut_matches_load(sec_cut, load_key):
+            continue
         if not _secondary_matches_primary_rest(sec_cut, rest_groups):
             continue
         if not _is_same_length(sec_cut.get('lengths', []), length):
@@ -259,8 +401,127 @@ def _apply_cascade_secondary_for_primary(
             trans_cuts=trans_cuts,
             transverse_remainder_cost=transverse_remainder_cost,
             transverse_remainder_terms=transverse_remainder_terms,
+            charge_strip_waste=False,
         )
         remaining_slots -= effective_qty
+
+    return (
+        total_cuts_for_this_size,
+        total_plates_from_cuts,
+        long_cut_meterage,
+        long_cut_length_display,
+        waste_cost,
+        waste_terms,
+        trans_cuts,
+        transverse_remainder_cost,
+        transverse_remainder_terms,
+    )
+
+
+def _is_crossload_rest_secondary(
+    sec_cut: dict,
+    rest_groups: dict[tuple[int, float], int],
+    load_key: int,
+    current_plan: dict,
+) -> bool:
+    """Secondary с полосы остатка primary другой нагрузки (10п → 8п)."""
+    if _secondary_matches_primary_rest(sec_cut, rest_groups):
+        return False
+    source = int(sec_cut.get('source', 0) or 0)
+    if source <= cfg.MIN_BILLABLE_TRIM_MM:
+        return False
+    src_lens = sec_cut.get('source_lengths', []) or []
+    for prim_cut in current_plan.get('primary_cuts') or []:
+        prim_lc = _cut_load_key(prim_cut)
+        if prim_lc is None or prim_lc == load_key:
+            continue
+        if int(prim_cut.get('rest', 0) or 0) != source:
+            continue
+        prim_len = _cut_length_from_lengths(prim_cut.get('lengths', []), 0.0)
+        if not _is_same_length(src_lens, prim_len):
+            continue
+        if not _is_same_length(sec_cut.get('lengths', []), prim_len):
+            continue
+        return True
+    return False
+
+
+def _apply_crossload_rest_secondaries(
+    *,
+    current_plan: dict,
+    rest_groups: dict[tuple[int, float], int],
+    length: float,
+    width_mm: int,
+    qty: int,
+    base_price_1_2m: float,
+    base_price: float,
+    load_code: int,
+    price_table: dict,
+    deps: ProcurementDeps,
+    total_cuts_for_this_size: int,
+    total_plates_from_cuts: int,
+    long_cut_meterage: float,
+    long_cut_length_display: float,
+    waste_cost: float,
+    waste_terms: list,
+    trans_cuts: float,
+    transverse_remainder_cost: float,
+    transverse_remainder_terms: list[tuple[float, int]],
+) -> tuple[int, int, float, float, float, list, float, float, list[tuple[float, int]]]:
+    """
+    Secondary с полосы остатка другой нагрузки (кросс-каскад): только резы/метраж,
+    без отхода полосы (он на владельце-primary).
+    """
+    load_key = int(math.floor(float(load_code)))
+
+    for sec_cut in current_plan.get('secondary_cuts') or []:
+        if not _cut_matches_load(sec_cut, load_key):
+            continue
+        if not _is_crossload_rest_secondary(
+            sec_cut, rest_groups, load_key, current_plan
+        ):
+            continue
+        if sec_cut.get('type') == 'transverse':
+            continue
+        if not _is_same_length(sec_cut.get('lengths', []), length):
+            continue
+        sec_cuts = sec_cut.get('cuts', []) or []
+        if not _width_matches_cut(width_mm, sec_cuts):
+            continue
+
+        src_lens = sec_cut.get('source_lengths', []) or []
+        if src_lens:
+            long_cut_length_display = float(src_lens[0])
+
+        (
+            total_cuts_for_this_size,
+            total_plates_from_cuts,
+            long_cut_meterage,
+            waste_cost,
+            waste_terms,
+            trans_cuts,
+            transverse_remainder_cost,
+            transverse_remainder_terms,
+        ) = _apply_secondary_cut(
+            sec_cut,
+            length=length,
+            width_mm=width_mm,
+            qty=qty,
+            base_price_1_2m=base_price_1_2m,
+            base_price=base_price,
+            load_code=load_code,
+            price_table=price_table,
+            deps=deps,
+            total_cuts_for_this_size=total_cuts_for_this_size,
+            total_plates_from_cuts=total_plates_from_cuts,
+            long_cut_meterage=long_cut_meterage,
+            waste_cost=waste_cost,
+            waste_terms=waste_terms,
+            trans_cuts=trans_cuts,
+            transverse_remainder_cost=transverse_remainder_cost,
+            transverse_remainder_terms=transverse_remainder_terms,
+            charge_strip_waste=False,
+        )
 
     return (
         total_cuts_for_this_size,
@@ -283,12 +544,17 @@ def _apply_transverse_on_primary_strip(
     width_mm: int,
     qty: int,
     base_price_1_2m: float,
+    load_code: int,
     trans_cuts: float,
     transverse_remainder_cost: float,
     transverse_remainder_terms: list[tuple[float, int]],
 ) -> tuple[float, float, list[tuple[float, int]]]:
     """Поперечный рез на основной полосе primary (не из rest по ширине)."""
+    load_key = int(math.floor(float(load_code)))
+
     for sec_cut in current_plan.get('secondary_cuts') or []:
+        if not _cut_matches_load(sec_cut, load_key):
+            continue
         if _secondary_matches_primary_rest(sec_cut, rest_groups):
             continue
         if not _is_same_length(sec_cut.get('lengths', []), length):
@@ -356,6 +622,7 @@ def _calc_trim_components(
     long_cut_length_display = length
     primary_matched = False
     rest_groups: dict[tuple[int, float], int] = {}
+    load_key = int(math.floor(float(load_code)))
 
     if current_plan and current_plan.get('primary_cuts'):
         matched_primary: list[tuple[int, float, int]] = []
@@ -363,6 +630,8 @@ def _calc_trim_components(
             if prim_cut.get('width') != width_mm:
                 continue
             if not _is_same_length(prim_cut.get('lengths', []), length):
+                continue
+            if not _cut_matches_load(prim_cut, load_key):
                 continue
 
             primary_matched = True
@@ -372,9 +641,6 @@ def _calc_trim_components(
             long_cut_length_display = prim_len
 
             primary_rest_width_mm = int(prim_cut.get('rest', 0) or 0)
-            if primary_rest_width_mm > cfg.MIN_BILLABLE_TRIM_MM:
-                total_cuts_for_this_size += prim_qty
-                long_cut_meterage += prim_qty * prim_len
             matched_primary.append((prim_qty, prim_len, primary_rest_width_mm))
 
         if matched_primary:
@@ -383,26 +649,103 @@ def _calc_trim_components(
                     key = (rest_mm, prim_len)
                     rest_groups[key] = rest_groups.get(key, 0) + prim_qty
 
-            unused_rest_total_mm = 0
+            primary_plate_qty = sum(prim_qty for prim_qty, _, _ in matched_primary)
+            cascade_qty_own = _cascade_qty_on_own_rest(
+                current_plan, rest_groups, load_key, width_mm, length
+            )
+            skip_primary_rest_cut = (
+                cascade_qty_own > 0
+                and primary_plate_qty < cascade_qty_own
+            )
+            for prim_qty, prim_len, rest_mm in matched_primary:
+                if rest_mm <= cfg.MIN_BILLABLE_TRIM_MM:
+                    continue
+                if skip_primary_rest_cut:
+                    continue
+                total_cuts_for_this_size += prim_qty
+                long_cut_meterage += prim_qty * prim_len
+
+            has_secondary_ops = bool(current_plan.get('secondary_cuts'))
+            unused_strip_total_mm = 0
+            strip_partially_used = False
             all_rests_used = bool(rest_groups)
-            for (rest_mm, prim_len), produced in rest_groups.items():
-                used_rests = 0
-                for sec_cut in (current_plan.get('secondary_cuts') or []):
-                    if int(sec_cut.get('source', 0) or 0) != rest_mm:
-                        continue
-                    if not _is_same_length(sec_cut.get('source_lengths', []), prim_len):
-                        continue
-                    used_rests += int(sec_cut.get('qty', 0) or 0)
+            assigned_used_from_rest: dict[tuple[int, float], int] = {}
+            for prim_cut in current_plan['primary_cuts']:
+                if prim_cut.get('width') != width_mm:
+                    continue
+                if not _is_same_length(prim_cut.get('lengths', []), length):
+                    continue
+                if not _cut_matches_load(prim_cut, load_key):
+                    continue
+                rest_mm = int(prim_cut.get('rest', 0) or 0)
+                if rest_mm <= cfg.MIN_BILLABLE_TRIM_MM:
+                    continue
+                prim_len = _cut_length_from_lengths(prim_cut.get('lengths', []), length)
+                prim_qty = int(prim_cut.get('qty', 0) or 0)
+                parent_id = prim_cut.get('primary_instance_id')
+                charge_as_strip_waste = False
+                strip_unused_mm = 0
+                unused_per_strip = 0
+                if parent_id:
+                    consumed_per_strip = _consumed_width_mm_on_rest_strip(
+                        current_plan,
+                        rest_mm,
+                        prim_len,
+                        parent_instance_id=parent_id,
+                    )
+                    unused_per_strip = max(0, rest_mm - consumed_per_strip)
+                else:
+                    rest_key = (rest_mm, round(prim_len, 3))
+                    total_used = _used_rest_strip_qty_legacy(
+                        current_plan, rest_mm, prim_len
+                    )
+                    already_assigned = assigned_used_from_rest.get(rest_key, 0)
+                    used_qty = min(
+                        prim_qty, max(0, total_used - already_assigned)
+                    )
+                    assigned_used_from_rest[rest_key] = already_assigned + used_qty
+                    cascade_same_width = False
+                    for sec_cut in current_plan.get('secondary_cuts') or []:
+                        if int(sec_cut.get('source', 0) or 0) != rest_mm:
+                            continue
+                        if not _is_same_length(sec_cut.get('source_lengths', []), prim_len):
+                            continue
+                        if _width_matches_cut(width_mm, sec_cut.get('cuts', []) or []):
+                            cascade_same_width = True
+                            break
+                    if cascade_same_width:
+                        width_consumed = _consumed_width_mm_on_rest_strip(
+                            current_plan, rest_mm, prim_len, parent_instance_id=None
+                        )
+                        unused_per_strip = max(0, rest_mm - width_consumed)
+                        strip_unused_mm = unused_per_strip
+                        charge_as_strip_waste = unused_per_strip > cfg.MIN_BILLABLE_TRIM_MM
+                        if width_consumed > 0 and charge_as_strip_waste:
+                            strip_partially_used = True
+                    else:
+                        unused_strip_qty = max(0, prim_qty - used_qty)
+                        strip_unused_mm = unused_strip_qty * rest_mm
+                        charge_as_strip_waste = False
+                if parent_id:
+                    if consumed_per_strip > 0 and unused_per_strip > 0:
+                        strip_partially_used = True
+                    strip_unused_mm = unused_per_strip * prim_qty
+                    charge_as_strip_waste = unused_per_strip > cfg.MIN_BILLABLE_TRIM_MM
+                if strip_unused_mm <= cfg.MIN_BILLABLE_TRIM_MM:
+                    continue
+                all_rests_used = False
+                if charge_as_strip_waste and base_price_1_2m > 0 and qty > 0:
+                    unused_strip_total_mm += strip_unused_mm
+                    waste_terms.append((unused_per_strip, prim_qty))
+                elif base_price_1_2m > 0 and qty > 0:
+                    rest_cost += (strip_unused_mm / 1200.0) * base_price_1_2m / qty
+                    rest_width_mm = max(rest_width_mm, strip_unused_mm)
 
-                unused_rests = max(0, produced - used_rests)
-                if unused_rests > 0:
-                    all_rests_used = False
-                    unused_rest_total_mm += unused_rests * rest_mm
-
-            if unused_rest_total_mm > 0 and base_price_1_2m > 0 and qty > 0:
-                rest_cost = (unused_rest_total_mm / 1200.0) * base_price_1_2m / qty
-                rest_width_mm = unused_rest_total_mm
-            elif all_rests_used:
+            if unused_strip_total_mm > 0 and base_price_1_2m > 0 and qty > 0:
+                waste_cost += (unused_strip_total_mm / 1200.0) * base_price_1_2m / qty
+                if strip_partially_used:
+                    rest_used = True
+            elif all_rests_used or strip_partially_used:
                 rest_used = True
                 rest_width_mm = 0
 
@@ -439,6 +782,38 @@ def _calc_trim_components(
                 transverse_remainder_terms=transverse_remainder_terms,
             )
 
+            (
+                total_cuts_for_this_size,
+                total_plates_from_cuts,
+                long_cut_meterage,
+                long_cut_length_display,
+                waste_cost,
+                waste_terms,
+                trans_cuts,
+                transverse_remainder_cost,
+                transverse_remainder_terms,
+            ) = _apply_crossload_rest_secondaries(
+                current_plan=current_plan,
+                rest_groups=rest_groups,
+                length=length,
+                width_mm=width_mm,
+                qty=qty,
+                base_price_1_2m=base_price_1_2m,
+                base_price=base_price,
+                load_code=load_code,
+                price_table=price_table,
+                deps=_deps,
+                total_cuts_for_this_size=total_cuts_for_this_size,
+                total_plates_from_cuts=total_plates_from_cuts,
+                long_cut_meterage=long_cut_meterage,
+                long_cut_length_display=long_cut_length_display,
+                waste_cost=waste_cost,
+                waste_terms=waste_terms,
+                trans_cuts=trans_cuts,
+                transverse_remainder_cost=transverse_remainder_cost,
+                transverse_remainder_terms=transverse_remainder_terms,
+            )
+
             trans_cuts, transverse_remainder_cost, transverse_remainder_terms = (
                 _apply_transverse_on_primary_strip(
                     current_plan=current_plan,
@@ -447,6 +822,7 @@ def _calc_trim_components(
                     width_mm=width_mm,
                     qty=qty,
                     base_price_1_2m=base_price_1_2m,
+                    load_code=load_code,
                     trans_cuts=trans_cuts,
                     transverse_remainder_cost=transverse_remainder_cost,
                     transverse_remainder_terms=transverse_remainder_terms,
@@ -458,6 +834,8 @@ def _calc_trim_components(
         sec_skip_width = 0
         secondary_matches = 0
         for sec_cut in current_plan['secondary_cuts']:
+            if not _cut_matches_load(sec_cut, load_key):
+                continue
             if not _is_same_length(sec_cut.get('lengths', []), length):
                 sec_skip_length += 1
                 continue

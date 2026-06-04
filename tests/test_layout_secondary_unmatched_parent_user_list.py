@@ -18,6 +18,7 @@ from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
 from core.optimization import verify_coverage
 from core.plate_line_parser import parse_line
+from core.plate_order_context import PlateOrderContext
 from viz_modules import layout_sequence as layout_sequence_mod
 from viz_modules.layout_sequence import build_layout_sequence
 
@@ -173,9 +174,11 @@ def test_layout_phase_C_logs_null_parent_slot_and_h5_unmatched(user_list_opt_con
         return _orig_agent_seq_debug(hypothesis_id, message, data)
 
     saved_d, saved_raw = _push_plate_load_cfg(plate_order)
+    plate_ctx = PlateOrderContext.fresh_empty()
+    plate_ctx.hydrate_from_order(plate_order)
     try:
         with patch.object(layout_sequence_mod, "_agent_seq_debug", side_effect=_spy):
-            with svc.legacy_runtime(ctx):
+            with svc.bound_plate_order_context(plate_ctx, ctx):
                 build_layout_sequence()
     finally:
         _restore_plate_load_cfg(saved_d, saved_raw)

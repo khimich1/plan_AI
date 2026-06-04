@@ -20,12 +20,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.visualization import visualize_plan
 from core.formovka_excel import create_formovka_files_for_tracks
-import core.config_and_data as cfg
-from core.config_and_data import PlateOrder
-import core.optimization as optimization
-from app.domain.models.optimization_context import OptimizationContext
-from app.domain.models.plate_order import PlateOrder as AppPlateOrder
+from core.plate_order_context import PlateOrderContext, run_in_order_context
 from core.debug_paths import get_debug_log_path
+
+from .debug_util import write_agent_debug, write_agent_debug_session
 
 from ..keyboards import production_day_actions_kb, day_documents_menu_kb
 from ..bot_config import OUTPUTS_DIR_STR
@@ -39,20 +37,8 @@ _DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
 
 async def _restore_optimization_data(state: FSMContext, day_number: int):
     """
-    Восстанавливает данные оптимизации из state для генерации документов.
-    
-    Простыми словами:
-    - Загружает данные из памяти бота (state)
-    - Восстанавливает настройки оптимизации
-    - Вычисляет индексы дорожек для выбранного дня
-    - Возвращает всё необходимое для генерации документов
-    
-    Args:
-        state: состояние FSM (память бота)
-        day_number: номер дня (например, 3)
-    
-    Returns:
-        dict: словарь с данными для генерации документов
+    Загружает метаданные оптимизации из state для генерации документов.
+    OPT/plate runtime — через ``PlateOrderContext.load_production_snapshot`` в worker.
     """
     data = await state.get_data()
     tracks_count = data['tracks_count']
@@ -62,26 +48,11 @@ async def _restore_optimization_data(state: FSMContext, day_number: int):
     optimization_result = data['optimization_result']
     plate_lookup_exact = data['plate_lookup_exact']
     plate_lookup_by_length = data['plate_lookup_by_length']
-    
-    app_order = AppPlateOrder.from_orders_2d(orders_2d)
-    context = OptimizationContext(
-        order=app_order,
-        optimization_result=optimization_result,
-        plan_by_load={"all": optimization_result} if optimization_result else {},
-        load_to_reinforcement_map={
-            load_code: ["all"] for load_code in sorted({p["load_code"] for p in orders_2d})
-        } if orders_2d else {},
-    )
-    optimization.OPT_CASCADING_PLAN = context.optimization_result
-    optimization.OPT_CASCADING_PLAN_BY_LOAD = context.plan_by_load
-    optimization.LOAD_TO_REINFORCEMENT_MAP = context.load_to_reinforcement_map
-    PlateOrder.from_dict(app_order.to_dict()).apply_to_globals()
-    
-    # Вычисляем индексы дорожек
+
     start_index = (day_number - 1) * tracks_count
     end_index = min(day_number * tracks_count, total_tracks_count)
     tracks_for_this_day = end_index - start_index
-    
+
     return {
         'tracks_count': tracks_count,
         'all_tracks_list': all_tracks_list,
@@ -89,42 +60,26 @@ async def _restore_optimization_data(state: FSMContext, day_number: int):
         'end_index': end_index,
         'tracks_for_this_day': tracks_for_this_day,
         'orders_2d': orders_2d,
+        'optimization_result': optimization_result,
         'plate_lookup_exact': plate_lookup_exact,
         'plate_lookup_by_length': plate_lookup_by_length,
         'total_tracks_count': total_tracks_count
     }
 
 
-def _restore_optimization_globals(orders_2d: list, optimization_result: dict):
-    """
-    Восстанавливает глобальные переменные оптимизации для генерации документов.
-    
-    Простыми словами:
-    - Устанавливает глобальные переменные optimization.* и cfg.*
-    - Эти переменные нужны для работы visualize_plan() и функций расчета себестоимости
-    - При работе с мультипланами эти переменные не восстанавливаются автоматически
-    
-    Args:
-        orders_2d: Список заказов (плит) для производства
-        optimization_result: Результат оптимизации раскладки
-    """
-    app_order = AppPlateOrder.from_orders_2d(orders_2d)
-    context = OptimizationContext(
-        order=app_order,
-        optimization_result=optimization_result,
-        plan_by_load={"all": optimization_result} if optimization_result else {},
-        load_to_reinforcement_map={
-            load_code: ["all"] for load_code in sorted({p["load_code"] for p in orders_2d})
-        } if orders_2d else {8: ["all"]},
+def _prepare_visualization_ctx(
+    ctx: PlateOrderContext,
+    orders_2d: list,
+    optimization_result: dict,
+) -> None:
+    """Гидратация ctx для ``visualize_plan`` (замена ``apply_to_globals`` + OPT_*)."""
+    ctx.load_production_snapshot(orders_2d, optimization_result)
+    logger.debug(
+        "[RESTORE_CTX] orders_2d=%s, PLATE_LOAD_DETAILS=%s, PLATES_1_2=%s",
+        len(orders_2d),
+        len(ctx.plates.plate_load_details),
+        len(ctx.plates.plates_1_2),
     )
-    optimization.OPT_CASCADING_PLAN = context.optimization_result
-    optimization.OPT_CASCADING_PLAN_BY_LOAD = context.plan_by_load
-    optimization.LOAD_TO_REINFORCEMENT_MAP = context.load_to_reinforcement_map
-    PlateOrder.from_dict(app_order.to_dict()).apply_to_globals()
-    
-    logger.debug(f"[RESTORE_GLOBALS] Восстановлено глобальных переменных: "
-                f"loads={len(all_loads)}, PLATE_LOAD_DETAILS={len(cfg.PLATE_LOAD_DETAILS)}, "
-                f"PLATES_1_2={len(cfg.PLATES_1_2)}")
 
 
 @router.callback_query(F.data.startswith("production_day_"))
@@ -507,8 +462,7 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
                     if 5.69 <= plate.get('length', 0) <= 5.73:
                         try:
                             _log_path = _DEBUG_LOG_8E9428
-                            with open(_log_path, 'a', encoding='utf-8') as _f:
-                                _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_prod_view_track", "location": "production_day_view:track_plate_str", "message": "57/57,1: plate_str (post-fix)", "data": {"plate_length": plate['length'], "length_str": length_str, "plate_str": plate_str}, "timestamp": __import__("time").time() * 1000, "runId": "post-fix"}, ensure_ascii=False) + "\n")
+                            write_agent_debug(_log_path, {"sessionId": "8e9428", "hypothesisId": "H_prod_view_track", "location": "production_day_view:track_plate_str", "message": "57/57,1: plate_str (post-fix)", "data": {"plate_length": plate['length'], "length_str": length_str, "plate_str": plate_str}, "timestamp": __import__("time").time() * 1000, "runId": "post-fix"})
                         except Exception:
                             pass
                     # #endregion
@@ -563,7 +517,11 @@ async def process_day_selection(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("generate_breakdown_"))
-async def generate_day_breakdown(callback: CallbackQuery, state: FSMContext):
+async def generate_day_breakdown(
+    callback: CallbackQuery,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """
     Генерирует детальную разбивку для выбранного дня.
     
@@ -623,30 +581,30 @@ async def generate_day_breakdown(callback: CallbackQuery, state: FSMContext):
         start_index = data.get('current_day_start_index', 0)
         end_index = data.get('current_day_end_index', len(day_tracks))
         tracks_for_this_day = len(day_tracks)
-        
-        # Восстанавливаем глобальные переменные оптимизации для visualize_plan()
-        _restore_optimization_globals(orders_2d, optimization_result)
+
+        _prepare_visualization_ctx(plate_order_ctx, orders_2d, optimization_result)
     else:
-        # === СТАРАЯ ЛОГИКА: Для несохранённых планов используем state ===
         restored_data = await _restore_optimization_data(state, day_number)
-        
+
         start_index = restored_data['start_index']
         end_index = restored_data['end_index']
         tracks_for_this_day = restored_data['tracks_for_this_day']
         all_tracks_list = restored_data['all_tracks_list']
-        
-        # Получаем готовые дорожки для этого дня
+        orders_2d = restored_data['orders_2d']
+        optimization_result = restored_data['optimization_result']
+
         day_tracks = all_tracks_list[start_index:end_index]
-    
+        _prepare_visualization_ctx(plate_order_ctx, orders_2d, optimization_result)
+
     try:
-        # Генерируем визуализацию с готовыми дорожками (НЕ перегенерируем!)
-        result_paths = await asyncio.to_thread(
+        result_paths = await run_in_order_context(
+            plate_order_ctx,
             visualize_plan,
             output_dir=OUTPUTS_DIR_STR,
-            tracks_per_file=None,  # НЕ нужен при existing_tracks
+            tracks_per_file=None,
             start_track_index=start_index,
             use_production_pricing=True,
-            existing_tracks=day_tracks  # ✅ Используем готовые дорожки из плана!
+            existing_tracks=day_tracks,
         )
         
         # Ищем детальную разбивку
@@ -972,8 +930,7 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
                         if 5.69 <= plate['length'] <= 5.73:
                             try:
                                 _log_path = _DEBUG_LOG_8E9428
-                                with open(_log_path, 'a', encoding='utf-8') as _f:
-                                    _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_prod_view", "location": "production_day_view:formovka_plate_name", "message": "57/57,1: plate_name (post-fix)", "data": {"plate_length": plate['length'], "length_str": length_str, "plate_name": plate_str_val}, "timestamp": __import__("time").time() * 1000, "runId": "post-fix"}, ensure_ascii=False) + "\n")
+                                write_agent_debug(_log_path, {"sessionId": "8e9428", "hypothesisId": "H_prod_view", "location": "production_day_view:formovka_plate_name", "message": "57/57,1: plate_name (post-fix)", "data": {"plate_length": plate['length'], "length_str": length_str, "plate_name": plate_str_val}, "timestamp": __import__("time").time() * 1000, "runId": "post-fix"})
                             except Exception:
                                 pass
                         # #endregion
@@ -1022,7 +979,11 @@ async def generate_day_formovka(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("generate_schema_"))
-async def generate_day_schema(callback: CallbackQuery, state: FSMContext):
+async def generate_day_schema(
+    callback: CallbackQuery,
+    state: FSMContext,
+    plate_order_ctx: PlateOrderContext,
+):
     """
     Генерирует схему дорожек для выбранного дня.
     
@@ -1082,29 +1043,30 @@ async def generate_day_schema(callback: CallbackQuery, state: FSMContext):
         start_index = data.get('current_day_start_index', 0)
         end_index = data.get('current_day_end_index', len(day_tracks))
         tracks_for_this_day = len(day_tracks)
-        
-        # (Глобальные переменные уже восстановлены выше в fallback-логике)
+
+        _prepare_visualization_ctx(plate_order_ctx, orders_2d, optimization_result)
     else:
-        # === СТАРАЯ ЛОГИКА: Для несохранённых планов используем state ===
         restored_data = await _restore_optimization_data(state, day_number)
-        
+
         start_index = restored_data['start_index']
         end_index = restored_data['end_index']
         tracks_for_this_day = restored_data['tracks_for_this_day']
         all_tracks_list = restored_data['all_tracks_list']
-        
-        # Получаем готовые дорожки для этого дня
+        orders_2d = restored_data['orders_2d']
+        optimization_result = restored_data['optimization_result']
+
         day_tracks = all_tracks_list[start_index:end_index]
-    
+        _prepare_visualization_ctx(plate_order_ctx, orders_2d, optimization_result)
+
     try:
-        # Генерируем визуализацию с готовыми дорожками (НЕ перегенерируем!)
-        result_paths = await asyncio.to_thread(
+        result_paths = await run_in_order_context(
+            plate_order_ctx,
             visualize_plan,
             output_dir=OUTPUTS_DIR_STR,
-            tracks_per_file=None,  # НЕ нужен при existing_tracks
+            tracks_per_file=None,
             start_track_index=start_index,
             use_production_pricing=True,
-            existing_tracks=day_tracks  # ✅ Используем готовые дорожки из плана!
+            existing_tracks=day_tracks,
         )
         
         if isinstance(result_paths, tuple) and len(result_paths) >= 2:

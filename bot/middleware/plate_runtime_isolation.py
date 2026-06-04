@@ -1,4 +1,4 @@
-"""Изоляция мутабельного заказа плит на время обработки апдейта (S1)."""
+"""Изоляция мутабельного заказа плит на время обработки апдейта (S1 / A1-001)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 
-from core.plate_runtime_state import fresh_plate_mutable_request_scope
+from core.plate_order_context import PlateOrderContext
 
 
 class PlateMutableRuntimeIsolationMiddleware(BaseMiddleware):
@@ -17,5 +17,7 @@ class PlateMutableRuntimeIsolationMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        with fresh_plate_mutable_request_scope():
+        ctx = PlateOrderContext.fresh_empty()
+        data["plate_order_ctx"] = ctx
+        with ctx.bound():
             return await handler(event, data)

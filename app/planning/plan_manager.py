@@ -1501,7 +1501,6 @@ def remove_track_from_plan(
 
     expected_count = sum(id_qty.values()) + sum(legacy_identity_qty.values())
 
-    kp_db.init_schema(db_path)
     conn = sqlite3.connect(db_path)
     plates_returned = 0
     try:

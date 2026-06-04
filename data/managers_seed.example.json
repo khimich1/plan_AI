@@ -1,0 +1,12 @@
+[
+  {
+    "fio": "Пример Менеджер Один",
+    "contact_number": "70000000001",
+    "email": "manager1@example.local"
+  },
+  {
+    "fio": "Пример Менеджер Два",
+    "contact_number": "70000000002",
+    "email": "manager2@example.local"
+  }
+]

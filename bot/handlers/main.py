@@ -6,6 +6,8 @@ from aiogram.types import Message
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
+from bot.security.users import BotUser
+
 from ..keyboards import main_menu_kb
 from ..bot_config import OUTPUTS_DIR_STR
 
@@ -14,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, bot_user: BotUser):
     """Обработчик команды /start"""
     await message.answer(
         "👋 Привет! Я бот для расчёта и визуализации дорожек ПБ.\n\n"
@@ -24,7 +26,7 @@ async def cmd_start(message: Message):
         "• Оптимизировать раскрой (экономия до 40%)\n"
         "• Экспортировать результаты в файлы\n\n"
         "Выберите действие кнопкой ниже или /help для справки",
-        reply_markup=main_menu_kb()
+        reply_markup=main_menu_kb(bot_user.role),
     )
 
 
@@ -95,7 +97,7 @@ async def cmd_stats(message: Message):
 
 
 @router.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext):
+async def cmd_cancel(message: Message, state: FSMContext, bot_user: BotUser):
     """
     Универсальная отмена.
 
@@ -110,6 +112,6 @@ async def cmd_cancel(message: Message, state: FSMContext):
 
     await message.answer(
         "❌ Операция отменена.\nВыберите действие:",
-        reply_markup=main_menu_kb()
+        reply_markup=main_menu_kb(bot_user.role),
     )
 
