@@ -248,6 +248,23 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             'CREATE INDEX IF NOT EXISTS idx_plates_kp_plate_name '
             'ON kp_plates(kp_id, plate_name)'
         )
+
+        # Таблица 9: production_plans — производственные планы (A2 / WP3).
+        # План хранится как JSON в payload_json; version — optimistic concurrency.
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS production_plans (
+                id TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                is_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_production_plans_active '
+            'ON production_plans(is_active)'
+        )
         
         if 'length_dm_raw' not in columns:
             print("[DB] Миграция: добавляем колонку length_dm_raw в kp_plates...")
@@ -286,6 +303,11 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             # Устанавливаем статус для всех существующих записей
             cur.execute("UPDATE kp_meta SET status = 'в работе' WHERE status IS NULL")
             print("[DB] ✅ Колонка status добавлена в kp_meta")
+
+        if "owner_user_id" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку owner_user_id в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN owner_user_id INTEGER")
+            print("[DB] ✅ Колонка owner_user_id добавлена в kp_meta")
 
         # === МИГРАЦИЯ: Добавляем nomenclature_id ===
         if 'nomenclature_id' not in columns:

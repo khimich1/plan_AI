@@ -24,6 +24,7 @@ def save_kp_to_db(
     execution_terms: Optional[str] = None,
     status: str = "в работе",
     logistics_cost: float = 0.0,
+    owner_user_id: int | None = None,
     db_path: str = DEFAULT_DB,
 ) -> int:
     """Сохраняет КП в базу (backward-compatible facade).
@@ -44,6 +45,7 @@ def save_kp_to_db(
         execution_terms,
         status,
         logistics_cost,
+        owner_user_id,
         db_path,
     )
 
@@ -289,11 +291,12 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
             # BLOB не нужно конвертировать в строку, оставляем как bytes
             kp_data['file'] = file_data
         
-        # Получаем статус из метаданных
-        cur.execute('SELECT status FROM kp_meta WHERE kp_id = ?', (kp_id,))
+        # Получаем статус и владельца из метаданных
+        cur.execute('SELECT status, owner_user_id FROM kp_meta WHERE kp_id = ?', (kp_id,))
         meta_row = cur.fetchone()
         if meta_row:
             kp_data['status'] = meta_row['status']
+            kp_data['owner_user_id'] = meta_row['owner_user_id']
         
         return kp_data
     
@@ -763,7 +766,36 @@ def get_next_kp_number(db_path: str = DEFAULT_DB) -> int:
     
     finally:
         conn.close()
-def get_all_kp_list(db_path: str = DEFAULT_DB) -> Dict[str, List[Dict]]:
+def _offer_access_sql_filters(
+    *,
+    owner_user_id: int | None = None,
+    readable_statuses: tuple[str, ...] | None = None,
+    deny_all: bool = False,
+) -> tuple[str, list]:
+    """Build AND-fragment for offer list/search queries (empty → no extra filter)."""
+    if deny_all:
+        return " AND 1 = 0", []
+    clauses: list[str] = []
+    params: list = []
+    if owner_user_id is not None:
+        clauses.append("m.owner_user_id = ?")
+        params.append(owner_user_id)
+    if readable_statuses is not None:
+        placeholders = ",".join("?" * len(readable_statuses))
+        clauses.append(f"COALESCE(m.status, 'в работе') IN ({placeholders})")
+        params.extend(readable_statuses)
+    if not clauses:
+        return "", []
+    return " AND " + " AND ".join(clauses), params
+
+
+def get_all_kp_list(
+    db_path: str = DEFAULT_DB,
+    *,
+    owner_user_id: int | None = None,
+    readable_statuses: tuple[str, ...] | None = None,
+    deny_all: bool = False,
+) -> Dict[str, List[Dict]]:
     """
     Получает все КП, разделенные по статусам.
     
@@ -787,8 +819,14 @@ def get_all_kp_list(db_path: str = DEFAULT_DB) -> Dict[str, List[Dict]]:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
+        access_sql, access_params = _offer_access_sql_filters(
+            owner_user_id=owner_user_id,
+            readable_statuses=readable_statuses,
+            deny_all=deny_all,
+        )
+
         # Получаем все КП с их статусами
-        cur.execute('''
+        cur.execute(f'''
             SELECT 
                 ko.kp_id,
                 ko.creation_date,
@@ -801,11 +839,13 @@ def get_all_kp_list(db_path: str = DEFAULT_DB) -> Dict[str, List[Dict]]:
                 ko.delivery_conditions,
                 ko.payment_conditions,
                 ko.execution_terms,
-                m.status
+                m.status,
+                m.owner_user_id
             FROM KP_offers ko
             LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
+            WHERE 1 = 1{access_sql}
             ORDER BY ko.kp_id ASC
-        ''')
+        ''', access_params)
         
         all_kp = [dict(row) for row in cur.fetchall()]
         
@@ -841,6 +881,10 @@ def search_kp_by_customer_name(
     name: str,
     limit: int = 50,
     db_path: str = DEFAULT_DB,
+    *,
+    owner_user_id: int | None = None,
+    readable_statuses: tuple[str, ...] | None = None,
+    deny_all: bool = False,
 ) -> tuple[List[Dict], int]:
     """
     Ищет КП по частичному совпадению имени заказчика (глобально, все статусы).
@@ -858,7 +902,13 @@ def search_kp_by_customer_name(
         pattern = f"%{escaped}%"
         fetch_limit = limit + 1
 
-        base_select = """
+        access_sql, access_params = _offer_access_sql_filters(
+            owner_user_id=owner_user_id,
+            readable_statuses=readable_statuses,
+            deny_all=deny_all,
+        )
+
+        base_select = f"""
             SELECT
                 ko.kp_id,
                 ko.creation_date,
@@ -869,22 +919,28 @@ def search_kp_by_customer_name(
                 ko.vat_amount,
                 ko.total_amount,
                 ko.execution_terms,
-                m.status
+                m.status,
+                m.owner_user_id
             FROM KP_offers ko
             LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
-            WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'
+            WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'{access_sql}
         """
 
         cur.execute(
             f"{base_select} ORDER BY ko.kp_id DESC LIMIT ?",
-            (pattern, fetch_limit),
+            (pattern, *access_params, fetch_limit),
         )
         rows = [dict(row) for row in cur.fetchall()]
 
         if len(rows) > limit:
             cur.execute(
-                f"SELECT COUNT(*) AS cnt FROM KP_offers ko WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'",
-                (pattern,),
+                f"""
+                SELECT COUNT(*) AS cnt
+                FROM KP_offers ko
+                LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
+                WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'{access_sql}
+                """,
+                (pattern, *access_params),
             )
             total = int(cur.fetchone()["cnt"])
             return rows[:limit], total

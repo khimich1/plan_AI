@@ -18,3 +18,12 @@ def _clear_settings_cache() -> None:
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_rate_limiter() -> None:
+    from app.security.login_rate_limit import reset_login_rate_limiter_for_tests
+
+    reset_login_rate_limiter_for_tests()
+    yield
+    reset_login_rate_limiter_for_tests()

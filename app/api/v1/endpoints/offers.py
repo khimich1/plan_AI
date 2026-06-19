@@ -15,20 +15,20 @@ def list_offers(
     status: str = Query(default="all"),
     limit: int = Query(default=200, ge=1, le=1000),
     kp_id: int | None = Query(default=None, ge=1),
-    _user: dict = Depends(require_roles("admin", "manager", "production")),
+    user: dict = Depends(require_roles("admin", "manager", "production")),
 ) -> dict:
     service = OffersService()
-    items = service.list_offers(status=status, limit=limit, kp_id=kp_id)
+    items = service.list_offers(status=status, limit=limit, kp_id=kp_id, user=user)
     return {"items": items, "count": len(items)}
 
 
 @router.get("/{kp_id}")
 def get_offer(
     kp_id: int,
-    _user: dict = Depends(require_roles("admin", "manager", "production")),
+    user: dict = Depends(require_roles("admin", "manager", "production")),
 ) -> dict:
     service = OffersService()
-    item = service.get_offer(kp_id)
+    item = service.get_offer(kp_id, user=user)
     if not item:
         raise HTTPException(status_code=404, detail="Offer not found")
     return item
@@ -37,20 +37,20 @@ def get_offer(
 @router.post("")
 def create_offer(
     payload: CreateOfferRequest,
-    _user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(require_roles("admin", "manager")),
 ) -> dict:
     service = OffersService()
-    return service.create_offer(payload)
+    return service.create_offer(payload, user=user)
 
 
 @router.patch("/{kp_id}/discount")
 def update_discount(
     kp_id: int,
     payload: UpdateOfferDiscountRequest,
-    _user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(require_roles("admin", "manager")),
 ) -> dict:
     service = OffersService()
-    item = service.update_discount(kp_id, payload.discount_percent)
+    item = service.update_discount(kp_id, payload.discount_percent, user=user)
     if not item:
         raise HTTPException(status_code=404, detail="Offer not found or discount was not updated")
     return item
@@ -60,11 +60,11 @@ def update_discount(
 def move_to_production(
     kp_id: int,
     payload: MoveOfferToProductionRequest,
-    _user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(require_roles("admin", "manager")),
 ) -> dict:
     service = OffersService()
     try:
-        return service.move_to_production(kp_id, payload.execution_terms_input)
+        return service.move_to_production(kp_id, payload.execution_terms_input, user=user)
     except ValueError as exc:
         if str(exc) == "not_found":
             raise HTTPException(status_code=404, detail="Offer not found") from exc
@@ -76,10 +76,10 @@ def move_to_production(
 @router.delete("/{kp_id}")
 def delete_offer(
     kp_id: int,
-    _user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(require_roles("admin", "manager")),
 ) -> dict:
     service = OffersService()
-    deleted = service.delete_offer(kp_id)
+    deleted = service.delete_offer(kp_id, user=user)
     if not deleted:
         raise HTTPException(status_code=404, detail="Offer not found")
     return {"ok": True, "kp_id": kp_id}
@@ -88,11 +88,11 @@ def delete_offer(
 @router.get("/{kp_id}/pdf")
 def download_offer_pdf(
     kp_id: int,
-    _user: dict = Depends(require_roles("admin", "manager", "production")),
+    user: dict = Depends(require_roles("admin", "manager", "production")),
 ) -> Response:
     service = OffersService()
     try:
-        filename, data = service.generate_pdf(kp_id)
+        filename, data = service.generate_pdf(kp_id, user=user)
     except ValueError as exc:
         if str(exc) == "not_found":
             raise HTTPException(status_code=404, detail="Offer not found") from exc
@@ -104,11 +104,11 @@ def download_offer_pdf(
 @router.get("/{kp_id}/xlsx")
 def download_offer_xlsx(
     kp_id: int,
-    _user: dict = Depends(require_roles("admin", "manager", "production")),
+    user: dict = Depends(require_roles("admin", "manager", "production")),
 ) -> Response:
     service = OffersService()
     try:
-        filename, data = service.generate_xlsx(kp_id)
+        filename, data = service.generate_xlsx(kp_id, user=user)
     except ValueError as exc:
         if str(exc) == "not_found":
             raise HTTPException(status_code=404, detail="Offer not found") from exc

@@ -29,6 +29,7 @@ class KpRepository:
         status: str = "в работе",
         order_data: Sequence[dict] | None = None,
         xlsx_path: str | None = None,
+        owner_user_id: int | None = None,
     ) -> int:
         return kp_db_offers.save_kp_to_db(
             creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
@@ -42,8 +43,12 @@ class KpRepository:
             payment_conditions=payment_conditions,
             execution_terms=execution_terms,
             status=status,
+            owner_user_id=owner_user_id,
             db_path=self.db_path,
         )
+
+    def list_offers_grouped(self, **list_filters) -> dict[str, list[dict]]:
+        return kp_db_offers.get_all_kp_list(self.db_path, **list_filters)
 
     def list_offers(self, limit: int = 100) -> list[dict]:
         query = """
@@ -60,9 +65,6 @@ class KpRepository:
             cursor = conn.cursor()
             cursor.execute(query, (limit,))
             return [dict(row) for row in cursor.fetchall()]
-
-    def list_offers_grouped(self) -> dict[str, list[dict]]:
-        return kp_db_offers.get_all_kp_list(self.db_path)
 
     def get_offer(self, kp_id: int) -> dict | None:
         return kp_db_offers.get_kp_by_id(kp_id, self.db_path)

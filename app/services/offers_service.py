@@ -5,6 +5,11 @@ from typing import Any
 
 from app.repositories.kp_repository import KpRepository
 from app.schemas.offers import CreateOfferRequest
+from app.security.offer_access import (
+    assert_offer_read_access,
+    assert_offer_write_access,
+    list_filters_for_user,
+)
 from core.kp_persistence_service import KpPersistenceService
 from core.execution_terms import parse_execution_terms_to_datetime
 from core.commercial_offer import generate_commercial_offer_pdf
@@ -18,17 +23,20 @@ class OffersService:
     def list_offers(
         self,
         *,
+        user: dict,
         status: str = "all",
         limit: int = 200,
         kp_id: int | None = None,
     ) -> list[dict[str, Any]]:
+        list_filters = list_filters_for_user(user)
         if kp_id is not None:
             item = self.kp_repository.get_offer(kp_id)
             if not item:
                 return []
+            assert_offer_read_access(user, item)
             return [self._to_offer_summary(item)]
 
-        grouped = self.kp_repository.list_offers_grouped()
+        grouped = self.kp_repository.list_offers_grouped(**list_filters)
         groups_map = {
             "archived": grouped.get("archived", []),
             "in_production": grouped.get("in_production", []),
@@ -41,13 +49,14 @@ class OffersService:
         items = sorted(items, key=lambda x: int(x.get("kp_id") or 0), reverse=True)
         return [self._to_offer_summary(item) for item in items[: max(limit, 1)]]
 
-    def get_offer(self, kp_id: int) -> dict[str, Any] | None:
+    def get_offer(self, kp_id: int, *, user: dict) -> dict[str, Any] | None:
         item = self.kp_repository.get_offer(kp_id)
         if not item:
             return None
+        assert_offer_read_access(user, item)
         return self._to_offer_details(item)
 
-    def create_offer(self, payload: CreateOfferRequest) -> dict[str, Any]:
+    def create_offer(self, payload: CreateOfferRequest, *, user: dict) -> dict[str, Any]:
         execution_terms = None
         status = "в архиве"
         used_default_execution_terms = False
@@ -65,6 +74,7 @@ class OffersService:
             payment_conditions=payload.payment_conditions,
             execution_terms=execution_terms,
             status=status,
+            owner_user_id=int(user["id"]),
             db_path=self.kp_repository.db_path,
         )
         created = self.kp_repository.get_offer(kp_id)
@@ -78,7 +88,11 @@ class OffersService:
             "offer": self._to_offer_summary(created),
         }
 
-    def update_discount(self, kp_id: int, discount_percent: float) -> dict[str, Any] | None:
+    def update_discount(self, kp_id: int, discount_percent: float, *, user: dict) -> dict[str, Any] | None:
+        item = self.kp_repository.get_offer(kp_id)
+        if not item:
+            return None
+        assert_offer_write_access(user, item)
         if not self.kp_repository.update_offer_discount(kp_id, discount_percent):
             return None
         item = self.kp_repository.get_offer(kp_id)
@@ -86,10 +100,11 @@ class OffersService:
             return None
         return self._to_offer_details(item)
 
-    def move_to_production(self, kp_id: int, execution_terms_input: str) -> dict[str, Any]:
+    def move_to_production(self, kp_id: int, execution_terms_input: str, *, user: dict) -> dict[str, Any]:
         item = self.kp_repository.get_offer(kp_id)
         if not item:
             raise ValueError("not_found")
+        assert_offer_write_access(user, item)
         if item.get("status") != "в архиве":
             raise ValueError("invalid_status")
         execution_terms, used_default = self._parse_execution_terms(execution_terms_input)
@@ -107,13 +122,18 @@ class OffersService:
             "offer": self._to_offer_summary(updated),
         }
 
-    def delete_offer(self, kp_id: int) -> bool:
+    def delete_offer(self, kp_id: int, *, user: dict) -> bool:
+        item = self.kp_repository.get_offer(kp_id)
+        if not item:
+            return False
+        assert_offer_write_access(user, item)
         return self.kp_repository.delete_offer(kp_id)
 
-    def generate_pdf(self, kp_id: int) -> tuple[str, bytes]:
+    def generate_pdf(self, kp_id: int, *, user: dict) -> tuple[str, bytes]:
         offer = self.kp_repository.get_offer(kp_id)
         if not offer:
             raise ValueError("not_found")
+        assert_offer_read_access(user, offer)
         order_data = self._order_data_from_offer(offer)
         if not order_data:
             raise ValueError("empty_order_data")
@@ -133,10 +153,11 @@ class OffersService:
         )
         return (f"KP_{kp_id}.pdf", pdf_buffer.getvalue())
 
-    def generate_xlsx(self, kp_id: int) -> tuple[str, bytes]:
+    def generate_xlsx(self, kp_id: int, *, user: dict) -> tuple[str, bytes]:
         offer = self.kp_repository.get_offer(kp_id)
         if not offer:
             raise ValueError("not_found")
+        assert_offer_read_access(user, offer)
         order_data = self._order_data_from_offer(offer)
         if not order_data:
             raise ValueError("empty_order_data")

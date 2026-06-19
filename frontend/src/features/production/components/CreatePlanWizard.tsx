@@ -4,12 +4,15 @@ import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { Spinner } from "@/shared/ui/Spinner";
+import { getErrorMessage } from "@/shared/lib/apiError";
+import { isPlanVersionConflict } from "@/shared/lib/planConflict";
 import { MonthCalendarGrid } from "@/features/production/components/MonthCalendarGrid";
 import {
   useBuildPlanMutation,
   useDayOccupancyQuery,
   useGlobalCalendarQuery,
   useKpCandidatesQuery,
+  usePlansListQuery,
   useWorkCalendarQuery,
 } from "@/features/production/hooks/useProductionQueries";
 import {
@@ -87,6 +90,7 @@ export const CreatePlanWizard = ({
 
   const occupancyQuery = useDayOccupancyQuery();
   const calendarQuery = useGlobalCalendarQuery();
+  const plansQuery = usePlansListQuery();
   const workCalendar = useWorkCalendarQuery();
   const candidatesQuery = useKpCandidatesQuery(step === 3);
   const buildMutation = useBuildPlanMutation();
@@ -379,6 +383,11 @@ export const CreatePlanWizard = ({
       ? Math.max(...fillTargets.map((t) => t.tracks))
       : tracksCount;
 
+    const activePlanId = plansQuery.data?.active_plan_id ?? undefined;
+    const activePlanVersion =
+      activePlanId &&
+      plansQuery.data?.plans.find((plan) => plan.id === activePlanId)?.version;
+
     buildMutation.mutate(
       {
         start_date: fillStart,
@@ -387,6 +396,9 @@ export const CreatePlanWizard = ({
         selected_kp_ids: filterMethod === "kp" ? selectedKpIds : undefined,
         selected_plate_ids: partialPlateIds,
         selected_plate_qty: selectedPlateQty,
+        active_plan_id: activePlanId,
+        expected_version:
+          typeof activePlanVersion === "number" ? activePlanVersion : undefined,
         plan_name: planName.trim() ? planName.trim() : undefined,
         fill_targets: fillTargets ?? undefined,
         layout_reinforcement_order: order,
@@ -680,10 +692,8 @@ export const CreatePlanWizard = ({
             </div>
           )}
 
-          {buildMutation.isError && (
-            <Alert tone="error">
-              {(buildMutation.error as Error)?.message || "Не удалось построить план."}
-            </Alert>
+          {buildMutation.isError && !isPlanVersionConflict(buildMutation.error) && (
+            <Alert tone="error">{getErrorMessage(buildMutation.error)}</Alert>
           )}
           {buildMutation.isSuccess && (
             <Alert tone="success">

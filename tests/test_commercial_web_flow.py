@@ -23,6 +23,7 @@ from app.services.commercial_upload_validation import reset_commercial_ocr_rate_
 from app.services.commercial_workflow_service import CommercialWorkflowService, _safe_ocr_temp_suffix
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from core.exceptions import PlateParseError
+from core.plate_order_context import PlateOrderContext
 
 # Minimal valid 1×1 PNG (magic bytes + structure) for upload validation tests.
 _MINIMAL_PNG_BYTES = (
@@ -821,8 +822,14 @@ def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
 
     captured: dict[str, str] = {}
 
-    def fake_generate_preview(*, text: str | None = None, parse_result: ParseResult | None = None):
+    def fake_generate_preview(
+        *,
+        text: str | None = None,
+        parse_result: ParseResult | None = None,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ):
         _ = parse_result
+        _ = plate_order_ctx
         preview_text = text or ""
         captured["text"] = preview_text
         fake_parse_result = ParseResult(
@@ -854,6 +861,7 @@ def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
     result = workflow.resolve_wide_plates(
         "draft-1",
         decisions=[{"line_id": "wide-1", "action": "exclude"}],
+        plate_order_ctx=PlateOrderContext.fresh_empty(),
     )
 
     assert result["draft_id"] == "draft-1"

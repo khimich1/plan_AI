@@ -23,6 +23,7 @@ class KpPersistenceService:
         execution_terms: Optional[str] = None,
         status: str = "в работе",
         logistics_cost: float = 0.0,
+        owner_user_id: int | None = None,
         db_path: str = DEFAULT_DB,
     ) -> int:
         trip_logistics = max(0.0, float(logistics_cost or 0.0))
@@ -137,8 +138,8 @@ class KpPersistenceService:
                     )
 
             cur.execute(
-                "INSERT INTO kp_meta (kp_id, status) VALUES (?, ?)",
-                (kp_id, status),
+                "INSERT INTO kp_meta (kp_id, status, owner_user_id) VALUES (?, ?, ?)",
+                (kp_id, status, owner_user_id),
             )
             conn.commit()
             return kp_id
