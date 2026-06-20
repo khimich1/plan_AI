@@ -11,6 +11,7 @@ from app.services.optimization_service import OptimizationService
 from app.services.production_completion_service import ProductionCompletionService
 from app.services.production_planning_service import ProductionPlanningService
 from app.planning import plan_manager
+from core.plate_order_context import PlateOrderContext
 from core.plan_track_removal import TrackRemovalError
 
 MAX_TRACKS_PER_DAY = plan_manager.MAX_TRACKS_PER_DAY
@@ -104,6 +105,7 @@ class ProductionService:
         plan_name: str | None = None,
         fill_targets: list[dict[str, Any]] | None = None,
         layout_reinforcement_order: str = "asc",
+        plate_order_ctx: PlateOrderContext | None = None,
     ) -> dict[str, Any]:
         return self.planning_service.build_plan(
             start_date=start_date,
@@ -116,6 +118,7 @@ class ProductionService:
             plan_name=plan_name,
             fill_targets=fill_targets,
             layout_reinforcement_order=layout_reinforcement_order,
+            plate_order_ctx=plate_order_ctx,
         )
 
     def get_calendar(self) -> dict | None:

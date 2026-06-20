@@ -109,6 +109,7 @@ def optimize(
     load_result: LoadResult,
     *,
     config: OptimizeConfig,
+    plate_order_ctx: PlateOrderContext | None = None,
 ) -> OptimizeResult:
     """Run 2D optimization, layout split, rescue and identity backfill."""
     orders_2d = load_result.orders_2d
@@ -120,7 +121,7 @@ def optimize(
     enrich_orders_2d_concrete_grade(orders_2d, db_path=str(config.pb_db_path))
 
     core_order = PlateOrder.from_orders_2d(orders_2d)
-    plate_ctx = PlateOrderContext.fresh_empty()
+    plate_ctx = plate_order_ctx or PlateOrderContext.fresh_empty()
     plate_ctx.hydrate_from_order(core_order)
 
     with plate_ctx.bound():

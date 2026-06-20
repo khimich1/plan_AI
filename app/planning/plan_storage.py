@@ -1,10 +1,13 @@
 """
 Загрузка, сохранение и метаданные производственных планов.
+
+Единый persistence path — SQLite через :class:`app.repositories.plan_repository.PlanRepository`.
+JSON-файлы в ``bot/data/plans/`` больше не используются для чтения/записи (см. WP1 / A1).
 """
+from __future__ import annotations
+
 import ast
-import json
 import logging
-import os
 import re
 import sys
 from datetime import datetime
@@ -17,6 +20,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from app.core.settings import get_settings
 from core import kp_db
 from core.serialization import strip_plate_audit_from_plan
 
@@ -28,6 +32,8 @@ MAX_TRACKS_PER_DAY = 5
 
 _PLAN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _MAX_PLAN_ID_LEN = 200
+
+_repo_override: object | None = None
 
 
 class InvalidPlanIdError(ValueError):
@@ -41,18 +47,18 @@ def _validate_plan_id(plan_id: Optional[str]) -> None:
         raise InvalidPlanIdError(f"bad plan_id: {plan_id!r}")
 
 
-def _plans_dir_resolved() -> Path:
-    return PLANS_DIR.resolve()
+def _get_repository():
+    from app.repositories.plan_repository import PlanRepository
+
+    if _repo_override is not None:
+        return _repo_override
+    settings = get_settings()
+    return PlanRepository(str(settings.plita_db_path))
 
 
-def _resolved_path_under_plans(candidate: Path, plans_root: Path) -> Path:
-    resolved = candidate.resolve()
-    try:
-        resolved.relative_to(plans_root)
-    except ValueError:
-        logger.warning("[PLANS] Отклонён путь вне каталога планов: %s", resolved)
-        raise InvalidPlanIdError("path escapes plans directory") from None
-    return resolved
+def get_repository():
+    """Возвращает активный репозиторий планов (для адаптеров и тестов)."""
+    return _get_repository()
 
 
 def convert_lookup_keys_to_tuples(lookup_dict: dict) -> dict:
@@ -83,19 +89,19 @@ def convert_lookup_keys_to_tuples(lookup_dict: dict) -> dict:
 
 def count_day_tracks(day_data: dict) -> int:
     """Единая точка truth: сколько дорожек реально в дне."""
-    real = len(day_data.get('tracks', []) or [])
-    saved = day_data.get('saved_tracks_count')
+    real = len(day_data.get("tracks", []) or [])
+    saved = day_data.get("saved_tracks_count")
     if saved is not None and saved != real:
         logger.warning(
             "[DAY_TRACKS] Рассинхрон: saved_tracks_count=%s, len(tracks)=%s",
-            saved, real,
+            saved,
+            real,
         )
     return real
 
 
-def ensure_plans_dir():
-    """Создаёт папку для планов, если её нет."""
-    PLANS_DIR.mkdir(parents=True, exist_ok=True)
+def ensure_plans_dir() -> None:
+    """Legacy no-op: планы хранятся в SQLite, не в каталоге на диске."""
 
 
 def create_plan_id() -> str:
@@ -104,187 +110,140 @@ def create_plan_id() -> str:
 
 
 def load_plans_metadata() -> dict:
-    """Загружает метаданные всех планов."""
-    if not PLANS_METADATA_PATH.exists():
-        return {"plans": [], "active_plan_id": None}
-
-    try:
-        with open(PLANS_METADATA_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        logger.exception(f"Ошибка загрузки метаданных планов: {e}")
-        return {"plans": [], "active_plan_id": None}
+    """Загружает метаданные всех планов из SQLite."""
+    return _get_repository().list_metadata()
 
 
-def save_plans_metadata(metadata: dict):
-    """Сохраняет метаданные планов."""
-    ensure_plans_dir()
-    try:
-        with open(PLANS_METADATA_PATH, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.exception(f"Ошибка сохранения метаданных планов: {e}")
+def save_plans_metadata(metadata: dict) -> None:
+    """Legacy no-op: метаданные выводятся из ``production_plans`` в SQLite."""
+    logger.debug(
+        "[PLANS] save_plans_metadata ignored (%d entries); SQLite is authoritative",
+        len(metadata.get("plans", []) or []),
+    )
 
 
 def get_plan_path(plan_id: str) -> Path:
-    """Возвращает абсолютный путь к файлу плана внутри PLANS_DIR."""
+    """Legacy path helper (для обратной совместимости импортов)."""
     _validate_plan_id(plan_id)
-    plans_root = _plans_dir_resolved()
-    candidate = plans_root / f"{plan_id}.json"
-    return _resolved_path_under_plans(candidate, plans_root)
+    return PLANS_DIR / f"{plan_id}.json"
 
 
 def load_plan(plan_id: str) -> Optional[dict]:
-    """Загружает конкретный план по ID."""
+    """Загружает конкретный план по ID из SQLite."""
     try:
-        plan_path = get_plan_path(plan_id)
+        _validate_plan_id(plan_id)
     except InvalidPlanIdError:
         logger.warning("Отклонён недопустимый plan_id: %r", plan_id)
         return None
-    if not plan_path.exists():
-        logger.warning(f"План {plan_id} не найден: {plan_path}")
-        return None
 
     try:
-        with open(plan_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        logger.exception(f"Ошибка загрузки плана {plan_id}: {e}")
+        return _get_repository().load_plan(plan_id)
+    except Exception as exc:
+        logger.exception("Ошибка загрузки плана %s: %s", plan_id, exc)
         return None
-
-
-def _make_plan_json_serializable(plan_data: dict) -> dict:
-    """Строит копию плана без несериализуемых в JSON полей."""
-    return strip_plate_audit_from_plan(plan_data)
 
 
 def save_plan(plan_data: dict) -> bool:
-    """Сохраняет план в файл."""
-    ensure_plans_dir()
-    plan_id = plan_data.get('id')
+    """Сохраняет план в SQLite."""
+    plan_id = plan_data.get("id")
     if not plan_id:
         logger.error("План не содержит ID!")
         return False
 
     try:
-        plan_path = get_plan_path(plan_id)
+        _validate_plan_id(plan_id)
+        _get_repository().save_plan(plan_data)
+        logger.info("План %s сохранён в SQLite", plan_id)
+        return True
     except InvalidPlanIdError:
         logger.error("Недопустимый ID плана при сохранении: %r", plan_id)
         return False
-    try:
-        to_save = _make_plan_json_serializable(plan_data)
-        with open(plan_path, 'w', encoding='utf-8') as f:
-            json.dump(to_save, f, ensure_ascii=False, indent=2)
-        logger.info(f"План {plan_id} сохранён в {plan_path}")
-        return True
-    except Exception as e:
-        logger.exception(f"Ошибка сохранения плана {plan_id}: {e}")
+    except Exception as exc:
+        logger.exception("Ошибка сохранения плана %s: %s", plan_id, exc)
         return False
 
 
 def delete_plan(plan_id: str) -> bool:
-    """Удаляет план и обновляет метаданные."""
+    """Удаляет план из SQLite и возвращает плиты в производство."""
     try:
-        plan_path = get_plan_path(plan_id)
+        _validate_plan_id(plan_id)
     except InvalidPlanIdError:
         return False
 
-    db_path = str(_PROJECT_ROOT / "plita.db")
+    repo = _get_repository()
+    if repo.load_plan(plan_id) is None:
+        return False
+
+    db_path = str(get_settings().plita_db_path)
     returned_count = kp_db.return_plan_plates_to_production(plan_id, db_path)
     if returned_count > 0:
         logger.info(
-            f"При удалении плана {plan_id}: возвращено {returned_count} записей плит в производство"
+            "При удалении плана %s: возвращено %s записей плит в производство",
+            plan_id,
+            returned_count,
         )
 
-    if plan_path.exists():
-        try:
-            os.remove(plan_path)
-        except Exception as e:
-            logger.exception(f"Ошибка удаления файла плана {plan_id}: {e}")
-            return False
+    active_id = repo.get_active_plan_id()
+    if not repo.delete(plan_id):
+        return False
 
-    metadata = load_plans_metadata()
-    metadata['plans'] = [p for p in metadata['plans'] if p['id'] != plan_id]
+    if active_id == plan_id:
+        remaining = [entry["id"] for entry in repo.list_metadata().get("plans", [])]
+        if remaining:
+            repo.set_active(remaining[0])
+        logger.info("Активный план %s удалён; новый active=%s", plan_id, remaining[:1])
 
-    if metadata.get('active_plan_id') == plan_id:
-        metadata['active_plan_id'] = None
-        if metadata['plans']:
-            metadata['active_plan_id'] = metadata['plans'][0]['id']
-
-    save_plans_metadata(metadata)
-    logger.info(f"План {plan_id} удалён")
+    logger.info("План %s удалён из SQLite", plan_id)
     return True
 
 
 def get_active_plan_id() -> Optional[str]:
     """Возвращает ID активного плана."""
-    metadata = load_plans_metadata()
-    return metadata.get('active_plan_id')
+    return _get_repository().get_active_plan_id()
 
 
 def set_active_plan(plan_id: str) -> bool:
-    """Устанавливает план как активный, только если JSON плана существует на диске."""
+    """Устанавливает план как активный, если он существует в SQLite."""
     try:
-        plan_path = get_plan_path(plan_id)
+        _validate_plan_id(plan_id)
     except InvalidPlanIdError:
         logger.warning("set_active_plan: недопустимый plan_id %r", plan_id)
         return False
-    if not plan_path.is_file():
-        logger.warning("set_active_plan: файл плана не найден %s", plan_path)
+
+    repo = _get_repository()
+    if repo.load_plan(plan_id) is None:
+        logger.warning("set_active_plan: план %r не найден в SQLite", plan_id)
         return False
-    metadata = load_plans_metadata()
-    metadata['active_plan_id'] = plan_id
-    save_plans_metadata(metadata)
-    logger.info(f"План {plan_id} установлен как активный")
-    return True
+
+    if repo.set_active_plan(plan_id):
+        logger.info("План %s установлен как активный", plan_id)
+        return True
+    return False
 
 
 def get_active_plan() -> Optional[dict]:
     """Загружает активный план."""
-    active_id = get_active_plan_id()
-    if not active_id:
-        return None
-    return load_plan(active_id)
+    record = _get_repository().get_active()
+    return record["payload"] if record else None
 
 
 def get_all_active_plan_ids() -> List[str]:
-    """Возвращает список ID всех планов, которые сохранены в metadata."""
+    """Возвращает список ID всех планов из метаданных."""
     metadata = load_plans_metadata()
-    plans = metadata.get('plans', [])
+    plans = metadata.get("plans", [])
     if isinstance(plans, dict):
         return list(plans.keys())
-    return [p.get('id') for p in plans if isinstance(p, dict) and p.get('id')]
+    return [p.get("id") for p in plans if isinstance(p, dict) and p.get("id")]
 
 
-def update_plan_metadata(plan: dict):
-    """Обновляет запись плана в метаданных."""
-    metadata = load_plans_metadata()
-    plan_id = plan['id']
-
-    total_days = len(plan.get('days', {}))
-    total_tracks = sum(
-        count_day_tracks(day)
-        for day in plan.get('days', {}).values()
+def update_plan_metadata(plan: dict) -> None:
+    """Legacy no-op: метаданные обновляются при сохранении payload в SQLite."""
+    logger.debug(
+        "[PLANS] update_plan_metadata ignored for plan %s; SQLite is authoritative",
+        plan.get("id"),
     )
 
-    plan_meta = {
-        'id': plan_id,
-        'name': plan.get('name', f'План {plan_id}'),
-        'created_at': plan.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
-        'start_date': plan.get('start_date', ''),
-        'total_days': total_days,
-        'tracks_count': plan.get('tracks_count', 5),
-        'total_tracks': total_tracks
-    }
 
-    found = False
-    for i, existing in enumerate(metadata['plans']):
-        if existing['id'] == plan_id:
-            metadata['plans'][i] = plan_meta
-            found = True
-            break
-
-    if not found:
-        metadata['plans'].append(plan_meta)
-
-    save_plans_metadata(metadata)
+def _make_plan_json_serializable(plan_data: dict) -> dict:
+    """Строит копию плана без несериализуемых в JSON полей."""
+    return strip_plate_audit_from_plan(plan_data)

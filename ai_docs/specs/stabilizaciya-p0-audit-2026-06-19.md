@@ -3,10 +3,12 @@
 > **Тип:** remediation feature-spec (стабилизационный спринт)
 > **Фаза SDD:** SPECIFY (спека на ревью — без PLAN/TASKS)
 > **Дата:** 2026-06-19
-> **Ревизия:** v4 — закрыт 2026-06-19 (IMPLEMENT + closure)
-> **Статус:** **закрыт (implemented)** — 2026-06-19
+> **Ревизия:** v5 — post-audit актуализация 2026-06-20
+> **Статус:** **закрыт (implemented, scope 2026-06-19)** — remediation P0 выполнен; residual риски — см. § Changelog
 > **Baseline:** [`project-baseline.md`](./project-baseline.md)
 > **Источник находок:** [`../develop/audits/2026-06-19-full-project-audit.md`](../develop/audits/2026-06-19-full-project-audit.md)
+> **Post-closure аудит:** [`../develop/audits/2026-06-20-full-project-audit.md`](../develop/audits/2026-06-20-full-project-audit.md)
+> **Наследники:** P1 [`stabilizaciya-p1-runtime-security-2026-06-19.md`](./stabilizaciya-p1-runtime-security-2026-06-19.md) · P2 [`bezopasnost-p2-audit-2026-06-19.md`](./bezopasnost-p2-audit-2026-06-19.md) · P3 [`stabilizaciya-p3-audit-2026-06-20.md`](./stabilizaciya-p3-audit-2026-06-20.md) — **закрыты**
 
 ---
 
@@ -233,6 +235,20 @@ Safety-net тесты пишутся **до** рефакторинга (особ
 - [x] `pytest tests/ -q` зелёный (726 passed); `tests/test_core_no_app_import.py` зелёный.
 - [x] Health Score пересчитан — см. [`../develop/audits/2026-06-19-full-project-audit.md`](../develop/audits/2026-06-19-full-project-audit.md) → раздел «Post-P0 remediation status».
 
+### Post-closure (аудит 2026-06-20)
+
+Спринт P0 **выполнил свой scope** (web: Q1, Q3, A2, A1). Полный аудит 2026-06-20 **переиндексировал ID** и выявил residual critical вне scope P0 (бот deprecated, но код и `plan_storage.py` остаются):
+
+| P0 (эта спека) | Аудит 20.06 | Статус после P0–P3 |
+|----------------|-------------|-------------------|
+| A2 — планы в SQLite + `version` | **A1/S1** split-brain (SQLite vs `bot/data/plans/`) | Web → `PlanRepository`/SQLite ✅; bot + `plan_storage.py` → JSON ⚠️ OPEN |
+| A1 — pipeline в `core/` | **A2** bot обходит `core/production/planning.py` | Web-адаптер ✅; `production_execution.py` ~900 строк отдельно ⚠️ OPEN |
+| A3 deferred | **A3** globals `config_and_data` / `plate_runtime_state` | Hot paths изолированы (P1) ✅; full decommission ⚠️ backlog |
+| Q1/Q3 (data integrity) | Не critical в снимке 20.06 | Закрыты ✅ (код + тесты) |
+| Out of scope: CSRF, rate limit, headers | Частично закрыты в P2/P3 + коммиты после P3 | CSRF middleware, XFF whitelist, security headers, password policy ✅ |
+
+**Важно:** Health Score **0.0/10** в аудите 20.06 — из‑за **новой** формулы и кластера A1/A2/A3; это не отменяет closure P0 по acceptance §5.
+
 ### Deferred / out of closure scope
 
 - **`A3`** (runtime-globals плит) — перенесён в следующий спринт (known-deferred).
@@ -264,9 +280,21 @@ Safety-net тесты пишутся **до** рефакторинга (особ
 
 ---
 
-## Следующий шаг (после ревью этой спеки)
+## Changelog / что изменилось с 2026-06-19
 
-1. Подтвердить ASSUMPTIONS и ответить на Open Questions.
-2. Фаза **PLAN**: Этап A (`Q1` → `Q3` → `A2`-схема/репозиторий/миграция) → Этап B (`A1` pipeline). Зависимости: `A1.persist` зависит от `A2.PlanRepository`.
-3. Фаза **TASKS**: задачи ≤5 файлов с acceptance + verify.
-4. **IMPLEMENT** по `incremental-implementation` + `test-driven-development`.
+| Дата | Изменение |
+|------|-----------|
+| 2026-06-19 | v4 — closure P0: Q1, Q3, A2, A1 по acceptance; план [`../develop/plans/2026-06-19-stabilizaciya-p0.md`](../develop/plans/2026-06-19-stabilizaciya-p0.md) закрыт |
+| 2026-06-19 | Следующие спринты: P1 (A3 hot paths, S1 bot auth), P2 (rate limit, RBAC), — закрыты |
+| 2026-06-20 | Аудит [`2026-06-20-full-project-audit.md`](../develop/audits/2026-06-20-full-project-audit.md): remapping ID (см. Post-closure §8); P3 закрыт (web login rate limit, production RBAC, destructive guard, integration tests) |
+| 2026-06-20 | Post-P3 коммиты: CSRF (`app/middleware/csrf.py`), XFF trusted proxies, security headers — вне scope P0, но закрывают high из снимка 20.06 |
+| 2026-06-20 | v5 — актуализация спеки: P0 scope остаётся **closed**; новый P0-кластер (A1/S1, A2, A3 по ID 20.06) — **отдельная спека**, не переоткрытие этой |
+
+---
+
+## Следующий шаг (актуально на 2026-06-20)
+
+1. ~~PLAN/TASKS/IMPLEMENT P0~~ — **закрыто**.
+2. ~~P1, P2, P3~~ — **закрыты** (см. наследники в шапке).
+3. **P0-next (residual critical):** спека [`stabilizaciya-p0-audit-2026-06-20.md`](./stabilizaciya-p0-audit-2026-06-20.md) · план [`../develop/plans/2026-06-20-stabilizaciya-p0-next.md`](../develop/plans/2026-06-20-stabilizaciya-p0-next.md) — **ready for implementation** (WP1 → WP8).
+4. **P1-next backlog:** POST-only logout (**S4**), полный destructive admin guard (**S6**), bare `except` в bot (**Q1** 20.06).

@@ -209,3 +209,45 @@ def test_optimization_service_runs_under_plate_order_ctx_bound(
     OptimizationService().optimize(order, plate_order_ctx=request_ctx)
 
     assert runtime_matches == [True]
+
+
+def test_run_planning_pipeline_reuses_plate_order_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.production_planning_service import ProductionPlanningService
+    from core.plate_runtime_state import get_plate_mutable_runtime
+    from core.production.dto import LoadResult
+
+    request_ctx = PlateOrderContext.fresh_empty()
+    runtime_matches: list[bool] = []
+
+    def fake_optimize_with_cuts(*, orders_2d, **kwargs):
+        runtime_matches.append(get_plate_mutable_runtime() is request_ctx.plates)
+        return {
+            "_opt_status": "ok",
+            "total_plates": 0,
+            "primary_cuts": [],
+            "secondary_cuts": [],
+            "plate_assignments": [],
+        }
+
+    monkeypatch.setattr(
+        "core.production.planning.optimize_with_cascading_longitudinal_cuts",
+        fake_optimize_with_cuts,
+    )
+
+    load_result = LoadResult(
+        kp_list=[],
+        selected_plates=[],
+        orders_2d=[{"length": 7.8, "width": 1200, "qty": 1, "load_code": 8}],
+        plate_lookup_exact={},
+        plate_lookup_by_length={},
+    )
+
+    with request_ctx.bound():
+        ProductionPlanningService().run_planning_pipeline(
+            load_result=load_result,
+            plate_order_ctx=request_ctx,
+        )
+
+    assert runtime_matches == [True]

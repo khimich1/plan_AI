@@ -14,11 +14,14 @@ from app.planning.plan_storage import create_plan_id
 from app.repositories.plan_repository import PlanRepository
 from core.production.dto import (
     LoadConfig,
+    LoadResult,
     OptimizeConfig,
+    OptimizeResult,
     PersistConfig,
     PlanBuildInput,
 )
 from core.production.errors import PlanBuildError
+from core.plate_order_context import PlateOrderContext
 from core.production.planning import load, optimize, persist
 from core.rest_matching_service import RestMatchingService
 
@@ -68,6 +71,74 @@ class ProductionPlanningService:
             db_path=db_path or self.plita_db_path,
         )
 
+    def run_planning_pipeline(
+        self,
+        *,
+        plan_input: PlanBuildInput | None = None,
+        load_result: LoadResult | None = None,
+        layout_reinforcement_order: str = "asc",
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> tuple[LoadResult, OptimizeResult]:
+        """validate+load → optimize через core; без persist (bot preview / build_plan)."""
+        if load_result is None:
+            if plan_input is None:
+                raise ValueError("Нужен plan_input или load_result.")
+            try:
+                load_result = load(
+                    plan_input,
+                    config=LoadConfig(
+                        plita_db_path=self.plita_db_path,
+                        pb_db_path=self.pb_db_path,
+                    ),
+                )
+            except PlanBuildError as exc:
+                raise _map_plan_build_error(exc) from exc
+
+        opt_raw = self._run_optimization_and_split(
+            orders_2d=load_result.orders_2d,
+            layout_reinforcement_order=layout_reinforcement_order,
+            plate_order_ctx=plate_order_ctx,
+        )
+        if isinstance(opt_raw, tuple):
+            all_tracks_list, optimization_result = opt_raw
+            opt_result = OptimizeResult(
+                all_tracks_list=all_tracks_list,
+                optimization_result=optimization_result,
+            )
+        else:
+            opt_result = opt_raw
+
+        return load_result, opt_result
+
+    def build_plan_structure(
+        self,
+        load_result: LoadResult,
+        opt_result: OptimizeResult,
+        *,
+        start_date: str,
+        tracks_count: int,
+        layout_reinforcement_order: str = "asc",
+    ) -> dict[str, Any]:
+        """Собирает структуру плана без commit/persist (bot preview / parity)."""
+        if not opt_result.all_tracks_list:
+            raise ProductionPlanBuildError("Оптимизация не дала результата.")
+
+        global_occupancy = self.plan_repository.get_global_occupancy()
+        plan, stats = self.plan_repository.build_plan_from_tracks(
+            plan_id=None,
+            new_tracks_list=opt_result.all_tracks_list,
+            start_date=start_date,
+            tracks_per_day=tracks_count,
+            plate_lookup_exact=load_result.plate_lookup_exact,
+            plate_lookup_by_length=load_result.plate_lookup_by_length,
+            orders_2d=load_result.orders_2d,
+            optimization_result=opt_result.optimization_result,
+            auto_save=False,
+            global_occupancy=global_occupancy,
+        )
+        plan["layout_reinforcement_order"] = layout_reinforcement_order
+        return {"plan": plan, "stats": stats}
+
     def build_plan(
         self,
         *,
@@ -81,6 +152,7 @@ class ProductionPlanningService:
         plan_name: str | None = None,
         fill_targets: list[dict[str, Any]] | None = None,
         layout_reinforcement_order: str = "asc",
+        plate_order_ctx: PlateOrderContext | None = None,
     ) -> dict[str, Any]:
         """Собирает план по заданным фильтрам через core-pipeline."""
         plan_input = PlanBuildInput(
@@ -94,26 +166,11 @@ class ProductionPlanningService:
         )
 
         try:
-            load_result = load(
-                plan_input,
-                config=LoadConfig(
-                    plita_db_path=self.plita_db_path,
-                    pb_db_path=self.pb_db_path,
-                ),
-            )
-
-            opt_result = self._run_optimization_and_split(
-                orders_2d=load_result.orders_2d,
+            load_result, opt_result = self.run_planning_pipeline(
+                plan_input=plan_input,
                 layout_reinforcement_order=layout_reinforcement_order,
+                plate_order_ctx=plate_order_ctx,
             )
-            from core.production.dto import OptimizeResult
-
-            if isinstance(opt_result, tuple):
-                all_tracks_list, optimization_result = opt_result
-                opt_result = OptimizeResult(
-                    all_tracks_list=all_tracks_list,
-                    optimization_result=optimization_result,
-                )
 
             persist_result = persist(
                 load_result,
@@ -145,6 +202,7 @@ class ProductionPlanningService:
         *,
         orders_2d: list[dict[str, Any]],
         layout_reinforcement_order: str = "asc",
+        plate_order_ctx: PlateOrderContext | None = None,
     ):
         """Делегирует в core.optimize; оставлен для подмены в тестах."""
         from core.production.dto import LoadResult, OptimizeConfig
@@ -163,4 +221,5 @@ class ProductionPlanningService:
                 layout_reinforcement_order=layout_reinforcement_order,  # type: ignore[arg-type]
                 track_top_up_from_following=get_settings().track_top_up_from_following,
             ),
+            plate_order_ctx=plate_order_ctx,
         )

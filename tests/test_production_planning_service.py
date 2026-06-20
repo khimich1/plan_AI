@@ -75,7 +75,7 @@ def planning_service(tmp_plita, monkeypatch):
         plan_repository=plan_repo,
     )
 
-    def fake_optimize(self, *, orders_2d, layout_reinforcement_order="asc"):
+    def fake_optimize(self, *, orders_2d, layout_reinforcement_order="asc", **kwargs):
         """Симулирует успешную оптимизацию: 3 плиты → 1 дорожка."""
         if not orders_2d:
             return [], {}

@@ -14,7 +14,10 @@ PLATE-CTX-001: изоляция от гонок между потоками (thr
     finally:
         reset_plate_mutable_runtime(token)
 
-Если bind не вызывается, поведение как раньше: отдельное состояние на поток.
+Или через ``PlateOrderContext.fresh_empty().bound()`` (предпочтительно на hot paths).
+
+Deployment: изоляция гарантирована в рамках одного процесса при middleware на entry points;
+см. ``ai_docs/develop/architecture/plate-runtime-isolation.md``.
 """
 
 from __future__ import annotations

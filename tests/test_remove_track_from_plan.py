@@ -84,13 +84,11 @@ def tmp_plita(tmp_path) -> str:
 
 @pytest.fixture(autouse=True)
 def _isolate_plans(tmp_path, monkeypatch):
-    plans_dir = tmp_path / "plans"
-    plans_dir.mkdir()
-    metadata_path = tmp_path / "plans_metadata.json"
-    monkeypatch.setattr(plan_storage, "PLANS_DIR", plans_dir)
-    monkeypatch.setattr(plan_storage, "PLANS_METADATA_PATH", metadata_path)
-    monkeypatch.setattr(plan_manager, "PLANS_DIR", plans_dir)
-    monkeypatch.setattr(plan_manager, "PLANS_METADATA_PATH", metadata_path)
+    """Изолируем SQLite-планы в tmp и отключаем праздники/выходные."""
+    db_path = str(tmp_path / "plita.db")
+    kp_db.init_schema(db_path)
+    repo = PlanRepository(db_path=db_path)
+    monkeypatch.setattr(plan_storage, "_repo_override", repo)
     monkeypatch.setattr(plan_manager, "load_holidays", lambda: set())
     monkeypatch.setattr(plan_manager, "load_extra_workdays", lambda: set())
 

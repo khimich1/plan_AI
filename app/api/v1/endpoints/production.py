@@ -69,6 +69,7 @@ def create_plan(
 @router.post("/plans/build", response_model=BuildPlanResponse)
 def build_plan_from_filters(
     payload: BuildPlanRequest,
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     _user: dict = Depends(require_roles("admin", "production")),
 ) -> BuildPlanResponse:
     try:
@@ -87,6 +88,7 @@ def build_plan_from_filters(
                 else None
             ),
             layout_reinforcement_order=payload.layout_reinforcement_order,
+            plate_order_ctx=plate_order_ctx,
         )
     except ProductionPlanBuildError as exc:
         raise_unprocessable_client_error(exc, where="production.build_plan")

@@ -29,7 +29,7 @@ from .plan_manager import (
     get_active_plan_id, add_tracks_to_plan, format_plan_stats_message,
     get_all_tracks_from_plan, get_global_days_info, get_global_day_occupancy,
     MAX_TRACKS_PER_DAY, get_all_plans_gantt_data, convert_lookup_keys_to_tuples,
-    save_plan, update_plan_metadata, set_active_plan, get_plan_path,
+    save_plan, update_plan_metadata, set_active_plan,
     count_day_tracks
 )
 
@@ -498,15 +498,15 @@ async def save_current_plan(callback: CallbackQuery, state: FSMContext):
             except Exception as rollback_error:
                 logger.error(f"[ROLLBACK] Ошибка при откате плит: {rollback_error}")
         
-        # Если план был сохранён на диск, но потом произошла ошибка - удаляем файл
+        # Если план был сохранён в SQLite, но потом произошла ошибка — удаляем запись
         if plan_saved and plan_id:
             try:
-                plan_path = get_plan_path(plan_id)
-                if plan_path.exists():
-                    os.remove(plan_path)
-                    logger.info(f"[ROLLBACK] Удалён файл плана {plan_id}")
+                from app.planning.plan_storage import get_repository
+
+                if get_repository().delete(plan_id):
+                    logger.info("[ROLLBACK] Удалена запись плана %s из SQLite", plan_id)
             except Exception as delete_error:
-                logger.error(f"[ROLLBACK] Ошибка при удалении файла плана: {delete_error}")
+                logger.error("[ROLLBACK] Ошибка при удалении плана %s: %s", plan_id, delete_error)
         
         await callback.message.answer(
             "❌ Не удалось сохранить план.\n"
