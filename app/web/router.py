@@ -10,11 +10,13 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from app.core.settings import get_settings
 from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER, get_current_user, require_roles
 from app.dependencies.commercial_draft import check_draft_ownership
+from app.dependencies.plate_context import get_plate_order_context
 from app.repositories.auth_repository import AuthRepository
 from app.security.session import clear_session_cookie, create_session_token, set_session_cookie
 from app.services.commercial_service import CommercialService
 from app.services.commercial_upload_validation import prepare_commercial_ocr_upload
 from app.services.commercial_workflow_service import CommercialWorkflowService
+from app.services.offers_service import OffersService
 from app.services.production_service import ProductionService
 from core.exceptions import PlateParseError
 
@@ -851,7 +853,8 @@ def managers_page(user: dict = Depends(require_roles("admin", "manager", "produc
 
 @router.get("/web/offers", response_class=HTMLResponse)
 def offers_page(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> HTMLResponse:
-    offers = ProductionService().kp_repository.list_offers(limit=100)
+    # Object-level RBAC: same filters as REST /api/v1/offers (OffersService).
+    offers = OffersService().list_offers(user=user, status="all", limit=100)
     rows = "".join(
         f"<tr><td>{item.get('kp_id')}</td><td>{escape(str(item.get('creation_date', '')))}</td><td>{escape(item.get('customer_name', '') or '')}</td><td>{escape(item.get('manager_name', '') or '')}</td><td>{escape(item.get('status', '') or '')}</td><td>{item.get('total_amount') or 0}</td></tr>"
         for item in offers
