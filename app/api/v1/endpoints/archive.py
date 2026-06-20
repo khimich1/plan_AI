@@ -7,6 +7,12 @@ from fastapi.responses import FileResponse, Response
 
 from app.dependencies.auth import require_roles
 from app.dependencies.plate_context import get_plate_order_context
+from app.core.http_errors import (
+    MSG_ARCHIVE_NOT_FOUND,
+    MSG_VALIDATION,
+    raise_bad_request_client_error,
+    raise_not_found_client_error,
+)
 from app.schemas.archive import (
     ArchiveFileKind,
     ArchiveOfferDetails,
@@ -77,7 +83,11 @@ async def download_current_plan_gantt(
     try:
         path = await service.build_current_plan_gantt()
     except ArchiveValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise_bad_request_client_error(
+            exc,
+            where="archive.download_current_plan_gantt",
+            detail=MSG_VALIDATION,
+        )
     except Exception as exc:
         logger.exception("Ошибка сборки сводного Gantt")
         raise HTTPException(
@@ -100,7 +110,11 @@ def get_archive_offer(
     try:
         return service.get_details(kp_id, user=user)
     except ArchiveNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_archive_offer",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
 
 
 @router.get("/{kp_id}/files/{kind}")
@@ -119,9 +133,17 @@ async def download_archive_document(
             plate_order_ctx=plate_order_ctx,
         )
     except ArchiveNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_archive_offer",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
     except ArchiveValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise_bad_request_client_error(
+            exc,
+            where="archive.download_archive_document",
+            detail=MSG_VALIDATION,
+        )
     except Exception as exc:
         logger.exception("Ошибка генерации %s для КП %s", kind, kp_id)
         raise HTTPException(
@@ -147,9 +169,17 @@ def update_archive_discount(
     try:
         return service.update_discount(kp_id, payload.discount, user=user)
     except ArchiveNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_archive_offer",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
     except ArchiveValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise_bad_request_client_error(
+            exc,
+            where="archive.download_archive_document",
+            detail=MSG_VALIDATION,
+        )
 
 
 @router.patch("/{kp_id}/logistics-cost", response_model=ArchiveOfferDetails)
@@ -162,9 +192,17 @@ def update_archive_logistics_cost(
     try:
         return service.update_logistics_cost(kp_id, payload.logistics_cost, user=user)
     except ArchiveNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_archive_offer",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
     except ArchiveValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise_bad_request_client_error(
+            exc,
+            where="archive.download_archive_document",
+            detail=MSG_VALIDATION,
+        )
 
 
 @router.delete("/{kp_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -176,7 +214,11 @@ def delete_archive_offer(
     try:
         service.delete_offer(kp_id, user=user)
     except ArchiveNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_archive_offer",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -190,9 +232,17 @@ def move_archive_offer_to_production(
     try:
         return service.move_to_production(kp_id, payload.execution_terms, user=user)
     except ArchiveNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_archive_offer",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
     except ArchiveValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise_bad_request_client_error(
+            exc,
+            where="archive.download_archive_document",
+            detail=MSG_VALIDATION,
+        )
 
 
 @router.get("/{kp_id}/production-estimate")
@@ -204,4 +254,8 @@ def get_production_estimate(
     try:
         return service.estimate_production(kp_id, user=user)
     except ArchiveNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_archive_offer",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )

@@ -14,6 +14,11 @@ _log = logging.getLogger("app.api.commercial")
 MSG_PARSE_FAILED = "Не удалось обработать ввод. Проверьте формат данных."
 MSG_VALIDATION = "Проверьте введённые данные."
 MSG_INTERNAL = "Внутренняя ошибка сервера. Повторите попытку позже."
+MSG_NOT_FOUND = "Запрошенный ресурс не найден."
+MSG_ARCHIVE_NOT_FOUND = "КП не найдено."
+MSG_DAY_NOT_FOUND = "Данные за указанную дату не найдены."
+MSG_PLAN_VERSION_CONFLICT = "План был изменён другим запросом. Обновите страницу и повторите."
+MSG_UNPROCESSABLE = "Не удалось выполнить операцию. Проверьте введённые данные."
 
 
 def raise_parse_client_error(exc: BaseException, *, where: str) -> NoReturn:
@@ -46,6 +51,62 @@ def raise_unexpected_server_error(_exc: BaseException, *, where: str) -> NoRetur
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail=MSG_INTERNAL,
     ) from None
+
+
+def raise_client_error(
+    exc: BaseException,
+    *,
+    status_code: int,
+    detail: str,
+    where: str,
+) -> NoReturn:
+    if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+        _log.error("%s: client error %s", where, detail, exc_info=exc)
+    else:
+        _log.warning("%s: client error %s", where, detail, exc_info=exc)
+    raise HTTPException(status_code=status_code, detail=detail) from None
+
+
+def raise_not_found_client_error(
+    exc: BaseException,
+    *,
+    where: str,
+    detail: str = MSG_NOT_FOUND,
+) -> NoReturn:
+    raise_client_error(
+        exc,
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=detail,
+        where=where,
+    )
+
+
+def raise_bad_request_client_error(
+    exc: BaseException,
+    *,
+    where: str,
+    detail: str = MSG_VALIDATION,
+) -> NoReturn:
+    raise_client_error(
+        exc,
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=detail,
+        where=where,
+    )
+
+
+def raise_unprocessable_client_error(
+    exc: BaseException,
+    *,
+    where: str,
+    detail: str = MSG_UNPROCESSABLE,
+) -> NoReturn:
+    raise_client_error(
+        exc,
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=detail,
+        where=where,
+    )
 
 
 def raise_structured_error(

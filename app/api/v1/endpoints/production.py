@@ -26,7 +26,14 @@ from app.schemas.production import (
     RemoveTrackResponse,
     SaveWorkCalendarRequest,
 )
-from app.core.http_errors import raise_structured_error, raise_unexpected_server_error
+from app.core.http_errors import (
+    MSG_DAY_NOT_FOUND,
+    MSG_PLAN_VERSION_CONFLICT,
+    raise_not_found_client_error,
+    raise_structured_error,
+    raise_unexpected_server_error,
+    raise_unprocessable_client_error,
+)
 from core.plate_order_context import PlateOrderContext
 from app.repositories.plan_errors import PlanVersionConflict
 from app.schemas.errors import ERROR_CODE_PLAN_VERSION_CONFLICT, ERROR_CODE_REST_VALIDATION_FAILED
@@ -86,7 +93,7 @@ def build_plan_from_filters(
         raise_structured_error(
             status_code=status.HTTP_409_CONFLICT,
             code=ERROR_CODE_PLAN_VERSION_CONFLICT,
-            message=str(exc),
+            message=MSG_PLAN_VERSION_CONFLICT,
             details={
                 "plan_id": exc.plan_id,
                 "expected_version": exc.expected_version,
@@ -159,7 +166,7 @@ def remove_track_from_plan(
         raise_structured_error(
             status_code=status.HTTP_409_CONFLICT,
             code=ERROR_CODE_PLAN_VERSION_CONFLICT,
-            message=str(exc),
+            message=MSG_PLAN_VERSION_CONFLICT,
             details={
                 "plan_id": exc.plan_id,
                 "expected_version": exc.expected_version,
@@ -235,7 +242,7 @@ def complete_day(
         raise_structured_error(
             status_code=status.HTTP_409_CONFLICT,
             code=ERROR_CODE_PLAN_VERSION_CONFLICT,
-            message=str(exc),
+            message=MSG_PLAN_VERSION_CONFLICT,
             details={
                 "plan_id": exc.plan_id,
                 "expected_version": exc.expected_version,
@@ -243,10 +250,7 @@ def complete_day(
             where="production.complete_day",
         )
     except ProductionCompletionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+        raise_unprocessable_client_error(exc, where="production.complete_day")
 
 
 @router.get("/days/{target_date}/documents/schema")
@@ -262,7 +266,11 @@ async def download_day_schema(
             plate_order_ctx=plate_order_ctx,
         )
     except DayDocumentsError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise_not_found_client_error(
+            exc,
+            where="production.download_day_schema",
+            detail=MSG_DAY_NOT_FOUND,
+        )
     except Exception as exc:
         logger.exception("[production/day-schema] ошибка: %s", exc)
         raise HTTPException(
@@ -290,9 +298,11 @@ async def download_day_breakdown(
             plate_order_ctx=plate_order_ctx,
         )
     except DayDocumentsError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        logger.exception("[production/day-breakdown] ошибка: %s", exc)
+        raise_not_found_client_error(
+            exc,
+            where="production.download_day_breakdown",
+            detail=MSG_DAY_NOT_FOUND,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Не удалось сформировать детальную разбивку.",
@@ -314,9 +324,11 @@ async def download_day_formovka(
     try:
         zip_path, cleanup_dir = await generate_day_formovka(target_date)
     except DayDocumentsError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        logger.exception("[production/day-formovka] ошибка: %s", exc)
+        raise_not_found_client_error(
+            exc,
+            where="production.download_day_formovka",
+            detail=MSG_DAY_NOT_FOUND,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Не удалось сформировать файлы формовки.",

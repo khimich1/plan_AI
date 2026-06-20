@@ -583,7 +583,7 @@ def test_complete_day_business_error_maps_to_422(
         cookies=admin_cookie,
     )
     assert response.status_code == 422
-    assert "не списано" in response.json()["detail"]
+    assert response.json()["detail"] == "Не удалось выполнить операцию. Проверьте введённые данные."
 
 
 def test_get_day_view_not_found(client: TestClient, admin_cookie: dict[str, str]) -> None:

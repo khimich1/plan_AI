@@ -4,7 +4,12 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from app.core.http_errors import raise_structured_error
+from app.core.http_errors import (
+    MSG_ARCHIVE_NOT_FOUND,
+    raise_not_found_client_error,
+    raise_structured_error,
+    raise_unprocessable_client_error,
+)
 from app.schemas.errors import (
     ERROR_CODE_PLAN_VERSION_CONFLICT,
     ERROR_CODE_REST_VALIDATION_FAILED,
@@ -82,3 +87,28 @@ def test_structured_error_json_response_shape() -> None:
             "details": {"positions": ["ПБ 1"]},
         }
     }
+
+
+def test_raise_not_found_client_error_uses_safe_detail() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        raise_not_found_client_error(
+            ValueError("internal kp_id=42 path=/secret"),
+            where="test_not_found",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == MSG_ARCHIVE_NOT_FOUND
+    assert "secret" not in str(exc_info.value.detail)
+
+
+def test_raise_unprocessable_client_error_hides_exception_text() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        raise_unprocessable_client_error(
+            RuntimeError("sqlite3.OperationalError: no such table"),
+            where="test_unprocessable",
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Не удалось выполнить операцию. Проверьте введённые данные."
+    assert "sqlite" not in str(exc_info.value.detail).lower()
