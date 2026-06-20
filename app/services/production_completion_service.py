@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections import defaultdict
 from typing import Any
@@ -9,9 +10,41 @@ from app.services.day_view_service import build_day_view_detail
 from app.services.plate_completion_service import PlateCompletionService
 from core import kp_db_plates, kp_db_rests, kp_db_schema
 
+_log = logging.getLogger(__name__)
+
 
 class ProductionCompletionError(ValueError):
     """Ошибка валидации данных при завершении производственного дня."""
+
+
+class ProductionRestValidationError(ProductionCompletionError):
+    """Ошибка валидации при сохранении остатка (невалидный kp_id и т.п.)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        plan_id: str,
+        plate_context: dict[str, Any],
+    ) -> None:
+        super().__init__(message)
+        self.plan_id = plan_id
+        self.plate_context = plate_context
+
+
+class ProductionRestDbError(Exception):
+    """Ошибка БД при сохранении остатка плиты."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        plan_id: str,
+        plate_context: dict[str, Any],
+    ) -> None:
+        super().__init__(message)
+        self.plan_id = plan_id
+        self.plate_context = plate_context
 
 
 class ProductionCompletionService:
@@ -39,7 +72,11 @@ class ProductionCompletionService:
             raise ProductionCompletionError("Plan not found")
 
         day_number = self._get_day_number(plan, target_date)
-        day_view = build_day_view_detail(target_date, db_path=self.db_path)
+        day_view = build_day_view_detail(
+            target_date,
+            db_path=self.db_path,
+            plan_repository=self.plan_repository,
+        )
         (
             plates_by_kp,
             rejected_by_kp,
@@ -154,28 +191,13 @@ class ProductionCompletionService:
             # P6: secondary-cuts без kp_id сохраняем в plate_rests — внутри
             # той же транзакции, чтобы при ошибке всё откатилось целиком.
             secondary_rests = completion_stats.get("secondary_rests") or []
-            for rest in secondary_rests:
-                qty = int(rest.get("qty") or 0)
-                if qty <= 0:
-                    continue
-                # plate_rests привязан к kp_id NOT NULL по миграции —
-                # без identity мы не можем сохранить, поэтому пишем под
-                # условный kp_id=0. Если миграция не позволяет — лог-warning.
-                try:
-                    kp_db_rests.create_plate_rest(
-                        kp_id=0,
-                        source_plate_name=rest.get("plate_name") or "",
-                        rest_width_mm=int(rest.get("width_mm") or 0),
-                        length_m=float(rest.get("length_m") or 0),
-                        production_day=int(day_number),
-                        qty=qty,
-                        db_path=self.db_path,
-                        _external_conn=conn,
-                    )
-                except Exception:  # noqa: BLE001
-                    # Если БД отказывается принять (FK на kp_id) — продолжаем,
-                    # secondary без kp_id просто не пишем как rest.
-                    pass
+            self._write_secondary_rests(
+                secondary_rests,
+                plan_id=plan_id,
+                day_number=day_number,
+                db_path=self.db_path,
+                conn=conn,
+            )
 
             # Проверка автозавершения КП — ТОЛЬКО после возврата брака,
             # иначе КП с полностью забракованным днём ошибочно станет 'выполнено'.
@@ -189,6 +211,12 @@ class ProductionCompletionService:
 
             conn.commit()
         except ProductionCompletionError:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        except ProductionRestDbError:
             try:
                 conn.rollback()
             except Exception:
@@ -211,6 +239,80 @@ class ProductionCompletionService:
             "day_number": day_number,
             **completion_stats,
         }
+
+    @staticmethod
+    def _write_secondary_rests(
+        secondary_rests: list[dict[str, Any]],
+        *,
+        plan_id: str,
+        day_number: int,
+        db_path: str,
+        conn: sqlite3.Connection,
+    ) -> None:
+        for rest in secondary_rests:
+            qty = int(rest.get("qty") or 0)
+            if qty <= 0:
+                continue
+
+            plate_context = {
+                "plate_name": rest.get("plate_name") or "",
+                "length_m": float(rest.get("length_m") or 0),
+                "width_mm": int(rest.get("width_mm") or 0),
+                "qty": qty,
+                "kp_id": rest.get("kp_id"),
+            }
+            try:
+                kp_id = int(rest.get("kp_id"))
+            except (TypeError, ValueError):
+                kp_id = 0
+
+            if kp_id <= 0:
+                _log.error(
+                    "complete_day rest validation failed: plan_id=%s plate=%s",
+                    plan_id,
+                    plate_context,
+                )
+                raise ProductionRestValidationError(
+                    "Не удалось сохранить остаток: невалидный kp_id.",
+                    plan_id=plan_id,
+                    plate_context=plate_context,
+                )
+
+            try:
+                kp_db_rests.create_plate_rest(
+                    kp_id=kp_id,
+                    source_plate_name=plate_context["plate_name"],
+                    rest_width_mm=plate_context["width_mm"],
+                    length_m=plate_context["length_m"],
+                    production_day=int(day_number),
+                    qty=qty,
+                    db_path=db_path,
+                    _external_conn=conn,
+                )
+            except sqlite3.IntegrityError as exc:
+                _log.error(
+                    "complete_day rest validation failed: plan_id=%s plate=%s",
+                    plan_id,
+                    plate_context,
+                    exc_info=exc,
+                )
+                raise ProductionRestValidationError(
+                    "Не удалось сохранить остаток: невалидный kp_id.",
+                    plan_id=plan_id,
+                    plate_context=plate_context,
+                ) from exc
+            except sqlite3.Error as exc:
+                _log.error(
+                    "complete_day rest DB error: plan_id=%s plate=%s",
+                    plan_id,
+                    plate_context,
+                    exc_info=exc,
+                )
+                raise ProductionRestDbError(
+                    "Не удалось сохранить остаток в БД.",
+                    plan_id=plan_id,
+                    plate_context=plate_context,
+                ) from exc
 
     @staticmethod
     def _format_unmoved_plates(

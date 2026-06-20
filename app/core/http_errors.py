@@ -7,6 +7,8 @@ from typing import NoReturn
 
 from fastapi import HTTPException, status
 
+from app.schemas.errors import ApiErrorBody, ERROR_CODE_UNPRICED_PLATES
+
 _log = logging.getLogger("app.api.commercial")
 
 MSG_PARSE_FAILED = "Не удалось обработать ввод. Проверьте формат данных."
@@ -44,3 +46,34 @@ def raise_unexpected_server_error(_exc: BaseException, *, where: str) -> NoRetur
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail=MSG_INTERNAL,
     ) from None
+
+
+def raise_structured_error(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    details: dict | None = None,
+    where: str,
+) -> NoReturn:
+    body = ApiErrorBody(code=code, message=message, details=details)
+    payload = body.model_dump(exclude_none=True)
+    if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+        _log.error("%s: structured error %s — %s", where, code, message)
+    else:
+        _log.warning("%s: structured error %s — %s", where, code, message)
+    raise HTTPException(status_code=status_code, detail=payload) from None
+
+
+def raise_unpriced_plates_error(exc: BaseException, *, where: str) -> NoReturn:
+    from core.exceptions import UnpricedPlatesError
+
+    if not isinstance(exc, UnpricedPlatesError):
+        raise TypeError("expected UnpricedPlatesError") from exc
+    raise_structured_error(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code=ERROR_CODE_UNPRICED_PLATES,
+        message="Нет цен для части позиций",
+        details={"positions": exc.positions},
+        where=where,
+    )

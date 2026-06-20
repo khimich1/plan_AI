@@ -7,7 +7,6 @@
 
 import io
 import os
-import sqlite3
 from typing import List, Dict, Optional
 
 try:
@@ -73,39 +72,13 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
     
     Returns:
         Цена плиты в рублях
+    
+    Raises:
+        PriceNotFoundError: если цена отсутствует в прайс-листе
     """
-    try:
-        from core.price_db import length_m_to_price_length_dm
+    from core.commercial_pricing import lookup_plate_price
 
-        length_dm = length_m_to_price_length_dm(length_m)
-        
-        # Определяем код нагрузки (8 = 800 кг/м², 10 = 1000 кг/м²)
-        load_code = load_class // 100
-        
-        con = sqlite3.connect(DB_PATH)
-        cur = con.cursor()
-        
-        # Ищем цену в таблице prices
-        result = cur.execute(
-            "SELECT price FROM prices WHERE length_dm = ? AND load_code = ?",
-            (length_dm, load_code)
-        ).fetchone()
-        
-        con.close()
-        
-        if result:
-            return float(result[0])
-        else:
-            # Если нет точной цены, используем базовую формулу
-            # Примерная цена: 4000 руб/м² * площадь плиты
-            area_m2 = length_m * width_m
-            return round(area_m2 * 4000, 2)
-            
-    except Exception as e:
-        print(f"Ошибка получения цены: {e}")
-        # Возвращаем примерную цену
-        area_m2 = length_m * width_m
-        return round(area_m2 * 4000, 2)
+    return lookup_plate_price(length_m, width_m, load_class, db_path=DB_PATH)
 
 
 def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0) -> Dict:
@@ -125,6 +98,9 @@ def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, lo
     Returns:
         Словарь с итоговыми суммами; subtotal = total_with_vat − vat_amount (для сумм subtotal+vat=total).
     """
+    from core.commercial_pricing import ensure_order_priced
+
+    ensure_order_priced(order_data, db_path=DB_PATH)
     total_qty = 0
     plates_total_with_vat = 0.0
     discount = min(max(float(discount_percent or 0.0), 0.0), 100.0)

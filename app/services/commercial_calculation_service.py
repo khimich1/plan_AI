@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.commercial_offer_xlsx import calculate_total_cost
+from core.commercial_offer_xlsx import DB_PATH, calculate_total_cost
+from core.commercial_pricing import ensure_order_priced
 
 
 class CommercialCalculationService:
@@ -43,6 +44,7 @@ class CommercialCalculationService:
                 raise ValueError("Укажите условия поставки.")
             if not str(metadata.get("payment_conditions", "")).strip():
                 raise ValueError("Укажите условия оплаты.")
+        ensure_order_priced(list(order_data), db_path=str(DB_PATH))
 
     def compute_totals(
         self,

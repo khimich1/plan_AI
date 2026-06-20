@@ -20,7 +20,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.planning import plan_manager
+from app.repositories.plan_repository import PlanRepository
 from core import kp_db
 
 
@@ -56,15 +56,11 @@ def tmp_plita(tmp_path) -> str:
 
 @pytest.fixture(autouse=True)
 def _isolate_plans(tmp_path, monkeypatch):
-    """Изолируем planning-файлы в ``tmp_path`` и отключаем праздники."""
-    plans_dir = tmp_path / "plans"
-    plans_dir.mkdir()
-    metadata_path = tmp_path / "plans_metadata.json"
+    """Отключаем праздники при распределении дорожек по дням."""
+    import core.work_calendar as work_calendar
 
-    monkeypatch.setattr(plan_manager, "PLANS_DIR", plans_dir)
-    monkeypatch.setattr(plan_manager, "PLANS_METADATA_PATH", metadata_path)
-    monkeypatch.setattr(plan_manager, "load_holidays", lambda: set())
-    monkeypatch.setattr(plan_manager, "load_extra_workdays", lambda: set())
+    monkeypatch.setattr(work_calendar, "load_holidays", lambda: set())
+    monkeypatch.setattr(work_calendar, "load_extra_workdays", lambda: set())
 
 
 @pytest.fixture
@@ -72,9 +68,11 @@ def planning_service(tmp_plita, monkeypatch):
     """Собирает :class:`ProductionPlanningService` с lean-оптимизатором."""
     from app.services.production_planning_service import ProductionPlanningService
 
+    plan_repo = PlanRepository(db_path=tmp_plita)
     service = ProductionPlanningService(
         plita_db_path=tmp_plita,
         pb_db_path=tmp_plita,  # reinforcement через series — не используется в тесте
+        plan_repository=plan_repo,
     )
 
     def fake_optimize(self, *, orders_2d, layout_reinforcement_order="asc"):
@@ -117,7 +115,7 @@ def planning_service(tmp_plita, monkeypatch):
     )
     # get_reinforcement возвращает float, чтобы _load_plates_for_kps не падал
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
     return service
@@ -213,9 +211,11 @@ def planning_service_qty7(tmp_plita_qty7, tmp_path, monkeypatch):
     from app.services.production_planning_service import ProductionPlanningService
 
     db_path, _plate_id = tmp_plita_qty7
+    plan_repo = PlanRepository(db_path=db_path)
     service = ProductionPlanningService(
         plita_db_path=db_path,
         pb_db_path=db_path,
+        plan_repository=plan_repo,
     )
 
     def fake_optimize(self, *, orders_2d, **kwargs):
@@ -256,7 +256,7 @@ def planning_service_qty7(tmp_plita_qty7, tmp_path, monkeypatch):
         fake_optimize,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
     return service
@@ -332,6 +332,7 @@ def test_build_plan_marks_plates_and_second_call_fails(planning_service, tmp_pli
         filter_method="all",
     )
     assert first["plan"]["id"]
+    assert first["plan"].get("version") == 1
 
     # После успешного билда плиты должны быть 'в плане'
     with sqlite3.connect(tmp_plita) as conn:
@@ -376,7 +377,7 @@ def test_complete_day_moves_plates_and_marks_kp_completed(planning_service, tmp_
 
     service = ProductionService(
         kp_repository=KpRepository(db_path=tmp_plita),
-        plan_repository=PlanRepository(),
+        plan_repository=PlanRepository(db_path=tmp_plita),
         planning_service=planning_service,
     )
     result = service.complete_day(plan_id=plan_id, target_date="2026-04-21")
@@ -423,7 +424,7 @@ def test_complete_day_with_partial_rejection_moves_only_accepted_qty(
 
     service = ProductionService(
         kp_repository=KpRepository(db_path=tmp_plita),
-        plan_repository=PlanRepository(),
+        plan_repository=PlanRepository(db_path=tmp_plita),
         planning_service=planning_service,
     )
     result = service.complete_day(
@@ -473,7 +474,7 @@ def test_complete_day_with_full_rejection_does_not_move_plate(
 
     service = ProductionService(
         kp_repository=KpRepository(db_path=tmp_plita),
-        plan_repository=PlanRepository(),
+        plan_repository=PlanRepository(db_path=tmp_plita),
         planning_service=planning_service,
     )
     result = service.complete_day(
@@ -524,7 +525,7 @@ def test_complete_day_rejects_qty_greater_than_plate_qty(
 
     service = ProductionService(
         kp_repository=KpRepository(db_path=tmp_plita),
-        plan_repository=PlanRepository(),
+        plan_repository=PlanRepository(db_path=tmp_plita),
         planning_service=planning_service,
     )
 
@@ -639,13 +640,14 @@ def test_full_cycle_no_stuck_plates(tmp_plita, monkeypatch):
         fake_optimize_with_secondary,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
 
     service = ProductionPlanningService(
         plita_db_path=tmp_plita,
         pb_db_path=tmp_plita,
+        plan_repository=PlanRepository(db_path=tmp_plita),
     )
 
     built = service.build_plan(
@@ -671,7 +673,7 @@ def test_full_cycle_no_stuck_plates(tmp_plita, monkeypatch):
 
     production = ProductionService(
         kp_repository=KpRepository(db_path=tmp_plita),
-        plan_repository=PlanRepository(),
+        plan_repository=PlanRepository(db_path=tmp_plita),
         planning_service=service,
     )
 

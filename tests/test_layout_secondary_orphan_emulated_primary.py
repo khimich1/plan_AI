@@ -7,6 +7,7 @@ import copy
 import pytest
 
 import core.config_and_data as cfg
+from core.production.planning import _build_assignment_gap_fallback_tracks
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
 from viz_modules.layout_sequence import _build_sequence_from_plan
@@ -40,8 +41,6 @@ def _label(L: float, W: float, load_code: int | None = None) -> str:
 
 def test_synthetic_orphan_from_minimal_plan_variant_A():
     """Детерминированный план: сирота всегда эмулируется как первичный сплит 1200 − W."""
-    from app.services.production_planning_service import ProductionPlanningService
-
     plan = {
         "primary_cuts": [
             {
@@ -103,7 +102,7 @@ def test_synthetic_orphan_from_minimal_plan_variant_A():
     assert abs(hit["rest_w"] - (1200 - 320) / 1000.0) < 1e-6
 
     tracks = [{"label": "Д1", "items": flat, "length": 100.0}]
-    missing_fb, _ = ProductionPlanningService._build_assignment_gap_fallback_tracks(
+    missing_fb, _ = _build_assignment_gap_fallback_tracks(
         plate_assignments=plan["plate_assignments"],
         tracks_list=tracks,
     )
@@ -145,8 +144,6 @@ def test_orphan_secondary_emulated_split_has_sec_unit_id_and_rest_1200_minus_wid
 
 
 def test_orphan_emulated_split_not_in_fallback_track(user_list_opt_context):
-    from app.services.production_planning_service import ProductionPlanningService
-
     _o, plate_order, svc, ctx = user_list_opt_context
     res = copy.deepcopy(ctx.optimization_result or {})
     orphans = [c for c in (res.get("secondary_cuts") or []) if not c.get("parent_instance_id")]
@@ -165,7 +162,7 @@ def test_orphan_emulated_split_not_in_fallback_track(user_list_opt_context):
             }
         ]
         assignments = list(res.get("plate_assignments") or [])
-        missing_fb, _ctr = ProductionPlanningService._build_assignment_gap_fallback_tracks(
+        missing_fb, _ctr = _build_assignment_gap_fallback_tracks(
             plate_assignments=assignments,
             tracks_list=tracks,
         )

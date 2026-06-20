@@ -111,7 +111,7 @@ def planning_service(tmp_plita, monkeypatch):
         fake_optimize,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
     return service
@@ -169,7 +169,7 @@ def test_audit_log_records_completion_and_rejection(planning_service, tmp_plita)
 
     service = ProductionService(
         kp_repository=KpRepository(db_path=tmp_plita),
-        plan_repository=PlanRepository(),
+        plan_repository=PlanRepository(db_path=tmp_plita),
         planning_service=planning_service,
     )
     service.complete_day(

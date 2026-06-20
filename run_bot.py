@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Скрипт запуска Telegram бота
+Скрипт запуска Telegram бота (DEPRECATED — см. bot/README.md).
+
 Запускайте из корня проекта: python run_bot.py
+Не использовать в production; активная поддержка прекращена 2026-06-19.
 """
 
-from bot.bot_main import main
 import asyncio
+import sys
+
+from bot.bot_main import main
 
 if __name__ == "__main__":
+    print(
+        "WARNING: Telegram-бот DEPRECATED — не для production. Подробнее: bot/README.md",
+        file=sys.stderr,
+    )
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

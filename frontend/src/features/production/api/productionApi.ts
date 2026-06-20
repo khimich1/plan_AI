@@ -10,6 +10,7 @@ import type {
   RemoveTrackResponse,
   KpCandidatesResponse,
   PlansMetadataResponse,
+  PlanDetailResponse,
   RejectedPlateItem,
   WorkCalendarPayload,
 } from "@/features/production/types/production";
@@ -20,7 +21,7 @@ export const productionApi = {
   listPlans: () => httpClient.get<PlansMetadataResponse>(`${BASE}/plans`),
 
   getPlan: (planId: string) =>
-    httpClient.get<Record<string, unknown>>(`${BASE}/plans/${encodeURIComponent(planId)}`),
+    httpClient.get<PlanDetailResponse>(`${BASE}/plans/${encodeURIComponent(planId)}`),
 
   activatePlan: (planId: string) =>
     httpClient.post<{ plan_id: string; active: boolean }>(
@@ -30,10 +31,20 @@ export const productionApi = {
   deletePlan: (planId: string) =>
     httpClient.delete<DeletePlanResponse>(`${BASE}/plans/${encodeURIComponent(planId)}`),
 
-  deleteTrack: (planId: string, date: string, trackIndex: number) =>
-    httpClient.delete<RemoveTrackResponse>(
-      `${BASE}/plans/${encodeURIComponent(planId)}/days/${encodeURIComponent(date)}/tracks/${trackIndex}`,
-    ),
+  deleteTrack: (
+    planId: string,
+    date: string,
+    trackIndex: number,
+    expectedVersion?: number,
+  ) => {
+    const versionQuery =
+      typeof expectedVersion === "number"
+        ? `?expected_version=${encodeURIComponent(String(expectedVersion))}`
+        : "";
+    return httpClient.delete<RemoveTrackResponse>(
+      `${BASE}/plans/${encodeURIComponent(planId)}/days/${encodeURIComponent(date)}/tracks/${trackIndex}${versionQuery}`,
+    );
+  },
 
   buildPlan: (payload: BuildPlanRequest) =>
     httpClient.post<BuildPlanResponse>(
@@ -60,10 +71,17 @@ export const productionApi = {
     date: string,
     planId: string,
     rejectedPlates: RejectedPlateItem[] = [],
+    expectedVersion?: number,
   ) =>
     httpClient.post<CompleteDayResponse>(
       `${BASE}/days/${encodeURIComponent(date)}/complete`,
-      JSON.stringify({ plan_id: planId, rejected_plates: rejectedPlates }),
+      JSON.stringify({
+        plan_id: planId,
+        rejected_plates: rejectedPlates,
+        ...(typeof expectedVersion === "number"
+          ? { expected_version: expectedVersion }
+          : {}),
+      }),
       { "Content-Type": "application/json" },
     ),
 

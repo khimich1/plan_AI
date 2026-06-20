@@ -7,9 +7,8 @@
   файлы формовки упаковываются в ZIP.
 
 Сервис работает во временных папках, обязанность очистки лежит на вызывающем коде
-(через FastAPI `BackgroundTasks`). `visualize_plan` использует глобали из
-`core.optimization` / `core.config_and_data`, поэтому параллельные вызовы
-сериализуются через `asyncio.Lock`.
+(через FastAPI `BackgroundTasks`). Визуализация выполняется в request-scoped
+``PlateOrderContext.bound()`` (см. middleware + ``run_in_order_context``).
 """
 from __future__ import annotations
 
@@ -32,33 +31,34 @@ from app.services.day_view_service import (
     _aggregate_plates_for_track,
     _build_smart_lookup,
 )
-from app.planning import plan_manager
+from app.repositories.plan_repository import PlanRepository
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FORMOVKA_TEMPLATE_PATH = PROJECT_ROOT / "банк знаний" / "!КЗ ПБ Шаблон.xlsx"
 
-# visualize_plan правит глобальные переменные — сериализуем вызовы,
-# чтобы не словить гонку при параллельных запросах.
-_visualize_lock = asyncio.Lock()
-
 
 class DayDocumentsError(RuntimeError):
     """Ошибка генерации документа для дня."""
 
 
-def _load_day_bundle(target_date: str) -> dict:
-    multi = plan_manager.get_tracks_for_date_from_all_plans(target_date)
+def _load_day_bundle(target_date: str, plan_repository: PlanRepository | None = None) -> dict:
+    repo = plan_repository or PlanRepository()
+    multi = repo.get_tracks_for_date(target_date)
     if not multi or not multi.get("tracks"):
         raise DayDocumentsError(f"На дату {target_date} нет дорожек ни в одном плане")
     return multi
 
 
-def _build_visualization_ctx(orders_2d: list, optimization_result: dict) -> PlateOrderContext:
-    ctx = PlateOrderContext.fresh_empty()
-    ctx.load_production_snapshot(orders_2d, optimization_result)
-    return ctx
+def _prepare_visualization_ctx(
+    plate_order_ctx: PlateOrderContext,
+    orders_2d: list,
+    optimization_result: dict,
+) -> PlateOrderContext:
+    """Заполнить request-scoped контекст снимком дня (без orphan ``fresh_empty()``)."""
+    plate_order_ctx.load_production_snapshot(orders_2d, optimization_result)
+    return plate_order_ctx
 
 
 def _run_visualize(existing_tracks: list, output_dir: Path) -> tuple[str | None, str | None]:
@@ -132,22 +132,26 @@ def _cleanup_dir(path: Path) -> None:
         logger.exception("[day-docs] Не удалось удалить временную папку %s", path)
 
 
-async def generate_day_schema(target_date: str) -> tuple[Path, Path]:
+async def generate_day_schema(
+    target_date: str,
+    *,
+    plate_order_ctx: PlateOrderContext,
+) -> tuple[Path, Path]:
     """Возвращает (pdf_path, cleanup_dir). Вызывающий код отвечает за удаление dir."""
     multi = _load_day_bundle(target_date)
     tmp_dir = _make_tmp_dir(prefix=f"day_schema_{target_date}_")
     try:
-        viz_ctx = _build_visualization_ctx(
+        _prepare_visualization_ctx(
+            plate_order_ctx,
             multi.get("orders_2d", []),
             multi.get("optimization_result", {}),
         )
-        async with _visualize_lock:
-            result = await run_in_order_context(
-                viz_ctx,
-                _run_visualize,
-                copy.deepcopy(multi["tracks"]),
-                tmp_dir,
-            )
+        result = await run_in_order_context(
+            plate_order_ctx,
+            _run_visualize,
+            copy.deepcopy(multi["tracks"]),
+            tmp_dir,
+        )
         if not isinstance(result, tuple) or len(result) < 2:
             raise DayDocumentsError("visualize_plan не вернул PDF")
         _png_path, pdf_path = result
@@ -159,22 +163,26 @@ async def generate_day_schema(target_date: str) -> tuple[Path, Path]:
         raise
 
 
-async def generate_day_breakdown(target_date: str) -> tuple[Path, Path]:
+async def generate_day_breakdown(
+    target_date: str,
+    *,
+    plate_order_ctx: PlateOrderContext,
+) -> tuple[Path, Path]:
     """Возвращает (xlsx_path, cleanup_dir)."""
     multi = _load_day_bundle(target_date)
     tmp_dir = _make_tmp_dir(prefix=f"day_breakdown_{target_date}_")
     try:
-        viz_ctx = _build_visualization_ctx(
+        _prepare_visualization_ctx(
+            plate_order_ctx,
             multi.get("orders_2d", []),
             multi.get("optimization_result", {}),
         )
-        async with _visualize_lock:
-            await run_in_order_context(
-                viz_ctx,
-                _run_visualize,
-                copy.deepcopy(multi["tracks"]),
-                tmp_dir,
-            )
+        await run_in_order_context(
+            plate_order_ctx,
+            _run_visualize,
+            copy.deepcopy(multi["tracks"]),
+            tmp_dir,
+        )
         breakdown = _find_breakdown(tmp_dir)
         if breakdown is None:
             raise DayDocumentsError("Файл детальной разбивки не найден")

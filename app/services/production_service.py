@@ -60,15 +60,18 @@ class ProductionService:
         return self.plan_repository.list_metadata()
 
     def get_plan(self, plan_id: str) -> dict | None:
-        return self.plan_repository.load_plan(plan_id)
+        record = self.plan_repository.get(plan_id)
+        if not record:
+            return None
+        return {**record["payload"], "version": record["version"]}
 
     def activate_plan(self, plan_id: str) -> dict | None:
-        if not self.plan_repository.set_active_plan(plan_id):
+        if not self.plan_repository.set_active(plan_id):
             return None
         return {"plan_id": plan_id, "active": True}
 
     def delete_plan(self, plan_id: str) -> dict:
-        deleted = self.plan_repository.delete_plan(plan_id)
+        deleted = self.plan_repository.delete(plan_id)
         return {"plan_id": plan_id, "deleted": deleted}
 
     def get_day_occupancy(self, exclude_plan_id: str | None = None) -> dict:
@@ -115,13 +118,17 @@ class ProductionService:
         )
 
     def get_calendar(self) -> dict | None:
-        return plan_manager.get_global_calendar_info()
+        return self.plan_repository.get_global_calendar_info()
 
     def get_day_view(self, target_date: str) -> dict | None:
         return self.plan_repository.get_tracks_for_date(target_date)
 
     def get_day_view_detailed(self, target_date: str) -> dict | None:
-        return build_day_view_detail(target_date)
+        return build_day_view_detail(
+            target_date,
+            db_path=self.kp_repository.db_path,
+            plan_repository=self.plan_repository,
+        )
 
     def complete_day(
         self,
@@ -176,7 +183,14 @@ class ProductionService:
         updated_plan["name"] = name or updated_plan.get("name") or f"План {updated_plan['id']}"
         if auto_save:
             self.plan_repository.save_plan(updated_plan)
-        return {"plan": updated_plan, "stats": stats}
+        plan_version = None
+        if auto_save:
+            saved = self.plan_repository.get(updated_plan["id"])
+            plan_version = saved["version"] if saved else None
+        result = {"plan": updated_plan, "stats": stats}
+        if plan_version is not None:
+            result["plan"] = {**updated_plan, "version": plan_version}
+        return result
 
     def get_work_calendar(self) -> dict:
         return self.calendar_repository.load_raw()
@@ -202,7 +216,7 @@ class ProductionService:
         actor: str | None = None,
     ) -> dict[str, Any]:
         try:
-            return plan_manager.remove_track_from_plan(
+            return self.plan_repository.remove_track_from_plan(
                 plan_id,
                 date,
                 track_index,

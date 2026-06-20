@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
@@ -11,11 +12,15 @@ from bot.security.audit import log_bot_security_event
 from bot.security.users import BotUser, resolve_bot_user
 from core.config.settings import get_settings
 
+_logger = logging.getLogger(__name__)
+
 _ACCESS_DENIED_TEXT = (
     "⛔ Доступ запрещён.\n"
     "Ваш Telegram-аккаунт не в списке разрешённых пользователей.\n"
     "Обратитесь к администратору."
 )
+
+_DEV_BYPASS_DEFAULT_ROLE = "production"
 
 
 def _extract_user(event: TelegramObject) -> User | None:
@@ -56,6 +61,14 @@ async def _reply_access_denied(event: TelegramObject) -> None:
         await message.answer(_ACCESS_DENIED_TEXT)
 
 
+def _dev_bypass_user(telegram_id: int) -> BotUser:
+    """Dev-only open access: allowlist role if present, never synthetic admin."""
+    allowlisted = resolve_bot_user(telegram_id)
+    if allowlisted is not None:
+        return allowlisted
+    return BotUser(telegram_id=telegram_id, role=_DEV_BYPASS_DEFAULT_ROLE)
+
+
 class BotAuthMiddleware(BaseMiddleware):
     async def __call__(
         self,
@@ -67,14 +80,25 @@ class BotAuthMiddleware(BaseMiddleware):
         user = _extract_user(event)
 
         if not settings.bot_auth_enabled:
-            if settings.app_env.lower() == "production":
+            if settings.app_env.lower() != "development":
                 log_bot_security_event(
                     "misconfiguration",
-                    action="bot_auth_disabled_in_production",
+                    action="bot_auth_disabled_outside_development",
+                    detail=settings.app_env,
                 )
                 return None
-            telegram_id = user.id if user else 0
-            data["bot_user"] = BotUser(telegram_id=telegram_id, role="admin")
+            if user is None:
+                log_bot_security_event(
+                    "access_denied",
+                    action="missing_telegram_user",
+                )
+                return None
+            _logger.warning(
+                "BOT_AUTH_ENABLED=false: dev-only open access (no synthetic admin; "
+                "default role=%s unless user is in BOT_TELEGRAM_ALLOWLIST)",
+                _DEV_BYPASS_DEFAULT_ROLE,
+            )
+            data["bot_user"] = _dev_bypass_user(user.id)
             return await handler(event, data)
 
         if user is None:

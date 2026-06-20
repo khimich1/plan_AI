@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.production_planning_service import ProductionPlanningService
+from core.production.planning import _build_assignment_gap_fallback_tracks
 from core.visualization import validate_track_integrity
 from viz_modules.layout_sequence import _build_sequence_from_plan
 
@@ -202,7 +202,7 @@ def test_build_assignment_gap_fallback_tracks_uses_unit_identity() -> None:
         }
     ]
 
-    fallback_tracks, missing = ProductionPlanningService._build_assignment_gap_fallback_tracks(
+    fallback_tracks, missing = _build_assignment_gap_fallback_tracks(
         plate_assignments=assignments,
         tracks_list=tracks,
     )
@@ -241,7 +241,7 @@ def test_build_assignment_gap_fallback_tracks_ignores_attached_secondary() -> No
         }
     ]
 
-    fallback_tracks, missing = ProductionPlanningService._build_assignment_gap_fallback_tracks(
+    fallback_tracks, missing = _build_assignment_gap_fallback_tracks(
         plate_assignments=assignments,
         tracks_list=tracks,
     )

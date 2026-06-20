@@ -114,6 +114,17 @@ class Settings(BaseSettings):
         alias="COMMERCIAL_OCR_UPLOADS_PER_HOUR",
         ge=1,
     )
+    auth_login_attempts_per_minute: int = Field(
+        default=5,
+        alias="AUTH_LOGIN_ATTEMPTS_PER_MINUTE",
+        ge=1,
+    )
+    auth_login_rate_limit_window_seconds: int = Field(
+        default=60,
+        alias="AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+        ge=1,
+        le=3600,
+    )
 
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
@@ -219,9 +230,9 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_bot_telegram_auth(self) -> Settings:
         if not self.bot_auth_enabled:
-            if self.app_env.lower() == "production":
+            if self.app_env.lower() != "development":
                 raise ValueError(
-                    "BOT_AUTH_ENABLED cannot be false in production. "
+                    "BOT_AUTH_ENABLED can only be false when APP_ENV=development. "
                     "Configure BOT_TELEGRAM_ALLOWLIST with telegram_id:role entries."
                 )
             return self

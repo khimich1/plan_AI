@@ -20,18 +20,27 @@ class OptimizationService:
         order: PlateOrder,
         *,
         orders_2d: list[dict[str, Any]] | None = None,
+        plate_order_ctx: PlateOrderContext | None = None,
     ) -> OptimizationContext:
         # Для совместимости с новым web-пайплайном допускаем явный orders_2d:
         # там важны дополнительные поля (kp_id/plate_name) для последующего
         # корректного commit в БД.
         source_orders_2d = orders_2d if orders_2d is not None else order.to_orders_2d()
-        if not source_orders_2d:
-            result = _opt_contract.opt_error(
-                _opt_contract.ERROR_EMPTY_ORDERS_2D,
-                "Пустой список для 2D оптимизации (PlateOrder / orders_2d).",
-            )
+
+        def _run_optimization() -> dict[str, Any]:
+            if not source_orders_2d:
+                return _opt_contract.opt_error(
+                    _opt_contract.ERROR_EMPTY_ORDERS_2D,
+                    "Пустой список для 2D оптимизации (PlateOrder / orders_2d).",
+                )
+            return optimize_with_cascading_longitudinal_cuts(orders_2d=source_orders_2d)
+
+        if plate_order_ctx is not None:
+            plate_order_ctx.hydrate_from_order(order)
+            with plate_order_ctx.bound():
+                result = _run_optimization()
         else:
-            result = optimize_with_cascading_longitudinal_cuts(orders_2d=source_orders_2d)
+            result = _run_optimization()
         all_loads = (
             sorted({int(float(item.get("load_code", 8))) for item in source_orders_2d})
             if source_orders_2d

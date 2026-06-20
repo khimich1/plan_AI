@@ -49,14 +49,15 @@ class CommercialService:
         *,
         text: str | None = None,
         parse_result: ParseResult | None = None,
-        plate_order_ctx: PlateOrderContext | None = None,
+        plate_order_ctx: PlateOrderContext,
     ) -> CommercialPreviewResult:
         current_parse_result = parse_result or self.parse(text or "")
         order = current_parse_result.order
-        optimization_context = self.optimization_service.optimize(order)
-
-        ctx = plate_order_ctx or PlateOrderContext.fresh_empty()
-        ctx.hydrate_from_order(order)
+        ctx = plate_order_ctx
+        optimization_context = self.optimization_service.optimize(
+            order,
+            plate_order_ctx=ctx,
+        )
         ctx.load_optimization_snapshot(
             optimization_result=optimization_context.optimization_result,
             plan_by_load=optimization_context.plan_by_load,

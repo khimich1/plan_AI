@@ -25,13 +25,14 @@ from app.schemas.commercial import (
 from app.core.http_errors import (
     raise_parse_client_error,
     raise_unexpected_server_error,
+    raise_unpriced_plates_error,
     raise_validation_client_error,
 )
 from app.services.commercial_workflow_service import CommercialWorkflowService
 from app.services.commercial_service import CommercialService
 from app.services.commercial_upload_validation import prepare_commercial_ocr_upload
 from app.services.draft_store import DraftStore
-from core.exceptions import PlateParseError
+from core.exceptions import PlateParseError, UnpricedPlatesError
 
 router = APIRouter(prefix="/commercial", tags=["commercial"])
 
@@ -64,6 +65,7 @@ async def create_commercial_draft(
     text: str = Form(default=""),
     image: UploadFile | None = File(default=None),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
 ) -> CommercialDraftDetailsResponse:
     image_bytes, image_name = await prepare_commercial_ocr_upload(
         image=image,
@@ -77,6 +79,7 @@ async def create_commercial_draft(
             image_bytes=image_bytes,
             image_filename=image_name,
             owner_user_id=int(user["id"]),
+            plate_order_ctx=plate_order_ctx,
         )
     except PlateParseError as exc:
         raise_parse_client_error(exc, where="create_commercial_draft")
@@ -91,6 +94,7 @@ async def create_commercial_draft(
 async def update_commercial_draft_plates(
     draft_id: str = Depends(verify_draft_ownership),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     mode: str = Form(default="append"),
     text: str = Form(default=""),
     image: UploadFile | None = File(default=None),
@@ -108,6 +112,7 @@ async def update_commercial_draft_plates(
             text=text,
             image_bytes=image_bytes,
             image_filename=image_name,
+            plate_order_ctx=plate_order_ctx,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
@@ -124,6 +129,7 @@ async def update_commercial_draft_plates(
 async def apply_ai_plates_to_draft(
     draft_id: str = Depends(verify_draft_ownership),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     instruction: str = Form(...),
     image: UploadFile | None = File(default=None),
 ) -> CommercialDraftDetailsResponse:
@@ -139,6 +145,7 @@ async def apply_ai_plates_to_draft(
             instruction=instruction,
             image_bytes=image_bytes,
             image_filename=image_name,
+            plate_order_ctx=plate_order_ctx,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
@@ -155,12 +162,14 @@ async def apply_ai_plates_to_draft(
 def resolve_draft_wide_plates(
     payload: CommercialWidePlatesResolveRequest,
     draft_id: str = Depends(verify_draft_ownership),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
 ) -> CommercialDraftDetailsResponse:
     workflow = CommercialWorkflowService()
     try:
         result = workflow.resolve_wide_plates(
             draft_id,
             decisions=[item.model_dump() for item in payload.decisions],
+            plate_order_ctx=plate_order_ctx,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
@@ -208,6 +217,8 @@ def calculate_draft(
         result = workflow.calculate_draft(draft_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except UnpricedPlatesError as exc:
+        raise_unpriced_plates_error(exc, where="calculate_draft")
     except ValueError as exc:
         raise_validation_client_error(exc, where="calculate_draft", detail=str(exc))
     except Exception as exc:
@@ -276,6 +287,7 @@ async def create_draft_from_form(
     payment_conditions: str = Form(default=""),
     image: UploadFile | None = File(default=None),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
 ) -> CommercialCreateFromFormResponse:
     image_bytes, image_name = await prepare_commercial_ocr_upload(
         image=image,
@@ -294,6 +306,7 @@ async def create_draft_from_form(
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
             owner_user_id=int(user["id"]),
+            plate_order_ctx=plate_order_ctx,
         )
     except PlateParseError as exc:
         raise_parse_client_error(exc, where="create_draft_from_form")
@@ -308,12 +321,19 @@ async def create_draft_from_form(
 def generate_draft_files(
     draft_id: str = Depends(verify_draft_ownership),
     payload: CommercialGenerateFilesRequest | None = None,
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
 ) -> CommercialGenerateFilesResponse:
     workflow = CommercialWorkflowService()
     try:
-        files = workflow.generate_files(draft_id, payload.file_types if payload else None)
+        files = workflow.generate_files(
+            draft_id,
+            payload.file_types if payload else None,
+            plate_order_ctx=plate_order_ctx,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except UnpricedPlatesError as exc:
+        raise_unpriced_plates_error(exc, where="generate_draft_files")
     except ValueError as exc:
         raise_validation_client_error(exc, where="generate_draft_files", detail=str(exc))
     except Exception as exc:
@@ -335,6 +355,8 @@ def save_draft_offer(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except UnpricedPlatesError as exc:
+        raise_unpriced_plates_error(exc, where="save_draft_offer")
     except ValueError as exc:
         raise_validation_client_error(exc, where="save_draft_offer", detail=str(exc))
     except Exception as exc:

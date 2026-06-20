@@ -53,8 +53,18 @@ def test_production_rejects_empty_allowlist_when_auth_enabled(
 
 
 def test_production_rejects_disabled_auth(_isolate_bot_auth_env: None) -> None:
-    with pytest.raises(ValidationError, match="BOT_AUTH_ENABLED cannot be false"):
+    with pytest.raises(ValidationError, match="BOT_AUTH_ENABLED can only be false"):
         _settings(app_env="production", bot_auth_enabled=False)
+
+
+def test_staging_rejects_disabled_auth(_isolate_bot_auth_env: None) -> None:
+    with pytest.raises(ValidationError, match="BOT_AUTH_ENABLED can only be false"):
+        _settings(app_env="staging", bot_auth_enabled=False)
+
+
+def test_development_allows_disabled_auth(_isolate_bot_auth_env: None) -> None:
+    settings = _settings(app_env="development", bot_auth_enabled=False)
+    assert settings.bot_auth_enabled is False
 
 
 def test_development_allows_empty_allowlist(_isolate_bot_auth_env: None) -> None:
@@ -140,6 +150,105 @@ def test_auth_middleware_allows_allowlisted_user(
 
     asyncio.run(_run())
     assert handled is True
+    get_settings.cache_clear()
+
+
+def test_auth_middleware_dev_disabled_auth_does_not_grant_admin(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_bot_auth_env: None,
+) -> None:
+    monkeypatch.setenv("BOT_AUTH_ENABLED", "false")
+    monkeypatch.setenv("APP_ENV", "development")
+    get_settings.cache_clear()
+
+    handled = False
+
+    async def handler(event: Message, data: dict) -> None:
+        nonlocal handled
+        handled = True
+        assert data["bot_user"].role == "production"
+
+    async def _run() -> None:
+        middleware = BotAuthMiddleware()
+        message = MagicMock(spec=Message)
+        message.from_user = User(id=777, is_bot=False, first_name="Dev")
+        message.answer = AsyncMock()
+        await middleware(handler, message, {})
+
+    asyncio.run(_run())
+    assert handled is True
+    get_settings.cache_clear()
+
+
+def test_auth_middleware_dev_disabled_auth_uses_allowlist_role(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_bot_auth_env: None,
+) -> None:
+    monkeypatch.setenv("BOT_TELEGRAM_ALLOWLIST", "100:admin")
+    monkeypatch.setenv("BOT_AUTH_ENABLED", "false")
+    monkeypatch.setenv("APP_ENV", "development")
+    get_settings.cache_clear()
+
+    handled = False
+
+    async def handler(event: Message, data: dict) -> None:
+        nonlocal handled
+        handled = True
+        assert data["bot_user"].role == "admin"
+
+    async def _run() -> None:
+        middleware = BotAuthMiddleware()
+        message = MagicMock(spec=Message)
+        message.from_user = User(id=100, is_bot=False, first_name="Admin")
+        message.answer = AsyncMock()
+        await middleware(handler, message, {})
+
+    asyncio.run(_run())
+    assert handled is True
+    get_settings.cache_clear()
+
+
+def test_auth_middleware_fail_closed_outside_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock as MockSettings
+
+    mock_settings = MockSettings()
+    mock_settings.bot_auth_enabled = False
+    mock_settings.app_env = "staging"
+    monkeypatch.setattr("bot.middleware.auth.get_settings", lambda: mock_settings)
+
+    handled = False
+
+    async def handler(event: Message, data: dict) -> None:
+        nonlocal handled
+        handled = True
+
+    async def _run() -> dict:
+        middleware = BotAuthMiddleware()
+        message = MagicMock(spec=Message)
+        message.from_user = User(id=1, is_bot=False, first_name="User")
+        message.answer = AsyncMock()
+        payload: dict = {}
+        await middleware(handler, message, payload)
+        return payload
+
+    payload = asyncio.run(_run())
+    assert handled is False
+    assert "bot_user" not in payload
+
+
+def test_validate_bot_startup_fails_on_production_disabled_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_bot_auth_env: None,
+) -> None:
+    from bot.bot_main import validate_bot_startup
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("BOT_AUTH_ENABLED", "false")
+    monkeypatch.setenv("BOT_TELEGRAM_ALLOWLIST", "1:admin")
+    get_settings.cache_clear()
+    assert validate_bot_startup() is False
     get_settings.cache_clear()
 
 

@@ -15,6 +15,8 @@ from app.services.commercial_service import CommercialService
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from app.services.execution_terms_service import ExecutionTermsService
 from app.services.file_generation_service import FileGenerationService
+from core.commercial_offer_xlsx import DB_PATH
+from core.commercial_pricing import ensure_order_priced
 from core.ocr_gpt import apply_plates_with_ai, recognize_text_smart
 from core.plate_order_context import PlateOrderContext
 
@@ -209,13 +211,17 @@ class CommercialWorkflowService:
         image_bytes: bytes | None,
         image_filename: str | None,
         owner_user_id: int,
+        plate_order_ctx: PlateOrderContext,
     ) -> dict[str, Any]:
         source_text, source_metadata = await self._resolve_source_input(
             text=text,
             image_bytes=image_bytes,
             image_filename=image_filename,
         )
-        preview = self.commercial_service.generate_preview(text=source_text["input_text"])
+        preview = self.commercial_service.generate_preview(
+            text=source_text["input_text"],
+            plate_order_ctx=plate_order_ctx,
+        )
         metadata = self._build_preview_metadata(
             preview=preview,
             base_metadata={},
@@ -255,12 +261,14 @@ class CommercialWorkflowService:
         delivery_conditions: str = "",
         payment_conditions: str = "",
         owner_user_id: int,
+        plate_order_ctx: PlateOrderContext,
     ) -> dict[str, Any]:
         draft = await self.create_draft(
             text=text,
             image_bytes=image_bytes,
             image_filename=image_filename,
             owner_user_id=owner_user_id,
+            plate_order_ctx=plate_order_ctx,
         )
         conditions_mode = "custom" if delivery_conditions.strip() or payment_conditions.strip() else "standard"
         return self.update_draft_meta(
@@ -281,6 +289,7 @@ class CommercialWorkflowService:
         text: str | None,
         image_bytes: bytes | None,
         image_filename: str | None,
+        plate_order_ctx: PlateOrderContext,
     ) -> dict[str, Any]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
@@ -301,7 +310,10 @@ class CommercialWorkflowService:
             next_text = source_text["input_text"]
             batches = [source_text["batch"]]
 
-        preview = self.commercial_service.generate_preview(text=next_text)
+        preview = self.commercial_service.generate_preview(
+            text=next_text,
+            plate_order_ctx=plate_order_ctx,
+        )
         next_metadata = self._build_preview_metadata(
             preview=preview,
             base_metadata=metadata,
@@ -336,6 +348,7 @@ class CommercialWorkflowService:
         instruction: str,
         image_bytes: bytes | None,
         image_filename: str | None,
+        plate_order_ctx: PlateOrderContext,
     ) -> dict[str, Any]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
@@ -390,7 +403,10 @@ class CommercialWorkflowService:
             "ocr_text": recognized_text,
             "filename": image_filename or "",
         }
-        preview = self.commercial_service.generate_preview(text=recognized_text)
+        preview = self.commercial_service.generate_preview(
+            text=recognized_text,
+            plate_order_ctx=plate_order_ctx,
+        )
         next_metadata = self._build_preview_metadata(
             preview=preview,
             base_metadata=metadata,
@@ -418,7 +434,13 @@ class CommercialWorkflowService:
         self._persist_wizard_step(draft_id, plates_step)
         return self.get_draft_details(draft_id)
 
-    def resolve_wide_plates(self, draft_id: str, decisions: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    def resolve_wide_plates(
+        self,
+        draft_id: str,
+        decisions: Iterable[dict[str, Any]],
+        *,
+        plate_order_ctx: PlateOrderContext,
+    ) -> dict[str, Any]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
         current_text = str(metadata.get("input_text", "") or "")
@@ -477,7 +499,10 @@ class CommercialWorkflowService:
                 continue
             if action == "replace":
                 replacement_text = str(decision.get("replacement_text", "") or "").strip()
-                replacement_lines = self._normalize_replacement_lines(replacement_text)
+                replacement_lines = self._normalize_replacement_lines(
+                    replacement_text,
+                    plate_order_ctx=plate_order_ctx,
+                )
                 if not replacement_lines:
                     raise ValueError("Для замены широкой плиты нужно указать корректный список замен.")
                 merged_lines.extend(replacement_lines)
@@ -488,7 +513,10 @@ class CommercialWorkflowService:
             raise ValueError("После обработки широких плит список стал пустым.")
 
         next_text = "\n".join(merged_lines)
-        preview = self.commercial_service.generate_preview(text=next_text)
+        preview = self.commercial_service.generate_preview(
+            text=next_text,
+            plate_order_ctx=plate_order_ctx,
+        )
         next_metadata = self._build_preview_metadata(
             preview=preview,
             base_metadata=metadata,
@@ -647,7 +675,13 @@ class CommercialWorkflowService:
             "offer_identity": self._build_offer_identity_payload(draft_id),
         }
 
-    def generate_files(self, draft_id: str, file_types: Iterable[str] | None = None) -> list[dict[str, str]]:
+    def generate_files(
+        self,
+        draft_id: str,
+        file_types: Iterable[str] | None = None,
+        *,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> list[dict[str, str]]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
         requested_types = self._normalize_file_types(file_types)
@@ -659,6 +693,7 @@ class CommercialWorkflowService:
             if schema_items:
                 files_by_kind["schema"] = schema_items[0]
         order_data = payload["order_data"]
+        ensure_order_priced(order_data, db_path=str(DB_PATH))
         manager_name = str(metadata.get("manager_name", "") or "")
         manager_phone = str(metadata.get("manager_phone", "") or "")
         manager_email = str(metadata.get("manager_email", "") or "")
@@ -723,11 +758,14 @@ class CommercialWorkflowService:
                 )
                 files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
             elif file_type == "schema":
-                viz_ctx = PlateOrderContext.fresh_empty()
+                if plate_order_ctx is None:
+                    raise ValueError(
+                        "Plate order context is required for schema file generation"
+                    )
                 visualization_result = self.file_generation_service.generate_visualization(
                     order=payload["order"],
                     context=payload["optimization_context"],
-                    ctx=viz_ctx,
+                    ctx=plate_order_ctx,
                     output_dir=str(self.settings.outputs_dir),
                 )
                 if isinstance(visualization_result, tuple) and len(visualization_result) >= 2:
@@ -1130,10 +1168,18 @@ class CommercialWorkflowService:
         parts = [current_text.strip(), next_text.strip()]
         return "\n".join(part for part in parts if part)
 
-    def _normalize_replacement_lines(self, replacement_text: str) -> list[str]:
+    def _normalize_replacement_lines(
+        self,
+        replacement_text: str,
+        *,
+        plate_order_ctx: PlateOrderContext,
+    ) -> list[str]:
         if not replacement_text.strip():
             return []
-        preview = self.commercial_service.generate_preview(text=replacement_text)
+        preview = self.commercial_service.generate_preview(
+            text=replacement_text,
+            plate_order_ctx=plate_order_ctx,
+        )
         return list(preview.parse_result.normalized_lines)
 
     def get_or_generate_file(self, safe_filename: str) -> Path:

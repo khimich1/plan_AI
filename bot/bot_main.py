@@ -57,17 +57,30 @@ def validate_bot_startup() -> bool:
         allowlist_count,
         settings.app_env,
     )
-    if not settings.bot_auth_enabled and settings.app_env.lower() != "production":
+    if not settings.bot_auth_enabled:
+        if settings.app_env.lower() != "development":
+            logger.error(
+                "❌ BOT_AUTH_ENABLED=false допустим только при APP_ENV=development"
+            )
+            return False
         logger.warning(
-            "⚠️ BOT_AUTH_ENABLED=false — доступ открыт всем пользователям Telegram (только для разработки)"
+            "⚠️ BOT_AUTH_ENABLED=false — dev-only open access без synthetic admin "
+            "(роль production, если пользователь не в allowlist)"
         )
     return True
 
 
+_DEPRECATION_WARNING = (
+    "DEPRECATED: Telegram-бот заморожен (2026-06-19) и не предназначен для production. "
+    "Используйте веб-интерфейс (FastAPI + React). Код сохранён только для совместимости — см. bot/README.md"
+)
+
+
 async def main():
     """Основная функция запуска бота"""
+    logger.warning(_DEPRECATION_WARNING)
     if not validate_bot_startup():
-        return
+        sys.exit(1)
     if not BOT_TOKEN:
         logger.error("❌ BOT_TOKEN не найден! Проверьте файл bot/bot.env")
         logger.error("💡 Получите токен у @BotFather в Telegram")

@@ -1,5 +1,5 @@
 import { env } from "@/shared/config/env";
-import { ApiError } from "@/shared/lib/apiError";
+import { ApiError, parseApiErrorPayload } from "@/shared/lib/apiError";
 import { queryClient } from "@/shared/lib/queryClient";
 
 const AUTH_ME_QUERY_KEY = ["auth", "me"] as const;
@@ -49,26 +49,31 @@ const parseResponseJson = async <T>(response: Response, path: string): Promise<T
 };
 
 const parseError = async (response: Response, path: string): Promise<never> => {
-  let detail = "Запрос завершился ошибкой.";
+  let message = "Запрос завершился ошибкой.";
+  let code: string | undefined;
+  let details: unknown;
   const contentType = response.headers.get("Content-Type") ?? "";
   try {
     const text = await response.text();
     if (looksLikeJson(contentType, text)) {
       try {
-        const payload = JSON.parse(text) as { detail?: string };
-        if (typeof payload.detail === "string" && payload.detail.trim()) {
-          detail = payload.detail;
+        const payload = JSON.parse(text) as unknown;
+        const parsed = parseApiErrorPayload(payload);
+        if (parsed) {
+          message = parsed.message;
+          code = parsed.code;
+          details = parsed.details;
         }
       } catch {
-        detail = response.statusText || detail;
+        message = response.statusText || message;
       }
     } else if (text.trimStart().startsWith("<") || contentType.includes("text/html")) {
-      detail = `Сервер вернул HTML вместо JSON (${response.status}) для ${path}. Проверьте URL API и прокси dev-сервера.`;
+      message = `Сервер вернул HTML вместо JSON (${response.status}) для ${path}. Проверьте URL API и прокси dev-сервера.`;
     }
   } catch {
-    detail = response.statusText || detail;
+    message = response.statusText || message;
   }
-  throw new ApiError(detail, response.status, detail);
+  throw new ApiError(message, response.status, message, code, details);
 };
 
 const handleUnauthorized = (path: string): void => {

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import get_settings
 from app.services.commercial_workflow_service import CommercialWorkflowService
+from core.plate_order_context import PlateOrderContext
 from tests.test_commercial_web_flow import _MINIMAL_PNG_BYTES, _sample_draft
 
 pytest_plugins = ["tests.test_commercial_web_flow"]
@@ -161,6 +162,7 @@ async def _run_apply_ai_workflow(monkeypatch, tmp_path):
         instruction="замени 78 на 60 и qty 7",
         image_bytes=None,
         image_filename=None,
+        plate_order_ctx=PlateOrderContext.fresh_empty(),
     )
     assert result["metadata"]["input_text"] == "ПБ 60-12-8п 7"
     assert result["metadata"]["source_type"] == "ai"

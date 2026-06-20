@@ -957,6 +957,7 @@ def offer_draft_page(
 @router.post("/web/offers/drafts/{draft_id}/generate-files")
 def generate_offer_draft_files(
     draft_id: str,
+    request: Request,
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
 ) -> RedirectResponse:
     try:
@@ -965,7 +966,10 @@ def generate_offer_draft_files(
         return RedirectResponse("/web/offers", status_code=303)
     workflow = CommercialWorkflowService()
     try:
-        workflow.generate_files(draft_id)
+        workflow.generate_files(
+            draft_id,
+            plate_order_ctx=get_plate_order_context(request),
+        )
     except (FileNotFoundError, ValueError):
         return RedirectResponse("/web/offers", status_code=303)
     return RedirectResponse(f"/web/offers/drafts/{draft_id}", status_code=303)

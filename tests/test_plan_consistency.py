@@ -120,7 +120,7 @@ def planning_service(tmp_plita, monkeypatch):
         fake_optimize,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
     return service
@@ -133,7 +133,7 @@ def _make_production_service(planning_service, db_path):
 
     return ProductionService(
         kp_repository=KpRepository(db_path=db_path),
-        plan_repository=PlanRepository(),
+        plan_repository=PlanRepository(db_path=db_path),
         planning_service=planning_service,
     )
 
@@ -422,7 +422,7 @@ def test_kp_plates_day_view_invariant_with_secondary_cuts(tmp_plita, monkeypatch
         fake_optimize_with_secondary,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
 

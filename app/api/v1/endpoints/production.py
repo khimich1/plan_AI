@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.dependencies.auth import require_roles
+from app.dependencies.plate_context import get_plate_order_context
 from app.services.day_documents_service import (
     DayDocumentsError,
     generate_day_breakdown,
@@ -25,8 +26,16 @@ from app.schemas.production import (
     RemoveTrackResponse,
     SaveWorkCalendarRequest,
 )
+from app.core.http_errors import raise_structured_error, raise_unexpected_server_error
+from core.plate_order_context import PlateOrderContext
+from app.repositories.plan_errors import PlanVersionConflict
+from app.schemas.errors import ERROR_CODE_PLAN_VERSION_CONFLICT, ERROR_CODE_REST_VALIDATION_FAILED
+from app.services.production_completion_service import (
+    ProductionCompletionError,
+    ProductionRestDbError,
+    ProductionRestValidationError,
+)
 from app.services.production_planning_service import ProductionPlanBuildError
-from app.services.production_completion_service import ProductionCompletionError
 from app.services.production_service import ProductionService, ProductionTrackRemovalError
 
 logger = logging.getLogger(__name__)
@@ -73,6 +82,17 @@ def build_plan_from_filters(
         )
     except ProductionPlanBuildError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except PlanVersionConflict as exc:
+        raise_structured_error(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ERROR_CODE_PLAN_VERSION_CONFLICT,
+            message=str(exc),
+            details={
+                "plan_id": exc.plan_id,
+                "expected_version": exc.expected_version,
+            },
+            where="production.build_plan",
+        )
     except Exception as exc:
         logger.exception("[production/build] Непредвиденная ошибка: %s", exc)
         raise HTTPException(
@@ -135,6 +155,17 @@ def remove_track_from_plan(
         )
     except ProductionTrackRemovalError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except PlanVersionConflict as exc:
+        raise_structured_error(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ERROR_CODE_PLAN_VERSION_CONFLICT,
+            message=str(exc),
+            details={
+                "plan_id": exc.plan_id,
+                "expected_version": exc.expected_version,
+            },
+            where="production.remove_track",
+        )
     return RemoveTrackResponse(**result)
 
 
@@ -190,6 +221,27 @@ def complete_day(
             rejected_plates=[item.model_dump() for item in payload.rejected_plates],
             actor=str(actor) if actor else None,
         )
+    except ProductionRestValidationError as exc:
+        raise_structured_error(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ERROR_CODE_REST_VALIDATION_FAILED,
+            message=str(exc),
+            details={"plan_id": exc.plan_id, "plate": exc.plate_context},
+            where="production.complete_day",
+        )
+    except ProductionRestDbError as exc:
+        raise_unexpected_server_error(exc, where="production.complete_day")
+    except PlanVersionConflict as exc:
+        raise_structured_error(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ERROR_CODE_PLAN_VERSION_CONFLICT,
+            message=str(exc),
+            details={
+                "plan_id": exc.plan_id,
+                "expected_version": exc.expected_version,
+            },
+            where="production.complete_day",
+        )
     except ProductionCompletionError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -201,10 +253,14 @@ def complete_day(
 async def download_day_schema(
     target_date: str,
     background_tasks: BackgroundTasks,
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     _user: dict = Depends(require_roles("admin", "production")),
 ) -> FileResponse:
     try:
-        pdf_path, cleanup_dir = await generate_day_schema(target_date)
+        pdf_path, cleanup_dir = await generate_day_schema(
+            target_date,
+            plate_order_ctx=plate_order_ctx,
+        )
     except DayDocumentsError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -225,10 +281,14 @@ async def download_day_schema(
 async def download_day_breakdown(
     target_date: str,
     background_tasks: BackgroundTasks,
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     _user: dict = Depends(require_roles("admin", "production")),
 ) -> FileResponse:
     try:
-        xlsx_path, cleanup_dir = await generate_day_breakdown(target_date)
+        xlsx_path, cleanup_dir = await generate_day_breakdown(
+            target_date,
+            plate_order_ctx=plate_order_ctx,
+        )
     except DayDocumentsError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:

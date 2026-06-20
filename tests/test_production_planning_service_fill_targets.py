@@ -117,7 +117,7 @@ def planning_service(tmp_plita, monkeypatch):
         fake_optimize,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
     return service
@@ -155,33 +155,29 @@ def test_fill_targets_split_across_days(planning_service, tmp_plita):
     assert statuses.get("в производстве") == 3
 
 
-def test_fill_targets_validation_too_many(planning_service):
+def test_fill_targets_validation_too_many(planning_service, monkeypatch):
     """Запрос 4 дорожек на день, где свободно лишь 2 — ошибка планирования."""
     from app.services.production_planning_service import ProductionPlanBuildError
 
-    # Подсовываем фейковую занятость: на 27.04 уже занято 2 из 3 (max=3).
-    # Свободно 1 → запрос 2 уже не пройдёт.
     target_date = "2026-04-27"
     fake_max_per_day = 3
 
-    # Перехватываем плановый MAX_TRACKS_PER_DAY и occupancy через monkeypatch
-    # на сервисе (через fixture monkeypatch требуется отдельное обращение).
-    import app.services.production_planning_service as svc_mod
-    from unittest.mock import patch
-
-    with patch.object(svc_mod.plan_manager, "MAX_TRACKS_PER_DAY", fake_max_per_day), \
-         patch.object(
-             svc_mod.plan_manager,
-             "get_global_day_occupancy",
-             return_value={target_date: 2},
-         ):
-        with pytest.raises(ProductionPlanBuildError) as exc_info:
-            planning_service.build_plan(
-                start_date="2026-04-27",
-                tracks_count=2,
-                filter_method="all",
-                fill_targets=[{"date": target_date, "tracks": 2}],
-            )
+    monkeypatch.setattr(
+        "app.services.production_planning_service.plan_manager.MAX_TRACKS_PER_DAY",
+        fake_max_per_day,
+    )
+    monkeypatch.setattr(
+        planning_service.plan_repository,
+        "get_global_occupancy",
+        lambda exclude_plan_id=None: {target_date: 2},
+    )
+    with pytest.raises(ProductionPlanBuildError) as exc_info:
+        planning_service.build_plan(
+            start_date="2026-04-27",
+            tracks_count=2,
+            filter_method="all",
+            fill_targets=[{"date": target_date, "tracks": 2}],
+        )
     assert "свободно" in str(exc_info.value).lower()
 
 
