@@ -30,9 +30,10 @@ _TRACK_REMOVAL_HTTP_STATUS: dict[str, int] = {
 class ProductionTrackRemovalError(Exception):
     """Ошибка удаления дорожки из производственного плана."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, message: str, *, status_code: int, code: str | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 class ProductionService:
@@ -225,5 +226,9 @@ class ProductionService:
             )
         except TrackRemovalError as exc:
             status_code = _TRACK_REMOVAL_HTTP_STATUS.get(exc.code or "", 500)
-            raise ProductionTrackRemovalError(exc.message, status_code=status_code) from exc
+            raise ProductionTrackRemovalError(
+                exc.message,
+                status_code=status_code,
+                code=exc.code,
+            ) from exc
 

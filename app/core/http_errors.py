@@ -19,6 +19,19 @@ MSG_ARCHIVE_NOT_FOUND = "КП не найдено."
 MSG_DAY_NOT_FOUND = "Данные за указанную дату не найдены."
 MSG_PLAN_VERSION_CONFLICT = "План был изменён другим запросом. Обновите страницу и повторите."
 MSG_UNPROCESSABLE = "Не удалось выполнить операцию. Проверьте введённые данные."
+MSG_DESTRUCTIVE_DB_BLOCKED = "Операция обнуления базы данных запрещена в текущем окружении."
+MSG_TRACK_REMOVAL_FAILED = "Не удалось удалить дорожку из плана."
+
+_TRACK_REMOVAL_CLIENT_MESSAGES: dict[str, str] = {
+    "plan_not_found": "План не найден.",
+    "day_not_found": MSG_DAY_NOT_FOUND,
+    "day_already_completed": "День уже завершён — удаление дорожки невозможно.",
+    "invalid_track_index": "Недопустимый номер дорожки.",
+    "no_plate_identity": "В дорожке не найдено плит для возврата в производство.",
+    "incomplete_return": "Не удалось полностью вернуть плиты в производство.",
+    "db_return_failed": "Не удалось вернуть плиты в производство.",
+    "plan_save_failed": "Не удалось сохранить план после удаления дорожки.",
+}
 
 
 def raise_parse_client_error(exc: BaseException, *, where: str) -> NoReturn:
@@ -124,6 +137,25 @@ def raise_structured_error(
     else:
         _log.warning("%s: structured error %s — %s", where, code, message)
     raise HTTPException(status_code=status_code, detail=payload) from None
+
+
+def raise_destructive_db_blocked_error(exc: BaseException, *, where: str) -> NoReturn:
+    _log.warning("%s: destructive db reset blocked", where, exc_info=exc)
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=MSG_DESTRUCTIVE_DB_BLOCKED,
+    ) from None
+
+
+def raise_track_removal_client_error(
+    exc: BaseException,
+    *,
+    where: str,
+    status_code: int,
+    code: str | None = None,
+) -> NoReturn:
+    detail = _TRACK_REMOVAL_CLIENT_MESSAGES.get(code or "", MSG_TRACK_REMOVAL_FAILED)
+    raise_client_error(exc, status_code=status_code, detail=detail, where=where)
 
 
 def raise_unpriced_plates_error(exc: BaseException, *, where: str) -> NoReturn:

@@ -6,10 +6,14 @@ from fastapi.testclient import TestClient
 
 from app.core.http_errors import (
     MSG_ARCHIVE_NOT_FOUND,
+    MSG_DESTRUCTIVE_DB_BLOCKED,
+    raise_destructive_db_blocked_error,
     raise_not_found_client_error,
     raise_structured_error,
+    raise_track_removal_client_error,
     raise_unprocessable_client_error,
 )
+from core.destructive_db_guard import DestructiveDbOperationBlocked
 from app.schemas.errors import (
     ERROR_CODE_PLAN_VERSION_CONFLICT,
     ERROR_CODE_REST_VALIDATION_FAILED,
@@ -112,3 +116,29 @@ def test_raise_unprocessable_client_error_hides_exception_text() -> None:
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail == "Не удалось выполнить операцию. Проверьте введённые данные."
     assert "sqlite" not in str(exc_info.value.detail).lower()
+
+
+def test_raise_destructive_db_blocked_hides_env_details() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        raise_destructive_db_blocked_error(
+            DestructiveDbOperationBlocked("ALLOW_DESTRUCTIVE_DB_RESET=1 secret"),
+            where="test_destructive",
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == MSG_DESTRUCTIVE_DB_BLOCKED
+    assert "ALLOW_DESTRUCTIVE" not in str(exc_info.value.detail)
+
+
+def test_raise_track_removal_client_error_maps_known_code() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        raise_track_removal_client_error(
+            RuntimeError("internal plan_id=secret"),
+            where="test_track_removal",
+            status_code=409,
+            code="day_already_completed",
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "заверш" in str(exc_info.value.detail).lower()
+    assert "secret" not in str(exc_info.value.detail).lower()

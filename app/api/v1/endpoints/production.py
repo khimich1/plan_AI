@@ -31,6 +31,7 @@ from app.core.http_errors import (
     MSG_PLAN_VERSION_CONFLICT,
     raise_not_found_client_error,
     raise_structured_error,
+    raise_track_removal_client_error,
     raise_unexpected_server_error,
     raise_unprocessable_client_error,
 )
@@ -88,7 +89,7 @@ def build_plan_from_filters(
             layout_reinforcement_order=payload.layout_reinforcement_order,
         )
     except ProductionPlanBuildError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        raise_unprocessable_client_error(exc, where="production.build_plan")
     except PlanVersionConflict as exc:
         raise_structured_error(
             status_code=status.HTTP_409_CONFLICT,
@@ -161,7 +162,12 @@ def remove_track_from_plan(
             actor=str(actor) if actor else None,
         )
     except ProductionTrackRemovalError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise_track_removal_client_error(
+            exc,
+            where="production.remove_track",
+            status_code=exc.status_code,
+            code=exc.code,
+        )
     except PlanVersionConflict as exc:
         raise_structured_error(
             status_code=status.HTTP_409_CONFLICT,
