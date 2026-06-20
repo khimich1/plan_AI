@@ -104,6 +104,23 @@ def test_list_users_paginates_by_username(tmp_path: Path):
     assert repository.count_users() == 5
 
 
+def test_bump_session_version_invalidates_existing_tokens(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path)
+    user, _created = repository.create_or_update_user(
+        username="revoke",
+        password="RevokePassword123!",
+        role="admin",
+    )
+
+    assert user["session_version"] == 0
+    new_version = repository.bump_session_version(user["id"])
+    loaded = repository.get_user_by_id(user["id"])
+
+    assert new_version == 1
+    assert loaded is not None
+    assert loaded["session_version"] == 1
+
+
 def test_get_users_page_returns_total_and_window(tmp_path: Path):
     repository = make_repository(tmp_path)
     repository.create_or_update_user(

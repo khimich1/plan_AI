@@ -7,8 +7,8 @@ from tests.helpers.csrf import CsrfAwareTestClient
 
 from app.core.settings import get_settings
 from app.main import create_app
-from app.repositories.auth_repository import AuthRepository
 from app.security.login_rate_limit import reset_login_rate_limiter_for_tests
+from tests.helpers.auth_fixtures import patch_auth_login
 
 VALID_APP_SECRET_KEY = "test-secret-key-for-pytest-must-be-32-chars-min"
 _LOGIN_JSON = {"username": "admin", "password": "StrongPassword123!"}
@@ -23,12 +23,7 @@ def _valid_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _mock_authenticate_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_authenticate(self, user: str, pwd: str) -> dict | None:
-        if user == _LOGIN_JSON["username"] and pwd == _LOGIN_JSON["password"]:
-            return {"id": 1, "username": user, "role": "admin"}
-        return None
-
-    monkeypatch.setattr(AuthRepository, "authenticate", fake_authenticate)
+    patch_auth_login(monkeypatch)
 
 
 @pytest.fixture()

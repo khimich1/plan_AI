@@ -23,6 +23,7 @@ USERS = [
         "role": "admin",
         "manager_id": None,
         "is_active": 1,
+        "session_version": 0,
         "created_at": "2026-01-01 00:00:00",
     },
 ]
@@ -41,7 +42,10 @@ def test_get_current_user_uses_get_user_by_id_not_list_users(
     list_users_mock = MagicMock(side_effect=AssertionError("list_users must not be called"))
     monkeypatch.setattr(AuthRepository, "list_users", list_users_mock)
 
-    token = create_session_token({"id": 1, "username": "admin", "role": "admin"}, ttl_seconds=300)
+    token = create_session_token(
+        {"id": 1, "username": "admin", "role": "admin", "sv": 0},
+        ttl_seconds=300,
+    )
     request = Request(
         {
             "type": "http",
@@ -64,7 +68,10 @@ def test_get_current_user_via_api_session(tmp_path: Path, monkeypatch: pytest.Mo
     patch_auth_users(monkeypatch, USERS)
 
     client = TestClient(create_app())
-    token = create_session_token({"id": 1, "username": "admin", "role": "admin"}, ttl_seconds=300)
+    token = create_session_token(
+        {"id": 1, "username": "admin", "role": "admin", "sv": 0},
+        ttl_seconds=300,
+    )
     response = client.get("/api/v1/health", cookies={"app_session": token})
 
     assert response.status_code == 200

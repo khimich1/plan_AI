@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import get_settings
 from app.main import create_app
-from app.repositories.auth_repository import AuthRepository
+from tests.helpers.auth_fixtures import patch_auth_login
 from app.security.csrf import CSRF_COOKIE_NAME
 from app.security.session import SESSION_COOKIE_NAME
 from tests.helpers.csrf import CsrfAwareTestClient
@@ -23,12 +23,7 @@ def _valid_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _mock_authenticate_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_authenticate(self, user: str, pwd: str) -> dict | None:
-        if user == "admin" and pwd == "StrongPassword123!":
-            return {"id": 1, "username": user, "role": "admin"}
-        return None
-
-    monkeypatch.setattr(AuthRepository, "authenticate", fake_authenticate)
+    patch_auth_login(monkeypatch)
 
 
 @pytest.fixture()

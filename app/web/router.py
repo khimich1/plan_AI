@@ -25,7 +25,7 @@ from app.dependencies.plate_context import get_plate_order_context
 from app.repositories.auth_repository import AuthRepository
 from app.security.csrf import generate_csrf_token, set_csrf_cookie
 from app.security.login_rate_limit import check_login_rate_limit, resolve_client_ip
-from app.security.session import create_session_token, set_session_cookie
+from app.security.session import create_session_token, session_claims_from_user, set_session_cookie
 from app.services.commercial_service import CommercialService
 from app.services.commercial_upload_validation import prepare_commercial_ocr_upload
 from app.services.commercial_workflow_service import CommercialWorkflowService
@@ -124,7 +124,7 @@ def login_submit(
     if not user:
         response = RedirectResponse(f"{SPA_LOGIN}?error=РќРµРІРµСЂРЅС‹Рµ+РґР°РЅРЅС‹Рµ", status_code=303)
         return mark_legacy_response(response, legacy_path="/web/login", successor=SPA_LOGIN)
-    token = create_session_token({"id": user["id"], "username": user["username"], "role": user["role"]})
+    token = create_session_token(session_claims_from_user(user))
     home = default_spa_home_for_role(user["role"])
     response = RedirectResponse(home, status_code=303)
     set_session_cookie(response, token)

@@ -27,6 +27,7 @@ TEST_USERS = [
         "role": "admin",
         "manager_id": None,
         "is_active": 1,
+        "session_version": 0,
         "created_at": "2026-01-01 00:00:00",
     },
     {
@@ -35,6 +36,7 @@ TEST_USERS = [
         "role": "production",
         "manager_id": None,
         "is_active": 1,
+        "session_version": 0,
         "created_at": "2026-01-01 00:00:00",
     },
     {
@@ -43,6 +45,7 @@ TEST_USERS = [
         "role": "manager",
         "manager_id": None,
         "is_active": 1,
+        "session_version": 0,
         "created_at": "2026-01-01 00:00:00",
     },
 ]
@@ -51,7 +54,7 @@ TEST_USERS = [
 def session_cookie(user_id: int, role: str, username: str) -> dict[str, str]:
     return {
         "app_session": create_session_token(
-            {"id": user_id, "username": username, "role": role},
+            {"id": user_id, "username": username, "role": role, "sv": 0},
             ttl_seconds=300,
         )
     }

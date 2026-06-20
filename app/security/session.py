@@ -13,8 +13,11 @@ from app.core.settings import get_settings
 
 SESSION_COOKIE_NAME = "app_session"
 
-# Stateless HMAC cookies: rotating APP_SECRET_KEY invalidates all sessions immediately.
-# Zero-downtime rotation needs server-side sessions or JWTs with key ids (kid) — future work.
+# Stateless HMAC cookies with server-side session_version (``sv`` claim in payload).
+# - ``exp``: absolute expiry (idle/max age = SESSION_COOKIE_MAX_AGE at issuance).
+# - ``sv``: must match ``app_users.session_version``; bumped on logout and password change.
+# Rotating APP_SECRET_KEY still invalidates all sessions immediately.
+# Full per-device revocation without global bump needs a sid revocation store — future work.
 
 
 def _sign(payload: bytes) -> str:
@@ -52,6 +55,29 @@ def decode_session_token(token: str) -> dict[str, Any] | None:
     if int(payload.get("exp", 0)) < int(time.time()):
         return None
     return payload
+
+
+def token_session_version(payload: dict[str, Any]) -> int:
+    """Return session version from token payload (legacy tokens without ``sv`` → 0)."""
+    raw = payload.get("sv")
+    if raw is None:
+        return 0
+    return int(raw)
+
+
+def session_claims_from_user(user: dict[str, Any]) -> dict[str, Any]:
+    """Build signed session payload fields from an authenticated user row."""
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "role": user["role"],
+        "sv": int(user.get("session_version", 0)),
+    }
+
+
+def is_session_active(payload: dict[str, Any], user: dict[str, Any]) -> bool:
+    """True when token session version matches the user's current server-side version."""
+    return token_session_version(payload) == int(user.get("session_version", 0))
 
 
 def session_cookie_policy() -> dict[str, bool | int | Literal["lax", "strict", "none"]]:

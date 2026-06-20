@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,13 +13,17 @@ from tests.helpers.csrf import CsrfAwareTestClient
 from app.core.settings import get_settings
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
+from tests.helpers.auth_fixtures import patch_auth_login
 from app.security.session import (
     SESSION_COOKIE_NAME,
     clear_session_cookie,
     create_session_token,
     decode_session_token,
+    is_session_active,
+    session_claims_from_user,
     session_cookie_policy,
     set_session_cookie,
+    token_session_version,
 )
 
 VALID_APP_SECRET_KEY = "test-secret-key-for-pytest-must-be-32-chars-min"
@@ -87,13 +92,14 @@ def _mock_authenticate_success(
     *,
     username: str = "admin",
     password: str = "StrongPassword123!",
+    session_version: int = 0,
 ) -> None:
-    def fake_authenticate(self, user: str, pwd: str) -> dict | None:
-        if user == username and pwd == password:
-            return {"id": 1, "username": username, "role": "admin"}
-        return None
-
-    monkeypatch.setattr(AuthRepository, "authenticate", fake_authenticate)
+    patch_auth_login(
+        monkeypatch,
+        username=username,
+        password=password,
+        session_version=session_version,
+    )
 
 
 @pytest.fixture()
@@ -103,7 +109,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def test_session_roundtrip() -> None:
-    token = create_session_token({"id": 1, "username": "demo", "role": "admin"}, ttl_seconds=60)
+    token = create_session_token(
+        session_claims_from_user(
+            {"id": 1, "username": "demo", "role": "admin", "session_version": 2}
+        ),
+        ttl_seconds=60,
+    )
 
     payload = decode_session_token(token)
 
@@ -111,6 +122,17 @@ def test_session_roundtrip() -> None:
     assert payload["id"] == 1
     assert payload["username"] == "demo"
     assert payload["role"] == "admin"
+    assert token_session_version(payload) == 2
+
+
+def test_is_session_active_matches_user_session_version() -> None:
+    payload = {"sv": 3}
+    user = {"session_version": 3}
+    stale_user = {"session_version": 4}
+
+    assert is_session_active(payload, user) is True
+    assert is_session_active(payload, stale_user) is False
+    assert is_session_active({"id": 1}, {"session_version": 0}) is True
 
 
 def test_session_cookie_policy_reflects_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -281,3 +303,73 @@ def test_web_logout_get_does_not_clear_session(
     me = client.get("/api/v1/auth/me")
     assert me.status_code == 200
     assert me.json()["user"]["username"] == "admin"
+
+
+def test_stale_session_cookie_rejected_after_logout(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "StrongPassword123!"},
+    )
+    assert login.status_code == 200
+    stale_cookie = client.cookies.get(SESSION_COOKIE_NAME)
+    assert stale_cookie
+
+    logout = client.post("/api/v1/auth/logout")
+    assert logout.status_code == 200
+
+    replay = TestClient(create_app())
+    replay.cookies.set(SESSION_COOKIE_NAME, stale_cookie)
+    me = replay.get("/api/v1/auth/me")
+    assert me.status_code == 401
+    assert me.json()["detail"] == "Session expired"
+
+
+def test_password_change_invalidates_old_session_cookie(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = str(tmp_path / "auth.db")
+    monkeypatch.setenv("APP_SECRET_KEY", VALID_APP_SECRET_KEY)
+    monkeypatch.setenv("PLITA_DB_PATH", db_path)
+    get_settings.cache_clear()
+
+    repository = AuthRepository(db_path=db_path)
+    repository.create_or_update_user(
+        username="alice",
+        password="CurrentPassword123!",
+        role="admin",
+    )
+
+    client = CsrfAwareTestClient(create_app())
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": "alice", "password": "CurrentPassword123!"},
+    )
+    assert login.status_code == 200
+    old_cookie = client.cookies.get(SESSION_COOKIE_NAME)
+    assert old_cookie
+
+    change = client.post(
+        "/api/v1/auth/change-password",
+        json={
+            "current_password": "CurrentPassword123!",
+            "new_password": "UpdatedPassword123!",
+        },
+    )
+    assert change.status_code == 200
+    new_cookie = client.cookies.get(SESSION_COOKIE_NAME)
+    assert new_cookie
+    assert new_cookie != old_cookie
+
+    replay = TestClient(create_app())
+    replay.cookies.set(SESSION_COOKIE_NAME, old_cookie)
+    me = replay.get("/api/v1/auth/me")
+    assert me.status_code == 401
+    assert me.json()["detail"] == "Session expired"
+
+    me_new = client.get("/api/v1/auth/me")
+    assert me_new.status_code == 200
+    assert me_new.json()["user"]["username"] == "alice"

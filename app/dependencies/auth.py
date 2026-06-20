@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, Request, status
 
 from app.repositories.auth_repository import AuthRepository
-from app.security.session import decode_session_token
+from app.security.session import decode_session_token, is_session_active
 
 
 def get_auth_repository() -> AuthRepository:
@@ -21,6 +21,8 @@ def get_current_user(
     user = repository.get_user_by_id(int(payload["id"]))
     if not user or not user.get("is_active"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
+    if not is_session_active(payload, user):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
     return user
 
 

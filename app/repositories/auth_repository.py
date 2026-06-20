@@ -44,6 +44,7 @@ class AuthRepository:
                     role TEXT NOT NULL,
                     manager_id INTEGER,
                     is_active INTEGER NOT NULL DEFAULT 1,
+                    session_version INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -54,7 +55,16 @@ class AuthRepository:
                 ON app_users(username)
                 """
             )
+            self._ensure_session_version_column(cursor)
             conn.commit()
+
+    def _ensure_session_version_column(self, cursor: sqlite3.Cursor) -> None:
+        cursor.execute("PRAGMA table_info(app_users)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "session_version" not in columns:
+            cursor.execute(
+                "ALTER TABLE app_users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"
+            )
 
     def _row_to_payload(self, row: sqlite3.Row | None, *, include_password_hash: bool = False) -> dict[str, Any] | None:
         if row is None:
@@ -71,7 +81,7 @@ class AuthRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, username, role, manager_id, is_active, created_at
+                SELECT id, username, role, manager_id, is_active, session_version, created_at
                 FROM app_users
                 WHERE id = ?
                 """,
@@ -87,7 +97,7 @@ class AuthRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, username, password_hash, role, manager_id, is_active, created_at
+                SELECT id, username, password_hash, role, manager_id, is_active, session_version, created_at
                 FROM app_users
                 WHERE username = ?
                 """,
@@ -157,6 +167,31 @@ class AuthRepository:
         payload.pop("password_hash", None)
         return payload
 
+    def bump_session_version(self, user_id: int) -> int:
+        """Increment session version so existing signed cookies for this user are rejected."""
+        self.init_schema()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE app_users
+                SET session_version = session_version + 1
+                WHERE id = ?
+                """,
+                (user_id,),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"User {user_id} not found.")
+            cursor.execute(
+                "SELECT session_version FROM app_users WHERE id = ?",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            conn.commit()
+        if row is None:
+            raise RuntimeError("Session version was not persisted.")
+        return int(row[0])
+
     def count_users(self) -> int:
         self.init_schema()
         with sqlite3.connect(self.db_path) as conn:
@@ -172,7 +207,7 @@ class AuthRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, username, role, manager_id, is_active, created_at
+                SELECT id, username, role, manager_id, is_active, session_version, created_at
                 FROM app_users
                 ORDER BY username
                 LIMIT ? OFFSET ?
