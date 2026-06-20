@@ -31,6 +31,22 @@ class RegisterUserRequest(BaseModel):
     is_active: bool = True
 
 
+class UserPublic(BaseModel):
+    id: int
+    username: str
+    role: str
+    manager_id: int | None = None
+    is_active: int
+    created_at: str
+
+
+class UsersPageResponse(BaseModel):
+    items: list[UserPublic]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(min_length=1)
     new_password: StrongPassword

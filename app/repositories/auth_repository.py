@@ -157,13 +157,35 @@ class AuthRepository:
         payload.pop("password_hash", None)
         return payload
 
-    def list_users(self) -> list[dict[str, Any]]:
+    def count_users(self) -> int:
+        self.init_schema()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM app_users")
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    def list_users(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         self.init_schema()
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, username, role, manager_id, is_active, created_at FROM app_users ORDER BY username"
+                """
+                SELECT id, username, role, manager_id, is_active, created_at
+                FROM app_users
+                ORDER BY username
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_users_page(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        return {
+            "items": self.list_users(limit=limit, offset=offset),
+            "total": self.count_users(),
+            "limit": limit,
+            "offset": offset,
+        }
 

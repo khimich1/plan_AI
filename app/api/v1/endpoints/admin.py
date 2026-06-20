@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.http_errors import raise_destructive_db_blocked_error
-from app.dependencies.auth import require_roles
+from app.dependencies.auth import get_auth_repository, require_roles
+from app.repositories.auth_repository import AuthRepository
 from app.schemas.admin import DbResetReport, DbStatsResponse, RecoverPlatesResponse
+from app.schemas.auth import UsersPageResponse
 from app.services.admin_service import AdminService
 from core.destructive_db_guard import DestructiveDbOperationBlocked
 
@@ -17,6 +19,17 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 def get_admin_service() -> AdminService:
     return AdminService()
+
+
+@router.get("/users", response_model=UsersPageResponse)
+def list_users(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    _user: dict = Depends(require_roles("admin")),
+    repository: AuthRepository = Depends(get_auth_repository),
+) -> UsersPageResponse:
+    page = repository.get_users_page(limit=limit, offset=offset)
+    return UsersPageResponse.model_validate(page)
 
 
 @router.get("/db/stats", response_model=DbStatsResponse)
