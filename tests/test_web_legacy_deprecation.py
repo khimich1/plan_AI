@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
@@ -150,6 +150,44 @@ def test_legacy_draft_get_redirects_to_spa_wizard(
     assert response.headers.get(DEPRECATION_HEADER) == DEPRECATION_HEADER_VALUE
 
 
+
+from urllib.parse import unquote
+
+
+def test_legacy_new_offer_post_invalid_manager_redirects_with_error(
+    client: TestClient,
+) -> None:
+    cookies = _session_cookie(user_id=1, username="admin", role="admin")
+    response = client.post(
+        "/web/offers/new",
+        data={"manager_id": "not-a-number", "client_name": "Test"},
+        cookies=cookies,
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert location.startswith("/commercial-offer/new?error=")
+    assert unquote(location.split("error=", 1)[1]) == "Выберите менеджера."
+
+
+def test_legacy_new_offer_post_invalid_manager_json_when_accept_json(
+    client: TestClient,
+) -> None:
+    cookies = _session_cookie(user_id=1, username="admin", role="admin")
+    response = client.post(
+        "/web/offers/new",
+        data={"manager_id": "not-a-number", "client_name": "Test"},
+        cookies=cookies,
+        headers={"Accept": "application/json"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Выберите менеджера."
+    assert response.headers.get(DEPRECATION_HEADER) == DEPRECATION_HEADER_VALUE
+
+
 def test_legacy_new_offer_post_success_redirects_to_spa_draft(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -161,7 +199,7 @@ def test_legacy_new_offer_post_success_redirects_to_spa_draft(
     monkeypatch.setattr(
         CommercialService,
         "list_managers",
-        lambda self: [{"id": 1, "fio": "Иван Иванов", "contact_number": "", "email": ""}],
+        lambda self: [{"id": 1, "fio": "РРІР°РЅ РРІР°РЅРѕРІ", "contact_number": "", "email": ""}],
     )
 
     async def fake_create(self, **kwargs):
@@ -173,12 +211,12 @@ def test_legacy_new_offer_post_success_redirects_to_spa_draft(
     response = client.post(
         "/web/offers/new",
         data={
-            "text": "ПБ 78-12-8п 2",
+            "text": "РџР‘ 78-12-8Рї 2",
             "manager_id": "1",
-            "client_name": "ООО Тест",
+            "client_name": "РћРћРћ РўРµСЃС‚",
             "discount_percent": "5",
-            "delivery_conditions": "Самовывоз",
-            "payment_conditions": "100% предоплата",
+            "delivery_conditions": "РЎР°РјРѕРІС‹РІРѕР·",
+            "payment_conditions": "100% РїСЂРµРґРѕРїР»Р°С‚Р°",
         },
         cookies=cookies,
         follow_redirects=False,
@@ -240,3 +278,4 @@ def test_commercial_offer_draft_stub_redirects_to_spa_wizard(client: TestClient)
 
     assert response.status_code == 303
     assert response.headers["location"] == spa_draft_url(draft_id)
+

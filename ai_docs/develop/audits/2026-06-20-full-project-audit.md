@@ -14,7 +14,7 @@
 
 *Актуально после P3 + post-sprint remediation (2026-06-20). Исходный снимок аудита — 0.0/10 (см. таблицу ниже).*
 
-**Обоснование:** Critical A1–A3 приняты как accepted residual (bot deprecated). Закрыты S1, S4, S5, S6, Q6, Q-M9, WP5, WP6 (A4 resolved). A7 phase 1 — redirects на SPA. Остаётся high-cap: A7 phase 2, S2, S3, S16.
+**Обоснование:** Critical A1–A3 приняты как accepted residual (bot deprecated). Закрыты S1, S4, S5, S6, Q6, Q-M9, WP5, WP6 (A4 resolved). A7 phase 1 — redirects на SPA. Остаётся high-cap: A7 phase 3, S2, S3, S16.
 
 | Severity | Architecture | Security | Code Quality | **Total** |
 |----------|-------------|----------|--------------|-----------|
@@ -304,7 +304,7 @@
 |-----------|----------|------------|
 | **A1, A2** | Critical | Bot deprecated; web authority — SQLite. Full consolidation — отдельный спринт |
 | **A3** | Critical | Hot paths изолированы (P1); full globals decommission — backlog |
-| **A7** | High | Phase 1 done (redirects); phase 2 — удаление HTML, POST flows → SPA/API |
+| **A7** | High | Phase 1-2 done; phase 3 — удаление HTML, POST flows → SPA/API |
 | **S2** | High | In-process rate limit — single instance (documented) |
 | **S3, S7–S16** | High/Medium | XFF whitelist, CSRF, security headers — backlog |
 
@@ -338,6 +338,8 @@
 
 ### Закрыто после P3 (post-sprint)
 
+**A7 legacy web deprecation:** phase 1-2 **done** (GET `/web/*` -> SPA; legacy POST login/offers/drafts -> SPA redirects + Deprecation headers). **Phase 3 (2026-06-20):** POST `/web/offers/new` validation errors -> `/commercial-offer/new?error=` or JSON 400; removed dead `_legacy_*_html` HTML from `app/web/router.py`.
+
 | ID / WP | Severity | Что сделано |
 |---------|----------|-------------|
 | **S6** | High | `app/security/password_policy.py` — min 12 chars, upper/lower/digit, common-password denylist; Pydantic + `AuthRepository`; `tests/test_password_policy.py` |
@@ -358,11 +360,13 @@
 
 ### Пересчёт Health Score (post-sprint)
 
+**A7 legacy web deprecation:** phase 1-2 **done** (GET `/web/*` -> SPA; legacy POST login/offers/drafts -> SPA redirects + Deprecation headers). **Phase 3 (2026-06-20):** POST `/web/offers/new` validation errors -> `/commercial-offer/new?error=` or JSON 400; removed dead `_legacy_*_html` HTML from `app/web/router.py`.
+
 | Метрика | После P3 | После post-sprint |
 |---------|----------|-------------------|
 | Critical (A1–A3) | accepted residual | accepted residual |
 | High resolved | S1, S4, S5, Q6 | + **S6**, **A4** (WP6) |
-| High partial | A7 | A7 phase 1 (redirects) |
+| High partial | A7 | A7 phase 1-2 done; phase 3 (offer form errors) in progress |
 | Medium resolved | Q-M9 | + **WP5** |
 | **Overall Health Score** | ~7.5–8 | **~8–8.5** |
 

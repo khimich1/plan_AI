@@ -36,6 +36,9 @@ def default_spa_home_for_role(role: str | None) -> str:
 def spa_new_with_notice(message: str) -> str:
     return f"{SPA_NEW}?notice={quote(message, safe='')}"
 
+def spa_new_with_error(message: str) -> str:
+    return f"{SPA_NEW}?error={quote(message, safe='')}"
+
 
 def spa_draft_url(draft_id: str, *, legacy: bool = True) -> str:
     query = f"draft={quote(draft_id, safe='')}"
