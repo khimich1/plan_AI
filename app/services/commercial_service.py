@@ -13,6 +13,7 @@ from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
 from app.services.plate_parser_service import PlateParserService
 from core import config_and_data as cfg
+from core.optimization.layout_runtime_snapshot import _make_get_load_code_for_plate
 from core.plate_order_context import PlateOrderContext
 from core.kp_db_nomenclature import enrich_order_data_with_nomenclature
 from core.kp_plate_weight import resolve_kp_line_weight_kg
@@ -95,13 +96,18 @@ class CommercialService:
         order_data_with_order: list[tuple[int, dict[str, Any]]] = []
         cache_by_key = order.nomenclature_cache
         order_sequence = self._build_order_sequence_map(parse_result)
+        resolve_load_code = _make_get_load_code_for_plate(order.plate_load_details)
         for item in procurement_items:
             length_m = float(item["length"])
             width_m = float(item["width"])
             qty = int(item["qty"])
             load_code = item.get("load_code")
             if load_code is None:
-                load_code = cfg.get_load_code_for_plate(length_m, width_m, default=(6 if width_m < 1.0 else 8))
+                load_code = resolve_load_code(
+                    length_m,
+                    width_m,
+                    default=(6 if width_m < 1.0 else 8),
+                )
 
             matching_row = None
             for row in price_rows:

@@ -795,6 +795,33 @@ def test_build_order_data_preserves_input_sequence() -> None:
     assert order_data[1]["length_m"] == pytest.approx(5.9)
 
 
+def test_build_order_data_resolves_load_from_order_not_tls_globals() -> None:
+    """A3 phase 1: _build_order_data must not read plate_runtime_state TLS."""
+    from core.plate_runtime_state import get_plate_mutable_runtime
+
+    service = CommercialService()
+    order = PlateOrder()
+    order.plate_load_details[(7.3, 1.2, 12.0, "73")] = 2
+
+    poisoned = get_plate_mutable_runtime()
+    poisoned.plate_load_details.clear()
+    poisoned.plate_load_details[(7.3, 1.2, 8.0, "73")] = 99
+
+    parse_result = ParseResult(
+        order=order,
+        normalized_text="",
+        line_plate_load_details=[{(7.3, 1.2, 12.0, "73"): 2}],
+    )
+    procurement_items = [
+        {"length": 7.3, "width": 1.2, "qty": 2, "length_dm_raw": "73"},
+    ]
+
+    order_data = service._build_order_data(procurement_items, [], order, parse_result)
+
+    assert len(order_data) == 1
+    assert order_data[0]["load_class"] == 1200
+
+
 def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

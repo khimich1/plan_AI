@@ -14,7 +14,7 @@
 
 *Актуально после P3 + post-sprint remediation (2026-06-20). Исходный снимок аудита — 0.0/10 (см. таблицу ниже).*
 
-**Обоснование:** Critical A1–A3 приняты как accepted residual (bot deprecated). Закрыты S1, S4, S5, S6, Q6, Q-M9, WP5, WP6 (A4 resolved). A7 phase 1 — redirects на SPA. Остаётся high-cap: A7 phase 3, S2, S3, S16.
+**Обоснование:** Critical A1–A3 приняты как accepted residual (bot deprecated). Закрыты S1, S4, S5, S6, S7, S16, Q6, Q-M9, WP5, WP6 (A4 resolved). A7 phase 1–3 done. A3 phase 1 — первый hot path без TLS globals. Остаётся high-cap: S2, S3.
 
 | Severity | Architecture | Security | Code Quality | **Total** |
 |----------|-------------|----------|--------------|-----------|
@@ -303,10 +303,10 @@
 | ID / тема | Severity | Примечание |
 |-----------|----------|------------|
 | **A1, A2** | Critical | Bot deprecated; web authority — SQLite. Full consolidation — отдельный спринт |
-| **A3** | Critical | Hot paths изолированы (P1); full globals decommission — backlog |
-| **A7** | High | Phase 1-2 done; phase 3 — удаление HTML, POST flows → SPA/API |
+| **A3** | Critical | Hot paths изолированы (P1); **phase 1 (2026-06-20):** `CommercialService._build_order_data` — load code из `order.plate_load_details`, не TLS; full globals decommission — backlog |
+| **A7** | High | **Phase 1-3 done** — GET `/web/*` → SPA; legacy POST flows → SPA/API redirects; dead HTML removed |
 | **S2** | High | In-process rate limit — single instance (documented) |
-| **S3, S7–S16** | High/Medium | XFF whitelist, CSRF, security headers — backlog |
+| **S3, S8–S15** | High/Medium | XFF whitelist, CSRF — backlog |
 
 ### Остаточный риск (documented)
 
@@ -343,14 +343,21 @@
 | ID / WP | Severity | Что сделано |
 |---------|----------|-------------|
 | **S6** | High | `app/security/password_policy.py` — min 12 chars, upper/lower/digit, common-password denylist; Pydantic + `AuthRepository`; `tests/test_password_policy.py` |
+| **S7** | Medium | `app/middleware/security_headers.py` — X-Frame-Options, X-Content-Type-Options, Referrer-Policy, CSP report-only, HSTS outside dev; `tests/test_security_headers.py` |
+| **S16** | Medium | `AuthRepository.get_user_by_id()`; admin `list_users` pagination; `get_current_user` без O(n) scan — **RESOLVED** (WP6) |
 | **WP5** | Medium | Pinned npm deps (`frontend/package.json`); `npm audit` → 0 high; `npm run build` green |
 | **WP6** | — | `AuthRepository.get_user_by_id()`; `get_current_user` без O(n) `list_users()`; `tests/test_auth_dependencies.py` — **A4 RESOLVED** |
+| **A3** | Critical | **Phase 1:** `CommercialService._build_order_data` — `_make_get_load_code_for_plate(order.plate_load_details)` вместо `cfg.get_load_code_for_plate` (TLS); `tests/test_commercial_web_flow.py` |
 
 ### Частично закрыто
 
 | ID | Severity | Phase 1 (done) | Phase 2 (backlog) |
 |----|----------|----------------|-------------------|
-| **A7** | High | `legacy_deprecation.py`: GET `/web/*` → SPA redirects, `Deprecation` + `Link: successor-version`, role-aware home; `tests/test_web_legacy_deprecation.py`; frontend `roleRoutes.ts` | Удалить legacy HTML handlers, POST-only flows → SPA/API; CSRF (S8) |
+| **A3** | Critical | `CommercialService._build_order_data` без TLS `get_load_code_for_plate`; `viz_modules/procurement/*`, bot handlers — backlog | Полный decommission `config_and_data` / `plate_runtime_state` proxies |
+
+### A7 legacy web — **CLOSED** (phase 1-3)
+
+GET `/web/*` → SPA; legacy POST login/offers/drafts → SPA redirects + Deprecation headers; phase 3: POST `/web/offers/new` validation errors → `/commercial-offer/new?error=` or JSON 400; removed dead `_legacy_*_html` from `app/web/router.py`; `tests/test_web_legacy_deprecation.py`.
 
 ### Регрессия
 
@@ -364,10 +371,10 @@
 
 | Метрика | После P3 | После post-sprint |
 |---------|----------|-------------------|
-| Critical (A1–A3) | accepted residual | accepted residual |
-| High resolved | S1, S4, S5, Q6 | + **S6**, **A4** (WP6) |
-| High partial | A7 | A7 phase 1-2 done; phase 3 (offer form errors) in progress |
-| Medium resolved | Q-M9 | + **WP5** |
+| Critical (A1–A3) | accepted residual | accepted residual; **A3 phase 1** started |
+| High resolved | S1, S4, S5, Q6 | + **S6**, **A4** (WP6), **A7** (phase 1-3) |
+| High partial | A7 | — |
+| Medium resolved | Q-M9 | + **WP5**, **S7**, **S16** |
 | **Overall Health Score** | ~7.5–8 | **~8–8.5** |
 
 ---
