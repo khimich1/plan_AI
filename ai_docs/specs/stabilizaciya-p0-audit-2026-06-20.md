@@ -8,9 +8,25 @@
 
 ---
 
+## Контекст: bot deprecated (из P0-2026-06-19)
+
+> **Решение пользователя (2026-06-19):** Telegram-бот **не используется** → заморожен и **deprecated**. Новых фич нет; полное удаление кода — отдельное согласование.
+
+Аудит 2026-06-20 **не учитывал** это решение и трактовал bot как активный канал (A1/S1 split-brain «web vs bot», A2 «bot обходит pipeline»). P0-next частично **расходился** со стратегией deprecation:
+
+| WP | Что сделано | Оценка vs deprecation |
+|----|-------------|------------------------|
+| **WP1** | `plan_storage` → SQLite; bot shim без JSON I/O | **Оправдано** — единый data plane для web; legacy `plan_storage`/bot handlers не должны писать в параллельное хранилище даже при случайном запуске |
+| **WP2** | Bot thin adapter + parity tests (web vs bot) | **Maintenance-only / sunk cost** — снижает риск расхождения при dev-запуске; **не** цель продукта; дальнейший parity — freeze |
+| **WP3** | `PlateOrderContext` на bot+API hot paths | **Частично оправдано** — изоляция нужна для **web/API**; bot paths — только чтобы не ломать frozen code |
+
+**Вывод:** инвестиции WP2 (adapter, cross-surface tests) — **закрыты и не продлеваются**. Новый backlog — **web/API security**, не bot reliability. См. [`stabilizaciya-p1-next-audit-2026-06-20.md`](./stabilizaciya-p1-next-audit-2026-06-20.md) и § Bot deprecation strategy там.
+
+---
+
 ## Objective
 
-Закрыть **3 critical** находки аудита 2026-06-20: split-brain планов (A1/S1), обход core pipeline ботом (A2), legacy globals (A3).
+Закрыть **3 critical** находки аудита 2026-06-20: split-brain планов (A1/S1), обход core pipeline ботом (A2), legacy globals (A3) — **с учётом bot deprecated** (WP2 = maintenance-only, не product goal).
 
 ## Scope (P0-next)
 
@@ -63,7 +79,8 @@
 
 ### Следующий шаг
 
-1. Backlog **A4** (bot → core, не app), **A5** (god-modules), **P1-next** (S4 logout, S6 admin guard, Q1 bare except)
-2. Отдельный спринт **A3 full decommission** после стабилизации hot paths
+1. **P1-next (web/API security):** S4 POST logout, S6 full destructive guard, S2/S3 — см. [`stabilizaciya-p1-next-audit-2026-06-20.md`](./stabilizaciya-p1-next-audit-2026-06-20.md). Bot-specific Q1/Q3 **не** в scope.
+2. **A4/A5 (bot god-modules, DIP)** — **отложены** (bot deprecated); только при решении о полном удалении `bot/`.
+3. Отдельный спринт **A3 full decommission** после security hardening.
 
 *Создано: 2026-06-20 · Закрыто: 2026-06-20 (partial A3 deferred).*

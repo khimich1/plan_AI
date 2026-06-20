@@ -223,7 +223,9 @@ WP7 (A1: persist через PlanRepository + web как тонкий адапт�
 
 ~~После ревью этого PLAN → фаза **TASKS**…~~
 
-**Спринт закрыт 2026-06-19.** Следующий фокус: `A3` (runtime-globals), `S1` (bot auth fail-closed), `S2`–`S5`, frontend reload при `plan_version_conflict` (опционально).
+**Спринт закрыт 2026-06-19.** P1/P2/P3 — **закрыты** (см. [`../../specs/stabilizaciya-p3-audit-2026-06-20.md`](../../specs/stabilizaciya-p3-audit-2026-06-20.md)).
+
+**Post-audit 2026-06-20:** scope P0 выполнен для web; residual critical (split-brain планов, bot pipeline, globals) — вне этого плана, см. [`../audits/2026-06-20-full-project-audit.md`](../audits/2026-06-20-full-project-audit.md) и changelog в спеке P0 v5.
 
 **Требует подтверждения перед стартом (Ask first):**
 - DDL `production_plans` в `core/kp_db_schema.py` (`WP3`). — **выполнено**

@@ -3,6 +3,7 @@
 > **Дата:** 2026-06-20
 > **Спека:** [`../../specs/stabilizaciya-p0-audit-2026-06-20.md`](../../specs/stabilizaciya-p0-audit-2026-06-20.md)
 > **Источник:** [`../audits/2026-06-20-full-project-audit.md`](../audits/2026-06-20-full-project-audit.md)
+> **Bot policy:** deprecated с P0-2026-06-19 — см. [`../../specs/stabilizaciya-p0-audit-2026-06-19.md`](../../specs/stabilizaciya-p0-audit-2026-06-19.md); WP2 = maintenance-only sunk cost
 
 ---
 
@@ -11,7 +12,7 @@
 | WP | Находка | Статус | Notes |
 |----|---------|--------|-------|
 | WP1 | A1/S1 — safety-net + SQLite authority | [x] done | `test_bot_plan_sqlite_authority.py`, `test_plan_storage_deprecation.py`; 23 passed (green, не RED — `plan_storage` уже на SQLite) |
-| WP2 | A2 — bot thin adapter над core pipeline | [x] done | `production_execution.py` → `run_planning_pipeline`; `bot/services/production_planning_adapter.py`; `test_bot_production_planning_parity.py` |
+| WP2 | A2 — bot thin adapter над core pipeline | [x] done | **Maintenance-only (bot deprecated):** adapter + parity test — sunk cost; не продлевать |
 | WP3 | A3 — decommission globals | [~] partial | `PlateOrderContext` на planning hot paths; arch doc; PEP 562 proxy deferred |
 
 ---

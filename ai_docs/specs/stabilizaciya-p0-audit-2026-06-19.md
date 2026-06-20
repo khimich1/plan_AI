@@ -296,5 +296,5 @@ Safety-net тесты пишутся **до** рефакторинга (особ
 
 1. ~~PLAN/TASKS/IMPLEMENT P0~~ — **закрыто**.
 2. ~~P1, P2, P3~~ — **закрыты** (см. наследники в шапке).
-3. **P0-next (residual critical):** спека [`stabilizaciya-p0-audit-2026-06-20.md`](./stabilizaciya-p0-audit-2026-06-20.md) · план [`../develop/plans/2026-06-20-stabilizaciya-p0-next.md`](../develop/plans/2026-06-20-stabilizaciya-p0-next.md) — **ready for implementation** (WP1 → WP8).
-4. **P1-next backlog:** POST-only logout (**S4**), полный destructive admin guard (**S6**), bare `except` в bot (**Q1** 20.06).
+3. **P0-next (residual critical):** спека [`stabilizaciya-p0-audit-2026-06-20.md`](./stabilizaciya-p0-audit-2026-06-20.md) · план [`../develop/plans/2026-06-20-stabilizaciya-p0-next.md`](../develop/plans/2026-06-20-stabilizaciya-p0-next.md) — **closed** (WP1–WP2 done; WP2 = maintenance-only sunk cost при bot deprecated).
+4. **P1-next backlog:** web/API security — **S4**, **S6**, **S2**, **S3** (аудит 20.06). Bot Q1/Q3 **вне scope** (закрыты deprecation, как Q2 здесь).
