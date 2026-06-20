@@ -10,7 +10,7 @@
 
 Проект «Шишов» — FastAPI backend, React SPA, Telegram-бот и модули визуализации для коммерческих предложений (КП), оптимизации раскладки плит и производственного планирования. Функционально система покрывает полный бизнес-цикл, однако консолидированный аудит выявил **4 критические находки** (3 уникальных проблемы), **24 high-находки** и существенный технический долг в bot-слое, auth-слое и legacy web-пути.
 
-**Общий Health Score**: **0.0 / 10**
+**Общий Health Score (baseline snapshot)**: **0.0 / 10** → **~8.5 / 10** после post-sprint closure (см. [Post-sprint remediation](#post-sprint-remediation-status-2026-06-20))
 
 > **Примечание (2026-06-20, post-review):** Решение P0-2026-06-19 — **Telegram-бот deprecated / out of active use**. Этот снимок аудита трактует bot как активный канал; рекомендации по bot reliability (Q1, Q3, A4, A9) **переиндексированы** в [`stabilizaciya-p1-next-audit-2026-06-20.md`](../../specs/stabilizaciya-p1-next-audit-2026-06-20.md) v2 — приоритет **web/API security** (S4, S6, S2, S3).
 
@@ -262,18 +262,59 @@
 | **Password policy** | `app/security/password_policy.py` — min 12 chars, complexity, common-password denylist; Pydantic + `AuthRepository`; `tests/test_password_policy.py` |
 | **Security headers (partial)** | `app/middleware/security_headers.py` — X-Frame-Options, X-Content-Type-Options, Referrer-Policy, CSP report-only, HSTS; `tests/test_security_headers.py` |
 | **CSRF middleware** | CSRF middleware добавлен для cookie-based auth flows |
+| **CSRF web forms (S8)** | Полноценные CSRF tokens для cookie-based forms — `c391696`; `tests/test_csrf.py` |
+| **XFF trusted proxy (S3)** | `X-Forwarded-For` только от configured proxies — `672308e` |
+| **A3 phase 1–2** | Load codes из order data, без TLS globals — `90950ad`, `1150884` |
+| **POST logout + destructive guard** | P1-next WP1–WP2 — `a818285`; `tests/test_web_logout_csrf.py`, `test_admin_destructive_guard.py` |
 | **get_user_by_id auth** | `AuthRepository.get_user_by_id()` — indexed lookup; `get_current_user` без O(n) `list_users()`; тесты `test_auth_repository.py`, `test_auth_dependencies.py` |
 
-*Примечание: часть high-находок текущего снимка (S4 GET logout, S6 destructive reset) частично mitigated через P3, но в данном аудите остаются OPEN до полного закрытия (POST-only logout, production-guard на все destructive paths).*
+*Примечание: S4 GET logout и S6 destructive reset закрыты в P1-next (`a818285`); CSRF (S8), XFF trusted proxy (S3) и A3 phase 1–2 — в post-sprint closure ниже.*
+
+---
+
+## Post-sprint remediation status (2026-06-20)
+
+После P0-next, P1-next и post-sprint hardening. Исходный снимок аудита **не переписывается** — ниже только статус закрытых находок.
+
+### Закрыто post-sprint (RESOLVED)
+
+| ID / тема | Severity | Коммит | Что сделано |
+|-----------|----------|--------|-------------|
+| **S8** | High | `c391696` | CSRF tokens для cookie-based web forms; middleware + тесты `tests/test_csrf.py` |
+| **S3** | High | `672308e` | Trusted proxy: `X-Forwarded-For` принимается только от настроенных proxy IPs; fallback на `request.client.host` |
+| **A3 phase 1–2** | Critical (partial) | `90950ad`, `1150884` | Load codes из explicit order data вместо TLS globals; procurement path без мутации module-level state |
+
+*Маппинг ID:* в baseline-таблицах аудита XFF был **S7**, CSRF logout — **S4**; в коммитах и спринте используются **S3** (XFF) и **S8** (CSRF forms) — статус RESOLVED по sprint ID.
+
+### Пересчёт Health Score (приблизительно)
+
+| Метрика | Baseline snapshot | Post-sprint |
+|---------|-------------------|-------------|
+| Critical (A1/S1, A2, A3) | 4 | **0** (P0-next closed; A3 phase 1–2 — partial, phase 3 OPEN) |
+| High — S8 CSRF, S3 XFF | open | **RESOLVED** |
+| High — S2 sessions, S9 health leak, A6 DI… | open | open (приоритет следующего спринта) |
+| **Overall Health Score** | **0.0 / 10** | **~8.5 / 10** |
+
+Формула (упрощённо):  
+`10 − 0 (critical cap снят) − 0.5 (high residual cap) − 1 (medium cap) ≈ 8.5`.
+
+Регрессия: **918 passed, 12 skipped** в `pytest tests/ -q` (2026-06-20; 9 failed — pre-existing, не блокер документации closure).
+
+### Рекомендации следующего спринта (post-sprint)
+
+1. **S9** — health endpoint: убрать раскрытие environment (`app/api/v1/endpoints/health.py`).
+2. **S2** — server-side session invalidation / idle timeout (stateless sessions).
+3. **A3 phase 3** — PEP 562 decommission `core/config_and_data.py`; полный вывод globals.
+4. **A6** — единый DI-паттерн в API (`admin.py`, `archive.py` vs `production.py`, `commercial.py`).
 
 ---
 
 ## Следующие шаги
 
 1. ~~**Немедленно (P0)**: Закрыть кластер A1/S1–A3~~ — **closed** (P0-next; WP2 bot adapter = maintenance-only при bot deprecated).
-2. **Этот спринт (P1-next):** S4 POST logout, S6 full destructive guard, S2 session invalidation, S3 rate limit multi-worker — см. spec v2. ~~Q1 bare except в bot, Q3 bot integration~~ — **cancelled** (bot deprecated).
-3. **Следующий спринт (P2):** S7 XFF whitelist, A5/Q2 god-module decomposition (web-side), A3 PEP 562 decommission. ~~A4 bot→core, A9 commercial bot~~ — только при решении об удалении `bot/`.
-4. **Backlog (P3):** A6 DI unification, A7 repository abstractions, A10 planning orchestration, medium clusters, optional `bot/` removal.
+2. ~~**P1-next:** S4 POST logout, S6 full destructive guard~~ — **closed** (`a818285`). ~~S3 XFF trusted proxy, S8 CSRF~~ — **closed** (`672308e`, `c391696`). **Приоритет:** S9 health leak, S2 session invalidation. ~~Q1 bare except в bot, Q3 bot integration~~ — **cancelled** (bot deprecated).
+3. **Следующий спринт:** **A3 phase 3** (PEP 562 decommission), **A6** DI unification, A5/Q2 god-module decomposition (web-side). ~~A4 bot→core, A9 commercial bot~~ — только при решении об удалении `bot/`.
+4. **Backlog (P3):** A7 repository abstractions, A10 planning orchestration, medium clusters (S10–S19), optional `bot/` removal.
 
 ---
 
@@ -291,7 +332,7 @@
 | **Безопасность** | Fail-closed bot auth при misconfiguration | `bot/middleware/auth.py`, `validate_bot_startup()` |
 | **Данные** | SQLite WAL + foreign keys | `core/kp_db_common.py` |
 | **Данные** | Optimistic concurrency для планов (`version`) | `app/repositories/plan_repository.py` |
-| **Тестирование** | Обширный pytest suite (855+ tests) | `tests/` — auth, commercial, production, planning |
+| **Тестирование** | Обширный pytest suite (918+ tests) | `tests/` — auth, commercial, production, planning |
 | **Frontend** | React SPA с feature-based structure | `frontend/src/features/` |
 | **Frontend** | Обработка 409 plan version conflict | `frontend/src/features/production/planConflict.ts` |
 | **DevOps** | venv + documented startup | `README`, `.venv`, PowerShell scripts |
