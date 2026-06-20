@@ -12,7 +12,7 @@ import re
 import sqlite3
 
 import core.config_and_data as cfg
-from core.debug_paths import get_debug_log_path
+from core.debug_paths import append_agent_debug_log, get_debug_log_path
 from core.price_db import length_m_to_price_length_dm
 
 _DEBUG_LOG_DB7A51 = get_debug_log_path("debug-db7a51.log")
@@ -230,14 +230,25 @@ def find_price_for_plate(price_table: dict, length_m: float, load_code: int | fl
                 result = loads[load_code_int]
                 break
     # #region agent log
-    import json
-    import time
-    _log_path = _DEBUG_LOG_DB7A51
-    try:
-        with open(_log_path, 'a', encoding='utf-8') as _f:
-            _f.write(json.dumps({"sessionId": "db7a51", "hypothesisId": "find_price_for_plate", "location": "price_utils.py:find_price_for_plate", "message": "find_price_for_plate lookup", "data": {"length_m": length_m, "load_code": load_code, "load_code_int": load_code_int, "key": key, "result": result, "key_in_table": key in price_table, "loads_keys": list(price_table.get(key, {}).keys())}, "timestamp": int(time.time() * 1000)}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+    append_agent_debug_log(
+        _DEBUG_LOG_DB7A51,
+        {
+            "sessionId": "db7a51",
+            "hypothesisId": "find_price_for_plate",
+            "location": "price_utils.py:find_price_for_plate",
+            "message": "find_price_for_plate lookup",
+            "data": {
+                "length_m": length_m,
+                "load_code": load_code,
+                "load_code_int": load_code_int,
+                "key": key,
+                "result": result,
+                "key_in_table": key in price_table,
+                "loads_keys": list(price_table.get(key, {}).keys()),
+            },
+            "timestamp": int(__import__("time").time() * 1000),
+        },
+    )
     # #endregion
     return result
 
