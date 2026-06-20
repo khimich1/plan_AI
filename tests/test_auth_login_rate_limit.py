@@ -60,6 +60,7 @@ def test_login_rate_limit_is_per_ip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AUTH_LOGIN_ATTEMPTS_PER_MINUTE", "2")
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "testclient")
     get_settings.cache_clear()
     reset_login_rate_limiter_for_tests()
 

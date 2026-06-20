@@ -48,13 +48,15 @@ def reset_login_rate_limiter_for_tests() -> None:
 
 
 def resolve_client_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
-    if request.client and request.client.host:
-        return request.client.host
+    direct_host = request.client.host if request.client and request.client.host else None
+    if direct_host and direct_host in get_settings().trusted_proxy_ips:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            first = forwarded.split(",")[0].strip()
+            if first:
+                return first
+    if direct_host:
+        return direct_host
     return "unknown"
 
 

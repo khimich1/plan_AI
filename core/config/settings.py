@@ -125,6 +125,9 @@ class Settings(BaseSettings):
         ge=1,
         le=3600,
     )
+    # Comma-separated IPs of reverse proxies allowed to set X-Forwarded-For (e.g. 127.0.0.1).
+    # Empty default: do not trust XFF; use the direct TCP client address only.
+    trusted_proxy_ips_raw: str = Field(default="", alias="TRUSTED_PROXY_IPS")
 
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
@@ -288,6 +291,18 @@ class Settings(BaseSettings):
     @property
     def cors_allowed_origins(self) -> list[str]:
         return self._split_cors_origins(self.cors_allowed_origins_raw)
+
+    @staticmethod
+    def _split_proxy_ips(raw: str) -> frozenset[str]:
+        normalized = raw.strip()
+        if not normalized:
+            return frozenset()
+        return frozenset(item.strip() for item in normalized.split(",") if item.strip())
+
+    @computed_field
+    @property
+    def trusted_proxy_ips(self) -> frozenset[str]:
+        return self._split_proxy_ips(self.trusted_proxy_ips_raw)
 
     def ensure_directories(self) -> None:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
