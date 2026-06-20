@@ -260,24 +260,24 @@ def test_web_login_set_cookie_attributes(
     assert attrs.get("max_age") == 86400
 
 
-def test_web_logout_clears_session_cookie(
+def test_web_logout_get_does_not_clear_session(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_cookie_settings(monkeypatch, cookie_samesite="strict", cookie_secure="true")
+    _configure_cookie_settings(monkeypatch, cookie_samesite="lax", cookie_secure="false")
     login = client.post(
-        "/web/login",
-        data={"username": "admin", "password": "StrongPassword123!"},
-        follow_redirects=False,
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "StrongPassword123!"},
     )
-    assert login.status_code == 303
-    client.cookies.update(login.cookies)
+    assert login.status_code == 200
 
-    logout = client.get("/web/logout", follow_redirects=False)
+    legacy_logout = client.get("/web/logout", follow_redirects=False)
 
-    assert logout.status_code == 303
-    assert logout.headers["location"] == "/commercial-offer/login"
-    raw_cookie = logout.headers.get("set-cookie", "")
-    assert SESSION_COOKIE_NAME in raw_cookie
-    assert "samesite=strict" in raw_cookie.lower()
-    assert "secure" in raw_cookie.lower()
+    assert legacy_logout.status_code == 405
+    assert "POST /api/v1/auth/logout" in legacy_logout.json()["detail"]
+    assert legacy_logout.headers.get("allow") == "POST"
+    assert legacy_logout.headers.get("deprecation") == "true"
+
+    me = client.get("/api/v1/auth/me")
+    assert me.status_code == 200
+    assert me.json()["user"]["username"] == "admin"

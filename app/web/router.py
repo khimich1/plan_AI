@@ -23,9 +23,9 @@ from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER, get_current_user, re
 from app.dependencies.commercial_draft import check_draft_ownership
 from app.dependencies.plate_context import get_plate_order_context
 from app.repositories.auth_repository import AuthRepository
-from app.security.csrf import clear_csrf_cookie, generate_csrf_token, set_csrf_cookie
+from app.security.csrf import generate_csrf_token, set_csrf_cookie
 from app.security.login_rate_limit import check_login_rate_limit, resolve_client_ip
-from app.security.session import clear_session_cookie, create_session_token, set_session_cookie
+from app.security.session import create_session_token, set_session_cookie
 from app.services.commercial_service import CommercialService
 from app.services.commercial_upload_validation import prepare_commercial_ocr_upload
 from app.services.commercial_workflow_service import CommercialWorkflowService
@@ -132,11 +132,18 @@ def login_submit(
     return mark_legacy_response(response, legacy_path="/web/login", successor=home)
 
 
+_LEGACY_LOGOUT_HINT = (
+    "GET /web/logout is deprecated. Use POST /api/v1/auth/logout with a valid CSRF token."
+)
+
+
 @router.get("/web/logout")
-def web_logout() -> RedirectResponse:
-    response = RedirectResponse(SPA_LOGIN, status_code=303)
-    clear_session_cookie(response)
-    clear_csrf_cookie(response)
+def web_logout() -> JSONResponse:
+    response = JSONResponse(
+        status_code=405,
+        content={"detail": _LEGACY_LOGOUT_HINT},
+        headers={"Allow": "POST"},
+    )
     return mark_legacy_response(response, legacy_path="/web/logout", successor=SPA_LOGIN)
 
 

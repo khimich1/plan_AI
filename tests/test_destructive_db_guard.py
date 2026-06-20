@@ -47,10 +47,25 @@ def test_destructive_blocked_in_staging(monkeypatch: pytest.MonkeyPatch) -> None
         require_destructive_db_reset()
 
 
-def test_destructive_allowed_in_production_with_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_destructive_blocked_in_production_with_allow_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ALLOW_DESTRUCTIVE_DB_RESET", "1")
+    monkeypatch.delenv("DESTRUCTIVE_DB_RESET_BREAK_GLASS", raising=False)
+    assert destructive_db_reset_allowed() is False
+    with pytest.raises(DestructiveDbOperationBlocked):
+        require_destructive_db_reset()
+
+
+def test_destructive_allowed_in_production_with_break_glass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ALLOW_DESTRUCTIVE_DB_RESET", "1")
+    monkeypatch.setenv("DESTRUCTIVE_DB_RESET_BREAK_GLASS", "1")
     assert destructive_db_reset_allowed() is True
+    require_destructive_db_reset()
 
 
 def test_clear_all_kp_blocked_in_production(

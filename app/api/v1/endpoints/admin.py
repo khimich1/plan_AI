@@ -10,7 +10,10 @@ from app.repositories.auth_repository import AuthRepository
 from app.schemas.admin import DbResetReport, DbStatsResponse, RecoverPlatesResponse
 from app.schemas.auth import UsersPageResponse
 from app.services.admin_service import AdminService
-from core.destructive_db_guard import DestructiveDbOperationBlocked
+from core.destructive_db_guard import (
+    DestructiveDbOperationBlocked,
+    require_destructive_db_reset,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +22,13 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 def get_admin_service() -> AdminService:
     return AdminService()
+
+
+def _enforce_destructive_db_reset() -> None:
+    try:
+        require_destructive_db_reset()
+    except DestructiveDbOperationBlocked as exc:
+        raise_destructive_db_blocked_error(exc, where="admin.destructive_guard")
 
 
 @router.get("/users", response_model=UsersPageResponse)
@@ -43,6 +53,7 @@ def get_db_stats(
 @router.post("/db/reset/full", response_model=DbResetReport)
 def reset_full(
     _user: dict = Depends(require_roles("admin")),
+    _guard: None = Depends(_enforce_destructive_db_reset),
     service: AdminService = Depends(get_admin_service),
 ) -> DbResetReport:
     try:
@@ -60,6 +71,7 @@ def reset_full(
 @router.post("/db/reset/kp-only", response_model=DbResetReport)
 def reset_kp_only(
     _user: dict = Depends(require_roles("admin")),
+    _guard: None = Depends(_enforce_destructive_db_reset),
     service: AdminService = Depends(get_admin_service),
 ) -> DbResetReport:
     try:
@@ -77,6 +89,7 @@ def reset_kp_only(
 @router.post("/db/reset/plans-only", response_model=DbResetReport)
 def reset_plans_only(
     _user: dict = Depends(require_roles("admin")),
+    _guard: None = Depends(_enforce_destructive_db_reset),
     service: AdminService = Depends(get_admin_service),
 ) -> DbResetReport:
     try:
@@ -94,6 +107,7 @@ def reset_plans_only(
 @router.post("/db/reset/calendar-only", response_model=DbResetReport)
 def reset_calendar_only(
     _user: dict = Depends(require_roles("admin")),
+    _guard: None = Depends(_enforce_destructive_db_reset),
     service: AdminService = Depends(get_admin_service),
 ) -> DbResetReport:
     try:

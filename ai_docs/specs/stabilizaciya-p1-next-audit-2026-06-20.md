@@ -69,10 +69,10 @@
 ## WP1 — S4: POST logout + CSRF
 
 **Acceptance:**
-- [ ] Logout доступен только через **POST** (GET возвращает 405 или redirect без invalidate session)
-- [ ] Cookie-based logout требует валидный CSRF token (как login/forms)
-- [ ] Шаблоны/frontend: форма или fetch POST с token
-- [ ] Тесты: `tests/test_web_logout_csrf.py` (или расширение csrf suite) — positive/negative
+- [x] Logout доступен только через **POST** (GET возвращает 405 или redirect без invalidate session)
+- [x] Cookie-based logout требует валидный CSRF token (как login/forms)
+- [x] Шаблоны/frontend: форма или fetch POST с token
+- [x] Тесты: `tests/test_web_logout_csrf.py` (или расширение csrf suite) — positive/negative
 
 **Verify:** `pytest tests/test_csrf.py tests/test_web_logout_csrf.py -q`
 
@@ -81,10 +81,10 @@
 ## WP2 — S6: full destructive guard
 
 **Acceptance:**
-- [ ] Инвентаризация всех destructive endpoints (admin reset, archive wipe, bulk delete)
-- [ ] Каждый path вызывает единый guard (`ALLOW_DESTRUCTIVE_DB_RESET` / env fail-closed)
-- [ ] Production/staging: 403 без явного override; audit log при deny
-- [ ] Тесты покрывают ранее неохваченные routes (дополнить `test_admin_destructive_guard.py`)
+- [x] Инвентаризация всех destructive endpoints (admin reset, archive wipe, bulk delete)
+- [x] Каждый path вызывает единый guard (`ALLOW_DESTRUCTIVE_DB_RESET` / env fail-closed)
+- [x] Production/staging: 403 без явного override; audit log при deny
+- [x] Тесты покрывают ранее неохваченные routes (дополнить `test_admin_destructive_guard.py`)
 
 **Verify:** `pytest tests/test_admin_destructive_guard.py -q`
 

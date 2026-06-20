@@ -1,4 +1,4 @@
-"""HTTP-level tests for destructive admin reset guards (WP2 S4)."""
+"""HTTP-level tests for destructive admin reset guards (WP2 S6)."""
 
 from __future__ import annotations
 
@@ -18,8 +18,17 @@ from app.security.session import create_session_token
 from core import kp_db
 
 VALID_APP_SECRET_KEY = "test-secret-key-for-pytest-must-be-32-chars-min"
+ADMIN_RESET_FULL = "/api/v1/admin/db/reset/full"
+ADMIN_RESET_KP = "/api/v1/admin/db/reset/kp-only"
 ADMIN_RESET_PLANS = "/api/v1/admin/db/reset/plans-only"
 ADMIN_RESET_CALENDAR = "/api/v1/admin/db/reset/calendar-only"
+
+ALL_RESET_ENDPOINTS = (
+    ADMIN_RESET_FULL,
+    ADMIN_RESET_KP,
+    ADMIN_RESET_PLANS,
+    ADMIN_RESET_CALENDAR,
+)
 
 ADMIN_USER = {
     "id": 1,
@@ -57,6 +66,7 @@ def production_admin_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     monkeypatch.setenv("BOT_AUTH_ENABLED", "true")
     monkeypatch.setenv("BOT_TELEGRAM_ALLOWLIST", "1:admin")
     monkeypatch.delenv("ALLOW_DESTRUCTIVE_DB_RESET", raising=False)
+    monkeypatch.delenv("DESTRUCTIVE_DB_RESET_BREAK_GLASS", raising=False)
     get_settings.cache_clear()
 
     patch_auth_users(monkeypatch, [ADMIN_USER])
@@ -79,15 +89,28 @@ def admin_cookie() -> dict[str, str]:
     }
 
 
-@pytest.mark.parametrize(
-    "endpoint",
-    [ADMIN_RESET_PLANS, ADMIN_RESET_CALENDAR],
-)
+@pytest.mark.parametrize("endpoint", ALL_RESET_ENDPOINTS)
 def test_reset_blocked_in_production_without_flag(
     client: TestClient,
     admin_cookie: dict[str, str],
     endpoint: str,
 ) -> None:
+    response = client.post(endpoint, cookies=admin_cookie)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == MSG_DESTRUCTIVE_DB_BLOCKED
+
+
+@pytest.mark.parametrize("endpoint", ALL_RESET_ENDPOINTS)
+def test_reset_blocked_in_production_with_allow_only(
+    client: TestClient,
+    admin_cookie: dict[str, str],
+    endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALLOW_DESTRUCTIVE_DB_RESET", "1")
+    monkeypatch.delenv("DESTRUCTIVE_DB_RESET_BREAK_GLASS", raising=False)
+
     response = client.post(endpoint, cookies=admin_cookie)
 
     assert response.status_code == 403
