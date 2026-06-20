@@ -11,6 +11,10 @@ from fastapi.responses import JSONResponse
 from app.api.v1.router import router as api_v1_router
 from app.core.settings import get_settings
 from app.repositories.auth_repository import AuthRepository
+from app.security.login_rate_limit import (
+    rate_limit_deployment_info,
+    warn_if_multi_worker_without_shared_store,
+)
 from app.services.draft_store import DraftStoreLockTimeout
 from app.web.router import router as web_router
 from core.logging_config import setup_logging
@@ -30,6 +34,7 @@ async def lifespan(app: FastAPI):
 
     kp_db.ensure_schema(str(settings.plita_db_path))
     AuthRepository(str(settings.plita_db_path)).init_schema()
+    warn_if_multi_worker_without_shared_store()
     app.state.settings = settings
     yield
 
@@ -74,7 +79,11 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["health"])
     def root_health() -> dict:
-        return {"status": "ok", "app": settings.app_name}
+        return {
+            "status": "ok",
+            "app": settings.app_name,
+            "rate_limiting": rate_limit_deployment_info(),
+        }
 
     app.include_router(api_v1_router, prefix="/api/v1")
     app.include_router(web_router)

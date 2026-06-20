@@ -28,6 +28,7 @@ TESTER_USER = {
     "manager_id": None,
     "is_active": 1,
     "created_at": "2026-01-01 00:00:00",
+    "session_version": 0,
 }
 
 
@@ -53,6 +54,7 @@ def client(
                 "manager_id": None,
                 "is_active": 1,
                 "created_at": "2026-01-01 00:00:00",
+    "session_version": 0,
             }
         ],
     )

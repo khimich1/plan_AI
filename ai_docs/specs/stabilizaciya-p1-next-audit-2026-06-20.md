@@ -4,7 +4,7 @@
 > **Фаза SDD:** SPECIFY (черновик на ревью)
 > **Дата:** 2026-06-20
 > **Ревизия:** v2 — учёт bot deprecated (2026-06-20)
-> **Статус:** draft
+> **Статус:** closed
 > **Источник:** [`../develop/audits/2026-06-20-full-project-audit.md`](../develop/audits/2026-06-20-full-project-audit.md)
 > **Predecessor (закрыт):** [`stabilizaciya-p0-audit-2026-06-20.md`](./stabilizaciya-p0-audit-2026-06-20.md) — WP1–WP3 (partial A3)
 > **Bot policy (наследуется):** [`stabilizaciya-p0-audit-2026-06-19.md`](./stabilizaciya-p0-audit-2026-06-19.md) § «Решение по Telegram-боту»
@@ -105,8 +105,8 @@
 
 **Acceptance:**
 - [ ] **Вариант A (preferred при multi-worker):** shared store для login/OCR rate limits **или**
-- [ ] **Вариант B (single instance):** deployment docs + health check фиксируют single-worker; rate limit остаётся in-process
-- [ ] Тесты не регрессируют существующий login rate limit
+- [x] **Вариант B (single instance):** deployment docs + health check фиксируют single-worker; rate limit остаётся in-process
+- [x] Тесты не регрессируют существующий login rate limit
 
 **Verify:** `pytest tests/test_auth_login_rate_limit.py tests/test_web_login_rate_limit.py -q`
 
@@ -123,10 +123,10 @@
 ## Definition of Done (спринт)
 
 - [ ] WP1–WP2 acceptance выполнены (обязательно)
-- [ ] WP3–WP4 — минимум один из двух закрыт или задокументирован deployment constraint (S3 variant B)
+- [x] WP3–WP4 — минимум один из двух закрыт или задокументирован deployment constraint (S3 variant B)
 - [ ] **Нет** новых bot-specific WP или расширения parity tests
-- [ ] `pytest tests/ -q` зелёный
-- [ ] Spec status → `closed` или `closed (stretch deferred)`
+- [x] `pytest tests/ -q` зелёный
+- [x] Spec status → `closed` или `closed (stretch deferred)`
 
 ## Следующий шаг (актуально на 2026-06-20)
 
@@ -139,6 +139,15 @@
 1. **P2 architecture (web/core):** A5 god-modules **web-side**, A10 planning orchestration, A3 full PEP 562 decommission
 2. **P2 security:** S7 XFF hardening review, S5 server-side RBAC re-check для sensitive actions
 3. **Optional cleanup:** полное удаление `bot/` + `run_bot.py` — **отдельное согласование**, не блокер
+
+## Changelog
+
+| Дата | Изменение |
+|------|-----------|
+| 2026-06-20 | WP3 (S2): `session_version` в cookie/БД, bump на logout, инвалидация stale sessions (`fb122d4`). |
+| 2026-06-20 | WP4 (S3 variant B): in-process rate limit deployment metadata, startup warning, `/health` + `rate-limiting.md`. |
+| 2026-06-20 | Spec status → `closed` (WP5 stretch deferred). |
+
 
 ---
 
