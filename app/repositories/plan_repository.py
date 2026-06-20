@@ -161,6 +161,14 @@ class PlanRepository:
             conn.commit()
         return cursor.rowcount > 0
 
+    def delete_all_plans(self) -> int:
+        """Delete all rows from ``production_plans`` in a single transaction."""
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM production_plans")
+            deleted = int(cursor.rowcount)
+            conn.commit()
+        return deleted
+
     def _list_metadata_from_sqlite(self) -> dict[str, Any]:
         with self._connect() as conn:
             rows = conn.execute(

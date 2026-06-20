@@ -51,6 +51,7 @@ type WizardDraftAction =
       replacementText: string;
     }
   | { type: "set-execution-terms"; value: string }
+  | { type: "set-draft-id"; draftId: string }
   | { type: "hydrate-draft"; payload: CommercialDraftDetails }
   | { type: "set-save-result"; payload: CommercialSaveResult | null }
   | { type: "reset" };
@@ -99,6 +100,8 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
       };
     case "set-execution-terms":
       return { ...state, executionTermsInput: action.value };
+    case "set-draft-id":
+      return { ...state, draftId: action.draftId };
     case "hydrate-draft":
       return {
         ...state,

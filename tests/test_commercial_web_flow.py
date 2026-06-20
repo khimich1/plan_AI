@@ -12,6 +12,7 @@ from app.core.http_errors import MSG_INTERNAL, MSG_PARSE_FAILED, MSG_VALIDATION
 from app.core.settings import get_settings
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
+from tests.helpers.auth_fixtures import patch_auth_users
 from app.security.session import create_session_token
 from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.parse_result import ParseResult
@@ -85,10 +86,9 @@ def _sample_draft(draft_id: str = "draft-123") -> dict:
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "tester",
@@ -590,10 +590,9 @@ def test_download_generated_file_rejects_outside_outputs(
 def client_two_users(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "alice",
@@ -768,8 +767,9 @@ def test_web_offer_form_and_redirect(
 
     assert page_response.status_code == 303
     assert page_response.headers["location"] == "/commercial-offer/new"
+    assert page_response.headers.get("Deprecation") == "true"
     assert submit_response.status_code == 303
-    assert submit_response.headers["location"] == "/web/offers/drafts/draft-web"
+    assert submit_response.headers["location"] == "/commercial-offer/new?draft=draft-web&legacy=1"
 
 
 def test_build_order_data_preserves_input_sequence() -> None:

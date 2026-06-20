@@ -21,9 +21,13 @@ class DestructiveDbOperationBlocked(RuntimeError):
 
 
 def destructive_db_reset_allowed() -> bool:
-    """True when destructive reset is permitted for the current environment."""
+    """True when destructive reset is permitted for the current environment.
+
+    Allowed only in ``development`` or when ``ALLOW_DESTRUCTIVE_DB_RESET`` is set.
+    Production, staging, and unknown environments are denied without the flag.
+    """
     app_env = os.environ.get("APP_ENV", "development").strip().lower()
-    if app_env != "production":
+    if app_env == "development":
         return True
     raw = os.environ.get("ALLOW_DESTRUCTIVE_DB_RESET", "").strip().lower()
     return raw in _TRUTHY

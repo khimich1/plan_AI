@@ -39,6 +39,14 @@ def test_destructive_blocked_in_production(monkeypatch: pytest.MonkeyPatch) -> N
         require_destructive_db_reset()
 
 
+def test_destructive_blocked_in_staging(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.delenv("ALLOW_DESTRUCTIVE_DB_RESET", raising=False)
+    assert destructive_db_reset_allowed() is False
+    with pytest.raises(DestructiveDbOperationBlocked):
+        require_destructive_db_reset()
+
+
 def test_destructive_allowed_in_production_with_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ALLOW_DESTRUCTIVE_DB_RESET", "1")
@@ -92,7 +100,7 @@ def _populated_db(_admin_settings):
     kp_db.init_schema(db_path)
     AuthRepository(db_path=db_path).create_or_update_user(
         username="root_admin",
-        password="qwerty123",
+        password="AdminTestPass12!",
         role="admin",
     )
     with sqlite3.connect(db_path) as conn:

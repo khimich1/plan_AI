@@ -11,6 +11,7 @@ from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.plate_order import PlateOrder
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
+from tests.helpers.auth_fixtures import patch_auth_users
 from app.security.session import create_session_token
 from app.services.draft_store import DraftStore
 from core import commercial_offer, commercial_offer_xlsx
@@ -44,10 +45,9 @@ def _unpriced_order_item() -> dict:
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "tester",

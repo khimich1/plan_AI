@@ -64,6 +64,22 @@ class AuthRepository:
             payload.pop("password_hash", None)
         return payload
 
+    def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
+        self.init_schema()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, username, role, manager_id, is_active, created_at
+                FROM app_users
+                WHERE id = ?
+                """,
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_payload(row)
+
     def get_user_by_username(self, username: str, *, include_password_hash: bool = False) -> dict[str, Any] | None:
         self.init_schema()
         with sqlite3.connect(self.db_path) as conn:

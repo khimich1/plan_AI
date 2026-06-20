@@ -68,6 +68,8 @@ def reset_plans_only(
 ) -> DbResetReport:
     try:
         return service.reset_plans_only()
+    except DestructiveDbOperationBlocked as exc:
+        raise_destructive_db_blocked_error(exc, where="admin.reset_plans_only")
     except Exception as exc:
         logger.exception("[admin/reset-plans-only] ошибка обнуления планов")
         raise HTTPException(
@@ -83,6 +85,8 @@ def reset_calendar_only(
 ) -> DbResetReport:
     try:
         return service.reset_calendar_only()
+    except DestructiveDbOperationBlocked as exc:
+        raise_destructive_db_blocked_error(exc, where="admin.reset_calendar_only")
     except Exception as exc:
         logger.exception("[admin/reset-calendar-only] ошибка сброса календаря")
         raise HTTPException(

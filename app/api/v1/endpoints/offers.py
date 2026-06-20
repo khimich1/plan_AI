@@ -15,7 +15,7 @@ def list_offers(
     status: str = Query(default="all"),
     limit: int = Query(default=200, ge=1, le=1000),
     kp_id: int | None = Query(default=None, ge=1),
-    user: dict = Depends(require_roles("admin", "manager", "production")),
+    user: dict = Depends(require_roles("admin", "manager")),
 ) -> dict:
     service = OffersService()
     items = service.list_offers(status=status, limit=limit, kp_id=kp_id, user=user)
@@ -25,7 +25,7 @@ def list_offers(
 @router.get("/{kp_id}")
 def get_offer(
     kp_id: int,
-    user: dict = Depends(require_roles("admin", "manager", "production")),
+    user: dict = Depends(require_roles("admin", "manager")),
 ) -> dict:
     service = OffersService()
     item = service.get_offer(kp_id, user=user)
@@ -88,7 +88,7 @@ def delete_offer(
 @router.get("/{kp_id}/pdf")
 def download_offer_pdf(
     kp_id: int,
-    user: dict = Depends(require_roles("admin", "manager", "production")),
+    user: dict = Depends(require_roles("admin", "manager")),
 ) -> Response:
     service = OffersService()
     try:
@@ -104,7 +104,7 @@ def download_offer_pdf(
 @router.get("/{kp_id}/xlsx")
 def download_offer_xlsx(
     kp_id: int,
-    user: dict = Depends(require_roles("admin", "manager", "production")),
+    user: dict = Depends(require_roles("admin", "manager")),
 ) -> Response:
     service = OffersService()
     try:

@@ -248,6 +248,7 @@ def test_web_login_set_cookie_attributes(
     )
 
     assert response.status_code == 303
+    assert response.headers["location"] == "/commercial-offer/new"
     raw_cookie = response.headers.get("set-cookie", "")
     attrs = _parse_set_cookie_header(raw_cookie)
     assert attrs.get("name") == SESSION_COOKIE_NAME
@@ -273,6 +274,7 @@ def test_web_logout_clears_session_cookie(
     logout = client.get("/web/logout", follow_redirects=False)
 
     assert logout.status_code == 303
+    assert logout.headers["location"] == "/commercial-offer/login"
     raw_cookie = logout.headers.get("set-cookie", "")
     assert SESSION_COOKIE_NAME in raw_cookie
     assert "samesite=strict" in raw_cookie.lower()

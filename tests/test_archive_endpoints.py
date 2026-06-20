@@ -10,6 +10,7 @@ from app.api.v1.endpoints.archive import get_archive_service
 from app.core.settings import get_settings
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
+from tests.helpers.auth_fixtures import patch_auth_users
 from app.schemas.archive import (
     ArchiveOfferDetails,
     ArchiveOfferFinance,
@@ -40,10 +41,9 @@ def client(
 ) -> TestClient:
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "tester",

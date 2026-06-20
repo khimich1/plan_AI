@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import get_settings
 from app.main import create_app
-from app.repositories.auth_repository import AuthRepository
+from tests.helpers.auth_fixtures import patch_auth_users
 from app.security.session import create_session_token
 from core.kp_persistence_service import KpPersistenceService
 from tests.helpers import kp_db_fixtures as fx
@@ -82,7 +82,7 @@ def auth_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestCl
     monkeypatch.setenv("APP_SECRET_KEY", VALID_APP_SECRET_KEY)
     monkeypatch.setenv("PLITA_DB_PATH", db_path)
     get_settings.cache_clear()
-    monkeypatch.setattr(AuthRepository, "list_users", lambda self: list(USERS))
+    patch_auth_users(monkeypatch, USERS)
     client = TestClient(create_app())
     return client, db_path
 

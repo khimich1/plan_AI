@@ -25,6 +25,7 @@ from app.repositories.plan_repository import PlanRepository
 from app.repositories.work_calendar_repository import WorkCalendarRepository
 from app.schemas.admin import DbResetReport, DbStatsResponse, RecoverPlatesResponse
 from core import kp_db_offers, kp_db_plates
+from core.destructive_db_guard import require_destructive_db_reset
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +92,14 @@ class AdminService:
         return DbResetReport(sqlite=_normalize_int_dict(sqlite_report))
 
     def reset_plans_only(self) -> DbResetReport:
-        """Частичное обнуление: только JSON-планы (БД не трогаем)."""
+        """Частичное обнуление: SQLite ``production_plans`` + legacy JSON-планы."""
+        require_destructive_db_reset()
         plans_report = self._clear_all_plans()
         return DbResetReport(plans=plans_report)
 
     def reset_calendar_only(self) -> DbResetReport:
         """Частичное обнуление: только производственный календарь."""
+        require_destructive_db_reset()
         calendar_reset = self._reset_calendar()
         return DbResetReport(calendar_reset=calendar_reset)
 
@@ -110,12 +113,13 @@ class AdminService:
     # ---------- Internals ----------
 
     def _clear_all_plans(self) -> dict[str, int]:
-        """Удаляет JSON-файлы планов и метаданные.
+        """Удаляет SQLite-планы и legacy JSON-файлы планов с метаданными.
 
         Повторяет логику ``bot/handlers/admin.py:386-436``, но пути берёт из
         ``Settings``: ``plans_dir``, ``plans_metadata_path``, ``current_plan_path``.
         """
         report: dict[str, int] = {
+            "sqlite_plans": 0,
             "current_plan": 0,
             "metadata": 0,
             "plan_files": 0,
@@ -123,6 +127,8 @@ class AdminService:
         }
 
         try:
+            report["sqlite_plans"] = self.plan_repository.delete_all_plans()
+
             current_plan_path: Path = self.settings.current_plan_path
             if current_plan_path.exists():
                 current_plan_path.unlink()
@@ -144,7 +150,10 @@ class AdminService:
             raise
 
         report["total"] = (
-            report["current_plan"] + report["metadata"] + report["plan_files"]
+            report["sqlite_plans"]
+            + report["current_plan"]
+            + report["metadata"]
+            + report["plan_files"]
         )
         return report
 

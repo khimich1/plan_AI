@@ -8,9 +8,8 @@ import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { getErrorMessage } from "@/shared/lib/apiError";
+import { defaultRouteForRole } from "@/shared/lib/roleRoutes";
 import { Spinner } from "@/shared/ui/Spinner";
-
-const DEFAULT_REDIRECT = "/new";
 
 const loginSchema = z.object({
   username: z.string().trim().min(1, "Введите логин"),
@@ -44,14 +43,14 @@ export const LoginPage = () => {
   }
 
   if (user) {
-    return <Navigate to={DEFAULT_REDIRECT} replace />;
+    return <Navigate to={defaultRouteForRole(user.role)} replace />;
   }
 
   const onSubmit = async (values: LoginFormValues) => {
     setSubmitError(null);
     try {
-      await login(values);
-      navigate(DEFAULT_REDIRECT, { replace: true });
+      const loggedInUser = await login(values);
+      navigate(defaultRouteForRole(loggedInUser.role), { replace: true });
     } catch (error) {
       setSubmitError(getErrorMessage(error));
     }

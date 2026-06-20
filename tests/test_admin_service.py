@@ -9,6 +9,7 @@ import pytest
 
 from app.core.settings import Settings
 from app.repositories.auth_repository import AuthRepository
+from app.repositories.plan_repository import PlanRepository
 from app.services.admin_service import AdminService
 from core import kp_db
 
@@ -38,7 +39,7 @@ def populated_db(admin_settings: Settings) -> Path:
     auth_repo = AuthRepository(db_path=db_path)
     auth_repo.create_or_update_user(
         username="root_admin",
-        password="qwerty123",
+        password="AdminTestPass12!",
         role="admin",
     )
 
@@ -136,12 +137,27 @@ def _table_count(db_path: Path | str, table: str) -> int:
         return int(cur.fetchone()[0])
 
 
+def _seed_sqlite_plans(db_path: str, *plan_ids: str) -> PlanRepository:
+    repo = PlanRepository(db_path=db_path)
+    for plan_id in plan_ids:
+        repo.create(
+            {
+                "id": plan_id,
+                "name": f"Plan {plan_id}",
+                "days": {},
+                "start_date": "2026-01-01",
+            }
+        )
+    return repo
+
+
 def test_reset_full_clears_all_plate_tables_and_plans(
     admin_settings: Settings,
     populated_db: Path,
     populated_plans: None,
 ) -> None:
-    service = _make_service(admin_settings)
+    plan_repo = _seed_sqlite_plans(str(populated_db), "sqlite_plan_1", "sqlite_plan_2")
+    service = AdminService(settings=admin_settings, plan_repository=plan_repo)
 
     report = service.reset_full()
 
@@ -152,12 +168,14 @@ def test_reset_full_clears_all_plate_tables_and_plans(
     assert _table_count(populated_db, "kp_files") == 0
     assert _table_count(populated_db, "kp_meta") == 0
     assert _table_count(populated_db, "plate_status_log") == 0
+    assert _table_count(populated_db, "production_plans") == 0
 
     assert not admin_settings.current_plan_path.exists()
     assert not admin_settings.plans_metadata_path.exists()
     assert admin_settings.plans_dir.exists()
     assert list(admin_settings.plans_dir.glob("*.json")) == []
 
+    assert report.plans["sqlite_plans"] == 2
     assert report.plans["plan_files"] == 2
     assert report.plans["current_plan"] == 1
     assert report.plans["metadata"] == 1
@@ -221,17 +239,20 @@ def test_reset_kp_only_keeps_completed_plates_and_rests(
     assert _table_count(populated_db, "plate_rests") == 1
 
 
-def test_reset_plans_only_does_not_touch_db(
+def test_reset_plans_only_clears_sqlite_and_json_keeps_kp_tables(
     admin_settings: Settings,
     populated_db: Path,
     populated_plans: None,
 ) -> None:
-    service = _make_service(admin_settings)
+    plan_repo = _seed_sqlite_plans(str(populated_db), "sqlite_plan_1", "sqlite_plan_2")
+    service = AdminService(settings=admin_settings, plan_repository=plan_repo)
 
     report = service.reset_plans_only()
 
+    assert _table_count(populated_db, "production_plans") == 0
     assert _table_count(populated_db, "KP_offers") == 1
     assert _table_count(populated_db, "kp_plates") == 1
+    assert report.plans["sqlite_plans"] == 2
     assert report.plans["plan_files"] == 2
     assert not admin_settings.current_plan_path.exists()
     assert not admin_settings.plans_metadata_path.exists()

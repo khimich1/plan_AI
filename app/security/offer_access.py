@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 
 FORBIDDEN_OFFER_DETAIL = "Доступ к КП запрещён."
 
-_PRODUCTION_READ_STATUSES = frozenset({"в работе", "выполнено"})
+_PRODUCTION_READ_STATUSES = frozenset({"в работе"})
 
 
 def is_admin(user: dict) -> bool:
@@ -27,9 +27,6 @@ def can_read_offer(user: dict, offer: dict) -> bool:
         if owner is None:
             return False
         return owner == int(user["id"])
-    if role == "production":
-        status_value = offer.get("status") or "в работе"
-        return status_value in _PRODUCTION_READ_STATUSES
     return False
 
 
@@ -67,6 +64,4 @@ def list_filters_for_user(user: dict) -> dict:
     role = user.get("role")
     if role == "manager":
         return {"owner_user_id": int(user["id"])}
-    if role == "production":
-        return {"readable_statuses": tuple(_PRODUCTION_READ_STATUSES)}
     return {"deny_all": True}

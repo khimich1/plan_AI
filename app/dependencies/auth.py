@@ -18,8 +18,7 @@ def get_current_user(
     payload = decode_session_token(token or "")
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    users = {user["id"]: user for user in repository.list_users()}
-    user = users.get(int(payload["id"]))
+    user = repository.get_user_by_id(int(payload["id"]))
     if not user or not user.get("is_active"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
     return user

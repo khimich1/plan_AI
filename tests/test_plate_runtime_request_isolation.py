@@ -15,6 +15,7 @@ from app.dependencies.plate_context import get_plate_order_context
 from app.main import create_app
 from app.middleware.plate_runtime_isolation import PlateMutableRuntimeIsolationMiddleware
 from app.repositories.auth_repository import AuthRepository
+from tests.helpers.auth_fixtures import patch_auth_users
 from app.security.session import create_session_token
 from core import config_and_data as cfg
 from core.plate_order_context import PlateOrderContext
@@ -33,10 +34,9 @@ def _auth_headers() -> dict[str, str]:
 def isolated_app(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "tester",

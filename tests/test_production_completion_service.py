@@ -21,6 +21,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.planning import plan_manager, plan_storage
 from core import kp_db, work_calendar
+from tests.helpers.auth_fixtures import patch_auth_users
 
 
 PLATE_NAME = "ПБ 60-12-8п"
@@ -986,7 +987,6 @@ def test_complete_day_rest_validation_maps_to_structured_422(
     from fastapi.testclient import TestClient
 
     from app.main import create_app
-    from app.repositories.auth_repository import AuthRepository
     from app.security.session import create_session_token
     from app.services.production_completion_service import ProductionRestValidationError
 
@@ -997,10 +997,9 @@ def test_complete_day_rest_validation_maps_to_structured_422(
     )
     plan_id = built["plan"]["id"]
 
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "tester",
@@ -1056,7 +1055,6 @@ def test_complete_day_rest_db_error_maps_to_500(
     from fastapi.testclient import TestClient
 
     from app.main import create_app
-    from app.repositories.auth_repository import AuthRepository
     from app.security.session import create_session_token
     from app.services.production_completion_service import ProductionRestDbError
 
@@ -1067,10 +1065,9 @@ def test_complete_day_rest_db_error_maps_to_500(
     )
     plan_id = built["plan"]["id"]
 
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "tester",

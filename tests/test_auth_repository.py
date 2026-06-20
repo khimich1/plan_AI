@@ -51,6 +51,23 @@ def test_create_or_update_user_updates_password_and_role(tmp_path: Path):
     assert repository.authenticate("operator", "UpdatedPassword123!") is None
 
 
+def test_get_user_by_id_returns_public_fields(tmp_path: Path):
+    repository = make_repository(tmp_path)
+    user, _created = repository.create_or_update_user(
+        username="lookup",
+        password="LookupPassword123!",
+        role="manager",
+    )
+
+    loaded = repository.get_user_by_id(user["id"])
+
+    assert loaded is not None
+    assert loaded["username"] == "lookup"
+    assert loaded["role"] == "manager"
+    assert "password_hash" not in loaded
+    assert repository.get_user_by_id(9999) is None
+
+
 def test_get_user_by_username_can_include_password_hash(tmp_path: Path):
     repository = make_repository(tmp_path)
     repository.create_or_update_user(

@@ -8,10 +8,22 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.core.settings import get_settings
+from app.web.legacy_deprecation import (
+    SPA_ARCHIVE,
+    SPA_LOGIN,
+    SPA_NEW,
+    SPA_PRODUCTION,
+    default_spa_home_for_role,
+    deprecated_redirect,
+    mark_legacy_response,
+    spa_draft_url,
+    spa_new_with_notice,
+)
 from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER, get_current_user, require_roles
 from app.dependencies.commercial_draft import check_draft_ownership
 from app.dependencies.plate_context import get_plate_order_context
 from app.repositories.auth_repository import AuthRepository
+from app.security.login_rate_limit import check_login_rate_limit, resolve_client_ip
 from app.security.session import clear_session_cookie, create_session_token, set_session_cookie
 from app.services.commercial_service import CommercialService
 from app.services.commercial_upload_validation import prepare_commercial_ocr_upload
@@ -192,43 +204,45 @@ def _render_offer_preview(*, user: dict, draft: dict) -> HTMLResponse:
     return _page("Offer Draft", body)
 
 
-@router.get("/web/login", response_class=HTMLResponse)
-def login_page(request: Request) -> HTMLResponse:
-    error = request.query_params.get("error")
-    body = """
-    <h1>Вход в систему</h1>
-    <form method="post" action="/web/login">
-      <label>Логин <input type="text" name="username"></label><br><br>
-      <label>Пароль <input type="password" name="password"></label><br><br>
-      <button type="submit">Войти</button>
-    </form>
-    """
-    if error:
-        body = f'<p style="color: red;">{escape(error)}</p>' + body
-    return _page("Login", body)
+@router.get("/web/login")
+def login_page(request: Request) -> RedirectResponse:
+    _ = request
+    return deprecated_redirect(SPA_LOGIN, legacy_path="/web/login")
 
 
 @router.post("/web/login")
-def login_submit(username: str = Form(...), password: str = Form(...)) -> RedirectResponse:
+def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+) -> RedirectResponse:
+    check_login_rate_limit(resolve_client_ip(request))
     repository = AuthRepository()
     user = repository.authenticate(username, password)
     if not user:
-        return RedirectResponse("/web/login?error=Неверные+данные", status_code=303)
+        response = RedirectResponse(f"{SPA_LOGIN}?error=Неверные+данные", status_code=303)
+        return mark_legacy_response(response, legacy_path="/web/login", successor=SPA_LOGIN)
     token = create_session_token({"id": user["id"], "username": user["username"], "role": user["role"]})
-    response = RedirectResponse("/web", status_code=303)
+    home = default_spa_home_for_role(user["role"])
+    response = RedirectResponse(home, status_code=303)
     set_session_cookie(response, token)
-    return response
+    return mark_legacy_response(response, legacy_path="/web/login", successor=home)
 
 
 @router.get("/web/logout")
 def web_logout() -> RedirectResponse:
-    response = RedirectResponse("/web/login", status_code=303)
+    response = RedirectResponse(SPA_LOGIN, status_code=303)
     clear_session_cookie(response)
-    return response
+    return mark_legacy_response(response, legacy_path="/web/logout", successor=SPA_LOGIN)
 
 
-@router.get("/web", response_class=HTMLResponse)
-def dashboard(user: dict = Depends(get_current_user)) -> HTMLResponse:
+@router.get("/web")
+def dashboard(user: dict = Depends(get_current_user)) -> RedirectResponse:
+    target = default_spa_home_for_role(user.get("role"))
+    return deprecated_redirect(target, legacy_path="/web")
+
+
+def _legacy_dashboard_html(user: dict) -> HTMLResponse:
     production = ProductionService().list_plans()
     managers = CommercialService().list_managers()
     body = (
@@ -243,8 +257,15 @@ def dashboard(user: dict = Depends(get_current_user)) -> HTMLResponse:
     return _page("Dashboard", body)
 
 
-@router.get("/web/managers", response_class=HTMLResponse)
-def managers_page(user: dict = Depends(require_roles("admin", "manager", "production"))) -> HTMLResponse:
+@router.get("/web/managers")
+def managers_page(
+    user: dict = Depends(require_roles("admin", "manager", "production")),
+) -> RedirectResponse:
+    _ = user
+    return deprecated_redirect(SPA_ARCHIVE, legacy_path="/web/managers")
+
+
+def _legacy_managers_page_html(user: dict) -> HTMLResponse:
     role = user.get("role", "")
     role_json = json.dumps(role)
     create_card_hidden = "" if role in {"admin", "manager"} else ' style="display:none"'
@@ -864,10 +885,15 @@ def managers_page(user: dict = Depends(require_roles("admin", "manager", "produc
     return _page("Managers", body)
 
 
-@router.get("/web/offers", response_class=HTMLResponse)
+@router.get("/web/offers")
 def offers_page(
     user: dict = Depends(require_roles("admin", "manager", "production")),
-) -> HTMLResponse:
+) -> RedirectResponse:
+    _ = user
+    return deprecated_redirect(SPA_ARCHIVE, legacy_path="/web/offers")
+
+
+def _legacy_offers_page_html(user: dict) -> HTMLResponse:
     # Object-level RBAC: same filters as REST /api/v1/offers (OffersService).
     offers = OffersService().list_offers(user=user, status="all", limit=100)
     rows = "".join(
@@ -883,10 +909,10 @@ def offers_page(
     return _page("Offers", body)
 
 
-@router.get("/web/offers/new", response_class=HTMLResponse)
-def new_offer_page(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> HTMLResponse:
+@router.get("/web/offers/new")
+def new_offer_page(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> RedirectResponse:
     _ = user
-    return RedirectResponse("/commercial-offer/new", status_code=303)
+    return deprecated_redirect(SPA_NEW, legacy_path="/web/offers/new")
 
 
 @router.post("/web/offers/new", response_model=None)
@@ -913,16 +939,24 @@ async def new_offer_submit(
     try:
         parsed_manager_id = int(manager_id)
     except ValueError:
-        return _render_offer_form(user=user, managers=managers, error="Выберите менеджера.", values=values)
+        return mark_legacy_response(
+            _render_offer_form(user=user, managers=managers, error="Выберите менеджера.", values=values),
+            legacy_path="/web/offers/new",
+            successor=SPA_NEW,
+        )
 
     try:
         parsed_discount = float((discount_percent or "0").replace(",", "."))
     except ValueError:
-        return _render_offer_form(
-            user=user,
-            managers=managers,
-            error="Скидка должна быть числом.",
-            values=values,
+        return mark_legacy_response(
+            _render_offer_form(
+                user=user,
+                managers=managers,
+                error="Скидка должна быть числом.",
+                values=values,
+            ),
+            legacy_path="/web/offers/new",
+            successor=SPA_NEW,
         )
 
     try:
@@ -932,7 +966,11 @@ async def new_offer_submit(
         )
     except HTTPException as exc:
         msg = exc.detail if isinstance(exc.detail, str) else "Ошибка загрузки файла."
-        return _render_offer_form(user=user, managers=managers, error=msg, values=values)
+        return mark_legacy_response(
+            _render_offer_form(user=user, managers=managers, error=msg, values=values),
+            legacy_path="/web/offers/new",
+            successor=SPA_NEW,
+        )
 
     workflow = CommercialWorkflowService()
     try:
@@ -948,26 +986,38 @@ async def new_offer_submit(
             owner_user_id=int(user["id"]),
         )
     except (PlateParseError, ValueError) as exc:
-        return _render_offer_form(user=user, managers=managers, error=str(exc), values=values)
-    return RedirectResponse(f"/web/offers/drafts/{draft['draft_id']}", status_code=303)
+        return mark_legacy_response(
+            _render_offer_form(user=user, managers=managers, error=str(exc), values=values),
+            legacy_path="/web/offers/new",
+            successor=SPA_NEW,
+        )
+    response = RedirectResponse(spa_draft_url(draft["draft_id"]), status_code=303)
+    successor = spa_draft_url(draft["draft_id"])
+    return mark_legacy_response(response, legacy_path="/web/offers/new", successor=successor)
 
 
-@router.get("/web/offers/drafts/{draft_id}", response_class=HTMLResponse)
+@router.get("/web/offers/drafts/{draft_id}")
 def offer_draft_page(
     draft_id: str,
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
-) -> HTMLResponse:
+) -> RedirectResponse:
+    legacy_path = f"/web/offers/drafts/{draft_id}"
     try:
         check_draft_ownership(draft_id, user)
     except HTTPException:
-        return _page("Draft not found", _nav(user) + "<h1>Черновик не найден</h1>")
+        return deprecated_redirect(
+            spa_new_with_notice("Черновик не найден или недоступен."),
+            legacy_path=legacy_path,
+        )
     workflow = CommercialWorkflowService()
     try:
-        draft = workflow.get_draft_details(draft_id)
+        workflow.get_draft_details(draft_id)
     except FileNotFoundError:
-        return _page("Draft not found", _nav(user) + "<h1>Черновик не найден</h1>")
-    draft = _redact_saved_offer_if_forbidden(draft, user)
-    return _render_offer_preview(user=user, draft=draft)
+        return deprecated_redirect(
+            spa_new_with_notice("Черновик не найден или недоступен."),
+            legacy_path=legacy_path,
+        )
+    return deprecated_redirect(spa_draft_url(draft_id), legacy_path=legacy_path)
 
 
 @router.post("/web/offers/drafts/{draft_id}/generate-files")
@@ -976,10 +1026,13 @@ def generate_offer_draft_files(
     request: Request,
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
 ) -> RedirectResponse:
+    legacy_path = f"/web/offers/drafts/{draft_id}/generate-files"
+    successor = spa_draft_url(draft_id)
     try:
         check_draft_ownership(draft_id, user)
     except HTTPException:
-        return RedirectResponse("/web/offers", status_code=303)
+        response = RedirectResponse(SPA_ARCHIVE, status_code=303)
+        return mark_legacy_response(response, legacy_path=legacy_path, successor=SPA_ARCHIVE)
     workflow = CommercialWorkflowService()
     try:
         workflow.generate_files(
@@ -987,8 +1040,13 @@ def generate_offer_draft_files(
             plate_order_ctx=get_plate_order_context(request),
         )
     except (FileNotFoundError, ValueError):
-        return RedirectResponse("/web/offers", status_code=303)
-    return RedirectResponse(f"/web/offers/drafts/{draft_id}", status_code=303)
+        response = RedirectResponse(
+            spa_new_with_notice("Не удалось сгенерировать файлы для черновика."),
+            status_code=303,
+        )
+        return mark_legacy_response(response, legacy_path=legacy_path, successor=successor)
+    response = RedirectResponse(successor, status_code=303)
+    return mark_legacy_response(response, legacy_path=legacy_path, successor=successor)
 
 
 @router.post("/web/offers/drafts/{draft_id}/save")
@@ -996,20 +1054,33 @@ def save_offer_draft(
     draft_id: str,
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
 ) -> RedirectResponse:
+    legacy_path = f"/web/offers/drafts/{draft_id}/save"
+    successor = spa_draft_url(draft_id)
     try:
         check_draft_ownership(draft_id, user)
     except HTTPException:
-        return RedirectResponse("/web/offers", status_code=303)
+        response = RedirectResponse(SPA_ARCHIVE, status_code=303)
+        return mark_legacy_response(response, legacy_path=legacy_path, successor=SPA_ARCHIVE)
     workflow = CommercialWorkflowService()
     try:
         workflow.save_offer(draft_id)
     except FileNotFoundError:
-        return RedirectResponse("/web/offers", status_code=303)
-    return RedirectResponse(f"/web/offers/drafts/{draft_id}", status_code=303)
+        response = RedirectResponse(
+            spa_new_with_notice("Не удалось сохранить черновик в базу."),
+            status_code=303,
+        )
+        return mark_legacy_response(response, legacy_path=legacy_path, successor=successor)
+    response = RedirectResponse(successor, status_code=303)
+    return mark_legacy_response(response, legacy_path=legacy_path, successor=successor)
 
 
-@router.get("/web/production", response_class=HTMLResponse)
-def production_page(user: dict = Depends(require_roles("admin", "production"))) -> HTMLResponse:
+@router.get("/web/production")
+def production_page(user: dict = Depends(require_roles("admin", "production"))) -> RedirectResponse:
+    _ = user
+    return deprecated_redirect(SPA_PRODUCTION, legacy_path="/web/production")
+
+
+def _legacy_production_page_html(user: dict) -> HTMLResponse:
     plans = ProductionService().list_plans()
     rows = "".join(
         f"<tr><td>{escape(plan.get('id', ''))}</td><td>{escape(plan.get('name', ''))}</td><td>{escape(plan.get('start_date', ''))}</td><td>{plan.get('total_days', 0)}</td><td>{plan.get('total_tracks', 0)}</td></tr>"
@@ -1017,6 +1088,27 @@ def production_page(user: dict = Depends(require_roles("admin", "production"))) 
     )
     body = _nav(user) + "<h1>Планы производства</h1>" + f"<table><tr><th>ID</th><th>Название</th><th>Старт</th><th>Дней</th><th>Дорожек</th></tr>{rows}</table>"
     return _page("Production", body)
+
+
+@router.get("/commercial-offer/login", response_class=HTMLResponse)
+def commercial_offer_login_spa() -> HTMLResponse:
+    return _render_frontend_shell()
+
+
+@router.get("/commercial-offer/archive", response_class=HTMLResponse)
+def commercial_offer_archive_spa(
+    user: dict = Depends(require_roles("admin", "manager", "production")),
+) -> HTMLResponse:
+    _ = user
+    return _render_frontend_shell()
+
+
+@router.get("/commercial-offer/production", response_class=HTMLResponse)
+def commercial_offer_production_spa(
+    user: dict = Depends(require_roles("admin", "production")),
+) -> HTMLResponse:
+    _ = user
+    return _render_frontend_shell()
 
 
 @router.get("/commercial-offer")
@@ -1029,6 +1121,15 @@ def commercial_offer_root(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> Red
 def commercial_offer_spa(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> HTMLResponse:
     _ = user
     return _render_frontend_shell()
+
+
+@router.get("/commercial-offer/drafts/{draft_id}")
+def commercial_offer_legacy_draft_stub(
+    draft_id: str,
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+) -> RedirectResponse:
+    _ = user
+    return RedirectResponse(spa_draft_url(draft_id), status_code=303)
 
 
 @router.get("/commercial-offer/assets/{asset_path:path}")
