@@ -3,6 +3,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.helpers.csrf import CsrfAwareTestClient
+
 from app.core.settings import get_settings
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
@@ -46,7 +48,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
             },
         ],
     )
-    return TestClient(create_app())
+    return CsrfAwareTestClient(create_app())
 
 
 def _session_cookie(*, user_id: int, username: str, role: str) -> dict[str, str]:

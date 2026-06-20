@@ -16,18 +16,23 @@ from app.main import create_app
 from app.middleware.plate_runtime_isolation import PlateMutableRuntimeIsolationMiddleware
 from app.repositories.auth_repository import AuthRepository
 from tests.helpers.auth_fixtures import patch_auth_users
+from app.security.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app.security.session import create_session_token
 from core import config_and_data as cfg
 from core.plate_order_context import PlateOrderContext
 from core.plate_runtime_state import get_plate_mutable_runtime
 
 
-def _auth_headers() -> dict[str, str]:
+def _auth_headers(csrf_token: str | None = None) -> dict[str, str]:
     token = create_session_token(
         {"id": 1, "username": "tester", "role": "admin"},
         ttl_seconds=300,
     )
-    return {"Cookie": f"app_session={token}"}
+    headers: dict[str, str] = {"Cookie": f"app_session={token}"}
+    if csrf_token:
+        headers["Cookie"] = f"{headers['Cookie']}; {CSRF_COOKIE_NAME}={csrf_token}"
+        headers[CSRF_HEADER_NAME] = csrf_token
+    return headers
 
 
 @pytest.fixture()
@@ -104,9 +109,12 @@ async def _gather_generate_preview(
     text_a: str,
     text_b: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    headers = _auth_headers()
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        bootstrap = await client.get("/health")
+        assert bootstrap.status_code == 200
+        csrf_token = bootstrap.cookies.get(CSRF_COOKIE_NAME)
+        headers = _auth_headers(csrf_token)
         responses = await asyncio.gather(
             client.post(
                 "/api/v1/commercial/generate-preview",

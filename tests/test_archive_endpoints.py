@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.helpers.csrf import CsrfAwareTestClient
+
 from app.api.v1.endpoints.archive import get_archive_service
 from app.core.settings import get_settings
 from app.main import create_app
@@ -56,7 +58,7 @@ def client(
     )
     app = create_app()
     app.dependency_overrides[get_archive_service] = lambda: fake_service
-    return TestClient(app)
+    return CsrfAwareTestClient(app)
 
 
 @pytest.fixture()

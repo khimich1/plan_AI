@@ -55,9 +55,11 @@ def create_app() -> FastAPI:
 
     app.add_middleware(PlateMutableRuntimeIsolationMiddleware)
 
+    from app.middleware.csrf import CsrfMiddleware
     from app.middleware.security_headers import SecurityHeadersMiddleware
 
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(CsrfMiddleware)
 
     @app.exception_handler(DraftStoreLockTimeout)
     async def _draft_store_lock_handler(

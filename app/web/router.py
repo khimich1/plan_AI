@@ -23,6 +23,7 @@ from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER, get_current_user, re
 from app.dependencies.commercial_draft import check_draft_ownership
 from app.dependencies.plate_context import get_plate_order_context
 from app.repositories.auth_repository import AuthRepository
+from app.security.csrf import clear_csrf_cookie, generate_csrf_token, set_csrf_cookie
 from app.security.login_rate_limit import check_login_rate_limit, resolve_client_ip
 from app.security.session import clear_session_cookie, create_session_token, set_session_cookie
 from app.services.commercial_service import CommercialService
@@ -127,6 +128,7 @@ def login_submit(
     home = default_spa_home_for_role(user["role"])
     response = RedirectResponse(home, status_code=303)
     set_session_cookie(response, token)
+    set_csrf_cookie(response, generate_csrf_token())
     return mark_legacy_response(response, legacy_path="/web/login", successor=home)
 
 
@@ -134,6 +136,7 @@ def login_submit(
 def web_logout() -> RedirectResponse:
     response = RedirectResponse(SPA_LOGIN, status_code=303)
     clear_session_cookie(response)
+    clear_csrf_cookie(response)
     return mark_legacy_response(response, legacy_path="/web/logout", successor=SPA_LOGIN)
 
 

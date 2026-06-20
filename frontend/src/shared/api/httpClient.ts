@@ -4,6 +4,24 @@ import { queryClient } from "@/shared/lib/queryClient";
 
 const AUTH_ME_QUERY_KEY = ["auth", "me"] as const;
 const AUTH_LOGIN_PATH = "/api/v1/auth/login";
+const CSRF_COOKIE_NAME = "csrf_token";
+const CSRF_HEADER_NAME = "X-CSRF-Token";
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+
+const readCsrfToken = (): string | null => {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const cookies = document.cookie.split(";");
+  for (const raw of cookies) {
+    const part = raw.trim();
+    if (part.startsWith(prefix)) {
+      return decodeURIComponent(part.slice(prefix.length));
+    }
+  }
+  return null;
+};
 
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -85,10 +103,19 @@ const handleUnauthorized = (path: string): void => {
 };
 
 const request = async <TResponse>(path: string, options: RequestOptions = {}): Promise<TResponse> => {
+  const method = options.method ?? "GET";
+  const headers = new Headers(options.headers);
+  if (!SAFE_METHODS.has(method)) {
+    const csrfToken = readCsrfToken();
+    if (csrfToken) {
+      headers.set(CSRF_HEADER_NAME, csrfToken);
+    }
+  }
+
   const response = await fetch(buildUrl(path), {
-    method: options.method ?? "GET",
+    method,
     body: options.body ?? null,
-    headers: options.headers,
+    headers,
     credentials: "include",
   });
 

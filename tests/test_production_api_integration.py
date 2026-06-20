@@ -11,6 +11,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.helpers.csrf import CsrfAwareTestClient
+
 from app.core.settings import get_settings
 from app.main import create_app
 from tests.helpers.auth_fixtures import patch_auth_users
@@ -283,7 +285,7 @@ def test_build_plan_business_error_when_no_plates(
     monkeypatch.setattr("core.work_calendar.load_holidays", lambda: set())
     monkeypatch.setattr("core.work_calendar.load_extra_workdays", lambda: set())
 
-    client = TestClient(create_app())
+    client = CsrfAwareTestClient(create_app())
     response = client.post(
         f"{API_PREFIX}/plans/build",
         json={

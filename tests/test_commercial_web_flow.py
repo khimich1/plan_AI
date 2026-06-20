@@ -8,6 +8,8 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.helpers.csrf import CsrfAwareTestClient
+
 from app.core.http_errors import MSG_INTERNAL, MSG_PARSE_FAILED, MSG_VALIDATION
 from app.core.settings import get_settings
 from app.main import create_app
@@ -100,7 +102,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         ],
     )
     app = create_app()
-    return TestClient(app)
+    return CsrfAwareTestClient(app)
 
 
 @pytest.fixture()
@@ -612,7 +614,7 @@ def client_two_users(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         ],
     )
     app = create_app()
-    return TestClient(app)
+    return CsrfAwareTestClient(app)
 
 
 def test_draft_idor_forbids_non_owner(

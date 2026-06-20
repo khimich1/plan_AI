@@ -43,12 +43,11 @@ def production_api_db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> str:
 
 @pytest.fixture()
 def production_api_client(production_api_db: str):
-    from fastapi.testclient import TestClient
-
     from app.main import create_app
+    from tests.helpers.csrf import CsrfAwareTestClient
 
     del production_api_db
-    return TestClient(create_app())
+    return CsrfAwareTestClient(create_app())
 
 
 @pytest.fixture()

@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.helpers.csrf import CsrfAwareTestClient
+
 from app.core.http_errors import MSG_DESTRUCTIVE_DB_BLOCKED
 from app.core.settings import get_settings
 from app.main import create_app
@@ -64,7 +66,7 @@ def production_admin_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
 @pytest.fixture()
 def client(production_admin_env: Path) -> TestClient:
     del production_admin_env
-    return TestClient(create_app())
+    return CsrfAwareTestClient(create_app())
 
 
 @pytest.fixture()

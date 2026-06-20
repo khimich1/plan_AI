@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.helpers.csrf import CsrfAwareTestClient
+
 from app.core.settings import get_settings
 from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.plate_order import PlateOrder
@@ -58,7 +60,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
             }
         ],
     )
-    return TestClient(create_app())
+    return CsrfAwareTestClient(create_app())
 
 
 @pytest.fixture()

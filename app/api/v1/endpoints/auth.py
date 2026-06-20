@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from app.dependencies.auth import get_current_user, require_roles
 from app.repositories.auth_repository import AuthRepository
 from app.schemas.auth import ChangePasswordRequest, LoginRequest, RegisterUserRequest
+from app.security.csrf import clear_csrf_cookie, generate_csrf_token, set_csrf_cookie
 from app.security.login_rate_limit import check_login_rate_limit, resolve_client_ip
 from app.security.password_policy import PasswordPolicyError
 from app.security.session import clear_session_cookie, create_session_token, set_session_cookie
@@ -27,12 +28,14 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
         }
     )
     set_session_cookie(response, token)
+    set_csrf_cookie(response, generate_csrf_token())
     return {"user": user}
 
 
 @router.post("/logout")
 def logout(response: Response) -> dict:
     clear_session_cookie(response)
+    clear_csrf_cookie(response)
     return {"ok": True}
 
 

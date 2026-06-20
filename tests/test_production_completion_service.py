@@ -984,7 +984,7 @@ def test_complete_day_rest_validation_maps_to_structured_422(
     monkeypatch,
 ):
     """Q1: endpoint отдаёт 422 с code=rest_validation_failed."""
-    from fastapi.testclient import TestClient
+    from tests.helpers.csrf import CsrfAwareTestClient
 
     from app.main import create_app
     from app.security.session import create_session_token
@@ -1023,7 +1023,9 @@ def test_complete_day_rest_validation_maps_to_structured_422(
         raise_rest_validation,
     )
 
-    client = TestClient(create_app())
+    from tests.helpers.csrf import CsrfAwareTestClient
+
+    client = CsrfAwareTestClient(create_app())
     token = create_session_token(
         {"id": 1, "username": "tester", "role": "admin"},
         ttl_seconds=300,
@@ -1052,7 +1054,7 @@ def test_complete_day_rest_db_error_maps_to_500(
     monkeypatch,
 ):
     """Q1: ошибка БД при записи остатка → HTTP 500."""
-    from fastapi.testclient import TestClient
+    from tests.helpers.csrf import CsrfAwareTestClient
 
     from app.main import create_app
     from app.security.session import create_session_token
@@ -1091,7 +1093,9 @@ def test_complete_day_rest_db_error_maps_to_500(
         raise_rest_db_error,
     )
 
-    client = TestClient(create_app())
+    from tests.helpers.csrf import CsrfAwareTestClient
+
+    client = CsrfAwareTestClient(create_app())
     token = create_session_token(
         {"id": 1, "username": "tester", "role": "admin"},
         ttl_seconds=300,
