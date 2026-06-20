@@ -8,6 +8,7 @@ import sqlite3
 from typing import Any
 
 from app.core.settings import get_settings
+from app.security.password_policy import validate_password
 
 
 def _hash_password(password: str, *, salt: str | None = None) -> str:
@@ -95,6 +96,7 @@ class AuthRepository:
             raise ValueError("Username must not be empty.")
         if not password:
             raise ValueError("Password must not be empty.")
+        validate_password(password)
         if not role.strip():
             raise ValueError("Role must not be empty.")
 
