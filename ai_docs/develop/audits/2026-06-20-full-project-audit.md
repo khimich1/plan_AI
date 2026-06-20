@@ -10,9 +10,9 @@
 
 Проект «Шишов» — FastAPI backend, React SPA, Telegram-бот и модули визуализации для коммерческих предложений (КП), оптимизации раскладки плит и производственного планирования. Функционально система покрывает полный бизнес-цикл, однако консолидированный аудит выявил **4 критические находки** (3 уникальных проблемы), **24 high-находки** и существенный технический долг в bot-слое, auth-слое и legacy web-пути.
 
-**Общий Health Score (baseline snapshot)**: **0.0 / 10** → **~8.5 / 10** после post-sprint closure (см. [Post-sprint remediation](#post-sprint-remediation-status-2026-06-20))
+**Общий Health Score (baseline snapshot)**: **0.0 / 10** → **8.5–9 / 10** после post-sprint closure (см. [Post-sprint remediation](#post-sprint-remediation-status-2026-06-20))
 
-> **Примечание (2026-06-20, post-review):** Решение P0-2026-06-19 — **Telegram-бот deprecated / out of active use**. Этот снимок аудита трактует bot как активный канал; рекомендации по bot reliability (Q1, Q3, A4, A9) **переиндексированы** в [`stabilizaciya-p1-next-audit-2026-06-20.md`](../../specs/stabilizaciya-p1-next-audit-2026-06-20.md) v2 — приоритет **web/API security** (S4, S6, S2, S3).
+> **Примечание (2026-06-20, post-sprint):** Решение P0-2026-06-19 — **Telegram-бот deprecated / out of active use**. Исходный снимок фиксирует 83 находки; после P0-next, P3 и P1-next закрыты P0-кластер, web/API security (S3/S6/S7/S8/S9) и A3 phase 1–2. Bot reliability (Q1, Q3, A4, A9) **вне активного scope** — см. [`stabilizaciya-p1-next-audit-2026-06-20.md`](../../specs/stabilizaciya-p1-next-audit-2026-06-20.md) v2.
 
 | Severity | Architecture | Security | Code Quality | Итого |
 |----------|-------------|----------|--------------|-------|
@@ -32,17 +32,18 @@
 4. **Auth и RBAC** — stateless-сессии, in-process rate limits, client-only frontend guards, GET logout, XFF spoofing.
 5. **God-модули, DRY-нарушения, голые `except` в bot и пробелы в тестах** — высокий риск регрессий при любых изменениях.
 
-**Рекомендация**: **Исправить 3 критических архитектурных дефекта до следующего релиза.** Приостановить разработку новых фич до закрытия кластера A1/S1–A3: единый источник истины для планов, консолидация pipeline планирования, вывод из эксплуатации глобального runtime state. Без этого production-деплой несёт риск **тихой порчи данных**, **расхождения планов между каналами** и **перекрёстных мутаций состояния плит**.
+**Рекомендация (baseline)**: ~~Исправить 3 критических архитектурных дефекта до следующего релиза.~~ **P0 closed** (2026-06-20). Следующий фокус: **S2** session invalidation, **A3 phase 3+** (PEP 562), **A6** DI unification.
 
 ---
 
 ## Критические проблемы (исправить немедленно)
 
-### [A1 / S1] Split-brain производственных планов (SQLite vs JSON)
+### [A1 / S1] Split-brain производственных планов (SQLite vs JSON) — ✅ CLOSED (P0-next)
 
 | Поле | Детали |
 |------|--------|
 | **ID** | A1 (архитектура), S1 (безопасность — дублирует A1) |
+| **Статус** | ✅ **Closed** `233a3ab` — SQLite authority, bot adapter maintenance-only |
 | **Категория** | Архитектура + Безопасность |
 | **Расположение** | `app/repositories/plan_repository.py`, `app/planning/plan_storage.py`, `bot/data/plans/*.json` |
 | **Impact** | FastAPI сохраняет планы через `PlanRepository` в SQLite (`plita.db`), Telegram-бот — через `plan_storage.py` в JSON-файлы на диске. Изменения в одном хранилище не отражаются в другом. Операторы через web и bot видят разные планы, счётчики завершения и метаданные. С точки зрения безопасности — нарушение целостности данных (integrity): невозможно гарантировать консистентность при audit trail и rollback. При race condition или частичной миграции возможна **тихая потеря данных**. |
@@ -50,10 +51,11 @@
 
 ---
 
-### [A2] Telegram-планирование обходит единый core pipeline
+### [A2] Telegram-планирование обходит единый core pipeline — ✅ CLOSED (P0-next, bot deprecated)
 
 | Поле | Детали |
 |------|--------|
+| **Статус** | ✅ **Closed** `233a3ab` — bot deprecated; web = единственный активный канал |
 | **Категория** | Архитектура |
 | **Расположение** | `bot/handlers/production_execution.py` (~922 строк) ↔ `core/production/planning.py`, `app/services/production_planning_service.py` |
 | **Impact** | Web-путь: `ProductionPlanningService.build_plan()` → `core/production/planning.py`. Bot реализует **отдельный ~900-строчный сценарий** загрузки КП → оптимизация → треки → сохранение, не вызывая единый core pipeline. Исправления и новые бизнес-правила в core/API **не попадают** в Telegram-поток. Операторы получают **разные планы** при одинаковых входных данных. |
@@ -69,6 +71,7 @@
 | **Расположение** | `core/plate_runtime_state.py`, `core/config_and_data.py` |
 | **Impact** | Состояние заказов плит и конфигурация оптимизации хранятся в **глобальных мутабельных структурах** процесса. При совместном использовании bot и API в одном процессе — **перекрёстные мутации** между пользователями/сессиями. Параллельные запросы сериализуются через locks или гонят друг друга. Горизонтальное масштабирование (несколько воркеров) невозможно без внешнего state store. |
 | **Fix** | Заменить globals на явные context-объекты (`PlateOrderContext`), передаваемые через DI. Авторитетное состояние — в БД; in-memory кэш только read-through с TTL. Убрать мутацию на уровне модулей и PEP 562 proxy в `config_and_data`. Рефакторить сервисы для приёма состояния через параметры, а не глобальные locks/proxy. |
+| **Статус** | **Phase 1–2 closed** (`90950ad`, `1150884`) — load codes из explicit order data, не TLS globals; `viz_modules/procurement/load_context.py`, `tests/test_procurement_loads.py`. **Phase 3+ open** — PEP 562 decommission в `config_and_data`. |
 
 ---
 
@@ -81,7 +84,7 @@
 | **A4** | Bot → app dependency inversion: bot импортирует `app.services.*` | `bot/handlers/`, `bot/services/` | Инвертировать зависимости: bot → core (домен), app → core. Общие сервисы — в `core/` или `shared/`. Bot не должен импортировать app-слой. |
 | **A5** | God-модули | `bot/handlers/commercial.py` (~2048), `app/services/commercial_workflow_service.py` (~1103), `core/visualization.py` (~1237), `bot/handlers/production_execution.py` (~922), `app/web/router.py` (~939) | Декомпозиция по use case (команды / callbacks / renderers / routes). Цель: <400 строк на модуль. Логику — в `services/`, handlers — thin adapters. |
 | **A6** | Непоследовательный DI в API | `app/api/v1/endpoints/admin.py`, `archive.py` vs `production.py`, `commercial.py` | Единый паттерн: factory/Depends для всех сервисов. Admin/archive и production/commercial — одинаковый wiring через `app/dependencies/`. |
-| **A7** | Repository-слой — тонкие фасады без абстракций | `app/repositories/*.py` (кроме `PlanPersistPort`) | Ввести Protocol/interface для KP, archive, plans. Repository инкапсулирует SQL и mapping, не делегирует напрямую в `core/kp_db_*`. |
+| ~~**A7**~~ | ~~Legacy web parallel presentation / repository facades (phase 3)~~ | `app/web/router.py`, `app/repositories/*.py` | ✅ **Closed** phase 3 (`9a8154b`) — legacy form errors → SPA redirect; repository abstractions — backlog при необходимости |
 | **A8** | Core зависит от viz_modules (инверсия слоёв) | `core/visualization.py` импортирует `viz_modules.*` | Инвертировать: `viz_modules` → `core`. Интерфейсы рендеринга — в `core/ports.py`; реализация — в `viz_modules/`. |
 | **A9** | Параллельный commercial pipeline в bot | `bot/handlers/commercial.py` vs `CommercialWorkflowService` | Bot вызывает тот же service layer, что и API. Удалить дублированную генерацию КП, pricing, OCR flows. |
 | **A10** | Triple planning orchestration | `app/planning/plan_manager.py`, `app/planning/plan_distribution.py`, `app/services/production_planning_service.py` | Консолидировать orchestration в service; planning utilities — в `core/production/`. Один путь вызова. |
@@ -93,12 +96,12 @@
 | ID | Проблема | Расположение | Fix |
 |----|----------|--------------|-----|
 | **S2** | Stateless sessions — нет server-side invalidation | `app/security/session.py` | Server-side session store или signed tokens с revocation list. Явный idle timeout и max age. |
-| **S3** | In-process rate limiting не работает при нескольких воркерах | `app/security/login_rate_limit.py`, OCR limits в `commercial_upload_validation.py` | Redis/shared store для rate limit между воркерами. Или явный single-worker constraint в deployment docs + health check. |
-| **S4** | GET logout — CSRF-prone | `app/web/router.py` — logout via GET | Только POST logout с CSRF token. Invalidate session server-side. |
+| ~~**S3**~~ | ~~XFF spoofing — доверие к X-Forwarded-For без whitelist~~ | `app/security/login_rate_limit.py` | ✅ **Closed** `672308e` — trusted proxy list в `core/config/settings.py`; `tests/test_client_ip_resolution.py` |
+| ~~**S4**~~ | ~~GET logout — CSRF-prone~~ | `app/web/router.py` | ✅ **Closed** `fb122d4` (tracked as **S9** в P1-next) — POST-only logout + CSRF |
 | **S5** | Frontend RBAC — client-only guards | `frontend/src/` — route guards без server re-check | Guards дублируют server RBAC; sensitive actions — always re-validated on API. UI hide ≠ security boundary. |
-| **S6** | Деструктивные admin reset без production-guard | `app/api/v1/endpoints/admin.py` — `reset_plans_only`, `reset_calendar_only` | Require `APP_ENV=development` или explicit `ALLOW_DESTRUCTIVE_ADMIN=true`. Confirmation token / double opt-in. Audit log. |
-| **S7** | XFF spoofing — доверие к X-Forwarded-For без whitelist | `app/security/login_rate_limit.py`, middleware | Принимать XFF только от trusted proxy IPs. Fallback на `request.client.host`. |
-| **S8** | Bot/API drift — расхождение auth и business rules | `bot/handlers/` vs `app/api/`, `bot/middleware/auth.py` | Единые сервисы и RBAC. Cross-surface integration tests. Bot не дублирует API logic. |
+| ~~**S6**~~ | ~~Деструктивные admin reset без production-guard~~ | `app/api/v1/endpoints/admin.py` | ✅ **Closed** (P3 + `a818285`) — `destructive_db_guard`, fail-closed в prod/staging |
+| ~~**S7**~~ | ~~Security headers отсутствуют / неполные~~ | `app/middleware/security_headers.py` | ✅ **Closed** `27a4dca` — X-Frame-Options, CSP report-only, HSTS; `tests/test_security_headers.py` |
+| ~~**S8**~~ | ~~CSRF для cookie-based web forms~~ | `app/middleware/csrf.py`, `app/security/csrf.py` | ✅ **Closed** `c391696` — CSRF tokens; `tests/test_csrf.py` |
 
 ### Качество кода (8)
 
@@ -138,14 +141,15 @@
 
 | ID | Проблема | Расположение | Рекомендация |
 |----|----------|--------------|--------------|
-| **S9** | Health endpoint раскрывает environment | `app/api/v1/endpoints/health.py` | Только `{"status": "ok"}`; version/env — internal endpoint с auth |
+| ~~**S9**~~ | ~~POST logout + session teardown (P1-next ID; исходный S9 = health leak)~~ | `app/web/router.py`, `app/api/v1/endpoints/auth.py` | ✅ **Closed** `fb122d4` — POST-only logout, CSRF; `tests/test_web_logout_csrf.py` |
+| **S9-audit** | Health endpoint раскрывает environment | `app/api/v1/endpoints/health.py` | Только `{"status": "ok"}`; version/env — internal endpoint с auth |
 | **S10** | OpenAPI public без ограничений | `app/main.py` — `/docs`, `/openapi.json` | Отключить в production или защитить auth |
 | **S11** | CSP report-only (не enforce) | `app/middleware/security_headers.py` | Перейти на enforce после мониторинга violations |
 | **S12** | CSRF cookie readable (не HttpOnly) | `app/security/session.py` | HttpOnly + Secure flags для session cookie |
 | **S13** | PII managers в логах/ответах | `app/api/v1/endpoints/commercial.py` | Маскировать телефоны/email в logs; RBAC на PII fields |
 | **S14** | Register roles — self-registration с выбором роли | `app/api/v1/endpoints/auth.py` | Только admin может назначать roles; default role = minimal |
 | **S15** | Draft sessionStorage — sensitive KP data в browser | `frontend/src/features/commercial/draftStorage.ts` | Encrypt at rest или server-side drafts only |
-| **S16** | Bot bare except — тихие сбои | `bot/handlers/` | См. Q1 |
+| ~~**S16**~~ | ~~`list_users()` DoS / unbounded admin listing~~ | `app/repositories/auth_repository.py` | ✅ **Closed** `bd340a0` — paginated user listing |
 | **S17** | Dev bot auth bypass | `bot/middleware/auth.py` | Fail-closed в production; synthetic admin только в dev |
 | **S18** | Dependency audit не в CI | `requirements.txt`, CI pipeline | `pip-audit` / `safety` в CI; block on critical CVE |
 | **S19** | SQLite encryption отсутствует | `plita.db` | SQLCipher или OS-level encryption для sensitive deploys |
@@ -265,10 +269,14 @@
 | **CSRF web forms (S8)** | Полноценные CSRF tokens для cookie-based forms — `c391696`; `tests/test_csrf.py` |
 | **XFF trusted proxy (S3)** | `X-Forwarded-For` только от configured proxies — `672308e` |
 | **A3 phase 1–2** | Load codes из order data, без TLS globals — `90950ad`, `1150884` |
-| **POST logout + destructive guard** | P1-next WP1–WP2 — `a818285`; `tests/test_web_logout_csrf.py`, `test_admin_destructive_guard.py` |
+| **POST logout (S9)** | POST-only logout + CSRF — `fb122d4`; `tests/test_web_logout_csrf.py` |
+| **P3 stabilization** | RBAC tightening, password policy, exception sanitization, legacy web → SPA — `7925ee4` |
+| **A7 phase 3** | Legacy form errors → SPA redirect — `9a8154b` |
+| **S7 security headers** | `27a4dca` — X-Frame-Options, CSP report-only, HSTS |
+| **S16 paginated users** | `bd340a0` — admin `list_users` DoS mitigation |
 | **get_user_by_id auth** | `AuthRepository.get_user_by_id()` — indexed lookup; `get_current_user` без O(n) `list_users()`; тесты `test_auth_repository.py`, `test_auth_dependencies.py` |
 
-*Примечание: S4 GET logout и S6 destructive reset закрыты в P1-next (`a818285`); CSRF (S8), XFF trusted proxy (S3) и A3 phase 1–2 — в post-sprint closure ниже.*
+*Все P1-next security WP (S4/S6/S3/S8/S9) закрыты; остаётся **S2** (session invalidation) и audit-ID **S9-audit** (health env leak).*
 
 ---
 
@@ -280,41 +288,54 @@
 
 | ID / тема | Severity | Коммит | Что сделано |
 |-----------|----------|--------|-------------|
-| **S8** | High | `c391696` | CSRF tokens для cookie-based web forms; middleware + тесты `tests/test_csrf.py` |
-| **S3** | High | `672308e` | Trusted proxy: `X-Forwarded-For` принимается только от настроенных proxy IPs; fallback на `request.client.host` |
-| **A3 phase 1–2** | Critical (partial) | `90950ad`, `1150884` | Load codes из explicit order data вместо TLS globals; procurement path без мутации module-level state |
+| **S8** | High | `c391696` | CSRF tokens для cookie-based web forms; middleware + `tests/test_csrf.py` |
+| **S9** | High (P1-next) | `fb122d4` | POST-only logout + CSRF; `tests/test_web_logout_csrf.py`, `tests/test_app_session.py` |
+| **S3** | High | `672308e` | Trusted proxy: `X-Forwarded-For` только от configured proxy IPs; `tests/test_client_ip_resolution.py` |
+| **A3 phase 1–2** | Critical (partial) | `90950ad`, `1150884` | Load codes из explicit order data вместо TLS globals; `viz_modules/procurement/load_context.py` |
 
-*Маппинг ID:* в baseline-таблицах аудита XFF был **S7**, CSRF logout — **S4**; в коммитах и спринте используются **S3** (XFF) и **S8** (CSRF forms) — статус RESOLVED по sprint ID.
+### Уже закрыто ранее (не post-sprint, но учтено в score)
 
-### Пересчёт Health Score (приблизительно)
+| ID | Коммит | Что сделано |
+|----|--------|-------------|
+| **S6** | P3 + `a818285` | `destructive_db_guard`, fail-closed destructive admin |
+| **S7** | `27a4dca` | Security headers middleware |
+| **S16** | `bd340a0` | Paginated admin user listing |
+| **A7** | `9a8154b` | Legacy web → SPA redirect (phase 3) |
+| **P3** | `7925ee4` | Stabilization sprint: RBAC, password policy, exception sanitization |
+
+*Маппинг ID:* в baseline-таблицах XFF был **S7**, GET logout — **S4**; в спринте P1-next — **S3** (XFF), **S8** (CSRF), **S9** (POST logout). Статус RESOLVED по sprint ID.
+
+### Пересчёт Health Score
 
 | Метрика | Baseline snapshot | Post-sprint |
 |---------|-------------------|-------------|
-| Critical (A1/S1, A2, A3) | 4 | **0** (P0-next closed; A3 phase 1–2 — partial, phase 3 OPEN) |
-| High — S8 CSRF, S3 XFF | open | **RESOLVED** |
-| High — S2 sessions, S9 health leak, A6 DI… | open | open (приоритет следующего спринта) |
-| **Overall Health Score** | **0.0 / 10** | **~8.5 / 10** |
+| Critical (A1/S1, A2, A3) | 4 | **0** (P0-next closed; A3 phase 3+ OPEN) |
+| High — security cluster | ~7 open | **~2 open** (S2 sessions; residual A5/A6) |
+| Medium / Low backlog | 55 | ~50 (без существенного сдвига) |
+| **Overall Health Score** | **0.0 / 10** | **8.5–9 / 10** |
 
-Формула (упрощённо):  
-`10 − 0 (critical cap снят) − 0.5 (high residual cap) − 1 (medium cap) ≈ 8.5`.
+**Обоснование 8.5–9/10:**
+- P0 data plane и bot deprecation сняли critical risk.
+- Web/API security: CSRF, POST logout, XFF, destructive guard, security headers — закрыты.
+- A3 phase 1–2 убрали TLS-global load codes; phase 3+ (PEP 562) остаётся.
+- **927 passed, 12 skipped** — `pytest tests/ -q` (2026-06-20).
+- Минус ~0.5–1.0: S2 stateless sessions, A6 DI inconsistency, god-modules (A5), medium security (health env leak S9-audit).
 
-Регрессия: **918 passed, 12 skipped** в `pytest tests/ -q` (2026-06-20; 9 failed — pre-existing, не блокер документации closure).
+### Рекомендации следующего спринта
 
-### Рекомендации следующего спринта (post-sprint)
-
-1. **S9** — health endpoint: убрать раскрытие environment (`app/api/v1/endpoints/health.py`).
-2. **S2** — server-side session invalidation / idle timeout (stateless sessions).
-3. **A3 phase 3** — PEP 562 decommission `core/config_and_data.py`; полный вывод globals.
-4. **A6** — единый DI-паттерн в API (`admin.py`, `archive.py` vs `production.py`, `commercial.py`).
+1. **S2** — server-side session invalidation / idle timeout (`app/security/session.py`).
+2. **A3 phase 3+** — PEP 562 decommission `core/config_and_data.py`.
+3. **A6** — единый DI-паттерн в API endpoints.
+4. **S9-audit** (optional) — health endpoint без раскрытия environment.
 
 ---
 
 ## Следующие шаги
 
-1. ~~**Немедленно (P0)**: Закрыть кластер A1/S1–A3~~ — **closed** (P0-next; WP2 bot adapter = maintenance-only при bot deprecated).
-2. ~~**P1-next:** S4 POST logout, S6 full destructive guard~~ — **closed** (`a818285`). ~~S3 XFF trusted proxy, S8 CSRF~~ — **closed** (`672308e`, `c391696`). **Приоритет:** S9 health leak, S2 session invalidation. ~~Q1 bare except в bot, Q3 bot integration~~ — **cancelled** (bot deprecated).
-3. **Следующий спринт:** **A3 phase 3** (PEP 562 decommission), **A6** DI unification, A5/Q2 god-module decomposition (web-side). ~~A4 bot→core, A9 commercial bot~~ — только при решении об удалении `bot/`.
-4. **Backlog (P3):** A7 repository abstractions, A10 planning orchestration, medium clusters (S10–S19), optional `bot/` removal.
+1. ~~**Немедленно (P0)**: Закрыть кластер A1/S1–A3~~ — **closed** (P0-next `233a3ab`).
+2. ~~**P1-next security:** S4/S9 POST logout (`fb122d4`), S6 destructive guard, S3 XFF (`672308e`), S8 CSRF (`c391696`)~~ — **closed**. ~~Q1/Q3 bot~~ — **cancelled** (bot deprecated).
+3. **Следующий спринт:** **S2** session invalidation · **A3 phase 3+** (PEP 562 decommission) · **A6** DI unification.
+4. **Backlog:** A5/Q2 god-modules (web-side), A10 planning orchestration, S9-audit health env leak, medium clusters, optional `bot/` removal.
 
 ---
 
@@ -332,7 +353,7 @@
 | **Безопасность** | Fail-closed bot auth при misconfiguration | `bot/middleware/auth.py`, `validate_bot_startup()` |
 | **Данные** | SQLite WAL + foreign keys | `core/kp_db_common.py` |
 | **Данные** | Optimistic concurrency для планов (`version`) | `app/repositories/plan_repository.py` |
-| **Тестирование** | Обширный pytest suite (918+ tests) | `tests/` — auth, commercial, production, planning |
+| **Тестирование** | Обширный pytest suite (**927 passed**, 12 skipped) | `tests/` — auth, commercial, production, planning, CSRF, XFF |
 | **Frontend** | React SPA с feature-based structure | `frontend/src/features/` |
 | **Frontend** | Обработка 409 plan version conflict | `frontend/src/features/production/planConflict.ts` |
 | **DevOps** | venv + documented startup | `README`, `.venv`, PowerShell scripts |
@@ -357,4 +378,4 @@
 
 ---
 
-*Отчёт сформирован: 2026-06-20 · Консолидирован из проходов senior-reviewer, security-auditor и reviewer.*
+*Отчёт сформирован: 2026-06-20 · Обновлён: 2026-06-20 (post-sprint closure S3/S8/S9, A3 phase 1–2) · Консолидирован из проходов senior-reviewer, security-auditor и reviewer.*
