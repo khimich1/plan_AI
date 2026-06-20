@@ -5,14 +5,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
-from core.debug_paths import get_debug_log_path
-
-from .debug_util import write_agent_debug, write_agent_debug_session
-
 logger = logging.getLogger(__name__)
-_DEBUG_LOG = get_debug_log_path("debug.log")
-_DEBUG_SESSION_LOG = get_debug_log_path("debug-d7e22e.log")
-_DEBUG_LOG_73B708 = get_debug_log_path("debug-73b708.log")
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
@@ -101,22 +94,6 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     """
     day_number = int(callback.data.split("_")[-1])
     data = await state.get_data()
-    # #region agent log
-    write_agent_debug_session(
-        _DEBUG_SESSION_LOG,
-        run_id="run1",
-        hypothesis_id="H6",
-        location="production_completion:start_day_completion:entry",
-        message="Entered complete_day callback",
-        data={
-            "callback_data": callback.data,
-            "day_number": day_number,
-            "has_current_day_tracks": bool(data.get("current_day_tracks")),
-            "from_saved_plan": bool(data.get("from_saved_plan", False)),
-            "has_all_tracks_list": bool(data.get("all_tracks_list")),
-        },
-    )
-    # #endregion
     
     # НОВОЕ: Проверяем данные из сохранённого плана (current_day_tracks)
     current_day_tracks = data.get('current_day_tracks')
@@ -215,62 +192,6 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     if not tracks_for_day:
         logger.error(f"[COMPLETION] День {day_number}: tracks_for_day пустой!")
     
-    # #region agent log H_LOST_tracks: целевые плиты в загруженных треках
-    _target_lengths = (5.98, 5.99, 6.11, 6.12)
-    _target_names = ('59,8-12-8п', '61,2-12-8п')
-    _lost_tracks = []
-    _plan_start = data.get('plan_start_date')
-    _sel_date = None
-    _cur_day_date = data.get('current_day_date')
-    if _plan_start:
-        try:
-            _sd = datetime.strptime(_plan_start, '%Y-%m-%d') + timedelta(days=day_number - 1)
-            _sel_date = _sd.strftime('%Y-%m-%d')
-        except Exception:
-            pass
-    for _ti, _tr in enumerate(tracks_for_day):
-        for _ii, _it in enumerate(_tr.get('items', []) or []):
-            if not _it:
-                continue
-            _len = _it.get('length') or _it.get('target_length')
-            _w = _it.get('width') if _it.get('width') is not None else (_it.get('main_w') if _it.get('main_w') is not None else 1.2)
-            _w = float(_w) if _w is not None else 1.2
-            _name = (_it.get('plate_name') or _it.get('label') or '') or ''
-            _match = False
-            if _len is not None:
-                _l = float(_len)
-                if abs(_w - 1.2) < 0.05 and any(abs(_l - t) < 0.02 for t in _target_lengths):
-                    _match = True
-            if not _match and any(s in _name for s in _target_names):
-                _match = True
-            if _match:
-                _lost_tracks.append({"plate_name": _name[:50], "length": _len, "width": _w, "kp_id": _it.get('kp_id'), "track_idx": _ti, "item_idx": _ii})
-    try:
-        write_agent_debug(
-            _DEBUG_LOG,
-            {
-                "hypothesisId": "H_LOST_tracks",
-                "location": "production_completion:start_day_completion",
-                "message": "Целевые плиты в треках загруженного дня",
-                "data": {
-                    "day_number": day_number,
-                    "plan_start_date": _plan_start,
-                    "selected_date": _sel_date,
-                    "current_day_date_from_state": _cur_day_date,
-                    "source": "current_day_tracks"
-                    if current_day_tracks
-                    else ("from_all_plans" if from_saved_plan else "all_tracks_list"),
-                    "source_plans": source_plans if source_plans else [],
-                    "tracks_count": len(tracks_for_day),
-                    "target_plates_in_tracks": _lost_tracks,
-                    "target_count": len(_lost_tracks),
-                },
-                "timestamp": __import__("time").time(),
-            },
-        )
-    except Exception:
-        pass
-    # #endregion
     
     # Создаем КОПИЮ lookup для завершения дня (чтобы не влиять на оригинал в state)
     completion_lookup_exact = copy.deepcopy(plate_lookup_exact)
@@ -379,14 +300,6 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             return best_match.copy()
         
         logger.warning(f"[TRACE]   ❌ НЕ НАЙДЕНО совпадение для: длина={length:.2f}м, ширина={width}мм, load_code={load_code}")
-        # #region agent log H12: целевые размеры не найдены в lookup
-        _target_keys = [(6.39, 1200), (2.54, 1200), (4.3, 1200), (4.5, 700), (6.0, 665)]
-        if any(abs(rounded_length - L) < 0.02 and abs(width - W) < 25 for L, W in _target_keys):
-            _d12 = _DEBUG_LOG
-            import json as _j12
-            _sample = list(completion_lookup_exact.keys())[:15]
-            write_agent_debug(_d12, {"hypothesisId": "H12", "location": "production_completion:get_plate_info_smart", "message": "Целевой размер не в lookup", "data": {"key": [rounded_length, width], "sample_keys": _sample, "by_length_sample": list(completion_lookup_by_length.keys())[:10]}, "timestamp": __import__('time').time()})
-        # #endregion
         return {
             'kp_date': 'неизвестно',
             'customer': 'неизвестно',
@@ -413,14 +326,6 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     for track_idx, track in enumerate(tracks_for_day):
         track_number = start_index + track_idx + 1
         track_plates = []
-        # #region agent log H8: items в track
-        _track_items = track.get('items', [])
-        _split_items = [i for i in _track_items if i and i.get('mode') == 'split' and i.get('secondary_cuts')]
-        if _split_items and track_idx == 0:  # Только первая дорожка для краткости
-            _d8 = _DEBUG_LOG
-            import json as _j8
-            write_agent_debug(_d8, {"hypothesisId": "H8", "location": "production_completion:track_items", "message": "Items с secondary_cuts в track", "data": {"track_idx": track_idx, "items_count": len(_track_items), "split_with_sec_count": len(_split_items), "day": day_number}, "timestamp": __import__('time').time()})
-        # #endregion
         for item in track.get('items', []):
             if item is None:
                 continue
@@ -452,33 +357,6 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             plate_name = plate_info.get('plate_name', '') or (item_plate_name or '')
             kp_id = plate_info.get('kp_id') or item_kp_id
             
-            # #region agent log H_LOST_lookup: lookup для целевых плит
-            _lt = float(length) if length is not None else 0
-            _is_target = (item_plate_name and ('59,8-12-8п' in item_plate_name or '61,2-12-8п' in item_plate_name)) or (any(abs(_lt - t) < 0.02 for t in (5.98, 5.99, 6.11, 6.12)) and width and abs(width / 1000 - 1.2) < 0.05)
-            if _is_target:
-                try:
-                    write_agent_debug(
-                        _DEBUG_LOG,
-                        {
-                            "hypothesisId": "H_LOST_lookup",
-                            "location": "production_completion:get_plate_info_smart_result",
-                            "message": "Lookup для целевой плиты",
-                            "data": {
-                                "day_number": day_number,
-                                "item_plate_name": item_plate_name,
-                                "length": length,
-                                "width": width,
-                                "item_kp_id": item_kp_id,
-                                "lookup_returned": bool(plate_info),
-                                "plate_name_used": plate_name[:50] if plate_name else None,
-                                "kp_id_used": kp_id,
-                            },
-                            "timestamp": __import__("time").time(),
-                        },
-                    )
-                except Exception:
-                    pass
-            # #endregion
             
             # Если нет имени плиты — формируем его
             if not plate_name and kp_id:
@@ -573,55 +451,8 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             
             # НОВОЕ: Обрабатываем плиты из вторичных резов (остатков)
             secondary_cuts = item.get('secondary_cuts', []) if item else []
-            # #region agent log H8: secondary_cuts в item
-            if secondary_cuts:
-                _d8 = _DEBUG_LOG
-                import json as _j8
-                write_agent_debug(_d8, {"hypothesisId": "H8", "location": "production_completion:secondary_cuts_check", "message": "secondary_cuts в item", "data": {"item_plate_name": item.get('plate_name', ''), "item_mode": item.get('mode', ''), "sec_cuts_count": len(secondary_cuts), "sec_cuts_sample": str(secondary_cuts)[:300], "day": day_number}, "timestamp": __import__('time').time()})
-            # #endregion
-            # #region agent log H12: RELOAD_CHECK — маркер что новый код загружен
-            try:
-                write_agent_debug(
-                    _DEBUG_LOG,
-                    {
-                        "hypothesisId": "H12",
-                        "location": "production_completion:before_sec_loop",
-                        "message": "RELOAD_CHECK_2026_02_06_v2",
-                        "data": {
-                            "secondary_cuts_len": len(secondary_cuts) if secondary_cuts else 0,
-                            "secondary_cuts_type": str(type(secondary_cuts).__name__),
-                            "secondary_cuts_truthy": bool(secondary_cuts),
-                            "item_plate_name": item.get("plate_name", ""),
-                            "day": day_number,
-                        },
-                        "timestamp": __import__("time").time(),
-                    },
-                )
-            except Exception:
-                pass
-            # #endregion
+
             for sec_cut in (secondary_cuts or []):
-                # #region agent log H11: вход в цикл secondary_cut (ПЕРЕД sec_width_m)
-                try:
-                    write_agent_debug(
-                        _DEBUG_LOG,
-                        {
-                            "hypothesisId": "H11",
-                            "location": "production_completion:sec_cut_loop_entry",
-                            "message": "Вход в цикл sec_cut",
-                            "data": {
-                                "sec_cut_keys": list(sec_cut.keys())
-                                if isinstance(sec_cut, dict)
-                                else str(type(sec_cut)),
-                                "sec_cut_repr": str(sec_cut)[:200],
-                                "day": day_number,
-                            },
-                            "timestamp": __import__("time").time(),
-                        },
-                    )
-                except Exception:
-                    pass
-                # #endregion
                 sec_width_m = sec_cut.get('width', 0)
                 if sec_width_m <= 0:
                     continue
@@ -637,20 +468,11 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                 try:
                     sec_plate_info = get_plate_info_smart(sec_length, sec_width, expected_kp_id=item_kp_id, load_code=sec_load_code)
                 except Exception as _exc11:
-                    write_agent_debug(
-                        _DEBUG_LOG,
-                        {
-                            "hypothesisId": "H11_ERR",
-                            "location": "production_completion:get_plate_info_smart_error",
-                            "message": str(_exc11),
-                            "data": {
-                                "sec_length": sec_length,
-                                "sec_width": sec_width,
-                                "day": day_number,
-                                "label": sec_cut.get("label", ""),
-                            },
-                            "timestamp": __import__("time").time(),
-                        },
+                    logger.warning(
+                        "get_plate_info_smart failed for secondary cut day=%s label=%s: %s",
+                        day_number,
+                        sec_cut.get("label", ""),
+                        _exc11,
                     )
                     sec_plate_info = {'kp_date': 'неизвестно', 'customer': 'неизвестно', 'plate_name': '', 'kp_id': None}
                 sec_kp_id = sec_plate_info.get('kp_id')
@@ -687,18 +509,7 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
                         existing['qty'] += 1
                         sec_found = True
                         break
-                # #region agent log H10: все вторичные резы (для диагностики пропущенных)
-                if sec_width_m < 0.5 or '40,3' in sec_plate_name or '42,2' in sec_plate_name or '51-3,2' in sec_plate_name:
-                    _d10 = _DEBUG_LOG
-                    import json as _j10
-                    write_agent_debug(_d10, {"hypothesisId": "H10", "location": "production_completion:secondary_cut_trace", "message": "Вторичный рез обработан", "data": {"sec_plate_name": sec_plate_name, "sec_kp_id": sec_kp_id, "sec_length": sec_length, "sec_width_m": sec_width_m, "sec_width_mm": sec_width, "day": day_number, "merged": sec_found, "item_kp_id": item_kp_id, "parent_plate": item.get('plate_name', ''), "label": sec_cut.get('label', ''), "plate_info_kp_id": sec_plate_info.get('kp_id'), "plate_info_name": sec_plate_info.get('plate_name', '')}, "timestamp": __import__('time').time()})
-                # #endregion
-                # #region agent log H7: secondary cuts 51,8-5 / 58,5-5,3
-                if '51,8-5' in sec_plate_name or '58,5-5,3' in sec_plate_name:
-                    _d7 = _DEBUG_LOG
-                    import json as _j7
-                    write_agent_debug(_d7, {"hypothesisId": "H7", "location": "production_completion:secondary_cut_added", "message": "Вторичный рез в track_plates", "data": {"sec_plate_name": sec_plate_name, "sec_kp_id": sec_kp_id, "sec_length": sec_length, "sec_width_m": sec_width_m, "day": day_number, "merged": sec_found}, "timestamp": __import__('time').time()})
-                # #endregion
+
                 if not sec_found:
                     sec_entry = {
                         'plate_name': sec_plate_name,
@@ -757,24 +568,7 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
             })
             total_qty += sum(p['qty'] for p in rests_for_this_day)
     
-    _agent_log = _DEBUG_LOG_73B708
-    # #region agent log (session 73b708) H_C: day_plates_by_track построен или пуст
-    try:
-        import json as _j_agent
-        _plates_flat = [p for t in day_plates_by_track for p in t.get('plates', [])]
-        _sample = [{"plate_name": p.get("plate_name"), "qty": p.get("qty", 1)} for p in _plates_flat[:15]]
-        write_agent_debug(_agent_log, {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_C", "location": "production_completion:day_plates_built", "message": "day_plates_by_track built", "data": {"day_number": day_number, "tracks_for_day_count": len(tracks_for_day), "day_plates_track_count": len(day_plates_by_track), "total_qty": total_qty, "plates_sample": _sample}, "timestamp": __import__('time').time()})
-    except Exception:
-        pass
-    # #endregion
     if not day_plates_by_track:
-        # #region agent log (session 73b708) H_C: пустой день
-        try:
-            import json as _j_c2
-            write_agent_debug(_agent_log, {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_C", "location": "production_completion:day_plates_empty", "message": "day_plates_by_track empty", "data": {"day_number": day_number, "tracks_for_day_count": len(tracks_for_day)}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
         plan_start_date = data.get('plan_start_date', datetime.now().strftime('%Y-%m-%d'))
         completed_days = data.get('completed_days', [])
         days_info = data.get('days_info', {})
@@ -796,35 +590,6 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     # Подсчитываем общее количество позиций
     total_positions = sum(len(track['plates']) for track in day_plates_by_track)
     
-    # #region agent log H_LOST_day_plates: целевые плиты в day_plates_by_track
-    _dpb_target = [p for t in day_plates_by_track for p in t.get('plates', []) if '59,8-12-8п' in (p.get('plate_name') or '') or '61,2-12-8п' in (p.get('plate_name') or '')]
-    try:
-        write_agent_debug(
-            _DEBUG_LOG,
-            {
-                "hypothesisId": "H_LOST_day_plates",
-                "location": "production_completion:day_plates_built",
-                "message": "Целевые плиты в day_plates_by_track (список на списание)",
-                "data": {
-                    "day_number": day_number,
-                    "target_plates_in_result": [
-                        {
-                            "plate_name": p.get("plate_name"),
-                            "kp_id": p.get("kp_id"),
-                            "qty": p.get("qty"),
-                            "width_m": p.get("width_m"),
-                        }
-                        for p in _dpb_target
-                    ],
-                    "target_count": len(_dpb_target),
-                    "total_plates_in_day": total_qty,
-                },
-                "timestamp": __import__("time").time(),
-            },
-        )
-    except Exception:
-        pass
-    # #endregion
     
     # ✅ НОВОЕ: Логируем результаты формирования списка для списания
     logger.info(f"[TRACE] ===== ШАГ 8: ПЛИТЫ ДЛЯ СПИСАНИЯ (day_plates_by_track) =====")
@@ -862,21 +627,6 @@ async def start_day_completion(callback: CallbackQuery, state: FSMContext):
     )
     
     await state.set_state(ProductionStates.marking_completion)
-    # #region agent log
-    write_agent_debug_session(
-        _DEBUG_SESSION_LOG,
-        run_id="run1",
-        hypothesis_id="H6",
-        location="production_completion:start_day_completion:state_set",
-        message="State set to marking_completion",
-        data={
-            "day_number": day_number,
-            "tracks_count": len(day_plates_by_track),
-            "total_positions": total_positions,
-            "total_qty": total_qty,
-        },
-    )
-    # #endregion
     await callback.answer()
 
 
@@ -1034,21 +784,6 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     rejected_quantities = data.get('rejected_quantities', {})
     # actor для plate_status_log: уникально привязывается к Telegram-user'у бота
     bot_actor = f"bot:{callback.from_user.id}" if callback.from_user else None
-    # #region agent log
-    write_agent_debug_session(
-        _DEBUG_SESSION_LOG,
-        run_id="run1",
-        hypothesis_id="H6",
-        location="production_completion:confirm_day_completion:entry",
-        message="Entered confirm_completion callback",
-        data={
-            "callback_data": callback.data,
-            "day_number": day_number,
-            "tracks_count": len(day_plates_by_track),
-            "rejected_positions_count": len(rejected_quantities),
-        },
-    )
-    # #endregion
     
     # Разделяем на выполненные и бракованные с учетом частичного брака
     completed_plates = []
@@ -1101,67 +836,12 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
     # Группируем по kp_id
     plates_by_kp = defaultdict(list)
     plates_without_kp = []  # Плиты без kp_id (не найдены в lookup)
-    # #region agent log
-    import json as _json3
-    _debug_log3 = _DEBUG_LOG
-    # #endregion
     
-    # #region agent log H7: сводка по completed_plates (в т.ч. 5 типов, которые не списались)
-    _d7 = _DEBUG_LOG
-    import json as _j7
-    _key_substrings = (
-        '51,8-5',
-        '58,5-5,3',
-        '61,1-12-10',
-        '36,6-6,65',
-        '64,8-12-12,5',
-        '78,1-12-10',
-        '78,1-12-12,5',
-        # Плиты из текущего кейса пользователя
-        '25,4-12-8п',
-        '43-12-8п',
-        '63,9-12-8п',
-        '45-7-6п',
-        '60-6,65-8п',
-    )
-    _targets = [p for p in completed_plates if any(s in p.get('plate_name', '') for s in _key_substrings)]
-    write_agent_debug(_d7, {"hypothesisId": "H7", "location": "production_completion:completed_plates_summary", "message": "Целевые плиты в completed_plates", "data": {"day": day_number, "target_count": len(_targets), "targets": [{"name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "length_m": p.get("length_m"), "width_m": p.get("width_m"), "load_class": p.get("load_class")} for p in _targets], "total_plates": len(completed_plates)}, "timestamp": __import__('time').time()})
-    # Диагностика: на каких днях плана есть плита 59,8-12-8п (если её нет в текущем дне — подсказка)
-    _check_name = "59,8-12-8п"
-    _in_today = any(_check_name in (p.get("plate_name") or "") for p in completed_plates)
-    if not _in_today and plan_ids:
-        _first_plan = plan_ids[0] if isinstance(plan_ids, (list, tuple)) else plan_ids
-        _days_with = get_plan_days_for_plate(_first_plan, _check_name)
-        _day_to_date = get_plan_day_to_date_mapping(_first_plan)
-        _dates_for_days = {d: _day_to_date.get(d) for d in _days_with}
-        _plan_start = data.get('plan_start_date')
-        _expected_date = None
-        if _plan_start:
-            try:
-                _ed = datetime.strptime(_plan_start, '%Y-%m-%d') + timedelta(days=day_number - 1)
-                _expected_date = _ed.strftime('%Y-%m-%d')
-            except Exception:
-                pass
-        write_agent_debug(_d7, {"hypothesisId": "H7b", "location": "production_completion:plate_day_hint", "message": "Плита 59,8-12-8п не в этом дне; в плане она в днях", "data": {"day_confirmed": day_number, "days_with_plate": _days_with, "day_to_date_in_plan": _dates_for_days, "plan_start_date": _plan_start, "expected_date_for_this_day": _expected_date, "hint": "Подтвердите один из дней, где плита в треках" if _days_with else "В треках плана не найдена"}, "timestamp": __import__('time').time()})
-    # #endregion
-    # #region agent log H15: ВСЕ вторичные резы в confirm_day_completion
-    _sec_plates = [p for p in completed_plates if p.get('is_secondary')]
-    _sec_total_qty = sum(p.get('qty', 1) for p in _sec_plates)
-    _no_kp = [p for p in _sec_plates if not p.get('kp_id')]
-    write_agent_debug(_d7, {"hypothesisId": "H15", "location": "production_completion:secondary_in_confirm", "message": "Вторичные резы в confirm", "data": {"day": day_number, "secondary_positions": len(_sec_plates), "secondary_qty": _sec_total_qty, "without_kp": len(_no_kp), "total_plates": len(completed_plates), "secondary_names": [{"name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty"), "width_m": p.get("width_m")} for p in _sec_plates[:20]]}, "timestamp": __import__('time').time()})
-    # #endregion
-    # #region agent log H_completion: плиты 61,2 / 61,1 / 59,8 / 59,9 в completed_plates при подтверждении дня
-    _plates_61_59 = [{"plate_name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty", 1), "length_m": p.get("length_m"), "width_m": p.get("width_m")} for p in completed_plates if any(x in (p.get("plate_name") or "") for x in ("61,2", "61,1", "59,8", "59,9"))]
-    write_agent_debug(_d7, {"hypothesisId": "H_completion", "location": "production_completion:confirm_day_completion", "message": "Плиты 61,2/61,1/59,8/59,9 в completed_plates", "data": {"day": day_number, "count": len(_plates_61_59), "entries": _plates_61_59, "total_completed": len(completed_plates)}, "timestamp": __import__('time').time()})
-    # #endregion
+
     for plate in completed_plates:
         kp_id = plate.get('kp_id')
         plate_name = plate.get('plate_name', '')
         width_m = plate.get('width_m', 0)
-        # #region agent log H3/H5: плиты с/без kp_id
-        if not kp_id or width_m in [0.46, 0.53, 0.5, 0.665] or '4,6' in plate_name or '5,3' in plate_name or '6,65' in plate_name or '51,8-5' in plate_name or '58,5-5,3' in plate_name:
-            write_agent_debug(_debug_log3, {"hypothesisId": "H3", "location": "production_completion:confirm_day_completion", "message": "Плита при списании", "data": {"plate_name": plate_name, "kp_id": kp_id, "width_m": width_m, "has_kp_id": bool(kp_id), "qty": plate.get('qty', 1)}, "timestamp": __import__('time').time()})
-        # #endregion
         if kp_id:
             plates_by_kp[kp_id].append(plate)
         else:
@@ -1292,65 +972,7 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
                 logger.warning(f"[COMPLETION] Плита не найдена в БД: {plate_name} ({length_m}м, load_class={load_class})")
     # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
     
-    # #region agent log: списано за день (цепочка визуализация → списание)
-    try:
-        import json as _j_chain
-        write_agent_debug(_d7, {"hypothesisId": "chain", "location": "production_completion:written_off_per_day", "message": "Списано за день", "data": {"day": day_number, "total_moved": total_moved, "completed_kps": completed_kps, "rests_used_count": rests_used_count, "secondary_as_rests": secondary_as_rests}, "timestamp": __import__('time').time()})
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log
-    try:
-        _target_like = ("59,8-12-8п", "50,8-5,3-8п", "50,8-3,2-8п", "63,9-12-8п")
-        _completed_targets = [
-            {
-                "plate_name": p.get("plate_name"),
-                "kp_id": p.get("kp_id"),
-                "qty": p.get("qty", 1),
-                "length_m": p.get("length_m"),
-                "width_m": p.get("width_m"),
-            }
-            for p in completed_plates
-            if any(_k in (p.get("plate_name") or "") for _k in _target_like)
-        ]
-        _remaining_targets = []
-        with sqlite3.connect(db_path) as _conn_dbg:
-            _cur_dbg = _conn_dbg.cursor()
-            _cur_dbg.execute("""
-                SELECT kp_id, plate_name, qty, status, plan_id, length_m, width_m
-                FROM kp_plates
-                WHERE plate_name LIKE '%59,8-12-8п%'
-                   OR plate_name LIKE '%50,8-5,3-8п%'
-                   OR plate_name LIKE '%50,8-3,2-8п%'
-                   OR plate_name LIKE '%63,9-12-8п%'
-                ORDER BY kp_id, plate_name
-            """)
-            for _r in _cur_dbg.fetchall():
-                _remaining_targets.append({
-                    "kp_id": _r[0],
-                    "plate_name": _r[1],
-                    "qty": _r[2],
-                    "status": _r[3],
-                    "plan_id": _r[4],
-                    "length_m": _r[5],
-                    "width_m": _r[6],
-                })
-        write_agent_debug_session(
-            _DEBUG_SESSION_LOG,
-            run_id="run1",
-            hypothesis_id="H5",
-            location="production_completion:after_writeoff_targets",
-            message="Target plates written-off vs remaining in kp_plates",
-            data={
-                "day": day_number,
-                "completed_targets": _completed_targets,
-                "completed_targets_count": len(_completed_targets),
-                "remaining_targets_in_kp_plates": _remaining_targets,
-            },
-        )
-    except Exception:
-        pass
-    # #endregion
+
     # Проверка: остались ли несписанные плиты (этап 6) — по КП дня и по всем КП плана
     kp_ids_in_day = set(p.get('kp_id') for track in day_plates_by_track for p in track.get('plates', []) if p.get('kp_id'))
     kp_ids_to_check = set(kp_ids_in_day)
@@ -1386,14 +1008,6 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
         except Exception as e:
             logger.exception(f"[СПИСАНИЕ] Проверка остатков: {e}")
     # ========== ВОЗВРАТ БРАКОВАННЫХ ПЛИТ В ПРОИЗВОДСТВО ==========
-    # #region agent log: бракованные плиты (что помечено, что возвращено)
-    try:
-        import json as _j_rej
-        _rej_data = {"day": day_number, "rejected_positions": len(rejected_plates), "rejected_total_qty": sum(p.get("qty", 1) for p in rejected_plates), "rejected_list": [{"plate_name": p.get("plate_name"), "kp_id": p.get("kp_id"), "qty": p.get("qty", 1)} for p in rejected_plates[:50]]}
-        write_agent_debug(_d7, {"hypothesisId": "reject", "location": "production_completion:rejected_before_return", "message": "Бракованные плиты (помечены пользователем)", "data": _rej_data, "timestamp": __import__('time').time()})
-    except Exception:
-        pass
-    # #endregion
     # Бракованные плиты возвращаются в статус 'в производстве',
     # чтобы попасть в следующее планирование. Логика возврата вынесена в
     # ProductionCompletionService._return_rejected — единая точка для бота
@@ -1421,13 +1035,6 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
                 f"(КП #{kp_id})"
             )
     
-    # #region agent log: сколько брака возвращено в производство
-    try:
-        import json as _j_rej2
-        write_agent_debug(_d7, {"hypothesisId": "reject", "location": "production_completion:rejected_returned", "message": "Брак возвращён в производство", "data": {"day": day_number, "rejected_returned": rejected_returned, "rejected_total_positions": len(rejected_plates)}, "timestamp": __import__('time').time()})
-    except Exception:
-        pass
-    # #endregion
     if rejected_returned > 0:
         logger.info(f"[COMPLETION] Всего возвращено в производство: {rejected_returned} позиций (брак)")
     # ========== КОНЕЦ ВОЗВРАТА БРАКА ==========
@@ -1561,26 +1168,9 @@ async def confirm_day_completion(callback: CallbackQuery, state: FSMContext):
             if plan and plan.get('days'):
                 completed = plan.get('completed_days', [])
                 total = len(plan['days'])
-                try:
-                    import json as _jrc
-                    write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_return_remaining", "location": "production_completion:after_mark_day", "message": "Проверка возврата остатков", "data": {"plan_id": plan_id, "completed_count": len(completed), "total_days": total, "will_return": len(completed) >= total}, "timestamp": __import__('time').time()})
-                except Exception:
-                    pass
                 if len(completed) >= total:
                     db_path = str(PROJECT_ROOT / "plita.db")
                     returned = kp_db.return_plan_plates_to_production(plan_id, db_path)
-                    try:
-                        import json as _jrc2
-                        write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_return_done", "location": "production_completion:return_plan_plates", "message": "Возврат остатков выполнен", "data": {"plan_id": plan_id, "returned": returned}, "timestamp": __import__('time').time()})
-                    except Exception:
-                        pass
-                    # #region agent log (session 73b708) H_D: возврат «в плане» в производство
-                    try:
-                        _agent_log_d = _DEBUG_LOG_73B708
-                        write_agent_debug(_agent_log_d, {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_D", "location": "production_completion:return_plan_plates", "message": "Return plan plates to production", "data": {"plan_id": plan_id, "returned": returned}, "timestamp": __import__('time').time()})
-                    except Exception:
-                        pass
-                    # #endregion
                     if returned > 0:
                         logger.info(f"[COMPLETION] План {plan_id} полностью выполнен: возвращено {returned} остаточных плит «в плане» в производство")
     

@@ -24,15 +24,8 @@ from . import config_and_data as cfg
 from .optimization import optimize_cuts_pulp
 from .price_db import init_schema, import_from_xlsx
 from .exceptions import FileGenerationError
-from .debug_paths import get_debug_log_path
-
 # Настройка логирования
 logger = logging.getLogger(__name__)
-_DEBUG_LOG = get_debug_log_path("debug.log")
-_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
-_DEBUG_LOG_95694E = get_debug_log_path("debug-95694e.log")
-_DEBUG_LOG_73B708 = get_debug_log_path("debug-73b708.log")
-_DEBUG_LOG_2D5C43 = get_debug_log_path("debug-2d5c43.log")
 
 # Импорты из новых модулей
 from viz_modules.price_utils import load_price_table_from_xlsx
@@ -449,12 +442,6 @@ def split_sequence_into_tracks(
                     max_reinforcement_in_track = max(max_reinforcement_in_track, solid_reinf)
                     if found_solid_idx < i:
                         i -= 1
-                        try:
-                            _p = _DEBUG_LOG_95694E
-                            with open(_p, 'a', encoding='utf-8') as _f:
-                                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_solid_before_i", "location": "visualization:split_tracks:empty_track", "message": "solid before cut: i-=1", "data": {"found_solid_idx": found_solid_idx, "i_before": i + 1, "group_label": group_label}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-                        except Exception:
-                            pass
                     continue
                 
                 # Проверяем: добавление плиты превысит максимум?
@@ -517,12 +504,6 @@ def split_sequence_into_tracks(
                         if found_solid_idx < i:
                             _i_before = i
                             i = found_solid_idx
-                            try:
-                                _p = _DEBUG_LOG_95694E
-                                with open(_p, 'a', encoding='utf-8') as _f:
-                                    _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_solid_before_i", "location": "visualization:split_tracks:will_exceed", "message": "solid before cut: i=found_solid_idx", "data": {"found_solid_idx": found_solid_idx, "i_before": _i_before, "group_label": group_label}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-                            except Exception:
-                                pass
                         track_label = _label_from_track_items(current_track, group_label)
                         tracks.append({
                             'items': current_track,
@@ -747,22 +728,7 @@ def split_sequence_into_tracks(
             "[SPLIT_TRACKS] Потеря плит при разбиении: было %s, в дорожках %s, разница %s",
             input_count, output_count, input_count - output_count
         )
-    # #region agent log (73b708) H_SPLIT_IO: целостность на выходе split_sequence_into_tracks
-    try:
-        _log_path = _DEBUG_LOG_73B708
-        with open(_log_path, 'a', encoding='utf-8') as _lf:
-            _lf.write(__import__('json').dumps({"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_SPLIT_IO", "location": "visualization:split_sequence_into_tracks:exit", "message": "Input vs output item count", "data": {"input_count": input_count, "output_count": output_count, "diff": input_count - output_count}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    # #region agent log (2d5c43) H4: split input vs output
-    try:
-        _log_2d5c43 = _DEBUG_LOG_2D5C43
-        with open(_log_2d5c43, 'a', encoding='utf-8') as _lf:
-            _lf.write(__import__('json').dumps({"sessionId": "2d5c43", "hypothesisId": "H4", "location": "visualization:split_sequence_into_tracks:exit", "message": "split input vs output item count", "data": {"input_count": input_count, "output_count": output_count, "diff": input_count - output_count, "tracks_count": len(tracks)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
+
     logger.info(f"[SPLIT_TRACKS] Плиты разбиты на {len(tracks)} дорожек")
     try:
         integrity_report = validate_track_integrity(
@@ -770,29 +736,6 @@ def split_sequence_into_tracks(
             tracks,
             strict=strict_layout_integrity,
         )
-        # #region agent log
-        try:
-            with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
-                _agent_f.write(__import__("json").dumps({
-                    "sessionId": "ebb546",
-                    "runId": "stage-localization",
-                    "hypothesisId": "S5C",
-                    "location": "core/visualization.py:split_sequence_into_tracks:integrity_report",
-                    "message": "Integrity report split_sequence_into_tracks",
-                    "data": {
-                        "input_total": int(integrity_report.get("input_total") or 0),
-                        "output_total": int(integrity_report.get("output_total") or 0),
-                        "ok": bool(integrity_report.get("ok")),
-                        "missing_count": len(integrity_report.get("missing") or {}),
-                        "duplicated_count": len(integrity_report.get("duplicated") or {}),
-                        "missing_sample": list((integrity_report.get("missing") or {}).items())[:20],
-                        "duplicated_sample": list((integrity_report.get("duplicated") or {}).items())[:20],
-                    },
-                    "timestamp": int(__import__("time").time() * 1000),
-                }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
         if not integrity_report["ok"]:
             logger.error(
                 "[SPLIT_TRACKS] Integrity mismatch: input=%s output=%s missing=%s duplicated=%s",
@@ -929,42 +872,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     # Стандартная логика: генерируем последовательность и разбиваем на дорожки (только если нет готовых дорожек)
     if not existing_tracks:
         seq = build_layout_sequence()
-        # #region agent log (95694e) количество 5.98/665 в seq до split (путь visualize_plan)
-        try:
-            def _c598665(s):
-                n = 0
-                if isinstance(s, list) and s and isinstance(s[0], dict) and s[0].get('load_code') is not None:
-                    for g in s:
-                        for it in g.get('sequence', []):
-                            L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
-                            w = it.get('width') or it.get('main_w') or 1.2
-                            w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
-                            if abs(L - 5.98) < 0.02 and w_mm == 665:
-                                n += 1
-                return n
-            _log_p = _DEBUG_LOG_95694E
-            with open(_log_p, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_seq_598665", "location": "visualization:visualize_plan:after_build_layout", "message": "count 5.98/665 in sequence before split", "data": {"count_598_665": _c598665(seq)}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
         tracks = split_sequence_into_tracks(seq, MAX_TRACK_LENGTH)
-        # #region agent log (95694e) количество 5.98/665 в дорожках после split (путь visualize_plan)
-        try:
-            _nt = 0
-            for tr in (tracks or []):
-                for it in tr.get('items', []) or []:
-                    L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
-                    w = it.get('width') or it.get('main_w') or 1.2
-                    w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
-                    if abs(L - 5.98) < 0.02 and w_mm == 665:
-                        _nt += 1
-            _log_p = _DEBUG_LOG_95694E
-            with open(_log_p, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_598665", "location": "visualization:visualize_plan:after_split", "message": "count 5.98/665 in tracks after split", "data": {"count_598_665": _nt}, "timestamp": __import__('time').time()}, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
         total_length = sum(t['length'] for t in tracks)
     
     num_tracks_total = len(tracks)

@@ -35,11 +35,7 @@ from core.visualization import visualize_plan
 from bot.services import kp_persistence as kp_db
 from core.execution_terms import parse_execution_terms_to_datetime
 from core.exceptions import PlateParseError, FileGenerationError
-from core.debug_paths import get_debug_log_path
 
-from .debug_util import write_agent_debug, write_agent_debug_session
-
-# Настройка логирования
 logger = logging.getLogger(__name__)
 
 from ..keyboards import main_menu_kb, conditions_choice_kb, save_to_db_kb, save_to_db_with_files_kb, cancel_process_kb, managers_selection_kb, confirm_plates_list_kb, wide_plates_actions_kb
@@ -85,10 +81,6 @@ OPT_PLAN_CACHE: Dict[int, dict] = {}
 
 commercial_service = CommercialService()
 optimization_service = OptimizationService()
-_DEBUG_LOG = get_debug_log_path("debug.log")
-_DEBUG_LOG_B59370 = get_debug_log_path("debug-b59370.log")
-_DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
-_DEBUG_LOG_A9176E = get_debug_log_path("debug-a9176e.log")
 
 
 async def _enter_kp_manager_selection(message: Message, state: FSMContext) -> bool:
@@ -1204,13 +1196,6 @@ async def generate_all_documents(
                     name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
                     length_dm_raw = item_ldr
             else:
-                # #region agent log
-                try:
-                    _log_path = _DEBUG_LOG_B59370
-                    write_agent_debug(_log_path, {"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000})
-                except Exception:
-                    pass
-                # #endregion
                 # length_dm_raw из item прокинут из build_procurement_items (57,1 не теряется)
                 item_ldr = item.get('length_dm_raw') or None
                 name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
@@ -1233,23 +1218,7 @@ async def generate_all_documents(
                 "width_m": width_m,
                 "qty": qty,
             })
-            # #region agent log (57/57,1: итоговое имя в order_data)
-            if 5.69 <= length_m <= 5.73:
-                try:
-                    _log_path = _DEBUG_LOG_8E9428
-                    write_agent_debug(_log_path, {"sessionId": "8e9428", "hypothesisId": "H_order_data", "location": "commercial:order_data_loop", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000})
-                except Exception:
-                    pass
-            # #endregion
-            # #region agent log (a9176e: 57/57,1 — order_data: matching_row + итоговое имя)
-            if 5.69 <= length_m <= 5.73:
-                try:
-                    _parsed = (cfg.parse_name_to_sizes(matching_row[1]) if matching_row and len(matching_row) > 1 else (None, None))
-                    _log_path = _DEBUG_LOG_A9176E
-                    write_agent_debug(_log_path, {"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000})
-                except Exception:
-                    pass
-            # #endregion
+
             entry = {
                 "name": name,
                 "length_m": length_m,
@@ -1289,27 +1258,6 @@ async def generate_all_documents(
         from bot.services.kp_persistence import enrich_order_data_with_nomenclature
         order_data = await asyncio.to_thread(enrich_order_data_with_nomenclature, order_data)
 
-        # #region agent log
-        try:
-            _od_total = sum(i.get('qty', 0) for i in order_data)
-            _od_sample = [(i.get('name', '')[:30], round(i.get('length_m', 0), 3), i.get('qty')) for i in order_data[:3]]
-            write_agent_debug(
-                _DEBUG_LOG,
-                {
-                    "hypothesisId": "H3",
-                    "location": "commercial:order_data_from_price_rows",
-                    "message": "order_data after build_price_rows",
-                    "data": {
-                        "len_order_data": len(order_data),
-                        "total_qty": _od_total,
-                        "sample": _od_sample,
-                    },
-                    "timestamp": __import__("time").time() * 1000,
-                },
-            )
-        except Exception:
-            pass
-        # #endregion
         # Сохраняем заказ в кэш
         ORDER_CACHE[message.from_user.id] = order_data
         
@@ -1645,13 +1593,6 @@ async def receive_order_and_generate_pdf(
                     name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
                     length_dm_raw = item_ldr
             else:
-                # #region agent log
-                try:
-                    _log_path = _DEBUG_LOG_B59370
-                    write_agent_debug(_log_path, {"sessionId": "b59370", "hypothesisId": "H3", "location": "commercial:order_data_no_match", "message": "no matching_row, using make_plate_name", "data": {"length_m": length_m, "width_m": width_m}, "timestamp": __import__("time").time() * 1000})
-                except Exception:
-                    pass
-                # #endregion
                 # length_dm_raw из item прокинут из build_procurement_items (57,1 не теряется)
                 item_ldr = item.get('length_dm_raw') or None
                 name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr)
@@ -1674,23 +1615,7 @@ async def receive_order_and_generate_pdf(
                 "width_m": width_m,
                 "qty": qty,
             })
-            # #region agent log (57/57,1: итоговое имя в order_data, альт. поток)
-            if 5.69 <= length_m <= 5.73:
-                try:
-                    _log_path = _DEBUG_LOG_8E9428
-                    write_agent_debug(_log_path, {"sessionId": "8e9428", "hypothesisId": "H_order_data_alt", "location": "commercial:order_data_loop_alt", "message": "57/57,1: final name in order_data", "data": {"length_m": length_m, "width_m": width_m, "qty": qty, "name": name, "from_matching_row": matching_row[1] if matching_row else None}, "timestamp": __import__("time").time() * 1000})
-                except Exception:
-                    pass
-            # #endregion
-            # #region agent log (a9176e: 57/57,1 — order_data alt flow)
-            if 5.69 <= length_m <= 5.73:
-                try:
-                    _parsed = (cfg.parse_name_to_sizes(matching_row[1]) if matching_row and len(matching_row) > 1 else (None, None))
-                    _log_path = _DEBUG_LOG_A9176E
-                    write_agent_debug(_log_path, {"sessionId": "a9176e", "hypothesisId": "H3", "location": "commercial:order_data_loop_alt", "message": "57/57,1 order_data name source", "data": {"length_m": length_m, "qty": qty, "has_matching_row": matching_row is not None, "matching_row_name": matching_row[1] if matching_row and len(matching_row) > 1 else None, "parsed_length": _parsed[0], "item_length_dm_raw": item.get('length_dm_raw'), "cache_name": item.get('canonical_name'), "final_name": name, "final_length_dm_raw": length_dm_raw}, "timestamp": __import__("time").time() * 1000})
-                except Exception:
-                    pass
-            # #endregion
+
             entry = {
                 "name": name,
                 "length_m": length_m,

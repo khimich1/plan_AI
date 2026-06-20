@@ -13,7 +13,6 @@ import re
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from .debug_paths import get_debug_log_path
 from .project_paths import (
     BASE_DIR,
     CUTS_DOCX_PATH,
@@ -57,8 +56,6 @@ from .parsing.plate_lists import (
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
-_DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
-_DEBUG_LOG_B59370 = get_debug_log_path("debug-b59370.log")
 
 # Пути и env: см. core.project_paths / core.project_settings (реэкспорт для обратной совместимости).
 
@@ -119,23 +116,7 @@ def make_plate_name(
             length_str = str(int(round(length_dm_val)))
         else:
             length_str = f'{length_dm_val:.1f}'.rstrip('0').rstrip('.').replace('.', ',')
-        # #region agent log (57/57,1: где теряется сотка по длине)
-        if 5.69 <= length_m <= 5.73:
-            try:
-                _log_path = _DEBUG_LOG_8E9428
-                with open(_log_path, 'a', encoding='utf-8') as _f:
-                    _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_length_001", "location": "config_and_data:make_plate_name", "message": "57/57,1: length_m -> length_str", "data": {"length_m": length_m, "length_dm_raw": length_dm_raw, "length_dm_val": length_dm_val, "length_str": length_str, "branch_001_used": branch_001}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-        # #endregion
-        # #region agent log
-        try:
-            _log_path = _DEBUG_LOG_B59370
-            with open(_log_path, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "b59370", "hypothesisId": "H2", "location": "config_and_data:make_plate_name", "message": "length_str from length_m (no length_dm_raw)", "data": {"length_m": length_m, "length_dm_val": length_dm_val, "length_str": length_str}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
+
     
     # Единая логика формирования ширины: всё в дециметрах.
     # 1.2м → '12', 0.53м → '5,3', 0.3м → '3', 0.2м → '2'

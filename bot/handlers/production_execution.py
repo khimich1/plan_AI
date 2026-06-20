@@ -33,9 +33,6 @@ from app.services.optimization_service import OptimizationService
 from app.services.production_planning_service import ProductionPlanningService
 from core.optimization.result_contract import is_optimization_success
 from core.plate_order_context import PlateOrderContext, run_in_order_context
-from core.debug_paths import get_debug_log_path
-
-from .debug_util import write_agent_debug, write_agent_debug_session
 
 from ..keyboards import main_menu_kb, calendar_days_kb
 from ..states import ProductionStates
@@ -49,33 +46,6 @@ from .plan_manager import (
 # Phase 5 (P8): RESCUE_TOL_LEN_M / RESCUE_TOL_W_MM / RESCUE_EXHAUSTED_RANK
 # удалены — fuzzy-матч больше не используется. Identity берётся из
 # plate_assignments, см. core.rescue_tracks.
-
-# Путь к NDJSON-логу для отладки плит/ключей
-_DEBUG_LOG = get_debug_log_path("debug.log")
-_DEBUG_SESSION_LOG = get_debug_log_path("debug-d7e22e.log")
-_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
-_DEBUG_RUNTIME_LOG = get_debug_log_path("debug-648532.log")
-_DEBUG_LOG_476B25 = get_debug_log_path("debug-476b25.log")
-_DEBUG_LOG_73B708 = get_debug_log_path("debug-73b708.log")
-_DEBUG_LOG_95694E = get_debug_log_path("debug-95694e.log")
-_DEBUG_RUNTIME_SESSION_ID = "648532"
-
-
-def _debug_write(hypothesis_id, location, message, data):
-    """Пишет строку NDJSON в debug.log (только при включённом agent debug)."""
-    import time
-
-    write_agent_debug(
-        _DEBUG_LOG,
-        {
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": time.time() * 1000,
-        },
-    )
-
 
 router = Router()
 optimization_service = OptimizationService()
@@ -337,13 +307,6 @@ async def load_and_plan_production(
             )
             await state.clear()
             return
-        # #region agent log H_366_loaded: плиты КП 2 после загрузки (до остатков)
-        _sel_kp2 = [{"plate_name": p.get("plate_name"), "kp_id": p.get("kp_id"), "length": p.get("length"), "width": p.get("width"), "qty": p.get("qty")} for p in selected_plates if p.get("kp_id") == 2]
-        try:
-            write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_366_loaded", "location": "production_execution:after_load_plates", "message": "Плиты КП №2 в selected_plates до остатков", "data": {"kp2_plates": _sel_kp2, "filter_method": filter_method, "kp_plate_ids_keys": list((kp_plate_ids or {}).keys())}, "timestamp": __import__("time").time()})
-        except Exception:
-            pass
-        # #endregion
         # === ШАГ 3.5: ПРОВЕРКА ОСТАТКОВ НА СКЛАДЕ ===
         plates_from_rests = []
         plates_for_optimizer = []
@@ -452,77 +415,8 @@ async def load_and_plan_production(
                 'concrete_grade': plate_data.get('concrete_grade'),
             })
         enrich_orders_2d_concrete_grade(orders_2d, db_path=PB_DB_PATH)
-        # #region agent log
-        _targets = []
-        for _o in orders_2d:
-            _n = (_o.get("plate_name") or "")
-            if any(_k in _n for _k in ("59,8-12-8п", "50,8-5,3-8п", "50,8-3,2-8п")):
-                _targets.append({
-                    "plate_name": _n,
-                    "length": _o.get("length"),
-                    "width": _o.get("width"),
-                    "load_code": _o.get("load_code"),
-                    "qty": _o.get("qty", 1),
-                    "kp_id": _o.get("kp_id"),
-                })
-        write_agent_debug_session(
-            _DEBUG_SESSION_LOG,
-            run_id="run1",
-            hypothesis_id="H1",
-            location="production_execution:orders_2d_built",
-            message="Target plates after parsing and loading",
-            data={
-                "targets_count": len(_targets),
-                "targets": _targets,
-                "orders_total_qty": sum(int(x.get("qty", 0) or 0) for x in orders_2d),
-            },
-        )
-        # #endregion
-        # #region agent log H_366: плита 36,6-6,65 в orders_2d при загрузке плана
-        _log_366 = [{"plate_name": o.get("plate_name"), "kp_id": o.get("kp_id"), "length": o.get("length"), "width": o.get("width"), "qty": o.get("qty", 1)} for o in orders_2d if o.get("kp_id") == 2 and ("36,6" in (o.get("plate_name") or "") or "6,65" in (o.get("plate_name") or "") or (abs(float(o.get("length", 0)) - 3.66) < 0.01 and o.get("width") == 665))]
-        if _log_366 or any(o.get("kp_id") == 2 for o in orders_2d):
-            try:
-                write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_366", "location": "production_execution:orders_2d_after_build", "message": "КП №2 и/или плита 36,6-6,65 в orders_2d", "data": {"kp2_orders": _log_366, "all_kp2_count": sum(1 for o in orders_2d if o.get("kp_id") == 2), "total_orders": len(orders_2d)}, "timestamp": __import__("time").time()})
-            except Exception:
-                pass
-        # #endregion
-        # #region agent log
-        _orders_by_key = Counter(
-            (
-                round(float(o.get('length', 0)), 2),
-                int(round(float(o.get('width', 0) or 0))),
-                cfg.normalize_load_code(o.get('load_code', 8)),
-            )
-            for o in orders_2d
-            for _ in range(int(o.get('qty', 1) or 0))
-        )
-        write_agent_debug(
-            _DEBUG_RUNTIME_LOG,
-            {
-                "sessionId": _DEBUG_RUNTIME_SESSION_ID,
-                "runId": "run1",
-                "hypothesisId": "H1_input_orders",
-                "location": "production_execution:orders_2d_built",
-                "message": "Demand snapshot before optimizer",
-                "data": {
-                    "orders_total_qty": int(sum(int(o.get('qty', 0) or 0) for o in orders_2d)),
-                    "orders_total_lines": len(orders_2d),
-                    "orders_by_key": {str(list(k)): int(v) for k, v in _orders_by_key.items()},
-                },
-                "timestamp": int(__import__("time").time() * 1000),
-            },
-        )
-        # #endregion
-        # #region agent log
-        try:
-            _log_476b25 = _DEBUG_LOG_476B25
-            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
-            _n51 = _orders_by_key.get(_tk51, 0)
-            _n58 = _orders_by_key.get(_tk58, 0)
-            write_agent_debug(_log_476b25, {"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_orders", "location": "production_execution:orders_2d_built", "message": "Chain step 1: demand for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "orders_2d"}, "timestamp": __import__("time").time()})
-        except Exception:
-            pass
-        # #endregion
+
+
         # Логируем уникальные load_code в orders_2d (план: этап 2.3)
         unique_loads = set(o['load_code'] for o in orders_2d)
         logger.info(f"[DEMAND] Уникальные load_code в orders_2d: {sorted(unique_loads)}")
@@ -541,21 +435,7 @@ async def load_and_plan_production(
                             logger.warning("[DEMAND] ⚠️ В БД есть плиты 12.5п, но в orders_2d только 12п!")
                 except Exception:
                     pass
-        # #region agent log: 59,9-12-10п trace (H1,H2)
-        _log_59_10 = [{"length": o["length"], "width": o["width"], "plate_name": o.get("plate_name", ""), "kp_id": o.get("kp_id"), "qty": o.get("qty", 1)} for o in orders_2d if 5.98 <= float(o.get("length", 0)) <= 6.0 and cfg.normalize_load_code(o.get("load_code", 8)) == 10]
-        if _log_59_10:
-            try:
-                write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_59_10_source", "location": "production_execution:orders_2d_built", "message": "orders_2d: плиты 5.98-6м 10п (ширина для 59,9-12-10п)", "data": {"orders": _log_59_10}, "timestamp": __import__("time").time()})
-            except Exception:
-                pass
-        # #endregion
-        # #region agent log H_orders: плиты 61,2 и 59,8 в orders_2d при планировании
-        _log_61_59 = [{"plate_name": o.get("plate_name", ""), "kp_id": o.get("kp_id"), "length": o.get("length"), "width": o.get("width"), "qty": o.get("qty", 1)} for o in orders_2d if ("61,2" in (o.get("plate_name") or "") or "59,8" in (o.get("plate_name") or ""))]
-        try:
-            write_agent_debug(_DEBUG_LOG, {"hypothesisId": "H_orders", "location": "production_execution:orders_2d_built", "message": "Плиты 61,2 и 59,8 в orders_2d", "data": {"count": len(_log_61_59), "entries": _log_61_59}, "timestamp": __import__("time").time()})
-        except Exception:
-            pass
-        # #endregion
+
         # ✅ НОВОЕ: Логируем все плиты ДО оптимизации
         logger.info(f"[TRACE] ===== ШАГ 1: ПЛИТЫ ДО ОПТИМИЗАЦИИ =====")
         logger.info(f"[TRACE] Всего плит: {sum(p['qty'] for p in orders_2d)}")
@@ -698,76 +578,8 @@ async def load_and_plan_production(
                 f"первичных получено {output_plates_primary}, "
                 f"вторичных дополнительно: {output_plates_total - output_plates_primary}"
             )
-        # #region agent log
-        _ordered_debug = Counter(
-            (
-                round(float(o.get('length', 0)), 2),
-                int(round(float(o.get('width', 0) or 0))),
-                cfg.normalize_load_code(o.get('load_code', 8)),
-            )
-            for o in orders_2d
-            for _ in range(int(o.get('qty', 1) or 0))
-        )
-        _produced_debug = Counter(
-            (
-                round(float(p.get('length', 0)), 2),
-                int(round(float(p.get('width', 0) or 0))),
-                cfg.normalize_load_code(p.get('load_code', 8)),
-            )
-            for p in all_assignments
-            if p.get('source') == 'primary'
-        )
-        write_agent_debug(
-            _DEBUG_RUNTIME_LOG,
-            {
-                "sessionId": _DEBUG_RUNTIME_SESSION_ID,
-                "runId": "run1",
-                "hypothesisId": "H2_optimizer_output",
-                "location": "production_execution:after_optimizer",
-                "message": "Optimizer demand vs produced(primary)",
-                "data": {
-                    "input_plates": int(input_plates),
-                    "output_primary": int(output_plates_primary),
-                    "output_total_assignments": int(output_plates_total),
-                    "missing_primary_keys": {str(list(k)): int(v) for k, v in (_ordered_debug - _produced_debug).items()},
-                    "extra_primary_keys": {str(list(k)): int(v) for k, v in (_produced_debug - _ordered_debug).items()},
-                },
-                "timestamp": int(__import__("time").time() * 1000),
-            },
-        )
-        # #endregion
         
-        # #region agent log (73b708) H_WHERE_OPT: сколько плит по целевым ключам вышло из оптимизатора
-        try:
-            _target_keys = [(5.08, 320, 8), (5.98, 665, 8)]
-            _pa = optimization_result.get('plate_assignments', []) or []
-            _opt_counts = {}
-            for _k in _target_keys:
-                _opt_counts[str(_k)] = 0
-            for _p in _pa:
-                _pl = round(float(_p.get('length', 0)), 2)
-                _pw = int(round(float(_p.get('width', 0))))
-                _plc = cfg.normalize_load_code(_p.get('load_code', 8))
-                for _tk in _target_keys:
-                    if abs(_pl - _tk[0]) < 0.02 and _pw == _tk[1] and _plc == _tk[2]:
-                        _opt_counts[str(_tk)] = _opt_counts.get(str(_tk), 0) + 1
-                        break
-            _agent_log = _DEBUG_LOG_73B708
-            write_agent_debug(_agent_log, {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_OPT", "location": "production_execution:after_optimizer", "message": "Plates by key at optimizer output", "data": {"target_keys": _target_keys, "counts": _opt_counts, "total_plate_assignments": len(_pa)}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
-        # #region agent log
-        try:
-            _log_476b25 = _DEBUG_LOG_476B25
-            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
-            _pa = optimization_result.get('plate_assignments', []) or []
-            _n51 = sum(1 for p in _pa if p.get('source') == 'primary' and abs(round(float(p.get('length', 0)), 2) - 5.1) < 0.02 and int(round(float(p.get('width', 0)))) == 320 and cfg.normalize_load_code(p.get('load_code', 8)) == 8)
-            _n58 = sum(1 for p in _pa if p.get('source') == 'primary' and abs(round(float(p.get('length', 0)), 2) - 5.8) < 0.02 and int(round(float(p.get('width', 0)))) == 320 and cfg.normalize_load_code(p.get('load_code', 8)) == 8)
-            write_agent_debug(_log_476b25, {"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_opt", "location": "production_execution:after_optimizer", "message": "Chain step 2: plate_assignments primary for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "plate_assignments_primary", "total_primary": sum(1 for p in _pa if p.get('source') == 'primary')}, "timestamp": __import__("time").time()})
-        except Exception:
-            pass
-        # #endregion
+
         # === ШАГ 4.5: ДОПОЛНЕНИЕ LOOKUP ДЛЯ ВТОРИЧНЫХ РЕЗОВ ===
         if optimization_result.get('secondary_cuts'):
             orders_dict = {}
@@ -849,34 +661,7 @@ async def load_and_plan_production(
         plate_order_ctx.load_production_snapshot(orders_2d, optimization_result)
         optimization_result['loads_in_group'] = sorted(all_loads)
         
-        # #region agent log (95694e) количество 5.98/665 в результате оптимизации (primary_cuts)
-        try:
-            _log_95694e = _DEBUG_LOG_95694E
-            _n_opt = 0
-            for _c in optimization_result.get('primary_cuts', []) or []:
-                _L = round(float((_c.get('lengths') or [6.0])[0]), 2)
-                _w = _c.get('width') or 1200
-                if abs(_L - 5.98) < 0.02 and _w == 665:
-                    _n_opt += _c.get('qty', 1)
-            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_opt_598665", "location": "production_execution:after_optimization", "message": "count 5.98/665 in optimization_result primary_cuts", "data": {"count_598_665": _n_opt}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
-        # #region agent log (95694e) количество 5.08/320 и 5.98/530 в primary_cuts
-        try:
-            _log_95694e = _DEBUG_LOG_95694E
-            _n_508320 = _n_598530 = 0
-            for _c in optimization_result.get('primary_cuts', []) or []:
-                _L = round(float((_c.get('lengths') or [6.0])[0]), 2)
-                _w = _c.get('width') or 1200
-                if abs(_L - 5.08) < 0.02 and _w == 320:
-                    _n_508320 += _c.get('qty', 1)
-                if abs(_L - 5.98) < 0.02 and _w == 530:
-                    _n_598530 += _c.get('qty', 1)
-            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_opt_rescue", "location": "production_execution:after_optimization", "message": "count 5.08/320 and 5.98/530 in primary_cuts", "data": {"count_508_320": _n_508320, "count_598_530": _n_598530}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
+
         # === ШАГ 6: ПОДСЧЕТ ДОРОЖЕК ===
         await message.answer("⏳ Подсчитываю дорожки...")
         
@@ -894,79 +679,9 @@ async def load_and_plan_production(
             _handler_audit = _PlateAudit(orders_2d)
 
         seq = build_layout_sequence()
-        # #region agent log (73b708) H_LAYOUT_IN: целостность после build_layout_sequence
-        try:
-            _pa_count = len(optimization_result.get('plate_assignments', []) or [])
-            if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
-                _seq_total = sum(len(g.get('sequence', [])) for g in seq)
-                _format = "grouped"
-            else:
-                _seq_total = len(seq) if seq else 0
-                _format = "flat"
-            _agent_log = _DEBUG_LOG_73B708
-            write_agent_debug(_agent_log, {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_LAYOUT_IN", "location": "production_execution:after_build_layout_sequence", "message": "Sequence vs plate_assignments count", "data": {"sequence_total": _seq_total, "plate_assignments_count": _pa_count, "format": _format, "diff": _seq_total - _pa_count}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
-        # #region agent log (95694e) количество 5.98/665 в последовательности до split
-        try:
-            _log_95694e = _DEBUG_LOG_95694E
-            def _count_598_665_in_seq(s):
-                n = 0
-                if isinstance(s, list) and s and isinstance(s[0], dict) and s[0].get('load_code') is not None:
-                    for g in s:
-                        for it in g.get('sequence', []):
-                            L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
-                            w = it.get('width') or it.get('main_w') or 1.2
-                            w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
-                            if abs(L - 5.98) < 0.02 and w_mm == 665:
-                                n += 1
-                return n
-            _n_seq = _count_598_665_in_seq(seq)
-            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_seq_598665", "location": "production_execution:after_build_layout", "message": "count 5.98/665 in sequence before split", "data": {"count_598_665": _n_seq}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
-        # #region agent log (95694e) количество 5.08/320 и 5.98/530 в последовательности до split
-        try:
-            _log_95694e = _DEBUG_LOG_95694E
-            _n508, _n598 = 0, 0
-            if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
-                for g in seq:
-                    for it in g.get('sequence', []):
-                        L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
-                        w = it.get('width') or it.get('main_w') or 1.2
-                        w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
-                        if abs(L - 5.08) < 0.02 and w_mm == 320:
-                            _n508 += 1
-                        if abs(L - 5.98) < 0.02 and w_mm == 530:
-                            _n598 += 1
-            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_seq_rescue", "location": "production_execution:after_build_layout", "message": "count 5.08/320 and 5.98/530 in sequence before split", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
+
         # PlateAudit: checkpoint после build_layout_sequence
         _handler_audit.checkpoint("layout_sequence", seq)
-        # #region agent log
-        try:
-            _log_476b25 = _DEBUG_LOG_476B25
-            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
-            _n51, _n58 = 0, 0
-            if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
-                for g in seq:
-                    for it in g.get('sequence', []):
-                        L = round(float(it.get('length', 0) or it.get('target_length', 0) or 0), 2)
-                        w = it.get('width') if it.get('width') is not None else it.get('main_w') or 1.2
-                        w_mm = int(round(float(w) * 1000)) if float(w) < 20 else int(round(float(w)))
-                        lc = cfg.normalize_load_code(it.get('load_code', 8))
-                        if abs(L - 5.1) < 0.02 and w_mm == 320 and lc == 8:
-                            _n51 += 1
-                        if abs(L - 5.8) < 0.02 and w_mm == 320 and lc == 8:
-                            _n58 += 1
-            write_agent_debug(_log_476b25, {"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_seq", "location": "production_execution:after_build_layout_sequence", "message": "Chain step 3: items in sequence for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "layout_sequence"}, "timestamp": __import__("time").time()})
-        except Exception:
-            pass
-        # #endregion
 
         try:
             all_tracks_list = split_sequence_into_tracks(
@@ -995,184 +710,8 @@ async def load_and_plan_production(
 
         # PlateAudit: checkpoint после split_sequence_into_tracks
         _handler_audit.checkpoint("tracks", all_tracks_list)
-        # #region agent log
-        try:
-            _log_476b25 = _DEBUG_LOG_476B25
-            _tk51, _tk58 = (5.1, 320, 8), (5.8, 320, 8)
-            _n51, _n58 = 0, 0
-            for tr in all_tracks_list or []:
-                for it in tr.get('items', []) or []:
-                    wv = it.get('main_w') if it.get('mode') == 'split' else it.get('width')
-                    w_mm = int(round(float(wv) * 1000)) if wv is not None and float(wv) < 20 else int(round(float(wv or 0)))
-                    lc = cfg.normalize_load_code(it.get('load_code', 8))
-                    if it.get('mode') == 'transverse' and it.get('target_length') is not None:
-                        L = round(float(it.get('target_length', 0)), 2)
-                        if abs(L - 5.1) < 0.02 and w_mm == 320 and lc == 8:
-                            _n51 += 1
-                        if abs(L - 5.8) < 0.02 and w_mm == 320 and lc == 8:
-                            _n58 += 1
-                        rem = round(float(it.get('remainder', 0) or 0), 2)
-                        if rem > 0.1:
-                            if abs(rem - 5.1) < 0.02 and w_mm == 320 and lc == 8:
-                                _n51 += 1
-                            if abs(rem - 5.8) < 0.02 and w_mm == 320 and lc == 8:
-                                _n58 += 1
-                    else:
-                        L = round(float(it.get('length', 0) or 0), 2)
-                        if abs(L - 5.1) < 0.02 and w_mm == 320 and lc == 8:
-                            _n51 += 1
-                        if abs(L - 5.8) < 0.02 and w_mm == 320 and lc == 8:
-                            _n58 += 1
-                    for sc in it.get('secondary_cuts', []) or []:
-                        sL = round(float(sc.get('target_length') or L), 2)
-                        sw = int(round(float(sc.get('width', 0))))
-                        slc = cfg.normalize_load_code(sc.get('load_code', it.get('load_code', 8)))
-                        if abs(sL - 5.1) < 0.02 and sw == 320 and slc == 8:
-                            _n51 += 1
-                        if abs(sL - 5.8) < 0.02 and sw == 320 and slc == 8:
-                            _n58 += 1
-            write_agent_debug(_log_476b25, {"sessionId": "476b25", "runId": "run1", "hypothesisId": "H_chain_tracks", "location": "production_execution:after_split_tracks", "message": "Chain step 4: items in tracks for 5.1/5.8 x 320 x 8", "data": {"key_5.1_320_8": _n51, "key_5.8_320_8": _n58, "stage": "all_tracks_list"}, "timestamp": __import__("time").time()})
-        except Exception:
-            pass
-        # #endregion
-        # #region agent log
-        def _count_keys_in_seq_and_tracks(order_keys_set):
-            seq_counts = Counter()
-            tracks_counts = Counter()
-            if isinstance(seq, list) and seq and isinstance(seq[0], dict) and seq[0].get('load_code') is not None:
-                for g in seq:
-                    for it in g.get('sequence', []):
-                        l = round(float(it.get('length', 0) or it.get('target_length', 0) or 0), 2)
-                        wv = it.get('width') if it.get('width') is not None else it.get('main_w')
-                        w = int(round(float(wv) * 1000)) if wv is not None and float(wv) < 20 else int(round(float(wv or 0)))
-                        lc = cfg.normalize_load_code(it.get('load_code', 8))
-                        k = (l, w, lc)
-                        if k in order_keys_set:
-                            seq_counts[k] += 1
-            for tr in all_tracks_list or []:
-                for it in tr.get('items', []) or []:
-                    l = round(float(it.get('target_length') if it.get('mode') == 'transverse' and it.get('target_length') is not None else it.get('length', 0) or 0), 2)
-                    wv = it.get('main_w') if it.get('mode') == 'split' else it.get('width')
-                    w = int(round(float(wv) * 1000)) if wv is not None and float(wv) < 20 else int(round(float(wv or 0)))
-                    lc = cfg.normalize_load_code(it.get('load_code', 8))
-                    k = (l, w, lc)
-                    if k in order_keys_set:
-                        tracks_counts[k] += 1
-                    for sc in it.get('secondary_cuts', []) or []:
-                        sl = round(float(sc.get('target_length') or l), 2)
-                        sw = int(round(float(sc.get('width', 0))))
-                        slc = cfg.normalize_load_code(sc.get('load_code', it.get('load_code', 8)))
-                        sk = (sl, sw, slc)
-                        if sk in order_keys_set:
-                            tracks_counts[sk] += 1
-            return seq_counts, tracks_counts
 
-        _order_keys_set = set(
-            (
-                round(float(o.get('length', 0)), 2),
-                int(round(float(o.get('width', 0) or 0))),
-                cfg.normalize_load_code(o.get('load_code', 8)),
-            )
-            for o in orders_2d
-        )
-        _seq_counts, _tracks_counts = _count_keys_in_seq_and_tracks(_order_keys_set)
-        write_agent_debug(
-            _DEBUG_RUNTIME_LOG,
-            {
-                "sessionId": _DEBUG_RUNTIME_SESSION_ID,
-                "runId": "run1",
-                "hypothesisId": "H3_layout_split",
-                "location": "production_execution:after_split_tracks",
-                "message": "Counts by ordered keys in sequence and tracks",
-                "data": {
-                    "ordered_keys_count": len(_order_keys_set),
-                    "sequence_counts": {str(list(k)): int(v) for k, v in _seq_counts.items()},
-                    "tracks_counts": {str(list(k)): int(v) for k, v in _tracks_counts.items()},
-                    "lost_on_split_keys": {str(list(k)): int(v) for k, v in (_seq_counts - _tracks_counts).items()},
-                },
-                "timestamp": int(__import__("time").time() * 1000),
-            },
-        )
-        # #endregion
-        # #region agent log (95694e) количество 5.98/665 в дорожках после split
-        try:
-            _log_95694e = _DEBUG_LOG_95694E
-            _n_tracks = 0
-            for tr in (all_tracks_list or []):
-                for it in tr.get('items', []) or []:
-                    L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
-                    w = it.get('width') or it.get('main_w') or 1.2
-                    w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
-                    if abs(L - 5.98) < 0.02 and w_mm == 665:
-                        _n_tracks += 1
-            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_598665", "location": "production_execution:after_split", "message": "count 5.98/665 in tracks after split", "data": {"count_598_665": _n_tracks}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
-        # #region agent log (95694e) количество 5.08/320 и 5.98/530 в дорожках после split
-        try:
-            _log_95694e = _DEBUG_LOG_95694E
-            _n508, _n598 = 0, 0
-            for tr in (all_tracks_list or []):
-                for it in tr.get('items', []) or []:
-                    L = round(float(it.get('length', 0) or it.get('target_length', 0)), 2)
-                    w = it.get('width') or it.get('main_w') or 1.2
-                    w_mm = round(float(w) * 1000) if float(w) < 20 else round(float(w))
-                    if abs(L - 5.08) < 0.02 and w_mm == 320:
-                        _n508 += 1
-                    if abs(L - 5.98) < 0.02 and w_mm == 530:
-                        _n598 += 1
-            write_agent_debug(_log_95694e, {"sessionId": "95694e", "hypothesisId": "H_95694e_tracks_rescue", "location": "production_execution:after_split", "message": "count 5.08/320 and 5.98/530 in tracks after split", "data": {"count_508_320": _n508, "count_598_530": _n598}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
-        # #region agent log (73b708) H_WHERE_TRACKS: сколько плит по целевым ключам в треках после split_sequence_into_tracks
-        try:
-            _target_keys = [(5.08, 320, 8), (5.98, 665, 8)]
-            def _w_mm(w, default=1.2):
-                if w is None:
-                    return round(default * 1000)
-                try:
-                    f = float(w)
-                    return round(f * 1000) if f < 20 else round(f)
-                except (TypeError, ValueError):
-                    return round(default * 1000)
-            _track_counts = {str(_k): 0 for _k in _target_keys}
-            for _tr in all_tracks_list:
-                for _it in _tr.get('items', []) or []:
-                    if not _it:
-                        continue
-                    _mode = _it.get('mode', 'solid')
-                    _lc = cfg.normalize_load_code(_it.get('load_code', 8))
-                    if _mode == 'split':
-                        _wm = _w_mm(_it.get('main_w', 1.2))
-                    else:
-                        _wm = _w_mm(_it.get('width', 1.2))
-                    if _mode == 'transverse' and _it.get('target_length') is not None:
-                        _ln = round(float(_it.get('target_length') or 0), 2)
-                    else:
-                        _ln = round(float(_it.get('length', 0) or 0), 2)
-                    if _ln <= 0:
-                        continue
-                    for _tk in _target_keys:
-                        if abs(_ln - _tk[0]) < 0.02 and _wm == _tk[1] and _lc == _tk[2]:
-                            _track_counts[str(_tk)] = _track_counts.get(str(_tk), 0) + 1
-                            break
-                    for _sc in _it.get('secondary_cuts', []) or []:
-                        _sw = _w_mm(_sc.get('width', 0), 0)
-                        _sl = round(float(_sc.get('target_length') or _ln), 2)
-                        if _sw <= 0:
-                            continue
-                        _slc = cfg.normalize_load_code(_sc.get('load_code', _it.get('load_code', 8)))
-                        for _tk in _target_keys:
-                            if abs(_sl - _tk[0]) < 0.02 and _sw == _tk[1] and _slc == _tk[2]:
-                                _track_counts[str(_tk)] = _track_counts.get(str(_tk), 0) + 1
-                                break
-            _agent_log = _DEBUG_LOG_73B708
-            write_agent_debug(_agent_log, {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_WHERE_TRACKS", "location": "production_execution:after_split_tracks", "message": "Plates by key in all_tracks_list", "data": {"target_keys": _target_keys, "counts": _track_counts}, "timestamp": __import__('time').time()})
-        except Exception:
-            pass
-        # #endregion
+
         # === ШАГ 6.5: ЗАЩИТА ОТ ПОТЕРИ ПЛИТ (РЕСКЬЮ) ===
         # Phase 5 (P8): локальная rescue-логика удалена. Источник правды —
         # plate_assignments (с backfill identity, см. core.plate_attribution).
@@ -1212,31 +751,6 @@ async def load_and_plan_production(
                 "(root + secondary_cuts)",
                 _backfilled_items_count,
             )
-        # #region agent log (session 73b708) H_E: резюме недостачи и рескью
-        try:
-            _agent_log = _DEBUG_LOG_73B708
-            _payload = {
-                "sessionId": "73b708",
-                "runId": "run1",
-                "hypothesisId": "H_E",
-                "location": "production_execution:rescue_summary",
-                "message": "Rescue/missing summary (Phase 5)",
-                "data": {
-                    "total_missing": int(sum(missing_counts.values()) if missing_counts else 0),
-                    "missing_keys_count": len(missing_counts) if missing_counts else 0,
-                    "missing_sample": [
-                        [int(k[0]), str(k[1]), int(v)]
-                        for k, v in list(missing_counts.items())[:10]
-                    ],
-                    "rescue_tracks_added": rescue_tracks_added,
-                    "rescue_assignments_added": len(rescue_assignments),
-                },
-                "timestamp": __import__('time').time(),
-            }
-            write_agent_debug(_agent_log, _payload)
-        except Exception:
-            pass
-        # #endregion
         # PlateAudit: финальный checkpoint после rescue
         _handler_audit.checkpoint("final", all_tracks_list)
         if _handler_audit.has_losses("input", "final"):
@@ -1244,28 +758,6 @@ async def load_and_plan_production(
         else:
             logger.info("[AUDIT] Все плиты учтены:\n%s", _handler_audit.summary())
 
-        # #region agent log (session 73b708) H_E: резюме недостачи и рескью + какие заказы дали недостающие ключи
-        try:
-            _agent_log = _DEBUG_LOG_73B708
-            _total_missing = sum(missing_counts.values()) if missing_counts else 0
-            _missing_sample = [list(k) + [v] for k, v in list(missing_counts.items())[:10]] if missing_counts else []
-            _missing_to_orders = []
-            _log_err = None
-            if missing_counts:
-                try:
-                    for mk in missing_counts.keys():
-                        _ml, _mw, _mlc = mk
-                        _orders_for_key = [{"plate_name": str(o.get("plate_name") or ""), "length": float(o.get("length", 0)), "width": int(round(float(o.get("width", 1200)))), "qty": int(o.get("qty", 1))} for o in orders_2d if abs(round(float(o.get("length", 0)), 2) - _ml) < 0.02 and int(round(float(o.get("width", 1200)))) == _mw and cfg.normalize_load_code(o.get("load_code", 8)) == _mlc]
-                        _missing_to_orders.append({"key": list(mk), "orders": _orders_for_key[:5]})
-                except Exception as _e:
-                    _log_err = str(_e)
-            _payload = {"sessionId": "73b708", "runId": "run1", "hypothesisId": "H_E", "location": "production_execution:rescue_summary", "message": "Rescue/missing summary", "data": {"total_missing": _total_missing, "missing_keys_count": len(missing_counts) if missing_counts else 0, "missing_sample": _missing_sample, "rescue_tracks_added": rescue_tracks_added, "missing_key_to_orders": _missing_to_orders}, "timestamp": __import__('time').time()}
-            if _log_err:
-                _payload["data"]["missing_key_to_orders_error"] = _log_err
-            write_agent_debug(_agent_log, _payload)
-        except Exception:
-            pass
-        # #endregion
         total_tracks_count = len(all_tracks_list)
         total_days = math.ceil(total_tracks_count / tracks_count)
         
@@ -1438,59 +930,6 @@ async def load_and_plan_production(
             days_info=days_info
         )
 
-        # #region agent log
-        try:
-            import json as _agent_json
-            import time as _agent_time
-            from collections import Counter as _AgentCounter
-
-            def _bot_count_physical(_tracks: list[dict]) -> tuple[int, int, _AgentCounter[str]]:
-                _total = 0
-                _without_identity = 0
-                _counts: _AgentCounter[str] = _AgentCounter()
-                for _tr in _tracks or []:
-                    if not isinstance(_tr, dict):
-                        continue
-                    for _it in _tr.get("items") or []:
-                        if not isinstance(_it, dict):
-                            continue
-                        _phys = [_it] + [
-                            _sec for _sec in (_it.get("secondary_cuts") or [])
-                            if isinstance(_sec, dict)
-                        ]
-                        for _p in _phys:
-                            _total += 1
-                            _kp = _p.get("kp_id")
-                            _name = _p.get("plate_name") or _p.get("label")
-                            if _kp and _name:
-                                _counts[f"{_kp}|{_name}"] += 1
-                            else:
-                                _without_identity += 1
-                return _total, _without_identity, _counts
-
-            _physical_total, _without_identity, _id_counts = _bot_count_physical(all_tracks_list)
-            write_agent_debug(
-                _DEBUG_AGENT_LOG,
-                {
-                    "sessionId": "ebb546",
-                    "runId": "bot-stage",
-                    "hypothesisId": "B1,B2",
-                    "location": "bot/handlers/production_execution.py:before_state_update",
-                    "message": "Bot stage E->state: треки перед сохранением в FSM",
-                    "data": {
-                        "orders_qty": sum(int(o.get("qty") or 0) for o in orders_2d),
-                        "assignments_total": len((optimization_result or {}).get("plate_assignments", []) or []),
-                        "tracks_count": len(all_tracks_list or []),
-                        "physical_items_total": _physical_total,
-                        "physical_without_identity": _without_identity,
-                        "top_identity_counts": _id_counts.most_common(15),
-                    },
-                    "timestamp": int(_agent_time.time() * 1000),
-                },
-            )
-        except Exception:
-            pass
-        # #endregion
         
         # === ПОКАЗЫВАЕМ КНОПКИ С ДАТАМИ ===
         await message.answer(
