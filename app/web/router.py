@@ -116,6 +116,18 @@ def _render_offer_form(
     return _page("New Offer", body)
 
 
+def _redact_saved_offer_if_forbidden(draft: dict, user: dict) -> dict:
+    saved_offer = draft.get("saved_offer")
+    if not saved_offer or saved_offer.get("kp_id") is None:
+        return draft
+    try:
+        OffersService().get_offer(int(saved_offer["kp_id"]), user=user)
+    except HTTPException:
+        draft = dict(draft)
+        draft["saved_offer"] = None
+    return draft
+
+
 def _render_offer_preview(*, user: dict, draft: dict) -> HTMLResponse:
     metadata = draft.get("metadata", {})
     totals = draft.get("totals", {})
@@ -235,11 +247,12 @@ def dashboard(user: dict = Depends(get_current_user)) -> HTMLResponse:
 def managers_page(user: dict = Depends(require_roles("admin", "manager", "production"))) -> HTMLResponse:
     role = user.get("role", "")
     role_json = json.dumps(role)
+    create_card_hidden = "" if role in {"admin", "manager"} else ' style="display:none"'
     body = (
         _nav(user)
-        + """
+        + f"""
     <h1>Менеджеры и КП</h1>
-    <div class="card" id="create-offer-card">
+    <div class="card" id="create-offer-card"{create_card_hidden}>
       <h2>Создать КП</h2>
       <p style="margin-top: 0;">Шаги: список плит -> менеджер -> клиент -> скидка/условия -> превью -> сохранить.</p>
       <label>Список плит:</label><br>
@@ -852,7 +865,9 @@ def managers_page(user: dict = Depends(require_roles("admin", "manager", "produc
 
 
 @router.get("/web/offers", response_class=HTMLResponse)
-def offers_page(user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER)) -> HTMLResponse:
+def offers_page(
+    user: dict = Depends(require_roles("admin", "manager", "production")),
+) -> HTMLResponse:
     # Object-level RBAC: same filters as REST /api/v1/offers (OffersService).
     offers = OffersService().list_offers(user=user, status="all", limit=100)
     rows = "".join(
@@ -951,6 +966,7 @@ def offer_draft_page(
         draft = workflow.get_draft_details(draft_id)
     except FileNotFoundError:
         return _page("Draft not found", _nav(user) + "<h1>Черновик не найден</h1>")
+    draft = _redact_saved_offer_if_forbidden(draft, user)
     return _render_offer_preview(user=user, draft=draft)
 
 
