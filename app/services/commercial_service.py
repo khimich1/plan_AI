@@ -66,9 +66,18 @@ class CommercialService:
         )
         with ctx.bound():
             price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
-            price_rows, total_sum = build_price_rows(price_table, reinforcement_code=8)
-            breakdown_tables = build_component_breakdown(price_table, price_rows)
-            procurement_items = build_procurement_items()
+            load_kwargs = {"plate_load_details": order.plate_load_details}
+            price_rows, total_sum = build_price_rows(
+                price_table,
+                reinforcement_code=8,
+                **load_kwargs,
+            )
+            breakdown_tables = build_component_breakdown(
+                price_table,
+                price_rows,
+                **load_kwargs,
+            )
+            procurement_items = build_procurement_items(**load_kwargs)
 
         order_data = self._build_order_data(
             procurement_items,

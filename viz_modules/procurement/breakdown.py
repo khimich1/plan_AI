@@ -3,10 +3,13 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from collections.abc import Mapping
+from typing import Any
 
 import core.config_and_data as cfg
 
 from ..price_utils import _find_price_for_plate_production_fallback, find_price_for_plate
+from .load_context import LoadCodeFn, resolve_procurement_load_context
 from .orders import get_orders_from_opt_plan
 from .plan_lookup import _find_plan_for_plate
 from .ports import ProcurementDeps, resolve_procurement_deps
@@ -24,12 +27,18 @@ def _accumulate_order_counter(
     plan_orders: list,
     *,
     reinforcement_code: int = 8,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
 ) -> None:
     """Группирует строки заказа по (длина, ширина, нагрузка, номинал_длины).
 
     Приоритет нагрузки: ``load_code`` на строке заказа (из плана оптимизатора),
-    иначе ``PLATE_LOAD_DETAILS``, иначе ``get_load_code_for_plate``.
+    иначе ``plate_load_details``, иначе ``get_load_code_for_plate``.
     """
+    details, resolve_load = resolve_procurement_load_context(
+        plate_load_details=plate_load_details,
+        get_load_code=get_load_code,
+    )
     for order in plan_orders:
         length = round(float(order.get('length', 0)), 3)
         width_val = order.get('width', 0)
@@ -45,8 +54,8 @@ def _accumulate_order_counter(
             continue
 
         found_details = []
-        if cfg.PLATE_LOAD_DETAILS:
-            for key, q in cfg.PLATE_LOAD_DETAILS.items():
+        if details:
+            for key, q in details.items():
                 L, W, load = key[0], key[1], key[2]
                 key_ldr = key[3] if len(key) > 3 else ''
                 if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
@@ -56,14 +65,22 @@ def _accumulate_order_counter(
             for load_code, q, detail_ldr in found_details:
                 order_counter[(length, width_mm, load_code, detail_ldr, False)] += q
         else:
-            load_code = cfg.get_load_code_for_plate(
+            load_code = resolve_load(
                 length, width_m, default=(6 if width_m < 1.0 else reinforcement_code)
             )
             warning_flag = bool(found_details)
             order_counter[(length, width_mm, load_code, order_ldr, warning_flag)] += order_qty
 
 
-def build_component_breakdown(price_table: dict, price_rows: list = None, reinforcement_code: int = 8, deps: ProcurementDeps | None = None):
+def build_component_breakdown(
+    price_table: dict,
+    price_rows: list = None,
+    reinforcement_code: int = 8,
+    deps: ProcurementDeps | None = None,
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+):
     """Формирует детальную разбивку компонентов для каждого наименования."""
     d = resolve_procurement_deps(deps)
     from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
@@ -130,7 +147,11 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
 
     order_counter: Counter = Counter()
     _accumulate_order_counter(
-        order_counter, plan_orders, reinforcement_code=reinforcement_code
+        order_counter,
+        plan_orders,
+        reinforcement_code=reinforcement_code,
+        plate_load_details=plate_load_details,
+        get_load_code=get_load_code,
     )
 
     breakdown_tables = []
@@ -361,7 +382,16 @@ def build_component_breakdown(price_table: dict, price_rows: list = None, reinfo
     return breakdown_tables
 
 
-def build_component_breakdown_production(price_table: dict, price_rows: list = None, reinforcement_code: int = 8, tracks_for_day: list = None, deps: ProcurementDeps | None = None):
+def build_component_breakdown_production(
+    price_table: dict,
+    price_rows: list = None,
+    reinforcement_code: int = 8,
+    tracks_for_day: list = None,
+    deps: ProcurementDeps | None = None,
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+):
     """
     Формирует детальную разбивку компонентов для планирования производства.
     ОТЛИЧИЯ от build_component_breakdown:
@@ -463,7 +493,11 @@ def build_component_breakdown_production(price_table: dict, price_rows: list = N
 
     order_counter: Counter = Counter()
     _accumulate_order_counter(
-        order_counter, plan_orders, reinforcement_code=reinforcement_code
+        order_counter,
+        plan_orders,
+        reinforcement_code=reinforcement_code,
+        plate_load_details=plate_load_details,
+        get_load_code=get_load_code,
     )
 
     # ШАГ 1: Определяем максимальное армирование

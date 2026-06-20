@@ -1,17 +1,28 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
+from typing import Any
 
 import core.config_and_data as cfg
 from core.optimization import OPT_PLAN
 
+from .load_context import LoadCodeFn, resolve_procurement_load_context
 from .orders import get_orders_from_opt_plan
 from .plan_lookup import _block_ab_key, _length_dm_raw_from_m
 
 
-def build_procurement_items():
+def build_procurement_items(
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+):
     """Формирует реальные позиции закупки из заказа пользователя."""
     items = []
+    details, resolve_load = resolve_procurement_load_context(
+        plate_load_details=plate_load_details,
+        get_load_code=get_load_code,
+    )
 
     plan_orders = get_orders_from_opt_plan()
     if plan_orders:
@@ -30,8 +41,8 @@ def build_procurement_items():
             else:
                 # ПРИОРИТЕТ 2 (для обратной совместимости): Пытаемся найти в PLATE_LOAD_DETAILS
                 found_details = []
-                if cfg.PLATE_LOAD_DETAILS:
-                    for key, q in cfg.PLATE_LOAD_DETAILS.items():
+                if details:
+                    for key, q in details.items():
                         L, W, load = key[0], key[1], key[2]
                         key_ldr = key[3] if len(key) > 3 else ''
                         if abs(L - length) < 0.05 and abs(W - width_m) < 0.01:
@@ -43,7 +54,7 @@ def build_procurement_items():
                     for load_code, q, detail_ldr in found_details:
                         order_counter[(length, width_m, load_code, detail_ldr, False)] += q
                 else:
-                    load_code = cfg.get_load_code_for_plate(length, width_m, default=(6 if width_m < 1.0 else 8))
+                    load_code = resolve_load(length, width_m, default=(6 if width_m < 1.0 else 8))
                     warning_flag = True if found_details else False
                     if found_details:
                         print(f"[WARNING] Несовпадение количества для плиты {length}x{width_m}: "
@@ -74,12 +85,11 @@ def build_procurement_items():
             })
         return items
 
-    # Приоритет 2: Используем PLATE_LOAD_DETAILS (если есть) или реальный заказ из cfg.PLATES_*
-    # PLATE_LOAD_DETAILS содержит (длина, ширина, нагрузка) → количество
-    if cfg.PLATE_LOAD_DETAILS:
-        # Используем PLATE_LOAD_DETAILS напрямую - там уже правильно разделены нагрузки!
+      # Приоритет 2: Используем plate_load_details (если есть) или реальный заказ из cfg.PLATES_*
+    # plate_load_details содержит (длина, ширина, нагрузка) → количество
+    if details:
         for key, qty in sorted(
-            cfg.PLATE_LOAD_DETAILS.items(),
+            details.items(),
             key=lambda x: (_block_ab_key(x[0][1]), x[0][1], x[0][0], x[0][2]),
         ):
             length, width_m, load_code = key[0], key[1], key[2]
@@ -126,7 +136,7 @@ def build_procurement_items():
                 exact_width_m = cfg.get_exact_width(length, target_name, width_mm / 1000.0)
                 
                 # Получаем нагрузку для этой плиты
-                load_code = cfg.get_load_code_for_plate(length, exact_width_m, default=(6 if exact_width_m < 1.0 else 8))
+                load_code = resolve_load(length, exact_width_m, default=(6 if exact_width_m < 1.0 else 8))
                 
                 all_plates.append({
                     'length': length,

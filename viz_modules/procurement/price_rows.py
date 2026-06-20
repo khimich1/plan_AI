@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
+from typing import Any
 
 import core.config_and_data as cfg
 
@@ -8,15 +10,30 @@ from ..price_utils import _find_price_for_plate_production_fallback, find_price_
 from core.debug_paths import append_agent_debug_log
 from .debug_logs import _DEBUG_LOG_8E9428, _DEBUG_LOG_A9176E, _DEBUG_LOG_DB7A51
 from .items import build_procurement_items
+from .load_context import LoadCodeFn, resolve_procurement_load_context
 from .plan_lookup import _find_plan_for_plate
 from .ports import ProcurementDeps, resolve_procurement_deps
 from .trim import _calc_trim_components, apply_factory_strip_waste, resolve_long_cut_pricing
 
 
-def build_price_rows(price_table: dict, reinforcement_code: int = 8, deps: ProcurementDeps | None = None):
+def build_price_rows(
+    price_table: dict,
+    reinforcement_code: int = 8,
+    deps: ProcurementDeps | None = None,
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+):
     """Формирует строки сметы."""
     d = resolve_procurement_deps(deps)
-    items = build_procurement_items()
+    _details, resolve_load = resolve_procurement_load_context(
+        plate_load_details=plate_load_details,
+        get_load_code=get_load_code,
+    )
+    items = build_procurement_items(
+        plate_load_details=plate_load_details,
+        get_load_code=get_load_code,
+    )
     rows = []
     total = 0.0
     idx = 1
@@ -32,7 +49,7 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8, deps: Procu
             load_code = it['load_code']  # Используем нагрузку из items (приоритет!)
         else:
             try:
-                load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
+                load_code = resolve_load(L, W, default=(6 if W < 1.0 else reinforcement_code))
             except Exception:
                 load_code = 6 if W < 1.0 else reinforcement_code
 
@@ -200,7 +217,14 @@ def build_price_rows(price_table: dict, reinforcement_code: int = 8, deps: Procu
     return rows, total
 
 
-def build_price_rows_production(price_table: dict, reinforcement_code: int = 8, deps: ProcurementDeps | None = None):
+def build_price_rows_production(
+    price_table: dict,
+    reinforcement_code: int = 8,
+    deps: ProcurementDeps | None = None,
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+):
     """
     Формирует строки сметы для планирования производства.
     ОТЛИЧИЯ от build_price_rows:
@@ -208,8 +232,15 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8, 
     - Добавлен компонент "Переармирование" (перерасход прутьев)
     """
     d = resolve_procurement_deps(deps)
+    _details, resolve_load = resolve_procurement_load_context(
+        plate_load_details=plate_load_details,
+        get_load_code=get_load_code,
+    )
     
-    items = build_procurement_items()
+    items = build_procurement_items(
+        plate_load_details=plate_load_details,
+        get_load_code=get_load_code,
+    )
     rows = []
     total = 0.0
     idx = 1
@@ -227,7 +258,7 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8, 
             L, W, qty = it['length'], it['width'], it['qty']
             load_code = it.get('load_code')
             if load_code is None:
-                load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
+                load_code = resolve_load(L, W, default=(6 if W < 1.0 else reinforcement_code))
             
             reinforcement = d.get_reinforcement(L, load_code, db_path=d.db_path)
             if reinforcement and reinforcement > global_max_reinforcement:
@@ -245,7 +276,7 @@ def build_price_rows_production(price_table: dict, reinforcement_code: int = 8, 
             load_code = it['load_code']
         else:
             try:
-                load_code = cfg.get_load_code_for_plate(L, W, default=(6 if W < 1.0 else reinforcement_code))
+                load_code = resolve_load(L, W, default=(6 if W < 1.0 else reinforcement_code))
             except Exception:
                 load_code = 6 if W < 1.0 else reinforcement_code
         
