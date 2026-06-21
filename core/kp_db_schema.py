@@ -275,10 +275,10 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
         cur.execute("SELECT id, plate_name, length_m FROM kp_plates WHERE length_dm_raw IS NULL OR length_dm_raw = ''")
         rows = cur.fetchall()
         if rows:
-            from core import config_and_data as cfg
+            from core.config_and_data import extract_length_dm_raw_from_plate_name
             for row in rows:
                 rid, plate_name, length_m = row
-                raw = cfg.extract_length_dm_raw_from_plate_name(plate_name or "")
+                raw = extract_length_dm_raw_from_plate_name(plate_name or "")
                 if raw:
                     cur.execute("UPDATE kp_plates SET length_dm_raw = ? WHERE id = ?", (raw, rid))
                 elif length_m is not None:

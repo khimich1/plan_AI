@@ -9,10 +9,9 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-import core.config_and_data as cfg
 from core import kp_db_plates
 from core.concrete_grade_resolver import enrich_orders_2d_concrete_grade, resolve_concrete_grade_from_order
-from core.domain.plate_order import PlateOrder
+from core.domain.plate_order import PlateOrder, normalize_load_code
 from core.optimization import optimize_with_cascading_longitudinal_cuts
 from core.optimization.layout_runtime_snapshot import build_layout_runtime_snapshot_from_plate_order_context
 from core.optimization.result_contract import is_optimization_success
@@ -616,7 +615,7 @@ def _load_plates_for_kps(
                 if qty <= 0:
                     continue
 
-                load_code = cfg.normalize_load_code(load_class // 100)
+                load_code = normalize_load_code(load_class // 100)
                 width_mm = int(round((width_m or 0) * 1000))
                 if (
                     plate_name
@@ -688,7 +687,7 @@ def _build_orders(
                 "length": plate["length"],
                 "width": plate["width"],
                 "qty": plate["qty"],
-                "load_code": cfg.normalize_load_code(plate["load_code"]),
+                "load_code": normalize_load_code(plate["load_code"]),
                 "reinforcement": plate["reinforcement"],
                 "kp_date": plate.get("kp_date", "неизвестно"),
                 "customer": plate.get("customer", "неизвестно"),
@@ -718,7 +717,7 @@ def _build_orders(
             "customer": order.get("customer", "неизвестно"),
             "plate_name": order.get("plate_name", ""),
             "reinforcement": order.get("reinforcement", 0),
-            "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
+            "load_code": normalize_load_code(order.get("load_code", 8)),
             "qty_remaining": order.get("qty", 1),
             "kp_id": order.get("kp_id"),
             "length_dm_raw": order.get("length_dm_raw", "") or "",
@@ -731,7 +730,7 @@ def _build_orders(
             "customer": order.get("customer", "неизвестно"),
             "plate_name": order.get("plate_name", ""),
             "reinforcement": order.get("reinforcement", 0),
-            "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
+            "load_code": normalize_load_code(order.get("load_code", 8)),
             "qty_remaining": order.get("qty", 1),
             "kp_id": order.get("kp_id"),
             "length_dm_raw": order.get("length_dm_raw", "") or "",

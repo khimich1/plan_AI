@@ -19,6 +19,7 @@ VALID_APP_SECRET_KEY = "test-secret-key-for-pytest-must-be-32-chars-min"
 @pytest.fixture(autouse=True)
 def _valid_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_SECRET_KEY", VALID_APP_SECRET_KEY)
+    monkeypatch.setenv("APP_ENV", "development")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -96,3 +97,29 @@ def test_api_health_includes_rate_limiting_metadata(client: TestClient) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["rate_limiting"]["shared_across_workers"] is False
+
+
+def test_health_includes_environment_in_development(client: TestClient) -> None:
+    response = client.get("/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert "environment" in payload
+    assert "app" in payload
+
+
+def test_health_redacts_environment_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("BOT_TELEGRAM_ALLOWLIST", "1:admin")
+    monkeypatch.setenv("BOT_AUTH_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with TestClient(create_app()) as production_client:
+        for path in ("/health", "/api/v1/health"):
+            response = production_client.get(path)
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["status"] == "ok"
+            assert "environment" not in payload
+            assert "app" not in payload
+            assert payload["rate_limiting"]["store"] == "in-process"

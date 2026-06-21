@@ -20,8 +20,7 @@ except ImportError:
     HAS_OPENPYXL = False
     Workbook = None  # type: ignore
 
-import core.config_and_data as cfg
-from core.config_and_data import LineContributionKey, make_plate_name
+from core.config_and_data import LineContributionKey, load_code_for_price_match, make_plate_name
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +88,7 @@ def _matches_key(item: dict[str, Any], key: LineContributionKey) -> bool:
             return False
     od_lc = _order_item_load_code(item)
     if lc_k is not None and od_lc is not None:
-        if cfg.load_code_for_price_match(od_lc) != cfg.load_code_for_price_match(lc_k):
+        if load_code_for_price_match(od_lc) != load_code_for_price_match(lc_k):
             return False
     return True
 

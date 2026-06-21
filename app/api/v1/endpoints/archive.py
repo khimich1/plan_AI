@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, Response
 
 from app.dependencies.auth import require_roles
 from app.dependencies.plate_context import get_plate_order_context
+from app.dependencies.services import get_archive_service
 from app.core.http_errors import (
     MSG_ARCHIVE_NOT_FOUND,
     MSG_VALIDATION,
@@ -34,10 +35,6 @@ from core.plate_order_context import PlateOrderContext
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/commercial/archive", tags=["commercial-archive"])
-
-
-def get_archive_service() -> ArchiveService:
-    return ArchiveService()
 
 
 @router.get("", response_model=list[ArchiveOfferListItem])

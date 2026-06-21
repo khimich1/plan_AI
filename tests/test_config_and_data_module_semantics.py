@@ -17,12 +17,14 @@ def test_get_config_matches_constants() -> None:
 
 def test_getattr_plate_load_details_is_runtime_dict() -> None:
     rt = cfg.get_plate_mutable_runtime()
-    x = cfg.PLATE_LOAD_DETAILS
+    with pytest.warns(DeprecationWarning, match=r"config_and_data\.PLATE_LOAD_DETAILS"):
+        x = cfg.PLATE_LOAD_DETAILS
     assert x is rt.plate_load_details
     before = dict(x)
     try:
         x.clear()
-        assert len(cfg.PLATE_LOAD_DETAILS) == 0
+        with pytest.warns(DeprecationWarning, match=r"config_and_data\.PLATE_LOAD_DETAILS"):
+            assert len(cfg.PLATE_LOAD_DETAILS) == 0
     finally:
         x.clear()
         x.update(before)

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.http_errors import raise_destructive_db_blocked_error
 from app.dependencies.auth import get_auth_repository, require_roles
+from app.dependencies.services import get_admin_service
 from app.repositories.auth_repository import AuthRepository
 from app.schemas.admin import DbResetReport, DbStatsResponse, RecoverPlatesResponse
 from app.schemas.auth import UsersPageResponse
@@ -18,10 +19,6 @@ from core.destructive_db_guard import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-
-def get_admin_service() -> AdminService:
-    return AdminService()
 
 
 def _enforce_destructive_db_reset() -> None:

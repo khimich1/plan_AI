@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-import core.config_and_data as cfg
+from core.config_and_data import get_load_code_for_plate
 from core.optimization.layout_runtime_snapshot import _make_get_load_code_for_plate
+from core.plate_runtime_state import get_plate_mutable_runtime
 
 LoadCodeFn = Callable[[float, float, int], int]
 PlateLoadDetails = Mapping[tuple[float, float, Any, str], int]
@@ -26,4 +27,5 @@ def resolve_procurement_load_context(
         return details, get_load_code
     if plate_load_details is not None:
         return plate_load_details, _make_get_load_code_for_plate(plate_load_details)
-    return cfg.PLATE_LOAD_DETAILS, cfg.get_load_code_for_plate
+    rt = get_plate_mutable_runtime()
+    return rt.plate_load_details, get_load_code_for_plate

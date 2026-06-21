@@ -11,8 +11,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from core import config_and_data as cfg
 from core import plate_name as _plate_name
+from core.config_and_data import format_reinforcement_from_load_code
+from core.domain.plate_order import normalize_load_code
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def _width_mm(value: Any, default: int = 1200) -> int:
 
 
 def _load_code(value: Any) -> int:
-    return cfg.normalize_load_code(value or 8)
+    return normalize_load_code(value or 8)
 
 
 def _assignment_key(item: dict[str, Any]) -> tuple[Any, ...] | None:
@@ -112,7 +113,7 @@ def _track_label(items: list[dict[str, Any]]) -> str:
     }
     if not loads:
         return "Нагрузка"
-    rendered = [cfg.format_reinforcement_from_load_code(lc) for lc in sorted(loads)]
+    rendered = [format_reinforcement_from_load_code(lc) for lc in sorted(loads)]
     return "Нагрузка " + ", ".join(rendered)
 
 

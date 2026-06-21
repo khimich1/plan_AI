@@ -20,7 +20,11 @@ import matplotlib.patches as patches
 from matplotlib.lines import Line2D
 
 # Относительные импорты внутри core/
-from . import config_and_data as cfg
+from core.config.constants import TRACK_WIDTH_M
+from core.config_and_data import format_reinforcement_from_load_code
+from core.domain.plate_order import normalize_load_code
+from core.plate_runtime_state import get_plate_mutable_runtime
+from core.project_paths import PRICE_DB_PATH, PRICE_XLSX_PATH
 from .optimization import optimize_cuts_pulp
 from .price_db import init_schema, import_from_xlsx
 from .exceptions import FileGenerationError
@@ -332,14 +336,14 @@ def split_sequence_into_tracks(
             lc = item.get('load_code')
             if lc is not None:
                 try:
-                    n = cfg.normalize_load_code(lc)
+                    n = normalize_load_code(lc)
                     if n is not None:
                         load_codes.add(n)
                 except Exception:
                     pass
         if not load_codes:
             return fallback
-        disp = [cfg.format_reinforcement_from_load_code(lc) for lc in sorted(load_codes)]
+        disp = [format_reinforcement_from_load_code(lc) for lc in sorted(load_codes)]
         return 'Нагрузка ' + ', '.join(disp) if len(disp) > 1 else f'Нагрузка {disp[0]}'
 
     tracks = []
@@ -776,6 +780,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     """
     # Константы длины дорожки (определяем в начале, чтобы были доступны везде)
     MAX_TRACK_LENGTH = 101.0  # Максимальная длина дорожки (ЖЁСТКИЙ ЛИМИТ!)
+    _rt = get_plate_mutable_runtime()
     
     logger.info(f"Начало генерации визуализации. Директория: {output_dir}")
     
@@ -795,14 +800,14 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         raise FileGenerationError(f"Не удалось создать папку для файлов: {e}")
 
     # Проверяем существование файла прайса (мягкая проверка)
-    if not Path(cfg.PRICE_XLSX_PATH).exists():
-        logger.warning(f"Файл прайса не найден по точному пути: {cfg.PRICE_XLSX_PATH}")
+    if not Path(PRICE_XLSX_PATH).exists():
+        logger.warning(f"Файл прайса не найден по точному пути: {PRICE_XLSX_PATH}")
         logger.info("Попытка автоматического поиска файла прайса в папке 'банк знаний'...")
     
     # Загружаем прайс из Excel (функция имеет встроенный автопоиск)
     # Если не удалось загрузить из Excel - используем цены из БД
     try:
-        price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
+        price_table = load_price_table_from_xlsx(str(PRICE_XLSX_PATH))
         if not price_table:
             logger.warning("Прайс-лист из Excel пуст, будут использованы цены из БД")
             price_table = {}  # Пустой словарь - цены будут из БД
@@ -816,12 +821,12 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     # Импорт прайса в БД (не критично, если не сработает)
     if auto_import_price_to_db:
         try:
-            init_schema(str(cfg.PRICE_DB_PATH))
+            init_schema(str(PRICE_DB_PATH))
 
             # Не импортируем каждый раз: импортируем только если БД отсутствует
             # или Excel новее базы (иначе это лишняя тяжёлая операция).
-            xlsx_path = Path(cfg.PRICE_XLSX_PATH)
-            db_path = Path(cfg.PRICE_DB_PATH)
+            xlsx_path = Path(PRICE_XLSX_PATH)
+            db_path = Path(PRICE_DB_PATH)
             should_import = (not db_path.exists())
             if (not should_import) and xlsx_path.exists():
                 try:
@@ -830,7 +835,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                     should_import = True
 
             if should_import:
-                written = import_from_xlsx(str(cfg.PRICE_XLSX_PATH), str(cfg.PRICE_DB_PATH))
+                written = import_from_xlsx(str(PRICE_XLSX_PATH), str(PRICE_DB_PATH))
                 if written:
                     logger.info(f'Прайс импортирован в БД: {written} строк')
             else:
@@ -940,16 +945,16 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
             # Сохраняем максимальное армирование дорожки для этой плиты
             key = (round(length, 3), width_mm)
             # Если плита уже есть в карте, берём максимум (она может быть в нескольких дорожках)
-            if key in cfg.PLATE_MAX_REINFORCEMENT_MAP:
-                cfg.PLATE_MAX_REINFORCEMENT_MAP[key] = max(cfg.PLATE_MAX_REINFORCEMENT_MAP[key], track_max_reinf)
+            if key in _rt.plate_max_reinforcement_map:
+                _rt.plate_max_reinforcement_map[key] = max(_rt.plate_max_reinforcement_map[key], track_max_reinf)
             else:
-                cfg.PLATE_MAX_REINFORCEMENT_MAP[key] = track_max_reinf
+                _rt.plate_max_reinforcement_map[key] = track_max_reinf
     
-    logger.info(f"[ВИЗУАЛИЗАЦИЯ] Заполнена карта макс. армирования: {len(cfg.PLATE_MAX_REINFORCEMENT_MAP)} плит")
+    logger.info(f"[ВИЗУАЛИЗАЦИЯ] Заполнена карта макс. армирования: {len(_rt.plate_max_reinforcement_map)} плит")
     
     # ✅ ПЕРЕСЧИТЫВАЕМ breakdown_tables после заполнения PLATE_MAX_REINFORCEMENT_MAP
     # Это нужно для корректного расчёта переармирования по дорожкам
-    if use_production_pricing and cfg.PLATE_MAX_REINFORCEMENT_MAP:
+    if use_production_pricing and _rt.plate_max_reinforcement_map:
         from viz_modules.procurement import build_component_breakdown_production
         breakdown_tables = build_component_breakdown_production(price_table, price_rows)
         logger.info("[ВИЗУАЛИЗАЦИЯ] Пересчитана детальная разбивка с учётом максимального армирования по дорожкам")
@@ -982,7 +987,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
                      fontsize=16, fontweight='bold')
 
     # Настройка осей для множественных дорожек
-    track_height = cfg.TRACK_WIDTH_M  # 1.2 м
+    track_height = TRACK_WIDTH_M  # 1.2 м
     track_spacing = 0.3  # Отступ между дорожками
     total_height = num_tracks * (track_height + track_spacing)
     
@@ -1105,8 +1110,8 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
     # Формируем сводку с учётом каскадной оптимизации
     from .optimization import OPT_CASCADING_PLAN
     txt = (
-        f"Длина по плану: {total_length:.1f} м ({num_tracks} дорожек)  |  Продольных резов: {cfg.LONGITUDINAL_CUTS}  |  Подрезов по длине: {cfg.LENGTH_TRIMS}\n"
-        f"Остатки лент 0.3: {cfg.UNUSED_STRIPS_0_3_M_TOTAL:.1f} пог.м  |  Обрезки 0.2: {cfg.SCRAP_STRIPS_0_2_M_TOTAL:.1f} пог.м (≈ {cfg.WASTE_AREA_M2:.2f} м²)"
+        f"Длина по плану: {total_length:.1f} м ({num_tracks} дорожек)  |  Продольных резов: {_rt.longitudinal_cuts}  |  Подрезов по длине: {_rt.length_trims}\n"
+        f"Остатки лент 0.3: {_rt.unused_strips_0_3_m_total:.1f} пог.м  |  Обрезки 0.2: {_rt.scrap_strips_0_2_m_total:.1f} пог.м (≈ {_rt.waste_area_m2:.2f} м²)"
     )
     
     # Добавляем информацию о каскадной оптимизации, если она была использована
@@ -1136,13 +1141,13 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         for (length, width_mm), qty in sorted(plan_counter.items(), key=lambda x: (x[0][0], x[0][1])):
             order_list.append(f"Заказ {length:.2f}м×{width_mm}мм: {qty} шт")
     else:
-        # Собираем все плиты из заказа (legacy путь через cfg)
+        # Собираем все плиты из заказа (legacy путь через plate runtime)
         all_orders = []
         for width_mm, plates_list in [
-            (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
-            (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
-            (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
-            (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08)
+            (320, _rt.plates_0_32), (460, _rt.plates_0_46), (700, _rt.plates_0_70),
+            (720, _rt.plates_0_72), (860, _rt.plates_0_86), (880, _rt.plates_0_88),
+            (740, _rt.plates_0_74), (480, _rt.plates_0_48), (500, _rt.plates_0_50),
+            (340, _rt.plates_0_34), (1080, _rt.plates_1_08)
         ]:
             if plates_list:
                 length_counts = Counter(plates_list)
@@ -1196,7 +1201,7 @@ def visualize_plan(output_dir: str = 'Визуализация_Раскладк�
         # Старый формат, если оптимизация не использовалась
         used_list.append('1.2 без реза: 6.3x2; 3.8x2')
         used_list.append('1.5->1.2: 3.8x3; 2.9x1 (остаток 0.3)')
-        used_list.append(f'Резы: продольных {cfg.LONGITUDINAL_CUTS}; подрезов {cfg.LENGTH_TRIMS}')
+        used_list.append(f'Резы: продольных {_rt.longitudinal_cuts}; подрезов {_rt.length_trims}')
 
     rows = max(len(order_list), len(used_list))
     table_rows = []

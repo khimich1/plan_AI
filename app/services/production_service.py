@@ -9,12 +9,10 @@ from app.repositories.work_calendar_repository import WorkCalendarRepository
 from app.services.day_view_service import build_day_view_detail
 from app.services.optimization_service import OptimizationService
 from app.services.production_completion_service import ProductionCompletionService
+from app.planning.plan_storage import MAX_TRACKS_PER_DAY
 from app.services.production_planning_service import ProductionPlanningService
-from app.planning import plan_manager
 from core.plate_order_context import PlateOrderContext
 from core.plan_track_removal import TrackRemovalError
-
-MAX_TRACKS_PER_DAY = plan_manager.MAX_TRACKS_PER_DAY
 
 _TRACK_REMOVAL_HTTP_STATUS: dict[str, int] = {
     "plan_not_found": 404,

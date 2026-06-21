@@ -1,7 +1,9 @@
-"""Web-ориентированный сервис планирования производства.
+"""Canonical orchestrator for production plan build/save flows (A10 / WP3).
 
-Тонкий адаптер над ``core.production.planning``: validate → load → optimize → persist.
-Используется веб-эндпоинтом ``POST /api/v1/production/plans/build``.
+Единая точка входа для web/bot адаптеров: validate → load → optimize → persist
+через ``core.production.planning``. Распределение дорожек и I/O — в
+``app.planning.plan_distribution`` / ``PlanRepository``; ``plan_manager`` —
+только legacy-фасад для frozen bot paths.
 """
 from __future__ import annotations
 
@@ -9,8 +11,7 @@ import logging
 from typing import Any, Literal
 
 from app.core.settings import get_settings
-from app.planning import plan_manager
-from app.planning.plan_storage import create_plan_id
+from app.planning.plan_storage import MAX_TRACKS_PER_DAY, create_plan_id
 from app.repositories.plan_repository import PlanRepository
 from core.production.dto import (
     LoadConfig,
@@ -39,7 +40,7 @@ def _map_plan_build_error(exc: PlanBuildError) -> ProductionPlanBuildError:
 
 
 class ProductionPlanningService:
-    """Тонкий адаптер: собирает вход, вызывает core-pipeline, возвращает ответ."""
+    """Orchestrator: собирает вход, вызывает core-pipeline, делегирует persist в repository."""
 
     def __init__(
         self,
@@ -183,7 +184,7 @@ class ProductionPlanningService:
                     active_plan_id=active_plan_id,
                     plan_name=plan_name,
                     fill_targets=tuple(fill_targets or ()),
-                    max_tracks_per_day=plan_manager.MAX_TRACKS_PER_DAY,
+                    max_tracks_per_day=MAX_TRACKS_PER_DAY,
                 ),
                 self.plan_repository,
                 ensure_unique_plan_id=create_plan_id,

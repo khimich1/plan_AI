@@ -37,8 +37,8 @@ import logging
 from collections import Counter
 from typing import Any
 
-from core import config_and_data as cfg
 from core import plate_name as _plate_name
+from core.domain.plate_order import normalize_load_code
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def _canon_key(length_m: float, width: Any, load_code: Any) -> tuple[float, int,
         W = int(round(float(width) * 1000))
     else:
         W = int(round(float(width or 1200)))
-    LC = cfg.normalize_load_code(load_code or 8)
+    LC = normalize_load_code(load_code or 8)
     return (L, W, LC)
 
 
@@ -89,7 +89,7 @@ def _build_order_info_map(
                 "length_dm_raw": order.get("length_dm_raw") or "",
                 "length": order.get("length"),
                 "width": order.get("width"),
-                "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
+                "load_code": normalize_load_code(order.get("load_code", 8)),
                 "concrete_grade": order.get("concrete_grade"),
             }
     return info_map

@@ -11,53 +11,32 @@ from app.schemas.commercial import WizardNextRequiredAction, WizardStepId
 from app.repositories.kp_repository import KpRepository
 from app.repositories.manager_repository import ManagerRepository
 from app.services.commercial_calculation_service import CommercialCalculationService
+from app.services.commercial_draft_service import CommercialDraftService, _safe_ocr_temp_suffix
+from app.services.commercial_export_service import CommercialExportService
 from app.services.commercial_service import CommercialService
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from app.services.execution_terms_service import ExecutionTermsService
-from app.services.file_generation_service import FileGenerationService
-from core.commercial_offer_xlsx import DB_PATH
 from core.commercial_pricing import ensure_order_priced
-from core.ocr_gpt import apply_plates_with_ai, recognize_text_smart
+from core.ocr_gpt import apply_plates_with_ai
 from core.plate_order_context import PlateOrderContext
 
 
-_ALLOWED_OCR_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf"})
-
-
-def _safe_ocr_temp_suffix(image_filename: str | None) -> str:
-    """Use only a whitelisted extension from the upload basename; never user-controlled path segments."""
-    raw = (image_filename or "").strip()
-    if not raw:
-        return ".jpg"
-    base = Path(raw).name
-    if ".." in base or "/" in base or "\\" in base:
-        return ".jpg"
-    suffix = Path(base).suffix.lower()
-    if suffix in _ALLOWED_OCR_IMAGE_SUFFIXES:
-        return suffix
-    return ".jpg"
-
-
 class CommercialWorkflowService:
-    FILE_LABELS = {
-        "pdf": "Коммерческое предложение (PDF)",
-        "xlsx": "Коммерческое предложение (XLSX)",
-        "breakdown": "Детальная разбивка (XLSX)",
-        "schema": "Схема раскладки (PDF)",
-    }
-    # Схема раскладки (matplotlib) — отдельно: при включении в file_types на слабом VPS возможен OOM.
-    DEFAULT_FILE_TYPES = ("pdf", "xlsx", "breakdown")
-    ALL_FILE_TYPES = ("pdf", "xlsx", "breakdown", "schema")
+    FILE_LABELS = CommercialExportService.FILE_LABELS
+    DEFAULT_FILE_TYPES = CommercialExportService.DEFAULT_FILE_TYPES
+    ALL_FILE_TYPES = CommercialExportService.ALL_FILE_TYPES
 
     def __init__(self) -> None:
         self.settings = get_settings()
         self.commercial_service = CommercialService()
-        self.file_generation_service = FileGenerationService()
         self.draft_store = DraftStore()
         self.manager_repository = ManagerRepository()
         self.kp_repository = KpRepository()
         self.execution_terms_service = ExecutionTermsService()
         self.calculation_service = CommercialCalculationService()
+        self.draft_service = CommercialDraftService(commercial_service=self.commercial_service)
+        self.export_service = CommercialExportService(draft_store=self.draft_store)
+        self.file_generation_service = self.export_service.file_generation_service
 
     def _wide_lines_blocking(self, metadata: dict[str, Any]) -> bool:
         return self.calculation_service.wide_lines_blocking(metadata)
@@ -213,7 +192,7 @@ class CommercialWorkflowService:
         owner_user_id: int,
         plate_order_ctx: PlateOrderContext,
     ) -> dict[str, Any]:
-        source_text, source_metadata = await self._resolve_source_input(
+        source_text, source_metadata = await self.draft_service.resolve_source_input(
             text=text,
             image_bytes=image_bytes,
             image_filename=image_filename,
@@ -222,7 +201,7 @@ class CommercialWorkflowService:
             text=source_text["input_text"],
             plate_order_ctx=plate_order_ctx,
         )
-        metadata = self._build_preview_metadata(
+        metadata = self.draft_service.build_preview_metadata(
             preview=preview,
             base_metadata={},
             source_type=source_text["source_type"],
@@ -293,7 +272,7 @@ class CommercialWorkflowService:
     ) -> dict[str, Any]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
-        source_text, source_metadata = await self._resolve_source_input(
+        source_text, source_metadata = await self.draft_service.resolve_source_input(
             text=text,
             image_bytes=image_bytes,
             image_filename=image_filename,
@@ -314,7 +293,7 @@ class CommercialWorkflowService:
             text=next_text,
             plate_order_ctx=plate_order_ctx,
         )
-        next_metadata = self._build_preview_metadata(
+        next_metadata = self.draft_service.build_preview_metadata(
             preview=preview,
             base_metadata=metadata,
             source_type=source_text["source_type"],
@@ -407,7 +386,7 @@ class CommercialWorkflowService:
             text=recognized_text,
             plate_order_ctx=plate_order_ctx,
         )
-        next_metadata = self._build_preview_metadata(
+        next_metadata = self.draft_service.build_preview_metadata(
             preview=preview,
             base_metadata=metadata,
             source_type="ai",
@@ -517,7 +496,7 @@ class CommercialWorkflowService:
             text=next_text,
             plate_order_ctx=plate_order_ctx,
         )
-        next_metadata = self._build_preview_metadata(
+        next_metadata = self.draft_service.build_preview_metadata(
             preview=preview,
             base_metadata=metadata,
             source_type=str(metadata.get("source_type") or "text"),
@@ -669,10 +648,10 @@ class CommercialWorkflowService:
             "order_data": payload["order_data"],
             "metadata": public_metadata,
             "wizard_state": wizard_state,
-            "files": self._collect_draft_files(metadata, draft_id),
+            "files": self.export_service.collect_draft_files(metadata, draft_id),
             "saved_offer": self._normalize_saved_offer(metadata.get("saved_offer")),
             "totals": totals,
-            "offer_identity": self._build_offer_identity_payload(draft_id),
+            "offer_identity": self.export_service.build_offer_identity_payload(draft_id),
         }
 
     def generate_files(
@@ -683,102 +662,12 @@ class CommercialWorkflowService:
         plate_order_ctx: PlateOrderContext | None = None,
     ) -> list[dict[str, str]]:
         payload = self._load_draft_or_raise(draft_id)
-        metadata = dict(payload.get("metadata", {}))
-        requested_types = self._normalize_file_types(file_types)
-        generated_files = self._normalize_generated_files(metadata.get("generated_files", []))
-        files_by_kind = {item["kind"]: item for item in generated_files}
-        schema_raw = metadata.get("schema_file")
-        if schema_raw and "schema" not in files_by_kind:
-            schema_items = self._normalize_generated_files([schema_raw])
-            if schema_items:
-                files_by_kind["schema"] = schema_items[0]
-        order_data = payload["order_data"]
-        ensure_order_priced(order_data, db_path=str(DB_PATH))
-        manager_name = str(metadata.get("manager_name", "") or "")
-        manager_phone = str(metadata.get("manager_phone", "") or "")
-        manager_email = str(metadata.get("manager_email", "") or "")
-        client_name = str(metadata.get("client_name", "") or "Клиент")
-        discount_percent = float(metadata.get("discount_percent", 0.0) or 0.0)
-        delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
-        payment_conditions = str(metadata.get("payment_conditions", "") or "")
-        logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
-        offer_number, offer_date, file_stem = self._build_offer_identity(draft_id)
-
-        for file_type in requested_types:
-            existing = files_by_kind.get(file_type)
-            if (
-                file_type not in {"pdf", "xlsx"}
-                and existing
-                and self._resolve_generated_file(existing["filename"]).exists()
-            ):
-                continue
-
-            if file_type == "pdf":
-                output_path = self.settings.outputs_dir / f"{file_stem}.pdf"
-                self.file_generation_service.generate_offer_pdf(
-                    order_data=order_data,
-                    output_path=str(output_path),
-                    offer_number=offer_number,
-                    offer_date=offer_date,
-                    customer_name=client_name,
-                    manager_name=manager_name,
-                    manager_phone=manager_phone,
-                    manager_email=manager_email,
-                    discount_percent=discount_percent,
-                    logistics_cost=logistics_cost,
-                    delivery_conditions=delivery_conditions or None,
-                    payment_conditions=payment_conditions or None,
-                )
-                files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
-            elif file_type == "xlsx":
-                output_path = self.settings.outputs_dir / f"{file_stem}.xlsx"
-                self.file_generation_service.generate_offer_xlsx(
-                    order_data=order_data,
-                    output_path=str(output_path),
-                    offer_number=offer_number,
-                    offer_date=offer_date,
-                    customer_name=client_name,
-                    manager_name=manager_name,
-                    manager_phone=manager_phone,
-                    manager_email=manager_email,
-                    discount_percent=discount_percent,
-                    delivery_conditions=delivery_conditions,
-                    payment_conditions=payment_conditions,
-                    logistics_cost=logistics_cost,
-                )
-                files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
-            elif file_type == "breakdown":
-                breakdown_tables = list(metadata.get("breakdown_tables") or [])
-                if not breakdown_tables:
-                    continue
-                output_path = self.settings.outputs_dir / f"{file_stem}_breakdown.xlsx"
-                self.file_generation_service.save_breakdown(
-                    breakdown_tables=breakdown_tables,
-                    output_path=str(output_path),
-                )
-                files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, output_path)
-            elif file_type == "schema":
-                if plate_order_ctx is None:
-                    raise ValueError(
-                        "Plate order context is required for schema file generation"
-                    )
-                visualization_result = self.file_generation_service.generate_visualization(
-                    order=payload["order"],
-                    context=payload["optimization_context"],
-                    ctx=plate_order_ctx,
-                    output_dir=str(self.settings.outputs_dir),
-                )
-                if isinstance(visualization_result, tuple) and len(visualization_result) >= 2:
-                    schema_path = Path(str(visualization_result[1]))
-                    if schema_path.exists():
-                        files_by_kind[file_type] = self._build_generated_file(draft_id, file_type, schema_path)
-
-        merged_files = [files_by_kind[key] for key in self.DEFAULT_FILE_TYPES if key in files_by_kind]
-        update_payload: dict[str, Any] = {"generated_files": merged_files}
-        if "schema" in files_by_kind:
-            update_payload["schema_file"] = files_by_kind["schema"]
-        self.draft_store.update_metadata(draft_id, **update_payload)
-        return [files_by_kind[key] for key in requested_types if key in files_by_kind]
+        return self.export_service.generate_files(
+            draft_id,
+            payload,
+            file_types,
+            plate_order_ctx=plate_order_ctx,
+        )
 
     def save_offer(
         self,
@@ -794,7 +683,7 @@ class CommercialWorkflowService:
         xlsx_file = next((item for item in files if item["kind"] == "xlsx"), None)
         xlsx_path = None
         if xlsx_file:
-            resolved = self._resolve_generated_file(xlsx_file["filename"])
+            resolved = self.export_service.resolve_generated_file(xlsx_file["filename"])
             xlsx_path = str(resolved) if resolved.exists() else None
 
         kp_id = self.kp_repository.save_offer(
@@ -828,7 +717,7 @@ class CommercialWorkflowService:
             discount_percent=float(metadata.get("discount_percent", 0.0) or 0.0),
             logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
         )
-        offer_identity = self._build_offer_identity_payload(draft_id)
+        offer_identity = self.export_service.build_offer_identity_payload(draft_id)
         return {
             "saved_offer": saved_offer,
             "totals": totals,
@@ -883,47 +772,6 @@ class CommercialWorkflowService:
             }
         raise ValueError("Некорректный режим сохранения.")
 
-    async def _extract_text_from_image(
-        self,
-        *,
-        image_bytes: bytes,
-        image_filename: str | None,
-    ) -> tuple[str, dict[str, Any]]:
-        suffix = _safe_ocr_temp_suffix(image_filename)
-        with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-            tmp_file.write(image_bytes)
-            tmp_path = Path(tmp_file.name)
-
-        recognition_mode = (self.settings.ocr_recognition_mode or "full_gpt").strip().lower()
-        if recognition_mode not in {"full_gpt", "hybrid"}:
-            recognition_mode = "full_gpt"
-
-        try:
-            result = await recognize_text_smart(
-                str(tmp_path),
-                force_gpt=(recognition_mode == "full_gpt"),
-                show_cost=True,
-                mode=recognition_mode,
-                verify_enabled=self.settings.ocr_verify_enabled,
-            )
-        finally:
-            tmp_path.unlink(missing_ok=True)
-
-        recognized_text = str((result or {}).get("text", "")).strip()
-        if not recognized_text:
-            raise ValueError("Не удалось распознать текст на изображении.")
-        return recognized_text, {
-            "ocr_recognition_mode": recognition_mode,
-            "ocr_cost_usd": float((result or {}).get("cost_usd", 0.0) or 0.0),
-            "ocr_plates": list((result or {}).get("plates") or []),
-            "ocr_draft_plates": list((result or {}).get("draft_plates") or []),
-            "ocr_corrections": list((result or {}).get("corrections") or []),
-            "ocr_verify_applied": bool((result or {}).get("verify_applied")),
-            "ocr_verify_failed": bool((result or {}).get("verify_failed")),
-            "ocr_method": str((result or {}).get("method") or "GPT-4o"),
-            "ocr_row_count_on_image": (result or {}).get("row_count_on_image"),
-        }
-
     def _load_draft_or_raise(self, draft_id: str) -> dict[str, Any]:
         try:
             payload = self.draft_store.load_preview(draft_id)
@@ -933,182 +781,8 @@ class CommercialWorkflowService:
             raise FileNotFoundError(f"Draft '{draft_id}' not found.")
         return payload
 
-    async def _resolve_source_input(
-        self,
-        *,
-        text: str | None,
-        image_bytes: bytes | None,
-        image_filename: str | None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        text_value = (text or "").strip()
-        if not text_value and not image_bytes:
-            raise ValueError("Нужно передать текст или изображение для распознавания.")
-        if image_bytes and not text_value:
-            recognized_text, source_metadata = await self._extract_text_from_image(
-                image_bytes=image_bytes,
-                image_filename=image_filename,
-            )
-            return (
-                {
-                    "source_type": "image",
-                    "original_text": text_value,
-                    "ocr_text": recognized_text,
-                    "input_text": recognized_text,
-                    "filename": image_filename or "",
-                    "batch": {
-                        "source_type": "image",
-                        "original_text": text_value,
-                        "normalized_text": recognized_text,
-                        "ocr_text": recognized_text,
-                        "filename": image_filename or "",
-                    },
-                },
-                source_metadata,
-            )
-        return (
-            {
-                "source_type": "text",
-                "original_text": text_value,
-                "ocr_text": "",
-                "input_text": text_value,
-                "filename": "",
-                "batch": {
-                    "source_type": "text",
-                    "original_text": text_value,
-                    "normalized_text": text_value,
-                    "ocr_text": "",
-                    "filename": "",
-                },
-            },
-            {},
-        )
-
-    def _build_preview_metadata(
-        self,
-        *,
-        preview: Any,
-        base_metadata: dict[str, Any],
-        source_type: str,
-        original_text: str,
-        ocr_text: str,
-        input_text: str,
-        last_source_filename: str,
-        plate_batches: list[dict[str, Any]],
-        wide_plates_resolved: bool,
-        source_metadata: dict[str, Any],
-        owner_user_id: int | None = None,
-    ) -> dict[str, Any]:
-        metadata = dict(base_metadata)
-        metadata.update(
-            {
-                "source_type": source_type,
-                "original_text": original_text,
-                "ocr_text": ocr_text,
-                "input_text": input_text,
-                "accumulated_text": input_text,
-                "warnings": list(preview.parse_result.warnings),
-                "unparsed_lines": list(preview.parse_result.unparsed_lines),
-                "normalized_text": preview.parse_result.normalized_text,
-                "normalized_lines": list(preview.parse_result.normalized_lines),
-                "wide_plate_lines": self._serialize_wide_plate_lines(preview.parse_result.wide_plate_lines),
-                "diagnostics": list(preview.parse_result.diagnostics),
-                "breakdown_tables": list(preview.breakdown_tables),
-                "price_rows_count": len(preview.price_rows),
-                "breakdown_tables_count": len(preview.breakdown_tables),
-                "total_sum": preview.total_sum,
-                "plate_batches": plate_batches,
-                "wide_plates_resolved": wide_plates_resolved,
-                "last_source_filename": last_source_filename,
-                "current_step": WizardStepId.plates.value,
-                "saved_offer": None,
-                "generated_files": [],
-                "current_save_mode": None,
-                "execution_terms": "",
-                **source_metadata,
-            }
-        )
-        metadata.setdefault("manager_id", None)
-        metadata.setdefault("manager_name", "")
-        metadata.setdefault("manager_phone", "")
-        metadata.setdefault("manager_email", "")
-        metadata.setdefault("client_name", "")
-        metadata.setdefault("discount_percent", 0.0)
-        metadata.setdefault("conditions_mode", "standard")
-        metadata.setdefault("delivery_conditions", "")
-        metadata.setdefault("payment_conditions", "")
-        metadata.setdefault("logistics_cost", 0.0)
-        if owner_user_id is not None:
-            metadata["owner_user_id"] = int(owner_user_id)
-        return metadata
-
-    def _normalize_file_types(self, file_types: Iterable[str] | None) -> list[str]:
-        requested = list(file_types or self.DEFAULT_FILE_TYPES)
-        normalized: list[str] = []
-        for item in requested:
-            key = str(item).strip().lower()
-            if key in self.FILE_LABELS and key not in normalized:
-                normalized.append(key)
-        if not normalized:
-            raise ValueError("Не выбраны типы файлов для генерации.")
-        return normalized
-
-    def _build_offer_identity(self, draft_id: str) -> tuple[str, str, str]:
-        now = datetime.now()
-        offer_number = f"WEB_{draft_id[:8].upper()}"
-        offer_date = now.strftime("%d.%m.%Y")
-        file_stem = f"kp_{draft_id[:8]}_{now.strftime('%Y%m%d_%H%M%S')}"
-        return offer_number, offer_date, file_stem
-
-    def _build_offer_identity_payload(self, draft_id: str) -> dict[str, str]:
-        offer_number, offer_date, file_stem = self._build_offer_identity(draft_id)
-        return {
-            "offer_number": offer_number,
-            "offer_date": offer_date,
-            "file_stem": file_stem,
-        }
-
-    def _build_generated_file(self, draft_id: str, kind: str, path: Path) -> dict[str, str]:
-        name = path.name
-        return {
-            "kind": kind,
-            "filename": name,
-            "display_name": self.FILE_LABELS[kind],
-            "download_url": f"/api/v1/commercial/files/{name}?draft_id={draft_id}",
-        }
-
-    def _collect_draft_files(self, metadata: dict[str, Any], draft_id: str) -> list[dict[str, str]]:
-        files = self._normalize_generated_files(metadata.get("generated_files", []))
-        schema_raw = metadata.get("schema_file")
-        if schema_raw:
-            schema_items = self._normalize_generated_files([schema_raw])
-            if schema_items and not any(item["kind"] == "schema" for item in files):
-                schema_item = schema_items[0]
-                filename = schema_item["filename"]
-                files.append(
-                    self._build_generated_file(draft_id, "schema", Path(filename))
-                    if "draft_id=" not in schema_item.get("download_url", "")
-                    else schema_item
-                )
-        return files
-
-    def _normalize_generated_files(self, items: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
-        normalized: list[dict[str, str]] = []
-        for item in items:
-            kind = str(item.get("kind", "")).strip().lower()
-            filename = Path(str(item.get("filename", "")).strip()).name
-            if kind not in self.FILE_LABELS or not filename:
-                continue
-            normalized.append(
-                {
-                    "kind": kind,
-                    "filename": filename,
-                    "display_name": str(item.get("display_name") or self.FILE_LABELS[kind]),
-                    "download_url": str(
-                        item.get("download_url") or f"/api/v1/commercial/files/{filename}"
-                    ),
-                }
-            )
-        return normalized
+    def _build_preview_metadata(self, **kwargs: Any) -> dict[str, Any]:
+        return self.draft_service.build_preview_metadata(**kwargs)
 
     def _normalize_saved_offer(self, item: dict[str, Any] | None) -> dict[str, Any] | None:
         if not item:
@@ -1140,29 +814,8 @@ class CommercialWorkflowService:
             "execution_terms": str(saved_offer.get("execution_terms", "") or ""),
         }
 
-    def _serialize_wide_plate_lines(self, items: Iterable[Any]) -> list[dict[str, Any]]:
-        serialized: list[dict[str, Any]] = []
-        for idx, item in enumerate(items, start=1):
-            if isinstance(item, (tuple, list)) and len(item) >= 2:
-                serialized.append(
-                    {
-                        "id": f"wide-{idx}",
-                        "line": str(item[0]),
-                        "qty": int(item[1]),
-                    }
-                )
-            elif isinstance(item, dict) and item.get("line"):
-                serialized.append(
-                    {
-                        "id": str(item.get("id") or f"wide-{idx}"),
-                        "line": str(item["line"]),
-                        "qty": int(item.get("qty", 1) or 1),
-                    }
-                )
-        return serialized
-
     def _normalize_wide_plate_lines(self, items: Iterable[Any]) -> list[dict[str, Any]]:
-        return self._serialize_wide_plate_lines(items)
+        return self.draft_service.serialize_wide_plate_lines(items)
 
     def _merge_plate_texts(self, current_text: str, next_text: str) -> str:
         parts = [current_text.strip(), next_text.strip()]
@@ -1184,7 +837,7 @@ class CommercialWorkflowService:
 
     def get_or_generate_file(self, safe_filename: str) -> Path:
         """Path under configured ``outputs_dir`` for a generated file basename (no subpaths)."""
-        return self._resolve_generated_file(safe_filename)
+        return self.export_service.get_or_generate_file(safe_filename)
 
     def _resolve_generated_file(self, filename: str) -> Path:
-        return self.settings.outputs_dir / Path(filename).name
+        return self.export_service.resolve_generated_file(filename)

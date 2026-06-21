@@ -6,7 +6,9 @@ import copy
 
 import pytest
 
-import core.config_and_data as cfg
+from core.config_and_data import make_plate_name
+from core.domain.plate_order import normalize_load_code
+from core.plate_runtime_state import get_plate_mutable_runtime
 from core.production.planning import _build_assignment_gap_fallback_tracks
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
@@ -36,7 +38,7 @@ def user_list_opt_context():
 
 def _label(L: float, W: float, load_code: int | None = None) -> str:
     lc = load_code if load_code is not None else 8
-    return cfg.make_plate_name(L, W, load_code=_norm_lc(lc))
+    return make_plate_name(L, W, load_code=_norm_lc(lc))
 
 
 def test_synthetic_orphan_from_minimal_plan_variant_A():

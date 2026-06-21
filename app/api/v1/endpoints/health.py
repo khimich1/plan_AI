@@ -8,13 +8,20 @@ from app.security.login_rate_limit import rate_limit_deployment_info
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health")
-def healthcheck() -> dict:
+def build_health_payload() -> dict:
+    """Public health payload: redact deployment metadata in production (S9-audit)."""
     settings = get_settings()
-    return {
+    payload: dict = {
         "status": "ok",
-        "app": settings.app_name,
-        "environment": settings.app_env,
         "rate_limiting": rate_limit_deployment_info(),
     }
+    if settings.app_env.lower() != "production":
+        payload["app"] = settings.app_name
+        payload["environment"] = settings.app_env
+    return payload
+
+
+@router.get("/health")
+def healthcheck() -> dict:
+    return build_health_payload()
 

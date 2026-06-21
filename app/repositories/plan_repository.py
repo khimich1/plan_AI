@@ -7,12 +7,12 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.settings import get_settings
-from app.planning import plan_manager
 from app.planning.plan_aggregation import (
     _iter_plan_tracks_for_date,
     _merge_plate_lookups,
     get_all_tracks_from_plan,
 )
+from app.planning.plan_distribution import add_tracks_to_plan
 from app.planning.plan_storage import MAX_TRACKS_PER_DAY, count_day_tracks
 from app.repositories.plan_errors import PlanVersionConflict
 from core.kp_db_common import _connect
@@ -499,7 +499,7 @@ class PlanRepository:
                 existing_plan = record["payload"]
                 existing_version = record["version"]
 
-        plan, stats = plan_manager.add_tracks_to_plan(
+        plan, stats = add_tracks_to_plan(
             plan_id=plan_id,
             new_tracks_list=new_tracks_list,
             start_date=start_date,

@@ -12,8 +12,15 @@ from app.repositories.manager_repository import ManagerRepository
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
 from app.services.plate_parser_service import PlateParserService
-from core import config_and_data as cfg
+from core.config_and_data import (
+    load_code_for_price_match,
+    make_plate_name,
+    parse_load_code_from_name,
+    parse_name_to_sizes,
+)
+from core.domain.plate_order import normalize_load_code
 from core.optimization.layout_runtime_snapshot import _make_get_load_code_for_plate
+from core.project_paths import PRICE_XLSX_PATH
 from core.plate_order_context import PlateOrderContext
 from core.kp_db_nomenclature import enrich_order_data_with_nomenclature
 from core.kp_plate_weight import resolve_kp_line_weight_kg
@@ -65,7 +72,7 @@ class CommercialService:
             load_to_reinforcement_map=optimization_context.load_to_reinforcement_map,
         )
         with ctx.bound():
-            price_table = load_price_table_from_xlsx(str(cfg.PRICE_XLSX_PATH))
+            price_table = load_price_table_from_xlsx(str(PRICE_XLSX_PATH))
             load_kwargs = {"plate_load_details": order.plate_load_details}
             price_rows, total_sum = build_price_rows(
                 price_table,
@@ -123,20 +130,20 @@ class CommercialService:
                 if len(row) < 8:
                     continue
                 row_name = row[1]
-                parsed_length, parsed_width = cfg.parse_name_to_sizes(row_name)
+                parsed_length, parsed_width = parse_name_to_sizes(row_name)
                 if parsed_length is None or parsed_width is None:
                     continue
-                parsed_load = cfg.parse_load_code_from_name(row_name)
+                parsed_load = parse_load_code_from_name(row_name)
                 if (
                     abs(parsed_length - length_m) < 0.01
                     and abs(parsed_width - width_m) < 0.01
-                    and cfg.load_code_for_price_match(parsed_load) == cfg.load_code_for_price_match(load_code)
+                    and load_code_for_price_match(parsed_load) == load_code_for_price_match(load_code)
                 ):
                     matching_row = row
                     break
 
             item_ldr = item.get("length_dm_raw") or ""
-            name = cfg.make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr or None)
+            name = make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr or None)
             unit_price = 0.0
             length_dm_raw = item_ldr
             if matching_row:
@@ -173,7 +180,7 @@ class CommercialService:
                 "length_dm_raw": length_dm_raw or item_ldr,
                 "width_m": width_m,
                 "qty": qty,
-                "load_class": (cfg.normalize_load_code(load_code) or 8) * 100,
+                "load_class": (normalize_load_code(load_code) or 8) * 100,
                 "unit_price": unit_price,
                 "weight": total_weight_kg,
             }

@@ -163,7 +163,7 @@ def test_fill_targets_validation_too_many(planning_service, monkeypatch):
     fake_max_per_day = 3
 
     monkeypatch.setattr(
-        "app.services.production_planning_service.plan_manager.MAX_TRACKS_PER_DAY",
+        "app.services.production_planning_service.MAX_TRACKS_PER_DAY",
         fake_max_per_day,
     )
     monkeypatch.setattr(

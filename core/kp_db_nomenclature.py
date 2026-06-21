@@ -79,7 +79,10 @@ def fill_plate_nomenclature_cache() -> None:
 
     _log = _logging.getLogger(__name__)
 
-    from core import config_and_data as cfg
+    from core.config_and_data import make_plate_name
+    from core.plate_runtime_state import get_plate_mutable_runtime
+
+    _rt = get_plate_mutable_runtime()
 
     if not os.path.exists(_PB_DB_PATH):
         _log.debug("fill_plate_nomenclature_cache: pb.db не найден, кэш не заполняется")
@@ -88,16 +91,16 @@ def fill_plate_nomenclature_cache() -> None:
     pb_conn = sqlite3.connect(_PB_DB_PATH)
     try:
         pb_cur = pb_conn.cursor()
-        for key, _qty in cfg.PLATE_LOAD_DETAILS.items():
-            if key in cfg.PLATE_NOMENCLATURE_CACHE:
+        for key, _qty in _rt.plate_load_details.items():
+            if key in _rt.plate_nomenclature_cache:
                 continue
             length_m, width_m, load_code = key[0], key[1], key[2]
-            length_dm_raw = key[3] if len(key) > 3 else cfg.PLATE_LENGTH_DM_RAW.get(key, "")
-            plate_name = cfg.make_plate_name(
+            length_dm_raw = key[3] if len(key) > 3 else _rt.plate_length_dm_raw.get(key, "")
+            plate_name = make_plate_name(
                 length_m, width_m, load_code=load_code, length_dm_raw=length_dm_raw
             )
             canonical_name, nomenclature_id, _ = lookup_nomenclature_by_plate_name(plate_name, pb_cur)
-            cfg.PLATE_NOMENCLATURE_CACHE[key] = {
+            _rt.plate_nomenclature_cache[key] = {
                 "canonical_name": canonical_name,
                 "nomenclature_id": nomenclature_id,
             }

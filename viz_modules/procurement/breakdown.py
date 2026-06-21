@@ -6,7 +6,14 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
-import core.config_and_data as cfg
+from core.config.constants import (
+    LONG_CUT_PRICE_PER_M,
+    MIN_BILLABLE_TRIM_MM,
+    TRANSVERSE_CUT_PRICE,
+    length_dm_to_m,
+)
+from core.config_and_data import make_plate_name
+from core.plate_runtime_state import get_plate_mutable_runtime
 
 from ..price_utils import _find_price_for_plate_production_fallback, find_price_for_plate
 from .load_context import LoadCodeFn, resolve_procurement_load_context
@@ -83,6 +90,7 @@ def build_component_breakdown(
 ):
     """Формирует детальную разбивку компонентов для каждого наименования."""
     d = resolve_procurement_deps(deps)
+    rt = get_plate_mutable_runtime()
     from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
     
     # Получаем заказы
@@ -91,10 +99,10 @@ def build_component_breakdown(
         # Fallback на старый способ
         all_orders = []
         for width_mm, plates_list in [
-            (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
-            (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
-            (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
-            (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08)
+            (320, rt.plates_0_32), (460, rt.plates_0_46), (700, rt.plates_0_70),
+            (720, rt.plates_0_72), (860, rt.plates_0_86), (880, rt.plates_0_88),
+            (740, rt.plates_0_74), (480, rt.plates_0_48), (500, rt.plates_0_50),
+            (340, rt.plates_0_34), (1080, rt.plates_1_08)
         ]:
             if plates_list:
                 length_counts = Counter(plates_list)
@@ -123,7 +131,7 @@ def build_component_breakdown(
                     #   ПБ 73-12-8п → длина 73дм=7.3м, ширина 12дм=1.2м
                     match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-', name)
                     if match:
-                        length = cfg.length_dm_to_m(match.group(1))  # Целое = номинал в дм (длина = номинал/10 м); с запятой/точкой = точное значение в дм
+                        length = length_dm_to_m(match.group(1))  # Целое = номинал в дм (длина = номинал/10 м); с запятой/точкой = точное значение в дм
                         
                         width_str = match.group(2).replace(',', '.').replace(' ', '')
                         width_dm = float(width_str)  # ← ШИРИНА ТОЖЕ В ДЕЦИМЕТРАХ!
@@ -160,7 +168,7 @@ def build_component_breakdown(
         width_m = width_mm / 1000.0
 
         # Имя плиты в детальной разбивке тоже должно отражать фактическую нагрузку
-        name = cfg.make_plate_name(length, width_m, load_code=load_code, length_dm_raw=ldr or None)
+        name = make_plate_name(length, width_m, load_code=load_code, length_dm_raw=ldr or None)
         if warning_flag:
             name += " (нагрузка?)"
         db_price = d.get_price(length, load_code, d.db_path)
@@ -213,7 +221,7 @@ def build_component_breakdown(
         waste_terms = trim['waste_terms']
         transverse_remainder_cost = trim['transverse_remainder_cost']
         trans_cuts += trim['trans_cuts']
-        trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
+        trans_cut_cost = trans_cuts * TRANSVERSE_CUT_PRICE
 
         long_cut_cost, long_cuts, total_cuts_count = resolve_long_cut_pricing(
             trim,
@@ -229,7 +237,7 @@ def build_component_breakdown(
             if trim.get('long_cut_meterage', 0) <= 0 and width_m < 1.15:
                 print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
                 rest_width_mm = 1200 - width_mm
-                if rest_width_mm > cfg.MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
+                if rest_width_mm > MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
                     rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
                     print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
                 else:
@@ -279,9 +287,9 @@ def build_component_breakdown(
             long_calc = format_long_cut_calculation(trim, qty)
             if not long_calc:
                 if abs(long_cuts - 1.0) > 0.001:
-                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {long_cuts:.2f}".replace('.', ',')
+                    long_calc = f"{LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {long_cuts:.2f}".replace('.', ',')
                 else:
-                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f}".replace('.', ',')
+                    long_calc = f"{LONG_CUT_PRICE_PER_M:.0f} × {length:.1f}".replace('.', ',')
             table_rows.append([
                 "Продольный рез",
                 long_calc,
@@ -290,7 +298,7 @@ def build_component_breakdown(
         
         # Поперечный рез
         if trans_cuts > 0:
-            trans_calc = f"{cfg.TRANSVERSE_CUT_PRICE:.0f} × {trans_cuts}"
+            trans_calc = f"{TRANSVERSE_CUT_PRICE:.0f} × {trans_cuts}"
             table_rows.append([
                 "Поперечный рез",
                 trans_calc,
@@ -402,6 +410,7 @@ def build_component_breakdown_production(
         tracks_for_day: Список дорожек текущего дня. Если указан, будут включены только плиты из этих дорожек.
     """
     d = resolve_procurement_deps(deps)
+    rt = get_plate_mutable_runtime()
     from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD
     
     # ✅ НОВОЕ: Если указаны дорожки текущего дня, собираем плиты только из них
@@ -446,10 +455,10 @@ def build_component_breakdown_production(
             # Fallback на старый способ
             all_orders = []
             for width_mm, plates_list in [
-                (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
-                (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
-                (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
-                (340, cfg.PLATES_0_34), (1080, cfg.PLATES_1_08)
+                (320, rt.plates_0_32), (460, rt.plates_0_46), (700, rt.plates_0_70),
+                (720, rt.plates_0_72), (860, rt.plates_0_86), (880, rt.plates_0_88),
+                (740, rt.plates_0_74), (480, rt.plates_0_48), (500, rt.plates_0_50),
+                (340, rt.plates_0_34), (1080, rt.plates_1_08)
             ]:
                 if plates_list:
                     length_counts = Counter(plates_list)
@@ -472,7 +481,7 @@ def build_component_breakdown_production(
                         # Парсим имя (поддержка дробных дециметров: "59,8" или "60")
                         match = re.search(r'ПБ\s+([\d,]+)-([\d,]+)-', name)
                         if match:
-                            length = cfg.length_dm_to_m(match.group(1))
+                            length = length_dm_to_m(match.group(1))
                             width_str = match.group(2).replace(',', '.').replace(' ', '')
                             width_dm = float(width_str)
                             width_mm = int(round(width_dm * 100))
@@ -503,7 +512,7 @@ def build_component_breakdown_production(
     # ШАГ 1: Определяем максимальное армирование
     # НОВОЕ: Используем PLATE_MAX_REINFORCEMENT_MAP если он заполнен (макс. армирование по дорожке)
     # Иначе - fallback на максимум по всему заказу
-    use_track_based_reinforcement = bool(cfg.PLATE_MAX_REINFORCEMENT_MAP)
+    use_track_based_reinforcement = bool(rt.plate_max_reinforcement_map)
 
     if use_track_based_reinforcement:
         print(f'[PRODUCTION BREAKDOWN] ✅ Используем максимальное армирование по ДОРОЖКАМ (из PLATE_MAX_REINFORCEMENT_MAP)')
@@ -522,14 +531,14 @@ def build_component_breakdown_production(
         width_m = width_mm / 1000.0
 
         # Имя плиты
-        name = cfg.make_plate_name(length, width_m, load_code=load_code, length_dm_raw=ldr or None)
+        name = make_plate_name(length, width_m, load_code=load_code, length_dm_raw=ldr or None)
         if warning_flag:
             name += " (нагрузка?)"
         
         # ✅ ИЗМЕНЕНИЕ 1: Базовая цена из raw_material_costs
         # В БД все плиты имеют формат "ПБ XX-12-НАГРУЗКА" (ширина 1.2м)
         # Поэтому ищем по базовому имени с той же нагрузкой и пересчитываем на фактическую ширину
-        base_name_1_2m = cfg.make_plate_name(length, 1.2, load_code=load_code)
+        base_name_1_2m = make_plate_name(length, 1.2, load_code=load_code)
         # Убираем "Плиты " и букву "п", т.к. в БД хранится формат "ПБ 23-12-8"
         base_name_1_2m_short = base_name_1_2m.replace('Плиты ', '').replace('п', '')
         base_price_1_2m = d.get_raw_material_cost(base_name_1_2m_short, db_path=d.db_path)
@@ -596,7 +605,7 @@ def build_component_breakdown_production(
         waste_terms = trim['waste_terms']
         transverse_remainder_cost = trim['transverse_remainder_cost']
         trans_cuts += trim['trans_cuts']
-        trans_cut_cost = trans_cuts * cfg.TRANSVERSE_CUT_PRICE
+        trans_cut_cost = trans_cuts * TRANSVERSE_CUT_PRICE
 
         long_cut_cost, long_cuts, total_cuts_count = resolve_long_cut_pricing(
             trim,
@@ -612,7 +621,7 @@ def build_component_breakdown_production(
             if trim.get('long_cut_meterage', 0) <= 0 and width_m < 1.15:
                 print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
                 rest_width_mm = 1200 - width_mm
-                if rest_width_mm > cfg.MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
+                if rest_width_mm > MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
                     rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
                     print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
                 else:
@@ -642,10 +651,10 @@ def build_component_breakdown_production(
         if use_track_based_reinforcement:
             # Ищем в карте по (length, width_mm)
             plate_key = (round(length, 3), width_mm)
-            max_reinforcement = cfg.PLATE_MAX_REINFORCEMENT_MAP.get(plate_key, 0)
+            max_reinforcement = rt.plate_max_reinforcement_map.get(plate_key, 0)
             if max_reinforcement == 0:
                 # Попробуем с другими округлениями
-                for (l, w), mr in cfg.PLATE_MAX_REINFORCEMENT_MAP.items():
+                for (l, w), mr in rt.plate_max_reinforcement_map.items():
                     if abs(l - length) < 0.05 and w == width_mm:
                         max_reinforcement = mr
                         break
@@ -704,9 +713,9 @@ def build_component_breakdown_production(
             long_calc = format_long_cut_calculation(trim, qty)
             if not long_calc:
                 if abs(long_cuts - 1.0) > 0.001:
-                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {long_cuts:.2f}".replace('.', ',')
+                    long_calc = f"{LONG_CUT_PRICE_PER_M:.0f} × {length:.1f} × {long_cuts:.2f}".replace('.', ',')
                 else:
-                    long_calc = f"{cfg.LONG_CUT_PRICE_PER_M:.0f} × {length:.1f}".replace('.', ',')
+                    long_calc = f"{LONG_CUT_PRICE_PER_M:.0f} × {length:.1f}".replace('.', ',')
             table_rows.append([
                 "Продольный рез",
                 long_calc,
@@ -715,7 +724,7 @@ def build_component_breakdown_production(
         
         # Поперечный рез
         if trans_cuts > 0:
-            trans_calc = f"{cfg.TRANSVERSE_CUT_PRICE:.0f} × {trans_cuts}"
+            trans_calc = f"{TRANSVERSE_CUT_PRICE:.0f} × {trans_cuts}"
             table_rows.append([
                 "Поперечный рез",
                 trans_calc,

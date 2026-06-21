@@ -321,9 +321,13 @@
 - **927 passed, 12 skipped** — `pytest tests/ -q` (2026-06-20).
 - Минус ~0.5–1.0: S2 stateless sessions, A6 DI inconsistency, god-modules (A5), medium security (health env leak S9-audit).
 
+**Post-P2 (2026-06-21):** спринт [`stabilizaciya-p2-architecture-2026-06-20.md`](../../specs/stabilizaciya-p2-architecture-2026-06-20.md) **closed** — A3 phase 3+ (hot paths), A6 DI, A10 orchestration, A5 web slice, S5 RBAC, stretch S9-audit/S7. **Overall Health Score: ~9/10** (S9-audit health redaction закрыт; residual — A8, medium S10–S19, bot backlog).
+
 ### Рекомендации следующего спринта
 
-1. **S2** — server-side session invalidation / idle timeout (`app/security/session.py`).
+**Следующий спринт →** [`stabilizaciya-p2-architecture-2026-06-20.md`](../../specs/stabilizaciya-p2-architecture-2026-06-20.md) (P2: A3 phase 3+, A6, A10, A5 web, S5; stretch S9/S7).
+
+1. ~~**S2** — server-side session invalidation~~ — **closed** P1-next (`session_version`, `fb122d4`).
 2. **A3 phase 3+** — PEP 562 decommission `core/config_and_data.py`.
 3. **A6** — единый DI-паттерн в API endpoints.
 4. **S9-audit** (optional) — health endpoint без раскрытия environment.
@@ -334,8 +338,8 @@
 
 1. ~~**Немедленно (P0)**: Закрыть кластер A1/S1–A3~~ — **closed** (P0-next `233a3ab`).
 2. ~~**P1-next security:** S4/S9 POST logout (`fb122d4`), S6 destructive guard, S3 XFF (`672308e`), S8 CSRF (`c391696`)~~ — **closed**. ~~Q1/Q3 bot~~ — **cancelled** (bot deprecated).
-3. **Следующий спринт:** **S2** session invalidation · **A3 phase 3+** (PEP 562 decommission) · **A6** DI unification.
-4. **Backlog:** A5/Q2 god-modules (web-side), A10 planning orchestration, S9-audit health env leak, medium clusters, optional `bot/` removal.
+3. **Следующий спринт:** [`stabilizaciya-p2-architecture-2026-06-20.md`](../../specs/stabilizaciya-p2-architecture-2026-06-20.md) — A3 phase 3+, A6, A10, A5 web, S5 (+ stretch S9/S7).
+4. **Backlog:** A8 viz inversion, A17 frontend god components, medium security cluster (S10–S19), optional `bot/` removal.
 
 ---
 
@@ -378,4 +382,4 @@
 
 ---
 
-*Отчёт сформирован: 2026-06-20 · Обновлён: 2026-06-20 (post-sprint closure S3/S8/S9, A3 phase 1–2) · Консолидирован из проходов senior-reviewer, security-auditor и reviewer.*
+*Отчёт сформирован: 2026-06-20 · Обновлён: 2026-06-21 (P2 closure: S9-audit health, A3/A6/A10/A5/S5) · Консолидирован из проходов senior-reviewer, security-auditor и reviewer.*

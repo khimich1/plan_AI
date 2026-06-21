@@ -122,6 +122,16 @@ def warn_if_multi_worker_without_shared_store() -> None:
 
 
 def resolve_client_ip(request: Request) -> str:
+    """Resolve client IP for rate limiting (audit S7).
+
+    ``X-Forwarded-For`` is used only when the direct TCP peer
+    (``request.client.host``) is in ``TRUSTED_PROXY_IPS``. With an empty
+    default, XFF is never trusted — prevents spoofing when the app is exposed
+    without a reverse proxy.
+
+    Behind nginx or a load balancer, set ``TRUSTED_PROXY_IPS`` to the proxy
+    address(es) as the app sees them (e.g. ``127.0.0.1`` on the same host).
+    """
     direct_host = request.client.host if request.client and request.client.host else None
     if direct_host and direct_host in get_settings().trusted_proxy_ips:
         forwarded = request.headers.get("X-Forwarded-For")

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from tests.helpers.csrf import CsrfAwareTestClient
 
-from app.api.v1.endpoints.archive import get_archive_service
+from app.dependencies.services import get_archive_service
 from app.core.settings import get_settings
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
@@ -54,7 +54,7 @@ def client(
                 "manager_id": None,
                 "is_active": 1,
                 "created_at": "2026-01-01 00:00:00",
-    "session_version": 0,
+                "session_version": 0,
             }
         ],
     )

@@ -10,8 +10,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from core import config_and_data as cfg
 from core.config.constants import TRACK_LENGTH_M
+from core.domain.plate_order import normalize_load_code
 from core.track_reconciliation import _track_label, _width_mm
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ def _item_uid(item: dict[str, Any]) -> str:
     plate_name = item.get("plate_name") or item.get("label")
     length = round(_item_length_m(item), 3)
     width_mm = _item_width_mm(item)
-    load_code = cfg.normalize_load_code(item.get("load_code", 8))
+    load_code = normalize_load_code(item.get("load_code", 8))
     if kp_id is not None and plate_name:
         return f"{kp_id}|{plate_name}|{length}|{width_mm}|{load_code}"
     return f"obj:{id(item)}"
@@ -140,7 +140,7 @@ def recalc_track(track: dict[str, Any]) -> None:
     if items:
         track["label"] = _track_label(items)
         load_codes = {
-            cfg.normalize_load_code(item.get("load_code", 8))
+            normalize_load_code(item.get("load_code", 8))
             for item in items
             if isinstance(item, dict) and item.get("load_code") is not None
         }

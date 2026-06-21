@@ -23,8 +23,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-import core.config_and_data as cfg
 from core import kp_db_plates, plate_name as _plate_name
+from core.domain.plate_order import normalize_load_code
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ def distribute_assigned_plates_to_orders(
                     "kp_id": order.get("kp_id"),
                     "plate_name": order.get("plate_name", ""),
                     "qty_lost": qty_ordered - qty_to_mark,
-                    "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
+                    "load_code": normalize_load_code(order.get("load_code", 8)),
                 }
             )
 

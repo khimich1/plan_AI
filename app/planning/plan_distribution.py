@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
+from core.work_calendar import is_working_day, load_extra_workdays, load_holidays
+
 from .plan_storage import (
     MAX_TRACKS_PER_DAY,
     count_day_tracks,
@@ -49,8 +51,6 @@ def distribute_tracks_by_days(
     """
     Разбивает список дорожек по дням с учётом глобальной занятости.
     """
-    from app.planning import plan_manager as _pm
-
     result: Dict[str, list] = {}
 
     try:
@@ -58,11 +58,11 @@ def distribute_tracks_by_days(
     except ValueError:
         current_date = datetime.now()
 
-    holidays = _pm.load_holidays()
-    extra_workdays = _pm.load_extra_workdays()
+    holidays = load_holidays()
+    extra_workdays = load_extra_workdays()
     occupancy = global_occupancy or {}
 
-    while not _pm.is_working_day(current_date.date(), holidays, extra_workdays):
+    while not is_working_day(current_date.date(), holidays, extra_workdays):
         current_date += timedelta(days=1)
 
     track_index = 0
@@ -80,7 +80,7 @@ def distribute_tracks_by_days(
                 max_per_day,
             )
             current_date += timedelta(days=1)
-            while not _pm.is_working_day(current_date.date(), holidays, extra_workdays):
+            while not is_working_day(current_date.date(), holidays, extra_workdays):
                 current_date += timedelta(days=1)
             continue
 
@@ -90,7 +90,7 @@ def distribute_tracks_by_days(
             track_index += chunk_size
 
         current_date += timedelta(days=1)
-        while not _pm.is_working_day(current_date.date(), holidays, extra_workdays):
+        while not is_working_day(current_date.date(), holidays, extra_workdays):
             current_date += timedelta(days=1)
 
     return result

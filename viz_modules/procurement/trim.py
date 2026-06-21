@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import math
 
-import core.config_and_data as cfg
+from core.config.constants import LONG_CUT_PRICE_PER_M, MIN_BILLABLE_TRIM_MM
+
 from ..price_utils import find_price_for_plate
 from .plan_lookup import _is_same_length
 from .ports import ProcurementDeps, resolve_procurement_deps
@@ -143,9 +144,9 @@ def _longitudinal_cuts_for_rest_secondary(
     kept_pieces = sec_pieces + max(0, len(sec_cuts_list) - 1)
     waste_w_mm = float(sec_cut.get('waste', 0) or 0)
     internal_cuts = (kept_pieces - 1) + (
-        1 if waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM else 0
+        1 if waste_w_mm > MIN_BILLABLE_TRIM_MM else 0
     )
-    if min_one_cut_per_op and int(sec_cut.get('source', 0) or 0) > cfg.MIN_BILLABLE_TRIM_MM:
+    if min_one_cut_per_op and int(sec_cut.get('source', 0) or 0) > MIN_BILLABLE_TRIM_MM:
         return sec_qty * max(1, internal_cuts)
     return sec_qty * internal_cuts
 
@@ -254,7 +255,7 @@ def _apply_secondary_cut(
 
     if (
         charge_strip_waste
-        and waste_w_mm > cfg.MIN_BILLABLE_TRIM_MM
+        and waste_w_mm > MIN_BILLABLE_TRIM_MM
         and base_price_1_2m > 0
         and qty > 0
     ):
@@ -428,7 +429,7 @@ def _is_crossload_rest_secondary(
     if _secondary_matches_primary_rest(sec_cut, rest_groups):
         return False
     source = int(sec_cut.get('source', 0) or 0)
-    if source <= cfg.MIN_BILLABLE_TRIM_MM:
+    if source <= MIN_BILLABLE_TRIM_MM:
         return False
     src_lens = sec_cut.get('source_lengths', []) or []
     for prim_cut in current_plan.get('primary_cuts') or []:
@@ -645,7 +646,7 @@ def _calc_trim_components(
 
         if matched_primary:
             for prim_qty, prim_len, rest_mm in matched_primary:
-                if rest_mm > cfg.MIN_BILLABLE_TRIM_MM:
+                if rest_mm > MIN_BILLABLE_TRIM_MM:
                     key = (rest_mm, prim_len)
                     rest_groups[key] = rest_groups.get(key, 0) + prim_qty
 
@@ -658,7 +659,7 @@ def _calc_trim_components(
                 and primary_plate_qty < cascade_qty_own
             )
             for prim_qty, prim_len, rest_mm in matched_primary:
-                if rest_mm <= cfg.MIN_BILLABLE_TRIM_MM:
+                if rest_mm <= MIN_BILLABLE_TRIM_MM:
                     continue
                 if skip_primary_rest_cut:
                     continue
@@ -678,7 +679,7 @@ def _calc_trim_components(
                 if not _cut_matches_load(prim_cut, load_key):
                     continue
                 rest_mm = int(prim_cut.get('rest', 0) or 0)
-                if rest_mm <= cfg.MIN_BILLABLE_TRIM_MM:
+                if rest_mm <= MIN_BILLABLE_TRIM_MM:
                     continue
                 prim_len = _cut_length_from_lengths(prim_cut.get('lengths', []), length)
                 prim_qty = int(prim_cut.get('qty', 0) or 0)
@@ -719,7 +720,7 @@ def _calc_trim_components(
                         )
                         unused_per_strip = max(0, rest_mm - width_consumed)
                         strip_unused_mm = unused_per_strip
-                        charge_as_strip_waste = unused_per_strip > cfg.MIN_BILLABLE_TRIM_MM
+                        charge_as_strip_waste = unused_per_strip > MIN_BILLABLE_TRIM_MM
                         if width_consumed > 0 and charge_as_strip_waste:
                             strip_partially_used = True
                     else:
@@ -730,8 +731,8 @@ def _calc_trim_components(
                     if consumed_per_strip > 0 and unused_per_strip > 0:
                         strip_partially_used = True
                     strip_unused_mm = unused_per_strip * prim_qty
-                    charge_as_strip_waste = unused_per_strip > cfg.MIN_BILLABLE_TRIM_MM
-                if strip_unused_mm <= cfg.MIN_BILLABLE_TRIM_MM:
+                    charge_as_strip_waste = unused_per_strip > MIN_BILLABLE_TRIM_MM
+                if strip_unused_mm <= MIN_BILLABLE_TRIM_MM:
                     continue
                 all_rests_used = False
                 if charge_as_strip_waste and base_price_1_2m > 0 and qty > 0:
@@ -886,7 +887,7 @@ def _calc_trim_components(
             )
 
     long_cut_cost = (
-        (long_cut_meterage * cfg.LONG_CUT_PRICE_PER_M) / qty if qty > 0 else 0.0
+        (long_cut_meterage * LONG_CUT_PRICE_PER_M) / qty if qty > 0 else 0.0
     )
 
     return {
@@ -936,7 +937,7 @@ def resolve_long_cut_pricing(
         if abs(width_m - 1.2) < 0.01:
             return 0.0, 0, 0
         long_cuts = fallback_long_cuts if fallback_long_cuts else (1 if width_m < 1.15 else 0)
-        cost = long_cuts * (cfg.LONG_CUT_PRICE_PER_M * length)
+        cost = long_cuts * (LONG_CUT_PRICE_PER_M * length)
         return cost, long_cuts, 0
 
     if plate_name:
@@ -982,7 +983,7 @@ def format_long_cut_calculation(trim: dict, qty: int) -> str | None:
     if meterage <= 0 or total <= 0:
         return None
     avg_len = meterage / total
-    price = cfg.LONG_CUT_PRICE_PER_M
+    price = LONG_CUT_PRICE_PER_M
     if qty > 1:
         return f"{price:.0f} × {avg_len:.1f} × {total:.0f} / {qty}".replace('.', ',')
     return f"{price:.0f} × {avg_len:.1f} × {total:.0f}".replace('.', ',')

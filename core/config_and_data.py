@@ -11,6 +11,7 @@
 import math
 import re
 import logging
+import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 from .project_paths import (
@@ -412,7 +413,16 @@ def clear_plate_metadata() -> None:
 
 def __getattr__(name: str) -> Any:
     if name in MUTABLE_LEGACY_NAMES:
-        return getattr(get_plate_mutable_runtime(), MUTABLE_ATTR_MAP[name])
+        attr = MUTABLE_ATTR_MAP[name]
+        warnings.warn(
+            (
+                f"config_and_data.{name} is deprecated; use "
+                f"get_plate_mutable_runtime().{attr} instead"
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return getattr(get_plate_mutable_runtime(), attr)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

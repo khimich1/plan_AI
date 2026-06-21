@@ -129,6 +129,39 @@ def test_post_plan_activate(
     assert listed["active_plan_id"] == plan_id
 
 
+def test_plan_lifecycle_create_build_activate_orchestration(
+    production_api_client: TestClient,
+    production_admin_cookie: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """WP3/A10: build (create) → activate проходит через ProductionPlanningService."""
+    build_calls: list[str] = []
+    original_build = ProductionPlanningService.build_plan
+
+    def tracked_build(self, **kwargs):
+        build_calls.append("build_plan")
+        return original_build(self, **kwargs)
+
+    monkeypatch.setattr(ProductionPlanningService, "build_plan", tracked_build)
+
+    built = paf.build_plan_via_api(production_api_client, production_admin_cookie)
+    assert build_calls == ["build_plan"]
+    assert built["stats"]["is_new_plan"] is True
+
+    plan_id = built["plan"]["id"]
+    activate = production_api_client.post(
+        f"{API_PREFIX}/plans/{plan_id}/activate",
+        cookies=production_admin_cookie,
+    )
+    assert activate.status_code == 200
+
+    listed = production_api_client.get(
+        f"{API_PREFIX}/plans",
+        cookies=production_admin_cookie,
+    ).json()
+    assert listed["active_plan_id"] == plan_id
+
+
 def test_get_kp_candidates(
     production_api_client: TestClient,
     production_admin_cookie: dict[str, str],
