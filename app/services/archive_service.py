@@ -35,6 +35,7 @@ from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
 from core.kp_order_data import order_data_from_kp_info
+from core.kp.xlsx_order_data import enrich_order_data_prices_from_xlsx
 
 
 logger = logging.getLogger(__name__)
@@ -206,12 +207,26 @@ class ArchiveService:
         if not order_data:
             raise ArchiveValidationError("В КП нет позиций для формирования документа")
 
+        stored_xlsx = self.repository.get_xlsx_file(kp_id)
+        if isinstance(stored_xlsx, (bytes, bytearray)) and stored_xlsx:
+            order_data = enrich_order_data_prices_from_xlsx(
+                order_data,
+                bytes(stored_xlsx),
+                discount_percent=float(raw.get("discount_percent") or 0),
+            )
+
         offer_number = str(kp_id)
         offer_date = raw.get("creation_date") or datetime.now().strftime("%d.%m.%Y")
         customer_name = raw.get("customer_name")
         manager_name = raw.get("manager_name")
         discount_percent = float(raw.get("discount_percent") or 0)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
+
+        if kind == "xlsx" and isinstance(stored_xlsx, (bytes, bytearray)) and stored_xlsx:
+            filename = f"КП_{kp_id}.xlsx"
+            target_path = self.outputs_dir / filename
+            await asyncio.to_thread(_write_bytes, target_path, bytes(stored_xlsx))
+            return target_path
 
         if kind == "pdf":
             buffer = await asyncio.to_thread(

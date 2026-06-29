@@ -318,9 +318,13 @@ def test_generate_document_rejects_empty_plates(tmp_path: Path) -> None:
 def test_generate_document_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from core.plate_order_context import PlateOrderContext
+
     repository = MagicMock()
     repository.get_by_id.return_value = _make_raw()
+    repository.get_xlsx_file.return_value = None
     service = _make_service(repository, tmp_path)
+    request_ctx = PlateOrderContext.fresh_empty()
 
     schema_path = tmp_path / "Схема_test_КЗ.pdf"
     schema_path.write_bytes(b"%PDF-SCHEMA")
@@ -328,17 +332,25 @@ def test_generate_document_schema(
     class FakeContext:
         optimization_success = True
         optimization_error_message = None
+        optimization_result = {"_opt_status": "ok", "total_plates": 2}
+        plan_by_load = {}
+        load_to_reinforcement_map = {}
+
+    async def fake_run_in_order_context(ctx, fn, *args, **kwargs):
+        return (str(tmp_path / "schema.png"), str(schema_path))
 
     monkeypatch.setattr(
         "app.services.archive_service.OptimizationService.optimize",
-        lambda self, order, orders_2d=None: FakeContext(),
+        lambda self, order, orders_2d=None, plate_order_ctx=None: FakeContext(),
     )
     monkeypatch.setattr(
-        "app.services.archive_service.FileGenerationService.generate_visualization",
-        lambda self, **kwargs: (str(tmp_path / "schema.png"), str(schema_path)),
+        "app.services.archive_service.run_in_order_context",
+        fake_run_in_order_context,
     )
 
-    path = asyncio.run(service.generate_document(42, "schema"))
+    path = asyncio.run(
+        service.generate_document(42, "schema", user=ADMIN, plate_order_ctx=request_ctx)
+    )
 
     assert path.exists()
     assert path.name == "КП_42_schema.pdf"

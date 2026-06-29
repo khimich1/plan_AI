@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Dict, List, Optional
 
+from core.kp.plates_resolve import resolve_plates_for_kp_documents
 from core.kp_db_common import DEFAULT_DB, _connect
 
 
@@ -35,7 +36,12 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
             """,
             (kp_id,),
         )
-        kp_data["plates"] = [dict(plate_row) for plate_row in cur.fetchall()]
+        raw_plates = [dict(plate_row) for plate_row in cur.fetchall()]
+        kp_data["plates"] = resolve_plates_for_kp_documents(
+            raw_plates,
+            kp_id=kp_id,
+            db_path=db_path,
+        )
 
         cur.execute("SELECT * FROM kp_files WHERE kp_id = ?", (kp_id,))
         file_row = cur.fetchone()

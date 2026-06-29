@@ -18,11 +18,13 @@ def order_data_from_kp_info(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for plate in plates:
         unit_price = plate.get("unit_price")
-        if unit_price is None or (
-            isinstance(unit_price, (int, float)) and unit_price <= 0
-        ):
-            discounted_price = plate.get("discounted_price") or 0
-            unit_price = discounted_price / factor
+        discounted_price = plate.get("discounted_price")
+        resolved_unit_price: float | None = None
+        if isinstance(unit_price, (int, float)) and unit_price > 0:
+            resolved_unit_price = float(unit_price)
+        elif isinstance(discounted_price, (int, float)) and discounted_price > 0:
+            resolved_unit_price = float(discounted_price) / factor
+
         qty = plate.get("qty") or 0
         total_weight = plate.get("total_weight")
         unit_weight = plate.get("unit_weight")
@@ -31,15 +33,15 @@ def order_data_from_kp_info(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
             if total_weight is not None and total_weight > 0
             else (unit_weight or 0) * qty
         )
-        result.append(
-            {
-                "name": plate.get("plate_name") or "",
-                "length_m": plate.get("length_m") or 0,
-                "width_m": plate.get("width_m") or 0,
-                "qty": qty,
-                "load_class": plate.get("load_class") or 800,
-                "unit_price": float(unit_price),
-                "weight": weight or 0,
-            }
-        )
+        item: dict[str, Any] = {
+            "name": plate.get("plate_name") or "",
+            "length_m": plate.get("length_m") or 0,
+            "width_m": plate.get("width_m") or 0,
+            "qty": qty,
+            "load_class": plate.get("load_class") or 800,
+            "weight": weight or 0,
+        }
+        if resolved_unit_price is not None:
+            item["unit_price"] = resolved_unit_price
+        result.append(item)
     return result

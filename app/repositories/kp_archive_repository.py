@@ -50,3 +50,6 @@ class KpArchiveRepository:
 
     def delete(self, kp_id: int) -> bool:
         return offers_write.delete_kp_by_id(kp_id, self.db_path)
+
+    def get_xlsx_file(self, kp_id: int) -> bytes | None:
+        return self._offers.get_xlsx_file(kp_id)
