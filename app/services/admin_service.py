@@ -24,7 +24,8 @@ from app.core.settings import Settings, get_settings
 from app.repositories.plan_repository import PlanRepository
 from app.repositories.work_calendar_repository import WorkCalendarRepository
 from app.schemas.admin import DbResetReport, DbStatsResponse, RecoverPlatesResponse
-from core import kp_db
+from core import kp_db_offers, kp_db_plates
+from core.destructive_db_guard import require_destructive_db_reset
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class AdminService:
     # ---------- Stats ----------
 
     def get_stats(self) -> DbStatsResponse:
-        sqlite_stats = kp_db.get_db_stats(self.db_path)
+        sqlite_stats = kp_db_offers.get_db_stats(self.db_path)
         plans_metadata = self.plan_repository.list_metadata()
         plans = plans_metadata.get("plans") if isinstance(plans_metadata, dict) else None
         plans_count = len(plans) if isinstance(plans, list) else 0
@@ -72,7 +73,8 @@ class AdminService:
 
         Таблица ``app_users`` НЕ затрагивается — администратор не теряет сессию.
         """
-        sqlite_report = kp_db.clear_all_plates_data(self.db_path)
+        require_destructive_db_reset()
+        sqlite_report = kp_db_offers.clear_all_plates_data(self.db_path)
         plans_report = self._clear_all_plans()
         calendar_reset = self._reset_calendar()
         return DbResetReport(
@@ -87,16 +89,19 @@ class AdminService:
         НЕ трогает ``completed_plates`` и ``plate_rests``.
         Соответствует старой команде бота ``/clear_all_kp``.
         """
-        sqlite_report = kp_db.clear_all_kp(self.db_path)
+        require_destructive_db_reset()
+        sqlite_report = kp_db_offers.clear_all_kp(self.db_path)
         return DbResetReport(sqlite=_normalize_int_dict(sqlite_report))
 
     def reset_plans_only(self) -> DbResetReport:
-        """Частичное обнуление: только JSON-планы (БД не трогаем)."""
+        """Частичное обнуление: SQLite ``production_plans`` + legacy JSON-планы."""
+        require_destructive_db_reset()
         plans_report = self._clear_all_plans()
         return DbResetReport(plans=plans_report)
 
     def reset_calendar_only(self) -> DbResetReport:
         """Частичное обнуление: только производственный календарь."""
+        require_destructive_db_reset()
         calendar_reset = self._reset_calendar()
         return DbResetReport(calendar_reset=calendar_reset)
 
@@ -104,18 +109,19 @@ class AdminService:
 
     def recover_stuck_plates(self) -> RecoverPlatesResponse:
         """Возвращает плиты из статуса 'в плане' в 'в производстве'."""
-        recovered = kp_db.recover_stuck_plates(self.db_path)
+        recovered = kp_db_plates.recover_stuck_plates(self.db_path)
         return RecoverPlatesResponse(recovered_records=int(recovered))
 
     # ---------- Internals ----------
 
     def _clear_all_plans(self) -> dict[str, int]:
-        """Удаляет JSON-файлы планов и метаданные.
+        """Удаляет SQLite-планы и legacy JSON-файлы планов с метаданными.
 
         Повторяет логику ``bot/handlers/admin.py:386-436``, но пути берёт из
         ``Settings``: ``plans_dir``, ``plans_metadata_path``, ``current_plan_path``.
         """
         report: dict[str, int] = {
+            "sqlite_plans": 0,
             "current_plan": 0,
             "metadata": 0,
             "plan_files": 0,
@@ -123,6 +129,8 @@ class AdminService:
         }
 
         try:
+            report["sqlite_plans"] = self.plan_repository.delete_all_plans()
+
             current_plan_path: Path = self.settings.current_plan_path
             if current_plan_path.exists():
                 current_plan_path.unlink()
@@ -144,7 +152,10 @@ class AdminService:
             raise
 
         report["total"] = (
-            report["current_plan"] + report["metadata"] + report["plan_files"]
+            report["sqlite_plans"]
+            + report["current_plan"]
+            + report["metadata"]
+            + report["plan_files"]
         )
         return report
 

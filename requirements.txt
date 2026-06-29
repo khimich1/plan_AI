@@ -1,6 +1,6 @@
 # Зависимости для веб-сервера: uvicorn app.main:app (FastAPI + общий пакет core/).
 # SPA во frontend/: зависимости в frontend/package.json — ставятся в Dockerfile через npm ci, не через pip.
-# Telegram-бот: pip install -r requirements-bot.txt
+# Telegram-бот DEPRECATED (P5 WP1): опционально pip install -r requirements-bot.txt — только bot_archived/
 
 fastapi==0.111.0
 uvicorn>=0.30.0

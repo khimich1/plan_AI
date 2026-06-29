@@ -8,10 +8,13 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.helpers.csrf import CsrfAwareTestClient
+
 from app.core.http_errors import MSG_INTERNAL, MSG_PARSE_FAILED, MSG_VALIDATION
 from app.core.settings import get_settings
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
+from tests.helpers.auth_fixtures import patch_auth_users
 from app.security.session import create_session_token
 from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.parse_result import ParseResult
@@ -23,6 +26,7 @@ from app.services.commercial_upload_validation import reset_commercial_ocr_rate_
 from app.services.commercial_workflow_service import CommercialWorkflowService, _safe_ocr_temp_suffix
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from core.exceptions import PlateParseError
+from core.plate_order_context import PlateOrderContext
 
 # Minimal valid 1×1 PNG (magic bytes + structure) for upload validation tests.
 _MINIMAL_PNG_BYTES = (
@@ -82,12 +86,12 @@ def _sample_draft(draft_id: str = "draft-123") -> dict:
 
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
+    monkeypatch.setenv("OCR_EXTERNAL_ENABLED", "true")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "tester",
@@ -99,7 +103,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         ],
     )
     app = create_app()
-    return TestClient(app)
+    return CsrfAwareTestClient(app)
 
 
 @pytest.fixture()
@@ -270,7 +274,7 @@ def test_draft_store_rejects_unsafe_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     monkeypatch.setenv("DRAFTS_DIR", str(tmp_path))
     get_settings.cache_clear()
     store = DraftStore()
@@ -293,7 +297,7 @@ def test_draft_store_accepts_safe_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     monkeypatch.setenv("DRAFTS_DIR", str(tmp_path))
     get_settings.cache_clear()
     DraftStore.validate_draft_id(safe_id)
@@ -310,7 +314,7 @@ def test_draft_store_validate_rejects_whitespace_only_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     monkeypatch.setenv("DRAFTS_DIR", str(tmp_path))
     get_settings.cache_clear()
     store = DraftStore()
@@ -337,7 +341,7 @@ def test_draft_store_get_path_rejects_symlink_escaping_base_dir(
     except OSError:
         pytest.skip("could not create symlink for DraftStore containment test")
 
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     monkeypatch.setenv("DRAFTS_DIR", str(drafts_dir))
     get_settings.cache_clear()
     store = DraftStore()
@@ -587,12 +591,11 @@ def test_download_generated_file_rejects_outside_outputs(
 
 @pytest.fixture()
 def client_two_users(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "alice",
@@ -612,7 +615,7 @@ def client_two_users(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         ],
     )
     app = create_app()
-    return TestClient(app)
+    return CsrfAwareTestClient(app)
 
 
 def test_draft_idor_forbids_non_owner(
@@ -638,6 +641,75 @@ def test_draft_idor_forbids_non_owner(
     client_two_users.cookies.set("app_session", token)
     response = client_two_users.get(f"/api/v1/commercial/drafts/{draft_id}")
     assert response.status_code == 403
+
+
+def test_get_draft_breakdown_returns_tables(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir()
+    monkeypatch.setenv("DRAFTS_DIR", str(drafts_dir))
+    get_settings.cache_clear()
+
+    draft_id = "e" * 32
+    plate_name = "Плиты ПБ 72,8-8-8п"
+    breakdown_rows = [
+        ["Базовая цена (0,80м)", "27 574,00 × (0,80 / 1.2)", "18 382,67 руб"],
+        ["Продольный рез", "460 × 7,3 × 1", "3 348,80 руб"],
+        ["ИТОГО за 1 плиту", "", "30 922,80 руб"],
+    ]
+    store = DraftStore()
+    order = PlateOrder()
+    store.replace_preview(
+        draft_id,
+        order=order,
+        optimization_context=OptimizationContext(order=order),
+        order_data=[{"name": plate_name, "qty": 1, "unit_price": 30922.8}],
+        metadata={
+            "owner_user_id": 1,
+            "breakdown_tables": [{"name": plate_name, "rows": breakdown_rows}],
+            "breakdown_tables_count": 1,
+        },
+    )
+
+    response = client.get(f"/api/v1/commercial/drafts/{draft_id}/breakdown")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["draft_id"] == draft_id
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["name"] == plate_name
+    assert len(payload["items"][0]["rows"]) == 3
+    assert payload["items"][0]["rows"][0][0] == "Базовая цена (0,80м)"
+
+
+def test_get_draft_breakdown_empty_when_no_tables(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir()
+    monkeypatch.setenv("DRAFTS_DIR", str(drafts_dir))
+    get_settings.cache_clear()
+
+    draft_id = "f" * 32
+    store = DraftStore()
+    order = PlateOrder()
+    store.replace_preview(
+        draft_id,
+        order=order,
+        optimization_context=OptimizationContext(order=order),
+        order_data=[],
+        metadata={"owner_user_id": 1},
+    )
+
+    response = client.get(f"/api/v1/commercial/drafts/{draft_id}/breakdown")
+    assert response.status_code == 200
+    assert response.json()["items"] == []
 
 
 def test_draft_idor_allows_owner(
@@ -698,8 +770,9 @@ def test_web_offer_form_and_redirect(
 
     assert page_response.status_code == 303
     assert page_response.headers["location"] == "/commercial-offer/new"
+    assert page_response.headers.get("Deprecation") == "true"
     assert submit_response.status_code == 303
-    assert submit_response.headers["location"] == "/web/offers/drafts/draft-web"
+    assert submit_response.headers["location"] == "/commercial-offer/new?draft=draft-web&legacy=1"
 
 
 def test_build_order_data_preserves_input_sequence() -> None:
@@ -723,6 +796,33 @@ def test_build_order_data_preserves_input_sequence() -> None:
     assert len(order_data) == 2
     assert order_data[0]["length_m"] == pytest.approx(7.1)
     assert order_data[1]["length_m"] == pytest.approx(5.9)
+
+
+def test_build_order_data_resolves_load_from_order_not_tls_globals() -> None:
+    """A3 phase 1: _build_order_data must not read plate_runtime_state TLS."""
+    from core.plate_runtime_state import get_plate_mutable_runtime
+
+    service = CommercialService()
+    order = PlateOrder()
+    order.plate_load_details[(7.3, 1.2, 12.0, "73")] = 2
+
+    poisoned = get_plate_mutable_runtime()
+    poisoned.plate_load_details.clear()
+    poisoned.plate_load_details[(7.3, 1.2, 8.0, "73")] = 99
+
+    parse_result = ParseResult(
+        order=order,
+        normalized_text="",
+        line_plate_load_details=[{(7.3, 1.2, 12.0, "73"): 2}],
+    )
+    procurement_items = [
+        {"length": 7.3, "width": 1.2, "qty": 2, "length_dm_raw": "73"},
+    ]
+
+    order_data = service._build_order_data(procurement_items, [], order, parse_result)
+
+    assert len(order_data) == 1
+    assert order_data[0]["load_class"] == 1200
 
 
 def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
@@ -752,8 +852,14 @@ def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
 
     captured: dict[str, str] = {}
 
-    def fake_generate_preview(*, text: str | None = None, parse_result: ParseResult | None = None):
+    def fake_generate_preview(
+        *,
+        text: str | None = None,
+        parse_result: ParseResult | None = None,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ):
         _ = parse_result
+        _ = plate_order_ctx
         preview_text = text or ""
         captured["text"] = preview_text
         fake_parse_result = ParseResult(
@@ -785,6 +891,7 @@ def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
     result = workflow.resolve_wide_plates(
         "draft-1",
         decisions=[{"line_id": "wide-1", "action": "exclude"}],
+        plate_order_ctx=PlateOrderContext.fresh_empty(),
     )
 
     assert result["draft_id"] == "draft-1"

@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Callable
 
-import core.config_and_data as cfg
+from core.domain.plate_order import normalize_load_code as default_normalize_load_code
 
 
 def secondary_geom_cut_key(length_m: object, rest_or_source_mm: object) -> tuple[float, int]:
@@ -148,7 +148,7 @@ def extract_orphan_secondaries_as_synthetic_primary_cuts(
     Вторичные без parent_instance_id убираем из гео-индекса и представляем как
     строки первичного реза (ширина = выход, rest = stock − ширина).
     """
-    _nlc = normalize_load_code if normalize_load_code is not None else cfg.normalize_load_code
+    _nlc = normalize_load_code if normalize_load_code is not None else default_normalize_load_code
     synthetic: list[dict] = []
     sec_rows_by_id: dict[str, dict] = {}
     for row in plan.get("secondary_cuts") or []:

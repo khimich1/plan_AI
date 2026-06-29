@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.schemas.production import DayPlateInfo
-from app.services.day_view_service import _aggregate_plates_for_track_from_db
+from app.services.day_view_service import aggregate_plates_for_track_from_db
 
 
 def test_aggregate_plates_for_track_from_db_write_off_completed_follows_snapshot_flag():
@@ -34,7 +34,7 @@ def test_aggregate_plates_for_track_from_db_write_off_completed_follows_snapshot
         "reinforcement": 0,
         "is_completed_snapshot": False,
     }
-    plates = _aggregate_plates_for_track_from_db(
+    plates = aggregate_plates_for_track_from_db(
         track,
         {101: row_live},
     )
@@ -43,7 +43,7 @@ def test_aggregate_plates_for_track_from_db_write_off_completed_follows_snapshot
     assert plates[0]["write_off_completed"] is False
 
     row_snap = {**row_live, "is_completed_snapshot": True}
-    plates_done = _aggregate_plates_for_track_from_db(track, {101: row_snap})
+    plates_done = aggregate_plates_for_track_from_db(track, {101: row_snap})
     assert plates_done[0]["write_off_completed"] is True
 
 

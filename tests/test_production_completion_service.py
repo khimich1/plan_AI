@@ -19,8 +19,9 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.planning import plan_manager
-from core import kp_db
+from app.planning import plan_manager, plan_storage
+from core import kp_db, work_calendar
+from tests.helpers.auth_fixtures import patch_auth_users
 
 
 PLATE_NAME = "ПБ 60-12-8п"
@@ -58,15 +59,15 @@ def tmp_plita(tmp_path) -> str:
 
 @pytest.fixture(autouse=True)
 def _isolate_plans(tmp_path, monkeypatch):
-    """Изолируем planning-файлы и отключаем праздники/выходные."""
-    plans_dir = tmp_path / "plans"
-    plans_dir.mkdir()
-    metadata_path = tmp_path / "plans_metadata.json"
+    """Изолируем SQLite-планы в tmp и отключаем праздники/выходные."""
+    from app.repositories.plan_repository import PlanRepository
 
-    monkeypatch.setattr(plan_manager, "PLANS_DIR", plans_dir)
-    monkeypatch.setattr(plan_manager, "PLANS_METADATA_PATH", metadata_path)
-    monkeypatch.setattr(plan_manager, "load_holidays", lambda: set())
-    monkeypatch.setattr(plan_manager, "load_extra_workdays", lambda: set())
+    db_path = str(tmp_path / "plita.db")
+    kp_db.init_schema(db_path)
+    repo = PlanRepository(db_path=db_path)
+    monkeypatch.setattr(plan_storage, "_repo_override", repo)
+    monkeypatch.setattr(work_calendar, "load_holidays", lambda: set())
+    monkeypatch.setattr(work_calendar, "load_extra_workdays", lambda: set())
 
 
 @pytest.fixture
@@ -116,7 +117,7 @@ def planning_service(tmp_plita, monkeypatch):
         fake_optimize,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
     return service
@@ -127,11 +128,25 @@ def _make_production_service(planning_service, db_path):
     from app.repositories.plan_repository import PlanRepository
     from app.services.production_service import ProductionService
 
+    plan_repo = PlanRepository(db_path=db_path)
     return ProductionService(
         kp_repository=KpRepository(db_path=db_path),
-        plan_repository=PlanRepository(),
+        plan_repository=plan_repo,
         planning_service=planning_service,
     )
+
+
+def _load_plan(db_path: str, plan_id: str) -> dict:
+    from app.repositories.plan_repository import PlanRepository
+
+    plan = PlanRepository(db_path=db_path).load_plan(plan_id)
+    assert plan is not None
+    return plan
+
+
+def _day_completed(db_path: str, plan_id: str, date_key: str) -> bool:
+    plan = _load_plan(db_path, plan_id)
+    return bool((plan.get("days") or {}).get(date_key, {}).get("completed"))
 
 
 def _kp_plate_rows(db_path: str) -> list[tuple[str, int, str | None]]:
@@ -160,10 +175,11 @@ def _completed_total(db_path: str) -> int:
         ).fetchone()[0]
 
 
-def _day_completed(plan_id: str, date_key: str) -> bool:
-    plan = plan_manager.load_plan(plan_id)
-    assert plan is not None
-    return bool((plan.get("days") or {}).get(date_key, {}).get("completed"))
+def _plate_rests_count(db_path: str) -> int:
+    with sqlite3.connect(db_path) as conn:
+        return int(
+            conn.execute("SELECT COUNT(*) FROM plate_rests").fetchone()[0]
+        )
 
 
 def test_full_reject_returns_plate_to_production(planning_service, tmp_plita):
@@ -209,7 +225,13 @@ def test_unmoved_plates_do_not_mark_day_completed(
     )
     plan_id = built["plan"]["id"]
 
-    monkeypatch.setattr(kp_db, "move_plates_to_completed", lambda *args, **kwargs: 0)
+    from app.services.plate_completion_service import PlateCompletionService
+
+    monkeypatch.setattr(
+        PlateCompletionService,
+        "move_plates_to_completed",
+        lambda *args, **kwargs: 0,
+    )
 
     service = _make_production_service(planning_service, tmp_plita)
     with pytest.raises(
@@ -218,7 +240,7 @@ def test_unmoved_plates_do_not_mark_day_completed(
     ):
         service.complete_day(plan_id=plan_id, target_date="2026-04-21")
 
-    assert _day_completed(plan_id, "2026-04-21") is False
+    assert _day_completed(tmp_plita, plan_id, "2026-04-21") is False
     assert _completed_total(tmp_plita) == 0
     rows = _kp_plate_rows(tmp_plita)
     assert rows == [("в плане", 3, plan_id)]
@@ -277,7 +299,7 @@ def test_plate_without_kp_id_does_not_mark_day_completed(
     with pytest.raises(ProductionCompletionError, match="нет привязки к КП"):
         service.complete_day(plan_id=plan_id, target_date="2026-04-21")
 
-    assert _day_completed(plan_id, "2026-04-21") is False
+    assert _day_completed(tmp_plita, plan_id, "2026-04-21") is False
     assert _completed_total(tmp_plita) == 0
     rows = _kp_plate_rows(tmp_plita)
     assert rows == [("в плане", 3, plan_id)]
@@ -722,7 +744,7 @@ def test_complete_day_handles_secondary_with_backfilled_identity(
         pb_db_path=tmp_plita,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
 
@@ -776,3 +798,314 @@ def test_complete_day_handles_secondary_with_backfilled_identity(
     assert completed_by_name.get(PLATE_NAME) == 3
     assert completed_by_name.get(secondary_plate_name) == 3
     assert remaining == 0
+
+
+def test_secondary_rest_without_kp_id_raises_rest_validation_error(
+    planning_service,
+    tmp_plita,
+    monkeypatch,
+):
+    """Q1: остаток без kp_id не отбрасывается молча — rest_validation_failed."""
+    from app.services.production_completion_service import ProductionRestValidationError
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    def fake_day_view(_target_date: str, **_kwargs) -> dict:
+        return {
+            "date": "2026-04-21",
+            "plans": [
+                {
+                    "plan_id": plan_id,
+                    "plan_name": plan_id,
+                    "completed": False,
+                    "tracks": [
+                        {
+                            "track_number": 1,
+                            "plates_info": [
+                                {
+                                    "plate_name": "ПБ 60-3,2-8п",
+                                    "length_m": 6.0,
+                                    "width_mm": 320,
+                                    "qty": 2,
+                                    "load_code": 8,
+                                    "kp_id": None,
+                                    "is_secondary": True,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "plans_count": 1,
+            "total_tracks": 1,
+        }
+
+    monkeypatch.setattr(
+        "app.services.production_completion_service.build_day_view_detail",
+        fake_day_view,
+    )
+
+    service = _make_production_service(planning_service, tmp_plita)
+    snap_kp_before = _kp_plate_rows(tmp_plita)
+    snap_completed_before = _completed_total(tmp_plita)
+
+    with pytest.raises(ProductionRestValidationError, match="невалидный kp_id"):
+        service.complete_day(plan_id=plan_id, target_date="2026-04-21")
+
+    assert _plate_rests_count(tmp_plita) == 0
+    assert _kp_plate_rows(tmp_plita) == snap_kp_before
+    assert _completed_total(tmp_plita) == snap_completed_before
+    assert _day_completed(tmp_plita, plan_id, "2026-04-21") is False
+
+
+def test_rest_db_error_rolls_back_without_partial_state(tmp_path, monkeypatch):
+    """Q1: сбой БД при записи остатка откатывает транзакцию целиком."""
+    from app.services.production_completion_service import (
+        ProductionCompletionService,
+        ProductionRestDbError,
+    )
+    from core import kp_db_rests
+
+    plan_id = "plan-rest-db"
+    db_path = str(tmp_path / "plita_rest_db.db")
+    kp_db.init_schema(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO KP_offers (kp_id, creation_date, execution_terms, customer_name) "
+            "VALUES (?, '2026-04-01', '06.06.2026', 'ТестКлиент')",
+            (KP_ID,),
+        )
+        conn.execute(
+            "INSERT INTO kp_meta (kp_id, status) VALUES (?, 'в работе')",
+            (KP_ID,),
+        )
+        conn.execute(
+            """
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, qty, status, plan_id, day_number
+            ) VALUES (?, 1, ?, 6.0, 1.2, 800, 3, 'в плане', ?, 1)
+            """,
+            (KP_ID, PLATE_NAME, plan_id),
+        )
+        conn.commit()
+
+    class _PlanRepositoryStub:
+        def load_plan(self, _plan_id: str) -> dict:
+            return {"id": plan_id, "days": {"2026-04-30": {"day_number": 1}}}
+
+    def _fake_day_view(_target_date: str, **_kwargs) -> dict:
+        return {
+            "date": "2026-04-30",
+            "plans": [
+                {
+                    "plan_id": plan_id,
+                    "plan_name": plan_id,
+                    "completed": False,
+                    "tracks": [
+                        {
+                            "track_number": 1,
+                            "plates_info": [
+                                {
+                                    "kp_id": KP_ID,
+                                    "plate_name": PLATE_NAME,
+                                    "length_m": 6.0,
+                                    "width_mm": 1200,
+                                    "qty": 3,
+                                    "load_code": 8,
+                                    "load_class": 800,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+    original_collect = ProductionCompletionService._collect_plates_by_kp
+
+    def collect_with_secondary_rest(day_view, current_plan_id, rejected_plates):
+        grouped, rejected, stats = original_collect(
+            day_view, current_plan_id, rejected_plates
+        )
+        stats = dict(stats)
+        stats["secondary_rests"] = [
+            {
+                "kp_id": KP_ID,
+                "plate_name": "ПБ 60-3,2-8п",
+                "length_m": 6.0,
+                "width_mm": 320,
+                "qty": 1,
+            }
+        ]
+        return grouped, rejected, stats
+
+    monkeypatch.setattr(
+        "app.services.production_completion_service.build_day_view_detail",
+        _fake_day_view,
+    )
+    monkeypatch.setattr(
+        ProductionCompletionService,
+        "_collect_plates_by_kp",
+        staticmethod(collect_with_secondary_rest),
+    )
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("simulated disk I/O error")
+
+    monkeypatch.setattr(kp_db_rests, "create_plate_rest", boom)
+
+    service = ProductionCompletionService(
+        db_path=db_path,
+        plan_repository=_PlanRepositoryStub(),
+    )
+    snap_kp_before = _kp_plate_rows(db_path)
+    snap_completed_before = _completed_total(db_path)
+
+    with pytest.raises(ProductionRestDbError, match="сохранить остаток"):
+        service.complete_day(plan_id=plan_id, target_date="2026-04-30")
+
+    assert _plate_rests_count(db_path) == 0
+    assert _kp_plate_rows(db_path) == snap_kp_before
+    assert _completed_total(db_path) == snap_completed_before
+
+
+def test_complete_day_rest_validation_maps_to_structured_422(
+    planning_service,
+    tmp_plita,
+    monkeypatch,
+):
+    """Q1: endpoint отдаёт 422 с code=rest_validation_failed."""
+    from tests.helpers.csrf import CsrfAwareTestClient
+
+    from app.main import create_app
+    from app.security.session import create_session_token
+    from app.services.production_completion_service import ProductionRestValidationError
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": 1,
+                "username": "tester",
+                "role": "admin",
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+            }
+        ],
+    )
+
+    def raise_rest_validation(*args, **kwargs):
+        raise ProductionRestValidationError(
+            "Не удалось сохранить остаток: невалидный kp_id.",
+            plan_id=plan_id,
+            plate_context={"plate_name": "ПБ 60-3,2-8п", "qty": 2},
+        )
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.production.ProductionService.complete_day",
+        raise_rest_validation,
+    )
+
+    from tests.helpers.csrf import CsrfAwareTestClient
+
+    client = CsrfAwareTestClient(create_app())
+    token = create_session_token(
+        {"id": 1, "username": "tester", "role": "admin"},
+        ttl_seconds=300,
+    )
+    client.cookies.set("app_session", token)
+
+    response = client.post(
+        "/api/v1/production/days/2026-04-21/complete",
+        json={"plan_id": plan_id, "rejected_plates": []},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "rest_validation_failed",
+        "message": "Не удалось сохранить остаток: невалидный kp_id.",
+        "details": {
+            "plan_id": plan_id,
+            "plate": {"plate_name": "ПБ 60-3,2-8п", "qty": 2},
+        },
+    }
+
+
+def test_complete_day_rest_db_error_maps_to_500(
+    planning_service,
+    tmp_plita,
+    monkeypatch,
+):
+    """Q1: ошибка БД при записи остатка → HTTP 500."""
+    from tests.helpers.csrf import CsrfAwareTestClient
+
+    from app.main import create_app
+    from app.security.session import create_session_token
+    from app.services.production_completion_service import ProductionRestDbError
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21",
+        tracks_count=3,
+        filter_method="all",
+    )
+    plan_id = built["plan"]["id"]
+
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": 1,
+                "username": "tester",
+                "role": "admin",
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+            }
+        ],
+    )
+
+    def raise_rest_db_error(*args, **kwargs):
+        raise ProductionRestDbError(
+            "Не удалось сохранить остаток в БД.",
+            plan_id=plan_id,
+            plate_context={"plate_name": "ПБ 60-3,2-8п", "qty": 1},
+        )
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.production.ProductionService.complete_day",
+        raise_rest_db_error,
+    )
+
+    from tests.helpers.csrf import CsrfAwareTestClient
+
+    client = CsrfAwareTestClient(create_app())
+    token = create_session_token(
+        {"id": 1, "username": "tester", "role": "admin"},
+        ttl_seconds=300,
+    )
+    client.cookies.set("app_session", token)
+
+    response = client.post(
+        "/api/v1/production/days/2026-04-21/complete",
+        json={"plan_id": plan_id, "rejected_plates": []},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == (
+        "Внутренняя ошибка сервера. Повторите попытку позже."
+    )

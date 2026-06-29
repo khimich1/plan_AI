@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-import core.config_and_data as cfg
 import pytest
 from core.optimization.layout_runtime_snapshot import (
     LayoutSequenceCfgSlice,
     build_layout_runtime_snapshot,
 )
+from core.plate_runtime_state import get_plate_mutable_runtime
 from viz_modules.layout_sequence.from_plan import _build_sequence_from_plan
 from viz_modules.layout_sequence.helpers import choose_best_separator, choose_closest_solid
 
@@ -22,8 +22,8 @@ def _layout_cfg(
     reinforcement_order: str = "asc",
     greedy: bool = True,
 ) -> LayoutSequenceCfgSlice:
-    return LayoutSequenceCfgSlice.from_config_module(
-        cfg,
+    return LayoutSequenceCfgSlice.from_plate_runtime(
+        get_plate_mutable_runtime(),
         layout_greedy_reinf_merge=greedy,
         layout_reinforcement_order=reinforcement_order,  # type: ignore[arg-type]
     )

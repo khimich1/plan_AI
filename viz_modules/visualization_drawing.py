@@ -8,10 +8,10 @@
 """
 import matplotlib.patches as patches
 
-import core.config_and_data as cfg
+from core.config.constants import TRACK_WIDTH_M
 
 
-def _draw_segment(ax, x0: float, length: float, color: str, label: str, y: float = 0.0, height: float = cfg.TRACK_WIDTH_M, reinforcement: float = None):
+def _draw_segment(ax, x0: float, length: float, color: str, label: str, y: float = 0.0, height: float = TRACK_WIDTH_M, reinforcement: float = None):
     """Рисует простой сегмент плиты"""
     rect = patches.Rectangle((x0, y), length, height, linewidth=1, edgecolor='black', facecolor=color, alpha=0.85)
     ax.add_patch(rect)
@@ -30,13 +30,13 @@ def _draw_split_plate(ax, x0: float, length: float, main_w: float, rest_w: float
     """Рисует плиту с продольным резом и возможными вторичными резами в остатке"""
     # Защитная проверка: сумма ширин не должна превышать ширину дорожки (1200мм = 1.2м)
     total_width = main_w + rest_w
-    if total_width > cfg.TRACK_WIDTH_M + 0.001:
-        print(f"[WARNING] Ширина превышена: {main_w:.3f} + {rest_w:.3f} = {total_width:.3f} > {cfg.TRACK_WIDTH_M}")
+    if total_width > TRACK_WIDTH_M + 0.001:
+        print(f"[WARNING] Ширина превышена: {main_w:.3f} + {rest_w:.3f} = {total_width:.3f} > {TRACK_WIDTH_M}")
         # Корректируем rest_w чтобы уместиться в дорожку
-        rest_w = max(0, cfg.TRACK_WIDTH_M - main_w)
+        rest_w = max(0, TRACK_WIDTH_M - main_w)
     
     # Фон всей плиты (1.2 м)
-    rect = patches.Rectangle((x0, y_base), length, cfg.TRACK_WIDTH_M, linewidth=1.2, edgecolor='black', facecolor='#ecf0f1', alpha=1.0)
+    rect = patches.Rectangle((x0, y_base), length, TRACK_WIDTH_M, linewidth=1.2, edgecolor='black', facecolor='#ecf0f1', alpha=1.0)
     ax.add_patch(rect)
     
     # Основная часть (зелёная)

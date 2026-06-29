@@ -1,5 +1,6 @@
 import { httpClient } from "@/shared/api/httpClient";
 import type {
+  BreakdownResponse,
   CommercialDraftDetails,
   CommercialGeneratedFile,
   CommercialSaveResult,
@@ -117,6 +118,9 @@ export const commercialOfferApi = {
     ),
 
   getDraft: (draftId: string) => httpClient.get<CommercialDraftDetails>(`/api/v1/commercial/drafts/${draftId}`),
+
+  getBreakdown: (draftId: string) =>
+    httpClient.get<BreakdownResponse>(`/api/v1/commercial/drafts/${draftId}/breakdown`),
 
   calculateDraft: (draftId: string) =>
     httpClient.post<CommercialDraftDetails>(`/api/v1/commercial/drafts/${draftId}/calculate`),

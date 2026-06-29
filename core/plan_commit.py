@@ -7,7 +7,7 @@
    ``(kp_id, plate_name)``.
 2. :func:`distribute_assigned_plates_to_orders` — распределяет полученные
    счётчики по строкам ``orders_2d`` (совпадает с тем, по чему
-   ``kp_db.mark_plates_as_planned`` обновляет БД).
+   ``kp_db_plates.mark_plates_as_planned`` обновляет БД).
 3. :func:`commit_plan_plates` — валидирует распределение и помечает плиты
    как ``'в плане'``. При ошибке откатывает изменения.
 
@@ -23,12 +23,10 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-import core.config_and_data as cfg
-from core import kp_db, plate_name as _plate_name
-from core.debug_paths import get_debug_log_path
+from core import kp_db_plates, plate_name as _plate_name
+from core.domain.plate_order import normalize_load_code
 
 logger = logging.getLogger(__name__)
-_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
 
 
 OrderIdentity = tuple[int | None, str]
@@ -205,7 +203,7 @@ def distribute_assigned_plates_to_orders(
                     "kp_id": order.get("kp_id"),
                     "plate_name": order.get("plate_name", ""),
                     "qty_lost": qty_ordered - qty_to_mark,
-                    "load_code": cfg.normalize_load_code(order.get("load_code", 8)),
+                    "load_code": normalize_load_code(order.get("load_code", 8)),
                 }
             )
 
@@ -325,8 +323,8 @@ def commit_plan_plates(
     2. :func:`distribute_assigned_plates_to_orders` → ``orders_with_qty``.
     3. Валидация: ``optimizer_unmapped`` и ``optimizer_extra`` должны быть
        пустыми (иначе нельзя гарантировать корректность пометки).
-    4. Цикл ``kp_db.mark_plates_as_planned`` по каждой позиции заказа.
-    5. При любой проблеме — ``kp_db.return_plan_plates_to_production`` и
+    4. Цикл ``kp_db_plates.mark_plates_as_planned`` по каждой позиции заказа.
+    5. При любой проблеме — ``kp_db_plates.return_plan_plates_to_production`` и
        выброс :class:`PlanCommitError`.
 
     Args:
@@ -442,53 +440,6 @@ def commit_plan_plates(
     if tracks_by_day:
         counts_by_identity_and_day = _count_track_items_by_day(tracks_by_day)
 
-    # #region agent log
-    try:
-        import json as _agent_json
-        import time as _agent_time
-
-        _orders_snapshot = []
-        _orders_without_day = 0
-        for _order, _qty_to_mark in orders_with_qty:
-            if _qty_to_mark <= 0:
-                continue
-            _kp_id = _order.get("kp_id")
-            _plate_label = _order.get("plate_name")
-            if not (_kp_id and _plate_label):
-                continue
-            _identity = (int(_kp_id), _plate_name.canonical(_plate_label))
-            _per_day = counts_by_identity_and_day.get(_identity) or {}
-            if not _per_day:
-                _orders_without_day += 1
-            _orders_snapshot.append({
-                "kp_id": int(_kp_id),
-                "plate_name": str(_plate_label),
-                "qty_to_mark": int(_qty_to_mark),
-                "per_day_total": int(sum(_per_day.values())),
-                "per_day": dict(_per_day),
-            })
-        with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
-            _agent_f.write(_agent_json.dumps({
-                "sessionId": "ebb546",
-                "runId": "pre-fix",
-                "hypothesisId": "H1,H2",
-                "location": "core/plan_commit.py:counts_by_identity_and_day",
-                "message": "Сопоставление qty_to_mark с per-day счетчиками из tracks_by_day",
-                "data": {
-                    "plan_id": plan_id,
-                    "tracks_by_day_present": bool(tracks_by_day),
-                    "orders_to_mark": len(_orders_snapshot),
-                    "orders_without_per_day": _orders_without_day,
-                    "total_qty_to_mark": sum(x["qty_to_mark"] for x in _orders_snapshot),
-                    "total_per_day_qty": sum(x["per_day_total"] for x in _orders_snapshot),
-                    "sample": _orders_snapshot[:20],
-                },
-                "timestamp": int(_agent_time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-
     # P5: пул (plate_id, remaining_qty) пар по identity и дню.
     # ``ids_by_identity_day[(kp_id, canon)][day_number]`` — список пар
     # (plate_id, qty), показывающий, сколько items может разделить
@@ -549,7 +500,7 @@ def commit_plan_plates(
                         break
                 # mark_plates_as_planned per-day
                 for d, take in day_alloc:
-                    mark_result = kp_db.mark_plates_as_planned(
+                    mark_result = kp_db_plates.mark_plates_as_planned(
                         kp_id=int(kp_id),
                         plate_name=plate_name,
                         qty_to_plan=take,
@@ -583,7 +534,7 @@ def commit_plan_plates(
                 for d, take in day_alloc:
                     if take <= 0:
                         continue
-                    mark_result = kp_db.mark_plates_as_planned(
+                    mark_result = kp_db_plates.mark_plates_as_planned(
                         kp_id=int(kp_id),
                         plate_name=plate_name,
                         qty_to_plan=take,
@@ -620,7 +571,7 @@ def commit_plan_plates(
                     "и наличие kp_id/plate_name у secondary_cuts.",
                     identity, qty_to_mark,
                 )
-            mark_result = kp_db.mark_plates_as_planned(
+            mark_result = kp_db_plates.mark_plates_as_planned(
                 kp_id=int(kp_id),
                 plate_name=plate_name,
                 qty_to_plan=qty_to_mark,
@@ -660,53 +611,6 @@ def commit_plan_plates(
                     physical["kp_plate_id"] = pair[0]
                     pair[1] -= 1
 
-    # #region agent log
-    try:
-        import json as _agent_json
-        import time as _agent_time
-
-        _physical_total = 0
-        _missing_identity = 0
-        _missing_plate_id = 0
-        _missing_plate_id_sample = []
-        if tracks_by_day:
-            for _day_tracks in tracks_by_day.values():
-                for _track in _day_tracks or []:
-                    for _physical in _iter_physical_items((_track or {}).get("items")):
-                        _physical_total += 1
-                        _identity = _identity_for_track_item(_physical)
-                        if _identity is None:
-                            _missing_identity += 1
-                            continue
-                        if _physical.get("kp_plate_id") is None:
-                            _missing_plate_id += 1
-                            if len(_missing_plate_id_sample) < 10:
-                                _missing_plate_id_sample.append({
-                                    "kp_id": _physical.get("kp_id"),
-                                    "plate_name": _physical.get("plate_name") or _physical.get("label"),
-                                    "length": _physical.get("length") or _physical.get("target_length"),
-                                    "width": _physical.get("width") or _physical.get("main_w"),
-                                })
-        with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
-            _agent_f.write(_agent_json.dumps({
-                "sessionId": "ebb546",
-                "runId": "pre-fix",
-                "hypothesisId": "H3",
-                "location": "core/plan_commit.py:after_kp_plate_id_assignment",
-                "message": "Проверка kp_plate_id после назначения на track items",
-                "data": {
-                    "plan_id": plan_id,
-                    "physical_items_total": _physical_total,
-                    "missing_identity": _missing_identity,
-                    "missing_kp_plate_id": _missing_plate_id,
-                    "missing_kp_plate_id_sample": _missing_plate_id_sample,
-                },
-                "timestamp": int(_agent_time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-
     logger.info(
         "[PLAN_COMMIT] План %s: помечено %s плит, пропущено %s",
         plan_id,
@@ -721,7 +625,7 @@ def commit_plan_plates(
             result.plates_mismatched,
         )
         try:
-            kp_db.return_plan_plates_to_production(plan_id, db_path)
+            kp_db_plates.return_plan_plates_to_production(plan_id, db_path)
         except Exception:
             logger.exception(
                 "[PLAN_COMMIT] Ошибка при откате плит для плана %s",

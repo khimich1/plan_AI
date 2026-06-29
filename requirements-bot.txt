@@ -1,5 +1,5 @@
-# Запуск Telegram-бота: python run_bot.py
-# Общий код с вебом — сначала те же пакеты, что и у сервера.
+# DEPRECATED (P5 WP1): optional deps for bot_archived/ reference only — not in default venv.
+# run_bot.py exits with deprecation; see bot/README.md.
 
 -r requirements.txt
 aiogram==3.6.0

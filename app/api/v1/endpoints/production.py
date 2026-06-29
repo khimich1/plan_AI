@@ -6,6 +6,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.dependencies.auth import require_roles
+from app.dependencies.plate_context import get_plate_order_context
+from app.dependencies.services import get_production_service
 from app.services.day_documents_service import (
     DayDocumentsError,
     generate_day_breakdown,
@@ -25,8 +27,25 @@ from app.schemas.production import (
     RemoveTrackResponse,
     SaveWorkCalendarRequest,
 )
+from app.concurrency.cpu_bound import run_cpu_bound
+from app.core.http_errors import (
+    MSG_DAY_NOT_FOUND,
+    MSG_PLAN_VERSION_CONFLICT,
+    raise_not_found_client_error,
+    raise_structured_error,
+    raise_track_removal_client_error,
+    raise_unexpected_server_error,
+    raise_unprocessable_client_error,
+)
+from core.plate_order_context import PlateOrderContext
+from app.repositories.plan_errors import PlanVersionConflict
+from app.schemas.errors import ERROR_CODE_PLAN_VERSION_CONFLICT, ERROR_CODE_REST_VALIDATION_FAILED
+from app.services.production_completion_service import (
+    ProductionCompletionError,
+    ProductionRestDbError,
+    ProductionRestValidationError,
+)
 from app.services.production_planning_service import ProductionPlanBuildError
-from app.services.production_completion_service import ProductionCompletionError
 from app.services.production_service import ProductionService, ProductionTrackRemovalError
 
 logger = logging.getLogger(__name__)
@@ -37,42 +56,61 @@ router = APIRouter(prefix="/production", tags=["production"])
 @router.get("/plans")
 def list_plans(
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> dict:
-    return ProductionService().list_plans()
+    return service.list_plans()
 
 
 @router.post("/plans")
-def create_plan(
+async def create_plan(
     payload: CreatePlanRequest,
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> dict:
-    return ProductionService().create_plan(**payload.model_dump())
+    return await run_cpu_bound(lambda: service.create_plan(**payload.model_dump()))
 
 
 @router.post("/plans/build", response_model=BuildPlanResponse)
-def build_plan_from_filters(
+async def build_plan_from_filters(
     payload: BuildPlanRequest,
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> BuildPlanResponse:
     try:
-        result = ProductionService().build_plan_from_filters(
-            start_date=payload.start_date,
-            tracks_count=payload.tracks_count,
-            filter_method=payload.filter_method,
-            selected_kp_ids=payload.selected_kp_ids or None,
-            selected_plate_ids=payload.selected_plate_ids or None,
-            selected_plate_qty=payload.selected_plate_qty or None,
-            active_plan_id=payload.active_plan_id,
-            plan_name=payload.plan_name,
-            fill_targets=(
-                [item.model_dump() for item in payload.fill_targets]
-                if payload.fill_targets
-                else None
+        result = await run_cpu_bound(
+            lambda: service.build_plan_from_filters(
+                start_date=payload.start_date,
+                tracks_count=payload.tracks_count,
+                filter_method=payload.filter_method,
+                selected_kp_ids=payload.selected_kp_ids or None,
+                selected_plate_ids=payload.selected_plate_ids or None,
+                selected_plate_qty=payload.selected_plate_qty or None,
+                active_plan_id=payload.active_plan_id,
+                plan_name=payload.plan_name,
+                fill_targets=(
+                    [item.model_dump() for item in payload.fill_targets]
+                    if payload.fill_targets
+                    else None
+                ),
+                layout_reinforcement_order=payload.layout_reinforcement_order,
+                plate_order_ctx=plate_order_ctx,
             ),
-            layout_reinforcement_order=payload.layout_reinforcement_order,
+            plate_order_ctx=plate_order_ctx,
         )
     except ProductionPlanBuildError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        raise_unprocessable_client_error(exc, where="production.build_plan")
+    except PlanVersionConflict as exc:
+        raise_structured_error(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ERROR_CODE_PLAN_VERSION_CONFLICT,
+            message=MSG_PLAN_VERSION_CONFLICT,
+            details={
+                "plan_id": exc.plan_id,
+                "expected_version": exc.expected_version,
+            },
+            where="production.build_plan",
+        )
     except Exception as exc:
         logger.exception("[production/build] Непредвиденная ошибка: %s", exc)
         raise HTTPException(
@@ -86,8 +124,9 @@ def build_plan_from_filters(
 def get_plan(
     plan_id: str,
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> dict:
-    plan = ProductionService().get_plan(plan_id)
+    plan = service.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     return plan
@@ -97,8 +136,9 @@ def get_plan(
 def delete_plan(
     plan_id: str,
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> DeletePlanResponse:
-    result = ProductionService().delete_plan(plan_id)
+    result = service.delete_plan(plan_id)
     if not result.get("deleted"):
         raise HTTPException(status_code=404, detail="Plan not found")
     return DeletePlanResponse(**result)
@@ -108,8 +148,9 @@ def delete_plan(
 def activate_plan(
     plan_id: str,
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> dict:
-    result = ProductionService().activate_plan(plan_id)
+    result = service.activate_plan(plan_id)
     if not result:
         raise HTTPException(status_code=404, detail="Plan not found")
     return result
@@ -124,25 +165,43 @@ def remove_track_from_plan(
     date: str,
     track_index: int,
     user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> RemoveTrackResponse:
     actor = user.get("email") or user.get("login") or user.get("user_id")
     try:
-        result = ProductionService().remove_track(
+        result = service.remove_track(
             plan_id=plan_id,
             date=date,
             track_index=track_index,
             actor=str(actor) if actor else None,
         )
     except ProductionTrackRemovalError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise_track_removal_client_error(
+            exc,
+            where="production.remove_track",
+            status_code=exc.status_code,
+            code=exc.code,
+        )
+    except PlanVersionConflict as exc:
+        raise_structured_error(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ERROR_CODE_PLAN_VERSION_CONFLICT,
+            message=MSG_PLAN_VERSION_CONFLICT,
+            details={
+                "plan_id": exc.plan_id,
+                "expected_version": exc.expected_version,
+            },
+            where="production.remove_track",
+        )
     return RemoveTrackResponse(**result)
 
 
 @router.get("/calendar")
 def get_calendar(
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> dict:
-    calendar = ProductionService().get_calendar()
+    calendar = service.get_calendar()
     if not calendar:
         return {"plans_count": 0, "days_info": {}, "completed_days": []}
     return calendar
@@ -152,16 +211,18 @@ def get_calendar(
 def get_day_occupancy(
     exclude_plan_id: str | None = None,
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> DayOccupancyResponse:
-    result = ProductionService().get_day_occupancy(exclude_plan_id=exclude_plan_id)
+    result = service.get_day_occupancy(exclude_plan_id=exclude_plan_id)
     return DayOccupancyResponse(**result)
 
 
 @router.get("/kp-candidates", response_model=KpCandidatesResponse)
 def get_kp_candidates(
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> KpCandidatesResponse:
-    result = ProductionService().list_kp_candidates()
+    result = service.list_kp_candidates()
     return KpCandidatesResponse(**result)
 
 
@@ -169,8 +230,9 @@ def get_kp_candidates(
 def get_day_view(
     target_date: str,
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> DayViewDetailResponse:
-    data = ProductionService().get_day_view_detailed(target_date)
+    data = service.get_day_view_detailed(target_date)
     if not data:
         raise HTTPException(status_code=404, detail="Day not found")
     return DayViewDetailResponse(**data)
@@ -181,32 +243,59 @@ def complete_day(
     target_date: str,
     payload: CompleteProductionDayRequest,
     user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> dict:
     actor = user.get("email") or user.get("login") or user.get("user_id")
     try:
-        return ProductionService().complete_day(
+        return service.complete_day(
             plan_id=payload.plan_id,
             target_date=target_date,
             rejected_plates=[item.model_dump() for item in payload.rejected_plates],
             actor=str(actor) if actor else None,
         )
-    except ProductionCompletionError as exc:
-        raise HTTPException(
+    except ProductionRestValidationError as exc:
+        raise_structured_error(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+            code=ERROR_CODE_REST_VALIDATION_FAILED,
+            message=str(exc),
+            details={"plan_id": exc.plan_id, "plate": exc.plate_context},
+            where="production.complete_day",
+        )
+    except ProductionRestDbError as exc:
+        raise_unexpected_server_error(exc, where="production.complete_day")
+    except PlanVersionConflict as exc:
+        raise_structured_error(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ERROR_CODE_PLAN_VERSION_CONFLICT,
+            message=MSG_PLAN_VERSION_CONFLICT,
+            details={
+                "plan_id": exc.plan_id,
+                "expected_version": exc.expected_version,
+            },
+            where="production.complete_day",
+        )
+    except ProductionCompletionError as exc:
+        raise_unprocessable_client_error(exc, where="production.complete_day")
 
 
 @router.get("/days/{target_date}/documents/schema")
 async def download_day_schema(
     target_date: str,
     background_tasks: BackgroundTasks,
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     _user: dict = Depends(require_roles("admin", "production")),
 ) -> FileResponse:
     try:
-        pdf_path, cleanup_dir = await generate_day_schema(target_date)
+        pdf_path, cleanup_dir = await generate_day_schema(
+            target_date,
+            plate_order_ctx=plate_order_ctx,
+        )
     except DayDocumentsError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise_not_found_client_error(
+            exc,
+            where="production.download_day_schema",
+            detail=MSG_DAY_NOT_FOUND,
+        )
     except Exception as exc:
         logger.exception("[production/day-schema] ошибка: %s", exc)
         raise HTTPException(
@@ -225,14 +314,20 @@ async def download_day_schema(
 async def download_day_breakdown(
     target_date: str,
     background_tasks: BackgroundTasks,
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     _user: dict = Depends(require_roles("admin", "production")),
 ) -> FileResponse:
     try:
-        xlsx_path, cleanup_dir = await generate_day_breakdown(target_date)
+        xlsx_path, cleanup_dir = await generate_day_breakdown(
+            target_date,
+            plate_order_ctx=plate_order_ctx,
+        )
     except DayDocumentsError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        logger.exception("[production/day-breakdown] ошибка: %s", exc)
+        raise_not_found_client_error(
+            exc,
+            where="production.download_day_breakdown",
+            detail=MSG_DAY_NOT_FOUND,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Не удалось сформировать детальную разбивку.",
@@ -254,9 +349,11 @@ async def download_day_formovka(
     try:
         zip_path, cleanup_dir = await generate_day_formovka(target_date)
     except DayDocumentsError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        logger.exception("[production/day-formovka] ошибка: %s", exc)
+        raise_not_found_client_error(
+            exc,
+            where="production.download_day_formovka",
+            detail=MSG_DAY_NOT_FOUND,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Не удалось сформировать файлы формовки.",
@@ -273,21 +370,24 @@ async def download_day_formovka(
 def list_candidates(
     limit: int = 500,
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> dict:
-    items = ProductionService().load_candidates_for_plan(limit=limit)
+    items = service.load_candidates_for_plan(limit=limit)
     return {"items": items, "count": len(items)}
 
 
 @router.get("/work-calendar")
 def get_work_calendar(
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> dict:
-    return ProductionService().get_work_calendar()
+    return service.get_work_calendar()
 
 
 @router.put("/work-calendar")
 def save_work_calendar(
     payload: SaveWorkCalendarRequest,
     _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
 ) -> dict:
-    return ProductionService().save_work_calendar(payload.model_dump())
+    return service.save_work_calendar(payload.model_dump())

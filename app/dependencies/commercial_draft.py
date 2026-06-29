@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, status
 
 from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER
+from app.security.offer_access import is_admin
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 
 
@@ -22,6 +23,8 @@ def check_draft_ownership(draft_id: str, user: dict) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Черновик недоступен. Создайте новый черновик.",
         )
+    if is_admin(user):
+        return
     if int(owner) != int(user["id"]):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

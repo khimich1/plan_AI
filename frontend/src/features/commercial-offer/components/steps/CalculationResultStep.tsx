@@ -1,7 +1,14 @@
-import { useEffect, useState } from "react";
-import type { CommercialDraftDetails, CommercialSaveResult, SaveMode } from "@/features/commercial-offer/types/commercialOffer";
+import { useEffect, useMemo, useState } from "react";
+import type {
+  BreakdownTable,
+  CommercialDraftDetails,
+  CommercialSaveResult,
+  SaveMode,
+} from "@/features/commercial-offer/types/commercialOffer";
 import { DownloadFilesSection } from "@/features/commercial-offer/components/DownloadFilesSection";
 import { SaveOfferSection } from "@/features/commercial-offer/components/SaveOfferSection";
+import { PlatePriceBreakdownModal } from "@/features/commercial-offer/components/PlatePriceBreakdownModal";
+import { findBreakdownTable } from "@/features/commercial-offer/lib/findBreakdownTable";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -16,6 +23,8 @@ import { StepLayout } from "@/shared/ui/StepLayout";
 
 type CalculationResultStepProps = {
   draft: CommercialDraftDetails;
+  breakdownTables: BreakdownTable[];
+  isBreakdownLoading: boolean;
   errorMessage: string | null;
   isGeneratingFiles: boolean;
   isGeneratingSchema: boolean;
@@ -35,6 +44,8 @@ type CalculationResultStepProps = {
 
 export const CalculationResultStep = ({
   draft,
+  breakdownTables,
+  isBreakdownLoading,
   errorMessage,
   isGeneratingFiles,
   isGeneratingSchema,
@@ -55,6 +66,12 @@ export const CalculationResultStep = ({
   const [logisticsCostDraft, setLogisticsCostDraft] = useState(String(draft.metadata.logistics_cost ?? 0));
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [logisticsError, setLogisticsError] = useState<string | null>(null);
+  const [selectedPlateName, setSelectedPlateName] = useState<string | null>(null);
+  const breakdownAvailable = (draft.metadata.breakdown_tables_count ?? 0) > 0;
+  const selectedBreakdownTable = useMemo(
+    () => (selectedPlateName ? findBreakdownTable(breakdownTables, selectedPlateName) : undefined),
+    [breakdownTables, selectedPlateName],
+  );
   const totalWeight = draft.order_data.reduce((acc, item) => acc + (toNumber(item.weight) ?? 0), 0);
   const serverSubtotal = draft.totals.subtotal;
   const serverVat = draft.totals.vat_amount;
@@ -140,10 +157,35 @@ export const CalculationResultStep = ({
             </tr>
           </thead>
           <tbody>
-            {draft.order_data.map((item, index) => (
+            {draft.order_data.map((item, index) => {
+              const plateName = String(item.name ?? "");
+              const canOpenBreakdown = breakdownAvailable && !isBreakdownLoading && plateName.length > 0;
+              return (
               <tr key={`${item.name ?? "row"}-${index}`}>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.name ?? "")}</td>
+                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
+                  {canOpenBreakdown ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlateName(plateName)}
+                      title="Показать детальную разбивку цены"
+                      style={{
+                        color: "#175cd3",
+                        textDecoration: "underline",
+                        cursor: "pointer",
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        textAlign: "left",
+                        font: "inherit",
+                      }}
+                    >
+                      {plateName}
+                    </button>
+                  ) : (
+                    plateName
+                  )}
+                </td>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.qty ?? "")}</td>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>шт</td>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
@@ -156,7 +198,8 @@ export const CalculationResultStep = ({
                   {formatOfferSum(item.qty, item.unit_price)}
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>
@@ -247,6 +290,13 @@ export const CalculationResultStep = ({
         onExecutionTermsChange(payload.executionTermsInput);
         await onSave(payload);
       }}
+    />
+
+    <PlatePriceBreakdownModal
+      open={selectedPlateName !== null}
+      plateName={selectedPlateName}
+      table={selectedBreakdownTable}
+      onClose={() => setSelectedPlateName(null)}
     />
 
     {(lastSaveResult?.result_card ?? null) && (

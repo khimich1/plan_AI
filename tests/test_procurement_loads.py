@@ -12,7 +12,58 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.config_and_data as cfg
+from core.plate_runtime_state import get_plate_mutable_runtime
 from viz_modules.procurement import build_procurement_items, build_price_rows
+from viz_modules.procurement.ports import ProcurementDeps
+
+
+_STUB_DEPS = ProcurementDeps(
+    db_path=":memory:",
+    get_price=lambda length_m, load_code, db_path: 1000.0,
+    get_raw_material_cost=lambda plate_name, db_path: 1000.0,
+    get_reinforcement=lambda length_m, load_code, source="erm", db_path=":memory:", allow_fallback=True: 5.0,
+)
+
+
+def test_procurement_items_use_explicit_plate_load_details_not_tls() -> None:
+    """A3 phase 2: explicit plate_load_details must not read TLS globals."""
+    details = {(7.3, 1.2, 12.0, "73"): 2}
+
+    poisoned = get_plate_mutable_runtime()
+    saved = dict(poisoned.plate_load_details)
+    poisoned.plate_load_details.clear()
+    poisoned.plate_load_details[(7.3, 1.2, 8.0, "73")] = 99
+
+    try:
+        items = build_procurement_items(plate_load_details=details)
+        assert len(items) == 1
+        assert items[0]["load_code"] == 12
+        assert items[0]["qty"] == 2
+    finally:
+        poisoned.plate_load_details.clear()
+        poisoned.plate_load_details.update(saved)
+
+
+def test_build_price_rows_resolve_load_from_explicit_details_not_tls() -> None:
+    """A3 phase 2: build_price_rows fallback uses explicit plate_load_details."""
+    details = {(7.3, 1.2, 12.0, "73"): 1}
+
+    poisoned = get_plate_mutable_runtime()
+    saved = dict(poisoned.plate_load_details)
+    poisoned.plate_load_details.clear()
+    poisoned.plate_load_details[(7.3, 1.2, 8.0, "73")] = 99
+
+    try:
+        rows, _total = build_price_rows(
+            {},
+            deps=_STUB_DEPS,
+            plate_load_details=details,
+        )
+        assert len(rows) == 1
+        assert "12п" in rows[0][1]
+    finally:
+        poisoned.plate_load_details.clear()
+        poisoned.plate_load_details.update(saved)
 
 
 def test_procurement_with_different_loads():

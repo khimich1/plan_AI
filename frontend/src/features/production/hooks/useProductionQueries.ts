@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { archiveKeys } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import { productionApi } from "@/features/production/api/productionApi";
 import { saveBlobAs } from "@/shared/lib/downloadFile";
+import { ApiError } from "@/shared/lib/apiError";
+import { handlePlanVersionConflict } from "@/shared/lib/planConflict";
 import type {
   BuildPlanRequest,
   BuildPlanResponse,
@@ -10,6 +12,7 @@ import type {
   DayViewResponse,
   GlobalCalendarResponse,
   KpCandidatesResponse,
+  PlanDetailResponse,
   PlansMetadataResponse,
   RejectedPlateItem,
   RemoveTrackResponse,
@@ -32,6 +35,14 @@ export const usePlansListQuery = () =>
   useQuery<PlansMetadataResponse>({
     queryKey: productionKeys.plans(),
     queryFn: productionApi.listPlans,
+    staleTime: 15_000,
+  });
+
+export const usePlanQuery = (planId: string | null) =>
+  useQuery<PlanDetailResponse>({
+    queryKey: productionKeys.plan(planId ?? ""),
+    queryFn: () => productionApi.getPlan(planId as string),
+    enabled: planId !== null,
     staleTime: 15_000,
   });
 
@@ -84,6 +95,11 @@ export const useActivatePlanMutation = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: productionKeys.all });
     },
+    onError: async (error, planId) => {
+      await handlePlanVersionConflict(queryClient, error, {
+        variables: { planId },
+      });
+    },
   });
 };
 
@@ -94,34 +110,47 @@ export const useDeletePlanMutation = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: productionKeys.all });
     },
+    onError: async (error, planId) => {
+      await handlePlanVersionConflict(queryClient, error, {
+        variables: { planId },
+      });
+    },
   });
 };
 
 export const useBuildPlanMutation = () => {
   const queryClient = useQueryClient();
-  return useMutation<BuildPlanResponse, Error, BuildPlanRequest>({
+  return useMutation<BuildPlanResponse, ApiError, BuildPlanRequest>({
     mutationFn: (payload) => productionApi.buildPlan(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: productionKeys.all });
+    },
+    onError: async (error, variables) => {
+      await handlePlanVersionConflict(queryClient, error, { variables });
     },
   });
 };
 
 export const useCompleteDayMutation = () => {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      date,
-      planId,
-      rejectedPlates = [],
-    }: {
+  return useMutation<
+    Awaited<ReturnType<typeof productionApi.completeDay>>,
+    ApiError,
+    {
       date: string;
       planId: string;
       rejectedPlates?: RejectedPlateItem[];
-    }) => productionApi.completeDay(date, planId, rejectedPlates),
+      expectedVersion?: number;
+    }
+  >({
+    mutationFn: ({ date, planId, rejectedPlates = [], expectedVersion }) =>
+      productionApi.completeDay(date, planId, rejectedPlates, expectedVersion),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: productionKeys.all });
       queryClient.invalidateQueries({ queryKey: archiveKeys.all });
+    },
+    onError: async (error, variables) => {
+      await handlePlanVersionConflict(queryClient, error, { variables });
     },
   });
 };
@@ -130,13 +159,16 @@ export const useDeleteTrackMutation = () => {
   const queryClient = useQueryClient();
   return useMutation<
     RemoveTrackResponse,
-    Error,
-    { planId: string; date: string; trackIndex: number }
+    ApiError,
+    { planId: string; date: string; trackIndex: number; expectedVersion?: number }
   >({
-    mutationFn: ({ planId, date, trackIndex }) =>
-      productionApi.deleteTrack(planId, date, trackIndex),
+    mutationFn: ({ planId, date, trackIndex, expectedVersion }) =>
+      productionApi.deleteTrack(planId, date, trackIndex, expectedVersion),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: productionKeys.all });
+    },
+    onError: async (error, variables) => {
+      await handlePlanVersionConflict(queryClient, error, { variables });
     },
   });
 };
@@ -164,6 +196,9 @@ export const useSaveWorkCalendarMutation = () => {
     onSuccess: (data) => {
       queryClient.setQueryData(productionKeys.workCalendar(), data);
       queryClient.invalidateQueries({ queryKey: productionKeys.workCalendar() });
+    },
+    onError: async (error) => {
+      await handlePlanVersionConflict(queryClient, error);
     },
   });
 };

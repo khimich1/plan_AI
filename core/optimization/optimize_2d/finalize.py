@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from core import config_and_data as cfg
+from core.domain.plate_order import normalize_load_code
 from core.optimization.coverage_verify import verify_coverage
 from core.optimization.debug_log import (
     _DEBUG_LOG_5b5324,
@@ -691,7 +691,7 @@ def run_two_d_phase_finalize(
             pass
     if _opt_debug_enabled():
         try:
-            _norm_lc = getattr(cfg, "normalize_load_code", lambda x: int(x) if x is not None else 8)
+            _norm_lc = normalize_load_code
             _by_key = {}
             for cut in result.get("primary_cuts", []):
                 lc = _norm_lc(cut.get("load_code", 8))

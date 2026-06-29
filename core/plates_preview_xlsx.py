@@ -37,8 +37,13 @@ except ImportError:
     HAS_OPENPYXL = False
     Workbook = None  # type: ignore
 
-import core.config_and_data as cfg
-from core.config_and_data import LineContributionKey, make_plate_name, set_plate_lists_from_text
+from core.config_and_data import (
+    LineContributionKey,
+    load_code_for_price_match,
+    make_plate_name,
+    set_plate_lists_from_text,
+)
+from core.plate_runtime_state import get_plate_mutable_runtime
 from core.plate_text_normalizer import get_wide_plate_lines
 from core.reconciliation_xlsx import split_plate_text_lines
 
@@ -112,7 +117,7 @@ def qty_for_contribution_key(
     def _load_ok(sload: int) -> bool:
         if lc is None:
             return True
-        return cfg.load_code_for_price_match(float(sload)) == cfg.load_code_for_price_match(float(lc))
+        return load_code_for_price_match(float(sload)) == load_code_for_price_match(float(lc))
 
     for (sl, sw, sload, sldr), q in plate_load_details.items():
         if abs(sl - lm) >= 0.01 or abs(sw - wm) >= 0.01:
@@ -279,7 +284,7 @@ def build_plates_reconciliation_preview_xlsx(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     _, line_contributions, line_plate_load_details = set_plate_lists_from_text(plates_text)
-    details_global = dict(cfg.PLATE_LOAD_DETAILS)
+    details_global = dict(get_plate_mutable_runtime().plate_load_details)
 
     norm_lines = split_plate_text_lines(plates_text)
     n = max(len(norm_lines), len(line_contributions), len(line_plate_load_details))

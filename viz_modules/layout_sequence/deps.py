@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.config_and_data import PRICE_DB_PATH
+from core.project_paths import PRICE_DB_PATH
 
 from viz_modules.layout_sequence.debug_trace import LayoutSequenceTracePaths
 

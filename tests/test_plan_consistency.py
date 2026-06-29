@@ -8,7 +8,7 @@
    запрос НЕ изменяет БД.
 3. ``test_complete_day_atomic_rollback`` — ошибка в середине списания
    не оставляет частичных записей в completed_plates.
-4. ``test_rescue_web_matches_bot`` — ``build_rescue_tracks`` детерминирован.
+4. ``test_rescue_tracks_deterministic`` — ``build_rescue_tracks`` детерминирован.
 5. ``test_canonical_plate_name`` — «Плиты ПБ ...» и «ПБ ...» — одна плита.
 6. ``test_secondary_no_identity_theft`` — secondary 4.5×600 НЕ забирает
    identity primary 4.5×1200.
@@ -120,7 +120,7 @@ def planning_service(tmp_plita, monkeypatch):
         fake_optimize,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
     return service
@@ -133,7 +133,7 @@ def _make_production_service(planning_service, db_path):
 
     return ProductionService(
         kp_repository=KpRepository(db_path=db_path),
-        plan_repository=PlanRepository(),
+        plan_repository=PlanRepository(db_path=db_path),
         planning_service=planning_service,
     )
 
@@ -205,14 +205,13 @@ def test_complete_day_atomic_rollback(planning_service, tmp_plita, monkeypatch):
     snap_kp_before = _snapshot(tmp_plita, "kp_plates")
     snap_completed_before = _snapshot(tmp_plita, "completed_plates")
 
-    # Симулируем падение в середине списания: подменяем move_plates_to_completed
-    # на функцию, которая ВСЕГДА бросает после первого вызова.
-    original = kp_db.move_plates_to_completed
+    # Симулируем падение в середине списания.
+    from app.services.plate_completion_service import PlateCompletionService
 
     def boom(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(kp_db, "move_plates_to_completed", boom)
+    monkeypatch.setattr(PlateCompletionService, "move_plates_to_completed", boom)
 
     service = _make_production_service(planning_service, tmp_plita)
     with pytest.raises((ProductionCompletionError, RuntimeError)):
@@ -223,8 +222,8 @@ def test_complete_day_atomic_rollback(planning_service, tmp_plita, monkeypatch):
     assert _snapshot(tmp_plita, "kp_plates") == snap_kp_before
 
 
-def test_rescue_web_matches_bot():
-    """Инвариант 4: общий core/rescue_tracks даёт детерминированные missing_counts.
+def test_rescue_tracks_deterministic():
+    """Инвариант 4: core/rescue_tracks даёт детерминированные missing_counts (web path).
 
     Phase 4: подсчёт идёт по identity (kp_id, plate_name) из plate_assignments.
     """
@@ -278,7 +277,7 @@ def test_canonical_plate_name():
 
 def test_secondary_no_identity_theft():
     """Инвариант 6: secondary 4.5×600 не получает identity primary 4.5×1200."""
-    from app.services.day_view_service import _build_smart_lookup
+    from app.services.day_view_service import build_smart_lookup
 
     plate_lookup_exact = {
         (4.5, 1200): [
@@ -296,7 +295,7 @@ def test_secondary_no_identity_theft():
     plate_lookup_by_length = {
         4.5: list(plate_lookup_exact[(4.5, 1200)]),
     }
-    lookup = _build_smart_lookup(plate_lookup_exact, plate_lookup_by_length)
+    lookup = build_smart_lookup(plate_lookup_exact, plate_lookup_by_length)
 
     # Secondary с шириной 600 не должен забрать identity primary 1200.
     info = lookup(4.5, 600)
@@ -423,7 +422,7 @@ def test_kp_plates_day_view_invariant_with_secondary_cuts(tmp_plita, monkeypatch
         fake_optimize_with_secondary,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
 

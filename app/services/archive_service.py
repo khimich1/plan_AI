@@ -19,14 +19,22 @@ from app.schemas.archive import (
     ArchivePlateItem,
     ArchiveSearchResponse,
 )
-from app.services.day_documents_service import _visualize_lock
+from app.repositories.plan_repository import PlanRepository
+from app.services.plan_distribution_service import PlanDistributionService
+from app.security.offer_access import (
+    assert_offer_read_access,
+    assert_offer_write_access,
+    list_filters_for_user,
+)
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
-from core.execution_terms import normalize_execution_terms_to_ddmmyyyy
+from core.plate_order_context import PlateOrderContext, run_in_order_context
+from core.ports.visualization import get_visualize_plan
+from core.execution_terms import parse_execution_terms
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
-from core.gantt_excel import create_gantt_excel
+from core.kp_order_data import order_data_from_kp_info
 
 
 logger = logging.getLogger(__name__)
@@ -66,24 +74,33 @@ class ArchiveService:
 
     # ---------- Списки и карточка ----------
 
-    def list_offers(self, section: ArchiveSection) -> list[ArchiveOfferListItem]:
-        raw_items = self.repository.list_by_section(section)
+    def list_offers(self, section: ArchiveSection, *, user: dict) -> list[ArchiveOfferListItem]:
+        list_filters = list_filters_for_user(user)
+        raw_items = self.repository.list_by_section(section, **list_filters)
         return [self._to_list_item(raw) for raw in raw_items]
 
-    def get_details(self, kp_id: int) -> ArchiveOfferDetails:
+    def get_details(self, kp_id: int, *, user: dict) -> ArchiveOfferDetails:
         raw = self.repository.get_by_id(kp_id)
         if not raw:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_read_access(user, raw)
         return self._to_details(raw)
 
     def search(
         self,
+        *,
+        user: dict,
         kp_id: int | None = None,
         customer: str | None = None,
     ) -> ArchiveSearchResponse:
+        list_filters = list_filters_for_user(user)
         if kp_id is not None:
             raw = self.repository.get_by_id(kp_id)
-            items = [self._to_list_item(raw)] if raw else []
+            if not raw:
+                items = []
+            else:
+                assert_offer_read_access(user, raw)
+                items = [self._to_list_item(raw)]
             return ArchiveSearchResponse(
                 mode="number",
                 items=items,
@@ -92,7 +109,7 @@ class ArchiveService:
             )
 
         name = (customer or "").strip()
-        rows, total = self.repository.search_by_customer_name(name, limit=50)
+        rows, total = self.repository.search_by_customer_name(name, limit=50, **list_filters)
         items = [self._to_list_item(raw) for raw in rows]
         return ArchiveSearchResponse(
             mode="customer",
@@ -103,32 +120,45 @@ class ArchiveService:
 
     # ---------- Мутации ----------
 
-    def update_discount(self, kp_id: int, discount: float) -> ArchiveOfferDetails:
+    def update_discount(self, kp_id: int, discount: float, *, user: dict) -> ArchiveOfferDetails:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_write_access(user, raw)
         if not 0 <= discount <= 100:
             raise ArchiveValidationError("Процент скидки должен быть от 0 до 100")
         if not self.repository.update_discount(kp_id, discount):
             raise ArchiveNotFoundError(
                 f"Не удалось обновить скидку. КП №{kp_id} не найдено или пустое."
             )
-        return self.get_details(kp_id)
+        return self.get_details(kp_id, user=user)
 
-    def update_logistics_cost(self, kp_id: int, logistics_cost: float) -> ArchiveOfferDetails:
+    def update_logistics_cost(self, kp_id: int, logistics_cost: float, *, user: dict) -> ArchiveOfferDetails:
         """Обновляет «стоимость рейса» (поле KP_offers.logistics_cost) и суммы заказа."""
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_write_access(user, raw)
         trip = max(0.0, float(logistics_cost or 0.0))
         if not self.repository.update_logistics_cost(kp_id, trip):
             raise ArchiveNotFoundError(
                 f"Не удалось обновить стоимость рейса. КП №{kp_id} не найдено или пустое."
             )
-        return self.get_details(kp_id)
+        return self.get_details(kp_id, user=user)
 
-    def delete_offer(self, kp_id: int) -> None:
+    def delete_offer(self, kp_id: int, *, user: dict) -> None:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} уже удалено или не существует")
+        assert_offer_write_access(user, raw)
         if not self.repository.delete(kp_id):
             raise ArchiveNotFoundError(f"КП №{kp_id} уже удалено или не существует")
 
-    def move_to_production(self, kp_id: int, terms_input: str) -> ArchiveOfferDetails:
+    def move_to_production(self, kp_id: int, terms_input: str, *, user: dict) -> ArchiveOfferDetails:
         raw = self.repository.get_by_id(kp_id)
         if not raw:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_write_access(user, raw)
         if raw.get("status") != "в архиве":
             raise ArchiveValidationError(
                 "Перевести в производство можно только КП из раздела «в архиве»"
@@ -140,12 +170,13 @@ class ArchiveService:
         if not self.repository.update_status(kp_id, "в работе"):
             raise ArchiveError(f"Не удалось изменить статус для КП №{kp_id}")
 
-        return self.get_details(kp_id)
+        return self.get_details(kp_id, user=user)
 
-    def estimate_production(self, kp_id: int) -> dict:
+    def estimate_production(self, kp_id: int, *, user: dict) -> dict:
         raw = self.repository.get_by_id(kp_id)
         if not raw:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_read_access(user, raw)
         plates = raw.get("plates") or []
         total_length = sum((p.get("length_m") or 0) * (p.get("qty") or 1) for p in plates)
         estimated_tracks = max(1, int(round(total_length / _MAX_TRACK_LENGTH_M + 0.5)))
@@ -158,12 +189,20 @@ class ArchiveService:
 
     # ---------- Документы ----------
 
-    async def generate_document(self, kp_id: int, kind: ArchiveFileKind) -> Path:
+    async def generate_document(
+        self,
+        kp_id: int,
+        kind: ArchiveFileKind,
+        *,
+        user: dict,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> Path:
         raw = self.repository.get_by_id(kp_id)
         if not raw:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_read_access(user, raw)
 
-        order_data = self._order_data_from_kp_info(raw)
+        order_data = order_data_from_kp_info(raw)
         if not order_data:
             raise ArchiveValidationError("В КП нет позиций для формирования документа")
 
@@ -209,6 +248,10 @@ class ArchiveService:
             )
             filename = f"КП_{kp_id}.xlsx"
         elif kind == "schema":
+            if plate_order_ctx is None:
+                raise ArchiveValidationError(
+                    "Plate order context is required for schema generation"
+                )
             orders_2d = self._orders_2d_from_kp_info(raw)
             if not orders_2d:
                 raise ArchiveValidationError("В КП нет позиций для формирования схемы")
@@ -217,6 +260,7 @@ class ArchiveService:
                 self.optimization_service.optimize,
                 plate_order,
                 orders_2d=orders_2d,
+                plate_order_ctx=plate_order_ctx,
             )
             if not context.optimization_success:
                 raise ArchiveValidationError(
@@ -226,13 +270,17 @@ class ArchiveService:
             filename = f"КП_{kp_id}_schema.pdf"
             target_path = self.outputs_dir / filename
 
-            async with _visualize_lock:
-                result = await asyncio.to_thread(
-                    self.file_generation_service.generate_visualization,
-                    order=plate_order,
-                    context=context,
-                    output_dir=str(self.outputs_dir),
-                )
+            plate_order_ctx.load_optimization_snapshot(
+                optimization_result=context.optimization_result,
+                plan_by_load=context.plan_by_load,
+                load_to_reinforcement_map=context.load_to_reinforcement_map,
+            )
+            result = await run_in_order_context(
+                plate_order_ctx,
+                get_visualize_plan(),
+                str(self.outputs_dir),
+                plate_order_ctx=plate_order_ctx,
+            )
 
             if not isinstance(result, tuple) or len(result) < 2:
                 raise ArchiveValidationError("Не удалось создать схему раскладки")
@@ -256,9 +304,10 @@ class ArchiveService:
         Собирает сводную диаграмму Ганта по всем сохранённым планам.
         Импорт plan_manager отложен, чтобы бэкенд запускался без bot-окружения.
         """
-        from app.planning.plan_manager import get_all_plans_gantt_data  # локальный импорт
-
-        gantt_data = await asyncio.to_thread(get_all_plans_gantt_data)
+        gantt_data = await asyncio.to_thread(
+            PlanDistributionService().get_all_plans_gantt_data,
+            PlanRepository(),
+        )
         if not gantt_data:
             raise ArchiveValidationError(
                 "Нет сохранённых планов для создания диаграммы."
@@ -317,7 +366,7 @@ class ArchiveService:
             except Exception:
                 logger.exception("Ошибка получения %% выполнения для КП %s", kp_id)
 
-        order_data = self._order_data_from_kp_info(raw)
+        order_data = order_data_from_kp_info(raw)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
         total_cargo_weight_kg = float(total_order_cargo_weight_kg(order_data))
         delivery_total = delivery_service_charge_rub(logistics_cost, total_cargo_weight_kg)
@@ -361,41 +410,6 @@ class ArchiveService:
         )
 
     @staticmethod
-    def _order_data_from_kp_info(kp_info: dict) -> list[dict]:
-        """Повторяет логику bot/handlers/archive._order_data_from_kp_info."""
-        plates = kp_info.get("plates") or []
-        discount = kp_info.get("discount_percent") or 0
-        factor = 1.0 - (discount / 100.0)
-        if factor <= 0:
-            factor = 1.0
-        result = []
-        for p in plates:
-            unit_price = p.get("unit_price")
-            if unit_price is None or (isinstance(unit_price, (int, float)) and unit_price <= 0):
-                discounted_price = p.get("discounted_price") or 0
-                unit_price = discounted_price / factor
-            qty = p.get("qty") or 0
-            total_weight = p.get("total_weight")
-            unit_weight = p.get("unit_weight")
-            weight = (
-                total_weight
-                if total_weight is not None and total_weight > 0
-                else (unit_weight or 0) * qty
-            )
-            result.append(
-                {
-                    "name": p.get("plate_name") or "",
-                    "length_m": p.get("length_m") or 0,
-                    "width_m": p.get("width_m") or 0,
-                    "qty": qty,
-                    "load_class": p.get("load_class") or 800,
-                    "unit_price": float(unit_price),
-                    "weight": weight or 0,
-                }
-            )
-        return result
-
-    @staticmethod
     def _orders_2d_from_kp_info(kp_info: dict) -> list[dict]:
         plates = kp_info.get("plates") or []
         result: list[dict] = []
@@ -423,7 +437,8 @@ class ArchiveService:
     @staticmethod
     def _parse_execution_terms(raw: str) -> str:
         try:
-            return normalize_execution_terms_to_ddmmyyyy(raw)
+            formatted, _ = parse_execution_terms(raw, policy="strict")
+            return formatted
         except ValueError as exc:
             raise ArchiveValidationError(str(exc)) from exc
 

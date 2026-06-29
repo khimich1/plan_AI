@@ -109,13 +109,14 @@ class TestVerifyCoverageSemantics:
 
 
 class TestOptimizeWithCascadingEmptyPublicApi:
-    def test_empty_inputs_yield_structured_error(self, capsys) -> None:
-        out = optimize_with_cascading_longitudinal_cuts(orders=None, orders_2d=None)
+    def test_empty_inputs_yield_structured_error(self, caplog) -> None:
+        with caplog.at_level("WARNING", logger="core.optimization.orchestrator"):
+            out = optimize_with_cascading_longitudinal_cuts(orders=None, orders_2d=None)
         assert out.get("_opt_status") == "error"
         assert out.get("_opt_error_code") == ERROR_NO_INPUT
 
-        captured = capsys.readouterr()
-        assert "Не указаны" in captured.out or "orders" in captured.out.lower()
+        messages = " ".join(r.getMessage() for r in caplog.records)
+        assert "Не указаны" in messages or "orders" in messages.lower()
 
 
 class TestFirstFitDecreasingAndTracks:

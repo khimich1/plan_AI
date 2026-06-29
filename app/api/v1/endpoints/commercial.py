@@ -7,8 +7,12 @@ from fastapi.responses import FileResponse
 
 from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER
 from app.dependencies.commercial_draft import check_draft_ownership, verify_draft_ownership
+from app.dependencies.plate_context import get_plate_order_context
+from app.dependencies.services import get_commercial_service, get_commercial_workflow_service
+from core.plate_order_context import PlateOrderContext
 from app.schemas.commercial import (
     CommercialCreateFromFormResponse,
+    CommercialDraftBreakdownResponse,
     CommercialDraftDetailsResponse,
     CommercialDraftMetaUpdateRequest,
     CommercialGenerateFilesRequest,
@@ -19,16 +23,21 @@ from app.schemas.commercial import (
     CommercialSaveOfferResponse,
     CommercialWidePlatesResolveRequest,
 )
+from app.concurrency.cpu_bound import run_cpu_bound
 from app.core.http_errors import (
     raise_parse_client_error,
     raise_unexpected_server_error,
+    raise_unpriced_plates_error,
     raise_validation_client_error,
 )
 from app.services.commercial_workflow_service import CommercialWorkflowService
 from app.services.commercial_service import CommercialService
-from app.services.commercial_upload_validation import prepare_commercial_ocr_upload
+from app.services.commercial_upload_validation import (
+    ensure_external_ocr_enabled,
+    prepare_commercial_ocr_upload,
+)
 from app.services.draft_store import DraftStore
-from core.exceptions import PlateParseError
+from core.exceptions import PlateParseError, UnpricedPlatesError
 
 router = APIRouter(prefix="/commercial", tags=["commercial"])
 
@@ -37,8 +46,8 @@ router = APIRouter(prefix="/commercial", tags=["commercial"])
 def parse_commercial_text(
     payload: CommercialParseRequest,
     _user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    service: CommercialService = Depends(get_commercial_service),
 ) -> dict:
-    service = CommercialService()
     try:
         result = service.parse(payload.text)
     except PlateParseError as exc:
@@ -61,19 +70,21 @@ async def create_commercial_draft(
     text: str = Form(default=""),
     image: UploadFile | None = File(default=None),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftDetailsResponse:
     image_bytes, image_name = await prepare_commercial_ocr_upload(
         image=image,
         user_id=int(user["id"]),
     )
 
-    workflow = CommercialWorkflowService()
     try:
         result = await workflow.create_draft(
             text=text,
             image_bytes=image_bytes,
             image_filename=image_name,
             owner_user_id=int(user["id"]),
+            plate_order_ctx=plate_order_ctx,
         )
     except PlateParseError as exc:
         raise_parse_client_error(exc, where="create_commercial_draft")
@@ -88,6 +99,8 @@ async def create_commercial_draft(
 async def update_commercial_draft_plates(
     draft_id: str = Depends(verify_draft_ownership),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
     mode: str = Form(default="append"),
     text: str = Form(default=""),
     image: UploadFile | None = File(default=None),
@@ -97,7 +110,6 @@ async def update_commercial_draft_plates(
         user_id=int(user["id"]),
     )
 
-    workflow = CommercialWorkflowService()
     try:
         result = await workflow.update_draft_plates(
             draft_id,
@@ -105,6 +117,7 @@ async def update_commercial_draft_plates(
             text=text,
             image_bytes=image_bytes,
             image_filename=image_name,
+            plate_order_ctx=plate_order_ctx,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
@@ -121,21 +134,24 @@ async def update_commercial_draft_plates(
 async def apply_ai_plates_to_draft(
     draft_id: str = Depends(verify_draft_ownership),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
     instruction: str = Form(...),
     image: UploadFile | None = File(default=None),
 ) -> CommercialDraftDetailsResponse:
+    ensure_external_ocr_enabled()
     image_bytes, image_name = await prepare_commercial_ocr_upload(
         image=image,
         user_id=int(user["id"]),
     )
 
-    workflow = CommercialWorkflowService()
     try:
         result = await workflow.apply_ai_plates_instruction(
             draft_id,
             instruction=instruction,
             image_bytes=image_bytes,
             image_filename=image_name,
+            plate_order_ctx=plate_order_ctx,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
@@ -152,12 +168,14 @@ async def apply_ai_plates_to_draft(
 def resolve_draft_wide_plates(
     payload: CommercialWidePlatesResolveRequest,
     draft_id: str = Depends(verify_draft_ownership),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftDetailsResponse:
-    workflow = CommercialWorkflowService()
     try:
         result = workflow.resolve_wide_plates(
             draft_id,
             decisions=[item.model_dump() for item in payload.decisions],
+            plate_order_ctx=plate_order_ctx,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
@@ -174,8 +192,8 @@ def resolve_draft_wide_plates(
 def update_draft_meta(
     payload: CommercialDraftMetaUpdateRequest,
     draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftDetailsResponse:
-    workflow = CommercialWorkflowService()
     try:
         result = workflow.update_draft_meta(
             draft_id,
@@ -197,14 +215,16 @@ def update_draft_meta(
 
 
 @router.post("/drafts/{draft_id}/calculate", response_model=CommercialDraftDetailsResponse)
-def calculate_draft(
+async def calculate_draft(
     draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftDetailsResponse:
-    workflow = CommercialWorkflowService()
     try:
-        result = workflow.calculate_draft(draft_id)
+        result = await run_cpu_bound(lambda: workflow.calculate_draft(draft_id))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except UnpricedPlatesError as exc:
+        raise_unpriced_plates_error(exc, where="calculate_draft")
     except ValueError as exc:
         raise_validation_client_error(exc, where="calculate_draft", detail=str(exc))
     except Exception as exc:
@@ -213,13 +233,20 @@ def calculate_draft(
 
 
 @router.post("/generate-preview")
-def generate_preview(
+async def generate_preview(
     payload: CommercialPreviewRequest,
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    service: CommercialService = Depends(get_commercial_service),
 ) -> dict:
-    service = CommercialService()
     try:
-        preview = service.generate_preview(text=payload.text)
+        preview = await run_cpu_bound(
+            lambda: service.generate_preview(
+                text=payload.text,
+                plate_order_ctx=plate_order_ctx,
+            ),
+            plate_order_ctx=plate_order_ctx,
+        )
         draft_id = DraftStore().save_preview(
             order=preview.parse_result.order,
             optimization_context=preview.optimization_context,
@@ -272,13 +299,14 @@ async def create_draft_from_form(
     payment_conditions: str = Form(default=""),
     image: UploadFile | None = File(default=None),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialCreateFromFormResponse:
     image_bytes, image_name = await prepare_commercial_ocr_upload(
         image=image,
         user_id=int(user["id"]),
     )
 
-    workflow = CommercialWorkflowService()
     try:
         result = await workflow.create_draft_from_form(
             text=text,
@@ -290,6 +318,7 @@ async def create_draft_from_form(
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
             owner_user_id=int(user["id"]),
+            plate_order_ctx=plate_order_ctx,
         )
     except PlateParseError as exc:
         raise_parse_client_error(exc, where="create_draft_from_form")
@@ -304,12 +333,19 @@ async def create_draft_from_form(
 def generate_draft_files(
     draft_id: str = Depends(verify_draft_ownership),
     payload: CommercialGenerateFilesRequest | None = None,
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialGenerateFilesResponse:
-    workflow = CommercialWorkflowService()
     try:
-        files = workflow.generate_files(draft_id, payload.file_types if payload else None)
+        files = workflow.generate_files(
+            draft_id,
+            payload.file_types if payload else None,
+            plate_order_ctx=plate_order_ctx,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except UnpricedPlatesError as exc:
+        raise_unpriced_plates_error(exc, where="generate_draft_files")
     except ValueError as exc:
         raise_validation_client_error(exc, where="generate_draft_files", detail=str(exc))
     except Exception as exc:
@@ -321,8 +357,8 @@ def generate_draft_files(
 def save_draft_offer(
     payload: CommercialSaveDraftRequest,
     draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialSaveOfferResponse:
-    workflow = CommercialWorkflowService()
     try:
         result = workflow.save_draft(
             draft_id,
@@ -331,6 +367,8 @@ def save_draft_offer(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except UnpricedPlatesError as exc:
+        raise_unpriced_plates_error(exc, where="save_draft_offer")
     except ValueError as exc:
         raise_validation_client_error(exc, where="save_draft_offer", detail=str(exc))
     except Exception as exc:
@@ -343,6 +381,7 @@ def download_generated_file(
     filename: str,
     draft_id: str = Query(..., min_length=1),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> FileResponse:
     check_draft_ownership(draft_id, user)
     safe_name = Path(filename).name
@@ -353,7 +392,6 @@ def download_generated_file(
     if safe_name not in store.generated_files_filenames(draft_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден.")
 
-    workflow = CommercialWorkflowService()
     target_file = workflow.get_or_generate_file(safe_name).resolve()
     outputs_dir = Path(workflow.settings.outputs_dir).resolve()
     if target_file.parent != outputs_dir or not target_file.exists():
@@ -364,8 +402,8 @@ def download_generated_file(
 @router.get("/drafts/{draft_id}", response_model=CommercialDraftDetailsResponse)
 def get_preview_draft(
     draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftDetailsResponse:
-    workflow = CommercialWorkflowService()
     try:
         result = workflow.get_draft_details(draft_id)
     except FileNotFoundError as exc:
@@ -373,4 +411,18 @@ def get_preview_draft(
     except Exception as exc:
         raise_unexpected_server_error(exc, where="get_preview_draft")
     return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.get("/drafts/{draft_id}/breakdown", response_model=CommercialDraftBreakdownResponse)
+def get_draft_breakdown(
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftBreakdownResponse:
+    try:
+        result = workflow.get_draft_breakdown(draft_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="get_draft_breakdown")
+    return CommercialDraftBreakdownResponse.model_validate(result)
 

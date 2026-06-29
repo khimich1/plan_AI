@@ -4,6 +4,7 @@ import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { Modal } from "@/shared/ui/Modal";
 import { Spinner } from "@/shared/ui/Spinner";
+import { isPlanVersionConflict } from "@/shared/lib/planConflict";
 import {
   useActivatePlanMutation,
   useDeletePlanMutation,
@@ -125,7 +126,8 @@ export const PlansList = ({ onOpenPlanCalendar }: Props) => {
               План <strong>{confirmDelete.name || confirmDelete.id}</strong> будет удалён,
               а связанные плиты возвращены в статус <em>«в производстве»</em>.
             </p>
-            {deleteMutation.isError && (
+            {deleteMutation.isError &&
+              !isPlanVersionConflict(deleteMutation.error) && (
               <Alert tone="error">Не удалось удалить план.</Alert>
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>

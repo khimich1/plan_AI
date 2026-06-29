@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from pulp import value
 
-from core import config_and_data as cfg
+from core.domain.plate_order import normalize_load_code
 from core.optimization.debug_log import _dbg_open_append, _opt_debug_enabled
 from core.optimization.geometry import _canonical_length
 from core.optimization.ilp_model import _residual_phys_key
@@ -88,7 +88,7 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
                     _residual_phys_key(opt["length"], opt["rest"])
                 ].append(
                     (
-                        cfg.normalize_load_code(
+                        normalize_load_code(
                             opt.get("load_code", target_load_code), default=8
                         ),
                         opt_id,
@@ -186,7 +186,7 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
             continue
         opt = secondary_options_by_id[opt_id]
         _target_length, _target_width, target_load_code = dk
-        target_load_code = cfg.normalize_load_code(target_load_code, default=8)
+        target_load_code = normalize_load_code(target_load_code, default=8)
         pieces = max(1, int(opt.get("pieces") or 1))
         if qty % pieces != 0:
             import logging as _batch_qty_log
@@ -219,7 +219,7 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
                     or []
                 )
                 for idx, (prim_lc, source_opt_id, instance_id) in enumerate(pool):
-                    if cfg.normalize_load_code(prim_lc, default=8) >= target_load_code:
+                    if normalize_load_code(prim_lc, default=8) >= target_load_code:
                         parent_id = instance_id
                         del pool[idx]
                         opt_queue = _primary_instances_by_opt_id.get(source_opt_id) or []

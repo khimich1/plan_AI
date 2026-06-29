@@ -60,3 +60,12 @@ class PriceNotFoundError(Exception):
         raise PriceNotFoundError("Цена для плиты ПБ 78-12-8п не найдена")
     """
     pass
+
+
+class UnpricedPlatesError(Exception):
+    """Одна или несколько позиций заказа не имеют цены в прайс-листе."""
+
+    def __init__(self, positions: list[str]) -> None:
+        self.positions = list(positions)
+        labels = ", ".join(self.positions)
+        super().__init__(f"Нет цен для позиций: {labels}")

@@ -96,6 +96,8 @@ class PrimaryCutSnapshot(BaseModel):
     lengths: list[float] = Field(default_factory=list)
     qty: int = 0
     rest: int = 0
+    load_code: float | int | None = None
+    primary_instance_id: str | None = None
 
     @field_validator("lengths", mode="before")
     @classmethod
@@ -133,6 +135,17 @@ class PrimaryCutSnapshot(BaseModel):
         except (TypeError, ValueError):
             return 0
 
+    @field_validator("load_code", mode="before")
+    @classmethod
+    def _coerce_load(cls, v: Any) -> float | int | None:
+        if v is None or v == "":
+            return None
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, int):
+            return v
+        return float(v)
+
 
 class SecondaryCutSnapshot(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -145,6 +158,8 @@ class SecondaryCutSnapshot(BaseModel):
     pieces: int = 1
     waste: float = 0.0
     type: str | None = None
+    load_code: float | int | None = None
+    parent_instance_id: str | None = None
 
     @field_validator("source_lengths", "lengths", mode="before")
     @classmethod
@@ -212,6 +227,17 @@ class SecondaryCutSnapshot(BaseModel):
             return float(v)
         except (TypeError, ValueError):
             return 0.0
+
+    @field_validator("load_code", mode="before")
+    @classmethod
+    def _coerce_load(cls, v: Any) -> float | int | None:
+        if v is None or v == "":
+            return None
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, int):
+            return v
+        return float(v)
 
 
 class CascadingPlanSnapshot(BaseModel):

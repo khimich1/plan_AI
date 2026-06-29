@@ -12,6 +12,7 @@
     python3 scripts/init_managers.py
 """
 
+import argparse
 import sys
 import os
 
@@ -24,6 +25,14 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, 'core'))
 from kp_db import init_default_managers, get_all_managers
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Seed managers into plita.db from JSON")
+    parser.add_argument(
+        "--seed",
+        dest="seed_path",
+        default=None,
+        help="Path to managers JSON (default: data/managers_seed.json or MANAGERS_SEED_PATH)",
+    )
+    args = parser.parse_args()
     print("=" * 50)
     print("ИНИЦИАЛИЗАЦИЯ МЕНЕДЖЕРОВ В БАЗЕ ДАННЫХ")
     print("=" * 50)
@@ -31,7 +40,7 @@ if __name__ == '__main__':
     
     # Добавляем менеджеров по умолчанию
     print("📝 Добавляю менеджеров...")
-    added_count = init_default_managers()
+    added_count = init_default_managers(seed_path=args.seed_path)
     print()
     
     # Показываем всех менеджеров

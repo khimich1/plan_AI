@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from collections import Counter
 
-from core import config_and_data as cfg
 from core.optimization.context import OPT_PLAN, OPT_WIDTH_PRIORITY
+from core.plate_runtime_state import get_plate_mutable_runtime
 from core.optimization.result_contract import (
     ERROR_EMPTY_ORDERS_1D,
     is_optimization_success,
@@ -38,22 +38,23 @@ def _append_actions(actions: list, width_mm: int, lengths: dict, long_cuts: int,
 def apply_width_optimization() -> dict:
     """
     Упрощённый наследуемый оптимизатор ширин.
-    Наполняет OPT_WIDTH_PRIORITY и OPT_PLAN['actions'] данными из cfg.PLATES_*.
+    Наполняет OPT_WIDTH_PRIORITY и OPT_PLAN['actions'] из текущего plate runtime.
     """
+    rt = get_plate_mutable_runtime()
     priority = []
     actions = []
 
     priority_groups = [
-        ('0_32', 320, cfg.PLATES_0_32),
-        ('0_46', 460, cfg.PLATES_0_46),
-        ('0_70', 700, cfg.PLATES_0_70),
-        ('0_72', 720, cfg.PLATES_0_72),
-        ('0_86', 860, cfg.PLATES_0_86),
-        ('0_74', 740, cfg.PLATES_0_74),
-        ('0_88', 880, cfg.PLATES_0_88),
-        ('0_48', 480, cfg.PLATES_0_48),
-        ('0_50', 500, cfg.PLATES_0_50),
-        ('0_34', 340, cfg.PLATES_0_34),
+        ('0_32', 320, rt.plates_0_32),
+        ('0_46', 460, rt.plates_0_46),
+        ('0_70', 700, rt.plates_0_70),
+        ('0_72', 720, rt.plates_0_72),
+        ('0_86', 860, rt.plates_0_86),
+        ('0_74', 740, rt.plates_0_74),
+        ('0_88', 880, rt.plates_0_88),
+        ('0_48', 480, rt.plates_0_48),
+        ('0_50', 500, rt.plates_0_50),
+        ('0_34', 340, rt.plates_0_34),
     ]
 
     for code, width_mm, plate_list in priority_groups:
@@ -64,11 +65,11 @@ def apply_width_optimization() -> dict:
         _append_actions(actions, width_mm, lengths, long_cuts=1, src_type='split')
 
     solid_groups = [
-        (1200, cfg.PLATES_1_2),
+        (1200, rt.plates_1_2),
     ]
     split_groups = [
-        (1080, cfg.PLATES_1_08),
-        (1000, cfg.PLATES_1_0),
+        (1080, rt.plates_1_08),
+        (1000, rt.plates_1_0),
     ]
 
     for width_mm, plate_list in solid_groups:
@@ -100,12 +101,13 @@ def optimize_cuts_pulp(orders: dict | None = None) -> dict:
     Legacy-обёртка над новой каскадной оптимизацией (для совместимости с визуализатором).
     """
     if orders is None:
+        rt = get_plate_mutable_runtime()
         orders = {}
         for width_mm, plates in [
-            (320, cfg.PLATES_0_32), (460, cfg.PLATES_0_46), (700, cfg.PLATES_0_70),
-            (720, cfg.PLATES_0_72), (860, cfg.PLATES_0_86), (880, cfg.PLATES_0_88),
-            (740, cfg.PLATES_0_74), (480, cfg.PLATES_0_48), (500, cfg.PLATES_0_50),
-            (340, cfg.PLATES_0_34)
+            (320, rt.plates_0_32), (460, rt.plates_0_46), (700, rt.plates_0_70),
+            (720, rt.plates_0_72), (860, rt.plates_0_86), (880, rt.plates_0_88),
+            (740, rt.plates_0_74), (480, rt.plates_0_48), (500, rt.plates_0_50),
+            (340, rt.plates_0_34)
         ]:
             if plates:
                 orders[width_mm] = len(plates)

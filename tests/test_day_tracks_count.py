@@ -48,8 +48,20 @@ def test_count_day_tracks_handles_missing_fields():
 def _patch_plans(monkeypatch, plans_by_id: dict[str, dict]) -> None:
     """Подменяет загрузку метаданных и планов заранее подготовленными данными."""
     metadata = {"plans": [{"id": plan_id} for plan_id in plans_by_id]}
-    monkeypatch.setattr(plan_manager, "load_plans_metadata", lambda: metadata)
-    monkeypatch.setattr(plan_manager, "load_plan", lambda plan_id: plans_by_id.get(plan_id))
+
+    def _load_metadata():
+        return metadata
+
+    def _load_plan(plan_id):
+        return plans_by_id.get(plan_id)
+
+    for module in (
+        "app.planning.plan_storage",
+        "app.planning.plan_calendar",
+        "app.planning.plan_aggregation",
+    ):
+        monkeypatch.setattr(f"{module}.load_plans_metadata", _load_metadata)
+        monkeypatch.setattr(f"{module}.load_plan", _load_plan)
 
 
 def test_calendar_and_detail_agree_on_broken_day(monkeypatch):

@@ -1,9 +1,27 @@
 import { env } from "@/shared/config/env";
-import { ApiError } from "@/shared/lib/apiError";
+import { ApiError, parseApiErrorPayload } from "@/shared/lib/apiError";
 import { queryClient } from "@/shared/lib/queryClient";
 
 const AUTH_ME_QUERY_KEY = ["auth", "me"] as const;
 const AUTH_LOGIN_PATH = "/api/v1/auth/login";
+const CSRF_COOKIE_NAME = "csrf_token";
+const CSRF_HEADER_NAME = "X-CSRF-Token";
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+
+const readCsrfToken = (): string | null => {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const cookies = document.cookie.split(";");
+  for (const raw of cookies) {
+    const part = raw.trim();
+    if (part.startsWith(prefix)) {
+      return decodeURIComponent(part.slice(prefix.length));
+    }
+  }
+  return null;
+};
 
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -49,26 +67,31 @@ const parseResponseJson = async <T>(response: Response, path: string): Promise<T
 };
 
 const parseError = async (response: Response, path: string): Promise<never> => {
-  let detail = "Запрос завершился ошибкой.";
+  let message = "Запрос завершился ошибкой.";
+  let code: string | undefined;
+  let details: unknown;
   const contentType = response.headers.get("Content-Type") ?? "";
   try {
     const text = await response.text();
     if (looksLikeJson(contentType, text)) {
       try {
-        const payload = JSON.parse(text) as { detail?: string };
-        if (typeof payload.detail === "string" && payload.detail.trim()) {
-          detail = payload.detail;
+        const payload = JSON.parse(text) as unknown;
+        const parsed = parseApiErrorPayload(payload);
+        if (parsed) {
+          message = parsed.message;
+          code = parsed.code;
+          details = parsed.details;
         }
       } catch {
-        detail = response.statusText || detail;
+        message = response.statusText || message;
       }
     } else if (text.trimStart().startsWith("<") || contentType.includes("text/html")) {
-      detail = `Сервер вернул HTML вместо JSON (${response.status}) для ${path}. Проверьте URL API и прокси dev-сервера.`;
+      message = `Сервер вернул HTML вместо JSON (${response.status}) для ${path}. Проверьте URL API и прокси dev-сервера.`;
     }
   } catch {
-    detail = response.statusText || detail;
+    message = response.statusText || message;
   }
-  throw new ApiError(detail, response.status, detail);
+  throw new ApiError(message, response.status, message, code, details);
 };
 
 const handleUnauthorized = (path: string): void => {
@@ -80,10 +103,19 @@ const handleUnauthorized = (path: string): void => {
 };
 
 const request = async <TResponse>(path: string, options: RequestOptions = {}): Promise<TResponse> => {
+  const method = options.method ?? "GET";
+  const headers = new Headers(options.headers);
+  if (!SAFE_METHODS.has(method)) {
+    const csrfToken = readCsrfToken();
+    if (csrfToken) {
+      headers.set(CSRF_HEADER_NAME, csrfToken);
+    }
+  }
+
   const response = await fetch(buildUrl(path), {
-    method: options.method ?? "GET",
+    method,
     body: options.body ?? null,
-    headers: options.headers,
+    headers,
     credentials: "include",
   });
 

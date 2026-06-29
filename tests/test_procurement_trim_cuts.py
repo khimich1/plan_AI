@@ -12,6 +12,7 @@ import core.config_and_data as _cfg  # noqa: F401
 
 from viz_modules.procurement.trim import (
     _calc_trim_components,
+    _is_crossload_rest_secondary,
     format_long_cut_calculation,
     format_transverse_remainder_calculation,
 )
@@ -464,3 +465,150 @@ def test_1020_primary_unused_rest_no_factory_waste_double_count() -> None:
     )
     assert waste_cost == pytest.approx(0.0)
     assert waste_terms == []
+
+
+BASE_1_2M_69_8 = 23468.0
+BASE_1_2M_69_10 = 24903.0
+
+
+def _mixed_load_plan_69_395() -> dict:
+    """План оптимизатора: слэб 8п (3 плиты, 2 реза на полосе) + слэб 10п (10п+8п, отход 410)."""
+    return {
+        "primary_cuts": [
+            {
+                "width": 395,
+                "rest": 805,
+                "qty": 1,
+                "lengths": [6.9],
+                "load_code": 8,
+                "primary_instance_id": "prim-1",
+            },
+            {
+                "width": 395,
+                "rest": 805,
+                "qty": 1,
+                "lengths": [6.9],
+                "load_code": 10,
+                "primary_instance_id": "prim-2",
+            },
+        ],
+        "secondary_cuts": [
+            {
+                "source": 805,
+                "source_lengths": [6.9],
+                "lengths": [6.9],
+                "cuts": [395],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 15,
+                "load_code": 8,
+                "parent_instance_id": "prim-1",
+            },
+            {
+                "source": 805,
+                "source_lengths": [6.9],
+                "lengths": [6.9],
+                "cuts": [395],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 15,
+                "load_code": 8,
+                "parent_instance_id": "prim-1",
+            },
+            {
+                "source": 805,
+                "source_lengths": [6.9],
+                "lengths": [6.9],
+                "cuts": [395],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 15,
+                "load_code": 8,
+                "parent_instance_id": "prim-2",
+            },
+        ],
+    }
+
+
+def test_mixed_load_10p_strip_waste_410() -> None:
+    """10п: отход 410мм на владельце слэба (805−395), не полный остаток 805."""
+    plan = _mixed_load_plan_69_395()
+    t = _calc_trim_components(
+        plan,
+        length=6.9,
+        width_mm=395,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_69_10,
+        base_price=BASE_1_2M_69_10 * (0.395 / 1.2),
+        load_code=10,
+        price_table={},
+    )
+    expected_waste = (410 / 1200.0) * BASE_1_2M_69_10
+    assert t["waste_cost"] == pytest.approx(expected_waste)
+    assert t["rest_cost"] == pytest.approx(0.0)
+    assert any(w == 410 for w, _ in t["waste_terms"])
+    assert t["total_cuts_for_this_size"] == 1
+
+
+def test_mixed_load_8p_three_cuts_no_410_waste() -> None:
+    """8п: 2 реза на полосе 8п + 1 кросс-рез с слэба 10п; отход 410 только на 10п."""
+    plan = _mixed_load_plan_69_395()
+    t = _calc_trim_components(
+        plan,
+        length=6.9,
+        width_mm=395,
+        qty=4,
+        base_price_1_2m=BASE_1_2M_69_8,
+        base_price=BASE_1_2M_69_8 * (0.395 / 1.2),
+        load_code=8,
+        price_table={},
+    )
+    assert t["rest_used"] is True
+    assert t["rest_cost"] == pytest.approx(0.0)
+    assert t["waste_cost"] == pytest.approx(0.0)
+    assert t["total_cuts_for_this_size"] == 3
+    assert not any(w == 410 for w, _ in t["waste_terms"])
+
+
+def _crossload_plan_10p_rest_535() -> dict:
+    """8п secondary с полосы остатка 10п primary (rest 535 ≠ rest 8п 670)."""
+    return {
+        "primary_cuts": [
+            {
+                "width": 665,
+                "rest": 535,
+                "qty": 1,
+                "lengths": [2.8],
+                "load_code": 10,
+            },
+        ],
+        "secondary_cuts": [
+            {
+                "source": 535,
+                "source_lengths": [2.8],
+                "lengths": [2.8],
+                "cuts": [665],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 5,
+                "load_code": 8,
+            },
+        ],
+    }
+
+
+def test_is_crossload_rest_secondary_true_when_source_on_other_load_rest() -> None:
+    """Регрессия TypeError: source_lengths — list, target_len — float."""
+    plan = _crossload_plan_10p_rest_535()
+    sec_cut = plan["secondary_cuts"][0]
+    rest_groups = {(670, 2.8): 1}
+    assert _is_crossload_rest_secondary(sec_cut, rest_groups, load_key=8, current_plan=plan)
+
+
+def test_is_crossload_rest_secondary_false_when_source_not_on_other_load_rest() -> None:
+    plan = _crossload_plan_10p_rest_535()
+    sec_cut = {**plan["secondary_cuts"][0], "source": 999}
+    rest_groups = {(670, 2.8): 1}
+    assert not _is_crossload_rest_secondary(
+        sec_cut, rest_groups, load_key=8, current_plan=plan
+    )
