@@ -1006,8 +1006,14 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
             WHERE kp_id = ? 
             ORDER BY position_number
         ''', (kp_id,))
-        plates = [dict(row) for row in cur.fetchall()]
-        kp_data['plates'] = plates
+        raw_plates = [dict(row) for row in cur.fetchall()]
+        from core.kp.plates_resolve import resolve_plates_for_kp_documents
+
+        kp_data["plates"] = resolve_plates_for_kp_documents(
+            raw_plates,
+            kp_id=kp_id,
+            db_path=db_path,
+        )
         
         # Получаем информацию о файле
         cur.execute('SELECT * FROM kp_files WHERE kp_id = ?', (kp_id,))

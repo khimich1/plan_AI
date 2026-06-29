@@ -44,3 +44,6 @@ class KpArchiveRepository:
 
     def search_by_customer_name(self, name: str, limit: int = 50) -> tuple[list[dict], int]:
         return kp_db.search_kp_by_customer_name(name, limit=limit, db_path=self.db_path)
+
+    def get_xlsx_file(self, kp_id: int) -> bytes | None:
+        return kp_db.get_xlsx_file(kp_id, db_path=self.db_path)

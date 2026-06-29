@@ -27,6 +27,7 @@ from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
 from core.gantt_excel import create_gantt_excel
+from core.kp.xlsx_order_data import enrich_order_data_prices_from_xlsx
 
 
 logger = logging.getLogger(__name__)
@@ -167,12 +168,26 @@ class ArchiveService:
         if not order_data:
             raise ArchiveValidationError("В КП нет позиций для формирования документа")
 
+        stored_xlsx = self.repository.get_xlsx_file(kp_id)
+        if isinstance(stored_xlsx, (bytes, bytearray)) and stored_xlsx:
+            order_data = enrich_order_data_prices_from_xlsx(
+                order_data,
+                bytes(stored_xlsx),
+                discount_percent=float(raw.get("discount_percent") or 0),
+            )
+
         offer_number = str(kp_id)
         offer_date = raw.get("creation_date") or datetime.now().strftime("%d.%m.%Y")
         customer_name = raw.get("customer_name")
         manager_name = raw.get("manager_name")
         discount_percent = float(raw.get("discount_percent") or 0)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
+
+        if kind == "xlsx" and isinstance(stored_xlsx, (bytes, bytearray)) and stored_xlsx:
+            filename = f"КП_{kp_id}.xlsx"
+            target_path = self.outputs_dir / filename
+            await asyncio.to_thread(_write_bytes, target_path, bytes(stored_xlsx))
+            return target_path
 
         if kind == "pdf":
             buffer = await asyncio.to_thread(
@@ -371,9 +386,13 @@ class ArchiveService:
         result = []
         for p in plates:
             unit_price = p.get("unit_price")
-            if unit_price is None or (isinstance(unit_price, (int, float)) and unit_price <= 0):
-                discounted_price = p.get("discounted_price") or 0
-                unit_price = discounted_price / factor
+            discounted_price = p.get("discounted_price")
+            resolved_unit_price: float | None = None
+            if isinstance(unit_price, (int, float)) and unit_price > 0:
+                resolved_unit_price = float(unit_price)
+            elif isinstance(discounted_price, (int, float)) and discounted_price > 0:
+                resolved_unit_price = float(discounted_price) / factor
+
             qty = p.get("qty") or 0
             total_weight = p.get("total_weight")
             unit_weight = p.get("unit_weight")
@@ -382,17 +401,17 @@ class ArchiveService:
                 if total_weight is not None and total_weight > 0
                 else (unit_weight or 0) * qty
             )
-            result.append(
-                {
-                    "name": p.get("plate_name") or "",
-                    "length_m": p.get("length_m") or 0,
-                    "width_m": p.get("width_m") or 0,
-                    "qty": qty,
-                    "load_class": p.get("load_class") or 800,
-                    "unit_price": float(unit_price),
-                    "weight": weight or 0,
-                }
-            )
+            item: dict = {
+                "name": p.get("plate_name") or "",
+                "length_m": p.get("length_m") or 0,
+                "width_m": p.get("width_m") or 0,
+                "qty": qty,
+                "load_class": p.get("load_class") or 800,
+                "weight": weight or 0,
+            }
+            if resolved_unit_price is not None:
+                item["unit_price"] = resolved_unit_price
+            result.append(item)
         return result
 
     @staticmethod

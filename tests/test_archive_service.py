@@ -313,6 +313,7 @@ def test_generate_document_schema(
 ) -> None:
     repository = MagicMock()
     repository.get_by_id.return_value = _make_raw()
+    repository.get_xlsx_file.return_value = None
     service = _make_service(repository, tmp_path)
 
     schema_path = tmp_path / "Схема_test_КЗ.pdf"
