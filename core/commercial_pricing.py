@@ -4,10 +4,13 @@ import logging
 import sqlite3
 from typing import Any
 
+from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
 from core.exceptions import PriceNotFoundError, UnpricedPlatesError
 from core.price_db import length_m_to_price_length_dm
 
 _log = logging.getLogger(__name__)
+
+VAT_RATE = 0.22
 
 
 def lookup_plate_price(
@@ -93,3 +96,72 @@ def ensure_order_priced(
     if positions:
         _log.warning("Непрорасценённые позиции: %s", positions)
         raise UnpricedPlatesError(positions)
+
+
+def format_phone(phone: str) -> str:
+    """Форматирует телефон в вид +7 (XXX) XXX-XX-XX."""
+    if not phone:
+        return ""
+
+    digits = "".join(filter(str.isdigit, phone))
+    if digits.startswith("7") and len(digits) == 11:
+        return f"+7 ({digits[1:4]}) {digits[4:7]}-{digits[7:9]}-{digits[9:11]}"
+    return digits
+
+
+def calculate_total_cost(
+    order_data: list[dict[str, Any]],
+    discount_percent: float = 0,
+    logistics_cost: float = 0,
+    *,
+    db_path: str,
+) -> dict[str, Any]:
+    """
+    Рассчитывает общую стоимость заказа.
+
+    unit_price в позициях считается уже с НДС. Скидка применяется к сумме плит.
+    НДС для отображения: сумма плит после скидки * VAT_RATE.
+    Итого к оплате: сумма плит после скидки + услуга по доставке грузов
+    (стоимость рейса × ceil(масса заказа кг / 18600); в базу НДС по плитам не входит).
+
+    subtotal = total_with_vat - vat_amount (согласованная разбивка для документов и архива).
+    """
+    ensure_order_priced(order_data, db_path=db_path)
+    total_qty = 0
+    plates_total_with_vat = 0.0
+    dp = float(discount_percent or 0.0)
+    dp = min(max(dp, 0.0), 100.0)
+    discount_factor = 1.0 - dp / 100.0
+
+    for item in order_data:
+        qty = item.get("qty", 0)
+
+        if "unit_price" in item and item["unit_price"] is not None:
+            unit_price = item["unit_price"]
+        else:
+            length_m = item.get("length_m", 0)
+            width_m = item.get("width_m", 0)
+            load_class = item.get("load_class", 800)
+            unit_price = lookup_plate_price(
+                length_m, width_m, load_class, db_path=db_path
+            )
+
+        discounted_price = float(unit_price) * discount_factor
+        item_cost = discounted_price * qty
+
+        total_qty += qty
+        plates_total_with_vat += item_cost
+
+    trip_cost = max(0.0, float(logistics_cost or 0.0))
+    cargo_kg = total_order_cargo_weight_kg(order_data)
+    delivery_total = delivery_service_charge_rub(trip_cost, cargo_kg)
+    vat_amount = round(plates_total_with_vat * VAT_RATE, 2)
+    total_with_vat = round(plates_total_with_vat + delivery_total, 2)
+    subtotal = round(total_with_vat - vat_amount, 2)
+
+    return {
+        "total_qty": total_qty,
+        "subtotal": subtotal,
+        "vat_amount": vat_amount,
+        "total_with_vat": total_with_vat,
+    }

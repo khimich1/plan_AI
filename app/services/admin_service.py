@@ -73,6 +73,7 @@ class AdminService:
 
         Таблица ``app_users`` НЕ затрагивается — администратор не теряет сессию.
         """
+        require_destructive_db_reset()
         sqlite_report = kp_db_offers.clear_all_plates_data(self.db_path)
         plans_report = self._clear_all_plans()
         calendar_reset = self._reset_calendar()
@@ -88,6 +89,7 @@ class AdminService:
         НЕ трогает ``completed_plates`` и ``plate_rests``.
         Соответствует старой команде бота ``/clear_all_kp``.
         """
+        require_destructive_db_reset()
         sqlite_report = kp_db_offers.clear_all_kp(self.db_path)
         return DbResetReport(sqlite=_normalize_int_dict(sqlite_report))
 

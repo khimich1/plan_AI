@@ -87,6 +87,7 @@ def _sample_draft(draft_id: str = "draft-123") -> dict:
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
+    monkeypatch.setenv("OCR_EXTERNAL_ENABLED", "true")
     get_settings.cache_clear()
     patch_auth_users(
         monkeypatch,

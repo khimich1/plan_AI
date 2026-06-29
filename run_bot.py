@@ -1,41 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Скрипт запуска Telegram бота (DEPRECATED — см. bot/README.md).
+Entry point for the deprecated Telegram bot (stub only).
 
-Запускайте из корня проекта: python run_bot.py
-Не использовать в production; активная поддержка прекращена 2026-06-19.
+Run from project root: python run_bot.py
+See bot/README.md for decommission details (P5 WP1, 2026-06-21).
 """
 
-import asyncio
+from __future__ import annotations
+
 import sys
 
-from bot.bot_main import main
+_DEPRECATION_MESSAGE = (
+    "DEPRECATED: Telegram bot is soft-decommissioned (2026-06-21).\n"
+    "Production path is the web app. See bot/README.md and bot_archived/.\n"
+    "Hard delete is planned for P6."
+)
+
+
+def main() -> int:
+    print(_DEPRECATION_MESSAGE, file=sys.stderr)
+    return 1
+
 
 if __name__ == "__main__":
-    print(
-        "WARNING: Telegram-бот DEPRECATED — не для production. Подробнее: bot/README.md",
-        file=sys.stderr,
-    )
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nБот остановлен пользователем")
-    except Exception as e:
-        error_msg = str(e)
-        print(f"Критическая ошибка: {error_msg}")
-        
-        # Более понятные сообщения для частых ошибок
-        if "Token is invalid" in error_msg or "Unauthorized" in error_msg:
-            print("\n" + "="*50)
-            print("❌ ПРОБЛЕМА: Токен бота неверный или не установлен!")
-            print("="*50)
-            print("💡 Что делать:")
-            print("   1. Откройте Telegram и найдите @BotFather")
-            print("   2. Отправьте команду /newbot")
-            print("   3. Следуйте инструкциям для создания бота")
-            print("   4. Скопируйте полученный токен")
-            print("   5. Откройте файл: bot/bot.env")
-            print("   6. Замените 'your_bot_token_here' на ваш токен")
-            print("="*50)
-
+    raise SystemExit(main())

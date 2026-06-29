@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import datetime
@@ -22,7 +21,6 @@ from core.plate_attribution import (
 )
 from core.plate_order_context import PlateOrderContext
 from core.production.dto import (
-    PLATE_STATUS_IN_PRODUCTION,
     FilterMethod,
     LoadConfig,
     LoadResult,
@@ -33,16 +31,16 @@ from core.production.dto import (
     PlanBuildInput,
 )
 from core.production.errors import PlanBuildError
-from core.production.ports import PlanPersistPort
+from core.production.ports import PlanLoadPort, PlanPersistPort
 from core.reinforcement_db import get_reinforcement
 from core.rescue_tracks import build_rescue_tracks
 from core.serialization import strip_plate_audit_from_plan
+from core.ports.visualization import build_layout_sequence
 from core.visualization import (
     LayoutIntegrityError,
     TrackLayoutInvariantError,
     split_sequence_into_tracks,
 )
-from viz_modules.layout_sequence import build_layout_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +65,13 @@ def load(
     plan_input: PlanBuildInput,
     *,
     config: LoadConfig,
+    plan_load: PlanLoadPort,
 ) -> LoadResult:
-    """Load KPs and plates from SQLite, build orders for optimization."""
+    """Load KPs and plates via repository port, build orders for optimization."""
     validate(plan_input)
 
     kp_list = _load_kp_list(
-        plita_db_path=config.plita_db_path,
+        plan_load=plan_load,
         filter_method=plan_input.filter_method,
         selected_kp_ids=list(plan_input.selected_kp_ids or ()),
     )
@@ -82,7 +81,7 @@ def load(
     kp_list.sort(key=lambda x: x["date"])
 
     plates_by_date_reinforcement = _load_plates_for_kps(
-        plita_db_path=config.plita_db_path,
+        plan_load=plan_load,
         pb_db_path=config.pb_db_path,
         kp_list=kp_list,
         selected_plate_ids=plan_input.selected_plate_ids or {},
@@ -478,36 +477,14 @@ def _tracks_by_day_from_plan(plan: dict[str, Any]) -> dict[str, list[dict[str, A
 
 def _load_kp_list(
     *,
-    plita_db_path: str,
+    plan_load: PlanLoadPort,
     filter_method: FilterMethod,
     selected_kp_ids: list[int],
 ) -> list[dict[str, Any]]:
-    with sqlite3.connect(plita_db_path) as conn:
-        cur = conn.cursor()
-
-        if filter_method == "kp":
-            placeholders = ",".join("?" * len(selected_kp_ids))
-            cur.execute(
-                f"""
-                SELECT kp.kp_id, kp.execution_terms, kp.customer_name
-                FROM KP_offers kp
-                JOIN kp_meta meta ON kp.kp_id = meta.kp_id
-                WHERE kp.kp_id IN ({placeholders})
-                  AND meta.status = 'в работе'
-                """,
-                tuple(selected_kp_ids),
-            )
-        else:
-            cur.execute(
-                """
-                SELECT kp.kp_id, kp.execution_terms, kp.customer_name
-                FROM KP_offers kp
-                JOIN kp_meta meta ON kp.kp_id = meta.kp_id
-                WHERE meta.status = 'в работе'
-                """
-            )
-
-        rows = cur.fetchall()
+    rows = plan_load.fetch_kps_in_production(
+        filter_method=filter_method,
+        selected_kp_ids=selected_kp_ids,
+    )
 
     result: list[dict[str, Any]] = []
     for kp_id, exec_terms, customer in rows:
@@ -547,7 +524,7 @@ def _qty_override_for_plate(
 
 def _load_plates_for_kps(
     *,
-    plita_db_path: str,
+    plan_load: PlanLoadPort,
     pb_db_path: str,
     kp_list: list[dict[str, Any]],
     selected_plate_ids: dict[int, list[int]],
@@ -557,111 +534,90 @@ def _load_plates_for_kps(
         lambda: defaultdict(list)
     )
 
-    with sqlite3.connect(plita_db_path) as conn:
-        cur = conn.cursor()
-        for kp in kp_list:
-            kp_id = kp["kp_id"]
-            plate_ids = selected_plate_ids.get(kp_id) or selected_plate_ids.get(str(kp_id))  # type: ignore[arg-type]
-            if plate_ids is not None and len(plate_ids) == 0:
-                continue
-            if plate_ids:
-                placeholders = ",".join("?" * len(plate_ids))
-                cur.execute(
-                    f"""
-                    SELECT id, plate_name, length_m, width_m, load_class, qty, length_dm_raw,
-                           COALESCE(concrete_grade, '') AS concrete_grade
-                    FROM kp_plates
-                    WHERE kp_id = ? AND status = ?
-                      AND id IN ({placeholders})
-                    ORDER BY position_number, id
-                    """,
-                    (kp_id, PLATE_STATUS_IN_PRODUCTION) + tuple(plate_ids),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, plate_name, length_m, width_m, load_class, qty, length_dm_raw,
-                           COALESCE(concrete_grade, '') AS concrete_grade
-                    FROM kp_plates
-                    WHERE kp_id = ? AND status = ?
-                    ORDER BY position_number, id
-                    """,
-                    (kp_id, PLATE_STATUS_IN_PRODUCTION),
-                )
+    for kp in kp_list:
+        kp_id = kp["kp_id"]
+        plate_ids = selected_plate_ids.get(kp_id) or selected_plate_ids.get(str(kp_id))  # type: ignore[arg-type]
+        if plate_ids is not None and len(plate_ids) == 0:
+            continue
 
-            for row in cur.fetchall():
-                plate_id = int(row[0])
-                plate_name = row[1]
-                length_m = row[2]
-                width_m = row[3]
-                load_class = row[4] or 800
-                db_qty = int(row[5] or 0)
-                length_dm_raw = (row[6] or "") if len(row) > 6 else ""
-                concrete_grade_raw = str(row[7] or "").strip() if len(row) > 7 else ""
+        rows = plan_load.fetch_plates_in_production_for_kp(
+            kp_id=kp_id,
+            plate_ids=list(plate_ids) if plate_ids else None,
+        )
 
-                qty_override = _qty_override_for_plate(
-                    selected_plate_qty, kp_id, plate_id
-                )
-                if qty_override is not None:
-                    if qty_override > db_qty:
-                        raise PlanBuildError(
-                            f"КП #{kp_id}, плита #{plate_id}: запрошено {qty_override}, "
-                            f"доступно {db_qty}."
-                        )
-                    qty = qty_override
-                else:
-                    qty = db_qty
+        for row in rows:
+            plate_id = int(row[0])
+            plate_name = row[1]
+            length_m = row[2]
+            width_m = row[3]
+            load_class = row[4] or 800
+            db_qty = int(row[5] or 0)
+            length_dm_raw = (row[6] or "") if len(row) > 6 else ""
+            concrete_grade_raw = str(row[7] or "").strip() if len(row) > 7 else ""
 
-                if qty <= 0:
-                    continue
-
-                load_code = normalize_load_code(load_class // 100)
-                width_mm = int(round((width_m or 0) * 1000))
-                if (
-                    plate_name
-                    and ("-12-8п" in plate_name or "-12-" in plate_name)
-                    and (width_m is None or width_m < 0.9 or width_m > 1.5)
-                ):
-                    width_mm = 1200
-
-                reinforcement = get_reinforcement(
-                    length_m=length_m,
-                    load_code=load_code,
-                    source="series",
-                    db_path=pb_db_path,
-                    allow_fallback=True,
-                )
-                if reinforcement is None:
-                    reinforcement = 999.0
-
-                concrete_grade = concrete_grade_raw
-                if not concrete_grade:
-                    concrete_grade = resolve_concrete_grade_from_order(
-                        {
-                            "concrete_grade": None,
-                            "plate_name": plate_name or "",
-                            "length": length_m or 0.0,
-                            "load_code": load_code,
-                        },
-                        db_path=pb_db_path,
+            qty_override = _qty_override_for_plate(
+                selected_plate_qty, kp_id, plate_id
+            )
+            if qty_override is not None:
+                if qty_override > db_qty:
+                    raise PlanBuildError(
+                        f"КП #{kp_id}, плита #{plate_id}: запрошено {qty_override}, "
+                        f"доступно {db_qty}."
                     )
+                qty = qty_override
+            else:
+                qty = db_qty
 
-                plates[kp["date"]][reinforcement].append(
+            if qty <= 0:
+                continue
+
+            load_code = normalize_load_code(load_class // 100)
+            width_mm = int(round((width_m or 0) * 1000))
+            if (
+                plate_name
+                and ("-12-8п" in plate_name or "-12-" in plate_name)
+                and (width_m is None or width_m < 0.9 or width_m > 1.5)
+            ):
+                width_mm = 1200
+
+            reinforcement = get_reinforcement(
+                length_m=length_m,
+                load_code=load_code,
+                source="series",
+                db_path=pb_db_path,
+                allow_fallback=True,
+            )
+            if reinforcement is None:
+                reinforcement = 999.0
+
+            concrete_grade = concrete_grade_raw
+            if not concrete_grade:
+                concrete_grade = resolve_concrete_grade_from_order(
                     {
-                        "plate_name": plate_name,
-                        "length": length_m,
-                        "width": width_mm,
+                        "concrete_grade": None,
+                        "plate_name": plate_name or "",
+                        "length": length_m or 0.0,
                         "load_code": load_code,
-                        "qty": qty,
-                        "reinforcement": reinforcement,
-                        "kp_id": kp_id,
-                        "kp_plate_id": plate_id,
-                        "kp_date": kp["date"].strftime("%d.%m.%Y"),
-                        "customer": kp["customer"],
-                        "length_dm_raw": length_dm_raw,
-                        "concrete_grade": concrete_grade,
-                    }
+                    },
+                    db_path=pb_db_path,
                 )
+
+            plates[kp["date"]][reinforcement].append(
+                {
+                    "plate_name": plate_name,
+                    "length": length_m,
+                    "width": width_mm,
+                    "load_code": load_code,
+                    "qty": qty,
+                    "reinforcement": reinforcement,
+                    "kp_id": kp_id,
+                    "kp_plate_id": plate_id,
+                    "kp_date": kp["date"].strftime("%d.%m.%Y"),
+                    "customer": kp["customer"],
+                    "length_dm_raw": length_dm_raw,
+                    "concrete_grade": concrete_grade,
+                }
+            )
 
     return plates
 

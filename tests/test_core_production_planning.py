@@ -32,6 +32,13 @@ from core.production.planning import (
 PLATE_NAME = "ПБ 60-12-8п"
 
 
+def _plan_load_for_db(db_path: str):
+    from app.repositories.plan_repository import PlanRepository
+    from app.services.plan_distribution_service import PlanLoadAdapter
+
+    return PlanLoadAdapter(PlanRepository(db_path=db_path))
+
+
 @pytest.fixture
 def tmp_plita(tmp_path) -> str:
     db_path = str(tmp_path / "plita.db")
@@ -135,6 +142,7 @@ def test_load_raises_when_no_kps(tmp_path) -> None:
                 filter_method="all",
             ),
             config=LoadConfig(plita_db_path=db_path, pb_db_path=db_path),
+            plan_load=_plan_load_for_db(db_path),
         )
 
 
@@ -146,6 +154,7 @@ def test_load_returns_plates_and_orders(tmp_plita) -> None:
             filter_method="all",
         ),
         config=LoadConfig(plita_db_path=tmp_plita, pb_db_path=tmp_plita),
+        plan_load=_plan_load_for_db(tmp_plita),
     )
 
     assert len(result.kp_list) == 1
@@ -176,6 +185,7 @@ def test_load_raises_qty_above_available(tmp_plita) -> None:
                 selected_plate_qty={1: {plate_id: 10}},
             ),
             config=LoadConfig(plita_db_path=tmp_plita, pb_db_path=tmp_plita),
+            plan_load=_plan_load_for_db(tmp_plita),
         )
 
 
@@ -195,6 +205,7 @@ def test_load_partial_qty(tmp_plita) -> None:
             selected_plate_qty={1: {plate_id: 2}},
         ),
         config=LoadConfig(plita_db_path=tmp_plita, pb_db_path=tmp_plita),
+        plan_load=_plan_load_for_db(tmp_plita),
     )
     assert result.orders_2d[0]["qty"] == 2
 
@@ -227,6 +238,7 @@ def test_optimize_with_mocked_optimizer(monkeypatch, tmp_plita) -> None:
             filter_method="all",
         ),
         config=LoadConfig(plita_db_path=tmp_plita, pb_db_path=tmp_plita),
+        plan_load=_plan_load_for_db(tmp_plita),
     )
     order = load_result.orders_2d[0]
 
@@ -303,6 +315,7 @@ def test_optimize_pipeline_validate_load_optimize(monkeypatch, tmp_plita) -> Non
     load_result = load(
         plan_input,
         config=LoadConfig(plita_db_path=tmp_plita, pb_db_path=tmp_plita),
+        plan_load=_plan_load_for_db(tmp_plita),
     )
     order = load_result.orders_2d[0]
 
@@ -446,6 +459,7 @@ def test_persist_saves_plan_via_repo(monkeypatch, tmp_plita) -> None:
             filter_method="all",
         ),
         config=LoadConfig(plita_db_path=tmp_plita, pb_db_path=tmp_plita),
+        plan_load=_plan_load_for_db(tmp_plita),
     )
     order = load_result.orders_2d[0]
     tracks = [

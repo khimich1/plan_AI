@@ -16,6 +16,7 @@ from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.execution_terms import parse_execution_terms_to_datetime
 from core.gantt_excel import create_gantt_excel
+from core.kp_order_data import order_data_from_kp_info as _order_data_from_kp_info
 from ..bot_config import OUTPUTS_DIR_STR
 from ..keyboards import main_menu_kb, archive_sections_kb, kp_details_kb
 from ..states import ArchiveStates
@@ -28,35 +29,6 @@ BOT_DIR = Path(__file__).parent.parent
 PROJECT_ROOT = BOT_DIR.parent
 
 router = Router()
-
-
-def _order_data_from_kp_info(kp_info: dict) -> list:
-    """Собирает order_data для генераторов из kp_info['plates'] (unit_price из колонки или из discounted_price и скидки)."""
-    plates = kp_info.get("plates") or []
-    discount = kp_info.get("discount_percent") or 0
-    factor = 1.0 - (discount / 100.0)
-    if factor <= 0:
-        factor = 1.0
-    order_data = []
-    for p in plates:
-        unit_price = p.get("unit_price")
-        if unit_price is None or (isinstance(unit_price, (int, float)) and unit_price <= 0):
-            discounted_price = p.get("discounted_price") or 0
-            unit_price = discounted_price / factor
-        qty = p.get("qty") or 0
-        total_weight = p.get("total_weight")
-        unit_weight = p.get("unit_weight")
-        weight = total_weight if total_weight is not None and total_weight > 0 else (unit_weight or 0) * qty
-        order_data.append({
-            "name": p.get("plate_name") or "",
-            "length_m": p.get("length_m") or 0,
-            "width_m": p.get("width_m") or 0,
-            "qty": qty,
-            "load_class": p.get("load_class") or 800,
-            "unit_price": float(unit_price),
-            "weight": weight or 0,
-        })
-    return order_data
 
 
 @router.message(F.text == "📁 Архив")

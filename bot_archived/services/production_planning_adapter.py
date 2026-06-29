@@ -12,6 +12,7 @@ from app.services.production_planning_service import (
     ProductionPlanBuildError,
     ProductionPlanningService,
 )
+from app.services.plan_distribution_service import PlanLoadAdapter
 from bot.services import kp_persistence as kp_db
 from core.plate_order_context import PlateOrderContext
 from core.production.dto import LoadConfig, LoadResult, PlanBuildInput
@@ -197,6 +198,7 @@ def load_plates_for_production(
                 plita_db_path=service.plita_db_path,
                 pb_db_path=service.pb_db_path,
             ),
+            plan_load=PlanLoadAdapter(service.plan_repository),
         )
     except PlanBuildError as exc:
         raise ProductionPlanBuildError(str(exc)) from exc

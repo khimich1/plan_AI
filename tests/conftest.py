@@ -13,6 +13,12 @@ import pytest
 from app.core.settings import get_settings
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    from app.adapters.visualization import wire_visualization_ports
+
+    wire_visualization_ports()
+
+
 @pytest.fixture(autouse=True)
 def _clear_settings_cache() -> None:
     get_settings.cache_clear()
@@ -22,11 +28,16 @@ def _clear_settings_cache() -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_login_rate_limiter() -> None:
-    from app.security.login_rate_limit import reset_login_rate_limiter_for_tests
+    from app.security.login_rate_limit import (
+        reset_login_rate_limiter_for_tests,
+        reset_password_change_rate_limiter_for_tests,
+    )
 
     reset_login_rate_limiter_for_tests()
+    reset_password_change_rate_limiter_for_tests()
     yield
     reset_login_rate_limiter_for_tests()
+    reset_password_change_rate_limiter_for_tests()
 
 
 # ---------------------------------------------------------------------------

@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     bot_telegram_allowlist_raw: str = Field(default="", alias="BOT_TELEGRAM_ALLOWLIST")
     bot_auth_fail_closed: bool | None = Field(default=None, alias="BOT_AUTH_FAIL_CLOSED")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    # External OCR / OpenAI image recognition (off by default; enable explicitly for staging).
+    ocr_external_enabled: bool = Field(default=False, alias="OCR_EXTERNAL_ENABLED")
     ocr_recognition_mode: str = Field(default="full_gpt", alias="OCR_RECOGNITION_MODE")
     ocr_verify_enabled: bool = Field(default=True, alias="OCR_VERIFY_ENABLED")
     weight_source: str = Field(default="formula", alias="WEIGHT_SOURCE")
@@ -124,6 +126,17 @@ class Settings(BaseSettings):
         alias="AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
         ge=1,
         le=3600,
+    )
+    auth_password_change_attempts: int = Field(
+        default=3,
+        alias="AUTH_PASSWORD_CHANGE_ATTEMPTS",
+        ge=1,
+    )
+    auth_password_change_window_seconds: int = Field(
+        default=900,
+        alias="AUTH_PASSWORD_CHANGE_WINDOW_SECONDS",
+        ge=1,
+        le=86400,
     )
     # Comma-separated IPs of reverse proxies allowed to set X-Forwarded-For (e.g. 127.0.0.1).
     # Empty default: do not trust XFF; use the direct TCP client address only.

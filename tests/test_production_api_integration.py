@@ -372,10 +372,12 @@ def test_remove_track_plan_version_conflict(
 ) -> None:
     plan_id = production_built_plan["plan"]["id"]
 
-    def raise_conflict(self, pid: str, date: str, track_index: int, **kwargs):
+    from app.services.plan_distribution_service import PlanDistributionService
+
+    def raise_conflict(self, repo, pid: str, date: str, track_index: int, **kwargs):
         raise PlanVersionConflict(pid, 1)
 
-    monkeypatch.setattr(PlanRepository, "remove_track_from_plan", raise_conflict)
+    monkeypatch.setattr(PlanDistributionService, "remove_track_from_plan", raise_conflict)
 
     response = production_api_client.delete(
         f"{API_PREFIX}/plans/{plan_id}/days/{DATE_KEY}/tracks/0",

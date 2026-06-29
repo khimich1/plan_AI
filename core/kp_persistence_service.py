@@ -37,13 +37,15 @@ class KpPersistenceService:
             vat_amount = totals["vat_amount"]
             total_amount = totals["total_with_vat"]
         except ImportError:
+            from core.commercial_pricing import VAT_RATE
+
             subtotal = 0.0
             for item in order_data:
                 qty = item.get("qty", 0)
                 unit_price = item.get("unit_price", 0.0)
                 discounted_price = unit_price * (1 - discount_percent / 100)
                 subtotal += discounted_price * qty
-            vat_amount = round(subtotal * 0.22, 2)
+            vat_amount = round(subtotal * VAT_RATE, 2)
             total_amount = round(subtotal + vat_amount, 2)
 
         conn = _connect(db_path)

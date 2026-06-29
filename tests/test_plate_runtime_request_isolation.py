@@ -18,7 +18,6 @@ from app.repositories.auth_repository import AuthRepository
 from tests.helpers.auth_fixtures import patch_auth_users
 from app.security.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app.security.session import create_session_token
-from core import config_and_data as cfg
 from core.plate_order_context import PlateOrderContext
 from core.plate_runtime_state import get_plate_mutable_runtime
 
@@ -64,16 +63,17 @@ def _parallel_probe_app() -> FastAPI:
         marker: float,
         ctx: PlateOrderContext = Depends(get_plate_order_context),
     ) -> dict[str, Any]:
-        cfg.PLATES_1_2.append(marker)
+        rt = get_plate_mutable_runtime()
+        rt.plates_1_2.append(marker)
         await asyncio.sleep(0.03)
-        runtime_first = cfg.PLATES_1_2[0] if cfg.PLATES_1_2 else None
+        runtime_first = rt.plates_1_2[0] if rt.plates_1_2 else None
         ctx_first = ctx.plates.plates_1_2[0] if ctx.plates.plates_1_2 else None
         return {
             "marker": marker,
             "runtime_first": runtime_first,
             "ctx_first": ctx_first,
-            "runtime_matches_ctx": get_plate_mutable_runtime() is ctx.plates,
-            "runtime_len": len(cfg.PLATES_1_2),
+            "runtime_matches_ctx": rt is ctx.plates,
+            "runtime_len": len(rt.plates_1_2),
         }
 
     return app

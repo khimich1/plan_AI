@@ -27,6 +27,7 @@ from app.schemas.production import (
     RemoveTrackResponse,
     SaveWorkCalendarRequest,
 )
+from app.concurrency.cpu_bound import run_cpu_bound
 from app.core.http_errors import (
     MSG_DAY_NOT_FOUND,
     MSG_PLAN_VERSION_CONFLICT,
@@ -61,37 +62,40 @@ def list_plans(
 
 
 @router.post("/plans")
-def create_plan(
+async def create_plan(
     payload: CreatePlanRequest,
     _user: dict = Depends(require_roles("admin", "production")),
     service: ProductionService = Depends(get_production_service),
 ) -> dict:
-    return service.create_plan(**payload.model_dump())
+    return await run_cpu_bound(lambda: service.create_plan(**payload.model_dump()))
 
 
 @router.post("/plans/build", response_model=BuildPlanResponse)
-def build_plan_from_filters(
+async def build_plan_from_filters(
     payload: BuildPlanRequest,
     plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     _user: dict = Depends(require_roles("admin", "production")),
     service: ProductionService = Depends(get_production_service),
 ) -> BuildPlanResponse:
     try:
-        result = service.build_plan_from_filters(
-            start_date=payload.start_date,
-            tracks_count=payload.tracks_count,
-            filter_method=payload.filter_method,
-            selected_kp_ids=payload.selected_kp_ids or None,
-            selected_plate_ids=payload.selected_plate_ids or None,
-            selected_plate_qty=payload.selected_plate_qty or None,
-            active_plan_id=payload.active_plan_id,
-            plan_name=payload.plan_name,
-            fill_targets=(
-                [item.model_dump() for item in payload.fill_targets]
-                if payload.fill_targets
-                else None
+        result = await run_cpu_bound(
+            lambda: service.build_plan_from_filters(
+                start_date=payload.start_date,
+                tracks_count=payload.tracks_count,
+                filter_method=payload.filter_method,
+                selected_kp_ids=payload.selected_kp_ids or None,
+                selected_plate_ids=payload.selected_plate_ids or None,
+                selected_plate_qty=payload.selected_plate_qty or None,
+                active_plan_id=payload.active_plan_id,
+                plan_name=payload.plan_name,
+                fill_targets=(
+                    [item.model_dump() for item in payload.fill_targets]
+                    if payload.fill_targets
+                    else None
+                ),
+                layout_reinforcement_order=payload.layout_reinforcement_order,
+                plate_order_ctx=plate_order_ctx,
             ),
-            layout_reinforcement_order=payload.layout_reinforcement_order,
             plate_order_ctx=plate_order_ctx,
         )
     except ProductionPlanBuildError as exc:

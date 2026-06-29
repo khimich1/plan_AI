@@ -10,7 +10,7 @@ import pytest
 
 from app.services.archive_service import ArchiveService, ArchiveValidationError
 from app.services.commercial_workflow_service import CommercialWorkflowService
-from app.services.day_documents_service import _prepare_visualization_ctx
+from app.services.day_documents_service import prepare_visualization_ctx
 from core.plate_order_context import PlateOrderContext
 
 
@@ -25,7 +25,7 @@ def test_prepare_visualization_ctx_reuses_request_context() -> None:
         "plate_assignments": [],
     }
 
-    result = _prepare_visualization_ctx(request_ctx, orders_2d, optimization_result)
+    result = prepare_visualization_ctx(request_ctx, orders_2d, optimization_result)
 
     assert result is request_ctx
     assert request_ctx.plates.plate_load_details
@@ -165,10 +165,10 @@ def test_parallel_bound_contexts_do_not_share_plate_state() -> None:
         ctx = PlateOrderContext.fresh_empty()
         ctx.plates.plates_1_2.append(marker)
         with ctx.bound():
-            from core import config_and_data as cfg
+            from core.plate_runtime_state import get_plate_mutable_runtime
 
             await asyncio.sleep(0.02)
-            return cfg.PLATES_1_2[0]
+            return get_plate_mutable_runtime().plates_1_2[0]
 
     async def _gather() -> tuple[float, float]:
         return await asyncio.gather(exercise(1.11), exercise(2.22))

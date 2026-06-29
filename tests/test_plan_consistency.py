@@ -8,7 +8,7 @@
    запрос НЕ изменяет БД.
 3. ``test_complete_day_atomic_rollback`` — ошибка в середине списания
    не оставляет частичных записей в completed_plates.
-4. ``test_rescue_web_matches_bot`` — ``build_rescue_tracks`` детерминирован.
+4. ``test_rescue_tracks_deterministic`` — ``build_rescue_tracks`` детерминирован.
 5. ``test_canonical_plate_name`` — «Плиты ПБ ...» и «ПБ ...» — одна плита.
 6. ``test_secondary_no_identity_theft`` — secondary 4.5×600 НЕ забирает
    identity primary 4.5×1200.
@@ -222,8 +222,8 @@ def test_complete_day_atomic_rollback(planning_service, tmp_plita, monkeypatch):
     assert _snapshot(tmp_plita, "kp_plates") == snap_kp_before
 
 
-def test_rescue_web_matches_bot():
-    """Инвариант 4: общий core/rescue_tracks даёт детерминированные missing_counts.
+def test_rescue_tracks_deterministic():
+    """Инвариант 4: core/rescue_tracks даёт детерминированные missing_counts (web path).
 
     Phase 4: подсчёт идёт по identity (kp_id, plate_name) из plate_assignments.
     """
@@ -277,7 +277,7 @@ def test_canonical_plate_name():
 
 def test_secondary_no_identity_theft():
     """Инвариант 6: secondary 4.5×600 не получает identity primary 4.5×1200."""
-    from app.services.day_view_service import _build_smart_lookup
+    from app.services.day_view_service import build_smart_lookup
 
     plate_lookup_exact = {
         (4.5, 1200): [
@@ -295,7 +295,7 @@ def test_secondary_no_identity_theft():
     plate_lookup_by_length = {
         4.5: list(plate_lookup_exact[(4.5, 1200)]),
     }
-    lookup = _build_smart_lookup(plate_lookup_exact, plate_lookup_by_length)
+    lookup = build_smart_lookup(plate_lookup_exact, plate_lookup_by_length)
 
     # Secondary с шириной 600 не должен забрать identity primary 1200.
     info = lookup(4.5, 600)

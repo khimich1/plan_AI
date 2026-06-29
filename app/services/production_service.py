@@ -120,10 +120,15 @@ class ProductionService:
         )
 
     def get_calendar(self) -> dict | None:
-        return self.plan_repository.get_global_calendar_info()
+        return self.planning_service.plan_distribution.get_global_calendar_info(
+            self.plan_repository
+        )
 
     def get_day_view(self, target_date: str) -> dict | None:
-        return self.plan_repository.get_tracks_for_date(target_date)
+        return self.planning_service.plan_distribution.get_tracks_for_date(
+            self.plan_repository,
+            target_date,
+        )
 
     def get_day_view_detailed(self, target_date: str) -> dict | None:
         return build_day_view_detail(
@@ -171,7 +176,8 @@ class ProductionService:
         active_plan_id: str | None = None,
         auto_save: bool = True,
     ) -> dict[str, Any]:
-        updated_plan, stats = self.plan_repository.build_plan_from_tracks(
+        updated_plan, stats = self.planning_service.plan_distribution.build_plan_from_tracks(
+            self.plan_repository,
             plan_id=active_plan_id,
             new_tracks_list=all_tracks_list,
             start_date=start_date,
@@ -218,7 +224,8 @@ class ProductionService:
         actor: str | None = None,
     ) -> dict[str, Any]:
         try:
-            return self.plan_repository.remove_track_from_plan(
+            return self.planning_service.plan_distribution.remove_track_from_plan(
+                self.plan_repository,
                 plan_id,
                 date,
                 track_index,

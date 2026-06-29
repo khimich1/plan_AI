@@ -1,8 +1,8 @@
 """Canonical orchestrator for production plan build/save flows (A10 / WP3).
 
 Единая точка входа для web/bot адаптеров: validate → load → optimize → persist
-через ``core.production.planning``. Распределение дорожек и I/O — в
-``app.planning.plan_distribution`` / ``PlanRepository``; ``plan_manager`` —
+через ``core.production.planning``. Распределение дорожек — в
+``PlanDistributionService`` / ``app.planning.plan_*``; persist — ``PlanRepository`` CRUD;
 только legacy-фасад для frozen bot paths.
 """
 from __future__ import annotations
@@ -13,6 +13,11 @@ from typing import Any, Literal
 from app.core.settings import get_settings
 from app.planning.plan_storage import MAX_TRACKS_PER_DAY, create_plan_id
 from app.repositories.plan_repository import PlanRepository
+from app.services.plan_distribution_service import (
+    PlanDistributionService,
+    PlanLoadAdapter,
+    PlanPersistAdapter,
+)
 from core.production.dto import (
     LoadConfig,
     LoadResult,
@@ -55,6 +60,7 @@ class ProductionPlanningService:
         self.plan_repository = plan_repository or PlanRepository(
             db_path=self.plita_db_path
         )
+        self.plan_distribution = PlanDistributionService()
 
     def find_matching_rests(
         self,
@@ -91,6 +97,7 @@ class ProductionPlanningService:
                         plita_db_path=self.plita_db_path,
                         pb_db_path=self.pb_db_path,
                     ),
+                    plan_load=PlanLoadAdapter(self.plan_repository),
                 )
             except PlanBuildError as exc:
                 raise _map_plan_build_error(exc) from exc
@@ -125,7 +132,8 @@ class ProductionPlanningService:
             raise ProductionPlanBuildError("Оптимизация не дала результата.")
 
         global_occupancy = self.plan_repository.get_global_occupancy()
-        plan, stats = self.plan_repository.build_plan_from_tracks(
+        plan, stats = self.plan_distribution.build_plan_from_tracks(
+            self.plan_repository,
             plan_id=None,
             new_tracks_list=opt_result.all_tracks_list,
             start_date=start_date,
@@ -173,6 +181,10 @@ class ProductionPlanningService:
                 plate_order_ctx=plate_order_ctx,
             )
 
+            persist_port = PlanPersistAdapter(
+                self.plan_repository,
+                self.plan_distribution,
+            )
             persist_result = persist(
                 load_result,
                 opt_result,
@@ -186,7 +198,7 @@ class ProductionPlanningService:
                     fill_targets=tuple(fill_targets or ()),
                     max_tracks_per_day=MAX_TRACKS_PER_DAY,
                 ),
-                self.plan_repository,
+                persist_port,
                 ensure_unique_plan_id=create_plan_id,
             )
         except PlanBuildError as exc:

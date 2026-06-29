@@ -27,6 +27,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.planning import plan_manager, plan_storage
 from app.repositories.plan_repository import PlanRepository
+from app.services.plan_distribution_service import PlanDistributionService
 from core import kp_db
 from core.plan_track_removal import (
     TrackRemovalError,
@@ -42,6 +43,10 @@ OTHER_PLAN_ID = "plan_other_test"
 
 def _plan_repo(db_path: str) -> PlanRepository:
     return PlanRepository(db_path=db_path)
+
+
+def _distribution() -> PlanDistributionService:
+    return PlanDistributionService()
 
 
 def _load_plan(db_path: str, plan_id: str) -> dict:
@@ -400,7 +405,7 @@ def test_remove_track_happy_path(planning_service, tmp_plita):
     in_plan_before = _kp_plate_rows(tmp_plita, plan_id=plan_id, status="в плане")
     assert _total_qty(in_plan_before) == 3
 
-    result = _plan_repo(tmp_plita).remove_track_from_plan(
+    result = _distribution().remove_track_from_plan(_plan_repo(tmp_plita),
         plan_id,
         DATE_KEY,
         0,
@@ -428,7 +433,7 @@ def test_replan_after_track_removal(planning_service, tmp_plita):
     built = _build_single_track_plan(planning_service, tracks_count=1)
     plan_id = built["plan"]["id"]
 
-    _plan_repo(tmp_plita).remove_track_from_plan(
+    _distribution().remove_track_from_plan(_plan_repo(tmp_plita),
         plan_id, DATE_KEY, 0, db_path=tmp_plita
     )
 
@@ -461,7 +466,7 @@ def test_remove_track_completed_day_raises(planning_service, tmp_plita):
     snap_json = _snapshot_plan_payload(tmp_plita, plan_id)
 
     with pytest.raises(TrackRemovalError) as exc_info:
-        _plan_repo(tmp_plita).remove_track_from_plan(
+        _distribution().remove_track_from_plan(_plan_repo(tmp_plita),
             plan_id, DATE_KEY, 0, db_path=tmp_plita
         )
 
@@ -507,7 +512,7 @@ def test_wrong_plan_id_row_not_touched(planning_service, tmp_plita):
     snap_json = _snapshot_plan_payload(tmp_plita, plan_id)
 
     with pytest.raises(TrackRemovalError) as exc_info:
-        _plan_repo(tmp_plita).remove_track_from_plan(
+        _distribution().remove_track_from_plan(_plan_repo(tmp_plita),
             plan_id, DATE_KEY, 0, db_path=tmp_plita
         )
 
@@ -540,7 +545,7 @@ def test_secondary_cuts_both_units_returned(tmp_plita, monkeypatch):
     expected_qty = _total_qty(in_plan_before)
     assert expected_qty == 5  # 3 primary + 2 secondary (как в test_plan_consistency)
 
-    result = _plan_repo(tmp_plita).remove_track_from_plan(
+    result = _distribution().remove_track_from_plan(_plan_repo(tmp_plita),
         plan_id, DATE_KEY, 0, db_path=tmp_plita
     )
 
@@ -584,7 +589,7 @@ def test_two_plans_same_date_isolation(planning_service, tmp_plita, monkeypatch)
     tracks_b_before = deepcopy(plan_b_before["days"][DATE_KEY]["tracks"])
     snap_b_db = _snapshot_kp_plates(tmp_plita)
 
-    _plan_repo(tmp_plita).remove_track_from_plan(
+    _distribution().remove_track_from_plan(_plan_repo(tmp_plita),
         plan_a_id, DATE_KEY, 0, db_path=tmp_plita
     )
 
@@ -621,7 +626,7 @@ def test_saved_tracks_count_sync_after_removal(tmp_plita, monkeypatch):
     assert day["saved_tracks_count"] == 2
     assert plan_manager.count_day_tracks(day) == 2
 
-    _plan_repo(tmp_plita).remove_track_from_plan(
+    _distribution().remove_track_from_plan(_plan_repo(tmp_plita),
         plan_id, DATE_KEY, 0, db_path=tmp_plita
     )
 
@@ -699,7 +704,7 @@ def test_remove_track_no_plate_identity(planning_service, tmp_plita):
     snap_json = _snapshot_plan_payload(tmp_plita, plan_id)
 
     with pytest.raises(TrackRemovalError) as exc_info:
-        _plan_repo(tmp_plita).remove_track_from_plan(
+        _distribution().remove_track_from_plan(_plan_repo(tmp_plita),
             plan_id, DATE_KEY, 0, db_path=tmp_plita
         )
 

@@ -427,6 +427,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    names = set(globals().keys())
-    names.update(MUTABLE_LEGACY_NAMES)
-    return sorted(names)
+    # Не рекламируем PEP 562 proxy-имена: web path — get_plate_mutable_runtime().
+    return sorted(globals().keys())

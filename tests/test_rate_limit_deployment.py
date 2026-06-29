@@ -10,6 +10,7 @@ from app.main import create_app
 from app.security.login_rate_limit import (
     configured_worker_count,
     rate_limit_deployment_info,
+    validate_rate_limit_shared_store_config,
     warn_if_multi_worker_without_shared_store,
 )
 
@@ -44,6 +45,15 @@ def test_configured_worker_count_reads_web_concurrency(
     monkeypatch.delenv("UVICORN_WORKERS", raising=False)
     monkeypatch.setenv("WEB_CONCURRENCY", "2")
     assert configured_worker_count() == 2
+
+
+def test_configured_worker_count_reads_app_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("UVICORN_WORKERS", raising=False)
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    monkeypatch.setenv("APP_WORKERS", "5")
+    assert configured_worker_count() == 5
 
 
 def test_rate_limit_deployment_info_without_env() -> None:
@@ -84,6 +94,25 @@ def test_warn_if_multi_worker_skips_single_worker(
     assert caplog.records == []
 
 
+def test_validate_rate_limit_shared_store_redis_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RATE_LIMIT_SHARED_STORE", "redis")
+    with pytest.raises(NotImplementedError, match="redis"):
+        validate_rate_limit_shared_store_config()
+
+
+def test_warn_if_multi_worker_skips_when_shared_store_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("UVICORN_WORKERS", "4")
+    monkeypatch.setenv("RATE_LIMIT_SHARED_STORE", "memory")
+    caplog.set_level(logging.WARNING, logger="app.security.login_rate_limit")
+    warn_if_multi_worker_without_shared_store()
+    assert caplog.records == []
+
+
 def test_health_includes_rate_limiting_metadata(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
@@ -119,7 +148,25 @@ def test_health_redacts_environment_in_production(monkeypatch: pytest.MonkeyPatc
             response = production_client.get(path)
             assert response.status_code == 200
             payload = response.json()
-            assert payload["status"] == "ok"
+            assert payload == {"status": "ok"}
             assert "environment" not in payload
             assert "app" not in payload
-            assert payload["rate_limiting"]["store"] == "in-process"
+            assert "rate_limiting" not in payload
+
+
+def test_openapi_docs_disabled_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("BOT_TELEGRAM_ALLOWLIST", "1:admin")
+    monkeypatch.setenv("BOT_AUTH_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with TestClient(create_app()) as production_client:
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            response = production_client.get(path)
+            assert response.status_code == 404
+
+
+def test_openapi_docs_enabled_in_development(client: TestClient) -> None:
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    assert "openapi" in response.json()

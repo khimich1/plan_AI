@@ -1,7 +1,7 @@
 """Генерация производственных документов по конкретному дню.
 
 Повторяет логику из `bot/handlers/production_day_view.py`:
-- схема (PDF) через `core.visualization.visualize_plan`;
+- схема (PDF) через порт `get_visualize_plan()`;
 - детальная разбивка (XLSX) — побочный файл той же функции;
 - формовка (XLSX по дорожке) через `core.formovka_excel.create_formovka_files_for_tracks`;
   файлы формовки упаковываются в ZIP.
@@ -25,13 +25,14 @@ from typing import Any
 
 from core.plate_order_context import PlateOrderContext, run_in_order_context
 from core.formovka_excel import create_formovka_files_for_tracks
-from core.visualization import visualize_plan
+from core.ports.visualization import get_visualize_plan
 
 from app.services.day_view_service import (
-    _aggregate_plates_for_track,
-    _build_smart_lookup,
+    aggregate_plates_for_track,
+    build_smart_lookup,
 )
 from app.repositories.plan_repository import PlanRepository
+from app.services.plan_distribution_service import PlanDistributionService
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +46,13 @@ class DayDocumentsError(RuntimeError):
 
 def _load_day_bundle(target_date: str, plan_repository: PlanRepository | None = None) -> dict:
     repo = plan_repository or PlanRepository()
-    multi = repo.get_tracks_for_date(target_date)
+    multi = PlanDistributionService().get_tracks_for_date(repo, target_date)
     if not multi or not multi.get("tracks"):
         raise DayDocumentsError(f"На дату {target_date} нет дорожек ни в одном плане")
     return multi
 
 
-def _prepare_visualization_ctx(
+def prepare_visualization_ctx(
     plate_order_ctx: PlateOrderContext,
     orders_2d: list,
     optimization_result: dict,
@@ -61,13 +62,18 @@ def _prepare_visualization_ctx(
     return plate_order_ctx
 
 
-def _run_visualize(existing_tracks: list, output_dir: Path) -> tuple[str | None, str | None]:
-    return visualize_plan(
+def _run_visualize(
+    existing_tracks: list,
+    output_dir: Path,
+    plate_order_ctx: PlateOrderContext,
+) -> tuple[str | None, str | None]:
+    return get_visualize_plan()(
         output_dir=str(output_dir),
         tracks_per_file=None,
         start_track_index=0,
         use_production_pricing=True,
         existing_tracks=existing_tracks,
+        plate_order_ctx=plate_order_ctx,
     )
 
 
@@ -88,14 +94,14 @@ def _find_breakdown(output_dir: Path) -> Path | None:
 def _build_formovka_tracks_data(multi: dict) -> list[dict[str, Any]]:
     """Готовит data для `create_formovka_files_for_tracks` на основе тех же
     агрегированных плит, что и в `DayViewDetailResponse` (fuzzy lookup)."""
-    lookup = _build_smart_lookup(
+    lookup = build_smart_lookup(
         multi.get("plate_lookup_exact", {}),
         multi.get("plate_lookup_by_length", {}),
     )
 
     tracks_data: list[dict[str, Any]] = []
     for index, track in enumerate(multi.get("tracks") or [], start=1):
-        plates = _aggregate_plates_for_track(track, lookup)
+        plates = aggregate_plates_for_track(track, lookup)
         if not plates:
             continue
         tracks_data.append(
@@ -141,7 +147,7 @@ async def generate_day_schema(
     multi = _load_day_bundle(target_date)
     tmp_dir = _make_tmp_dir(prefix=f"day_schema_{target_date}_")
     try:
-        _prepare_visualization_ctx(
+        prepare_visualization_ctx(
             plate_order_ctx,
             multi.get("orders_2d", []),
             multi.get("optimization_result", {}),
@@ -151,6 +157,7 @@ async def generate_day_schema(
             _run_visualize,
             copy.deepcopy(multi["tracks"]),
             tmp_dir,
+            plate_order_ctx,
         )
         if not isinstance(result, tuple) or len(result) < 2:
             raise DayDocumentsError("visualize_plan не вернул PDF")
@@ -172,7 +179,7 @@ async def generate_day_breakdown(
     multi = _load_day_bundle(target_date)
     tmp_dir = _make_tmp_dir(prefix=f"day_breakdown_{target_date}_")
     try:
-        _prepare_visualization_ctx(
+        prepare_visualization_ctx(
             plate_order_ctx,
             multi.get("orders_2d", []),
             multi.get("optimization_result", {}),
@@ -182,6 +189,7 @@ async def generate_day_breakdown(
             _run_visualize,
             copy.deepcopy(multi["tracks"]),
             tmp_dir,
+            plate_order_ctx,
         )
         breakdown = _find_breakdown(tmp_dir)
         if breakdown is None:

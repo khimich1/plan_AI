@@ -7,13 +7,15 @@ from datetime import datetime
 
 from app.core.settings import get_settings
 from app.domain.enums import PlateStatus
-from core import kp_db_offers
+from app.repositories.kp_offers_repository import KpOffersRepository
+from core.kp import offers_write
 
 
 class KpRepository:
     def __init__(self, db_path: str | None = None) -> None:
         settings = get_settings()
         self.db_path = db_path or str(settings.plita_db_path)
+        self._offers = KpOffersRepository(self.db_path)
 
     def save_offer(
         self,
@@ -31,7 +33,7 @@ class KpRepository:
         xlsx_path: str | None = None,
         owner_user_id: int | None = None,
     ) -> int:
-        return kp_db_offers.save_kp_to_db(
+        return offers_write.save_kp_to_db(
             creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
             order_data=list(order_data or []),
             xlsx_file_path=xlsx_path,
@@ -48,7 +50,7 @@ class KpRepository:
         )
 
     def list_offers_grouped(self, **list_filters) -> dict[str, list[dict]]:
-        return kp_db_offers.get_all_kp_list(self.db_path, **list_filters)
+        return self._offers.list_grouped(**list_filters)
 
     def list_offers(self, limit: int = 100) -> list[dict]:
         query = """
@@ -67,25 +69,25 @@ class KpRepository:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_offer(self, kp_id: int) -> dict | None:
-        return kp_db_offers.get_kp_by_id(kp_id, self.db_path)
+        return self._offers.get_by_id(kp_id)
 
     def update_offer_discount(self, kp_id: int, discount_percent: float) -> bool:
-        return kp_db_offers.update_kp_discount(kp_id, discount_percent, self.db_path)
+        return offers_write.update_kp_discount(kp_id, discount_percent, self.db_path)
 
     def update_offer_logistics_cost(self, kp_id: int, logistics_cost: float) -> bool:
-        return kp_db_offers.update_kp_logistics_cost(kp_id, logistics_cost, self.db_path)
+        return offers_write.update_kp_logistics_cost(kp_id, logistics_cost, self.db_path)
 
     def update_offer_status(self, kp_id: int, status: str) -> bool:
-        return kp_db_offers.update_kp_status(kp_id, status, self.db_path)
+        return offers_write.update_kp_status(kp_id, status, self.db_path)
 
     def update_offer_execution_date(self, kp_id: int, execution_date: str) -> bool:
-        return kp_db_offers.update_kp_execution_date(kp_id, execution_date, self.db_path)
+        return offers_write.update_kp_execution_date(kp_id, execution_date, self.db_path)
 
     def delete_offer(self, kp_id: int) -> bool:
-        return kp_db_offers.delete_kp_by_id(kp_id, self.db_path)
+        return offers_write.delete_kp_by_id(kp_id, self.db_path)
 
     def get_completion_percentage(self, kp_id: int) -> dict:
-        return kp_db_offers.get_kp_completion_percentage(kp_id, self.db_path)
+        return self._offers.get_completion_percentage(kp_id)
 
     def list_production_candidates(self, limit: int = 500) -> list[dict]:
         query = """
@@ -151,9 +153,9 @@ class KpRepository:
 
         for row in rows:
             kp_id = int(row["kp_id"])
-            completion = kp_db_offers.get_kp_completion_percentage(kp_id, self.db_path)
-            in_plan = kp_db_offers.get_kp_plates_in_plan_percentage(kp_id, self.db_path)
-            total_length_m = kp_db_offers.get_kp_total_length(kp_id, self.db_path)
+            completion = self._offers.get_completion_percentage(kp_id)
+            in_plan = self._offers.get_plates_in_plan_percentage(kp_id)
+            total_length_m = self._offers.get_total_length(kp_id)
 
             result.append(
                 {

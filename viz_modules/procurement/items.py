@@ -87,7 +87,7 @@ def build_procurement_items(
             })
         return items
 
-      # Приоритет 2: Используем plate_load_details (если есть) или реальный заказ из cfg.PLATES_*
+      # Приоритет 2: plate_load_details или списки rt.plates_* (legacy fallback)
     # plate_load_details содержит (длина, ширина, нагрузка) → количество
     if details:
         for key, qty in sorted(
@@ -121,7 +121,7 @@ def build_procurement_items(
             items.append(item)
         return items
     
-    # Legacy режим: Используем cfg.PLATES_* (если PLATE_LOAD_DETAILS пуст)
+    # Legacy fallback: rt.plates_* когда plate_load_details пуст
     all_plates = []
     # ВАЖНО: Добавлен target_name для получения точных ширин из PLATE_EXACT_WIDTHS
     for width_mm, plates_list, target_name in [

@@ -24,8 +24,12 @@ from core.project_paths import PRICE_XLSX_PATH
 from core.plate_order_context import PlateOrderContext
 from core.kp_db_nomenclature import enrich_order_data_with_nomenclature
 from core.kp_plate_weight import resolve_kp_line_weight_kg
-from viz_modules.price_utils import load_price_table_from_xlsx
-from viz_modules.procurement import build_component_breakdown, build_price_rows, build_procurement_items
+from core.ports.visualization import (
+    build_component_breakdown,
+    build_price_rows,
+    build_procurement_items,
+    load_price_table_from_xlsx,
+)
 
 
 @dataclass

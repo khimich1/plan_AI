@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import Any
 
 from app.repositories.kp_repository import KpRepository
@@ -11,7 +10,7 @@ from app.security.offer_access import (
     list_filters_for_user,
 )
 from core.kp_persistence_service import KpPersistenceService
-from core.execution_terms import parse_execution_terms_to_datetime
+from core.execution_terms import parse_execution_terms
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 
@@ -178,13 +177,7 @@ class OffersService:
         return (f"KP_{kp_id}.xlsx", xlsx_buffer.getvalue())
 
     def _parse_execution_terms(self, raw_terms: str) -> tuple[str, bool]:
-        text = (raw_terms or "").strip()
-        deadline_date = parse_execution_terms_to_datetime(text)
-        used_default = False
-        if not deadline_date:
-            deadline_date = datetime.now() + timedelta(days=14)
-            used_default = True
-        return deadline_date.strftime("%d.%m.%Y"), used_default
+        return parse_execution_terms(raw_terms, policy="default_if_empty")
 
     def _to_offer_summary(self, item: dict[str, Any]) -> dict[str, Any]:
         kp_id = int(item.get("kp_id") or 0)

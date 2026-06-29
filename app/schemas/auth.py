@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
@@ -26,7 +26,7 @@ class LoginRequest(BaseModel):
 class RegisterUserRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: StrongPassword
-    role: str = Field(min_length=1, max_length=32)
+    role: Literal["admin", "manager", "production"]
     manager_id: int | None = None
     is_active: bool = True
 
@@ -38,6 +38,38 @@ class UserPublic(BaseModel):
     manager_id: int | None = None
     is_active: int
     created_at: str
+
+
+class AuthUserResponse(BaseModel):
+    id: int
+    username: str
+    role: str
+    manager_id: int | None = None
+    is_active: int
+    session_version: int
+    created_at: str
+
+
+class LoginResponse(BaseModel):
+    user: AuthUserResponse
+
+
+class MeResponse(BaseModel):
+    user: AuthUserResponse
+
+
+class LogoutResponse(BaseModel):
+    ok: bool = True
+
+
+class RegisterUserResponse(BaseModel):
+    user: AuthUserResponse
+    created: bool
+
+
+class ChangePasswordResponse(BaseModel):
+    user: AuthUserResponse
+    ok: bool = True
 
 
 class UsersPageResponse(BaseModel):

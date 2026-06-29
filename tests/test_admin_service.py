@@ -14,6 +14,12 @@ from app.services.admin_service import AdminService
 from core import kp_db
 
 
+@pytest.fixture(autouse=True)
+def _allow_destructive_db_reset_in_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("ALLOW_DESTRUCTIVE_DB_RESET", "1")
+
+
 @pytest.fixture()
 def admin_settings(tmp_path: Path) -> Settings:
     """Изолированный Settings, указывающий на директории внутри tmp_path."""

@@ -1,8 +1,28 @@
-"""Protocols for production planning persistence (no app imports)."""
+"""Protocols for production planning persistence and load (no app imports)."""
 
 from __future__ import annotations
 
 from typing import Any, Protocol
+
+from core.production.dto import FilterMethod
+
+
+class PlanLoadPort(Protocol):
+    """Read-only KP/plate data for the planning load phase."""
+
+    def fetch_kps_in_production(
+        self,
+        *,
+        filter_method: FilterMethod,
+        selected_kp_ids: list[int],
+    ) -> list[tuple[int, str | None, str | None]]: ...
+
+    def fetch_plates_in_production_for_kp(
+        self,
+        *,
+        kp_id: int,
+        plate_ids: list[int] | None,
+    ) -> list[tuple[Any, ...]]: ...
 
 
 class PlanPersistPort(Protocol):

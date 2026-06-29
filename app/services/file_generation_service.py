@@ -8,7 +8,7 @@ from core.commercial_offer import generate_commercial_offer_pdf, save_breakdown_
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.plate_order_context import PlateOrderContext
 from core.plates_preview_xlsx import build_plates_reconciliation_preview_xlsx
-from core.visualization import visualize_plan
+from core.ports.visualization import get_visualize_plan
 
 
 class FileGenerationService:
@@ -62,5 +62,7 @@ class FileGenerationService:
             plan_by_load=context.plan_by_load,
             load_to_reinforcement_map=context.load_to_reinforcement_map,
         )
-        with ctx.bound():
-            return visualize_plan(output_dir or str(self.settings.outputs_dir))
+        return get_visualize_plan()(
+            output_dir or str(self.settings.outputs_dir),
+            plate_order_ctx=ctx,
+        )

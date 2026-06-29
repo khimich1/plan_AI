@@ -7,13 +7,14 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Iterable
 
 from app.core.settings import get_settings
-from app.schemas.commercial import WizardNextRequiredAction, WizardStepId
+from app.schemas.commercial import WizardStepId
 from app.repositories.kp_repository import KpRepository
 from app.repositories.manager_repository import ManagerRepository
 from app.services.commercial_calculation_service import CommercialCalculationService
 from app.services.commercial_draft_service import CommercialDraftService, _safe_ocr_temp_suffix
 from app.services.commercial_export_service import CommercialExportService
 from app.services.commercial_service import CommercialService
+from app.services.commercial_wizard_step_service import CommercialWizardStepService
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from app.services.execution_terms_service import ExecutionTermsService
 from core.commercial_pricing import ensure_order_priced
@@ -37,151 +38,31 @@ class CommercialWorkflowService:
         self.draft_service = CommercialDraftService(commercial_service=self.commercial_service)
         self.export_service = CommercialExportService(draft_store=self.draft_store)
         self.file_generation_service = self.export_service.file_generation_service
+        self.step_service = CommercialWizardStepService(
+            calculation_service=self.calculation_service,
+            draft_store=self.draft_store,
+        )
 
     def _wide_lines_blocking(self, metadata: dict[str, Any]) -> bool:
-        return self.calculation_service.wide_lines_blocking(metadata)
+        return self.step_service.wide_lines_blocking(metadata)
 
     def _meta_ready_for_calculate(self, metadata: dict[str, Any]) -> bool:
-        return self.calculation_service.meta_ready_for_calculate(metadata)
+        return self.step_service.meta_ready_for_calculate(metadata)
 
     def _normalize_stored_step(self, metadata: dict[str, Any]) -> WizardStepId:
-        raw = str(metadata.get("current_step") or "").strip().lower()
-        aliases = {"wide_plates": WizardStepId.wide_plates.value, "calculate": WizardStepId.client.value}
-        raw = aliases.get(raw, raw)
-        try:
-            return WizardStepId(raw) if raw else WizardStepId.plates
-        except ValueError:
-            return WizardStepId.plates
+        return self.step_service.normalize_stored_step(metadata)
 
     def _wizard_step_after_plate_snapshot(self, metadata: dict[str, Any], order_data: list[Any]) -> WizardStepId:
-        return WizardStepId.plates
+        return self.step_service.wizard_step_after_plate_snapshot(metadata, order_data)
 
     def _persist_wizard_step(self, draft_id: str, step: WizardStepId) -> None:
-        self.draft_store.update_metadata(draft_id, current_step=step.value)
+        self.step_service.persist_wizard_step(draft_id, step)
 
     def infer_wizard_current_step(self, payload: dict[str, Any]) -> WizardStepId:
-        """Эффективный шаг для UI: хранимый шаг + защита от «перепрыгивания» узких плит + валидность result."""
-        metadata = dict(payload.get("metadata") or {})
-        order_data = payload.get("order_data") or []
-        stored = self._normalize_stored_step(metadata)
-
-        if stored == WizardStepId.result:
-            if (
-                order_data
-                and not self._wide_lines_blocking(metadata)
-                and self._meta_ready_for_calculate(metadata)
-            ):
-                return WizardStepId.result
-            return WizardStepId.client
-
-        if order_data and self._wide_lines_blocking(metadata):
-            if stored in (WizardStepId.manager, WizardStepId.client, WizardStepId.result):
-                return WizardStepId.wide_plates
-            if stored == WizardStepId.wide_plates:
-                return WizardStepId.wide_plates
-
-        return stored
-
-    def _infer_next_required_action(
-        self,
-        payload: dict[str, Any],
-        effective_step: WizardStepId,
-    ) -> WizardNextRequiredAction:
-        metadata = dict(payload.get("metadata") or {})
-        order_data = payload.get("order_data") or []
-
-        if not order_data:
-            return WizardNextRequiredAction.ingest_plates
-
-        if self._wide_lines_blocking(metadata):
-            return WizardNextRequiredAction.resolve_wide_plates
-
-        if not metadata.get("manager_id"):
-            return WizardNextRequiredAction.select_manager
-
-        if not self._meta_ready_for_calculate(metadata):
-            return WizardNextRequiredAction.complete_client_terms
-
-        if effective_step == WizardStepId.result:
-            return WizardNextRequiredAction.none
-
-        return WizardNextRequiredAction.post_calculate
-
-    def _infer_can_proceed_to(
-        self,
-        payload: dict[str, Any],
-        effective_step: WizardStepId,
-        next_action: WizardNextRequiredAction,
-    ) -> list[WizardStepId]:
-        metadata = dict(payload.get("metadata") or {})
-        order_data = payload.get("order_data") or []
-
-        if effective_step == WizardStepId.plates:
-            if not order_data:
-                return []
-            if self._wide_lines_blocking(metadata):
-                return [WizardStepId.wide_plates]
-            return [WizardStepId.manager]
-
-        if effective_step == WizardStepId.wide_plates:
-            return []
-
-        if effective_step == WizardStepId.manager:
-            if metadata.get("manager_id"):
-                return [WizardStepId.client]
-            return []
-
-        if effective_step == WizardStepId.client:
-            if next_action == WizardNextRequiredAction.post_calculate:
-                return []
-            return []
-
-        return []
-
-    def _collect_wizard_validation_errors(
-        self,
-        payload: dict[str, Any],
-        next_action: WizardNextRequiredAction,
-    ) -> list[str]:
-        """Сообщения, согласованные с проверками ``calculate_draft`` / ``next_required_action``."""
-        metadata = dict(payload.get("metadata") or {})
-        order_data = payload.get("order_data") or []
-
-        if next_action == WizardNextRequiredAction.ingest_plates:
-            return ["Список плит пустой."]
-        if next_action == WizardNextRequiredAction.resolve_wide_plates:
-            return ["Сначала обработайте плиты шире 12 дм."]
-        if next_action == WizardNextRequiredAction.select_manager:
-            return ["Выберите менеджера."]
-        if next_action == WizardNextRequiredAction.complete_client_terms:
-            errors: list[str] = []
-            if not order_data:
-                errors.append("Список плит пустой.")
-            if metadata.get("wide_plate_lines") and not metadata.get("wide_plates_resolved"):
-                errors.append("Сначала обработайте плиты шире 12 дм.")
-            if not metadata.get("manager_id"):
-                errors.append("Выберите менеджера.")
-            if not str(metadata.get("client_name", "")).strip():
-                errors.append("Укажите клиента.")
-            if metadata.get("conditions_mode") == "custom":
-                if not str(metadata.get("delivery_conditions", "")).strip():
-                    errors.append("Укажите условия поставки.")
-                if not str(metadata.get("payment_conditions", "")).strip():
-                    errors.append("Укажите условия оплаты.")
-            return errors
-        return []
+        return self.step_service.infer_wizard_current_step(payload)
 
     def build_wizard_state(self, payload: dict[str, Any]) -> dict[str, Any]:
-        current = self.infer_wizard_current_step(payload)
-        next_action = self._infer_next_required_action(payload, current)
-        can_proceed = self._infer_can_proceed_to(payload, current, next_action)
-        validation_errors = self._collect_wizard_validation_errors(payload, next_action)
-        return {
-            "current_step": current,
-            "can_proceed_to": can_proceed,
-            "next_required_action": next_action,
-            "validation_errors": validation_errors,
-        }
+        return self.step_service.build_wizard_state(payload)
 
     async def create_draft(
         self,
@@ -590,7 +471,7 @@ class CommercialWorkflowService:
     def calculate_draft(self, draft_id: str) -> dict[str, Any]:
         details = self.get_draft_details(draft_id)
         metadata = details["metadata"]
-        self.calculation_service.validate_calculate_prerequisites(
+        self.calculation_service.enforce_calculate_prerequisites(
             order_data=list(details["order_data"]),
             metadata=dict(metadata),
         )

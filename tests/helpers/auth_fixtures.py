@@ -36,7 +36,10 @@ def patch_auth_login(
         "id": user_id,
         "username": username,
         "role": role,
+        "manager_id": None,
+        "is_active": 1,
         "session_version": session_version,
+        "created_at": "2026-01-01 00:00:00",
     }
 
     def fake_authenticate(self: AuthRepository, user_name: str, pwd: str) -> dict[str, Any] | None:
@@ -47,15 +50,7 @@ def patch_auth_login(
     def fake_get_user_by_id(self: AuthRepository, lookup_id: int) -> dict[str, Any] | None:
         if int(lookup_id) != int(user["id"]):
             return None
-        return {
-            "id": user["id"],
-            "username": user["username"],
-            "role": user["role"],
-            "manager_id": None,
-            "is_active": 1,
-            "session_version": user["session_version"],
-            "created_at": "2026-01-01 00:00:00",
-        }
+        return dict(user)
 
     def fake_bump_session_version(self: AuthRepository, lookup_id: int) -> int:
         if int(lookup_id) != int(user["id"]):

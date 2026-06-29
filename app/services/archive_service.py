@@ -20,6 +20,7 @@ from app.schemas.archive import (
     ArchiveSearchResponse,
 )
 from app.repositories.plan_repository import PlanRepository
+from app.services.plan_distribution_service import PlanDistributionService
 from app.security.offer_access import (
     assert_offer_read_access,
     assert_offer_write_access,
@@ -28,12 +29,12 @@ from app.security.offer_access import (
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
 from core.plate_order_context import PlateOrderContext, run_in_order_context
-from core.visualization import visualize_plan
-from core.execution_terms import normalize_execution_terms_to_ddmmyyyy
+from core.ports.visualization import get_visualize_plan
+from core.execution_terms import parse_execution_terms
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
-from core.gantt_excel import create_gantt_excel
+from core.kp_order_data import order_data_from_kp_info
 
 
 logger = logging.getLogger(__name__)
@@ -201,7 +202,7 @@ class ArchiveService:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         assert_offer_read_access(user, raw)
 
-        order_data = self._order_data_from_kp_info(raw)
+        order_data = order_data_from_kp_info(raw)
         if not order_data:
             raise ArchiveValidationError("В КП нет позиций для формирования документа")
 
@@ -276,8 +277,9 @@ class ArchiveService:
             )
             result = await run_in_order_context(
                 plate_order_ctx,
-                visualize_plan,
+                get_visualize_plan(),
                 str(self.outputs_dir),
+                plate_order_ctx=plate_order_ctx,
             )
 
             if not isinstance(result, tuple) or len(result) < 2:
@@ -302,7 +304,10 @@ class ArchiveService:
         Собирает сводную диаграмму Ганта по всем сохранённым планам.
         Импорт plan_manager отложен, чтобы бэкенд запускался без bot-окружения.
         """
-        gantt_data = await asyncio.to_thread(PlanRepository().get_all_plans_gantt_data)
+        gantt_data = await asyncio.to_thread(
+            PlanDistributionService().get_all_plans_gantt_data,
+            PlanRepository(),
+        )
         if not gantt_data:
             raise ArchiveValidationError(
                 "Нет сохранённых планов для создания диаграммы."
@@ -361,7 +366,7 @@ class ArchiveService:
             except Exception:
                 logger.exception("Ошибка получения %% выполнения для КП %s", kp_id)
 
-        order_data = self._order_data_from_kp_info(raw)
+        order_data = order_data_from_kp_info(raw)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
         total_cargo_weight_kg = float(total_order_cargo_weight_kg(order_data))
         delivery_total = delivery_service_charge_rub(logistics_cost, total_cargo_weight_kg)
@@ -405,41 +410,6 @@ class ArchiveService:
         )
 
     @staticmethod
-    def _order_data_from_kp_info(kp_info: dict) -> list[dict]:
-        """Повторяет логику bot/handlers/archive._order_data_from_kp_info."""
-        plates = kp_info.get("plates") or []
-        discount = kp_info.get("discount_percent") or 0
-        factor = 1.0 - (discount / 100.0)
-        if factor <= 0:
-            factor = 1.0
-        result = []
-        for p in plates:
-            unit_price = p.get("unit_price")
-            if unit_price is None or (isinstance(unit_price, (int, float)) and unit_price <= 0):
-                discounted_price = p.get("discounted_price") or 0
-                unit_price = discounted_price / factor
-            qty = p.get("qty") or 0
-            total_weight = p.get("total_weight")
-            unit_weight = p.get("unit_weight")
-            weight = (
-                total_weight
-                if total_weight is not None and total_weight > 0
-                else (unit_weight or 0) * qty
-            )
-            result.append(
-                {
-                    "name": p.get("plate_name") or "",
-                    "length_m": p.get("length_m") or 0,
-                    "width_m": p.get("width_m") or 0,
-                    "qty": qty,
-                    "load_class": p.get("load_class") or 800,
-                    "unit_price": float(unit_price),
-                    "weight": weight or 0,
-                }
-            )
-        return result
-
-    @staticmethod
     def _orders_2d_from_kp_info(kp_info: dict) -> list[dict]:
         plates = kp_info.get("plates") or []
         result: list[dict] = []
@@ -467,7 +437,8 @@ class ArchiveService:
     @staticmethod
     def _parse_execution_terms(raw: str) -> str:
         try:
-            return normalize_execution_terms_to_ddmmyyyy(raw)
+            formatted, _ = parse_execution_terms(raw, policy="strict")
+            return formatted
         except ValueError as exc:
             raise ArchiveValidationError(str(exc)) from exc
 

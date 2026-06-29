@@ -12,7 +12,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core import config_and_data as cfg  # noqa: E402
+from core import config_and_data as cfg  # noqa: E402 — set_plate_lists_from_text only
 from core.plate_order_context import PlateOrderContext  # noqa: E402
 from core.plate_runtime_state import (  # noqa: E402
     fresh_plate_mutable_request_scope,
@@ -37,12 +37,12 @@ def test_fresh_thread_sees_empty_plate_runtime_not_demo() -> None:
 def test_plate_scope_isolates_concurrent_asyncio_tasks() -> None:
     async def _gather() -> tuple[int, int]:
         async def exercise(append_len: int) -> int:
-            with plate_mutable_runtime_scope(new_plate_mutable_runtime_empty()):
-                cfg.PLATES_1_2.append(1.0)
+            with plate_mutable_runtime_scope(new_plate_mutable_runtime_empty()) as rt:
+                rt.plates_1_2.append(1.0)
                 for _ in range(append_len):
-                    cfg.PLATES_1_2.append(1.0)
+                    rt.plates_1_2.append(1.0)
                 await asyncio.sleep(0.02)
-                return len(cfg.PLATES_1_2)
+                return len(rt.plates_1_2)
 
         a, b = await asyncio.gather(exercise(2), exercise(5))
         return a, b
@@ -53,7 +53,7 @@ def test_plate_scope_isolates_concurrent_asyncio_tasks() -> None:
 def test_set_plate_lists_from_text_leaves_data_visible_inside_fresh_request_scope() -> None:
     with fresh_plate_mutable_request_scope():
         cfg.set_plate_lists_from_text("ПБ 66-12-8п 1")
-        assert len(cfg.PLATES_1_2) >= 1
+        assert len(get_plate_mutable_runtime().plates_1_2) >= 1
 
 
 def test_nested_bound_scopes_keep_independent_plate_lists() -> None:
@@ -61,11 +61,11 @@ def test_nested_bound_scopes_keep_independent_plate_lists() -> None:
     inner = PlateOrderContext.fresh_empty()
 
     with outer.bound():
-        cfg.PLATES_1_2.append(1.0)
+        outer.plates.plates_1_2.append(1.0)
         with inner.bound():
-            cfg.PLATES_1_2.append(2.0)
-            assert cfg.PLATES_1_2 == [2.0]
-        assert cfg.PLATES_1_2 == [1.0]
+            inner.plates.plates_1_2.append(2.0)
+            assert get_plate_mutable_runtime().plates_1_2 == [2.0]
+        assert get_plate_mutable_runtime().plates_1_2 == [1.0]
 
     assert outer.plates.plates_1_2 == [1.0]
     assert inner.plates.plates_1_2 == [2.0]
@@ -75,9 +75,9 @@ def test_parallel_nested_bound_async_tasks_do_not_share_runtime() -> None:
     async def exercise(marker: float) -> float:
         ctx = PlateOrderContext.fresh_empty()
         with ctx.bound():
-            cfg.PLATES_1_2.append(marker)
+            ctx.plates.plates_1_2.append(marker)
             await asyncio.sleep(0.02)
-            return cfg.PLATES_1_2[0]
+            return get_plate_mutable_runtime().plates_1_2[0]
 
     async def _gather() -> tuple[float, float]:
         return await asyncio.gather(exercise(3.33), exercise(4.44))

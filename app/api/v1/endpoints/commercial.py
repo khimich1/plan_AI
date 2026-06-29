@@ -23,6 +23,7 @@ from app.schemas.commercial import (
     CommercialSaveOfferResponse,
     CommercialWidePlatesResolveRequest,
 )
+from app.concurrency.cpu_bound import run_cpu_bound
 from app.core.http_errors import (
     raise_parse_client_error,
     raise_unexpected_server_error,
@@ -31,7 +32,10 @@ from app.core.http_errors import (
 )
 from app.services.commercial_workflow_service import CommercialWorkflowService
 from app.services.commercial_service import CommercialService
-from app.services.commercial_upload_validation import prepare_commercial_ocr_upload
+from app.services.commercial_upload_validation import (
+    ensure_external_ocr_enabled,
+    prepare_commercial_ocr_upload,
+)
 from app.services.draft_store import DraftStore
 from core.exceptions import PlateParseError, UnpricedPlatesError
 
@@ -135,6 +139,7 @@ async def apply_ai_plates_to_draft(
     instruction: str = Form(...),
     image: UploadFile | None = File(default=None),
 ) -> CommercialDraftDetailsResponse:
+    ensure_external_ocr_enabled()
     image_bytes, image_name = await prepare_commercial_ocr_upload(
         image=image,
         user_id=int(user["id"]),
@@ -210,12 +215,12 @@ def update_draft_meta(
 
 
 @router.post("/drafts/{draft_id}/calculate", response_model=CommercialDraftDetailsResponse)
-def calculate_draft(
+async def calculate_draft(
     draft_id: str = Depends(verify_draft_ownership),
     workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftDetailsResponse:
     try:
-        result = workflow.calculate_draft(draft_id)
+        result = await run_cpu_bound(lambda: workflow.calculate_draft(draft_id))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
     except UnpricedPlatesError as exc:
@@ -228,14 +233,20 @@ def calculate_draft(
 
 
 @router.post("/generate-preview")
-def generate_preview(
+async def generate_preview(
     payload: CommercialPreviewRequest,
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
     plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     service: CommercialService = Depends(get_commercial_service),
 ) -> dict:
     try:
-        preview = service.generate_preview(text=payload.text, plate_order_ctx=plate_order_ctx)
+        preview = await run_cpu_bound(
+            lambda: service.generate_preview(
+                text=payload.text,
+                plate_order_ctx=plate_order_ctx,
+            ),
+            plate_order_ctx=plate_order_ctx,
+        )
         draft_id = DraftStore().save_preview(
             order=preview.parse_result.order,
             optimization_context=preview.optimization_context,

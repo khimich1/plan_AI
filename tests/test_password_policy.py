@@ -62,6 +62,15 @@ def test_register_user_request_accepts_strong_password() -> None:
     assert payload.password == _VALID_PASSWORD
 
 
+def test_register_user_request_rejects_invalid_role() -> None:
+    with pytest.raises(ValidationError):
+        RegisterUserRequest(
+            username="new_user",
+            password=_VALID_PASSWORD,
+            role="superadmin",
+        )
+
+
 def test_change_password_request_rejects_same_password() -> None:
     with pytest.raises(ValidationError, match="must differ"):
         ChangePasswordRequest(

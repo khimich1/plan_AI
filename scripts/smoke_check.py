@@ -7,9 +7,10 @@
     python scripts/smoke_check.py
 
 Проверяет:
-- что токен подхватывается из .env / bot/bot.env
 - что базы данных существуют (если нет — предупреждает)
 - что парсер плит работает на паре примеров
+
+Telegram-бот soft-decommissioned (P5 WP1): см. bot/README.md.
 """
 
 from __future__ import annotations
@@ -35,21 +36,14 @@ def main() -> int:
     print("SMOKE CHECK")
     print("=" * 70)
     print(f"Project root: {PROJECT_ROOT}")
+    print("[INFO] Telegram bot deprecated — see bot/README.md")
 
-    # 1) Токен
-    from bot.bot_config import BOT_TOKEN, DB_PATH
+    from core.project_paths import PRICE_DB_PATH
 
-    if not BOT_TOKEN or BOT_TOKEN == "your_bot_token_here" or len(BOT_TOKEN) < 20:
-        print("[FAIL] BOT_TOKEN НЕ настроен")
-        print("   - Открой bot/bot.env или .env в корне и укажи BOT_TOKEN=...")
+    if PRICE_DB_PATH.exists():
+        print(f"[OK] Найдена база цен pb.db: {PRICE_DB_PATH}")
     else:
-        print("[OK] BOT_TOKEN выглядит настроенным")
-
-    # 2) БД
-    if DB_PATH.exists():
-        print(f"[OK] Найдена база цен pb.db: {DB_PATH}")
-    else:
-        print(f"[WARN] Не найдена база цен pb.db: {DB_PATH}")
+        print(f"[WARN] Не найдена база цен pb.db: {PRICE_DB_PATH}")
         print("   - Это не всегда критично: прайс может подхватиться из Excel")
 
     plita_db = PROJECT_ROOT / "plita.db"
@@ -59,7 +53,6 @@ def main() -> int:
         print(f"[WARN] Не найдена база КП plita.db: {plita_db}")
         print("   - Она создастся при первом сохранении КП")
 
-    # 3) Парсер плит
     from core.config_and_data import set_plate_lists_from_text
 
     examples = [
@@ -85,4 +78,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

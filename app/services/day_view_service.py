@@ -12,6 +12,7 @@ from typing import Any
 
 from app.core.settings import get_settings
 from app.repositories.plan_repository import PlanRepository
+from app.services.plan_distribution_service import PlanDistributionService
 from core import plate_name as plate_name_utils
 from core.concrete_grade_resolver import resolve_concrete_grade_from_order
 
@@ -34,7 +35,7 @@ def _reinforcement_to_load_code(reinforcement: float) -> int:
     return 12
 
 
-def _build_smart_lookup(
+def build_smart_lookup(
     plate_lookup_exact: dict,
     plate_lookup_by_length: dict,
 ):
@@ -129,13 +130,13 @@ def _iter_plate_items(track: dict):
             yield float(sec_length), int(sec_width_mm), True, item, label_hint
 
 
-def _aggregate_plates_for_track_from_db(
+def aggregate_plates_for_track_from_db(
     track: dict,
     db_rows_by_id: dict[int, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """P5: строит plates_info по items с kp_plate_id, читая данные из БД.
 
-    Формат как у :func:`_aggregate_plates_for_track`, плюс учёт строк, исчезнувших
+    Формат как у :func:`aggregate_plates_for_track`, плюс учёт строк, исчезнувших
     из ``kp_plates`` после ``complete_day`` (см. :func:`_load_db_rows_for_plan_day`).
     """
     plates: list[dict[str, Any]] = []
@@ -380,7 +381,7 @@ def _load_db_rows_for_plan_day(
     return rows
 
 
-def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
+def aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
     plates: list[dict[str, Any]] = []
     is_rescue = track.get("label") == "РЕСКЬЮ"
 
@@ -504,7 +505,7 @@ def build_day_view_detail(
         db_path = str(_get_settings().plita_db_path)
 
     repo = plan_repository or PlanRepository(db_path=db_path)
-    multi = repo.get_tracks_for_date(date_key)
+    multi = PlanDistributionService().get_tracks_for_date(repo, date_key)
     if not multi:
         return None
 
@@ -517,7 +518,7 @@ def build_day_view_detail(
             "total_tracks": 0,
         }
 
-    lookup = _build_smart_lookup(
+    lookup = build_smart_lookup(
         multi.get("plate_lookup_exact", {}),
         multi.get("plate_lookup_by_length", {}),
     )
@@ -564,11 +565,11 @@ def build_day_view_detail(
                 if db_rows is not None:
                     db_rows_cache[cache_key] = db_rows
             if db_rows is not None:
-                plates_info = _aggregate_plates_for_track_from_db(track, db_rows)
+                plates_info = aggregate_plates_for_track_from_db(track, db_rows)
                 is_legacy = False
 
         if is_legacy:
-            plates_info = _aggregate_plates_for_track(track, lookup)
+            plates_info = aggregate_plates_for_track(track, lookup)
 
         block["tracks"].append(
             {
