@@ -32,8 +32,10 @@ services:
       PLANS_DIR: /data/plans
       PLANS_METADATA_PATH: /data/plans_metadata.json
       CURRENT_PLAN_PATH: /data/current_plan.json
+      WORK_CALENDAR_PATH: /data/work_calendar.json
       BACKEND_CORS_ALLOWED_ORIGINS: "https://zavodstart.ru,https://www.zavodstart.ru,http://localhost,http://127.0.0.1,http://localhost:5173,http://127.0.0.1:5173"
       # GPT-4o Vision: на VPS создайте .env рядом с compose (см. .gitignore) или export OPENAI_API_KEY
+      OCR_EXTERNAL_ENABLED: ${OCR_EXTERNAL_ENABLED:-true}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # APP_SECRET_KEY: "..."
       # Прайсы: смонтируйте том и выставьте пути через env

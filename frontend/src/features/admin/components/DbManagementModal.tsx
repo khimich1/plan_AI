@@ -236,9 +236,9 @@ export const DbManagementModal = ({ open, onClose }: Props) => {
                   title: "Удалить JSON-планы производства",
                   description: (
                     <span>
-                      Будут удалены файлы <code>bot/data/plans/*.json</code>,{" "}
-                      <code>plans_metadata.json</code> и{" "}
-                      <code>current_plan.json</code>. Содержимое SQLite-базы и
+                      Будут удалены файлы <code>data/plans/*.json</code>,{" "}
+                      <code>data/plans_metadata.json</code> и{" "}
+                      <code>data/current_plan.json</code>. Содержимое SQLite-базы и
                       календарь не пострадают.
                     </span>
                   ),

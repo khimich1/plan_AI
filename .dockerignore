@@ -64,7 +64,11 @@ Outputs/
 tmp/
 bot/tmp/
 
-# Состояние бота и черновиков (монтировать томом на сервере)
+# Состояние приложения и черновиков (монтировать томом на сервере)
+data/plans/
+data/plans_metadata.json
+data/current_plan.json
+# Legacy (до WP6-A2)
 bot/data/plans/
 bot/data/plans_metadata.json
 .app_data/

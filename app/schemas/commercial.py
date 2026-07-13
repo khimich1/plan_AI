@@ -147,9 +147,15 @@ class CommercialDraftMetadata(BaseModel):
     current_save_mode: CommercialSaveMode | None = None
     execution_terms: str = ""
     logistics_cost: float = 0.0
+    ocr_recognition_mode: str = ""
+    ocr_cost_usd: float = 0.0
+    ocr_cost_rub: float = 0.0
+    ocr_api_calls: int = 0
     ocr_method: str = ""
     ocr_verify_applied: bool = False
     ocr_verify_failed: bool = False
+    ocr_verify_skipped_reason: str | None = None
+    ocr_verify_applied_reason: str | None = None
     ocr_corrections: list[dict[str, Any]] = Field(default_factory=list)
     ocr_row_count_on_image: int | None = None
 

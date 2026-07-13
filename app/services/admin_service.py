@@ -11,8 +11,8 @@
 оставались тонкими, а пути к файлам брались из ``Settings``,
 а не из захардкоженных констант ``bot/handlers/admin.py``.
 
-ВНИМАНИЕ: операции рекомендуется выполнять при остановленном Telegram-боте,
-иначе возможна гонка за файлы ``bot/data/plans/*`` и за ``plita.db``.
+ВНИМАНИЕ: деструктивные операции требуют ``require_destructive_db_reset``;
+при параллельной записи возможна гонка за ``data/plans/*`` и ``plita.db``.
 """
 from __future__ import annotations
 
@@ -117,8 +117,8 @@ class AdminService:
     def _clear_all_plans(self) -> dict[str, int]:
         """Удаляет SQLite-планы и legacy JSON-файлы планов с метаданными.
 
-        Повторяет логику ``bot/handlers/admin.py:386-436``, но пути берёт из
-        ``Settings``: ``plans_dir``, ``plans_metadata_path``, ``current_plan_path``.
+        Пути берёт из ``Settings``: ``plans_dir``, ``plans_metadata_path``,
+        ``current_plan_path``.
         """
         report: dict[str, int] = {
             "sqlite_plans": 0,

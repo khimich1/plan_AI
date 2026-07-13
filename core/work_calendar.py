@@ -10,7 +10,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-CALENDAR_PATH = Path(__file__).resolve().parent.parent / "bot" / "data" / "work_calendar.json"
+CALENDAR_PATH = Path(__file__).resolve().parent.parent / "data" / "work_calendar.json"
 
 
 def _load_calendar_data() -> dict:

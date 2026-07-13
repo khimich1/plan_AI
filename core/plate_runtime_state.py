@@ -227,7 +227,7 @@ MUTABLE_ATTR_MAP: Dict[str, str] = {
 }
 
 # PEP 562 proxy (config_and_data.__getattr__): только имена с оставшимися bot/test cfg.-callers.
-# Web/core/app — get_plate_mutable_runtime(); см. pep562-config-and-data-decommission.md.
+# Web/core/app — get_plate_mutable_runtime(); см. docs/pep562-config-and-data-decommission.md.
 MUTABLE_LEGACY_NAMES = frozenset(
     {
         # bot/handlers/optimize.py
