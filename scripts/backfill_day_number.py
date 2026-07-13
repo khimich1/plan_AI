@@ -5,7 +5,7 @@
 планов будет проваливаться в legacy fuzzy-lookup. Чтобы переключить
 существующие активные планы на DB-путь, нужно:
 
-1. Прочитать каждый файл ``bot/data/plans/*.json``.
+1. Прочитать каждый файл ``data/plans/*.json``.
 2. Для каждой даты в ``plan.days[date].tracks`` определить ``day_number``.
 3. Для каждой плиты ``kp_id + plate_name`` пометить соответствующую строку
    ``kp_plates`` с этим ``plan_id`` и ``status='в плане'``, проставив
@@ -165,8 +165,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--plans-dir",
-        default=str(PROJECT_ROOT / "bot" / "data" / "plans"),
-        help="Директория с JSON-планами (по умолчанию bot/data/plans)",
+        default=str(PROJECT_ROOT / "data" / "plans"),
+        help="Директория с JSON-планами (по умолчанию data/plans)",
     )
     parser.add_argument(
         "--dry-run",

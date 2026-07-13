@@ -53,7 +53,7 @@ export default defineConfig({
     // Без этого fetch на http://localhost:5173/api/... отдаёт HTML SPA → срыв JSON в auth/me и пустой UI
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8001",
+        target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },

@@ -2,7 +2,7 @@
 Загрузка, сохранение и метаданные производственных планов.
 
 Единый persistence path — SQLite через :class:`app.repositories.plan_repository.PlanRepository`.
-JSON-файлы в ``bot/data/plans/`` больше не используются для чтения/записи (см. WP1 / A1).
+JSON-файлы в ``data/plans/`` больше не используются для чтения/записи (см. WP1 / A1).
 """
 from __future__ import annotations
 

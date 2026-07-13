@@ -12,6 +12,8 @@ services:
     image: plan-wed-web:local
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
@@ -24,10 +26,12 @@ services:
       PLANS_DIR: /data/plans
       PLANS_METADATA_PATH: /data/plans_metadata.json
       CURRENT_PLAN_PATH: /data/current_plan.json
-      # Календарь по умолчанию из образа; для правок на сервере перенесите файл в /data и задайте WORK_CALENDAR_PATH
+      WORK_CALENDAR_PATH: /data/work_calendar.json
       # BACKEND_CORS_ALLOWED_ORIGINS: "https://your-domain.example"
       # APP_SECRET_KEY: "..."
-      # OPENAI_API_KEY: "..."  # если нужен OCR
+      # OCR / GPT Vision (значения из .env через env_file):
+      # OCR_EXTERNAL_ENABLED=true
+      # OPENAI_API_KEY=...
       # Прайсы и резы лежат вне образа — смонтируйте каталог и укажите пути:
       # PRICES_DIR: /knowledge
       # PRICE_XLSX_PATH: /knowledge/ваш-прайс.xlsx

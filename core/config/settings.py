@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -68,10 +69,31 @@ class Settings(BaseSettings):
     bot_telegram_allowlist_raw: str = Field(default="", alias="BOT_TELEGRAM_ALLOWLIST")
     bot_auth_fail_closed: bool | None = Field(default=None, alias="BOT_AUTH_FAIL_CLOSED")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
-    # External OCR / OpenAI image recognition (off by default; enable explicitly for staging).
+    # External OCR / vision recognition (off by default; enable explicitly for staging).
     ocr_external_enabled: bool = Field(default=False, alias="OCR_EXTERNAL_ENABLED")
     ocr_recognition_mode: str = Field(default="full_gpt", alias="OCR_RECOGNITION_MODE")
+    ocr_provider: Literal["gigachat", "openai"] = Field(default="openai", alias="OCR_PROVIDER")
     ocr_verify_enabled: bool = Field(default=True, alias="OCR_VERIFY_ENABLED")
+    ocr_verify_mode: Literal["auto", "always", "never"] = Field(
+        default="auto",
+        alias="OCR_VERIFY_MODE",
+    )
+    ocr_max_api_calls: int = Field(default=2, alias="OCR_MAX_API_CALLS", ge=1, le=2)
+    ocr_verify_auto_max_rows: int = Field(default=10, alias="OCR_VERIFY_AUTO_MAX_ROWS", ge=1)
+    ocr_verify_auto_min_confidence: float = Field(
+        default=0.92,
+        alias="OCR_VERIFY_AUTO_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
+    ocr_verify_auto_max_bytes: int = Field(
+        default=819_200,
+        alias="OCR_VERIFY_AUTO_MAX_BYTES",
+        ge=1024,
+    )
+    gigachat_credentials: str | None = Field(default=None, alias="GIGACHAT_CREDENTIALS")
+    gigachat_model: str = Field(default="GigaChat-2-Max", alias="GIGACHAT_MODEL")
+    gigachat_scope: str = Field(default="GIGACHAT_API_PERS", alias="GIGACHAT_SCOPE")
     weight_source: str = Field(default="formula", alias="WEIGHT_SOURCE")
 
     pb_db_path: Path = Field(default=PROJECT_ROOT / "pb.db")
@@ -84,10 +106,10 @@ class Settings(BaseSettings):
     )
     outputs_dir: Path = Field(default=PROJECT_ROOT / "Визуализация_Раскладки")
     prices_dir: Path = Field(default=PROJECT_ROOT / "банк знаний")
-    plans_dir: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "plans")
-    plans_metadata_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "plans_metadata.json")
-    current_plan_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "current_plan.json")
-    work_calendar_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "work_calendar.json")
+    plans_dir: Path = Field(default=PROJECT_ROOT / "data" / "plans")
+    plans_metadata_path: Path = Field(default=PROJECT_ROOT / "data" / "plans_metadata.json")
+    current_plan_path: Path = Field(default=PROJECT_ROOT / "data" / "current_plan.json")
+    work_calendar_path: Path = Field(default=PROJECT_ROOT / "data" / "work_calendar.json")
     logs_dir: Path = Field(default=PROJECT_ROOT / "logs")
     drafts_dir: Path = Field(default=PROJECT_ROOT / ".app_data" / "drafts")
     frontend_dist_dir: Path = Field(default=PROJECT_ROOT / "frontend" / "dist")
@@ -258,6 +280,17 @@ class Settings(BaseSettings):
                 "when bot authentication is enabled (example: 123456789:admin). "
                 "Roles: admin, manager, production."
             )
+        return self
+
+    @model_validator(mode="after")
+    def migrate_ocr_verify_enabled(self) -> Settings:
+        if os.getenv("OCR_VERIFY_ENABLED") is not None:
+            _logger.warning(
+                "OCR_VERIFY_ENABLED is deprecated; use OCR_VERIFY_MODE (auto|always|never) instead."
+            )
+            if os.getenv("OCR_VERIFY_MODE") is None:
+                mode = "always" if self.ocr_verify_enabled else "never"
+                object.__setattr__(self, "ocr_verify_mode", mode)
         return self
 
     @model_validator(mode="after")

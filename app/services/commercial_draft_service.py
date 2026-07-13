@@ -30,12 +30,64 @@ def safe_ocr_temp_suffix(image_filename: str | None) -> str:
 _safe_ocr_temp_suffix = safe_ocr_temp_suffix
 
 
+_OCR_VERIFY_SKIPPED_WARNING = (
+    "Распознавание выполнено без второй проверки (OCR_MAX_API_CALLS=1). "
+    "Проверьте марки и количество вручную."
+)
+
+
 class CommercialDraftService:
     """Draft ingest helpers: OCR/text source resolution and preview metadata assembly."""
 
     def __init__(self, *, commercial_service: CommercialService | None = None) -> None:
         self.settings = get_settings()
         self.commercial_service = commercial_service or CommercialService()
+
+    def _ocr_quality_warnings(self, result: dict[str, Any]) -> list[str]:
+        """Q4: при OCR_MAX_API_CALLS=1 предупреждение о сомнительном Extract."""
+        if int(self.settings.ocr_max_api_calls or 2) > 1:
+            return []
+
+        plates = list(result.get("plates") or [])
+        min_confidence = float(self.settings.ocr_verify_auto_min_confidence or 0.92)
+        has_low_confidence = any(self._plate_confidence(plate) < min_confidence for plate in plates)
+        has_parser_rejected = any(
+            "parser_rejected" in list(plate.get("issues") or [])
+            for plate in plates
+        )
+        if has_low_confidence or has_parser_rejected:
+            return [_OCR_VERIFY_SKIPPED_WARNING]
+        return []
+
+    @staticmethod
+    def _plate_confidence(plate: dict[str, Any]) -> float:
+        try:
+            return float(plate.get("confidence", 0.95))
+        except (TypeError, ValueError):
+            return 0.95
+
+    def _map_ocr_result_metadata(
+        self,
+        result: dict[str, Any],
+        *,
+        recognition_mode: str,
+    ) -> dict[str, Any]:
+        return {
+            "ocr_recognition_mode": recognition_mode,
+            "ocr_cost_usd": float(result.get("cost_usd", 0.0) or 0.0),
+            "ocr_cost_rub": float(result.get("ocr_cost_rub", 0.0) or 0.0),
+            "ocr_api_calls": int(result.get("ocr_api_calls", 1) or 1),
+            "ocr_plates": list(result.get("plates") or []),
+            "ocr_draft_plates": list(result.get("draft_plates") or []),
+            "ocr_corrections": list(result.get("corrections") or []),
+            "ocr_verify_applied": bool(result.get("verify_applied")),
+            "ocr_verify_failed": bool(result.get("verify_failed")),
+            "ocr_method": str(result.get("ocr_method") or result.get("method") or "GPT-4o"),
+            "ocr_row_count_on_image": result.get("row_count_on_image"),
+            "ocr_verify_skipped_reason": result.get("ocr_verify_skipped_reason"),
+            "ocr_verify_applied_reason": result.get("ocr_verify_applied_reason"),
+            "ocr_warnings": self._ocr_quality_warnings(result),
+        }
 
     async def extract_text_from_image(
         self,
@@ -58,25 +110,20 @@ class CommercialDraftService:
                 force_gpt=(recognition_mode == "full_gpt"),
                 show_cost=True,
                 mode=recognition_mode,
-                verify_enabled=self.settings.ocr_verify_enabled,
             )
         finally:
             tmp_path.unlink(missing_ok=True)
 
-        recognized_text = str((result or {}).get("text", "")).strip()
+        if not result:
+            raise ValueError("Не удалось распознать текст на изображении.")
+
+        recognized_text = str(result.get("text", "")).strip()
         if not recognized_text:
             raise ValueError("Не удалось распознать текст на изображении.")
-        return recognized_text, {
-            "ocr_recognition_mode": recognition_mode,
-            "ocr_cost_usd": float((result or {}).get("cost_usd", 0.0) or 0.0),
-            "ocr_plates": list((result or {}).get("plates") or []),
-            "ocr_draft_plates": list((result or {}).get("draft_plates") or []),
-            "ocr_corrections": list((result or {}).get("corrections") or []),
-            "ocr_verify_applied": bool((result or {}).get("verify_applied")),
-            "ocr_verify_failed": bool((result or {}).get("verify_failed")),
-            "ocr_method": str((result or {}).get("method") or "GPT-4o"),
-            "ocr_row_count_on_image": (result or {}).get("row_count_on_image"),
-        }
+        return recognized_text, self._map_ocr_result_metadata(
+            result,
+            recognition_mode=recognition_mode,
+        )
 
     async def resolve_source_input(
         self,
@@ -143,6 +190,13 @@ class CommercialDraftService:
         source_metadata: dict[str, Any],
         owner_user_id: int | None = None,
     ) -> dict[str, Any]:
+        source_metadata_payload = dict(source_metadata)
+        ocr_warnings = list(source_metadata_payload.pop("ocr_warnings", []) or [])
+        warnings = list(preview.parse_result.warnings)
+        for warning in ocr_warnings:
+            if warning not in warnings:
+                warnings.append(warning)
+
         metadata = dict(base_metadata)
         metadata.update(
             {
@@ -151,7 +205,7 @@ class CommercialDraftService:
                 "ocr_text": ocr_text,
                 "input_text": input_text,
                 "accumulated_text": input_text,
-                "warnings": list(preview.parse_result.warnings),
+                "warnings": warnings,
                 "unparsed_lines": list(preview.parse_result.unparsed_lines),
                 "normalized_text": preview.parse_result.normalized_text,
                 "normalized_lines": list(preview.parse_result.normalized_lines),
@@ -169,7 +223,7 @@ class CommercialDraftService:
                 "generated_files": [],
                 "current_save_mode": None,
                 "execution_terms": "",
-                **source_metadata,
+                **source_metadata_payload,
             }
         )
         metadata.setdefault("manager_id", None)

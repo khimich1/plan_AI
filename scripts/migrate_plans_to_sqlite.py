@@ -1,6 +1,6 @@
 """Migrate production plans from JSON files to SQLite (WP4 / A2 part 2).
 
-Reads ``bot/data/plans/*.json`` and ``bot/data/plans_metadata.json``, writes
+Reads ``data/plans/*.json`` and ``data/plans_metadata.json``, writes
 rows into ``production_plans`` via :class:`app.repositories.plan_repository.PlanRepository`.
 
 Features:
@@ -35,8 +35,8 @@ from core.serialization import strip_plate_audit_from_plan  # noqa: E402
 
 logger = logging.getLogger("migrate_plans_to_sqlite")
 
-DEFAULT_PLANS_DIR = PROJECT_ROOT / "bot" / "data" / "plans"
-DEFAULT_METADATA_PATH = PROJECT_ROOT / "bot" / "data" / "plans_metadata.json"
+DEFAULT_PLANS_DIR = PROJECT_ROOT / "data" / "plans"
+DEFAULT_METADATA_PATH = PROJECT_ROOT / "data" / "plans_metadata.json"
 DEFAULT_DB_PATH = PROJECT_ROOT / "plita.db"
 
 PLAN_KEY_FIELDS = ("id", "name", "created_at", "start_date", "tracks_count")
