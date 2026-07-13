@@ -7,7 +7,7 @@ from core.commercial_pricing import ensure_order_priced
 
 # Wizard / calculate prerequisite messages (single source of truth).
 ERR_EMPTY_PLATES = "Список плит пустой."
-ERR_WIDE_PLATES = "Сначала обработайте плиты шире 12 дм."
+ERR_WIDE_PLATES = "Сначала примите решение по позициям шире стандартной."
 ERR_NO_MANAGER = "Выберите менеджера."
 ERR_NO_CLIENT = "Укажите клиента."
 ERR_NO_DELIVERY = "Укажите условия поставки."

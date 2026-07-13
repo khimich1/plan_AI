@@ -373,6 +373,13 @@ class CommercialWorkflowService:
             raise ValueError("После обработки широких плит список стал пустым.")
 
         next_text = "\n".join(merged_lines)
+        plate_batches = list(metadata.get("plate_batches") or [])
+        updated_batches = self._apply_wide_plate_decisions_to_batches(
+            plate_batches,
+            wide_set,
+            resolved_by_line,
+            plate_order_ctx=plate_order_ctx,
+        )
         preview = self.commercial_service.generate_preview(
             text=next_text,
             plate_order_ctx=plate_order_ctx,
@@ -385,7 +392,7 @@ class CommercialWorkflowService:
             ocr_text=str(metadata.get("ocr_text", "") or ""),
             input_text=next_text,
             last_source_filename=str(metadata.get("last_source_filename", "") or ""),
-            plate_batches=list(metadata.get("plate_batches") or []),
+            plate_batches=updated_batches,
             wide_plates_resolved=True,
             source_metadata={},
         )
@@ -397,7 +404,7 @@ class CommercialWorkflowService:
             order_data=preview.order_data,
             metadata=next_metadata,
         )
-        self._persist_wizard_step(draft_id, WizardStepId.manager)
+        self._persist_wizard_step(draft_id, WizardStepId.plates)
         return self.get_draft_details(draft_id)
 
     def update_draft_meta(
@@ -455,16 +462,8 @@ class CommercialWorkflowService:
         if updates:
             if prev_step == WizardStepId.result and set(updates.keys()).issubset(financial_keys):
                 self._persist_wizard_step(draft_id, WizardStepId.result)
-            elif "manager_id" in updates and not (
-                {"client_name", "conditions_mode", "delivery_conditions", "payment_conditions"} & set(updates.keys())
-            ):
-                self._persist_wizard_step(draft_id, WizardStepId.manager)
-            elif self._meta_ready_for_calculate(md):
-                self._persist_wizard_step(draft_id, WizardStepId.client)
-            elif md.get("manager_id"):
-                self._persist_wizard_step(draft_id, WizardStepId.client)
             else:
-                self._persist_wizard_step(draft_id, WizardStepId.manager)
+                self._persist_wizard_step(draft_id, WizardStepId.client)
 
         return self.get_draft_details(draft_id)
 
@@ -715,6 +714,49 @@ class CommercialWorkflowService:
             plate_order_ctx=plate_order_ctx,
         )
         return list(preview.parse_result.normalized_lines)
+
+    def _apply_wide_plate_decisions_to_batches(
+        self,
+        plate_batches: list[dict[str, Any]],
+        wide_set: set[str],
+        resolved_by_line: dict[str, dict[str, Any]],
+        *,
+        plate_order_ctx: PlateOrderContext,
+    ) -> list[dict[str, Any]]:
+        if not plate_batches:
+            return plate_batches
+
+        updated: list[dict[str, Any]] = []
+        for batch in plate_batches:
+            batch_text = str(batch.get("normalized_text", "") or "")
+            batch_lines = [line.strip() for line in batch_text.split("\n") if line.strip()]
+            next_lines: list[str] = []
+            for line in batch_lines:
+                if line not in wide_set:
+                    next_lines.append(line)
+                    continue
+                decision = resolved_by_line.get(line)
+                if decision is None:
+                    next_lines.append(line)
+                    continue
+                action = str(decision.get("action", "")).strip().lower()
+                if action == "confirm":
+                    next_lines.append(line)
+                elif action == "exclude":
+                    continue
+                elif action == "replace":
+                    replacement_text = str(decision.get("replacement_text", "") or "").strip()
+                    replacement_lines = self._normalize_replacement_lines(
+                        replacement_text,
+                        plate_order_ctx=plate_order_ctx,
+                    )
+                    next_lines.extend(replacement_lines)
+                else:
+                    next_lines.append(line)
+            next_batch = dict(batch)
+            next_batch["normalized_text"] = "\n".join(next_lines)
+            updated.append(next_batch)
+        return updated
 
     def get_or_generate_file(self, safe_filename: str) -> Path:
         """Path under configured ``outputs_dir`` for a generated file basename (no subpaths)."""

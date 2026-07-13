@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import pytest
+
+from app.schemas.commercial import WizardNextRequiredAction, WizardStepId, _coerce_wizard_step_id
+from app.services.commercial_calculation_service import CommercialCalculationService
+from app.services.commercial_wizard_step_service import CommercialWizardStepService
+from app.services.draft_store import DraftStore
+
+
+@pytest.fixture
+def wizard_service() -> CommercialWizardStepService:
+    return CommercialWizardStepService(
+        calculation_service=CommercialCalculationService(),
+        draft_store=DraftStore(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("plates", WizardStepId.plates),
+        ("client", WizardStepId.client),
+        ("result", WizardStepId.result),
+        ("wide-plates", WizardStepId.plates),
+        ("wide_plates", WizardStepId.plates),
+        ("manager", WizardStepId.client),
+        ("calculate", WizardStepId.client),
+        ("", WizardStepId.plates),
+        ("unknown-step", WizardStepId.plates),
+    ],
+)
+def test_coerce_wizard_step_id_legacy_aliases(raw: str, expected: WizardStepId) -> None:
+    assert _coerce_wizard_step_id(raw) == expected
+
+
+def test_wizard_state_ingest_plates_validation_errors(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {"current_step": WizardStepId.plates.value, "wide_plate_lines": [], "wide_plates_resolved": True},
+        "order_data": [],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["next_required_action"] == WizardNextRequiredAction.ingest_plates
+    assert state["validation_errors"] == ["Список плит пустой."]
+    assert state["can_proceed_to"] == []
+
+
+def test_wizard_state_wide_plates_blocks_forward_on_plates(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {
+            "current_step": WizardStepId.plates.value,
+            "wide_plate_lines": [{"id": "w1", "line": "X", "qty": 1}],
+            "wide_plates_resolved": False,
+        },
+        "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.plates
+    assert state["can_proceed_to"] == []
+    assert state["next_required_action"] == WizardNextRequiredAction.resolve_wide_plates
+    assert state["validation_errors"] == ["Сначала примите решение по позициям шире стандартной."]
+
+
+def test_wizard_state_legacy_wide_plates_step_maps_to_plates(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {
+            "current_step": "wide-plates",
+            "wide_plate_lines": [{"id": "w1", "line": "X", "qty": 1}],
+            "wide_plates_resolved": False,
+        },
+        "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.plates
+    assert state["can_proceed_to"] == []
+    assert state["next_required_action"] == WizardNextRequiredAction.resolve_wide_plates
+
+
+def test_wizard_state_plates_can_proceed_to_client_when_ready(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {
+            "current_step": WizardStepId.plates.value,
+            "wide_plate_lines": [],
+            "wide_plates_resolved": True,
+        },
+        "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.plates
+    assert state["can_proceed_to"] == [WizardStepId.client]
+
+
+def test_wizard_state_client_requires_calculate(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {
+            "current_step": WizardStepId.client.value,
+            "manager_id": 1,
+            "client_name": "ООО А",
+            "conditions_mode": "standard",
+            "wide_plate_lines": [],
+            "wide_plates_resolved": True,
+        },
+        "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.client
+    assert state["can_proceed_to"] == []
+    assert state["next_required_action"] == WizardNextRequiredAction.post_calculate
+    assert state["validation_errors"] == []
+
+
+def test_wizard_state_result_after_calculate(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {
+            "current_step": WizardStepId.result.value,
+            "manager_id": 1,
+            "client_name": "ООО А",
+            "conditions_mode": "standard",
+            "wide_plate_lines": [],
+            "wide_plates_resolved": True,
+        },
+        "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.result
+    assert state["next_required_action"] == WizardNextRequiredAction.none
+    assert state["validation_errors"] == []
+
+
+def test_wizard_state_select_manager_on_client_step(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {
+            "current_step": "manager",
+            "manager_id": None,
+            "client_name": "",
+            "conditions_mode": "standard",
+            "wide_plate_lines": [],
+            "wide_plates_resolved": True,
+        },
+        "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.client
+    assert state["next_required_action"] == WizardNextRequiredAction.select_manager
+    assert state["validation_errors"] == ["Выберите менеджера."]

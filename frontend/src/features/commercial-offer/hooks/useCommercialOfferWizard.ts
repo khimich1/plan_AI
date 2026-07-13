@@ -88,7 +88,7 @@ export const useCommercialOfferWizard = () => {
       image: File | null;
     }) => commercialOfferApi.applyAiPlates(draftId, { instruction, image }),
     onSuccess: (draft, variables) => {
-      dispatch({ type: "hydrate-draft", payload: draft });
+      dispatch({ type: "start-batch-review", payload: draft });
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
     },
@@ -103,6 +103,7 @@ export const useCommercialOfferWizard = () => {
       decisions: Array<{ sourceLine: string; action: WidePlateAction; replacementText: string }>;
     }) => commercialOfferApi.resolveWidePlates(draftId, decisions),
     onSuccess: (draft, variables) => {
+      dispatch({ type: "sync-after-wide-plates", payload: draft });
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
     },

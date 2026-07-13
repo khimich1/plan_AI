@@ -20,6 +20,7 @@ export const AppHeader = () => {
   const [dbModalOpen, setDbModalOpen] = useState(false);
   const isAdmin = user?.role === "admin";
   const isProduction = user?.role === "production";
+  const isManager = user?.role === "manager";
 
   const onLogoutClick = async () => {
     try {
@@ -87,14 +88,16 @@ export const AppHeader = () => {
               </NavLink>
             </>
           )}
-          <NavLink
-            to={PRODUCTION_PATH}
-            className={({ isActive }) =>
-              isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
-            }
-          >
-            Производство
-          </NavLink>
+          {!isManager && (
+            <NavLink
+              to={PRODUCTION_PATH}
+              className={({ isActive }) =>
+                isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
+              }
+            >
+              Производство
+            </NavLink>
+          )}
           {isAdmin && (
             <button
               type="button"

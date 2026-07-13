@@ -17,8 +17,6 @@ class WizardStepId(str, Enum):
     """Канонические шаги мастера КП (совпадают с JSON-значениями на фронтенде)."""
 
     plates = "plates"
-    wide_plates = "wide-plates"
-    manager = "manager"
     client = "client"
     result = "result"
 
@@ -41,7 +39,9 @@ def _coerce_wizard_step_id(value: Any) -> WizardStepId:
     if not raw:
         return WizardStepId.plates
     legacy_aliases = {
-        "wide_plates": WizardStepId.wide_plates,
+        "wide-plates": WizardStepId.plates,
+        "wide_plates": WizardStepId.plates,
+        "manager": WizardStepId.client,
         "calculate": WizardStepId.client,
     }
     if raw in legacy_aliases:

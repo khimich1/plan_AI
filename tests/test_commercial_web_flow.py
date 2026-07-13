@@ -898,6 +898,105 @@ def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
     assert captured["text"] == "ПБ 59-12-8п 1"
 
 
+def test_resolve_wide_plates_updates_current_plate_batch_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = CommercialWorkflowService()
+    draft_payload = {
+        "order": PlateOrder(),
+        "optimization_context": OptimizationContext(order=PlateOrder()),
+        "order_data": [],
+        "metadata": {
+            "source_type": "image",
+            "original_text": "",
+            "ocr_text": "ПБ 63-15-8 3\nПБ 58-15-8 10",
+            "input_text": "ПБ 63-15-8 3\nПБ 58-15-8 10",
+            "normalized_lines": ["ПБ 63-15-8 3", "ПБ 58-15-8 10"],
+            "plate_batches": [
+                {
+                    "source_type": "image",
+                    "original_text": "",
+                    "normalized_text": "ПБ 63-15-8 3\nПБ 58-15-8 10",
+                    "ocr_text": "ПБ 63-15-8 3\nПБ 58-15-8 10",
+                    "filename": "photo.jpg",
+                }
+            ],
+            "wide_plate_lines": [
+                {"id": "wide-1", "line": "ПБ 63-15-8 3", "qty": 3},
+                {"id": "wide-2", "line": "ПБ 58-15-8 10", "qty": 10},
+            ],
+            "last_source_filename": "photo.jpg",
+        },
+    }
+    monkeypatch.setattr(
+        workflow,
+        "_load_draft_or_raise",
+        lambda _draft_id: draft_payload,
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_generate_preview(
+        *,
+        text: str | None = None,
+        parse_result: ParseResult | None = None,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ):
+        _ = parse_result
+        _ = plate_order_ctx
+        preview_text = text or ""
+        captured["text"] = preview_text
+        fake_parse_result = ParseResult(
+            order=PlateOrder(),
+            normalized_text=preview_text,
+            normalized_lines=[line for line in preview_text.splitlines() if line.strip()],
+        )
+        return CommercialPreviewResult(
+            parse_result=fake_parse_result,
+            optimization_context=OptimizationContext(
+                order=PlateOrder(),
+                optimization_result={"total_plates": 0, "total_cost": 0.0},
+            ),
+            order_data=[],
+            price_rows=[],
+            breakdown_tables=[],
+            total_sum=0.0,
+        )
+
+    monkeypatch.setattr(workflow.commercial_service, "generate_preview", fake_generate_preview)
+
+    def fake_replace_preview(
+        _draft_id: str,
+        *,
+        order: Any,
+        optimization_context: Any,
+        order_data: Any,
+        metadata: dict[str, Any],
+    ) -> None:
+        _ = order
+        _ = optimization_context
+        _ = order_data
+        captured["plate_batches"] = metadata.get("plate_batches")
+
+    monkeypatch.setattr(workflow.draft_store, "replace_preview", fake_replace_preview)
+    monkeypatch.setattr(workflow, "get_draft_details", lambda _draft_id: {"draft_id": _draft_id})
+
+    workflow.resolve_wide_plates(
+        "draft-1",
+        decisions=[
+            {"line_id": "wide-1", "action": "exclude"},
+            {"line_id": "wide-2", "action": "confirm"},
+        ],
+        plate_order_ctx=PlateOrderContext.fresh_empty(),
+    )
+
+    assert captured["text"] == "ПБ 58-15-8 10"
+    batches = captured["plate_batches"]
+    assert batches is not None
+    assert len(batches) == 1
+    assert batches[0]["normalized_text"] == "ПБ 58-15-8 10"
+
+
 def test_save_draft_archive_passes_normalized_execution_terms(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -990,26 +1089,26 @@ def test_wizard_state_wide_plates_blocks_forward() -> None:
     }
     state = wf.build_wizard_state(payload)
     assert state["current_step"] == WizardStepId.plates
-    assert state["can_proceed_to"] == [WizardStepId.wide_plates]
+    assert state["can_proceed_to"] == []
     assert state["next_required_action"] == WizardNextRequiredAction.resolve_wide_plates
-    assert state["validation_errors"] == ["Сначала обработайте плиты шире 12 дм."]
+    assert state["validation_errors"] == ["Сначала примите решение по позициям шире стандартной."]
 
 
-def test_wizard_state_wide_plates_step_locked_until_resolve() -> None:
+def test_wizard_state_legacy_wide_plates_step_maps_to_plates() -> None:
     wf = CommercialWorkflowService()
     payload = {
         "metadata": {
-            "current_step": WizardStepId.wide_plates.value,
+            "current_step": "wide-plates",
             "wide_plate_lines": [{"id": "w1", "line": "X", "qty": 1}],
             "wide_plates_resolved": False,
         },
         "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
     }
     state = wf.build_wizard_state(payload)
-    assert state["current_step"] == WizardStepId.wide_plates
+    assert state["current_step"] == WizardStepId.plates
     assert state["can_proceed_to"] == []
     assert state["next_required_action"] == WizardNextRequiredAction.resolve_wide_plates
-    assert state["validation_errors"] == ["Сначала обработайте плиты шире 12 дм."]
+    assert state["validation_errors"] == ["Сначала примите решение по позициям шире стандартной."]
 
 
 def test_wizard_state_client_requires_calculate() -> None:
@@ -1055,7 +1154,7 @@ def test_wizard_state_select_manager_validation_errors() -> None:
     wf = CommercialWorkflowService()
     payload = {
         "metadata": {
-            "current_step": WizardStepId.manager.value,
+            "current_step": "manager",
             "manager_id": None,
             "client_name": "",
             "conditions_mode": "standard",
@@ -1065,5 +1164,6 @@ def test_wizard_state_select_manager_validation_errors() -> None:
         "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
     }
     state = wf.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.client
     assert state["next_required_action"] == WizardNextRequiredAction.select_manager
     assert state["validation_errors"] == ["Выберите менеджера."]
