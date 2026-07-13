@@ -106,10 +106,18 @@ export const CalculationResultStep = ({
     setLogisticsCostDraft(String(parsed).replace(".", ","));
   };
 
+  const totalWithVat = formatTotalsMoney(serverTotalWithVat);
+  const readinessWarnings = [
+    ...draft.metadata.warnings,
+    ...(draft.metadata.unparsed_lines.length > 0
+      ? [`Строки, не попавшие в расчёт: ${draft.metadata.unparsed_lines.length}`]
+      : []),
+  ];
+
   return (
     <StepLayout
-    title="Шаг 5. Расчёт и результат"
-    description="Запустите финальный расчёт, проверьте итоговые данные и скачайте файлы. Сохранение в БД и архив также выполняется через backend."
+    title="Шаг 3. Результат"
+    description="Проверьте готовность КП, скачайте файлы и сохраните результат."
     footer={
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem" }}>
         <Button type="button" variant="ghost" onClick={onBack}>
@@ -123,7 +131,26 @@ export const CalculationResultStep = ({
   >
     {errorMessage && <Alert tone="error">{errorMessage}</Alert>}
 
-    <Card title="Summary">
+    <Card title="Готовность КП" subtitle="Перед отправкой клиенту проверьте ключевые пункты.">
+      <ul style={{ margin: 0, paddingLeft: "1.25rem", display: "grid", gap: "0.5rem" }}>
+        <li>✓ {draft.order_data.length} плит в заказе</li>
+        <li>✓ Клиент: {draft.metadata.client_name || "не указан"}</li>
+        <li>✓ Сумма с НДС: {totalWithVat}</li>
+        {readinessWarnings.length > 0 && (
+          <li style={{ color: "#b54708" }}>
+            ⚠ {readinessWarnings.length} предупреждени{readinessWarnings.length === 1 ? "е" : readinessWarnings.length < 5 ? "я" : "й"}:
+            <ul style={{ margin: "0.35rem 0 0", paddingLeft: "1.25rem" }}>
+              {readinessWarnings.slice(0, 5).map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+              {readinessWarnings.length > 5 && <li>… и ещё {readinessWarnings.length - 5}</li>}
+            </ul>
+          </li>
+        )}
+      </ul>
+    </Card>
+
+    <Card title="Сводка">
       <div
         style={{
           display: "grid",

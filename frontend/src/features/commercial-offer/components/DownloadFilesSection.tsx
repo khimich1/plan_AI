@@ -1,4 +1,4 @@
-import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
+import type { CommercialDraftDetails, FileKind } from "@/features/commercial-offer/types/commercialOffer";
 import { downloadFile } from "@/shared/lib/downloadFile";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -11,6 +11,12 @@ type DownloadFilesSectionProps = {
   onGenerateSchema: () => void;
 };
 
+const FILE_KIND_LABELS: Record<Exclude<FileKind, "schema">, string> = {
+  pdf: "PDF коммерческого предложения",
+  xlsx: "Excel со списком позиций",
+  breakdown: "Детальная разбивка цен",
+};
+
 export const DownloadFilesSection = ({
   draft,
   isPending,
@@ -20,47 +26,50 @@ export const DownloadFilesSection = ({
 }: DownloadFilesSectionProps) => {
   const mainFiles = draft.files.filter((file) => file.kind !== "schema");
   const schemaFile = draft.files.find((file) => file.kind === "schema");
-  const showSchemaSection = mainFiles.length > 0;
+  const filesByKind = new Map(mainFiles.map((file) => [file.kind, file]));
+  const missingMainKinds = (["pdf", "xlsx"] as const).filter((kind) => !filesByKind.has(kind));
+  const hasAnyMainFile = mainFiles.length > 0;
 
   return (
     <Card
-      title="Файлы КП"
-      subtitle="Генерация происходит на backend. После этого файлы можно скачать по отдельности."
-      actions={
-        <Button type="button" variant="secondary" onClick={onGenerate} disabled={isPending}>
-          {isPending ? "Генерация..." : "Сформировать файлы"}
-        </Button>
-      }
+      title="Документы для клиента"
+      subtitle="Сформируйте нужные файлы и скачайте их по отдельности."
     >
-      {mainFiles.length === 0 ? (
-        <p style={{ margin: 0, color: "#475467" }}>Файлы ещё не сгенерированы.</p>
+      {!hasAnyMainFile ? (
+        <div style={{ display: "grid", gap: "0.75rem" }}>
+          <p style={{ margin: 0, color: "#475467" }}>
+            Документы ещё не сформированы. Нажмите кнопку ниже — будут подготовлены PDF и Excel.
+          </p>
+          <Button type="button" variant="primary" onClick={onGenerate} disabled={isPending}>
+            {isPending ? "Формируем документы..." : "Сформировать PDF и Excel"}
+          </Button>
+        </div>
       ) : (
         <div style={{ display: "grid", gap: "0.75rem" }}>
-          {mainFiles.map((file) => (
-            <div
-              key={file.kind}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "1rem",
-                border: "1px solid #e4e7ec",
-                borderRadius: 12,
-                padding: "0.8rem 0.9rem",
-              }}
-            >
-              <div>
-                <strong>{file.display_name}</strong>
-                <div style={{ color: "#475467" }}>{file.filename}</div>
-              </div>
-              <Button type="button" variant="ghost" onClick={() => downloadFile(file.download_url)}>
-                Скачать
-              </Button>
-            </div>
-          ))}
+          {(["pdf", "xlsx", "breakdown"] as const).map((kind) => {
+            const file = filesByKind.get(kind);
+            if (!file) {
+              return null;
+            }
+            return (
+              <FileRow
+                key={file.kind}
+                title={FILE_KIND_LABELS[kind]}
+                filename={file.filename}
+                downloadUrl={file.download_url}
+              />
+            );
+          })}
+
+          {missingMainKinds.length > 0 && (
+            <Button type="button" variant="secondary" onClick={onGenerate} disabled={isPending}>
+              {isPending ? "Дозагрузка..." : "Дозагрузить недостающие документы"}
+            </Button>
+          )}
         </div>
       )}
 
-      {showSchemaSection && (
+      {hasAnyMainFile && (
         <div
           style={{
             display: "flex",
@@ -69,13 +78,14 @@ export const DownloadFilesSection = ({
             border: "1px solid #e4e7ec",
             borderRadius: 12,
             padding: "0.8rem 0.9rem",
-            marginTop: mainFiles.length > 0 ? "0.75rem" : 0,
+            marginTop: "0.75rem",
+            alignItems: "center",
           }}
         >
           <div>
             <strong>Схема раскладки (PDF)</strong>
             <div style={{ color: "#475467" }}>
-              {schemaFile ? schemaFile.filename : "Генерируется отдельным запросом после основных файлов"}
+              {schemaFile ? schemaFile.filename : "Формируется отдельно после основных документов"}
             </div>
           </div>
           {schemaFile ? (
@@ -83,13 +93,8 @@ export const DownloadFilesSection = ({
               Скачать
             </Button>
           ) : (
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={onGenerateSchema}
-              disabled={isSchemaPending}
-            >
-              {isSchemaPending ? "Формируем…" : "Сформировать схему раскладки"}
+            <Button type="button" variant="secondary" onClick={onGenerateSchema} disabled={isSchemaPending}>
+              {isSchemaPending ? "Формируем…" : "Сформировать схему"}
             </Button>
           )}
         </div>
@@ -97,3 +102,33 @@ export const DownloadFilesSection = ({
     </Card>
   );
 };
+
+const FileRow = ({
+  title,
+  filename,
+  downloadUrl,
+}: {
+  title: string;
+  filename: string;
+  downloadUrl: string;
+}) => (
+  <div
+    style={{
+      display: "flex",
+      justifyContent: "space-between",
+      gap: "1rem",
+      border: "1px solid #e4e7ec",
+      borderRadius: 12,
+      padding: "0.8rem 0.9rem",
+      alignItems: "center",
+    }}
+  >
+    <div>
+      <strong>{title}</strong>
+      <div style={{ color: "#475467" }}>{filename}</div>
+    </div>
+    <Button type="button" variant="ghost" onClick={() => downloadFile(downloadUrl)}>
+      Скачать
+    </Button>
+  </div>
+);

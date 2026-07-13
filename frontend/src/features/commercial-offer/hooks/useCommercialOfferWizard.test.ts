@@ -136,7 +136,7 @@ describe("useCommercialOfferWizard", () => {
       wrapper: createWrapper(queryClient),
     });
 
-    const steps = ["wide-plates", "manager", "client", "result"] as const;
+    const steps = ["client", "result"] as const;
 
     for (const step of steps) {
       act(() => {
@@ -183,7 +183,7 @@ describe("useCommercialOfferWizard", () => {
 
     act(() => {
       result.current.dispatch({ type: "set-draft-id", draftId: draft.draft_id });
-      result.current.dispatch({ type: "set-step", step: "manager" });
+      result.current.dispatch({ type: "set-step", step: "client" });
     });
 
     await waitFor(() => {

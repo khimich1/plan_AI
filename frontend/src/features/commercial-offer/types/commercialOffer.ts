@@ -1,4 +1,7 @@
-export type WizardStepId = "plates" | "wide-plates" | "manager" | "client" | "result";
+export type WizardStepId = "plates" | "client" | "result";
+
+/** Legacy step ids from older drafts (localStorage / server metadata). */
+export type LegacyWizardStepId = "wide-plates" | "manager";
 
 /** Синхронизировано с app.schemas.commercial.WizardNextRequiredAction */
 export type WizardNextRequiredAction =
@@ -175,6 +178,9 @@ export type WizardStoreState = {
   sourceText: string;
   selectedImageName: string | null;
   normalizedText: string;
+  batchReviewText: string;
+  pendingBatchReview: boolean;
+  confirmedBatchCount: number;
   lastPlateMode: PlateInputMode;
   managerId: number | null;
   clientName: string;

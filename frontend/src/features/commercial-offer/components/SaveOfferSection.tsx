@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { saveOfferSchema } from "@/features/commercial-offer/schemas/commercialOffer";
@@ -22,6 +22,11 @@ type SaveOfferFormValues = {
   executionTermsInput: string;
 };
 
+const ALTERNATIVE_SAVE_MODES: Array<{ value: SaveMode; label: string; hint: string }> = [
+  { value: "archive", label: "В архив", hint: "КП сразу попадёт в архив — для завершённых предложений." },
+  { value: "skip", label: "Пропустить", hint: "Только скачать файлы, без записи в БД." },
+];
+
 export const SaveOfferSection = ({
   draft,
   lastSaveResult,
@@ -29,6 +34,7 @@ export const SaveOfferSection = ({
   isPending,
   onSave,
 }: SaveOfferSectionProps) => {
+  const [showAlternativeModes, setShowAlternativeModes] = useState(false);
   const form = useForm<SaveOfferFormValues>({
     resolver: zodResolver(saveOfferSchema),
     defaultValues: {
@@ -48,61 +54,104 @@ export const SaveOfferSection = ({
     });
   }, [defaultExecutionTerms, form]);
 
+  const submitSave = form.handleSubmit(async (payload) => {
+    if (hasSavedOffer) {
+      return;
+    }
+    await onSave(payload);
+  });
+
+  const handlePrimarySave = async () => {
+    form.setValue("mode", "database");
+    await submitSave();
+  };
+
   return (
-    <Card title="Сохранение результата" subtitle="Выберите, как сохранить подготовленное коммерческое предложение.">
-      <form
-        onSubmit={form.handleSubmit(async (payload) => {
-          if (hasSavedOffer) {
-            return;
-          }
-          await onSave(payload);
-        })}
-        style={{ display: "grid", gap: "1rem" }}
-      >
-        <div style={{ display: "grid", gap: "0.75rem" }}>
-          {[
-            { value: "database", label: "Сохранить в БД со статусом «в работе»" },
-            { value: "archive", label: "Сохранить в архив" },
-            { value: "skip", label: "Не сохранять" },
-          ].map((item) => (
-            <label
-              key={item.value}
-              style={{
-                display: "flex",
-                gap: "0.75rem",
-                alignItems: "center",
-                border: "1px solid #e4e7ec",
-                borderRadius: 12,
-                padding: "0.9rem",
-              }}
-            >
-              <input type="radio" value={item.value} {...form.register("mode")} disabled={isSubmitDisabled} />
-              <span>{item.label}</span>
-            </label>
-          ))}
-        </div>
+    <Card
+      title="Сохранение результата"
+      subtitle="По умолчанию КП сохраняется со статусом «в работе» — можно вернуться к нему позже."
+    >
+      <form onSubmit={(event) => void submitSave(event)} style={{ display: "grid", gap: "1rem" }}>
+        <FieldWrapper
+          label="Срок изготовления"
+          hint={EXECUTION_TERMS_FIELD_HINT}
+          error={form.formState.errors.executionTermsInput?.message}
+        >
+          <Input
+            {...form.register("executionTermsInput")}
+            placeholder={EXECUTION_TERMS_PLACEHOLDER}
+            disabled={isSubmitDisabled || mode === "skip"}
+          />
+        </FieldWrapper>
 
-        {mode !== "skip" && (
-          <FieldWrapper
-            label="Срок изготовления"
-            hint={
-              mode === "archive"
-                ? `${EXECUTION_TERMS_FIELD_HINT} Необязательно для архива — можно оставить пустым.`
-                : EXECUTION_TERMS_FIELD_HINT
-            }
-            error={form.formState.errors.executionTermsInput?.message}
-          >
-            <Input
-              {...form.register("executionTermsInput")}
-              placeholder={EXECUTION_TERMS_PLACEHOLDER}
-              disabled={isSubmitDisabled}
-            />
-          </FieldWrapper>
-        )}
-
-        <Button type="submit" variant={hasSavedOffer ? "secondary" : "primary"} disabled={isSubmitDisabled}>
-          {hasSavedOffer ? "Сохранено" : isPending ? "Сохранение..." : "Подтвердить сохранение"}
+        <Button
+          type="button"
+          variant={hasSavedOffer ? "secondary" : "primary"}
+          disabled={isSubmitDisabled}
+          onClick={() => void handlePrimarySave()}
+        >
+          {hasSavedOffer ? "Сохранено" : isPending ? "Сохранение..." : "В работе"}
         </Button>
+
+        <div style={{ display: "grid", gap: "0.5rem" }}>
+          <button
+            type="button"
+            onClick={() => setShowAlternativeModes((open) => !open)}
+            disabled={isSubmitDisabled}
+            style={{
+              border: "none",
+              background: "none",
+              color: "#175cd3",
+              cursor: isSubmitDisabled ? "not-allowed" : "pointer",
+              textAlign: "left",
+              padding: 0,
+              font: "inherit",
+              opacity: isSubmitDisabled ? 0.55 : 1,
+            }}
+          >
+            {showAlternativeModes ? "▾ Другой вариант сохранения" : "▸ Другой вариант сохранения"}
+          </button>
+
+          {showAlternativeModes && (
+            <div style={{ display: "grid", gap: "0.75rem", paddingLeft: "0.25rem" }}>
+              {ALTERNATIVE_SAVE_MODES.map((item) => (
+                <label
+                  key={item.value}
+                  style={{
+                    display: "grid",
+                    gap: "0.35rem",
+                    border: mode === item.value ? "1px solid #84adff" : "1px solid #e4e7ec",
+                    borderRadius: 12,
+                    padding: "0.9rem",
+                    background: mode === item.value ? "#f5f8ff" : "#ffffff",
+                  }}
+                >
+                  <span style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                    <input
+                      type="radio"
+                      value={item.value}
+                      checked={mode === item.value}
+                      onChange={() => form.setValue("mode", item.value)}
+                      disabled={isSubmitDisabled}
+                    />
+                    <strong>{item.label}</strong>
+                  </span>
+                  <span style={{ color: "#475467", fontSize: "0.9rem", paddingLeft: "1.6rem" }}>{item.hint}</span>
+                </label>
+              ))}
+
+              {mode !== "database" && (
+                <Button type="submit" variant="secondary" disabled={isSubmitDisabled}>
+                  {isPending
+                    ? "Сохранение..."
+                    : mode === "archive"
+                      ? "Сохранить в архив"
+                      : "Пропустить сохранение"}
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
       </form>
 
       {(lastSaveResult ?? draft.saved_offer) && (

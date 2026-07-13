@@ -10,7 +10,7 @@ type KpPlatePreviewPanelProps = {
 };
 
 const flagLabel = (flag: "wide_direct" | "wide_split"): string =>
-  flag === "wide_direct" ? "Широкая (>12 дм)" : "Раскол широкой плиты";
+  flag === "wide_direct" ? "Шире стандартной" : "Разделена на стандартные позиции";
 
 export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPanelProps) => {
   const rows = buildKpPreviewRows(draft);
@@ -30,8 +30,8 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
         {showWideAlert && (
           <Alert tone="warning">
             {wideLines.length}{" "}
-            {wideLines.length === 1 ? "нестандартная позиция" : "нестандартных позиций"} в распознанном тексте —
-            состав предварительный, проверка на шаге 2.
+            {wideLines.length === 1 ? "позиция шире стандартной" : "позиций шире стандартной"} в списке —
+            примите решение в блоке ниже.
           </Alert>
         )}
 
@@ -46,7 +46,7 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
         )}
 
         {normalizedTextChanged && (
-          <Alert tone="info">Изменён нормализованный текст — нажмите «Обработать» для пересчёта состава.</Alert>
+          <Alert tone="info">Изменён список плит — нажмите «Список верен» для пересчёта состава.</Alert>
         )}
 
         {rows.length === 0 ? (

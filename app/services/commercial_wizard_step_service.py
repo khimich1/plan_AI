@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.schemas.commercial import WizardNextRequiredAction, WizardStepId
+from app.schemas.commercial import WizardNextRequiredAction, WizardStepId, _coerce_wizard_step_id
 from app.services.commercial_calculation_service import (
     ERR_EMPTY_PLATES,
     ERR_NO_MANAGER,
@@ -31,13 +31,7 @@ class CommercialWizardStepService:
         return self.calculation_service.meta_ready_for_calculate(metadata)
 
     def normalize_stored_step(self, metadata: dict[str, Any]) -> WizardStepId:
-        raw = str(metadata.get("current_step") or "").strip().lower()
-        aliases = {"wide_plates": WizardStepId.wide_plates.value, "calculate": WizardStepId.client.value}
-        raw = aliases.get(raw, raw)
-        try:
-            return WizardStepId(raw) if raw else WizardStepId.plates
-        except ValueError:
-            return WizardStepId.plates
+        return _coerce_wizard_step_id(metadata.get("current_step"))
 
     def wizard_step_after_plate_snapshot(self, metadata: dict[str, Any], order_data: list[Any]) -> WizardStepId:
         return WizardStepId.plates
@@ -61,10 +55,9 @@ class CommercialWizardStepService:
             return WizardStepId.client
 
         if order_data and self.wide_lines_blocking(metadata):
-            if stored in (WizardStepId.manager, WizardStepId.client, WizardStepId.result):
-                return WizardStepId.wide_plates
-            if stored == WizardStepId.wide_plates:
-                return WizardStepId.wide_plates
+            if stored in (WizardStepId.client, WizardStepId.result):
+                return WizardStepId.plates
+            return WizardStepId.plates
 
         return stored
 
@@ -108,16 +101,8 @@ class CommercialWizardStepService:
             if not order_data:
                 return []
             if self.wide_lines_blocking(metadata):
-                return [WizardStepId.wide_plates]
-            return [WizardStepId.manager]
-
-        if effective_step == WizardStepId.wide_plates:
-            return []
-
-        if effective_step == WizardStepId.manager:
-            if metadata.get("manager_id"):
-                return [WizardStepId.client]
-            return []
+                return []
+            return [WizardStepId.client]
 
         if effective_step == WizardStepId.client:
             if next_action == WizardNextRequiredAction.post_calculate:
