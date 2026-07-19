@@ -235,13 +235,15 @@ def build_component_breakdown(
 
         if not (current_plan and current_plan.get('primary_cuts')):
             if trim.get('long_cut_meterage', 0) <= 0 and width_m < 1.15:
-                print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
-                rest_width_mm = 1200 - width_mm
-                if rest_width_mm > MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
-                    rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
-                    print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
-                else:
-                    rest_cost = 0.0
+                # 1020–1080 мм: отход factory strip — через apply_factory_strip_waste (R5).
+                if not (1020 <= width_mm <= 1080):
+                    print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
+                    rest_width_mm = 1200 - width_mm
+                    if rest_width_mm > MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
+                        rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
+                        print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
+                    else:
+                        rest_cost = 0.0
 
         waste_cost, waste_terms = apply_factory_strip_waste(
             width_mm=width_mm,
@@ -619,13 +621,15 @@ def build_component_breakdown_production(
 
         if not (current_plan and current_plan.get('primary_cuts')):
             if trim.get('long_cut_meterage', 0) <= 0 and width_m < 1.15:
-                print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
-                rest_width_mm = 1200 - width_mm
-                if rest_width_mm > MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
-                    rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
-                    print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
-                else:
-                    rest_cost = 0.0
+                # 1020–1080 мм: отход factory strip — через apply_factory_strip_waste (R5).
+                if not (1020 <= width_mm <= 1080):
+                    print(f'[DEBUG] Плана оптимизации нет для {name}, используем ручной расчёт остатков')
+                    rest_width_mm = 1200 - width_mm
+                    if rest_width_mm > MIN_BILLABLE_TRIM_MM and base_price_1_2m > 0:
+                        rest_cost = (rest_width_mm / 1200.0) * base_price_1_2m
+                        print(f'[DEBUG] Остаток {rest_width_mm}мм не использован, добавляем к цене: {rest_cost:.2f} руб')
+                    else:
+                        rest_cost = 0.0
 
         waste_cost, waste_terms = apply_factory_strip_waste(
             width_mm=width_mm,

@@ -232,6 +232,7 @@ def _apply_secondary_cut(
     transverse_remainder_cost: float,
     transverse_remainder_terms: list[tuple[float, int]],
     charge_strip_waste: bool = True,
+    min_one_cut_per_op: bool | None = None,
 ) -> tuple[int, int, float, float, list, float, float, list[tuple[float, int]]]:
     del base_price, load_code, price_table, deps  # kept for call-site compatibility
 
@@ -244,9 +245,11 @@ def _apply_secondary_cut(
     src_len = float(src_lens[0]) if src_lens else length
 
     waste_w_mm = float(sec_cut.get('waste', 0) or 0)
+    if min_one_cut_per_op is None:
+        min_one_cut_per_op = not charge_strip_waste
     cut_count = _longitudinal_cuts_for_rest_secondary(
         sec_cut,
-        min_one_cut_per_op=not charge_strip_waste,
+        min_one_cut_per_op=min_one_cut_per_op,
     )
 
     total_plates_from_cuts += sec_qty * kept_pieces
@@ -305,6 +308,27 @@ def _secondary_matches_primary_rest(
         if _is_same_length(src_lens, prim_len):
             return True
     return False
+
+
+def _rest_groups_from_plan(
+    current_plan: dict | None,
+    load_key: int,
+) -> dict[tuple[int, float], int]:
+    """Собирает rest_groups из всех primary_cuts плана (не только matched по width)."""
+    rest_groups: dict[tuple[int, float], int] = {}
+    if not current_plan:
+        return rest_groups
+    for prim_cut in current_plan.get('primary_cuts') or []:
+        if not _cut_matches_load(prim_cut, load_key):
+            continue
+        rest_mm = int(prim_cut.get('rest', 0) or 0)
+        if rest_mm <= MIN_BILLABLE_TRIM_MM:
+            continue
+        prim_len = _cut_length_from_lengths(prim_cut.get('lengths', []), 0.0)
+        prim_qty = int(prim_cut.get('qty', 0) or 0)
+        key = (rest_mm, prim_len)
+        rest_groups[key] = rest_groups.get(key, 0) + prim_qty
+    return rest_groups
 
 
 def _apply_cascade_secondary_for_primary(
@@ -724,9 +748,22 @@ def _calc_trim_components(
                         if width_consumed > 0 and charge_as_strip_waste:
                             strip_partially_used = True
                     else:
-                        unused_strip_qty = max(0, prim_qty - used_qty)
-                        strip_unused_mm = unused_strip_qty * rest_mm
-                        charge_as_strip_waste = False
+                        width_consumed = _consumed_width_mm_on_rest_strip(
+                            current_plan, rest_mm, prim_len, parent_instance_id=None
+                        )
+                        if 0 < width_consumed < rest_mm:
+                            unused_per_strip = rest_mm - width_consumed
+                            strip_unused_mm = unused_per_strip * min(used_qty, prim_qty)
+                            charge_as_strip_waste = unused_per_strip > MIN_BILLABLE_TRIM_MM
+                            if charge_as_strip_waste:
+                                strip_partially_used = True
+                            fully_unused_qty = max(0, prim_qty - used_qty)
+                            if fully_unused_qty > 0:
+                                strip_unused_mm += fully_unused_qty * rest_mm
+                        else:
+                            unused_strip_qty = max(0, prim_qty - used_qty)
+                            strip_unused_mm = unused_strip_qty * rest_mm
+                            charge_as_strip_waste = False
                 if parent_id:
                     if consumed_per_strip > 0 and unused_per_strip > 0:
                         strip_partially_used = True
@@ -831,6 +868,7 @@ def _calc_trim_components(
             )
 
     if not primary_matched and current_plan and current_plan.get('secondary_cuts'):
+        plan_rest_groups = _rest_groups_from_plan(current_plan, load_key)
         sec_skip_length = 0
         sec_skip_width = 0
         secondary_matches = 0
@@ -850,6 +888,12 @@ def _calc_trim_components(
             src_lens = sec_cut.get('source_lengths', []) or []
             if src_lens:
                 long_cut_length_display = float(src_lens[0])
+
+            from_rest = _secondary_matches_primary_rest(sec_cut, plan_rest_groups)
+            from_crossload = _is_crossload_rest_secondary(
+                sec_cut, plan_rest_groups, load_key, current_plan
+            )
+            charge_strip_waste = not (from_rest or from_crossload)
 
             (
                 total_cuts_for_this_size,
@@ -878,6 +922,10 @@ def _calc_trim_components(
                 trans_cuts=trans_cuts,
                 transverse_remainder_cost=transverse_remainder_cost,
                 transverse_remainder_terms=transverse_remainder_terms,
+                charge_strip_waste=charge_strip_waste,
+                # Кросс-нагрузка: минимум 1 продольный рез на операцию; с rest primary
+                # той же нагрузки — только если waste > порога (см. _longitudinal_cuts_*).
+                min_one_cut_per_op=from_crossload,
             )
 
         if secondary_matches == 0 and (sec_skip_length > 0 or sec_skip_width > 0):
@@ -924,7 +972,10 @@ def resolve_long_cut_pricing(
     Returns: (long_cut_cost, long_cuts, total_cuts_count)
     """
     has_plan = bool(current_plan and current_plan.get('primary_cuts'))
-    has_trim_cuts = trim.get('long_cut_meterage', 0) > 0 or trim.get('total_plates_from_cuts', 0) > 0
+    # Только фактический метраж реза; total_plates_from_cuts>0 при rest=0 (1080 factory strip)
+    # не означает отсутствие продольного реза — иначе ранний return обнуляет стоимость.
+    has_trim_cuts = trim.get('long_cut_meterage', 0) > 0
+    width_mm = int(round(width_m * 1000))
 
     if has_trim_cuts and qty > 0:
         return (
@@ -933,11 +984,36 @@ def resolve_long_cut_pricing(
             trim['total_cuts_for_this_size'],
         )
 
+    if abs(width_m - 1.2) < 0.01:
+        return 0.0, 0, 0
+
+    # Плиты 10,2–10,8 м: factory strip + 1 продольный рез на плиту (R5).
+    if 1020 <= width_mm <= 1080:
+        cost = LONG_CUT_PRICE_PER_M * length
+        return cost, 1, 0
+
     if not has_plan:
-        if abs(width_m - 1.2) < 0.01:
-            return 0.0, 0, 0
         long_cuts = fallback_long_cuts if fallback_long_cuts else (1 if width_m < 1.15 else 0)
         cost = long_cuts * (LONG_CUT_PRICE_PER_M * length)
+        return cost, long_cuts, 0
+
+    if width_m < 1.15:
+        # Secondary с полосы rest primary уже сматчен trim'ом — нулевой метраж
+        # намеренный (один физический рез на primary), не подменять fallback'ом.
+        trim_matched_secondary = (
+            not trim.get('primary_matched', False)
+            and int(trim.get('total_plates_from_cuts', 0) or 0) > 0
+        )
+        if trim_matched_secondary:
+            return 0.0, 0, 0
+
+        long_cuts = fallback_long_cuts if fallback_long_cuts else 1
+        cost = long_cuts * (LONG_CUT_PRICE_PER_M * length)
+        if plate_name:
+            print(
+                f'[WARNING] План есть, но trim не нашёл резов для {plate_name} '
+                f'({length}м × {width_mm}мм), fallback long_cuts={long_cuts}'
+            )
         return cost, long_cuts, 0
 
     if plate_name:

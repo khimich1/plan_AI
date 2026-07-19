@@ -368,7 +368,8 @@ def test_order_total_cut_costs_instance_rows() -> None:
     assert total_trans == pytest.approx(TRANSVERSE_PRICE)
 
 
-def test_plan_exists_no_match_no_fallback_cuts() -> None:
+def test_plan_exists_unmatched_width_uses_fallback_long_cut() -> None:
+    """BUG-4: при плане без match trim использует fallback_long_cuts."""
     from viz_modules.procurement.trim import resolve_long_cut_pricing
 
     plan = _cascade_plan()
@@ -381,8 +382,437 @@ def test_plan_exists_no_match_no_fallback_cuts() -> None:
         current_plan=plan,
         fallback_long_cuts=1,
     )
-    assert cost == 0.0
-    assert cuts == 0
+    assert cuts == 1
+    assert cost == pytest.approx(LONG_CUT_PRICE * 3.0)
+
+
+BASE_1_2M_63 = 21515.0
+BASE_1_2M_45 = 14510.0
+BASE_1_2M_108 = 23468.0
+
+
+def _case3_cross_width_plan() -> dict:
+    """ПБ 63-7,2-8п (720) + ПБ 45-3,2-8п (320) с rest 480 → отход 160 только на primary."""
+    return {
+        "primary_cuts": [{"width": 720, "rest": 480, "qty": 1, "lengths": [6.3]}],
+        "secondary_cuts": [
+            {
+                "source": 480,
+                "source_lengths": [6.3],
+                "lengths": [6.3],
+                "cuts": [320],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 160,
+            },
+        ],
+    }
+
+
+def test_waste_160_only_on_primary_720_320() -> None:
+    """BUG-2 кейс 3: отход 160 мм только на ПБ 63-7,2, не на ПБ 45-3,2."""
+    plan = _case3_cross_width_plan()
+    t720 = _calc_trim_components(
+        plan,
+        length=6.3,
+        width_mm=720,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_63,
+        base_price=BASE_1_2M_63 * (720 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    t320 = _calc_trim_components(
+        plan,
+        length=6.3,
+        width_mm=320,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_45,
+        base_price=BASE_1_2M_45 * (320 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    expected_primary_waste = (160 / 1200.0) * BASE_1_2M_63
+    assert t720["waste_cost"] == pytest.approx(expected_primary_waste)
+    assert t320["waste_cost"] == pytest.approx(0.0)
+
+
+def test_secondary_from_rest_no_strip_waste() -> None:
+    """BUG-2: secondary с полосы primary rest не тарифицирует отход полосы."""
+    plan = {
+        "primary_cuts": [{"width": 640, "rest": 560, "qty": 1, "lengths": [5.0]}],
+        "secondary_cuts": [
+            {
+                "source": 560,
+                "source_lengths": [5.0],
+                "lengths": [5.0],
+                "cuts": [320],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 240,
+            },
+        ],
+    }
+    t320 = _calc_trim_components(
+        plan,
+        length=5.0,
+        width_mm=320,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_28,
+        base_price=BASE_1_2M_28 * (320 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    assert t320["primary_matched"] is False
+    assert t320["waste_cost"] == pytest.approx(0.0)
+
+
+def _pb_422_665_321_530_plan() -> dict:
+    """ПБ 42,2-6,65-8п (primary) + ПБ 32,1-5,3-8п (secondary с rest + поперечный)."""
+    return {
+        "primary_cuts": [{"width": 665, "rest": 535, "qty": 1, "lengths": [4.2]}],
+        "secondary_cuts": [
+            {
+                "source": 535,
+                "source_lengths": [4.2],
+                "lengths": [3.2],
+                "cuts": [530],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 5,
+            },
+        ],
+    }
+
+
+def test_pb_422_665_321_530_no_double_long_cut() -> None:
+    """Каскад 665→530: один физический продольный рез — только на primary."""
+    from viz_modules.procurement.trim import resolve_long_cut_pricing
+
+    plan = _pb_422_665_321_530_plan()
+    t665 = _calc_trim_components(
+        plan,
+        length=4.2,
+        width_mm=665,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_28,
+        base_price=BASE_1_2M_28 * (665 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    t530 = _calc_trim_components(
+        plan,
+        length=3.2,
+        width_mm=530,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_28,
+        base_price=BASE_1_2M_28 * (530 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+
+    assert t665["primary_matched"] is True
+    assert t665["long_cut_meterage"] == pytest.approx(4.2)
+    assert t530["primary_matched"] is False
+    assert t530["long_cut_meterage"] == pytest.approx(0.0)
+    assert t530["trans_cuts"] == pytest.approx(1.0)
+
+    _, long_cuts_665, _ = resolve_long_cut_pricing(
+        t665,
+        qty=1,
+        length=4.2,
+        width_m=0.665,
+        current_plan=plan,
+        fallback_long_cuts=0,
+    )
+    long_cost_530, long_cuts_530, _ = resolve_long_cut_pricing(
+        t530,
+        qty=1,
+        length=3.2,
+        width_m=0.53,
+        current_plan=plan,
+        fallback_long_cuts=0,
+    )
+
+    assert long_cuts_665 == 1
+    assert long_cuts_530 == 0
+    assert long_cost_530 == pytest.approx(0.0)
+
+    total_meterage = t665["long_cut_meterage"] + t530["long_cut_meterage"]
+    assert total_meterage == pytest.approx(4.2)
+
+
+def test_crossload_secondary_long_cut_in_trim_not_fallback() -> None:
+    """Кросс-нагрузка 10п→8п: продольный рез в trim, не через fallback."""
+    from viz_modules.procurement.trim import resolve_long_cut_pricing
+
+    plan = _crossload_plan_10p_rest_535()
+    t665 = _calc_trim_components(
+        plan,
+        length=2.8,
+        width_mm=665,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_28,
+        base_price=BASE_1_2M_28 * (665 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    assert t665["primary_matched"] is False
+    assert t665["long_cut_meterage"] == pytest.approx(2.8)
+
+    long_cost, long_cuts, _ = resolve_long_cut_pricing(
+        t665,
+        qty=1,
+        length=2.8,
+        width_m=0.665,
+        current_plan=plan,
+        fallback_long_cuts=0,
+    )
+    assert long_cuts == 1
+    assert long_cost == pytest.approx(LONG_CUT_PRICE * 2.8)
+
+
+def _case4_multi_secondary_plan() -> dict:
+    """BUG-3 кейс 4: rest 880, два secondary 320, waste 240 только в данных оптимизатора."""
+    return {
+        "primary_cuts": [{"width": 320, "rest": 880, "qty": 1, "lengths": [5.63]}],
+        "secondary_cuts": [
+            {
+                "source": 880,
+                "source_lengths": [5.63],
+                "lengths": [5.63],
+                "cuts": [320],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 0,
+            },
+            {
+                "source": 880,
+                "source_lengths": [5.63],
+                "lengths": [4.64],
+                "cuts": [320],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 240,
+            },
+        ],
+    }
+
+
+def test_waste_560_primary_secondary_240_zero() -> None:
+    """BUG-3 кейс 4: secondary с waste=240 в плане не получает строку отхода."""
+    plan = _case4_multi_secondary_plan()
+    t_primary = _calc_trim_components(
+        plan,
+        length=5.63,
+        width_mm=320,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_28,
+        base_price=BASE_1_2M_28 * (320 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    t_secondary = _calc_trim_components(
+        plan,
+        length=4.64,
+        width_mm=320,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_28,
+        base_price=BASE_1_2M_28 * (320 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    assert t_primary["waste_cost"] > 0
+    assert t_secondary["waste_cost"] == pytest.approx(0.0)
+
+
+def test_1080_factory_strip_includes_long_cut() -> None:
+    """BUG-1 кейсы 1–2: 1080 мм — factory strip + продольный рез."""
+    from viz_modules.procurement.trim import apply_factory_strip_waste, resolve_long_cut_pricing
+
+    plan = {
+        "primary_cuts": [{"width": 530, "rest": 670, "qty": 1, "lengths": [3.05]}],
+        "secondary_cuts": [],
+    }
+    length = 3.05
+    width_mm = 1080
+    trim = _calc_trim_components(
+        plan,
+        length=length,
+        width_mm=width_mm,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_108,
+        base_price=BASE_1_2M_108 * (1.08 / 1.2),
+        load_code=12,
+        price_table={},
+    )
+    waste_cost, waste_terms = apply_factory_strip_waste(
+        width_mm=width_mm,
+        base_price_1_2m=BASE_1_2M_108,
+        rest_cost=trim["rest_cost"],
+        rest_used=trim["rest_used"],
+        waste_cost=trim["waste_cost"],
+        waste_terms=trim["waste_terms"],
+        qty=1,
+    )
+    long_cut_cost, long_cuts, _ = resolve_long_cut_pricing(
+        trim,
+        qty=1,
+        length=length,
+        width_m=1.08,
+        current_plan=plan,
+        fallback_long_cuts=0,
+    )
+    assert long_cuts == 1
+    assert long_cut_cost == pytest.approx(LONG_CUT_PRICE * length)
+    assert waste_cost == pytest.approx((120 / 1200.0) * BASE_1_2M_108)
+    assert waste_terms == [(120, 1)]
+
+
+def test_1080_qty2_waste_formula_120x2() -> None:
+    """BUG-1: qty=2 — waste (120×2) и продольный рез на каждую плиту."""
+    from viz_modules.procurement.trim import apply_factory_strip_waste, resolve_long_cut_pricing
+
+    length = 3.21
+    width_mm = 1080
+    trim = _calc_trim_components(
+        None,
+        length=length,
+        width_mm=width_mm,
+        qty=2,
+        base_price_1_2m=BASE_1_2M_108,
+        base_price=BASE_1_2M_108 * (1.08 / 1.2),
+        load_code=12,
+        price_table={},
+    )
+    waste_cost, waste_terms = apply_factory_strip_waste(
+        width_mm=width_mm,
+        base_price_1_2m=BASE_1_2M_108,
+        rest_cost=trim["rest_cost"],
+        rest_used=trim["rest_used"],
+        waste_cost=trim["waste_cost"],
+        waste_terms=trim["waste_terms"],
+        qty=2,
+    )
+    long_cut_cost, _, _ = resolve_long_cut_pricing(
+        trim,
+        qty=2,
+        length=length,
+        width_m=1.08,
+        current_plan=None,
+        fallback_long_cuts=1,
+    )
+    assert waste_terms == [(120, 2)]
+    assert waste_cost == pytest.approx((120 / 1200.0) * BASE_1_2M_108)
+    assert long_cut_cost == pytest.approx(LONG_CUT_PRICE * length)
+
+
+BASE_1_2M_66_8 = 22821.0
+
+
+def _pb_66_108_plan() -> dict:
+    """ПБ 66-10,8-8п: primary 1080 мм, rest=0 (factory strip из 1200)."""
+    return {
+        "orders_requested": [
+            {"length": 6.62, "width": 1080, "qty": 1, "load_code": 8},
+        ],
+        "primary_cuts": [
+            {
+                "width": 1080,
+                "rest": 0,
+                "qty": 1,
+                "lengths": [6.62],
+                "load_code": 8,
+            },
+        ],
+        "secondary_cuts": [],
+    }
+
+
+def test_1080_plan_rest_zero_includes_long_cut() -> None:
+    """Регрессия: план с rest=0 матчит плиту, но продольный рез всё равно нужен."""
+    from viz_modules.procurement.trim import apply_factory_strip_waste, resolve_long_cut_pricing
+
+    plan = _pb_66_108_plan()
+    length = 6.62
+    width_mm = 1080
+    trim = _calc_trim_components(
+        plan,
+        length=length,
+        width_mm=width_mm,
+        qty=1,
+        base_price_1_2m=BASE_1_2M_66_8,
+        base_price=BASE_1_2M_66_8 * (1.08 / 1.2),
+        load_code=8,
+        price_table={},
+    )
+    assert trim["total_plates_from_cuts"] == 1
+    assert trim["long_cut_meterage"] == pytest.approx(0.0)
+    assert trim["long_cut_cost"] == pytest.approx(0.0)
+
+    long_cut_cost, long_cuts, _ = resolve_long_cut_pricing(
+        trim,
+        qty=1,
+        length=length,
+        width_m=1.08,
+        current_plan=plan,
+        fallback_long_cuts=0,
+    )
+    assert long_cuts == 1
+    assert long_cut_cost == pytest.approx(LONG_CUT_PRICE * length)
+
+    waste_cost, waste_terms = apply_factory_strip_waste(
+        width_mm=width_mm,
+        base_price_1_2m=BASE_1_2M_66_8,
+        rest_cost=trim["rest_cost"],
+        rest_used=trim["rest_used"],
+        waste_cost=trim["waste_cost"],
+        waste_terms=trim["waste_terms"],
+        qty=1,
+    )
+    assert waste_terms == [(120, 1)]
+    assert waste_cost == pytest.approx((120 / 1200.0) * BASE_1_2M_66_8)
+
+    base_price = BASE_1_2M_66_8 * (1.08 / 1.2)
+    total_without_long_cut = base_price + waste_cost
+    assert total_without_long_cut == pytest.approx(BASE_1_2M_66_8)
+    assert base_price + waste_cost + long_cut_cost > BASE_1_2M_66_8
+
+
+def test_pb_66_108_breakdown_includes_long_cut_line(monkeypatch) -> None:
+    """ПБ 66-10,8-8п: в разбивке есть строка «Продольный рез»."""
+    import core.optimization as optimization
+    from viz_modules.procurement.breakdown import build_component_breakdown
+    from viz_modules.procurement.ports import ProcurementDeps
+
+    plan = _pb_66_108_plan()
+    monkeypatch.setattr(optimization, "OPT_CASCADING_PLAN_BY_LOAD", {8: plan})
+    monkeypatch.setattr(optimization, "LOAD_TO_REINFORCEMENT_MAP", {8: [8]})
+    monkeypatch.setattr(optimization, "OPT_CASCADING_PLAN", {})
+
+    deps = ProcurementDeps(
+        db_path=":memory:",
+        get_price=lambda length_m, load_code, db_path: BASE_1_2M_66_8,
+        get_raw_material_cost=lambda plate_name, db_path: BASE_1_2M_66_8,
+        get_reinforcement=lambda length_m, load_code, source="erm", db_path=":memory:", allow_fallback=True: 20.0,
+    )
+
+    tables = build_component_breakdown({}, deps=deps, reinforcement_code=8)
+    assert len(tables) == 1
+    row_labels = [row[0] for row in tables[0]["rows"]]
+    assert "Продольный рез" in row_labels
+    assert any("Отходы" in label for label in row_labels)
+
+    long_row = next(row for row in tables[0]["rows"] if row[0] == "Продольный рез")
+    expected_long = LONG_CUT_PRICE * 6.62
+    cost_str = long_row[2].replace(" руб", "").replace(" ", "").replace(",", ".")
+    assert float(cost_str) == pytest.approx(expected_long)
+
+    total_row = next(row for row in tables[0]["rows"] if row[0] == "ИТОГО за 1 плиту")
+    total_str = total_row[2].replace(" руб", "").replace(" ", "").replace(",", ".")
+    total_per_unit = float(total_str)
+    assert total_per_unit == pytest.approx(BASE_1_2M_66_8 + expected_long)
+    assert total_per_unit > BASE_1_2M_66_8
 
 
 BASE_1_2M_73 = 27574.0
@@ -612,3 +1042,120 @@ def test_is_crossload_rest_secondary_false_when_source_not_on_other_load_rest() 
     assert not _is_crossload_rest_secondary(
         sec_cut, rest_groups, load_key=8, current_plan=plan
     )
+
+
+REAL_ORDER_8P_TEXT = """
+ПБ 72-10,8-8 — 2 шт
+ПБ 72-9,2-8 — 3 шт
+ПБ 66-10,8-8 — 1 шт
+ПБ 63-7,2-8 +доб — 4 шт
+ПБ 63-6,65-8 + доб — 4 шт
+ПБ 52-5,3-8 + доб — 1 шт
+ПБ 31-6,65-8 + доб — 1 шт
+"""
+
+
+def _breakdown_labels(tables: list, *, length_dm: str, width_dm: str) -> list[str]:
+    needle = f"ПБ {length_dm}-{width_dm}-"
+    table = next(t for t in tables if needle in t.get("name", ""))
+    return [row[0] for row in table.get("rows", [])]
+
+
+def test_real_order_8p_1080_plates_have_long_cut_and_factory_waste() -> None:
+    """Интеграция: реальный заказ 8п — 10,8 м с планом и без плана."""
+    from core.domain.plate_order import normalize_load_code
+    from core.plate_line_parser import parse_line
+    from core.plate_order_context import PlateOrderContext
+    from app.domain.models.plate_order import PlateOrder as AppPlateOrder
+    from app.services.optimization_service import OptimizationService
+    from viz_modules.procurement.breakdown import build_component_breakdown
+    from viz_modules.procurement.ports import ProcurementDeps
+
+    orders_2d = []
+    for raw in REAL_ORDER_8P_TEXT.strip().splitlines():
+        r = parse_line(raw.strip())
+        assert r.parsed, r.reason_text
+        orders_2d.append(
+            {
+                "length": r.length_m,
+                "width": int(round(r.width_m * 1000)),
+                "qty": r.qty,
+                "load_code": normalize_load_code(r.load_code),
+            }
+        )
+
+    plate_order = AppPlateOrder.from_orders_2d(orders_2d)
+    poc = PlateOrderContext.fresh_empty()
+    poc.hydrate_from_order(plate_order)
+    opt_ctx = OptimizationService().optimize(
+        plate_order, orders_2d=orders_2d, plate_order_ctx=poc
+    )
+    poc.load_optimization_snapshot(
+        optimization_result=opt_ctx.optimization_result,
+        plan_by_load=opt_ctx.plan_by_load,
+        load_to_reinforcement_map=opt_ctx.load_to_reinforcement_map,
+    )
+
+    deps = ProcurementDeps(
+        db_path=":memory:",
+        get_price=lambda length_m, load_code, db_path: BASE_1_2M_66_8,
+        get_raw_material_cost=lambda plate_name, db_path: BASE_1_2M_66_8,
+        get_reinforcement=lambda **kwargs: 20.0,
+    )
+
+    with poc.bound():
+        tables = build_component_breakdown({}, deps=deps, reinforcement_code=8)
+
+    for length_dm, width_dm in (("66", "10,8"), ("72", "10,8")):
+        labels = _breakdown_labels(tables, length_dm=length_dm, width_dm=width_dm)
+        assert "Продольный рез" in labels
+        assert any("Отходы" in label and "120" in label for label in labels), labels
+
+    labels_720 = _breakdown_labels(tables, length_dm="63", width_dm="7,2")
+    assert "Продольный рез" in labels_720
+    assert any("Отходы" in label for label in labels_720)
+
+    labels_665 = _breakdown_labels(tables, length_dm="63", width_dm="6,65")
+    assert "Продольный рез" in labels_665
+
+    labels_530 = _breakdown_labels(tables, length_dm="52", width_dm="5,3")
+    # Secondary с rest primary: поперечный + остаток, без второго продольного реза.
+    assert "Продольный рез" not in labels_530
+    assert "Поперечный рез" in labels_530
+
+
+def test_real_order_1080_without_plan_uses_waste_not_rest() -> None:
+    """Без плана: 10,8 м — «Отходы (120мм)», не «Остаток (120мм)»."""
+    from core.plate_order_context import PlateOrderContext
+    from core.plate_line_parser import parse_line
+    from core.domain.plate_order import normalize_load_code
+    from app.domain.models.plate_order import PlateOrder as AppPlateOrder
+    from viz_modules.procurement.breakdown import build_component_breakdown
+    from viz_modules.procurement.ports import ProcurementDeps
+
+    r = parse_line("ПБ 66-10,8-8 — 1 шт")
+    plate_order = AppPlateOrder.from_orders_2d(
+        [
+            {
+                "length": r.length_m,
+                "width": int(round(r.width_m * 1000)),
+                "qty": r.qty,
+                "load_code": normalize_load_code(r.load_code),
+            }
+        ]
+    )
+    poc = PlateOrderContext.fresh_empty()
+    poc.hydrate_from_order(plate_order)
+    deps = ProcurementDeps(
+        db_path=":memory:",
+        get_price=lambda length_m, load_code, db_path: BASE_1_2M_66_8,
+        get_raw_material_cost=lambda plate_name, db_path: BASE_1_2M_66_8,
+        get_reinforcement=lambda **kwargs: 20.0,
+    )
+    with poc.bound():
+        tables = build_component_breakdown({}, deps=deps, reinforcement_code=8)
+
+    labels = [row[0] for row in tables[0]["rows"]]
+    assert "Продольный рез" in labels
+    assert any("Отходы" in label and "120" in label for label in labels)
+    assert not any(label.startswith("Остаток (120") for label in labels)
