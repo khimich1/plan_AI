@@ -46,6 +46,13 @@ export type WidePlateLine = {
   qty: number;
 };
 
+export type DoborPair = {
+  id: string;
+  source_line: string;
+  primary_line: string;
+  complement_line: string;
+};
+
 export type PlateBatch = {
   source_type: "text" | "image" | "ai";
   original_text: string;
@@ -103,6 +110,7 @@ export type CommercialDraftMetadata = {
   normalized_text: string;
   normalized_lines: string[];
   wide_plate_lines: WidePlateLine[];
+  dobor_pairs: DoborPair[];
   diagnostics: Array<Record<string, unknown>>;
   price_rows_count: number;
   breakdown_tables_count: number;

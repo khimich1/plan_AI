@@ -30,6 +30,7 @@ from app.core.http_errors import (
     raise_unpriced_plates_error,
     raise_validation_client_error,
 )
+from app.services.commercial_draft_service import CommercialDraftService
 from app.services.commercial_workflow_service import CommercialWorkflowService
 from app.services.commercial_service import CommercialService
 from app.services.commercial_upload_validation import (
@@ -61,6 +62,7 @@ def parse_commercial_text(
         "unparsed_lines": result.unparsed_lines,
         "warnings": result.warnings,
         "wide_plate_lines": result.wide_plate_lines,
+        "dobor_pairs": CommercialDraftService.serialize_dobor_pairs(result.dobor_pairs),
         "diagnostics": result.diagnostics,
     }
 

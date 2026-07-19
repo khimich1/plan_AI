@@ -89,6 +89,13 @@ class CommercialWidePlateLine(BaseModel):
     qty: int = 1
 
 
+class CommercialDoborPair(BaseModel):
+    id: str = Field(min_length=1)
+    source_line: str
+    primary_line: str
+    complement_line: str
+
+
 class CommercialPlateBatch(BaseModel):
     source_type: CommercialSourceType
     original_text: str = ""
@@ -134,6 +141,7 @@ class CommercialDraftMetadata(BaseModel):
     normalized_text: str = ""
     normalized_lines: list[str] = Field(default_factory=list)
     wide_plate_lines: list[CommercialWidePlateLine] = Field(default_factory=list)
+    dobor_pairs: list[CommercialDoborPair] = Field(default_factory=list)
     diagnostics: list[dict[str, Any]] = Field(default_factory=list)
     price_rows_count: int = 0
     breakdown_tables_count: int = 0

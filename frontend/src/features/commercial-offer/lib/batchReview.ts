@@ -63,6 +63,11 @@ export const filterDraftForBatchReview = (
 
   const unparsed_lines = (draft.metadata.unparsed_lines ?? []).filter((line) => keys.has(normalizeLineKey(line)));
   const wide_plate_lines = (draft.metadata.wide_plate_lines ?? []).filter((item) => keys.has(normalizeLineKey(item.line)));
+  const dobor_pairs = (draft.metadata.dobor_pairs ?? []).filter((pair) => {
+    const primaryKey = normalizeLineKey(pair.primary_line);
+    const complementKey = normalizeLineKey(pair.complement_line);
+    return keys.has(primaryKey) || keys.has(complementKey);
+  });
 
   return {
     ...draft,
@@ -70,6 +75,7 @@ export const filterDraftForBatchReview = (
       ...draft.metadata,
       unparsed_lines,
       wide_plate_lines,
+      dobor_pairs,
     },
   };
 };

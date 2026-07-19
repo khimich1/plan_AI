@@ -2,7 +2,9 @@ import { useMemo } from "react";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import {
   buildPlateLineHighlightMap,
+  DOBOR_MARKER_HIGHLIGHT_STYLE,
   PLATE_LINE_HIGHLIGHT_STYLES,
+  splitLineByDoborMarker,
   type PlateLineHighlightKind,
 } from "@/features/commercial-offer/lib/plateLineHighlights";
 import { AutoResizeTextarea } from "@/shared/ui/Field";
@@ -18,6 +20,7 @@ const LEGEND_ITEMS: Array<{ kind: PlateLineHighlightKind; label: string }> = [
   { kind: "correction", label: "Исправлено при распознавании" },
   { kind: "unparsed", label: "Не попало в расчёт" },
   { kind: "wide", label: "Шире стандартной" },
+  { kind: "dobor", label: "Пара добора" },
 ];
 
 export const PlateListEditor = ({ draft, value, onChange, minHeight = 440 }: PlateListEditorProps) => {
@@ -81,6 +84,20 @@ export const PlateListEditor = ({ draft, value, onChange, minHeight = 440 }: Pla
           {lines.map((line, index) => {
             const highlight = highlightMap.get(index);
             const style = highlight ? PLATE_LINE_HIGHLIGHT_STYLES[highlight.kind] : null;
+            const doborBadge =
+              highlight?.kind === "dobor" && highlight.doborPairId ? (
+                <span
+                  style={{
+                    float: "right",
+                    fontSize: "0.75rem",
+                    color: "#026aa2",
+                    fontWeight: 600,
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  ↔ добор
+                </span>
+              ) : null;
             return (
               <div
                 key={`${index}-${line}`}
@@ -91,7 +108,26 @@ export const PlateListEditor = ({ draft, value, onChange, minHeight = 440 }: Pla
                   boxShadow: style ? `inset 3px 0 0 ${style.border}` : undefined,
                 }}
               >
-                {line || "\u00a0"}
+                {line ? (
+                  splitLineByDoborMarker(line).map((segment, segmentIndex) =>
+                    segment.isMarker ? (
+                      <span
+                        key={segmentIndex}
+                        style={{
+                          background: DOBOR_MARKER_HIGHLIGHT_STYLE.background,
+                          boxShadow: `inset 0 -2px 0 ${DOBOR_MARKER_HIGHLIGHT_STYLE.border}`,
+                        }}
+                      >
+                        {segment.text}
+                      </span>
+                    ) : (
+                      <span key={segmentIndex}>{segment.text}</span>
+                    ),
+                  )
+                ) : (
+                  "\u00a0"
+                )}
+                {doborBadge}
               </div>
             );
           })}

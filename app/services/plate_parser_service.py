@@ -194,6 +194,7 @@ class PlateParserService:
             unparsed_lines=unparsed_lines,
             diagnostics=diagnostics,
             wide_plate_lines=get_wide_plate_lines(processing_text),
+            dobor_pairs=list(normalization.dobor_pairs),
             warnings=warnings,
             line_contributions=line_contributions,
             line_plate_load_details=line_plate_load_details,

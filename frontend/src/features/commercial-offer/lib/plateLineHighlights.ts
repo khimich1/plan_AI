@@ -1,13 +1,17 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 
-export type PlateLineHighlightKind = "correction" | "unparsed" | "wide";
+export type PlateLineHighlightKind = "correction" | "unparsed" | "wide" | "dobor";
 
 export type PlateLineHighlight = {
   kind: PlateLineHighlightKind;
   title: string;
+  doborPairId?: string;
+  doborPartnerLine?: string;
 };
 
 const normalizeLineKey = (line: string) => line.trim().toLowerCase();
+
+const stripUnparsedSuffix = (line: string) => line.replace(/\s*\(пропущено:.*\)\s*$/i, "").trim();
 
 export const buildPlateLineHighlightMap = (
   draft: CommercialDraftDetails,
@@ -17,11 +21,19 @@ export const buildPlateLineHighlightMap = (
   const lines = textLines;
 
   const unparsedKeys = new Set(
-    (draft.metadata.unparsed_lines ?? []).map((line) => normalizeLineKey(line)),
+    (draft.metadata.unparsed_lines ?? []).map((line) => normalizeLineKey(stripUnparsedSuffix(line))),
   );
   const wideKeys = new Set(
     (draft.metadata.wide_plate_lines ?? []).map((item) => normalizeLineKey(item.line)),
   );
+
+  const doborByLineKey = new Map<string, { pairId: string; partnerLine: string }>();
+  for (const pair of draft.metadata.dobor_pairs ?? []) {
+    const primaryKey = normalizeLineKey(pair.primary_line);
+    const complementKey = normalizeLineKey(pair.complement_line);
+    doborByLineKey.set(primaryKey, { pairId: pair.id, partnerLine: pair.complement_line });
+    doborByLineKey.set(complementKey, { pairId: pair.id, partnerLine: pair.primary_line });
+  }
 
   const correctionRows = new Set<number>();
   for (const correction of draft.metadata.ocr_corrections ?? []) {
@@ -49,6 +61,16 @@ export const buildPlateLineHighlightMap = (
       });
       return;
     }
+    const doborMatch = doborByLineKey.get(key);
+    if (doborMatch) {
+      highlights.set(index, {
+        kind: "dobor",
+        title: `Добор: пара с «${doborMatch.partnerLine}»`,
+        doborPairId: doborMatch.pairId,
+        doborPartnerLine: doborMatch.partnerLine,
+      });
+      return;
+    }
     if (correctionRows.has(index)) {
       highlights.set(index, {
         kind: "correction",
@@ -64,4 +86,38 @@ export const PLATE_LINE_HIGHLIGHT_STYLES: Record<PlateLineHighlightKind, { backg
   correction: { background: "#fffaeb", border: "#fec84b" },
   unparsed: { background: "#fff4ed", border: "#f9a86c" },
   wide: { background: "#fef3f2", border: "#f97066" },
+  dobor: { background: "#f0f9ff", border: "#36bffa" },
+};
+
+export const DOBOR_MARKER_HIGHLIGHT_STYLE = { background: "#d1fadf", border: "#32d583" };
+
+export type DoborMarkerSegment = {
+  text: string;
+  isMarker: boolean;
+};
+
+/** Tail marker pattern aligned with core/dobor_split.py _DOБOR_MARKER_RE (marker text only). */
+const DOBOR_MARKER_TAIL_RE =
+  /(\s*(?:\+\s*)?(?:доб(?:ор)?))(?:\s*[-—]?\s*)?(?:(?:\d+)(?:\s*[-—]?\s*)?(?:шт\.?)?)?\s*$/iu;
+
+export const splitLineByDoborMarker = (line: string): DoborMarkerSegment[] => {
+  const match = line.match(DOBOR_MARKER_TAIL_RE);
+  if (!match || match.index === undefined) {
+    return [{ text: line, isMarker: false }];
+  }
+
+  const markerText = match[1] ?? "";
+  const markerStart = match.index;
+  const markerEnd = markerStart + markerText.length;
+  const segments: DoborMarkerSegment[] = [];
+
+  if (markerStart > 0) {
+    segments.push({ text: line.slice(0, markerStart), isMarker: false });
+  }
+  segments.push({ text: markerText, isMarker: true });
+  if (markerEnd < line.length) {
+    segments.push({ text: line.slice(markerEnd), isMarker: false });
+  }
+
+  return segments;
 };

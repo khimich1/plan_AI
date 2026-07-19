@@ -210,6 +210,7 @@ class CommercialDraftService:
                 "normalized_text": preview.parse_result.normalized_text,
                 "normalized_lines": list(preview.parse_result.normalized_lines),
                 "wide_plate_lines": self.serialize_wide_plate_lines(preview.parse_result.wide_plate_lines),
+                "dobor_pairs": self.serialize_dobor_pairs(preview.parse_result.dobor_pairs),
                 "diagnostics": list(preview.parse_result.diagnostics),
                 "breakdown_tables": list(preview.breakdown_tables),
                 "price_rows_count": len(preview.price_rows),
@@ -258,6 +259,30 @@ class CommercialDraftService:
                         "id": str(item.get("id") or f"wide-{idx}"),
                         "line": str(item["line"]),
                         "qty": int(item.get("qty", 1) or 1),
+                    }
+                )
+        return serialized
+
+    @staticmethod
+    def serialize_dobor_pairs(items: Iterable[Any]) -> list[dict[str, Any]]:
+        serialized: list[dict[str, Any]] = []
+        for idx, item in enumerate(items, start=1):
+            if hasattr(item, "pair_id"):
+                serialized.append(
+                    {
+                        "id": str(getattr(item, "pair_id", f"dobor-{idx}")),
+                        "source_line": str(getattr(item, "source_line", "")),
+                        "primary_line": str(getattr(item, "primary_line", "")),
+                        "complement_line": str(getattr(item, "complement_line", "")),
+                    }
+                )
+            elif isinstance(item, dict) and item.get("primary_line"):
+                serialized.append(
+                    {
+                        "id": str(item.get("id") or f"dobor-{idx}"),
+                        "source_line": str(item.get("source_line", "")),
+                        "primary_line": str(item["primary_line"]),
+                        "complement_line": str(item.get("complement_line", "")),
                     }
                 )
         return serialized

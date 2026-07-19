@@ -64,6 +64,7 @@ def _sample_draft(draft_id: str = "draft-123") -> dict:
             "normalized_text": "ПБ 78-12-8п 2",
             "normalized_lines": ["ПБ 78-12-8п 2"],
             "wide_plate_lines": [],
+            "dobor_pairs": [],
             "wide_plates_resolved": True,
             "current_step": "client",
         },
