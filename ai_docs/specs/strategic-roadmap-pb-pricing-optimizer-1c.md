@@ -61,6 +61,7 @@
 - Разные правила lookup: точное совпадение vs `ABS(length_dm-?)<=1` в `price_utils.py`.
 - Нагрузка **12,5п** — особая логика (`floor` → колонка 12) — должна быть единообразной везде.
 - PDF и XLSX дублируют `calculate_total_cost` — уже есть тесты на логистику (`test_commercial_logistics_cost.py`), но нет единого **golden suite** по прайсу.
+- **`viz_modules/procurement/trim.py`:** периодически теряется продольный рез (10,8 м); двойной учёт отхода на primary+secondary; необъяснимые отходы на дочерних плитах — **задокументировано и в работе:** [`plate-pricing-trim-bugs.md`](./plate-pricing-trim-bugs.md).
 
 ### Оптимизатор — механизмы контроля целостности
 
@@ -122,6 +123,7 @@ Phase 1 ──► Phase 2 ──► Phase 3 ──► Phase 4 ──► Phase 5
 - Сверка PDF vs XLSX vs API preview breakdown.
 - Документирование правил: ceil длины, 12,5п, резы, НДС 22%, скидка, логистика.
 - UI: индикация позиций с fallback-ценой (если нет в прайсе).
+- **Баги trim (отходы / продольный рез):** см. детальную спеку [`plate-pricing-trim-bugs.md`](./plate-pricing-trim-bugs.md) — Fix-1..4, регрессия T1–T8, эталоны менеджера.
 
 **Out of scope:**
 - Себестоимость (`factory_cost/`) как источник цены продажи.
