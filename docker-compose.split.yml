@@ -43,10 +43,10 @@ services:
     volumes:
       # Данные здесь НЕ в каталоге /plan_zavod — том Docker (docker volume inspect …).
       # Варианты БД:
-      # 1) Перед build положить pb.db и plita.db в docker/seed/ (попадут в образ), первый запуск скопирует в /data.
+      # 1) Перед build положить pb.db в docker/seed/ (попадёт в образ). plita.db не сидится — admin через create_admin.py.
       # 2) Вместо named volume — привязка каталога на сервере (файлы видны на диске):
       #    - ./data:/data
-      #    и скопируйте туда готовые pb.db и plita.db, затем up (пересборка не нужна).
+      #    и скопируйте туда pb.db при необходимости; plita.db создастся при старте backend.
       # Если том уже создал пустые БД — для повторной заливки сидов: docker compose … down -v (сотрёт /data!)
       - web_split_data:/data
 

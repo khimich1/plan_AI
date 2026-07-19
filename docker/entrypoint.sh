@@ -14,12 +14,8 @@ if [ "$(id -u)" = "0" ]; then
     fi
   fi
   if [ -n "${PLITA_DB_PATH:-}" ] && [ ! -f "$PLITA_DB_PATH" ]; then
-    if [ -f "$SEED_DIR/plita.db" ]; then
-      echo "[entrypoint] Инициализация $PLITA_DB_PATH из $SEED_DIR/plita.db"
-      cp -a "$SEED_DIR/plita.db" "$PLITA_DB_PATH"
-    else
-      echo "[entrypoint] Пропуск plita.db: нет $SEED_DIR/plita.db в образе. Иначе приложение создаст новую пустую БД при старте (init_schema)."
-    fi
+    echo "[entrypoint] plita.db отсутствует на томе — схема создастся при старте backend (init_schema)."
+    echo "[entrypoint] После первого up создайте admin: python scripts/create_admin.py --username <name>"
   fi
   # Импорт core/config_and_data создаёт пути в /app/debug_logs — каталог должен быть доступен appuser.
   mkdir -p /app/debug_logs

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -13,8 +12,6 @@ from core.config_and_data import (
 from core.plate_runtime_state import get_plate_mutable_runtime
 
 from ..price_utils import _find_price_for_plate_production_fallback, find_price_for_plate
-from core.debug_paths import append_agent_debug_log
-from .debug_logs import _DEBUG_LOG_8E9428, _DEBUG_LOG_A9176E, _DEBUG_LOG_DB7A51
 from .items import build_procurement_items
 from .load_context import LoadCodeFn, resolve_procurement_load_context
 from .plan_lookup import _find_plan_for_plate
@@ -64,62 +61,12 @@ def build_price_rows(
         name = it.get('canonical_name') or make_plate_name(
             L, W, load_code=load_code, length_dm_raw=it.get('length_dm_raw') or None
         )
-        # #region agent log (57/57,1: имя строки сметы)
-        if 5.69 <= L <= 5.73:
-            append_agent_debug_log(
-                _DEBUG_LOG_8E9428,
-                {
-                    "sessionId": "8e9428",
-                    "hypothesisId": "H_price_row",
-                    "location": "procurement:build_price_rows",
-                    "message": "57/57,1: price_row name",
-                    "data": {"L": L, "name": name, "canonical_name": it.get("canonical_name")},
-                    "timestamp": __import__("time").time() * 1000,
-                },
-            )
-        if 5.69 <= L <= 5.73:
-            append_agent_debug_log(
-                _DEBUG_LOG_A9176E,
-                {
-                    "sessionId": "a9176e",
-                    "hypothesisId": "H2",
-                    "location": "procurement:build_price_rows",
-                    "message": "57/57,1 price_row name source",
-                    "data": {
-                        "L": L,
-                        "canonical_name": it.get("canonical_name"),
-                        "length_dm_raw": it.get("length_dm_raw"),
-                        "name": name,
-                    },
-                    "timestamp": __import__("time").time() * 1000,
-                },
-            )
         if it.get('warning'):
             name += " (нагрузка?)"
         db_price = d.get_price(L, load_code, d.db_path)
         use_fallback = db_price is None or (isinstance(db_price, (int, float)) and db_price <= 0)
         find_price = find_price_for_plate(price_table, L, load_code) if use_fallback else None
         base_price_1_2m = (db_price if (db_price is not None and isinstance(db_price, (int, float)) and db_price > 0) else None) or find_price or 0.0
-        if base_price_1_2m == 0.0:
-            append_agent_debug_log(
-                _DEBUG_LOG_DB7A51,
-                {
-                    "sessionId": "db7a51",
-                    "hypothesisId": "build_price_rows",
-                    "location": "procurement.py:build_price_rows",
-                    "message": "price chain",
-                    "data": {
-                        "name": name,
-                        "L": L,
-                        "W": W,
-                        "load_code": load_code,
-                        "db_price": db_price,
-                        "find_price": find_price,
-                        "base_price_1_2m": base_price_1_2m,
-                    },
-                    "timestamp": int(time.time() * 1000),
-                },
-            )
         if base_price_1_2m > 0:
             width_factor = W / 1.2
             base_price = base_price_1_2m * width_factor
