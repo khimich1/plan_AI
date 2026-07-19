@@ -139,6 +139,11 @@ class DraftStore:
             name = Path(str(item.get("filename", "")).strip()).name
             if name:
                 names.add(name)
+        schema_raw = meta.get("schema_file")
+        if isinstance(schema_raw, dict):
+            schema_name = Path(str(schema_raw.get("filename", "")).strip()).name
+            if schema_name:
+                names.add(schema_name)
         return names
 
     def save_preview(

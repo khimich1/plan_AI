@@ -1,5 +1,10 @@
+import { useCallback, useState } from "react";
+
 import type { CommercialDraftDetails, FileKind } from "@/features/commercial-offer/types/commercialOffer";
-import { downloadFile } from "@/shared/lib/downloadFile";
+import { httpClient } from "@/shared/api/httpClient";
+import { getErrorMessage } from "@/shared/lib/apiError";
+import { saveBlobAs } from "@/shared/lib/downloadFile";
+import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 
@@ -29,12 +34,29 @@ export const DownloadFilesSection = ({
   const filesByKind = new Map(mainFiles.map((file) => [file.kind, file]));
   const missingMainKinds = (["pdf", "xlsx"] as const).filter((kind) => !filesByKind.has(kind));
   const hasAnyMainFile = mainFiles.length > 0;
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+
+  const handleDownload = useCallback(async (downloadUrl: string, fallbackFilename: string, key: string) => {
+    setDownloadError(null);
+    setDownloadingKey(key);
+    try {
+      const result = await httpClient.download(downloadUrl, fallbackFilename);
+      saveBlobAs(result.blob, result.filename);
+    } catch (error) {
+      setDownloadError(getErrorMessage(error));
+    } finally {
+      setDownloadingKey(null);
+    }
+  }, []);
 
   return (
     <Card
       title="Документы для клиента"
       subtitle="Сформируйте нужные файлы и скачайте их по отдельности."
     >
+      {downloadError && <Alert tone="error">{downloadError}</Alert>}
+
       {!hasAnyMainFile ? (
         <div style={{ display: "grid", gap: "0.75rem" }}>
           <p style={{ margin: 0, color: "#475467" }}>
@@ -56,7 +78,8 @@ export const DownloadFilesSection = ({
                 key={file.kind}
                 title={FILE_KIND_LABELS[kind]}
                 filename={file.filename}
-                downloadUrl={file.download_url}
+                isDownloading={downloadingKey === file.kind}
+                onDownload={() => handleDownload(file.download_url, file.filename, file.kind)}
               />
             );
           })}
@@ -89,8 +112,13 @@ export const DownloadFilesSection = ({
             </div>
           </div>
           {schemaFile ? (
-            <Button type="button" variant="ghost" onClick={() => downloadFile(schemaFile.download_url)}>
-              Скачать
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={downloadingKey === "schema"}
+              onClick={() => handleDownload(schemaFile.download_url, schemaFile.filename, "schema")}
+            >
+              {downloadingKey === "schema" ? "Скачиваем…" : "Скачать"}
             </Button>
           ) : (
             <Button type="button" variant="secondary" onClick={onGenerateSchema} disabled={isSchemaPending}>
@@ -106,11 +134,13 @@ export const DownloadFilesSection = ({
 const FileRow = ({
   title,
   filename,
-  downloadUrl,
+  isDownloading,
+  onDownload,
 }: {
   title: string;
   filename: string;
-  downloadUrl: string;
+  isDownloading: boolean;
+  onDownload: () => void;
 }) => (
   <div
     style={{
@@ -127,8 +157,8 @@ const FileRow = ({
       <strong>{title}</strong>
       <div style={{ color: "#475467" }}>{filename}</div>
     </div>
-    <Button type="button" variant="ghost" onClick={() => downloadFile(downloadUrl)}>
-      Скачать
+    <Button type="button" variant="ghost" disabled={isDownloading} onClick={onDownload}>
+      {isDownloading ? "Скачиваем…" : "Скачать"}
     </Button>
   </div>
 );

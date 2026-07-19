@@ -54,9 +54,9 @@ bot.env
 # База данных
 *.db
 pb.db
-# Опционально: закоммитьте стартовые копии для Docker (docker/seed/README.txt)
+# Опционально: закоммитьте стартовую копию прайсов для Docker (docker/seed/README.txt)
+# plita.db НЕ коммитится — admin создаётся через scripts/create_admin.py
 !docker/seed/pb.db
-!docker/seed/plita.db
 # SQLite временные файлы
 *.db-shm
 *.db-wal

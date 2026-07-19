@@ -3,15 +3,7 @@
 
 from __future__ import annotations
 
-import json
-import time
 from core.config_and_data import canonical_plate_key
-from core.optimization.debug_log import (
-    _DEBUG_LOG_5b5324,
-    _DEBUG_LOG_COMMON,
-    _dbg_open_append,
-    _opt_debug_enabled,
-)
 from core.optimization.geometry import (
     GeometryConfig,
     NARROWING_TABLE,
@@ -22,12 +14,6 @@ from core.optimization.geometry import (
 from core.optimization.ilp_model import build_two_d_cutting_ilp
 from core.optimization.logging_utils import order_line_for_console
 from core.optimization.optimization_config import DEFAULT_CONFIG, OptimizationConfig
-from core.optimization.optimization_debug_impl import (
-    _DEBUG_AGENT_LOG_EBB546,
-    _DEBUG_LOG_2D5C43,
-    _DEBUG_LOG_7E420E,
-    _debug_runtime_write_648532,
-)
 from core.optimization.optimize_2d.state import TwoDPhaseAState
 from core.optimization.ports.order_data import PlateOrderDataPort, resolve_plate_order_port
 from core.optimization.order_dispatch import (
@@ -73,27 +59,6 @@ def run_two_d_phase_a(
     if not orders_2d:
         return None, opt_error(ERROR_EMPTY_ORDERS_2D, "Пустой список заказов orders_2d.")
 
-    # #region agent log
-    if _opt_debug_enabled():
-        try:
-            with _dbg_open_append(_DEBUG_LOG_7E420E) as _lf:
-                _lf.write(
-                    json.dumps(
-                        {
-                            "sessionId": "7e420e",
-                            "hypothesisId": "H_OPT_ENTER",
-                            "location": "core/optimization/optimize_2d/prep_solve.py",
-                            "message": "2D ILP optimizer entered (fresh plan build)",
-                            "data": {"n_orders": len(orders_2d), "plate_width": int(plate_width)},
-                            "timestamp": int(time.time() * 1000),
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-    # #endregion
 
     print(f"\n[OPT_2D] === ПОЛНАЯ 2D ОПТИМИЗАЦИЯ ===")
     print(f"[OPT_2D] Заказ:")
@@ -105,100 +70,9 @@ def run_two_d_phase_a(
     for order in orders_2d:
         key = canonical_plate_key(order["length"], order["width"], order.get("load_code", 800))
         demand_2d[key] = demand_2d.get(key, 0) + order["qty"]
-    # #region agent log: demand keys 59/10 (H3,H4)
-    if _opt_debug_enabled():
-        try:
-            _demand_59_10 = [
-                (list(k), v)
-                for k, v in demand_2d.items()
-                if abs(k[0] - 5.99) < 0.02 and (k[2] == 10 or abs(float(k[2]) - 10) < 0.01)
-            ]
-            if _demand_59_10:
-                with _dbg_open_append(_DEBUG_LOG_COMMON) as _df:
-                    _df.write(
-                        json.dumps(
-                            {
-                                "hypothesisId": "H_59_10_demand",
-                                "location": "core/optimization/optimize_2d/prep_solve.py",
-                                "message": "demand_2d: ключи 5.99м 10п (length, width, load_code)",
-                                "data": {"keys": _demand_59_10},
-                                "timestamp": time.time(),
-                            },
-                            ensure_ascii=False,
-                        )
-                        + "\n"
-                    )
-        except Exception:
-            pass
-    # #endregion
     order_info_list = build_order_info_list(orders_2d, _order_view)
 
     slot_lists, slot_cursors = _build_proportional_slot_lists(orders_2d, demand_2d)
-    # #region agent log (session 5b5324) после построения slot_lists
-    if _opt_debug_enabled():
-        try:
-            _slot_summary = [(list(k), len(slots)) for k, slots in list(slot_lists.items())[:20]]
-            _sample_slot = []
-            for k, slots in list(slot_lists.items())[:3]:
-                if slots:
-                    _sample_slot.append(
-                        {
-                            "key": list(k),
-                            "first_identity": [
-                                slots[0].get("kp_id"),
-                                (slots[0].get("plate_name") or "")[:50],
-                            ],
-                        }
-                    )
-            with _dbg_open_append(_DEBUG_LOG_5b5324) as _f:
-                _f.write(
-                    json.dumps(
-                        {
-                            "sessionId": "5b5324",
-                            "hypothesisId": "H_slots",
-                            "location": "core/optimization/optimize_2d/prep_solve.py",
-                            "message": "slot_lists summary",
-                            "data": {
-                                "slot_summary": _slot_summary,
-                                "sample_slot_identity": _sample_slot,
-                            },
-                            "timestamp": time.time(),
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-    # #endregion
-    # #region agent log
-    if _opt_debug_enabled():
-        try:
-            _slot_mismatch = []
-            _slot_empty = []
-            for _k, _need in demand_2d.items():
-                _slots_len = len(slot_lists.get(_k, []))
-                if _slots_len == 0 and _need > 0:
-                    _slot_empty.append({"key": list(_k), "need": int(_need)})
-                if _slots_len < _need:
-                    _slot_mismatch.append({"key": list(_k), "need": int(_need), "slots": int(_slots_len)})
-            _debug_runtime_write_648532(
-                "run1",
-                "H1_slot_key_alignment",
-                "core/optimization/optimize_2d/prep_solve.py",
-                "Demand keys versus proportional slot capacity",
-                {
-                    "demand_total": int(sum(demand_2d.values())),
-                    "slot_total": int(sum(len(v) for v in slot_lists.values())),
-                    "demand_keys": int(len(demand_2d)),
-                    "slot_keys": int(len(slot_lists)),
-                    "empty_slot_keys": _slot_empty[:50],
-                    "short_slot_keys": _slot_mismatch[:50],
-                },
-            )
-        except Exception:
-            pass
-    # #endregion
 
     tolerance_width = 20
     demand_tolerance_width = 10
@@ -223,72 +97,8 @@ def run_two_d_phase_a(
         print(f"  {target_w}мм можно получить через: {sources}")
 
     print(f"[OPT_2D] Опций первичных резов (до фильтрации): {len(primary_options)}")
-    # #region agent log (2d5c43) Plan B: опции для 5.1/320 и 6/530 до фильтра
-    if _opt_debug_enabled():
-        try:
-            _log = _DEBUG_LOG_2D5C43
-            _opts_320 = [
-                {"id": o["id"], "length": o["length"], "main": o["main"], "type": o.get("type"), "load_code": o.get("load_code")}
-                for o in primary_options
-                if o.get("main") == 320 or o.get("target_width") == 320
-            ]
-            _opts_530 = [
-                {"id": o["id"], "length": o["length"], "main": o["main"], "type": o.get("type"), "load_code": o.get("load_code")}
-                for o in primary_options
-                if o.get("main") == 530 or o.get("target_width") == 530
-            ]
-            with _dbg_open_append(_log) as _f:
-                _f.write(
-                    json.dumps(
-                        {
-                            "sessionId": "2d5c43",
-                            "hypothesisId": "H_opt_gen",
-                            "location": "core/optimization/optimize_2d/prep_solve.py",
-                            "message": "options for 320 and 530 before filter",
-                            "data": {"opts_320": _opts_320, "opts_530": _opts_530, "solid_widths": solid_widths},
-                            "timestamp": time.time(),
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-    # #endregion
     primary_options = primary_result.options
     print(f"[OPT_2D] После фильтрации осталось: {len(primary_options)} первичных опций")
-    # #region agent log (2d5c43) Plan B: опции для 320/530 после фильтра
-    if _opt_debug_enabled():
-        try:
-            _log = _DEBUG_LOG_2D5C43
-            _opts_320 = [
-                {"id": o["id"], "length": o["length"], "main": o["main"], "type": o.get("type")}
-                for o in primary_options
-                if o.get("main") == 320 or o.get("target_width") == 320
-            ]
-            _opts_530 = [
-                {"id": o["id"], "length": o["length"], "main": o["main"], "type": o.get("type")}
-                for o in primary_options
-                if o.get("main") == 530 or o.get("target_width") == 530
-            ]
-            with _dbg_open_append(_log) as _f:
-                _f.write(
-                    json.dumps(
-                        {
-                            "sessionId": "2d5c43",
-                            "hypothesisId": "H_opt_filter",
-                            "location": "core/optimization/optimize_2d/prep_solve.py",
-                            "message": "options for 320 and 530 after filter",
-                            "data": {"opts_320": _opts_320, "opts_530": _opts_530},
-                            "timestamp": time.time(),
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-    # #endregion
     secondary_options = generate_raw_secondary_cut_options_2d(
         primary_options=primary_options,
         demand_2d=demand_2d,
@@ -321,44 +131,6 @@ def run_two_d_phase_a(
     solid_pairs_per_dk = ilp.solid_pairs_per_dk
     no_sources_keys = ilp.no_sources_keys
 
-    # #region agent log
-    if _opt_debug_enabled():
-        try:
-            _supply_diag = []
-            for _dk in dk_list:
-                _supply_diag.append(
-                    {
-                        "dk": list(_dk),
-                        "need_qty": int(demand_2d.get(_dk, 0)),
-                        "primary_opts": len(primary_pairs_per_dk.get(_dk) or []),
-                        "secondary_opts": len(secondary_pairs_per_dk.get(_dk) or []),
-                        "solid_opts": len(solid_pairs_per_dk.get(_dk) or []),
-                    }
-                )
-            with _dbg_open_append(_DEBUG_AGENT_LOG_EBB546) as _agent_f:
-                _agent_f.write(
-                    json.dumps(
-                        {
-                            "sessionId": "ebb546",
-                            "runId": "solver-localization",
-                            "hypothesisId": "O1,O2",
-                            "location": "core/optimization/optimize_2d/prep_solve.py",
-                            "message": "Demand keys и количество доступных опций до solve",
-                            "data": {
-                                "demand_total": int(sum(demand_2d.values())),
-                                "demand_keys": int(len(dk_list)),
-                                "no_sources_keys": [{"dk": list(k), "qty": int(q)} for k, q in (no_sources_keys or [])],
-                                "supply_diag": _supply_diag[:200],
-                            },
-                            "timestamp": int(time.time() * 1000),
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-    # #endregion
 
     print(
         f"[OPT_2D] Запуск решателя: {len(primary_options)} primary, "
@@ -405,82 +177,6 @@ def run_two_d_phase_a(
             v = value(sv) or 0
             if v > 0.5:
                 _slack_logger.warning("[OPT_2D] [SOLID_SLACK] %s = %d", dk, int(round(v)))
-    # #region agent log
-    if _opt_debug_enabled():
-        try:
-            _coverage_diag = []
-            _missing_after_solver = []
-            for _dk in dk_list:
-                _need = int(demand_2d.get(_dk, 0))
-                _z_prim = int(
-                    round(
-                        sum(
-                            (value(z_prim.get((_oid, _dk))) or 0)
-                            for _oid in (primary_pairs_per_dk.get(_dk) or [])
-                        )
-                    )
-                )
-                _z_sec = int(
-                    round(
-                        sum(
-                            (value(z_sec.get((_oid, _dk))) or 0)
-                            for _oid in (secondary_pairs_per_dk.get(_dk) or [])
-                        )
-                    )
-                )
-                _unmet_v = int(round(value(unmet.get(_dk)) or 0))
-                _covered = _z_prim + _z_sec
-                _coverage_diag.append(
-                    {
-                        "dk": list(_dk),
-                        "need_qty": _need,
-                        "z_prim": _z_prim,
-                        "z_sec": _z_sec,
-                        "covered": _covered,
-                        "unmet": _unmet_v,
-                        "supply_primary_opts": len(primary_pairs_per_dk.get(_dk) or []),
-                        "supply_secondary_opts": len(secondary_pairs_per_dk.get(_dk) or []),
-                    }
-                )
-                if _covered < _need:
-                    _missing_after_solver.append(
-                        {
-                            "dk": list(_dk),
-                            "need_qty": _need,
-                            "covered": _covered,
-                            "missing": _need - _covered,
-                            "unmet": _unmet_v,
-                        }
-                    )
-            with _dbg_open_append(_DEBUG_AGENT_LOG_EBB546) as _agent_f:
-                _agent_f.write(
-                    json.dumps(
-                        {
-                            "sessionId": "ebb546",
-                            "runId": "solver-localization",
-                            "hypothesisId": "O3,O4,O5",
-                            "location": "core/optimization/optimize_2d/prep_solve.py",
-                            "message": "Покрытие спроса по dk после solve через z_prim/z_sec/unmet",
-                            "data": {
-                                "solver_status": _solver_status,
-                                "demand_total": int(sum(demand_2d.values())),
-                                "z_prim_total": int(round(sum((value(v) or 0) for v in z_prim.values()))),
-                                "z_sec_total": int(round(sum((value(v) or 0) for v in z_sec.values()))),
-                                "unmet_total": _unmet_total,
-                                "slack_total": _slack_total,
-                                "missing_after_solver_total": int(sum(x["missing"] for x in _missing_after_solver)),
-                                "missing_after_solver": _missing_after_solver[:120],
-                                "coverage_diag": _coverage_diag[:250],
-                            },
-                            "timestamp": int(time.time() * 1000),
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-    # #endregion
 
     state = TwoDPhaseAState(
         orders_2d=orders_2d,

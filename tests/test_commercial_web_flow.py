@@ -545,6 +545,54 @@ def test_download_generated_file_from_outputs_dir(
     assert response.content == b"ok"
 
 
+def test_download_schema_file_from_schema_file_metadata(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir()
+    monkeypatch.setenv("DRAFTS_DIR", str(drafts_dir))
+    get_settings.cache_clear()
+
+    draft_id = "b" * 32
+    schema_filename = "schema-test-file.pdf"
+    store = DraftStore()
+    order = PlateOrder()
+    oc = OptimizationContext(order=order)
+    store.replace_preview(
+        draft_id,
+        order=order,
+        optimization_context=oc,
+        order_data=[],
+        metadata={
+            "owner_user_id": 1,
+            "schema_file": {
+                "kind": "schema",
+                "filename": schema_filename,
+                "display_name": "Схема раскладки (PDF)",
+                "download_url": "",
+            },
+        },
+    )
+
+    workflow = CommercialWorkflowService()
+    target_file = Path(workflow.settings.outputs_dir) / schema_filename
+    target_file.write_bytes(b"%PDF-schema")
+
+    try:
+        response = client.get(
+            f"/api/v1/commercial/files/{schema_filename}",
+            params={"draft_id": draft_id},
+        )
+    finally:
+        target_file.unlink(missing_ok=True)
+
+    assert response.status_code == 200
+    assert response.content == b"%PDF-schema"
+
+
 def test_download_generated_file_rejects_outside_outputs(
     client: TestClient,
     auth_cookie: dict[str, str],

@@ -12,11 +12,8 @@ import re
 import sqlite3
 
 from core.config_and_data import parse_name_to_sizes
-from core.debug_paths import append_agent_debug_log, get_debug_log_path
 from core.project_paths import BASE_DIR, PRICE_DB_PATH, PRICE_XLSX_PATH
 from core.price_db import length_m_to_price_length_dm
-
-_DEBUG_LOG_DB7A51 = get_debug_log_path("debug-db7a51.log")
 
 try:
     import pandas as pd
@@ -230,27 +227,6 @@ def find_price_for_plate(price_table: dict, length_m: float, load_code: int | fl
             if abs(Ldm - key) <= 1 and load_code_int in loads:
                 result = loads[load_code_int]
                 break
-    # #region agent log
-    append_agent_debug_log(
-        _DEBUG_LOG_DB7A51,
-        {
-            "sessionId": "db7a51",
-            "hypothesisId": "find_price_for_plate",
-            "location": "price_utils.py:find_price_for_plate",
-            "message": "find_price_for_plate lookup",
-            "data": {
-                "length_m": length_m,
-                "load_code": load_code,
-                "load_code_int": load_code_int,
-                "key": key,
-                "result": result,
-                "key_in_table": key in price_table,
-                "loads_keys": list(price_table.get(key, {}).keys()),
-            },
-            "timestamp": int(__import__("time").time() * 1000),
-        },
-    )
-    # #endregion
     return result
 
 

@@ -23,7 +23,7 @@ type SaveOfferFormValues = {
 };
 
 const ALTERNATIVE_SAVE_MODES: Array<{ value: SaveMode; label: string; hint: string }> = [
-  { value: "archive", label: "В архив", hint: "КП сразу попадёт в архив — для завершённых предложений." },
+  { value: "database", label: "В работе", hint: "КП сохранится со статусом «в работе» — можно вернуться к нему позже." },
   { value: "skip", label: "Пропустить", hint: "Только скачать файлы, без записи в БД." },
 ];
 
@@ -38,7 +38,7 @@ export const SaveOfferSection = ({
   const form = useForm<SaveOfferFormValues>({
     resolver: zodResolver(saveOfferSchema),
     defaultValues: {
-      mode: "database",
+      mode: "archive",
       executionTermsInput: defaultExecutionTerms,
     },
   });
@@ -62,14 +62,14 @@ export const SaveOfferSection = ({
   });
 
   const handlePrimarySave = async () => {
-    form.setValue("mode", "database");
+    form.setValue("mode", "archive");
     await submitSave();
   };
 
   return (
     <Card
       title="Сохранение результата"
-      subtitle="По умолчанию КП сохраняется со статусом «в работе» — можно вернуться к нему позже."
+      subtitle="По умолчанию КП сохраняется в архив — для завершённых предложений."
     >
       <form onSubmit={(event) => void submitSave(event)} style={{ display: "grid", gap: "1rem" }}>
         <FieldWrapper
@@ -90,7 +90,7 @@ export const SaveOfferSection = ({
           disabled={isSubmitDisabled}
           onClick={() => void handlePrimarySave()}
         >
-          {hasSavedOffer ? "Сохранено" : isPending ? "Сохранение..." : "В работе"}
+          {hasSavedOffer ? "Сохранено" : isPending ? "Сохранение..." : "В архив"}
         </Button>
 
         <div style={{ display: "grid", gap: "0.5rem" }}>
@@ -140,12 +140,12 @@ export const SaveOfferSection = ({
                 </label>
               ))}
 
-              {mode !== "database" && (
+              {mode !== "archive" && (
                 <Button type="submit" variant="secondary" disabled={isSubmitDisabled}>
                   {isPending
                     ? "Сохранение..."
-                    : mode === "archive"
-                      ? "Сохранить в архив"
+                    : mode === "database"
+                      ? "Сохранить в работе"
                       : "Пропустить сохранение"}
                 </Button>
               )}

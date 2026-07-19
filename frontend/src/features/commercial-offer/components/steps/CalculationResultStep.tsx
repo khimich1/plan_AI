@@ -133,7 +133,8 @@ export const CalculationResultStep = ({
 
     <Card title="Готовность КП" subtitle="Перед отправкой клиенту проверьте ключевые пункты.">
       <ul style={{ margin: 0, paddingLeft: "1.25rem", display: "grid", gap: "0.5rem" }}>
-        <li>✓ {draft.order_data.length} плит в заказе</li>
+        <li>✓ {draft.order_data.length} позиций в заказе</li>
+        <li>✓ {draft.totals.total_qty ?? 0} плит в заказе</li>
         <li>✓ Клиент: {draft.metadata.client_name || "не указан"}</li>
         <li>✓ Сумма с НДС: {totalWithVat}</li>
         {readinessWarnings.length > 0 && (

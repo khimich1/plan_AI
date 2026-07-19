@@ -64,6 +64,16 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
             >
               <thead>
                 <tr style={{ textAlign: "left", color: "#475467", background: "#f2f4f7" }}>
+                  <th
+                    style={{
+                      padding: "0.55rem 0.65rem",
+                      borderBottom: "1px solid #e4e7ec",
+                      width: "1%",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    №
+                  </th>
                   <th style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #e4e7ec", minWidth: 280 }}>
                     Наименование
                   </th>
@@ -92,6 +102,18 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
               <tbody>
                 {rows.map((row, index) => (
                   <tr key={`${row.name}-${index}`}>
+                    <td
+                      style={{
+                        padding: "0.55rem 0.65rem",
+                        borderBottom: "1px solid #f2f4f7",
+                        fontVariantNumeric: "tabular-nums",
+                        whiteSpace: "nowrap",
+                        width: "1%",
+                        verticalAlign: "top",
+                      }}
+                    >
+                      {index + 1}
+                    </td>
                     <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7", verticalAlign: "top" }}>
                       <div style={{ whiteSpace: "nowrap" }}>{row.name}</div>
                       {row.flag && (
