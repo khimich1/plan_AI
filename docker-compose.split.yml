@@ -34,10 +34,17 @@ services:
       CURRENT_PLAN_PATH: /data/current_plan.json
       WORK_CALENDAR_PATH: /data/work_calendar.json
       BACKEND_CORS_ALLOWED_ORIGINS: "https://zavodstart.ru,https://www.zavodstart.ru,http://localhost,http://127.0.0.1,http://localhost:5173,http://127.0.0.1:5173"
-      # GPT-4o Vision: на VPS создайте .env рядом с compose (см. .gitignore) или export OPENAI_API_KEY
+      # Секреты и OCR: значения из .env рядом с compose (см. .gitignore)
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?set APP_SECRET_KEY in .env}
       OCR_EXTERNAL_ENABLED: ${OCR_EXTERNAL_ENABLED:-true}
+      OCR_PROVIDER: ${OCR_PROVIDER:-gigachat}
+      OCR_VERIFY_MODE: ${OCR_VERIFY_MODE:-never}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # APP_SECRET_KEY: "..."
+      GIGACHAT_CREDENTIALS: ${GIGACHAT_CREDENTIALS:-}
+      GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat-2-Max}
+      GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
+      # Без бота на VPS: иначе в production нужен BOT_TELEGRAM_ALLOWLIST
+      BOT_AUTH_FAIL_CLOSED: ${BOT_AUTH_FAIL_CLOSED:-false}
       # Прайсы: смонтируйте том и выставьте пути через env
       # PRICES_DIR: /knowledge
     volumes:
@@ -49,6 +56,8 @@ services:
       #    и скопируйте туда pb.db при необходимости; plita.db создастся при старте backend.
       # Если том уже создал пустые БД — для повторной заливки сидов: docker compose … down -v (сотрёт /data!)
       - web_split_data:/data
+      # Кириллица в PDF: положите .ttf в core/fonts на хосте (см. core/commercial_offer.py)
+      - ./core/fonts:/app/core/fonts:ro
 
   frontend:
     build:
