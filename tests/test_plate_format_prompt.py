@@ -13,3 +13,4 @@ def test_plate_parser_system_prompt_contains_all_formats():
     assert "71-12-8 3" in prompt
     assert "normalized_candidate" in prompt
     assert "JSON" in prompt
+    assert "+доб" in prompt

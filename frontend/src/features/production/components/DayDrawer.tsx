@@ -3,12 +3,14 @@ import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Spinner } from "@/shared/ui/Spinner";
-import { ApiError, getErrorMessage } from "@/shared/lib/apiError";
+import { getErrorMessage } from "@/shared/lib/apiError";
+import { isPlanVersionConflict } from "@/shared/lib/planConflict";
 import {
   useCompleteDayMutation,
   useDayDocumentMutation,
   useDayViewQuery,
   useDeleteTrackMutation,
+  usePlansListQuery,
 } from "@/features/production/hooks/useProductionQueries";
 import type {
   DayInfo,
@@ -83,6 +85,7 @@ export const DayDrawer = ({
 }: DayDrawerProps) => {
   const open = date !== null;
   const dayQuery = useDayViewQuery(date);
+  const plansQuery = usePlansListQuery();
   const completeMutation = useCompleteDayMutation();
   const deleteTrackMutation = useDeleteTrackMutation();
   const schemaMutation = useDayDocumentMutation("schema");
@@ -131,6 +134,19 @@ export const DayDrawer = ({
     () => dayQuery.data?.plans ?? [],
     [dayQuery.data],
   );
+
+  const planVersionById = useMemo(() => {
+    const versions = new Map<string, number>();
+    for (const plan of plansQuery.data?.plans ?? []) {
+      if (typeof plan.version === "number") {
+        versions.set(plan.id, plan.version);
+      }
+    }
+    return versions;
+  }, [plansQuery.data]);
+
+  const getExpectedVersion = (planId: string): number | undefined =>
+    planVersionById.get(planId);
 
   const totalTracks = dayQuery.data?.total_tracks ?? 0;
   const hasTracks = totalTracks > 0;
@@ -193,9 +209,15 @@ export const DayDrawer = ({
           date,
           planId: plan.plan_id,
           rejectedPlates: buildRejectedPlates(plan),
+          expectedVersion: getExpectedVersion(plan.plan_id),
         },
         {
           onSuccess: () => clearPlanRejections(plan.plan_id),
+          onError: (error) => {
+            if (isPlanVersionConflict(error)) {
+              clearPlanRejections(plan.plan_id);
+            }
+          },
         },
       );
     }
@@ -218,6 +240,7 @@ export const DayDrawer = ({
       planId: plan.plan_id,
       date,
       trackIndex: track.plan_track_index,
+      expectedVersion: getExpectedVersion(plan.plan_id),
     });
   };
 
@@ -234,14 +257,21 @@ export const DayDrawer = ({
     completeMutation.data?.date === date ? completeMutation.data : null;
   const deleteTrackResult =
     deleteTrackMutation.data?.date === date ? deleteTrackMutation.data : null;
-  const completeErrorMessage = completeMutation.isError
-    ? getErrorMessage(completeMutation.error)
-    : null;
+  const completeErrorMessage =
+    completeMutation.isError && !isPlanVersionConflict(completeMutation.error)
+      ? getErrorMessage(completeMutation.error)
+      : null;
   const deleteTrackErrorMessage = deleteTrackMutation.isError
-    ? deleteTrackMutation.error instanceof ApiError &&
-      deleteTrackMutation.error.status === 409
-      ? "День уже завершён, удаление невозможно"
-      : getErrorMessage(deleteTrackMutation.error)
+    ? (() => {
+        const error = deleteTrackMutation.error;
+        if (isPlanVersionConflict(error)) {
+          return null;
+        }
+        if (error.status === 409) {
+          return "День уже завершён, удаление невозможно";
+        }
+        return getErrorMessage(error);
+      })()
     : null;
 
   return (

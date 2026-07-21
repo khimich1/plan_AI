@@ -5,6 +5,7 @@ import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDra
 import type { CommercialDraftDetails, SaveMode, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
 
 const draftQueryKey = (draftId: string | null) => ["commercial-offer-draft", draftId] as const;
+const breakdownQueryKey = (draftId: string | null) => ["commercial-offer-breakdown", draftId] as const;
 
 export const useCommercialOfferWizard = () => {
   const { state, dispatch } = useWizardDraftStore();
@@ -26,6 +27,17 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
+  const breakdownQuery = useQuery({
+    queryKey: breakdownQueryKey(state.draftId),
+    enabled: Boolean(state.draftId) && state.currentStep === "result",
+    queryFn: async () => {
+      if (!state.draftId) {
+        throw new Error("Draft is not initialized.");
+      }
+      return commercialOfferApi.getBreakdown(state.draftId);
+    },
+  });
+
   useEffect(() => {
     if (draftQuery.data) {
       dispatch({ type: "hydrate-draft", payload: draftQuery.data });
@@ -35,6 +47,7 @@ export const useCommercialOfferWizard = () => {
   const invalidateDraft = useCallback(
     (draftId: string) => {
       void queryClient.invalidateQueries({ queryKey: draftQueryKey(draftId) });
+      void queryClient.invalidateQueries({ queryKey: breakdownQueryKey(draftId) });
     },
     [queryClient],
   );
@@ -75,7 +88,7 @@ export const useCommercialOfferWizard = () => {
       image: File | null;
     }) => commercialOfferApi.applyAiPlates(draftId, { instruction, image }),
     onSuccess: (draft, variables) => {
-      dispatch({ type: "hydrate-draft", payload: draft });
+      dispatch({ type: "start-batch-review", payload: draft });
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
     },
@@ -90,6 +103,7 @@ export const useCommercialOfferWizard = () => {
       decisions: Array<{ sourceLine: string; action: WidePlateAction; replacementText: string }>;
     }) => commercialOfferApi.resolveWidePlates(draftId, decisions),
     onSuccess: (draft, variables) => {
+      dispatch({ type: "sync-after-wide-plates", payload: draft });
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
     },
@@ -173,6 +187,7 @@ export const useCommercialOfferWizard = () => {
     dispatch,
     managersQuery,
     draftQuery,
+    breakdownQuery,
     createDraftMutation,
     updatePlatesMutation,
     applyAiPlatesMutation,

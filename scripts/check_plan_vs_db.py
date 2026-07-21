@@ -9,7 +9,7 @@ from collections import defaultdict
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DB_PATH = PROJECT_ROOT / "plita.db"
-PLAN_PATH = PROJECT_ROOT / "bot" / "data" / "plans" / "plan_20260215_140537.json"
+PLAN_PATH = PROJECT_ROOT / "data" / "plans" / "plan_20260215_140537.json"
 
 
 def collect_plan_plates(plan_path: Path) -> dict:

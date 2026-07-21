@@ -8,6 +8,7 @@ import sqlite3
 from typing import Any
 
 from app.core.settings import get_settings
+from app.security.password_policy import validate_password
 
 
 def _hash_password(password: str, *, salt: str | None = None) -> str:
@@ -43,6 +44,7 @@ class AuthRepository:
                     role TEXT NOT NULL,
                     manager_id INTEGER,
                     is_active INTEGER NOT NULL DEFAULT 1,
+                    session_version INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -53,7 +55,16 @@ class AuthRepository:
                 ON app_users(username)
                 """
             )
+            self._ensure_session_version_column(cursor)
             conn.commit()
+
+    def _ensure_session_version_column(self, cursor: sqlite3.Cursor) -> None:
+        cursor.execute("PRAGMA table_info(app_users)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "session_version" not in columns:
+            cursor.execute(
+                "ALTER TABLE app_users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"
+            )
 
     def _row_to_payload(self, row: sqlite3.Row | None, *, include_password_hash: bool = False) -> dict[str, Any] | None:
         if row is None:
@@ -63,6 +74,22 @@ class AuthRepository:
             payload.pop("password_hash", None)
         return payload
 
+    def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
+        self.init_schema()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, username, role, manager_id, is_active, session_version, created_at
+                FROM app_users
+                WHERE id = ?
+                """,
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_payload(row)
+
     def get_user_by_username(self, username: str, *, include_password_hash: bool = False) -> dict[str, Any] | None:
         self.init_schema()
         with sqlite3.connect(self.db_path) as conn:
@@ -70,7 +97,7 @@ class AuthRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, username, password_hash, role, manager_id, is_active, created_at
+                SELECT id, username, password_hash, role, manager_id, is_active, session_version, created_at
                 FROM app_users
                 WHERE username = ?
                 """,
@@ -95,6 +122,7 @@ class AuthRepository:
             raise ValueError("Username must not be empty.")
         if not password:
             raise ValueError("Password must not be empty.")
+        validate_password(password)
         if not role.strip():
             raise ValueError("Role must not be empty.")
 
@@ -139,13 +167,60 @@ class AuthRepository:
         payload.pop("password_hash", None)
         return payload
 
-    def list_users(self) -> list[dict[str, Any]]:
+    def bump_session_version(self, user_id: int) -> int:
+        """Increment session version so existing signed cookies for this user are rejected."""
+        self.init_schema()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE app_users
+                SET session_version = session_version + 1
+                WHERE id = ?
+                """,
+                (user_id,),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"User {user_id} not found.")
+            cursor.execute(
+                "SELECT session_version FROM app_users WHERE id = ?",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            conn.commit()
+        if row is None:
+            raise RuntimeError("Session version was not persisted.")
+        return int(row[0])
+
+    def count_users(self) -> int:
+        self.init_schema()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM app_users")
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    def list_users(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         self.init_schema()
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, username, role, manager_id, is_active, created_at FROM app_users ORDER BY username"
+                """
+                SELECT id, username, role, manager_id, is_active, session_version, created_at
+                FROM app_users
+                ORDER BY username
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_users_page(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        return {
+            "items": self.list_users(limit=limit, offset=offset),
+            "total": self.count_users(),
+            "limit": limit,
+            "offset": offset,
+        }
 

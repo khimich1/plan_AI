@@ -14,7 +14,10 @@ PLATE-CTX-001: изоляция от гонок между потоками (thr
     finally:
         reset_plate_mutable_runtime(token)
 
-Если bind не вызывается, поведение как раньше: отдельное состояние на поток.
+Или через ``PlateOrderContext.fresh_empty().bound()`` (предпочтительно на hot paths).
+
+Deployment: изоляция гарантирована в рамках одного процесса при middleware на entry points;
+см. ``ai_docs/develop/architecture/plate-runtime-isolation.md``.
 """
 
 from __future__ import annotations
@@ -187,6 +190,7 @@ def fresh_plate_mutable_request_scope() -> Iterator[PlateMutableRuntime]:
 
 
 # Имена верхнего уровня legacy-модуля cfg -> атрибут PlateMutableRuntime
+# Полная карта legacy cfg-имён → атрибут PlateMutableRuntime (документация / миграция).
 MUTABLE_ATTR_MAP: Dict[str, str] = {
     "PLATES_1_2": "plates_1_2",
     "PLATES_1_5_TO_1_2": "plates_1_5_to_1_2",
@@ -222,7 +226,30 @@ MUTABLE_ATTR_MAP: Dict[str, str] = {
     "LAST_PARSE_DIAGNOSTICS": "last_parse_diagnostics",
 }
 
-MUTABLE_LEGACY_NAMES = frozenset(MUTABLE_ATTR_MAP.keys())
+# PEP 562 proxy (config_and_data.__getattr__): только имена с оставшимися bot/test cfg.-callers.
+# Web/core/app — get_plate_mutable_runtime(); см. docs/pep562-config-and-data-decommission.md.
+MUTABLE_LEGACY_NAMES = frozenset(
+    {
+        # bot/handlers/optimize.py
+        "PLATES_0_32",
+        "PLATES_0_46",
+        "PLATES_0_70",
+        "PLATES_0_72",
+        "PLATES_0_86",
+        "PLATES_0_88",
+        "PLATES_0_74",
+        "PLATES_0_48",
+        "PLATES_0_50",
+        "PLATES_0_34",
+        # tests / semantics (PLATE_LOAD_DETAILS proxy contract)
+        "PLATES_1_2",
+        "PLATES_1_0",
+        "PLATES_1_08",
+        "PLATE_LOAD_DETAILS",
+        "PLATE_EXACT_WIDTHS",
+        "PLATE_LENGTH_DM_RAW",
+    }
+)
 
 __all__ = [
     "PlateLoadKey",

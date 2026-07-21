@@ -11,13 +11,12 @@ import logging
 from typing import Any
 
 from app.core.settings import get_settings
-from app.planning import plan_manager
+from app.repositories.plan_repository import PlanRepository
+from app.services.plan_distribution_service import PlanDistributionService
 from core import plate_name as plate_name_utils
-from core.debug_paths import get_debug_log_path
 from core.concrete_grade_resolver import resolve_concrete_grade_from_order
 
 logger = logging.getLogger(__name__)
-_DEBUG_AGENT_LOG = get_debug_log_path("debug-ebb546.log")
 
 # P3: tolerance ±0.005 м — защита от float-погрешности.
 # Раньше было 0.03 м, что склеивало 5.7 и 5.71 как один заказ и крало identity.
@@ -36,7 +35,7 @@ def _reinforcement_to_load_code(reinforcement: float) -> int:
     return 12
 
 
-def _build_smart_lookup(
+def build_smart_lookup(
     plate_lookup_exact: dict,
     plate_lookup_by_length: dict,
 ):
@@ -131,13 +130,13 @@ def _iter_plate_items(track: dict):
             yield float(sec_length), int(sec_width_mm), True, item, label_hint
 
 
-def _aggregate_plates_for_track_from_db(
+def aggregate_plates_for_track_from_db(
     track: dict,
     db_rows_by_id: dict[int, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """P5: строит plates_info по items с kp_plate_id, читая данные из БД.
 
-    Формат как у :func:`_aggregate_plates_for_track`, плюс учёт строк, исчезнувших
+    Формат как у :func:`aggregate_plates_for_track`, плюс учёт строк, исчезнувших
     из ``kp_plates`` после ``complete_day`` (см. :func:`_load_db_rows_for_plan_day`).
     """
     plates: list[dict[str, Any]] = []
@@ -382,7 +381,7 @@ def _load_db_rows_for_plan_day(
     return rows
 
 
-def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
+def aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
     plates: list[dict[str, Any]] = []
     is_rescue = track.get("label") == "РЕСКЬЮ"
 
@@ -463,10 +462,15 @@ def _aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
     return plates
 
 
-def _plan_completion_map(source_plan_ids: list[str], date_key: str) -> dict[str, bool]:
+def _plan_completion_map(
+    source_plan_ids: list[str],
+    date_key: str,
+    *,
+    plan_repository: PlanRepository,
+) -> dict[str, bool]:
     result: dict[str, bool] = {}
     for plan_id in source_plan_ids:
-        plan = plan_manager.load_plan(plan_id)
+        plan = plan_repository.load_plan(plan_id)
         if not plan:
             continue
         day = plan.get("days", {}).get(date_key, {})
@@ -474,7 +478,11 @@ def _plan_completion_map(source_plan_ids: list[str], date_key: str) -> dict[str,
     return result
 
 
-def build_day_view_detail(date_key: str, db_path: str | None = None) -> dict | None:
+def build_day_view_detail(
+    date_key: str,
+    db_path: str | None = None,
+    plan_repository: PlanRepository | None = None,
+) -> dict | None:
     """Собирает детальный вид дня: дорожки с плитами, сгруппированные по планам.
 
     P5: для планов, где у items есть ``kp_plate_id`` (новый формат), читает
@@ -492,7 +500,12 @@ def build_day_view_detail(date_key: str, db_path: str | None = None) -> dict | N
           отличить «дня нет» от «день есть, но без дорожек» и показать
           info-алерт, а не generic-ошибку.
     """
-    multi = plan_manager.get_tracks_for_date_from_all_plans(date_key)
+    if db_path is None:
+        from app.core.settings import get_settings as _get_settings
+        db_path = str(_get_settings().plita_db_path)
+
+    repo = plan_repository or PlanRepository(db_path=db_path)
+    multi = PlanDistributionService().get_tracks_for_date(repo, date_key)
     if not multi:
         return None
 
@@ -505,18 +518,13 @@ def build_day_view_detail(date_key: str, db_path: str | None = None) -> dict | N
             "total_tracks": 0,
         }
 
-    lookup = _build_smart_lookup(
+    lookup = build_smart_lookup(
         multi.get("plate_lookup_exact", {}),
         multi.get("plate_lookup_by_length", {}),
     )
 
     source_plans: list[str] = multi.get("source_plans") or []
-    completion = _plan_completion_map(source_plans, date_key)
-
-    # Определяем путь по plan'у, чтобы читать БД-данные один раз на (plan_id, day).
-    if db_path is None:
-        from app.core.settings import get_settings as _get_settings
-        db_path = str(_get_settings().plita_db_path)
+    completion = _plan_completion_map(source_plans, date_key, plan_repository=repo)
 
     db_rows_cache: dict[tuple[str, int], dict[int, dict[str, Any]]] = {}
 
@@ -557,11 +565,11 @@ def build_day_view_detail(date_key: str, db_path: str | None = None) -> dict | N
                 if db_rows is not None:
                     db_rows_cache[cache_key] = db_rows
             if db_rows is not None:
-                plates_info = _aggregate_plates_for_track_from_db(track, db_rows)
+                plates_info = aggregate_plates_for_track_from_db(track, db_rows)
                 is_legacy = False
 
         if is_legacy:
-            plates_info = _aggregate_plates_for_track(track, lookup)
+            plates_info = aggregate_plates_for_track(track, lookup)
 
         block["tracks"].append(
             {
@@ -576,56 +584,6 @@ def build_day_view_detail(date_key: str, db_path: str | None = None) -> dict | N
                 "is_legacy": is_legacy,
             }
         )
-
-    # #region agent log
-    try:
-        import json as _agent_json
-        import time as _agent_time
-
-        _plan_summaries = []
-        for _pid, _block in plan_blocks.items():
-            _tracks = _block.get("tracks") or []
-            _qty_total = 0
-            _without_kp = 0
-            _legacy_tracks = 0
-            _empty_tracks = 0
-            for _track in _tracks:
-                if _track.get("is_legacy"):
-                    _legacy_tracks += 1
-                _plates_info = _track.get("plates_info") or []
-                if not _plates_info:
-                    _empty_tracks += 1
-                for _plate in _plates_info:
-                    _qty = int(_plate.get("qty") or 0)
-                    _qty_total += _qty
-                    if not _plate.get("kp_id"):
-                        _without_kp += _qty
-            _plan_summaries.append({
-                "plan_id": _pid,
-                "tracks": len(_tracks),
-                "legacy_tracks": _legacy_tracks,
-                "empty_tracks": _empty_tracks,
-                "plates_qty_total": _qty_total,
-                "plates_without_kp_qty": _without_kp,
-            })
-        with open(_DEBUG_AGENT_LOG, "a", encoding="utf-8") as _agent_f:
-            _agent_f.write(_agent_json.dumps({
-                "sessionId": "ebb546",
-                "runId": "pre-fix",
-                "hypothesisId": "H3,H4",
-                "location": "app/services/day_view_service.py:build_day_view_detail:return",
-                "message": "Day-view summary по планам и plates_info",
-                "data": {
-                    "date_key": date_key,
-                    "source_plans": source_plans,
-                    "total_tracks": len(tracks),
-                    "plans": _plan_summaries,
-                },
-                "timestamp": int(_agent_time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
 
     return {
         "date": date_key,

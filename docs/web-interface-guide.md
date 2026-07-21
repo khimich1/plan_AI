@@ -1,5 +1,9 @@
 # Веб-интерфейс проекта: структура, запуск и использование
 
+> **DEPRECATED (2026-07):** этот гайд описывает устаревший HTML-интерфейс `/web/*`.
+> Канонический UI — React SPA под `/commercial-offer/*`.
+> Актуальные спеки: `docs/specs/p6-legacy-decommission.md`, `docs/specs/security-sprint.md`.
+
 Этот документ описывает только веб-часть проекта (`FastAPI` + HTML-страницы + API).
 Старые Telegram-модули (`bot/...`, `run_bot.py`, `start_bot.sh`) здесь не рассматриваются.
 

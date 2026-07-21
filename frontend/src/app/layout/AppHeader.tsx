@@ -19,6 +19,8 @@ export const AppHeader = () => {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [dbModalOpen, setDbModalOpen] = useState(false);
   const isAdmin = user?.role === "admin";
+  const isProduction = user?.role === "production";
+  const isManager = user?.role === "manager";
 
   const onLogoutClick = async () => {
     try {
@@ -65,31 +67,37 @@ export const AppHeader = () => {
           </div>
         </div>
         <nav className="app-nav">
-          <a
-            href={newOfferHref}
-            onClick={onNewOfferClick}
-            className={
-              location.pathname === NEW_OFFER_PATH ? "app-nav__link app-nav__link--active" : "app-nav__link"
-            }
-          >
-            Создать КП
-          </a>
-          <NavLink
-            to={ARCHIVE_PATH}
-            className={({ isActive }) =>
-              isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
-            }
-          >
-            Архив
-          </NavLink>
-          <NavLink
-            to={PRODUCTION_PATH}
-            className={({ isActive }) =>
-              isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
-            }
-          >
-            Производство
-          </NavLink>
+          {!isProduction && (
+            <>
+              <a
+                href={newOfferHref}
+                onClick={onNewOfferClick}
+                className={
+                  location.pathname === NEW_OFFER_PATH ? "app-nav__link app-nav__link--active" : "app-nav__link"
+                }
+              >
+                Создать КП
+              </a>
+              <NavLink
+                to={ARCHIVE_PATH}
+                className={({ isActive }) =>
+                  isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
+                }
+              >
+                Архив
+              </NavLink>
+            </>
+          )}
+          {!isManager && (
+            <NavLink
+              to={PRODUCTION_PATH}
+              className={({ isActive }) =>
+                isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
+              }
+            >
+              Производство
+            </NavLink>
+          )}
           {isAdmin && (
             <button
               type="button"

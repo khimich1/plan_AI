@@ -4,10 +4,10 @@
 Сравнение заказа и КП: нормализация названий плит и сверка количеств.
 Нормализация: 7,0→7, 9,0→9, 39,0→39, 40,0→40; суффиксы кос/выб/доб убираем для группировки.
 """
-import os
 import re
 from collections import defaultdict
-from core.debug_paths import get_debug_log_path
+
+from core.debug_paths import append_agent_debug_log, get_debug_log_path
 
 _DEBUG_LOG_8E9428 = get_debug_log_path("debug-8e9428.log")
 
@@ -227,13 +227,17 @@ def normalize_name(raw: str) -> str:
     s = raw.strip()
     # #region agent log (57/57,1: какой сырой текст в какой ключ попал)
     if '57' in s and '-12-8' in s:
-        try:
-            _log_path = _DEBUG_LOG_8E9428
-            with open(_log_path, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_compare_norm", "location": "compare_order_kp:normalize_name_input", "message": "57/57,1: raw name before norm", "data": {"raw": raw[:80]}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
+        append_agent_debug_log(
+            _DEBUG_LOG_8E9428,
+            {
+                "sessionId": "8e9428",
+                "hypothesisId": "H_compare_norm",
+                "location": "compare_order_kp:normalize_name_input",
+                "message": "57/57,1: raw name before norm",
+                "data": {"raw": raw[:80]},
+                "timestamp": __import__("time").time() * 1000,
+            },
+        )
     # Суффиксы «1 выб»/«2 выб» — после них в заказе иногда нет «п» в конце; восстанавливаем для единообразия
     if ' выб' in s:
         s = re.sub(r'\s+[12]\s+выб\s*$', '', s).strip()
@@ -253,14 +257,17 @@ def normalize_name(raw: str) -> str:
     s = re.sub(r'-5,0-', '-5-', s)
     # #region agent log (57/57,1: ключ после нормализации)
     if '57' in s and '-12-8' in s:
-        try:
-            import os as _os
-            _log_path = _DEBUG_LOG_8E9428
-            with open(_log_path, 'a', encoding='utf-8') as _f:
-                _f.write(__import__('json').dumps({"sessionId": "8e9428", "hypothesisId": "H_compare_norm", "location": "compare_order_kp:normalize_name_output", "message": "57/57,1: key after norm", "data": {"normalized_key": s[:80]}, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
+        append_agent_debug_log(
+            _DEBUG_LOG_8E9428,
+            {
+                "sessionId": "8e9428",
+                "hypothesisId": "H_compare_norm",
+                "location": "compare_order_kp:normalize_name_output",
+                "message": "57/57,1: key after norm",
+                "data": {"normalized_key": s[:80]},
+                "timestamp": __import__("time").time() * 1000,
+            },
+        )
     return s
 
 

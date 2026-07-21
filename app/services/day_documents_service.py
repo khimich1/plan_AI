@@ -1,15 +1,14 @@
 """Генерация производственных документов по конкретному дню.
 
 Повторяет логику из `bot/handlers/production_day_view.py`:
-- схема (PDF) через `core.visualization.visualize_plan`;
+- схема (PDF) через порт `get_visualize_plan()`;
 - детальная разбивка (XLSX) — побочный файл той же функции;
 - формовка (XLSX по дорожке) через `core.formovka_excel.create_formovka_files_for_tracks`;
   файлы формовки упаковываются в ZIP.
 
 Сервис работает во временных папках, обязанность очистки лежит на вызывающем коде
-(через FastAPI `BackgroundTasks`). `visualize_plan` использует глобали из
-`core.optimization` / `core.config_and_data`, поэтому параллельные вызовы
-сериализуются через `asyncio.Lock`.
+(через FastAPI `BackgroundTasks`). Визуализация выполняется в request-scoped
+``PlateOrderContext.bound()`` (см. middleware + ``run_in_order_context``).
 """
 from __future__ import annotations
 
@@ -24,66 +23,57 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.domain.models.optimization_context import OptimizationContext
-from app.domain.models.plate_order import PlateOrder as AppPlateOrder
-import core.optimization as optimization
-from core.optimization.result_contract import is_optimization_success
-from core.config_and_data import PlateOrder
+from core.plate_order_context import PlateOrderContext, run_in_order_context
 from core.formovka_excel import create_formovka_files_for_tracks
-from core.project_paths import resolve_formovka_template_path
-from core.visualization import visualize_plan
+from core.ports.visualization import get_visualize_plan
 
 from app.services.day_view_service import (
-    _aggregate_plates_for_track,
-    _build_smart_lookup,
+    aggregate_plates_for_track,
+    build_smart_lookup,
 )
-from app.planning import plan_manager
+from app.repositories.plan_repository import PlanRepository
+from app.services.plan_distribution_service import PlanDistributionService
 
 logger = logging.getLogger(__name__)
 
-# visualize_plan правит глобальные переменные — сериализуем вызовы,
-# чтобы не словить гонку при параллельных запросах.
-_visualize_lock = asyncio.Lock()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FORMOVKA_TEMPLATE_PATH = PROJECT_ROOT / "банк знаний" / "!КЗ ПБ Шаблон.xlsx"
 
 
 class DayDocumentsError(RuntimeError):
     """Ошибка генерации документа для дня."""
 
 
-def _load_day_bundle(target_date: str) -> dict:
-    multi = plan_manager.get_tracks_for_date_from_all_plans(target_date)
+def _load_day_bundle(target_date: str, plan_repository: PlanRepository | None = None) -> dict:
+    repo = plan_repository or PlanRepository()
+    multi = PlanDistributionService().get_tracks_for_date(repo, target_date)
     if not multi or not multi.get("tracks"):
         raise DayDocumentsError(f"На дату {target_date} нет дорожек ни в одном плане")
     return multi
 
 
-def _restore_optimization_globals(orders_2d: list, optimization_result: dict) -> None:
-    """Ставит глобальные переменные оптимизации, нужные `visualize_plan`."""
-    app_order = AppPlateOrder.from_orders_2d(orders_2d)
-    if orders_2d:
-        load_codes = sorted({p.get("load_code", 8) for p in orders_2d})
-        load_map = {code: ["all"] for code in load_codes}
-    else:
-        load_map = {8: ["all"]}
-    context = OptimizationContext(
-        order=app_order,
-        optimization_result=optimization_result,
-        plan_by_load={"all": optimization_result} if is_optimization_success(optimization_result) else {},
-        load_to_reinforcement_map=load_map,
-    )
-    optimization.OPT_CASCADING_PLAN = context.optimization_result
-    optimization.OPT_CASCADING_PLAN_BY_LOAD = context.plan_by_load
-    optimization.LOAD_TO_REINFORCEMENT_MAP = context.load_to_reinforcement_map
-    PlateOrder.from_dict(app_order.to_dict()).apply_to_globals()
+def prepare_visualization_ctx(
+    plate_order_ctx: PlateOrderContext,
+    orders_2d: list,
+    optimization_result: dict,
+) -> PlateOrderContext:
+    """Заполнить request-scoped контекст снимком дня (без orphan ``fresh_empty()``)."""
+    plate_order_ctx.load_production_snapshot(orders_2d, optimization_result)
+    return plate_order_ctx
 
 
-def _run_visualize(existing_tracks: list, output_dir: Path) -> tuple[str | None, str | None]:
-    return visualize_plan(
+def _run_visualize(
+    existing_tracks: list,
+    output_dir: Path,
+    plate_order_ctx: PlateOrderContext,
+) -> tuple[str | None, str | None]:
+    return get_visualize_plan()(
         output_dir=str(output_dir),
         tracks_per_file=None,
         start_track_index=0,
         use_production_pricing=True,
         existing_tracks=existing_tracks,
+        plate_order_ctx=plate_order_ctx,
     )
 
 
@@ -104,14 +94,14 @@ def _find_breakdown(output_dir: Path) -> Path | None:
 def _build_formovka_tracks_data(multi: dict) -> list[dict[str, Any]]:
     """Готовит data для `create_formovka_files_for_tracks` на основе тех же
     агрегированных плит, что и в `DayViewDetailResponse` (fuzzy lookup)."""
-    lookup = _build_smart_lookup(
+    lookup = build_smart_lookup(
         multi.get("plate_lookup_exact", {}),
         multi.get("plate_lookup_by_length", {}),
     )
 
     tracks_data: list[dict[str, Any]] = []
     for index, track in enumerate(multi.get("tracks") or [], start=1):
-        plates = _aggregate_plates_for_track(track, lookup)
+        plates = aggregate_plates_for_track(track, lookup)
         if not plates:
             continue
         tracks_data.append(
@@ -148,19 +138,27 @@ def _cleanup_dir(path: Path) -> None:
         logger.exception("[day-docs] Не удалось удалить временную папку %s", path)
 
 
-async def generate_day_schema(target_date: str) -> tuple[Path, Path]:
+async def generate_day_schema(
+    target_date: str,
+    *,
+    plate_order_ctx: PlateOrderContext,
+) -> tuple[Path, Path]:
     """Возвращает (pdf_path, cleanup_dir). Вызывающий код отвечает за удаление dir."""
     multi = _load_day_bundle(target_date)
     tmp_dir = _make_tmp_dir(prefix=f"day_schema_{target_date}_")
     try:
-        async with _visualize_lock:
-            _restore_optimization_globals(
-                multi.get("orders_2d", []),
-                multi.get("optimization_result", {}),
-            )
-            result = await asyncio.to_thread(
-                _run_visualize, copy.deepcopy(multi["tracks"]), tmp_dir
-            )
+        prepare_visualization_ctx(
+            plate_order_ctx,
+            multi.get("orders_2d", []),
+            multi.get("optimization_result", {}),
+        )
+        result = await run_in_order_context(
+            plate_order_ctx,
+            _run_visualize,
+            copy.deepcopy(multi["tracks"]),
+            tmp_dir,
+            plate_order_ctx,
+        )
         if not isinstance(result, tuple) or len(result) < 2:
             raise DayDocumentsError("visualize_plan не вернул PDF")
         _png_path, pdf_path = result
@@ -172,19 +170,27 @@ async def generate_day_schema(target_date: str) -> tuple[Path, Path]:
         raise
 
 
-async def generate_day_breakdown(target_date: str) -> tuple[Path, Path]:
+async def generate_day_breakdown(
+    target_date: str,
+    *,
+    plate_order_ctx: PlateOrderContext,
+) -> tuple[Path, Path]:
     """Возвращает (xlsx_path, cleanup_dir)."""
     multi = _load_day_bundle(target_date)
     tmp_dir = _make_tmp_dir(prefix=f"day_breakdown_{target_date}_")
     try:
-        async with _visualize_lock:
-            _restore_optimization_globals(
-                multi.get("orders_2d", []),
-                multi.get("optimization_result", {}),
-            )
-            await asyncio.to_thread(
-                _run_visualize, copy.deepcopy(multi["tracks"]), tmp_dir
-            )
+        prepare_visualization_ctx(
+            plate_order_ctx,
+            multi.get("orders_2d", []),
+            multi.get("optimization_result", {}),
+        )
+        await run_in_order_context(
+            plate_order_ctx,
+            _run_visualize,
+            copy.deepcopy(multi["tracks"]),
+            tmp_dir,
+            plate_order_ctx,
+        )
         breakdown = _find_breakdown(tmp_dir)
         if breakdown is None:
             raise DayDocumentsError("Файл детальной разбивки не найден")
@@ -204,8 +210,7 @@ async def generate_day_formovka(target_date: str) -> tuple[Path, Path]:
     tmp_dir = _make_tmp_dir(prefix=f"day_formovka_{target_date}_")
     try:
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        resolved_template = resolve_formovka_template_path()
-        template_path = str(resolved_template) if resolved_template else None
+        template_path = str(FORMOVKA_TEMPLATE_PATH) if FORMOVKA_TEMPLATE_PATH.exists() else None
 
         def _run_formovka() -> list[str]:
             return create_formovka_files_for_tracks(

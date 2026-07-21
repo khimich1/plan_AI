@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from core.debug_paths import get_debug_log_path
+from core.debug_paths import get_debug_log_path, kp_db_agent_debug_active
 
 _log = logging.getLogger(__name__)
 
@@ -56,6 +56,8 @@ def layout_sequence_trace_context(traces: LayoutSequenceTracePaths) -> Iterator[
 
 
 def append_json_line(path: Path, payload_dict: dict[str, Any], *, ensure_ascii: bool = False) -> None:
+    if not kp_db_agent_debug_active():
+        return
     line = json.dumps(payload_dict, ensure_ascii=ensure_ascii, default=str) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
@@ -64,6 +66,8 @@ def append_json_line(path: Path, payload_dict: dict[str, Any], *, ensure_ascii: 
 
 def _agent_seq_debug(hypothesis_id: str, message: str, data: dict[str, Any]) -> None:
     # #region agent log
+    if not kp_db_agent_debug_active():
+        return
     try:
         payload = {
             "sessionId": "7e420e",

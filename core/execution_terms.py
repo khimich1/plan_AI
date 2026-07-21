@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
+from typing import Literal
 
 _DATE_FORMATS = ("%d.%m.%Y", "%Y-%m-%d")
 _DAYS_RE = re.compile(r"(\d+)\s*(?:дн|день|дней|day|days)", re.IGNORECASE)
@@ -18,6 +19,10 @@ _WEEKS_RE = re.compile(r"(\d+)\s*(?:нед|недел|недели|week|weeks)",
 _PARSE_HINT_RU = (
     "Укажите срок в формате ДД.ММ.ГГГГ, ГГГГ-ММ-ДД, N дней или N недель."
 )
+
+DEFAULT_EXECUTION_TERMS_DAYS = 14
+
+ExecutionTermsPolicy = Literal["strict", "default_if_empty"]
 
 
 def parse_execution_terms_to_datetime(
@@ -49,16 +54,39 @@ def parse_execution_terms_to_datetime(
     return None
 
 
+def parse_execution_terms(
+    value: str,
+    *,
+    policy: ExecutionTermsPolicy,
+    now: datetime | None = None,
+    default_days: int = DEFAULT_EXECUTION_TERMS_DAYS,
+) -> tuple[str, bool]:
+    """Парсит срок изготовления и возвращает (ДД.ММ.ГГГГ, used_default).
+
+    strict — пустой или нераспознанный ввод → ValueError.
+    default_if_empty — при неудаче подставляет now + default_days, used_default=True.
+    """
+    clock = now if now is not None else datetime.now()
+    text = (value or "").strip()
+    deadline = parse_execution_terms_to_datetime(text, now=clock)
+
+    if deadline is not None:
+        return deadline.strftime("%d.%m.%Y"), False
+
+    if policy == "strict":
+        if not text:
+            raise ValueError("Укажите срок изготовления.")
+        raise ValueError(_PARSE_HINT_RU)
+
+    fallback = clock + timedelta(days=default_days)
+    return fallback.strftime("%d.%m.%Y"), True
+
+
 def normalize_execution_terms_to_ddmmyyyy(
     raw: str,
     *,
     now: datetime | None = None,
 ) -> str:
     """Нормализует ввод к строке ДД.ММ.ГГГГ или бросает ValueError."""
-    dt = parse_execution_terms_to_datetime(raw, now=now)
-    if dt is None:
-        value = (raw or "").strip()
-        if not value:
-            raise ValueError("Укажите срок изготовления.")
-        raise ValueError(_PARSE_HINT_RU)
-    return dt.strftime("%d.%m.%Y")
+    formatted, _ = parse_execution_terms(raw, policy="strict", now=now)
+    return formatted

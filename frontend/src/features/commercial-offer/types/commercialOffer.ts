@@ -1,4 +1,7 @@
-export type WizardStepId = "plates" | "wide-plates" | "manager" | "client" | "result";
+export type WizardStepId = "plates" | "client" | "result";
+
+/** Legacy step ids from older drafts (localStorage / server metadata). */
+export type LegacyWizardStepId = "wide-plates" | "manager";
 
 /** Синхронизировано с app.schemas.commercial.WizardNextRequiredAction */
 export type WizardNextRequiredAction =
@@ -41,6 +44,13 @@ export type WidePlateLine = {
   id: string;
   line: string;
   qty: number;
+};
+
+export type DoborPair = {
+  id: string;
+  source_line: string;
+  primary_line: string;
+  complement_line: string;
 };
 
 export type PlateBatch = {
@@ -100,6 +110,7 @@ export type CommercialDraftMetadata = {
   normalized_text: string;
   normalized_lines: string[];
   wide_plate_lines: WidePlateLine[];
+  dobor_pairs: DoborPair[];
   diagnostics: Array<Record<string, unknown>>;
   price_rows_count: number;
   breakdown_tables_count: number;
@@ -118,6 +129,16 @@ export type CommercialDraftMetadata = {
   ocr_verify_failed?: boolean;
   ocr_corrections?: OcrCorrection[];
   ocr_row_count_on_image?: number | null;
+};
+
+export type BreakdownTable = {
+  name: string;
+  rows: string[][];
+};
+
+export type BreakdownResponse = {
+  draft_id: string;
+  items: BreakdownTable[];
 };
 
 export type CommercialDraftDetails = {
@@ -165,6 +186,9 @@ export type WizardStoreState = {
   sourceText: string;
   selectedImageName: string | null;
   normalizedText: string;
+  batchReviewText: string;
+  pendingBatchReview: boolean;
+  confirmedBatchCount: number;
   lastPlateMode: PlateInputMode;
   managerId: number | null;
   clientName: string;

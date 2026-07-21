@@ -17,12 +17,14 @@ def test_get_config_matches_constants() -> None:
 
 def test_getattr_plate_load_details_is_runtime_dict() -> None:
     rt = cfg.get_plate_mutable_runtime()
-    x = cfg.PLATE_LOAD_DETAILS
+    with pytest.warns(DeprecationWarning, match=r"config_and_data\.PLATE_LOAD_DETAILS"):
+        x = cfg.PLATE_LOAD_DETAILS
     assert x is rt.plate_load_details
     before = dict(x)
     try:
         x.clear()
-        assert len(cfg.PLATE_LOAD_DETAILS) == 0
+        with pytest.warns(DeprecationWarning, match=r"config_and_data\.PLATE_LOAD_DETAILS"):
+            assert len(cfg.PLATE_LOAD_DETAILS) == 0
     finally:
         x.clear()
         x.update(before)
@@ -31,3 +33,17 @@ def test_getattr_plate_load_details_is_runtime_dict() -> None:
 def test_unknown_attribute_raises() -> None:
     with pytest.raises(AttributeError):
         getattr(cfg, "NOT_A_REAL_CONFIG_AND_DATA_SYMBOL")
+
+
+def test_decommissioned_proxy_names_raise() -> None:
+    """P4 A4: cuts/strips/metadata caches removed from PEP 562 proxy."""
+    for name in (
+        "LONGITUDINAL_CUTS",
+        "WASTE_AREA_M2",
+        "PLATE_METADATA",
+        "PLATE_NOMENCLATURE_CACHE",
+        "LAST_PARSE_DIAGNOSTICS",
+        "PLATES_1_5_TO_1_2",
+    ):
+        with pytest.raises(AttributeError, match=name):
+            getattr(cfg, name)

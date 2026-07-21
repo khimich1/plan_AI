@@ -54,9 +54,9 @@ bot.env
 # База данных
 *.db
 pb.db
-# Опционально: закоммитьте стартовые копии для Docker (docker/seed/README.txt)
+# Опционально: закоммитьте стартовую копию прайсов для Docker (docker/seed/README.txt)
+# plita.db НЕ коммитится — admin создаётся через scripts/create_admin.py
 !docker/seed/pb.db
-!docker/seed/plita.db
 # SQLite временные файлы
 *.db-shm
 *.db-wal
@@ -74,7 +74,11 @@ bot/tmp/
 plans_metadata.json
 tmp/
 
-# Локальные JSON-планы производства и их метаданные (генерируются ботом/сервисом)
+# Локальные JSON-планы производства и их метаданные (генерируются сервисом)
+data/plans/
+data/plans_metadata.json
+data/current_plan.json
+# Legacy (до WP6-A2)
 bot/data/plans/
 bot/data/plans_metadata.json
 

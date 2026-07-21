@@ -8,9 +8,8 @@ import time
 from collections import defaultdict
 from typing import Any
 
-import core.config_and_data as cfg
-
 from core.optimization.layout_runtime_snapshot import LayoutSequenceCfgSlice
+from core.plate_runtime_state import get_plate_mutable_runtime
 
 from viz_modules.layout_sequence.debug_trace import append_json_line, layout_sequence_trace_context
 from viz_modules.layout_sequence.deps import LayoutSequenceDeps
@@ -192,7 +191,7 @@ def _build_sequence_from_plan_impl(
     if reinforcement_map is None:
         reinforcement_map = {}
     if layout_cfg is None:
-        layout_cfg = LayoutSequenceCfgSlice.from_config_module(cfg)
+        layout_cfg = LayoutSequenceCfgSlice.from_plate_runtime(get_plate_mutable_runtime())
     pl = layout_cfg.plate_lists
     _norm = layout_cfg.normalize_load_code
     vis_log = deps.log

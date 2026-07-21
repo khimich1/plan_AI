@@ -53,9 +53,8 @@ debug_logs/
 *.db
 *.db-shm
 *.db-wal
-# Снимки для первого запуска на сервере — кладите сюда перед сборкой (см. docker/seed/README.txt)
+# Снимок прайсов для первого запуска (см. docker/seed/README.txt). plita.db не сидится.
 !docker/seed/pb.db
-!docker/seed/plita.db
 
 # Клиентские / объёмные данные и выходы расчётов (плашка КП — docker/assets/)
 банк знаний/
@@ -64,7 +63,11 @@ Outputs/
 tmp/
 bot/tmp/
 
-# Состояние бота и черновиков (монтировать томом на сервере)
+# Состояние приложения и черновиков (монтировать томом на сервере)
+data/plans/
+data/plans_metadata.json
+data/current_plan.json
+# Legacy (до WP6-A2)
 bot/data/plans/
 bot/data/plans_metadata.json
 .app_data/

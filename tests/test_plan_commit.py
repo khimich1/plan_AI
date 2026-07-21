@@ -463,8 +463,8 @@ def test_commit_plan_plates_rolls_back_on_mark_failure(tmp_db, monkeypatch):
         rollback_calls.append(plan_id)
         return real_return(plan_id, db_path)
 
-    monkeypatch.setattr("core.plan_commit.kp_db.mark_plates_as_planned", fake_mark)
-    monkeypatch.setattr("core.plan_commit.kp_db.return_plan_plates_to_production", spy_return)
+    monkeypatch.setattr("core.kp_db_plates.mark_plates_as_planned", fake_mark)
+    monkeypatch.setattr("core.kp_db_plates.return_plan_plates_to_production", spy_return)
 
     with pytest.raises(PlanCommitError):
         commit_plan_plates(

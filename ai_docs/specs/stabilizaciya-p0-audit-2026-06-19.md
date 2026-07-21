@@ -1,0 +1,300 @@
+# Spec: Стабилизация P0 — устранение critical-находок аудита 2026-06-19
+
+> **Тип:** remediation feature-spec (стабилизационный спринт)
+> **Фаза SDD:** SPECIFY (спека на ревью — без PLAN/TASKS)
+> **Дата:** 2026-06-19
+> **Ревизия:** v5 — post-audit актуализация 2026-06-20
+> **Статус:** **закрыт (implemented, scope 2026-06-19)** — remediation P0 выполнен; residual риски — см. § Changelog
+> **Baseline:** [`project-baseline.md`](./project-baseline.md)
+> **Источник находок:** [`../develop/audits/2026-06-19-full-project-audit.md`](../develop/audits/2026-06-19-full-project-audit.md)
+> **Post-closure аудит:** [`../develop/audits/2026-06-20-full-project-audit.md`](../develop/audits/2026-06-20-full-project-audit.md)
+> **Наследники:** P1 [`stabilizaciya-p1-runtime-security-2026-06-19.md`](./stabilizaciya-p1-runtime-security-2026-06-19.md) · P2 [`bezopasnost-p2-audit-2026-06-19.md`](./bezopasnost-p2-audit-2026-06-19.md) · P3 [`stabilizaciya-p3-audit-2026-06-20.md`](./stabilizaciya-p3-audit-2026-06-20.md) — **закрыты**
+
+---
+
+## Стратегия (одной фразой)
+
+> Стабилизировать данные (ошибки + SQLite-планы с version), потом консолидировать логику (shared pipeline), runtime-globals оставить на потом — минимальный путь к системе, где планы не теряются при параллельной работе.
+
+**Решение по Telegram-боту:** бот не нужен (им не будут пользоваться) → **замораживается и деприкейтится**. Он перестаёт быть целью консолидации и выводится из P0. Код бота в рамках этой спеки **не удаляется** (полное удаление — отдельное согласование, см. follow-up).
+
+---
+
+## ASSUMPTIONS I'M MAKING
+
+1. **Telegram-бот деприкейтнут**: новых фич нет, как цель паритета/консолидации не рассматривается. Код остаётся в репо «как есть» (заморожен), активное удаление — опциональный follow-up, не часть этой спеки.
+2. Порядок работ строго: **(A) данные → (B) консолидация → (C) globals потом**.
+3. `A3` (глобальное мутабельное состояние плит) **выводится из этой спеки** и переносится в следующий спринт.
+4. `Q2` (голый `except` в bot-handler) **закрывается деприкейтом бота**; отдельный фикс не делаем, пока бот не используется.
+5. Планы хранятся в **SQLite (`plita.db`)**, таблица **`production_plans(payload_json, version, is_active, …)`** — план как **JSON-колонка** + `version` для optimistic concurrency. Нормализация треков в отдельные таблицы — **позже (`A7`)**, не в этой спеке.
+6. Архитектурные ограничения и стек — из `project-baseline.md`, без изменений (`core ↛ app`, single instance, SQLite, FastAPI).
+7. «Shared pipeline» (`A1`) означает вынос чистой логики планирования в `core/` для **web**; бот-адаптер не требуется (бот заморожен).
+8. Эта спека — фаза SPECIFY. PLAN/TASKS — после ревью.
+
+→ Поправь допущения сейчас или подтверди, и я перейду к фазе PLAN.
+
+---
+
+## 1. Objective & Problem Statement
+
+### Objective
+
+Привести проект из состояния **Health Score 0.0/10** к состоянию, где **критические риски данных закрыты** и планирование консолидировано в общий pipeline. Целевой инвариант: **web-планы не теряются и не повреждаются при параллельной работе**, ошибки в critical-путях не «тихие».
+
+### Problem Statement (по аудиту, с учётом деприкейта бота)
+
+1. **Тихая потеря данных** (`Q1`, `Q3`): ошибки создания остатков и ценообразования перехватываются/маскируются — порча инвентаря и неверные суммы КП без сигнала.
+2. **Файловые гонки планов** (`A2`): планы пишутся в JSON-файлы без атомарности/блокировок — потеря и рассинхрон под конкурентностью.
+3. **Дублирование/размазанность логики планирования** (`A1`): бизнес-правила планирования смешаны в толстом web-сервисе (и историческом bot-handler). Нужен единый pipeline в `core/`, чтобы web был тонким адаптером.
+
+### Reframe: что значит «стало лучше»
+
+| Требование | Reframed success criteria |
+|------------|---------------------------|
+| «Убрать silent failure» | В `Q1`/`Q3` нет `except: pass`/fallback без логирования; ошибка видна наверх |
+| «Планы без гонок» | Запись плана атомарна; конкурентная запись ловится через `version` (optimistic lock) |
+| «Shared pipeline» | Логика планирования — в `core/`; web-сервис вызывает её, своей копии правил не держит |
+
+---
+
+## 2. Scope
+
+### In scope — Этап A: Стабилизация данных (делаем первым)
+
+| ID | Категория | Название | Механизм |
+|----|-----------|----------|----------|
+| Q1 | Целостность данных | Тихая потеря данных при создании остатков | Транзакция + логирование + проброс ошибки |
+| Q3 | Целостность данных | Ошибки ценообразования маскируются fallback | Жёсткая ошибка вместо `area*4000`, блок экспорта |
+| A2 | Архитектура/данные | Файловое хранение планов с гонками | Перенос в SQLite + `PlanRepository` + колонка `version` |
+
+### In scope — Этап B: Консолидация логики (после Этапа A)
+
+| ID | Категория | Название | Механизм |
+|----|-----------|----------|----------|
+| A1 | Архитектура | Размазанная логика production-planning | Вынос чистого pipeline в `core/production/planning.py`; web — тонкий адаптер |
+
+### Deferred (вне этой спеки — следующий спринт)
+
+| ID | Причина переноса |
+|----|------------------|
+| A3 | Runtime-globals плит — «оставить на потом» (решение пользователя) |
+| A8 | Унификация bot-runtime — неактуально при деприкейте бота |
+
+### Resolved by deprecation (фикс не требуется)
+
+| ID | Почему закрыто |
+|----|----------------|
+| Q2 | Голый `except` в bot-handler — бот заморожен и не используется; риск ≈ 0 |
+
+### Out of scope (в этой спеке)
+
+- Все High/Medium/Low находки (`S1–S25`, `A4–A26`, `Q4–Q28`).
+- Полное **удаление** кода бота (опциональный follow-up, отдельное согласование).
+- Миграция SQLite → PostgreSQL, шифрование БД, CSRF, rate limiting, security headers.
+
+---
+
+## 3. Tech Stack
+
+Без изменений относительно baseline (см. [`project-baseline.md` → Tech Stack](./project-baseline.md)).
+
+Ключевое для спеки:
+- SQLite (`plita.db`) WAL + FK (`core/kp_db_common.py`) — хранилище планов (`A2`).
+- Optimistic concurrency через колонку `version` (без внешних зависимостей).
+- Стандартный `logging` (запрет `print()` в тронутых critical-путях).
+- pytest + FastAPI TestClient.
+
+---
+
+## 4. Commands
+
+```powershell
+Set-Location "c:\Users\Роман\Desktop\Шишов"
+.\.venv\Scripts\Activate.ps1
+
+# Этап A — данные
+pytest tests/test_production_completion_service.py -q     # Q1
+pytest tests/test_commercial_web_flow.py -q               # Q3
+pytest tests/test_plan_repository.py -q                   # A2 (новый)
+
+# Этап B — консолидация
+pytest tests/test_production_planning_service.py -q       # A1
+
+# Границы слоёв (должно оставаться зелёным)
+pytest tests/test_core_no_app_import.py -q
+
+# Полный прогон перед закрытием спринта
+pytest tests/ -q
+```
+
+---
+
+## 5. Acceptance Criteria по находкам
+
+### ЭТАП A — Стабилизация данных
+
+#### Q1 — Тихая потеря данных при создании остатков
+
+- **Где:** `app/services/production_completion_service.py` (строки ~164–178)
+- **Acceptance:**
+  - [x] Удалён `except ...: pass` вокруг записи в `plate_rests`.
+  - [x] Сбой записи → лог `ERROR` с `plan_id` и контекстом плиты.
+  - [x] Контракт ошибок: ошибка валидации (например невалидный `kp_id`) → **HTTP 422**; ошибка БД → **HTTP 500**. Частичный успех недопустим.
+  - [x] Запись остатков в транзакции: частичный сбой откатывается.
+  - [x] Остаток без валидного `kp_id` не отбрасывается молча.
+- **Verify:** unit-тест: mock-сбой → ошибка пробрасывается (422/500), частичного состояния в БД нет.
+
+#### Q3 — Ошибки ценообразования маскируются fallback
+
+- **Где:** `core/commercial_offer.py` (~195–226), дубликат в `core/commercial_offer_xlsx.py` (~77–108)
+- **Acceptance:**
+  - [x] Удалён тихий fallback `area * 4000` в потоке генерации.
+  - [x] Отсутствие цены → **HTTP 422** с телом `{ code: "unpriced_plates", ... }` и списком позиций без цены.
+  - [x] `print()` в ценообразовании → `logging` (минимум `WARNING`).
+  - [x] Экспорт PDF/XLSX блокируется до устранения непрорасценённых позиций.
+  - [x] Дублирование ценового примитива между двумя файлами не расширяется (в идеале единый источник в `core/`).
+- **Verify:** тест: КП с позицией без цены не генерирует документ, возвращает 422 `unpriced_plates` с перечнем позиций.
+
+#### A2 — Файловое хранение планов с гонками
+
+- **Где:** `app/planning/plan_manager.py` (~32–35), `bot/data/plans/`, `bot/data/plans_metadata.json`
+- **Acceptance:**
+  - [x] DDL: таблица `production_plans(id, payload_json, version, is_active, created_at, updated_at, …)` в `plita.db`; план хранится как **JSON в `payload_json`** (нормализация треков — позже, `A7`).
+  - [x] Введён `PlanRepository` с транзакционными записями (закрывает и `S8`).
+  - [x] Optimistic concurrency: `UPDATE … WHERE id=? AND version=?` с инкрементом `version`; при 0 затронутых строк → конфликт → **HTTP 409** с телом `{ code: "plan_version_conflict", … }`; клиент делает reload (без авто-ретрая на сервере).
+  - [x] **Миграция `bot/data/plans/` + `plans_metadata.json` → SQLite выполняется ДО отключения file I/O в web** (порядок обязателен).
+  - [x] Прямой file I/O планов убран из web-кода — доступ только через репозиторий.
+  - [x] Поле `version` отдаётся в API-ответах плана (`GET /production/plans/{id}`) для клиентского reflow.
+  - [x] Конкурентная запись двух планов не приводит к порче (тест на параллельную запись).
+- **Verify:** `tests/test_plan_repository.py` — параллельная запись, конфликт `version` → 409; миграция прогоняется без потерь.
+
+### ЭТАП B — Консолидация логики
+
+#### A1 — Вынос pipeline планирования в `core/`
+
+- **Где:** `app/services/production_planning_service.py` (~1030 строк); историческая копия в `bot/handlers/production_execution.py` — **не трогаем** (бот заморожен).
+- **Acceptance:**
+  - [x] Введён единый доменный pipeline (например `core/production/planning.py`) с чистыми функциями и явными контрактами (load → validate → optimize → persist).
+  - [x] Web-сервис (`production_planning_service.py`) вызывает общий pipeline и становится тонким адаптером; своей копии бизнес-правил планирования не держит.
+  - [x] `persist`-шаг pipeline использует `PlanRepository` из `A2` (общий путь записи).
+  - [x] Новые правила планирования добавляются только в `core/`-pipeline.
+  - [x] `core/` не импортирует `app/` (`tests/test_core_no_app_import.py` зелёный).
+  - [x] Бот **не** делается адаптером и **не** консолидируется (deprecated).
+- **Verify:** `pytest tests/test_production_planning_service.py -q` зелёный; новый `tests/test_core_production_planning.py` проверяет pipeline изолированно.
+
+---
+
+## 6. Testing Strategy
+
+Safety-net тесты пишутся **до** рефакторинга (особенно `A1`/`A2`) — фиксируют корректное поведение.
+
+| Находка | Тип теста | Файл |
+|---------|-----------|------|
+| Q1 | Unit / service | `tests/test_production_completion_service.py` (расширить) |
+| Q3 | Unit / generation | `tests/test_commercial_pricing_errors.py` (новый) |
+| A2 | Concurrency / repository | `tests/test_plan_repository.py` (новый) |
+| A1 | Unit pipeline + service | `tests/test_core_production_planning.py` (новый) |
+
+> Bot-тесты (`A1`/`Q2` cross-surface) **не пишем** — бот деприкейтнут.
+
+---
+
+## 7. Boundaries
+
+### Always
+- Сначала тест, фиксирующий поведение, затем рефакторинг (`A1`/`A2`).
+- Порядок этапов: A (данные) → B (консолидация). Не начинать B, пока A не зелёный.
+- `logging` вместо `print()` в тронутых critical-путях.
+- `core/` не импортирует `app/`.
+- Новые правила планирования — только в `core/`-pipeline.
+
+### Ask first
+- Изменение DDL `core/kp_db_schema.py` (новая таблица планов + колонка `version` для `A2`).
+- Изменение публичных контрактов API, видимых пользователю (новые коды ошибок вместо «тихого» успеха в `Q1/Q3`).
+- Формат хранения и схема мигрированных планов (`A2`).
+- Полное удаление кода бота (follow-up).
+- Любая новая pip-зависимость.
+
+### Never
+- Восстанавливать silent failure «чтобы не падало».
+- Трогать `bot/` как цель консолидации (заморожен).
+- Тащить `A3`/runtime-globals в этот спринт.
+- Коммитить без явной просьбы; удалять падающие тесты без согласования.
+- Расширять fallback ценообразования вместо его устранения.
+
+---
+
+## 8. Success Criteria (спринт «готово»)
+
+- [x] Человек прочитал ASSUMPTIONS и подтвердил/поправил.
+- [x] **Этап A** закрыт: `Q1`, `Q3`, `A2` по acceptance; соответствующие тесты зелёные.
+- [x] **Этап B** закрыт: `A1` — логика планирования в `core/`-pipeline; web — тонкий адаптер.
+- [x] В `Q1/Q3` нет `except: pass` / fallback без логирования.
+- [x] Планы в БД, транзакционно; конкурентная запись ловится через `version`; прямого file I/O планов в web нет; миграционный скрипт готов.
+- [x] Бот помечен deprecated (`bot/README.md`, WARNING при старте); из P0 и консолидации выведен.
+- [x] `pytest tests/ -q` зелёный (726 passed); `tests/test_core_no_app_import.py` зелёный.
+- [x] Health Score пересчитан — см. [`../develop/audits/2026-06-19-full-project-audit.md`](../develop/audits/2026-06-19-full-project-audit.md) → раздел «Post-P0 remediation status».
+
+### Post-closure (аудит 2026-06-20)
+
+Спринт P0 **выполнил свой scope** (web: Q1, Q3, A2, A1). Полный аудит 2026-06-20 **переиндексировал ID** и выявил residual critical вне scope P0 (бот deprecated, но код и `plan_storage.py` остаются):
+
+| P0 (эта спека) | Аудит 20.06 | Статус после P0–P3 |
+|----------------|-------------|-------------------|
+| A2 — планы в SQLite + `version` | **A1/S1** split-brain (SQLite vs `bot/data/plans/`) | Web → `PlanRepository`/SQLite ✅; bot + `plan_storage.py` → JSON ⚠️ OPEN |
+| A1 — pipeline в `core/` | **A2** bot обходит `core/production/planning.py` | Web-адаптер ✅; `production_execution.py` ~900 строк отдельно ⚠️ OPEN |
+| A3 deferred | **A3** globals `config_and_data` / `plate_runtime_state` | Hot paths изолированы (P1) ✅; full decommission ⚠️ backlog |
+| Q1/Q3 (data integrity) | Не critical в снимке 20.06 | Закрыты ✅ (код + тесты) |
+| Out of scope: CSRF, rate limit, headers | Частично закрыты в P2/P3 + коммиты после P3 | CSRF middleware, XFF whitelist, security headers, password policy ✅ |
+
+**Важно:** Health Score **0.0/10** в аудите 20.06 — из‑за **новой** формулы и кластера A1/A2/A3; это не отменяет closure P0 по acceptance §5.
+
+### Deferred / out of closure scope
+
+- **`A3`** (runtime-globals плит) — перенесён в следующий спринт (known-deferred).
+- **`S1`** (admin bypass в боте) — не входил в P0; остаётся открытым (бот deprecated, но уязвимость при случайном запуске сохраняется).
+
+---
+
+## 9. Risks & Mitigations
+
+| Риск | Митигация |
+|------|-----------|
+| Замена silent failure ломает «зелёные» сценарии | Сначала integration-тесты текущего поведения; явные коды ошибок согласуются (Ask first) |
+| Миграция планов повредит `bot/data/plans/` | Миграция на копии, dry-run, бэкап, обратимость |
+| `A1` без бота всё ещё задевает много web-кода | Тонкий адаптер + изолированные тесты pipeline; инкрементально |
+| Optimistic `version` усложняет запись | Чёткий контракт конфликта (отказ/ретрай); покрыть тестом параллельной записи |
+| Замороженный бот «случайно» используется | Явно пометить deprecated (README/лог при старте); не удалять, но не поддерживать |
+
+---
+
+## 10. Decisions (закрытые Open Questions)
+
+1. **Схема планов (`A2`):** `production_plans(payload_json, version, is_active, …)` — JSON-колонка + `version`. Нормализация треков — позже (`A7`).
+2. **Контракт ошибок (`Q1/Q3`):**
+   - `Q3` → **422** + `{ code: "unpriced_plates", positions: [...] }`.
+   - `Q1` → **422** при ошибке валидации, **500** при ошибке БД; частичный успех запрещён.
+3. **Конфликт `version` (`A2`):** **409** + `{ code: "plan_version_conflict" }` → reload на клиенте (без авто-ретрая на сервере).
+4. **Глубина `A1`:** поэтапно — `validate → load → optimize → persist`; `persist` подключается после `A2`.
+5. **Бот:** заморожен + deprecated; полное удаление — отдельный follow-up **после** закрытия P0.
+
+---
+
+## Changelog / что изменилось с 2026-06-19
+
+| Дата | Изменение |
+|------|-----------|
+| 2026-06-19 | v4 — closure P0: Q1, Q3, A2, A1 по acceptance; план [`../develop/plans/2026-06-19-stabilizaciya-p0.md`](../develop/plans/2026-06-19-stabilizaciya-p0.md) закрыт |
+| 2026-06-19 | Следующие спринты: P1 (A3 hot paths, S1 bot auth), P2 (rate limit, RBAC), — закрыты |
+| 2026-06-20 | Аудит [`2026-06-20-full-project-audit.md`](../develop/audits/2026-06-20-full-project-audit.md): remapping ID (см. Post-closure §8); P3 закрыт (web login rate limit, production RBAC, destructive guard, integration tests) |
+| 2026-06-20 | Post-P3 коммиты: CSRF (`app/middleware/csrf.py`), XFF trusted proxies, security headers — вне scope P0, но закрывают high из снимка 20.06 |
+| 2026-06-20 | v5 — актуализация спеки: P0 scope остаётся **closed**; новый P0-кластер (A1/S1, A2, A3 по ID 20.06) — **отдельная спека**, не переоткрытие этой |
+
+---
+
+## Следующий шаг (актуально на 2026-06-20)
+
+1. ~~PLAN/TASKS/IMPLEMENT P0~~ — **закрыто**.
+2. ~~P1, P2, P3~~ — **закрыты** (см. наследники в шапке).
+3. **P0-next (residual critical):** спека [`stabilizaciya-p0-audit-2026-06-20.md`](./stabilizaciya-p0-audit-2026-06-20.md) · план [`../develop/plans/2026-06-20-stabilizaciya-p0-next.md`](../develop/plans/2026-06-20-stabilizaciya-p0-next.md) — **closed** (WP1–WP2 done; WP2 = maintenance-only sunk cost при bot deprecated).
+4. **P1-next backlog:** web/API security — **S4**, **S6**, **S2**, **S3** (аудит 20.06). Bot Q1/Q3 **вне scope** (закрыты deprecation, как Q2 здесь).

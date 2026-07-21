@@ -111,7 +111,7 @@ def planning_service(tmp_plita, monkeypatch):
         fake_optimize,
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
     return service
@@ -169,7 +169,7 @@ def test_audit_log_records_completion_and_rejection(planning_service, tmp_plita)
 
     service = ProductionService(
         kp_repository=KpRepository(db_path=tmp_plita),
-        plan_repository=PlanRepository(),
+        plan_repository=PlanRepository(db_path=tmp_plita),
         planning_service=planning_service,
     )
     service.complete_day(
@@ -204,12 +204,14 @@ def test_audit_log_records_completion_and_rejection(planning_service, tmp_plita)
 
 def test_audit_atomic_with_kp_plates_update(tmp_plita, monkeypatch):
     """Если INSERT в plate_status_log падает — UPDATE kp_plates тоже откатывается."""
-    original_audit = kp_db._audit_append
+    import core.kp_db_plates_planning as planning_mod
+
+    original_audit = planning_mod.audit_append
 
     def broken_audit(*args, **kwargs):
         raise sqlite3.IntegrityError("simulated audit failure")
 
-    monkeypatch.setattr(kp_db, "_audit_append", broken_audit)
+    monkeypatch.setattr(planning_mod, "audit_append", broken_audit)
 
     result = kp_db.mark_plates_as_planned(
         kp_id=KP_ID,
@@ -220,7 +222,7 @@ def test_audit_atomic_with_kp_plates_update(tmp_plita, monkeypatch):
         actor="test:atomic",
     )
 
-    monkeypatch.setattr(kp_db, "_audit_append", original_audit)
+    monkeypatch.setattr(planning_mod, "audit_append", original_audit)
 
     # Сама функция вернула success=False (исключение поймано)
     assert result["success"] is False

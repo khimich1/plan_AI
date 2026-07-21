@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""SQLite schema initialization for plita.db (A1 / A4)."""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+import threading
+
+from core.kp_db_common import DEFAULT_DB, _connect
+
+_schema_ready: set[str] = set()
+_schema_lock = threading.Lock()
+
+def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
+    """
+    Создаёт таблицы в базе данных, если их ещё нет.
+    
+    Простыми словами:
+    - Проверяет, есть ли таблицы в БД
+    - Если нет — создаёт их с нужными колонками
+    - Это как создать пустую таблицу Excel с заголовками
+    """
+    conn = _connect(db_path)
+    try:
+        cur = conn.cursor()
+        
+        # Таблица 1: KP_offers - Основная информация о КП
+        # PRIMARY KEY - порядковый номер КП (auto increment)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS KP_offers (
+                kp_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                creation_date TEXT NOT NULL,
+                customer_name TEXT,
+                manager_name TEXT,
+                discount_percent REAL DEFAULT 0,
+                subtotal REAL,
+                vat_amount REAL,
+                total_amount REAL,
+                delivery_conditions TEXT,
+                payment_conditions TEXT,
+                execution_terms TEXT
+            )
+        ''')
+        
+        # Таблица 2: kp_plates - Позиции (плиты) в каждом КП
+        # kp_id - связь с KP_offers
+        # status - статус плиты: "в производстве" (доступна для планирования) или "в плане" (уже добавлена в план)
+        # plan_id - ID плана, в который добавлена плита (для связи и отката при удалении плана)
+        # nomenclature_id - уникальный идентификатор из prays_plity
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_plates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER,
+                plate_name TEXT NOT NULL,
+                length_m REAL,
+                width_m REAL,
+                load_class INTEGER,
+                qty INTEGER NOT NULL,
+                unit_weight REAL,
+                total_weight REAL,
+                discounted_price REAL,
+                status TEXT DEFAULT 'в производстве',
+                plan_id TEXT,
+                length_dm_raw TEXT,
+                nomenclature_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Миграция: колонка unit_price для пересчёта скидки и генерации документов из архива
+        try:
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN unit_price REAL")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # колонка уже существует
+
+        try:
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN concrete_grade TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Стоимость одного рейса (логистика), как в draft metadata logistics_cost / PDF/XLSX
+        try:
+            cur.execute("ALTER TABLE KP_offers ADD COLUMN logistics_cost REAL DEFAULT 0")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        
+        # Таблица 3: kp_files - Файлы XLSX
+        # kp_id - связь с KP_offers
+        # xlsx_file - сам файл как BLOB (двоичные данные)
+        # file_path - путь к файлу
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                xlsx_file BLOB,
+                file_path TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE,
+                UNIQUE(kp_id)
+            )
+        ''')
+        
+        # Таблица 4: kp_meta - Метаданные
+        # kp_id - связь с KP_offers
+        # status - статус КП: выполнено, отклонено, в работе, в ожидании
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_meta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                status TEXT DEFAULT 'в работе',
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE,
+                UNIQUE(kp_id)
+            )
+        ''')
+        
+        # Таблица 5: completed_plates - Выполненные плиты
+        # Сюда переносятся плиты после завершения дня производства
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS completed_plates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                plate_name TEXT NOT NULL,
+                length_m REAL,
+                width_m REAL,
+                load_class INTEGER,
+                qty INTEGER NOT NULL,
+                completed_date TEXT NOT NULL,
+                production_day INTEGER,
+                nomenclature_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Таблица 6: plate_rests - Остатки от резки плит
+        # Хранит информацию об остатках, которые образуются при продольном резе
+        # Статусы: available (доступен), used (использован), completed (выполнен), discarded (списан)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS plate_rests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                source_plate_name TEXT NOT NULL,
+                rest_width_mm INTEGER NOT NULL,
+                length_m REAL NOT NULL,
+                qty INTEGER NOT NULL DEFAULT 1,
+                status TEXT DEFAULT 'available',
+                created_date TEXT NOT NULL,
+                used_date TEXT,
+                production_day INTEGER,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Таблица 7: managers - Менеджеры
+        # Хранит информацию о менеджерах: ФИО, контактный номер, email
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS managers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fio TEXT NOT NULL,
+                contact_number TEXT NOT NULL,
+                email TEXT NOT NULL,
+                UNIQUE(email)
+            )
+        ''')
+
+        # Таблица 8: plate_status_log — журнал переходов статусов плит.
+        # Каждая запись — это отдельный переход (planned / completed / rejected /
+        # plan_rollback). Используется для диагностики «куда делась плита» и
+        # независима от kp_plates: даже если строка в kp_plates удалена, история
+        # переходов остаётся.
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS plate_status_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                plate_id     INTEGER,
+                kp_id        INTEGER NOT NULL,
+                plate_name   TEXT,
+                plan_id      TEXT,
+                day_number   INTEGER,
+                from_status  TEXT,
+                to_status    TEXT NOT NULL,
+                qty          INTEGER NOT NULL,
+                reason       TEXT,
+                actor        TEXT,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        ''')
+
+        # Создаём индексы для быстрого поиска
+        # Это как закладки в книге — помогают быстро найти нужную информацию
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_kp_id_plates ON kp_plates(kp_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_kp_id_files ON kp_files(kp_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_kp_id_meta ON kp_meta(kp_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_meta_status ON kp_meta(status)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_completed_kp_id ON completed_plates(kp_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_completed_date ON completed_plates(completed_date)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_kp_id ON plate_rests(kp_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_rests_status ON plate_rests(status)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_managers_email ON managers(email)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_status_log_kp ON plate_status_log(kp_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_status_log_plan ON plate_status_log(plan_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_status_log_status ON plate_status_log(to_status)')
+        # Индексы для status и plan_id создаются в блоке миграции ниже
+        
+        # === МИГРАЦИЯ: Добавляем колонки status и plan_id если их нет ===
+        # Это нужно для существующих баз данных, где таблица уже создана без этих полей
+        cur.execute("PRAGMA table_info(kp_plates)")
+        columns = [col[1] for col in cur.fetchall()]
+        
+        if 'status' not in columns:
+            print("[DB] Миграция: добавляем колонку status в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN status TEXT DEFAULT 'в производстве'")
+            # Устанавливаем статус для всех существующих записей
+            cur.execute("UPDATE kp_plates SET status = 'в производстве' WHERE status IS NULL")
+            print("[DB] ✅ Колонка status добавлена")
+        
+        # Создаём индекс для status (после того, как колонка точно существует)
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_plates_status ON kp_plates(status)')
+        
+        if 'plan_id' not in columns:
+            print("[DB] Миграция: добавляем колонку plan_id в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN plan_id TEXT")
+            print("[DB] ✅ Колонка plan_id добавлена")
+        
+        # Создаём индекс для plan_id (после того, как колонка точно существует)
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_plates_plan_id ON kp_plates(plan_id)')
+
+        # P5: day_number — день производства, в который попала плита.
+        # Записывается mark_plates_as_planned. Нужен, чтобы day_view мог читать
+        # plates_info напрямую из БД и держать инвариант с complete_day.
+        if 'day_number' not in columns:
+            print("[DB] Миграция: добавляем колонку day_number в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN day_number INTEGER")
+            print("[DB] ✅ Колонка day_number добавлена")
+
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_plates_plan_day '
+            'ON kp_plates(plan_id, day_number)'
+        )
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_plates_kp_length_dm '
+            'ON kp_plates(kp_id, length_dm_raw)'
+        )
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_plates_kp_plate_name '
+            'ON kp_plates(kp_id, plate_name)'
+        )
+
+        # Таблица 9: production_plans — производственные планы (A2 / WP3).
+        # План хранится как JSON в payload_json; version — optimistic concurrency.
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS production_plans (
+                id TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                is_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_production_plans_active '
+            'ON production_plans(is_active)'
+        )
+        
+        if 'length_dm_raw' not in columns:
+            print("[DB] Миграция: добавляем колонку length_dm_raw в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN length_dm_raw TEXT")
+            print("[DB] ✅ Колонка length_dm_raw добавлена")
+        
+        # Обратная засылка length_dm_raw из plate_name для существующих строк (один раз после ADD COLUMN)
+        cur.execute("SELECT id, plate_name, length_m FROM kp_plates WHERE length_dm_raw IS NULL OR length_dm_raw = ''")
+        rows = cur.fetchall()
+        if rows:
+            from core.config_and_data import extract_length_dm_raw_from_plate_name
+            for row in rows:
+                rid, plate_name, length_m = row
+                raw = extract_length_dm_raw_from_plate_name(plate_name or "")
+                if raw:
+                    cur.execute("UPDATE kp_plates SET length_dm_raw = ? WHERE id = ?", (raw, rid))
+                elif length_m is not None:
+                    # Fallback: из length_m (5.98 -> "59,8", 6.12 -> "61,2")
+                    dm = float(length_m) * 10
+                    if abs(dm - round(dm)) < 0.01:
+                        raw_fb = str(int(round(dm)))
+                    else:
+                        raw_fb = f"{dm:.1f}".rstrip('0').rstrip('.').replace('.', ',')
+                    cur.execute("UPDATE kp_plates SET length_dm_raw = ? WHERE id = ?", (raw_fb, rid))
+            if rows:
+                print(f"[DB] ✅ Обратная засылка length_dm_raw: обновлено {len(rows)} строк")
+        
+        # === МИГРАЦИЯ: Добавляем колонку status в kp_meta если её нет ===
+        # Это нужно для существующих баз данных, где таблица уже создана без этого поля
+        cur.execute("PRAGMA table_info(kp_meta)")
+        meta_columns = [col[1] for col in cur.fetchall()]
+        
+        if 'status' not in meta_columns:
+            print("[DB] Миграция: добавляем колонку status в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN status TEXT DEFAULT 'в работе'")
+            # Устанавливаем статус для всех существующих записей
+            cur.execute("UPDATE kp_meta SET status = 'в работе' WHERE status IS NULL")
+            print("[DB] ✅ Колонка status добавлена в kp_meta")
+
+        if "owner_user_id" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку owner_user_id в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN owner_user_id INTEGER")
+            print("[DB] ✅ Колонка owner_user_id добавлена в kp_meta")
+
+        # === МИГРАЦИЯ: Добавляем nomenclature_id ===
+        if 'nomenclature_id' not in columns:
+            print("[DB] Миграция: добавляем колонку nomenclature_id в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN nomenclature_id TEXT")
+            print("[DB] Колонка nomenclature_id добавлена в kp_plates")
+
+        cur.execute("PRAGMA table_info(completed_plates)")
+        cp_columns = [col[1] for col in cur.fetchall()]
+        if 'nomenclature_id' not in cp_columns:
+            print("[DB] Миграция: добавляем колонку nomenclature_id в completed_plates...")
+            cur.execute("ALTER TABLE completed_plates ADD COLUMN nomenclature_id TEXT")
+            print("[DB] Колонка nomenclature_id добавлена в completed_plates")
+        
+        conn.commit()
+    finally:
+        conn.close()
+def ensure_schema(db_path: str = DEFAULT_DB) -> None:
+    """Idempotent schema initialization (once per absolute db path per process)."""
+    abs_path = os.path.abspath(db_path)
+    if abs_path in _schema_ready:
+        return
+    with _schema_lock:
+        if abs_path in _schema_ready:
+            return
+        _init_schema_impl(db_path)
+        _schema_ready.add(abs_path)
+
+
+def init_schema(db_path: str = DEFAULT_DB) -> None:
+    """Backward-compatible alias for :func:`ensure_schema`."""
+    ensure_schema(db_path)

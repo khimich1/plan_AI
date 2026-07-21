@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from sqlite3 import Cursor
 
+from core.kp_db_audit import audit_append
+
 
 class PlateAuditRepository:
     """Запись событий изменения статуса плит в ``plate_status_log``."""
@@ -33,23 +35,16 @@ class PlateAuditRepository:
 
         Принимает уже открытый ``cur`` — каллер отвечает за commit/rollback.
         """
-        cur.execute(
-            """
-            INSERT INTO plate_status_log (
-                plate_id, kp_id, plate_name, plan_id, day_number,
-                from_status, to_status, qty, reason, actor
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                plate_id,
-                int(kp_id),
-                plate_name,
-                plan_id,
-                day_number,
-                from_status,
-                to_status,
-                int(qty),
-                reason,
-                actor,
-            ),
+        audit_append(
+            cur,
+            plate_id=plate_id,
+            kp_id=kp_id,
+            plate_name=plate_name,
+            plan_id=plan_id,
+            day_number=day_number,
+            from_status=from_status,
+            to_status=to_status,
+            qty=qty,
+            reason=reason,
+            actor=actor,
         )

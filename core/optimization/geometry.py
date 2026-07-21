@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, TypeAlias
 
-from core import config_and_data as cfg
+from core.domain.plate_order import normalize_load_code
 
 
 DemandKey: TypeAlias = tuple[float, int, float | int]
@@ -136,7 +136,7 @@ def generate_primary_cut_options_2d(
 
     for (length, width, load_code), _qty in demand_2d.items():
         order_info = order_info_getter(order_info_list, (length, width, load_code))
-        option_load_code = cfg.normalize_load_code(
+        option_load_code = normalize_load_code(
             order_info.get("load_code", load_code) if order_info else load_code,
             default=8,
         )

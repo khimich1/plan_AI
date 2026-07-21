@@ -71,10 +71,19 @@ function makeDraft(overrides: Partial<CommercialDraftDetails>): CommercialDraftD
 
 type WizardDraftDispatch = ReturnType<typeof useWizardDraftStore>["dispatch"];
 
-/** Доступ к dispatch без user-event: выставляем ref в первом рендере. */
-function Harness({ actionRef }: { actionRef: MutableRefObject<WizardDraftDispatch | null> }) {
+/** Доступ к dispatch и state без user-event: выставляем ref в первом рендере. */
+function Harness({
+  actionRef,
+  stateRef,
+}: {
+  actionRef: MutableRefObject<WizardDraftDispatch | null>;
+  stateRef?: MutableRefObject<ReturnType<typeof useWizardDraftStore>["state"] | null>;
+}) {
   const { dispatch, state } = useWizardDraftStore();
   actionRef.current = dispatch;
+  if (stateRef) {
+    stateRef.current = state;
+  }
   return <span data-testid="current-step">{state.currentStep}</span>;
 }
 
@@ -89,7 +98,7 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
     cleanup();
   });
 
-  it("не переходит с plates на wide-plates после hydrate-draft (только через «Обработать»)", async () => {
+  it("не переходит с plates на client после hydrate-draft (только через «Обработать»)", async () => {
     render(
       <WizardDraftProvider>
         <Harness actionRef={dispatchRef} />
@@ -102,7 +111,26 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
       dispatchRef.current?.({
         type: "hydrate-draft",
         payload: makeDraft({
-          wizard_state: { ...baseWizardState, current_step: "wide-plates" },
+          wizard_state: { ...baseWizardState, current_step: "client" },
+        }),
+      });
+    });
+
+    expect(screen.getByTestId("current-step")).toHaveTextContent("plates");
+  });
+
+  it("маппит legacy wide-plates в plates при hydrate-draft", async () => {
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} />
+      </WizardDraftProvider>,
+    );
+
+    await act(async () => {
+      dispatchRef.current?.({
+        type: "hydrate-draft",
+        payload: makeDraft({
+          wizard_state: { ...baseWizardState, current_step: "wide-plates" as unknown as WizardStepId },
         }),
       });
     });
@@ -131,7 +159,7 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
     expect(screen.getByTestId("current-step")).toHaveTextContent("plates");
   });
 
-  it("для обоих валидных шагов берёт максимум (local client, server manager → client)", async () => {
+  it("для обоих валидных шагов берёт максимум (local client, legacy server manager → client)", async () => {
     render(
       <WizardDraftProvider>
         <Harness actionRef={dispatchRef} />
@@ -147,7 +175,7 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
       dispatchRef.current?.({
         type: "hydrate-draft",
         payload: makeDraft({
-          wizard_state: { ...baseWizardState, current_step: "manager" },
+          wizard_state: { ...baseWizardState, current_step: "manager" as unknown as WizardStepId },
         }),
       });
     });
@@ -163,7 +191,7 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
     );
 
     await act(async () => {
-      dispatchRef.current?.({ type: "set-step", step: "wide-plates" });
+      dispatchRef.current?.({ type: "set-step", step: "client" });
     });
 
     await act(async () => {
@@ -178,6 +206,73 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
       });
     });
 
-    expect(screen.getByTestId("current-step")).toHaveTextContent("wide-plates");
+    expect(screen.getByTestId("current-step")).toHaveTextContent("client");
+  });
+
+  it("sync-after-wide-plates обновляет batchReviewText и сбрасывает widePlateActions", async () => {
+    const stateRef: MutableRefObject<ReturnType<typeof useWizardDraftStore>["state"] | null> = { current: null };
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    await act(async () => {
+      dispatchRef.current?.({
+        type: "start-batch-review",
+        payload: makeDraft({
+          metadata: {
+            plate_batches: [
+              {
+                source_type: "image",
+                original_text: "",
+                normalized_text: "ПБ 63-15-8 3\nПБ 58-15-8 10",
+                ocr_text: "",
+                filename: "photo.jpg",
+              },
+            ],
+            normalized_text: "ПБ 63-15-8 3\nПБ 58-15-8 10",
+            wide_plate_lines: [{ id: "w1", line: "ПБ 63-15-8 3", qty: 3 }],
+            wide_plates_resolved: false,
+          },
+        }),
+      });
+      dispatchRef.current?.({
+        type: "set-wide-action",
+        lineId: "w1",
+        action: "exclude",
+        replacementText: "",
+      });
+    });
+
+    expect(stateRef.current?.batchReviewText).toContain("ПБ 63-15-8 3");
+    expect(stateRef.current?.widePlateActions.w1?.action).toBe("exclude");
+
+    await act(async () => {
+      dispatchRef.current?.({
+        type: "sync-after-wide-plates",
+        payload: makeDraft({
+          metadata: {
+            plate_batches: [
+              {
+                source_type: "image",
+                original_text: "",
+                normalized_text: "ПБ 58-15-8 10",
+                ocr_text: "",
+                filename: "photo.jpg",
+              },
+            ],
+            normalized_text: "ПБ 58-15-8 10",
+            wide_plate_lines: [],
+            wide_plates_resolved: true,
+          },
+          order_data: [{ name: "ПБ 58-15-8 10", qty: 10 }],
+        }),
+      });
+    });
+
+    expect(stateRef.current?.batchReviewText).toBe("ПБ 58-15-8 10");
+    expect(stateRef.current?.normalizedText).toBe("ПБ 58-15-8 10");
+    expect(stateRef.current?.widePlateActions).toEqual({});
   });
 });

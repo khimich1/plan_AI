@@ -101,7 +101,7 @@ def planning_service(tmp_plita, monkeypatch):
         ProductionPlanningService, "_run_optimization_and_split", fake_optimize
     )
     monkeypatch.setattr(
-        "app.services.production_planning_service.get_reinforcement",
+        "core.production.planning.get_reinforcement",
         lambda **kwargs: 999.0,
     )
     return service

@@ -1,8 +1,59 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class OfferSummary(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    kp_id: int
+    creation_date: str | None = None
+    customer_name: str | None = None
+    manager_name: str | None = None
+    discount_percent: float = 0.0
+    subtotal: float = 0.0
+    vat_amount: float = 0.0
+    total_amount: float = 0.0
+    delivery_conditions: str | None = None
+    payment_conditions: str | None = None
+    execution_terms: str | None = None
+    status: str = "в работе"
+    completion_percentage: float = 0.0
+
+
+class OfferPlateItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class OfferDetails(OfferSummary):
+    plates: list[OfferPlateItem] = Field(default_factory=list)
+
+
+class OfferListResponse(BaseModel):
+    items: list[OfferSummary]
+    count: int
+
+
+class CreateOfferResponse(BaseModel):
+    kp_id: int
+    status: str
+    execution_terms: str | None = None
+    used_default_execution_terms: bool = False
+    offer: OfferSummary | None = None
+
+
+class MoveToProductionResponse(BaseModel):
+    kp_id: int
+    execution_terms: str
+    used_default_execution_terms: bool
+    offer: OfferSummary
+
+
+class DeleteOfferResponse(BaseModel):
+    ok: bool = True
+    kp_id: int
 
 
 class OfferOrderItem(BaseModel):

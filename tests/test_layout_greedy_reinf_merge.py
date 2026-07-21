@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import core.config_and_data as cfg
 import pytest
 from core.optimization.layout_runtime_snapshot import LayoutSequenceCfgSlice
+from core.plate_runtime_state import get_plate_mutable_runtime
 from core.visualization import split_sequence_into_tracks
 from viz_modules.layout_sequence.from_plan import _build_sequence_from_plan
 
@@ -15,8 +15,8 @@ def _label(L: float, W: float, load_code: int | None = None) -> str:
 
 
 def _layout_cfg(*, greedy: bool, track_pref: bool = False) -> LayoutSequenceCfgSlice:
-    return LayoutSequenceCfgSlice.from_config_module(
-        cfg,
+    return LayoutSequenceCfgSlice.from_plate_runtime(
+        get_plate_mutable_runtime(),
         layout_greedy_reinf_merge=greedy,
         layout_track_reinf_preference=track_pref,
     )

@@ -7,14 +7,15 @@ from datetime import datetime
 
 from app.core.settings import get_settings
 from app.domain.enums import PlateStatus
-from core import kp_db
+from app.repositories.kp_offers_repository import KpOffersRepository
+from core.kp import offers_write
 
 
 class KpRepository:
     def __init__(self, db_path: str | None = None) -> None:
         settings = get_settings()
         self.db_path = db_path or str(settings.plita_db_path)
-        kp_db.init_schema(self.db_path)
+        self._offers = KpOffersRepository(self.db_path)
 
     def save_offer(
         self,
@@ -30,8 +31,9 @@ class KpRepository:
         status: str = "в работе",
         order_data: Sequence[dict] | None = None,
         xlsx_path: str | None = None,
+        owner_user_id: int | None = None,
     ) -> int:
-        return kp_db.save_kp_to_db(
+        return offers_write.save_kp_to_db(
             creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
             order_data=list(order_data or []),
             xlsx_file_path=xlsx_path,
@@ -43,8 +45,12 @@ class KpRepository:
             payment_conditions=payment_conditions,
             execution_terms=execution_terms,
             status=status,
+            owner_user_id=owner_user_id,
             db_path=self.db_path,
         )
+
+    def list_offers_grouped(self, **list_filters) -> dict[str, list[dict]]:
+        return self._offers.list_grouped(**list_filters)
 
     def list_offers(self, limit: int = 100) -> list[dict]:
         query = """
@@ -62,32 +68,29 @@ class KpRepository:
             cursor.execute(query, (limit,))
             return [dict(row) for row in cursor.fetchall()]
 
-    def list_offers_grouped(self) -> dict[str, list[dict]]:
-        return kp_db.get_all_kp_list(self.db_path)
-
     def get_offer(self, kp_id: int) -> dict | None:
-        return kp_db.get_kp_by_id(kp_id, self.db_path)
+        return self._offers.get_by_id(kp_id)
 
     def get_next_kp_number(self) -> int:
         return kp_db.get_next_kp_number(self.db_path)
 
     def update_offer_discount(self, kp_id: int, discount_percent: float) -> bool:
-        return kp_db.update_kp_discount(kp_id, discount_percent, self.db_path)
+        return offers_write.update_kp_discount(kp_id, discount_percent, self.db_path)
 
     def update_offer_logistics_cost(self, kp_id: int, logistics_cost: float) -> bool:
-        return kp_db.update_kp_logistics_cost(kp_id, logistics_cost, self.db_path)
+        return offers_write.update_kp_logistics_cost(kp_id, logistics_cost, self.db_path)
 
     def update_offer_status(self, kp_id: int, status: str) -> bool:
-        return kp_db.update_kp_status(kp_id, status, self.db_path)
+        return offers_write.update_kp_status(kp_id, status, self.db_path)
 
     def update_offer_execution_date(self, kp_id: int, execution_date: str) -> bool:
-        return kp_db.update_kp_execution_date(kp_id, execution_date, self.db_path)
+        return offers_write.update_kp_execution_date(kp_id, execution_date, self.db_path)
 
     def delete_offer(self, kp_id: int) -> bool:
-        return kp_db.delete_kp_by_id(kp_id, self.db_path)
+        return offers_write.delete_kp_by_id(kp_id, self.db_path)
 
     def get_completion_percentage(self, kp_id: int) -> dict:
-        return kp_db.get_kp_completion_percentage(kp_id, self.db_path)
+        return self._offers.get_completion_percentage(kp_id)
 
     def list_production_candidates(self, limit: int = 500) -> list[dict]:
         query = """
@@ -105,14 +108,7 @@ class KpRepository:
             return [dict(row) for row in cursor.fetchall()]
 
     def list_kps_in_production(self) -> list[dict]:
-        """Возвращает список КП со статусом 'в работе' с метриками выполнения.
-
-        Для каждой КП считаем:
-        - ``completion_pct`` — процент выполненных плит (из ``core.kp_db.get_kp_completion_percentage``),
-        - ``in_plan_pct`` — доля плит уже помещённых в какой-либо план (в статусе 'в плане'),
-        - ``total_length_m`` — сумма длин плит (в метрах) в состоянии 'в производстве'/'в плане',
-        - ``estimated_days`` — грубая оценка числа дней, если бы ширина дорожки использовалась полностью.
-        """
+        """Возвращает список КП со статусом 'в работе' с метриками выполнения."""
         query = """
         SELECT o.kp_id, o.customer_name, o.creation_date, o.execution_terms
         FROM KP_offers o
@@ -160,9 +156,9 @@ class KpRepository:
 
         for row in rows:
             kp_id = int(row["kp_id"])
-            completion = kp_db.get_kp_completion_percentage(kp_id, self.db_path)
-            in_plan = kp_db.get_kp_plates_in_plan_percentage(kp_id, self.db_path)
-            total_length_m = kp_db.get_kp_total_length(kp_id, self.db_path)
+            completion = self._offers.get_completion_percentage(kp_id)
+            in_plan = self._offers.get_plates_in_plan_percentage(kp_id)
+            total_length_m = self._offers.get_total_length(kp_id)
 
             result.append(
                 {
@@ -179,4 +175,3 @@ class KpRepository:
                 }
             )
         return result
-

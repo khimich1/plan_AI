@@ -32,8 +32,10 @@ services:
       PLANS_DIR: /data/plans
       PLANS_METADATA_PATH: /data/plans_metadata.json
       CURRENT_PLAN_PATH: /data/current_plan.json
+      WORK_CALENDAR_PATH: /data/work_calendar.json
       BACKEND_CORS_ALLOWED_ORIGINS: "https://zavodstart.ru,https://www.zavodstart.ru,http://localhost,http://127.0.0.1,http://localhost:5173,http://127.0.0.1:5173"
       # GPT-4o Vision: на VPS создайте .env рядом с compose (см. .gitignore) или export OPENAI_API_KEY
+      OCR_EXTERNAL_ENABLED: ${OCR_EXTERNAL_ENABLED:-true}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # APP_SECRET_KEY: "..."
       # Прайсы: смонтируйте том и выставьте пути через env
@@ -41,10 +43,10 @@ services:
     volumes:
       # Данные здесь НЕ в каталоге /plan_zavod — том Docker (docker volume inspect …).
       # Варианты БД:
-      # 1) Перед build положить pb.db и plita.db в docker/seed/ (попадут в образ), первый запуск скопирует в /data.
+      # 1) Перед build положить pb.db в docker/seed/ (попадёт в образ). plita.db не сидится — admin через create_admin.py.
       # 2) Вместо named volume — привязка каталога на сервере (файлы видны на диске):
       #    - ./data:/data
-      #    и скопируйте туда готовые pb.db и plita.db, затем up (пересборка не нужна).
+      #    и скопируйте туда pb.db при необходимости; plita.db создастся при старте backend.
       # Если том уже создал пустые БД — для повторной заливки сидов: docker compose … down -v (сотрёт /data!)
       - web_split_data:/data
 

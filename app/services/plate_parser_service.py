@@ -8,7 +8,7 @@ from typing import Any
 from app.domain.models.parse_result import ParseResult
 from app.domain.models.plate_order import PlateOrder
 from app.repositories.kp_repository import KpRepository
-from core import config_and_data as legacy_cfg
+from core.config_and_data import make_plate_name
 from core.exceptions import PlateParseError
 from core.kp_db import lookup_nomenclature_by_plate_name
 from core.plate_line_parser import build_lwh_mm_load_warning, parse_line
@@ -194,6 +194,7 @@ class PlateParserService:
             unparsed_lines=unparsed_lines,
             diagnostics=diagnostics,
             wide_plate_lines=get_wide_plate_lines(processing_text),
+            dobor_pairs=list(normalization.dobor_pairs),
             warnings=warnings,
             line_contributions=line_contributions,
             line_plate_load_details=line_plate_load_details,
@@ -207,7 +208,7 @@ class PlateParserService:
             cursor = conn.cursor()
             for key in order.plate_load_details:
                 length_m, width_m, load_code, length_dm_raw = key
-                plate_name = legacy_cfg.make_plate_name(
+                plate_name = make_plate_name(
                     length_m,
                     width_m,
                     load_code=int(float(load_code)),

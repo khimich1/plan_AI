@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CreatePlanRequest(BaseModel):
@@ -75,6 +75,30 @@ class DayOccupancyResponse(BaseModel):
 class DeletePlanResponse(BaseModel):
     plan_id: str
     deleted: bool
+
+
+class PlanMetaSummary(BaseModel):
+    id: str
+    name: str
+    created_at: str | None = None
+    start_date: str | None = None
+    total_days: int | None = None
+    tracks_count: int | None = None
+    total_tracks: int | None = None
+    version: int | None = None
+
+
+class PlansListResponse(BaseModel):
+    plans: list[PlanMetaSummary]
+    active_plan_id: str | None = None
+
+
+class PlanDetailResponse(BaseModel):
+    """Полный план с optimistic-lock version для web-клиента."""
+
+    model_config = ConfigDict(extra="allow")
+
+    version: int
 
 
 class RemoveTrackResponse(BaseModel):

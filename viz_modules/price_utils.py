@@ -11,11 +11,9 @@ import os
 import re
 import sqlite3
 
-import core.config_and_data as cfg
-from core.debug_paths import get_debug_log_path
+from core.config_and_data import parse_name_to_sizes
+from core.project_paths import BASE_DIR, PRICE_DB_PATH, PRICE_XLSX_PATH
 from core.price_db import length_m_to_price_length_dm
-
-_DEBUG_LOG_DB7A51 = get_debug_log_path("debug-db7a51.log")
 
 try:
     import pandas as pd
@@ -39,9 +37,9 @@ def load_price_table_from_xlsx(path: str):
         candidate_paths = [path]
     else:
         search_dirs = [
-            os.path.dirname(path) if os.path.dirname(path) else cfg.BASE_DIR,
-            cfg.BASE_DIR,
-            os.path.join(cfg.BASE_DIR, 'банк знаний')
+            os.path.dirname(path) if os.path.dirname(path) else BASE_DIR,
+            BASE_DIR,
+            os.path.join(BASE_DIR, 'банк знаний')
         ]
         for d in search_dirs:
             if not os.path.isdir(d):
@@ -128,7 +126,7 @@ def load_price_table_from_xlsx(path: str):
                 name = str(row.get(name_col, '')).strip()
                 if not name:
                     continue
-                L, _ = cfg.parse_name_to_sizes(name)
+                L, _ = parse_name_to_sizes(name)
                 if L is None:
                     continue
                 key = int(round(L*10))
@@ -162,7 +160,7 @@ def load_price_table_from_xlsx(path: str):
     return table
 
 
-def sync_price_xlsx_to_db(xlsx_path: str = cfg.PRICE_XLSX_PATH, db_path: str = cfg.PRICE_DB_PATH,
+def sync_price_xlsx_to_db(xlsx_path: str = PRICE_XLSX_PATH, db_path: str = PRICE_DB_PATH,
                           sheet_hint: str = '24.06.2024') -> int:
     """Заливает прайс из XLSX в SQLite."""
     if pd is None:
@@ -186,7 +184,7 @@ def sync_price_xlsx_to_db(xlsx_path: str = cfg.PRICE_XLSX_PATH, db_path: str = c
         conn.close()
 
 
-def find_price_from_db(length_m: float, load_code: float | int = 8, db_path: str = cfg.PRICE_DB_PATH) -> float:
+def find_price_from_db(length_m: float, load_code: float | int = 8, db_path: str = PRICE_DB_PATH) -> float:
     """
     Ищет цену в БД с допуском ±1 дм.
     
@@ -229,16 +227,6 @@ def find_price_for_plate(price_table: dict, length_m: float, load_code: int | fl
             if abs(Ldm - key) <= 1 and load_code_int in loads:
                 result = loads[load_code_int]
                 break
-    # #region agent log
-    import json
-    import time
-    _log_path = _DEBUG_LOG_DB7A51
-    try:
-        with open(_log_path, 'a', encoding='utf-8') as _f:
-            _f.write(json.dumps({"sessionId": "db7a51", "hypothesisId": "find_price_for_plate", "location": "price_utils.py:find_price_for_plate", "message": "find_price_for_plate lookup", "data": {"length_m": length_m, "load_code": load_code, "load_code_int": load_code_int, "key": key, "result": result, "key_in_table": key in price_table, "loads_keys": list(price_table.get(key, {}).keys())}, "timestamp": int(time.time() * 1000)}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
     return result
 
 

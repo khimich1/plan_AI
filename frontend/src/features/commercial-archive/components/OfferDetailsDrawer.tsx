@@ -4,10 +4,12 @@ import { Button } from "@/shared/ui/Button";
 import { Spinner } from "@/shared/ui/Spinner";
 import { Alert } from "@/shared/ui/Alert";
 import { FieldWrapper } from "@/shared/ui/Field";
+import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
 import {
   useArchiveOfferQuery,
   useArchiveDocumentMutation,
+  useProductionEstimateQuery,
   useUpdateDiscountMutation,
   useUpdateLogisticsCostMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
@@ -30,6 +32,7 @@ const PLATES_PREVIEW = 10;
 
 export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const query = useArchiveOfferQuery(open ? kpId : null);
+  const estimateQuery = useProductionEstimateQuery(open ? kpId : null);
   const [showAllPlates, setShowAllPlates] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [discountDraft, setDiscountDraft] = useState("");
@@ -154,6 +157,33 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             }}
           >
             <h3 style={{ margin: "0 0 0.75rem", fontSize: "1rem" }}>Итоги</h3>
+            {estimateQuery.isPending && (
+              <div
+                style={{
+                  display: "flex",
+                  gap: "0.5rem",
+                  alignItems: "center",
+                  marginBottom: "0.75rem",
+                }}
+              >
+                <Spinner /> Подсчитываю ориентир по производству...
+              </div>
+            )}
+            {estimateQuery.data && (
+              <div style={{ marginBottom: "0.75rem" }}>
+                <ProductionEstimateAlert
+                  estimatedTracks={estimateQuery.data.estimated_tracks}
+                  estimatedDays={estimateQuery.data.estimated_days}
+                  totalLengthM={estimateQuery.data.total_length_m}
+                  label="Оценка заказа для производства"
+                  context={
+                    offer.execution_terms
+                      ? `текущий срок в карточке: ${offer.execution_terms}`
+                      : undefined
+                  }
+                />
+              </div>
+            )}
             <div
               style={{
                 display: "grid",

@@ -6,10 +6,13 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.v1.endpoints.archive import get_archive_service
+from tests.helpers.csrf import CsrfAwareTestClient
+
+from app.dependencies.services import get_archive_service
 from app.core.settings import get_settings
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
+from tests.helpers.auth_fixtures import patch_auth_users
 from app.schemas.archive import (
     ArchiveOfferDetails,
     ArchiveOfferFinance,
@@ -17,6 +20,16 @@ from app.schemas.archive import (
     ArchiveSearchResponse,
 )
 from app.security.session import create_session_token
+
+TESTER_USER = {
+    "id": 1,
+    "username": "tester",
+    "role": "admin",
+    "manager_id": None,
+    "is_active": 1,
+    "created_at": "2026-01-01 00:00:00",
+    "session_version": 0,
+}
 
 
 @pytest.fixture()
@@ -29,12 +42,11 @@ def client(
     monkeypatch: pytest.MonkeyPatch,
     fake_service: MagicMock,
 ) -> TestClient:
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        AuthRepository,
-        "list_users",
-        lambda self: [
+    patch_auth_users(
+        monkeypatch,
+        [
             {
                 "id": 1,
                 "username": "tester",
@@ -42,12 +54,13 @@ def client(
                 "manager_id": None,
                 "is_active": 1,
                 "created_at": "2026-01-01 00:00:00",
+                "session_version": 0,
             }
         ],
     )
     app = create_app()
     app.dependency_overrides[get_archive_service] = lambda: fake_service
-    return TestClient(app)
+    return CsrfAwareTestClient(app)
 
 
 @pytest.fixture()
@@ -123,7 +136,7 @@ def test_list_returns_items(
     payload = response.json()
     assert len(payload) == 1
     assert payload[0]["kp_id"] == 42
-    fake_service.list_offers.assert_called_once_with("archived")
+    fake_service.list_offers.assert_called_once_with("archived", user=TESTER_USER)
 
 
 def test_get_details_404(
@@ -157,7 +170,7 @@ def test_update_discount_ok(
     )
 
     assert response.status_code == 200
-    fake_service.update_discount.assert_called_once_with(42, 10.0)
+    fake_service.update_discount.assert_called_once_with(42, 10.0, user=TESTER_USER)
 
 
 def test_update_discount_validation(
@@ -204,7 +217,7 @@ def test_update_logistics_cost_ok(
     )
 
     assert response.status_code == 200
-    fake_service.update_logistics_cost.assert_called_once_with(42, 100.0)
+    fake_service.update_logistics_cost.assert_called_once_with(42, 100.0, user=TESTER_USER)
     payload = response.json()
     assert payload["logistics_cost"] == 100.0
     assert payload["finance"]["total_amount"] == 750.0
@@ -251,7 +264,7 @@ def test_delete_ok(
     )
 
     assert response.status_code == 204
-    fake_service.delete_offer.assert_called_once_with(42)
+    fake_service.delete_offer.assert_called_once_with(42, user=TESTER_USER)
 
 
 def test_move_to_production_ok(
@@ -269,7 +282,7 @@ def test_move_to_production_ok(
 
     assert response.status_code == 200
     assert response.json()["status"] == "в работе"
-    fake_service.move_to_production.assert_called_once_with(42, "5 дней")
+    fake_service.move_to_production.assert_called_once_with(42, "5 дней", user=TESTER_USER)
 
 
 def test_move_to_production_validation_error(
@@ -339,7 +352,7 @@ def test_search_by_number_found(
     assert payload["total"] == 1
     assert len(payload["items"]) == 1
     assert payload["items"][0]["kp_id"] == 42
-    fake_service.search.assert_called_once_with(kp_id=42)
+    fake_service.search.assert_called_once_with(user=TESTER_USER, kp_id=42)
 
 
 def test_search_by_number_not_found(
@@ -382,7 +395,7 @@ def test_search_by_customer_returns_items(
     assert payload["mode"] == "customer"
     assert payload["total"] == 2
     assert len(payload["items"]) == 2
-    fake_service.search.assert_called_once_with(customer="Ромашка")
+    fake_service.search.assert_called_once_with(user=TESTER_USER, customer="Ромашка")
 
 
 def test_search_by_customer_not_found(
@@ -445,7 +458,7 @@ def test_search_both_params_prefers_kp_id(
     )
 
     assert response.status_code == 200
-    fake_service.search.assert_called_once_with(kp_id=42)
+    fake_service.search.assert_called_once_with(user=TESTER_USER, kp_id=42)
 
 
 def test_search_customer_truncated_flag(
@@ -481,7 +494,7 @@ def test_download_file_returns_file(
     target = tmp_path / "КП_42.pdf"
     target.write_bytes(b"%PDF-TEST")
 
-    async def fake_generate(kp_id: int, kind: str) -> Path:
+    async def fake_generate(kp_id: int, kind: str, **kwargs) -> Path:
         return target
 
     fake_service.generate_document = fake_generate  # type: ignore[assignment]

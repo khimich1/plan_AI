@@ -3,6 +3,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { Alert } from "@/shared/ui/Alert";
+import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { Spinner } from "@/shared/ui/Spinner";
 import {
   useMoveToProductionMutation,
@@ -102,10 +103,11 @@ export const MoveToProductionDialog = ({
           </div>
         )}
         {estimate.data && (
-          <Alert tone="info">
-            Оценка производства: ~{estimate.data.estimated_tracks} дорожек, ~{estimate.data.estimated_days} дней
-            (суммарная длина {estimate.data.total_length_m.toFixed(1)} м).
-          </Alert>
+          <ProductionEstimateAlert
+            estimatedTracks={estimate.data.estimated_tracks}
+            estimatedDays={estimate.data.estimated_days}
+            totalLengthM={estimate.data.total_length_m}
+          />
         )}
         <FieldWrapper label="Срок выполнения" hint={EXECUTION_TERMS_FIELD_HINT}>
           <Input

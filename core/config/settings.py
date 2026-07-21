@@ -5,15 +5,28 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _logger = logging.getLogger(__name__)
+
+APP_SECRET_KEY_MIN_LENGTH = 32
+_FORBIDDEN_APP_SECRET_KEYS = frozenset(
+    {
+        "",
+        "change-this-secret-key-in-env",
+        "changeme",
+        "secret",
+    }
+)
+
+BOT_ALLOWED_ROLES = frozenset({"admin", "manager", "production"})
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BOT_DIR = PROJECT_ROOT / "bot"
@@ -27,14 +40,23 @@ class Settings(BaseSettings):
         env_file=(PROJECT_ROOT / ".env", BOT_DIR / "bot.env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "Shishov Backend"
     app_env: str = "development"
     app_debug: bool = False
-    app_secret_key: str = Field(
-        default="change-this-secret-key-in-env",
-        alias="APP_SECRET_KEY",
+    app_secret_key: str = Field(alias="APP_SECRET_KEY")
+    cookie_secure: bool | None = Field(default=None, alias="COOKIE_SECURE")
+    cookie_samesite: Literal["lax", "strict", "none"] = Field(
+        default="lax",
+        alias="COOKIE_SAMESITE",
+    )
+    session_ttl_seconds: int = Field(
+        default=60 * 60 * 12,
+        alias="SESSION_COOKIE_MAX_AGE",
+        ge=60,
+        le=60 * 60 * 24 * 30,
     )
     # Строка из .env: pydantic-settings иначе пытается json.loads для list[str] до field_validator.
     cors_allowed_origins_raw: str = Field(
@@ -43,9 +65,35 @@ class Settings(BaseSettings):
     )
 
     bot_token: str | None = Field(default=None, alias="BOT_TOKEN")
+    bot_auth_enabled: bool = Field(default=True, alias="BOT_AUTH_ENABLED")
+    bot_telegram_allowlist_raw: str = Field(default="", alias="BOT_TELEGRAM_ALLOWLIST")
+    bot_auth_fail_closed: bool | None = Field(default=None, alias="BOT_AUTH_FAIL_CLOSED")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    # External OCR / vision recognition (off by default; enable explicitly for staging).
+    ocr_external_enabled: bool = Field(default=False, alias="OCR_EXTERNAL_ENABLED")
     ocr_recognition_mode: str = Field(default="full_gpt", alias="OCR_RECOGNITION_MODE")
+    ocr_provider: Literal["gigachat", "openai"] = Field(default="openai", alias="OCR_PROVIDER")
     ocr_verify_enabled: bool = Field(default=True, alias="OCR_VERIFY_ENABLED")
+    ocr_verify_mode: Literal["auto", "always", "never"] = Field(
+        default="auto",
+        alias="OCR_VERIFY_MODE",
+    )
+    ocr_max_api_calls: int = Field(default=2, alias="OCR_MAX_API_CALLS", ge=1, le=2)
+    ocr_verify_auto_max_rows: int = Field(default=10, alias="OCR_VERIFY_AUTO_MAX_ROWS", ge=1)
+    ocr_verify_auto_min_confidence: float = Field(
+        default=0.92,
+        alias="OCR_VERIFY_AUTO_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
+    ocr_verify_auto_max_bytes: int = Field(
+        default=819_200,
+        alias="OCR_VERIFY_AUTO_MAX_BYTES",
+        ge=1024,
+    )
+    gigachat_credentials: str | None = Field(default=None, alias="GIGACHAT_CREDENTIALS")
+    gigachat_model: str = Field(default="GigaChat-2-Max", alias="GIGACHAT_MODEL")
+    gigachat_scope: str = Field(default="GIGACHAT_API_PERS", alias="GIGACHAT_SCOPE")
     weight_source: str = Field(default="formula", alias="WEIGHT_SOURCE")
 
     pb_db_path: Path = Field(default=PROJECT_ROOT / "pb.db")
@@ -58,10 +106,10 @@ class Settings(BaseSettings):
     )
     outputs_dir: Path = Field(default=PROJECT_ROOT / "Визуализация_Раскладки")
     prices_dir: Path = Field(default=PROJECT_ROOT / "банк знаний")
-    plans_dir: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "plans")
-    plans_metadata_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "plans_metadata.json")
-    current_plan_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "current_plan.json")
-    work_calendar_path: Path = Field(default=PROJECT_ROOT / "bot" / "data" / "work_calendar.json")
+    plans_dir: Path = Field(default=PROJECT_ROOT / "data" / "plans")
+    plans_metadata_path: Path = Field(default=PROJECT_ROOT / "data" / "plans_metadata.json")
+    current_plan_path: Path = Field(default=PROJECT_ROOT / "data" / "current_plan.json")
+    work_calendar_path: Path = Field(default=PROJECT_ROOT / "data" / "work_calendar.json")
     logs_dir: Path = Field(default=PROJECT_ROOT / "logs")
     drafts_dir: Path = Field(default=PROJECT_ROOT / ".app_data" / "drafts")
     frontend_dist_dir: Path = Field(default=PROJECT_ROOT / "frontend" / "dist")
@@ -90,6 +138,31 @@ class Settings(BaseSettings):
         alias="COMMERCIAL_OCR_UPLOADS_PER_HOUR",
         ge=1,
     )
+    auth_login_attempts_per_minute: int = Field(
+        default=5,
+        alias="AUTH_LOGIN_ATTEMPTS_PER_MINUTE",
+        ge=1,
+    )
+    auth_login_rate_limit_window_seconds: int = Field(
+        default=60,
+        alias="AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+        ge=1,
+        le=3600,
+    )
+    auth_password_change_attempts: int = Field(
+        default=3,
+        alias="AUTH_PASSWORD_CHANGE_ATTEMPTS",
+        ge=1,
+    )
+    auth_password_change_window_seconds: int = Field(
+        default=900,
+        alias="AUTH_PASSWORD_CHANGE_WINDOW_SECONDS",
+        ge=1,
+        le=86400,
+    )
+    # Comma-separated IPs of reverse proxies allowed to set X-Forwarded-For (e.g. 127.0.0.1).
+    # Empty default: do not trust XFF; use the direct TCP client address only.
+    trusted_proxy_ips_raw: str = Field(default="", alias="TRUSTED_PROXY_IPS")
 
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
@@ -113,6 +186,131 @@ class Settings(BaseSettings):
         default=True,
         alias="TRACK_TOP_UP_FROM_FOLLOWING",
     )
+
+    @field_validator("bot_telegram_allowlist_raw", mode="before")
+    @classmethod
+    def parse_bot_telegram_allowlist_raw(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @staticmethod
+    def _parse_bot_telegram_allowlist(raw: str) -> dict[int, str]:
+        normalized = raw.strip()
+        if not normalized:
+            return {}
+        if normalized.startswith("["):
+            try:
+                parsed = json.loads(normalized)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "BOT_TELEGRAM_ALLOWLIST JSON must be an array of "
+                    '{"id": <telegram_id>, "role": "<admin|manager|production>"} objects.'
+                ) from exc
+            if not isinstance(parsed, list):
+                raise ValueError("BOT_TELEGRAM_ALLOWLIST JSON must be an array.")
+            result: dict[int, str] = {}
+            for entry in parsed:
+                if not isinstance(entry, dict):
+                    raise ValueError("Each BOT_TELEGRAM_ALLOWLIST JSON entry must be an object.")
+                telegram_id = entry.get("id", entry.get("telegram_id"))
+                role = entry.get("role")
+                if telegram_id is None or role is None:
+                    raise ValueError(
+                        "BOT_TELEGRAM_ALLOWLIST JSON entries require 'id' (or 'telegram_id') and 'role'."
+                    )
+                role_str = str(role).strip().lower()
+                if role_str not in BOT_ALLOWED_ROLES:
+                    raise ValueError(
+                        f"Invalid bot role '{role}'; allowed: admin, manager, production."
+                    )
+                result[int(telegram_id)] = role_str
+            return result
+        result = {}
+        for part in normalized.split(","):
+            item = part.strip()
+            if not item:
+                continue
+            if ":" not in item:
+                raise ValueError(
+                    "BOT_TELEGRAM_ALLOWLIST entries must use telegram_id:role format "
+                    "(example: 123456789:admin,987654321:manager)."
+                )
+            id_part, role_part = item.split(":", 1)
+            role_str = role_part.strip().lower()
+            if role_str not in BOT_ALLOWED_ROLES:
+                raise ValueError(
+                    f"Invalid bot role '{role_part.strip()}'; allowed: admin, manager, production."
+                )
+            result[int(id_part.strip())] = role_str
+        return result
+
+    @computed_field
+    @property
+    def bot_telegram_allowlist(self) -> dict[int, str]:
+        return self._parse_bot_telegram_allowlist(self.bot_telegram_allowlist_raw)
+
+    @computed_field
+    @property
+    def bot_auth_fail_closed_enabled(self) -> bool:
+        if self.bot_auth_fail_closed is not None:
+            return self.bot_auth_fail_closed
+        return self.app_env.lower() == "production"
+
+    @model_validator(mode="after")
+    def validate_bot_telegram_allowlist_format(self) -> Settings:
+        try:
+            self._parse_bot_telegram_allowlist(self.bot_telegram_allowlist_raw)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
+
+    @model_validator(mode="after")
+    def validate_bot_telegram_auth(self) -> Settings:
+        if not self.bot_auth_enabled:
+            if self.app_env.lower() != "development":
+                raise ValueError(
+                    "BOT_AUTH_ENABLED can only be false when APP_ENV=development. "
+                    "Configure BOT_TELEGRAM_ALLOWLIST with telegram_id:role entries."
+                )
+            return self
+        if self.bot_auth_fail_closed_enabled and not self.bot_telegram_allowlist:
+            raise ValueError(
+                "BOT_TELEGRAM_ALLOWLIST must contain at least one telegram_id:role entry "
+                "when bot authentication is enabled (example: 123456789:admin). "
+                "Roles: admin, manager, production."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def migrate_ocr_verify_enabled(self) -> Settings:
+        if os.getenv("OCR_VERIFY_ENABLED") is not None:
+            _logger.warning(
+                "OCR_VERIFY_ENABLED is deprecated; use OCR_VERIFY_MODE (auto|always|never) instead."
+            )
+            if os.getenv("OCR_VERIFY_MODE") is None:
+                mode = "always" if self.ocr_verify_enabled else "never"
+                object.__setattr__(self, "ocr_verify_mode", mode)
+        return self
+
+    @model_validator(mode="after")
+    def validate_app_secret_key(self) -> Settings:
+        key = self.app_secret_key.strip()
+        if key in _FORBIDDEN_APP_SECRET_KEYS or len(key) < APP_SECRET_KEY_MIN_LENGTH:
+            raise ValueError(
+                "APP_SECRET_KEY must be set via environment, must not use a known default, "
+                f"and must be at least {APP_SECRET_KEY_MIN_LENGTH} characters "
+                "(generate with: python -c \"import secrets; print(secrets.token_urlsafe(48))\")."
+            )
+        object.__setattr__(self, "app_secret_key", key)
+        return self
+
+    @computed_field
+    @property
+    def cookie_secure_enabled(self) -> bool:
+        if self.cookie_secure is not None:
+            return self.cookie_secure
+        return self.app_env.lower() == "production"
 
     @field_validator("cors_allowed_origins_raw", mode="before")
     @classmethod
@@ -139,6 +337,18 @@ class Settings(BaseSettings):
     @property
     def cors_allowed_origins(self) -> list[str]:
         return self._split_cors_origins(self.cors_allowed_origins_raw)
+
+    @staticmethod
+    def _split_proxy_ips(raw: str) -> frozenset[str]:
+        normalized = raw.strip()
+        if not normalized:
+            return frozenset()
+        return frozenset(item.strip() for item in normalized.split(",") if item.strip())
+
+    @computed_field
+    @property
+    def trusted_proxy_ips(self) -> frozenset[str]:
+        return self._split_proxy_ips(self.trusted_proxy_ips_raw)
 
     def ensure_directories(self) -> None:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)

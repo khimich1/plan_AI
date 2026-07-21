@@ -4,13 +4,23 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Union
+from typing import Any, Dict, List, Sequence, Tuple, Union
 
-from ..plate_runtime_state import get_plate_mutable_runtime
+from ..plate_runtime_state import PlateMutableRuntime, get_plate_mutable_runtime
 from ..runtime import NomenclatureCacheFiller, get_default_nomenclature_cache_filler
 
 logger = logging.getLogger(__name__)
+
+_APPLY_TO_GLOBALS_DEPRECATION = (
+    "PlateOrder.apply_to_globals() is deprecated (A1-002); "
+    "use PlateOrderContext.hydrate_from_order() with ctx.bound() or run_in_order_context()."
+)
+_GET_CURRENT_PLATE_ORDER_DEPRECATION = (
+    "get_current_plate_order() is deprecated (A1-002); "
+    "read from PlateOrderContext.plates or hydrate_from_order() instead."
+)
 
 
 def normalize_load_code(value, default: int = 8):
@@ -38,6 +48,17 @@ def normalize_load_code(value, default: int = 8):
         return int(round(val))
 
     return round(val, 1)
+
+
+def parse_load_key_from_list(k_list: Sequence[Any]) -> Tuple[float, float, Union[int, float], str]:
+    """Конвертирует список [length, width, load_code] или [length, width, load_code, ldr] в 4-кортеж."""
+    ldr = str(k_list[3]).strip() if len(k_list) > 3 and k_list[3] is not None else ""
+    load_value = k_list[2]
+    if isinstance(load_value, (int, float)):
+        normalized_load: Union[int, float] = float(load_value)
+    else:
+        normalized_load = int(load_value)
+    return (float(k_list[0]), float(k_list[1]), normalized_load, ldr)
 
 
 def _try_fill_plate_nomenclature_cache(
@@ -128,23 +149,12 @@ class PlateOrder:
     @classmethod
     def from_dict(cls, d: dict) -> "PlateOrder":
         """Восстановление из FSM state."""
-
-        def _parse_load_key(k_list):
-            """Конвертирует список [length, width, load_code] или [length, width, load_code, ldr] в 4-кортеж."""
-            ldr = str(k_list[3]).strip() if len(k_list) > 3 and k_list[3] is not None else ""
-            return (
-                float(k_list[0]),
-                float(k_list[1]),
-                float(k_list[2]) if isinstance(k_list[2], (int, float)) else int(k_list[2]),
-                ldr,
-            )
-
         load_details = {}
         for k_list, v in d.get("plate_load_details", []):
-            load_details[_parse_load_key(k_list)] = int(v)
+            load_details[parse_load_key_from_list(k_list)] = int(v)
         length_dm_raw = {}
         for k_list, v in d.get("plate_length_dm_raw", []):
-            key = _parse_load_key(k_list)
+            key = parse_load_key_from_list(k_list)
             length_dm_raw[key] = str(v) if v is not None else ""
         exact_widths = {}
         for k_list, v in d.get("plate_exact_widths", []):
@@ -178,6 +188,40 @@ class PlateOrder:
             usable_strips_0_34_m_total=float(d.get("usable_strips_0_34_m_total", 0)),
             scrap_strips_0_12_m_total=float(d.get("scrap_strips_0_12_m_total", 0)),
             waste_area_m2=float(d.get("waste_area_m2", 0)),
+        )
+
+    @classmethod
+    def from_runtime(cls, rt: PlateMutableRuntime) -> "PlateOrder":
+        """Снимок заказа из мутабельного рантайма (``PlateOrderContext.plates``)."""
+        return cls(
+            plates_1_2=list(rt.plates_1_2),
+            plates_1_5_to_1_2=list(rt.plates_1_5_to_1_2),
+            plates_1_0=list(rt.plates_1_0),
+            plates_1_08=list(rt.plates_1_08),
+            plates_0_46=list(rt.plates_0_46),
+            plates_0_32=list(rt.plates_0_32),
+            plates_0_72=list(rt.plates_0_72),
+            plates_0_70=list(rt.plates_0_70),
+            plates_0_86=list(rt.plates_0_86),
+            plates_0_74=list(rt.plates_0_74),
+            plates_0_88=list(rt.plates_0_88),
+            plates_0_48=list(rt.plates_0_48),
+            plates_0_50=list(rt.plates_0_50),
+            plates_0_34=list(rt.plates_0_34),
+            plate_load_details=dict(rt.plate_load_details),
+            plate_length_dm_raw=dict(rt.plate_length_dm_raw),
+            plate_exact_widths=dict(rt.plate_exact_widths),
+            longitudinal_cuts=int(rt.longitudinal_cuts),
+            length_trims=int(rt.length_trims),
+            unused_strips_0_3_m_total=float(rt.unused_strips_0_3_m_total),
+            scrap_strips_0_2_m_total=float(rt.scrap_strips_0_2_m_total),
+            usable_strips_0_74_m_total=float(rt.usable_strips_0_74_m_total),
+            usable_strips_0_88_m_total=float(rt.usable_strips_0_88_m_total),
+            usable_strips_0_48_m_total=float(rt.usable_strips_0_48_m_total),
+            usable_strips_0_50_m_total=float(rt.usable_strips_0_50_m_total),
+            usable_strips_0_34_m_total=float(rt.usable_strips_0_34_m_total),
+            scrap_strips_0_12_m_total=float(rt.scrap_strips_0_12_m_total),
+            waste_area_m2=float(rt.waste_area_m2),
         )
 
     @classmethod
@@ -230,8 +274,11 @@ class PlateOrder:
         order._recompute_totals()
         return order
 
-    def _recompute_totals(self) -> None:
+    def recompute_totals(self) -> None:
         """Пересчитывает итоговые поля из списков плит."""
+        self._recompute_totals()
+
+    def _recompute_totals(self) -> None:
         self.longitudinal_cuts = (
             len(self.plates_1_5_to_1_2)
             + len(self.plates_1_0)
@@ -275,7 +322,12 @@ class PlateOrder:
         *,
         fill_nomenclature_cache: NomenclatureCacheFiller | None = None,
     ) -> None:
-        """Записывает данные заказа в потоколокальное / контекстное состояние cfg."""
+        """Записывает данные заказа в потоколокальное / контекстное состояние cfg.
+
+        .. deprecated:: A1-002
+            Prefer ``PlateOrderContext.hydrate_from_order()`` — см. ``core.plate_order_context``.
+        """
+        warnings.warn(_APPLY_TO_GLOBALS_DEPRECATION, DeprecationWarning, stacklevel=2)
         rt = get_plate_mutable_runtime()
         rt.plate_load_details.clear()
         rt.plate_load_details.update(self.plate_load_details)
@@ -312,36 +364,20 @@ class PlateOrder:
         rt.waste_area_m2 = self.waste_area_m2
 
 
+def coerce_core_plate_order(plate_order: Any) -> PlateOrder:
+    """Привести app/legacy заказ к каноническому ``PlateOrder`` (без app-only полей)."""
+    if type(plate_order) is PlateOrder:
+        return plate_order
+    if hasattr(plate_order, "to_dict"):
+        return PlateOrder.from_dict(dict(plate_order.to_dict()))
+    raise TypeError(f"Unsupported plate order type: {type(plate_order)!r}")
+
+
 def get_current_plate_order() -> PlateOrder:
-    """Строит PlateOrder из текущего потоколокального / контекстного состояния."""
-    rt = get_plate_mutable_runtime()
-    return PlateOrder(
-        plates_1_2=list(rt.plates_1_2),
-        plates_1_5_to_1_2=list(rt.plates_1_5_to_1_2),
-        plates_1_0=list(rt.plates_1_0),
-        plates_1_08=list(rt.plates_1_08),
-        plates_0_46=list(rt.plates_0_46),
-        plates_0_32=list(rt.plates_0_32),
-        plates_0_72=list(rt.plates_0_72),
-        plates_0_70=list(rt.plates_0_70),
-        plates_0_86=list(rt.plates_0_86),
-        plates_0_74=list(rt.plates_0_74),
-        plates_0_88=list(rt.plates_0_88),
-        plates_0_48=list(rt.plates_0_48),
-        plates_0_50=list(rt.plates_0_50),
-        plates_0_34=list(rt.plates_0_34),
-        plate_load_details=dict(rt.plate_load_details),
-        plate_length_dm_raw=dict(rt.plate_length_dm_raw),
-        plate_exact_widths=dict(rt.plate_exact_widths),
-        longitudinal_cuts=int(rt.longitudinal_cuts),
-        length_trims=int(rt.length_trims),
-        unused_strips_0_3_m_total=float(rt.unused_strips_0_3_m_total),
-        scrap_strips_0_2_m_total=float(rt.scrap_strips_0_2_m_total),
-        usable_strips_0_74_m_total=float(rt.usable_strips_0_74_m_total),
-        usable_strips_0_88_m_total=float(rt.usable_strips_0_88_m_total),
-        usable_strips_0_48_m_total=float(rt.usable_strips_0_48_m_total),
-        usable_strips_0_50_m_total=float(rt.usable_strips_0_50_m_total),
-        usable_strips_0_34_m_total=float(rt.usable_strips_0_34_m_total),
-        scrap_strips_0_12_m_total=float(rt.scrap_strips_0_12_m_total),
-        waste_area_m2=float(rt.waste_area_m2),
-    )
+    """Строит PlateOrder из текущего потоколокального / контекстного состояния.
+
+    .. deprecated:: A1-002
+        Prefer ``PlateOrderContext.plates`` or ``hydrate_from_order()`` for explicit context.
+    """
+    warnings.warn(_GET_CURRENT_PLATE_ORDER_DEPRECATION, DeprecationWarning, stacklevel=2)
+    return PlateOrder.from_runtime(get_plate_mutable_runtime())

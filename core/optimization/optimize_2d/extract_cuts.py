@@ -9,11 +9,9 @@ from dataclasses import dataclass
 
 from pulp import value
 
-from core import config_and_data as cfg
-from core.optimization.debug_log import _dbg_open_append, _opt_debug_enabled
+from core.domain.plate_order import normalize_load_code
 from core.optimization.geometry import _canonical_length
 from core.optimization.ilp_model import _residual_phys_key
-from core.optimization.optimization_debug_impl import _DEBUG_LOG_7E420E
 from core.optimization.optimize_2d.state import TwoDPhaseAState
 from core.optimization.secondary_batches import _batch_sizes_for_secondary_z_sec
 
@@ -88,7 +86,7 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
                     _residual_phys_key(opt["length"], opt["rest"])
                 ].append(
                     (
-                        cfg.normalize_load_code(
+                        normalize_load_code(
                             opt.get("load_code", target_load_code), default=8
                         ),
                         opt_id,
@@ -97,48 +95,6 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
                 )
             total_plates += 1
 
-    # #region agent log
-    if _opt_debug_enabled():
-        try:
-            import json as _aj
-            import time as _at
-
-            _geom_prim_counts: dict[str, int] = {}
-            for _pc in planned_primary_cuts:
-                if _pc.get("rest", 0) <= 0:
-                    continue
-                _L0 = (
-                    _canonical_length(_pc["lengths"][0]) if _pc.get("lengths") else 0.0
-                )
-                _rk = f"{_L0}_{int(round(float(_pc['rest'])))}"
-                _geom_prim_counts[_rk] = _geom_prim_counts.get(_rk, 0) + 1
-            _opt_queue_lens_before_sec = {
-                str(k): len(v)
-                for k, v in _primary_instances_by_opt_id.items()
-                if v
-            }
-            with _dbg_open_append(_DEBUG_LOG_7E420E) as _lf:
-                _lf.write(
-                    _aj.dumps(
-                        {
-                            "sessionId": "7e420e",
-                            "hypothesisId": "H_OPT_PRIMARY_GEOM",
-                            "location": "core/optimization/optimize_2d/extract_cuts.py",
-                            "message": "primary splits count by (len_m, rest_mm); opt_id queues before any secondary pop",
-                            "data": {
-                                "n_planned_primary": len(planned_primary_cuts),
-                                "geom_split_counts": _geom_prim_counts,
-                                "opt_id_queue_nonempty": _opt_queue_lens_before_sec,
-                            },
-                            "timestamp": int(_at.time() * 1000),
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-    # #endregion
 
     print("[OPT_2D] 🔧 Применяем правила завода для порядка плит...")
 
@@ -186,7 +142,7 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
             continue
         opt = secondary_options_by_id[opt_id]
         _target_length, _target_width, target_load_code = dk
-        target_load_code = cfg.normalize_load_code(target_load_code, default=8)
+        target_load_code = normalize_load_code(target_load_code, default=8)
         pieces = max(1, int(opt.get("pieces") or 1))
         if qty % pieces != 0:
             import logging as _batch_qty_log
@@ -219,7 +175,7 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
                     or []
                 )
                 for idx, (prim_lc, source_opt_id, instance_id) in enumerate(pool):
-                    if cfg.normalize_load_code(prim_lc, default=8) >= target_load_code:
+                    if normalize_load_code(prim_lc, default=8) >= target_load_code:
                         parent_id = instance_id
                         del pool[idx]
                         opt_queue = _primary_instances_by_opt_id.get(source_opt_id) or []
@@ -246,53 +202,6 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
             for _ in range(batch_size):
                 secondary_instance_id = f"sec-{_next_secondary_instance_id}"
                 _next_secondary_instance_id += 1
-                # #region agent log
-                if _opt_debug_enabled():
-                    try:
-                        import json as _aj
-                        import time as _at
-
-                        _q_after = {
-                            str(_soid): len(_primary_instances_by_opt_id.get(_soid) or [])
-                            for _soid in (opt.get("source_ids") or [])
-                        }
-                        with _dbg_open_append(_DEBUG_LOG_7E420E) as _lf:
-                            _lf.write(
-                                _aj.dumps(
-                                    {
-                                        "sessionId": "7e420e",
-                                        "hypothesisId": "H_OPT_SEC_PARENT_POP",
-                                        "location": "core/optimization/optimize_2d/extract_cuts.py",
-                                        "message": "z_sec output row shares parent within pieces-batch",
-                                        "data": {
-                                            "sec_opt_id": opt_id,
-                                            "pieces": pieces,
-                                            "batch_index": batch_index,
-                                            "batch_size": batch_size,
-                                            "batch_offset_in_z_block": z_block_offset,
-                                            "source_length": opt.get("source_length"),
-                                            "source_rest": opt.get("source_rest"),
-                                            "target_order_key": list(dk)
-                                            if isinstance(dk, (list, tuple))
-                                            else dk,
-                                            "source_ids": list(opt.get("source_ids") or []),
-                                            "queue_lens_before_pop": _q_before,
-                                            "queue_remaining_after_parent_pop": _q_mid,
-                                            "queue_remaining_by_source_opt_id": _q_after,
-                                            "parent_instance_id": parent_instance_id,
-                                            "secondary_instance_id": secondary_instance_id,
-                                            "sec_type": opt.get("type"),
-                                        },
-                                        "timestamp": int(_at.time() * 1000),
-                                    },
-                                    ensure_ascii=False,
-                                    default=str,
-                                )
-                                + "\n"
-                            )
-                    except Exception:
-                        pass
-                # #endregion
                 planned_secondary_cuts.append(
                     {
                         "source": opt["source_rest"],
@@ -321,50 +230,6 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
             _secondary_parent_missing,
         )
 
-    # #region agent log
-    if _opt_debug_enabled():
-        try:
-            import json as _aj
-            import time as _at
-
-            _null_parent = sum(
-                1 for c in planned_secondary_cuts if not c.get("parent_instance_id")
-            )
-            _by_geom = {}
-            for c in planned_secondary_cuts:
-                if c.get("parent_instance_id"):
-                    continue
-                sl = c.get("source_lengths") or []
-                _L = _canonical_length(sl[0]) if sl else None
-                _src = c.get("source")
-                _gk = (
-                    f"{_L}_{int(round(float(_src)))}"
-                    if _L is not None and _src is not None
-                    else "?"
-                )
-                _by_geom[_gk] = _by_geom.get(_gk, 0) + 1
-            with _dbg_open_append(_DEBUG_LOG_7E420E) as _lf:
-                _lf.write(
-                    _aj.dumps(
-                        {
-                            "sessionId": "7e420e",
-                            "hypothesisId": "H_OPT_SEC_SUMMARY",
-                            "location": "core/optimization/optimize_2d/extract_cuts.py",
-                            "message": "secondary cuts: null parent count and breakdown by geom key",
-                            "data": {
-                                "n_secondary": len(planned_secondary_cuts),
-                                "null_parent_count": _null_parent,
-                                "null_parent_by_source_geom_key": _by_geom,
-                            },
-                            "timestamp": int(_at.time() * 1000),
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-    # #endregion
 
     return TwoDPhaseBResult(
         primary_cuts=primary_cuts,

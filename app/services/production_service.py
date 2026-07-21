@@ -9,11 +9,10 @@ from app.repositories.work_calendar_repository import WorkCalendarRepository
 from app.services.day_view_service import build_day_view_detail
 from app.services.optimization_service import OptimizationService
 from app.services.production_completion_service import ProductionCompletionService
+from app.planning.plan_storage import MAX_TRACKS_PER_DAY
 from app.services.production_planning_service import ProductionPlanningService
-from app.planning import plan_manager
+from core.plate_order_context import PlateOrderContext
 from core.plan_track_removal import TrackRemovalError
-
-MAX_TRACKS_PER_DAY = plan_manager.MAX_TRACKS_PER_DAY
 
 _TRACK_REMOVAL_HTTP_STATUS: dict[str, int] = {
     "plan_not_found": 404,
@@ -30,9 +29,10 @@ _TRACK_REMOVAL_HTTP_STATUS: dict[str, int] = {
 class ProductionTrackRemovalError(Exception):
     """Ошибка удаления дорожки из производственного плана."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, message: str, *, status_code: int, code: str | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 class ProductionService:
@@ -60,15 +60,18 @@ class ProductionService:
         return self.plan_repository.list_metadata()
 
     def get_plan(self, plan_id: str) -> dict | None:
-        return self.plan_repository.load_plan(plan_id)
+        record = self.plan_repository.get(plan_id)
+        if not record:
+            return None
+        return {**record["payload"], "version": record["version"]}
 
     def activate_plan(self, plan_id: str) -> dict | None:
-        if not self.plan_repository.set_active_plan(plan_id):
+        if not self.plan_repository.set_active(plan_id):
             return None
         return {"plan_id": plan_id, "active": True}
 
     def delete_plan(self, plan_id: str) -> dict:
-        deleted = self.plan_repository.delete_plan(plan_id)
+        deleted = self.plan_repository.delete(plan_id)
         return {"plan_id": plan_id, "deleted": deleted}
 
     def get_day_occupancy(self, exclude_plan_id: str | None = None) -> dict:
@@ -100,6 +103,7 @@ class ProductionService:
         plan_name: str | None = None,
         fill_targets: list[dict[str, Any]] | None = None,
         layout_reinforcement_order: str = "asc",
+        plate_order_ctx: PlateOrderContext | None = None,
     ) -> dict[str, Any]:
         return self.planning_service.build_plan(
             start_date=start_date,
@@ -112,16 +116,26 @@ class ProductionService:
             plan_name=plan_name,
             fill_targets=fill_targets,
             layout_reinforcement_order=layout_reinforcement_order,
+            plate_order_ctx=plate_order_ctx,
         )
 
     def get_calendar(self) -> dict | None:
-        return plan_manager.get_global_calendar_info()
+        return self.planning_service.plan_distribution.get_global_calendar_info(
+            self.plan_repository
+        )
 
     def get_day_view(self, target_date: str) -> dict | None:
-        return self.plan_repository.get_tracks_for_date(target_date)
+        return self.planning_service.plan_distribution.get_tracks_for_date(
+            self.plan_repository,
+            target_date,
+        )
 
     def get_day_view_detailed(self, target_date: str) -> dict | None:
-        return build_day_view_detail(target_date)
+        return build_day_view_detail(
+            target_date,
+            db_path=self.kp_repository.db_path,
+            plan_repository=self.plan_repository,
+        )
 
     def complete_day(
         self,
@@ -162,7 +176,8 @@ class ProductionService:
         active_plan_id: str | None = None,
         auto_save: bool = True,
     ) -> dict[str, Any]:
-        updated_plan, stats = self.plan_repository.build_plan_from_tracks(
+        updated_plan, stats = self.planning_service.plan_distribution.build_plan_from_tracks(
+            self.plan_repository,
             plan_id=active_plan_id,
             new_tracks_list=all_tracks_list,
             start_date=start_date,
@@ -176,7 +191,14 @@ class ProductionService:
         updated_plan["name"] = name or updated_plan.get("name") or f"План {updated_plan['id']}"
         if auto_save:
             self.plan_repository.save_plan(updated_plan)
-        return {"plan": updated_plan, "stats": stats}
+        plan_version = None
+        if auto_save:
+            saved = self.plan_repository.get(updated_plan["id"])
+            plan_version = saved["version"] if saved else None
+        result = {"plan": updated_plan, "stats": stats}
+        if plan_version is not None:
+            result["plan"] = {**updated_plan, "version": plan_version}
+        return result
 
     def get_work_calendar(self) -> dict:
         return self.calendar_repository.load_raw()
@@ -202,7 +224,8 @@ class ProductionService:
         actor: str | None = None,
     ) -> dict[str, Any]:
         try:
-            return plan_manager.remove_track_from_plan(
+            return self.planning_service.plan_distribution.remove_track_from_plan(
+                self.plan_repository,
                 plan_id,
                 date,
                 track_index,
@@ -211,5 +234,9 @@ class ProductionService:
             )
         except TrackRemovalError as exc:
             status_code = _TRACK_REMOVAL_HTTP_STATUS.get(exc.code or "", 500)
-            raise ProductionTrackRemovalError(exc.message, status_code=status_code) from exc
+            raise ProductionTrackRemovalError(
+                exc.message,
+                status_code=status_code,
+                code=exc.code,
+            ) from exc
 

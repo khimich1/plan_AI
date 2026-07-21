@@ -8,8 +8,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from core import config_and_data as cfg
+from core.config.constants import LONG_CUT_PRICE_PER_M, TRANSVERSE_CUT_PRICE
+from core.domain.plate_order import normalize_load_code
 from core.optimization.debug_log import _DEBUG_LOG_COMMON, _dbg_open_append
+from core.project_paths import PRICE_DB_PATH
 from core.optimization.geometry import _canonical_length
 from core.price_db import get_price
 
@@ -46,14 +48,14 @@ def _build_residual_balance_constraints(
         rest_w = opt.get("rest", 0)
         if rest_w > 0 and opt.get("type") != "solid":
             phys = _residual_phys_key(opt.get("length"), rest_w)
-            prim_lc = cfg.normalize_load_code(opt.get("load_code", 8), default=8)
+            prim_lc = normalize_load_code(opt.get("load_code", 8), default=8)
             opt["load_code"] = prim_lc
             supply_by_phys[phys][prim_lc].append(opt["id"])
 
     for opt in secondary_options:
         target_key = opt.get("target_order_key", (0, 0, 8))
         sec_lc = target_key[2] if len(target_key) == 3 else 8
-        sec_lc = cfg.normalize_load_code(sec_lc, default=8)
+        sec_lc = normalize_load_code(sec_lc, default=8)
         phys = _residual_phys_key(opt.get("source_length"), opt.get("source_rest"))
         demand_by_phys[phys][sec_lc].append(opt["id"])
 
@@ -311,17 +313,17 @@ def build_two_d_cutting_ilp(
 
     print("[OPT_2D] Расчёт стоимости первичных резов...")
     for opt in primary_options:
-        plate_price = get_price(opt["length"], 8, cfg.PRICE_DB_PATH) or 10000
+        plate_price = get_price(opt["length"], 8, PRICE_DB_PATH) or 10000
         cut_cost = (
-            cfg.LONG_CUT_PRICE_PER_M * opt["length"] if opt["type"] in ("direct", "indirect") else 0
+            LONG_CUT_PRICE_PER_M * opt["length"] if opt["type"] in ("direct", "indirect") else 0
         )
         obj_terms.append(x_prim[opt["id"]] * (plate_price + cut_cost))
 
     for opt in secondary_options:
         if opt["type"] in ("narrowing", "multiple", "multiple_transverse"):
-            obj_terms.append(x_sec[opt["id"]] * cfg.LONG_CUT_PRICE_PER_M * opt["source_length"])
+            obj_terms.append(x_sec[opt["id"]] * LONG_CUT_PRICE_PER_M * opt["source_length"])
         if opt["type"] in ("transverse", "multiple_transverse"):
-            obj_terms.append(x_sec[opt["id"]] * cfg.TRANSVERSE_CUT_PRICE)
+            obj_terms.append(x_sec[opt["id"]] * TRANSVERSE_CUT_PRICE)
 
     for rkey, rec in rests_by_lkey.items():
         if not (rec["produced"] and rec["consumed"]):
@@ -329,7 +331,7 @@ def build_two_d_cutting_ilp(
         unused_expr = lpSum(x_prim[i] for i in rec["produced"]) - lpSum(
             x_sec[i] for i in rec["consumed"]
         )
-        base_price = get_price(rkey[0], 6, cfg.PRICE_DB_PATH) or 5000
+        base_price = get_price(rkey[0], 6, PRICE_DB_PATH) or 5000
         rest_price = base_price * (rkey[1] / float(plate_width))
         obj_terms.append(unused_expr * rest_price * opt_config.unused_rest_penalty_coeff)
 

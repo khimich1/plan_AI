@@ -8,8 +8,8 @@
 """
 
 import io
+import logging
 import os
-import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional
 from xml.sax.saxutils import escape
@@ -60,6 +60,8 @@ BANK_CORR_ACCOUNT = "30101810500000000653"
 
 # Путь к базе данных с ценами (абсолютный)
 DB_PATH = os.path.join(PROJECT_ROOT, "pb.db")
+
+logger = logging.getLogger(__name__)
 
 try:
     from core.project_paths import resolve_commercial_offer_logo_path
@@ -167,7 +169,9 @@ def register_fonts():
         else:
             globals()['FONT_NORMAL'] = 'Helvetica'
             globals()['FONT_BOLD'] = 'Helvetica-Bold'
-            print("ВНИМАНИЕ: Не найдены шрифты с поддержкой кириллицы! Русский текст может отображаться некорректно.")
+            logger.warning(
+                "Не найдены шрифты с поддержкой кириллицы; русский текст может отображаться некорректно"
+            )
     
     return bool(registered_fonts)
 
@@ -191,121 +195,31 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
     
     Returns:
         Цена плиты в рублях
-    """
-    try:
-        from core.price_db import length_m_to_price_length_dm
-
-        length_dm = length_m_to_price_length_dm(length_m)
-        
-        # Определяем код нагрузки (8 = 800 кг/м², 10 = 1000 кг/м²)
-        load_code = load_class // 100
-        
-        con = sqlite3.connect(DB_PATH)
-        cur = con.cursor()
-        
-        # Ищем цену в таблице prices
-        result = cur.execute(
-            "SELECT price FROM prices WHERE length_dm = ? AND load_code = ?",
-            (length_dm, load_code)
-        ).fetchone()
-        
-        con.close()
-        
-        if result:
-            return float(result[0])
-        else:
-            # Если нет точной цены, используем базовую формулу
-            # Примерная цена: 4000 руб/м² * площадь плиты
-            area_m2 = length_m * width_m
-            return round(area_m2 * 4000, 2)
-            
-    except Exception as e:
-        print(f"Ошибка получения цены: {e}")
-        # Возвращаем примерную цену
-        area_m2 = length_m * width_m
-        return round(area_m2 * 4000, 2)
-
-
-def calculate_total_cost(order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0) -> Dict:
-    """
-    Рассчитывает общую стоимость заказа.
-
-    unit_price в позициях считается уже с НДС. Скидка применяется к сумме плит.
-    НДС (22%) для отображения: сумма плит после скидки * 0.22.
-    Итого к оплате: сумма плит после скидки + услуга по доставке грузов
-    (стоимость рейса × ceil(масса заказа кг / 18600); в базу НДС по плитам не входит).
-
-    subtotal = total_with_vat - vat_amount (согласованная разбивка для документов и архива).
-
-    Args:
-        order_data: список позиций заказа с полями name, length_m, width_m, qty, unit_price (опционально)
-        discount_percent: процент скидки (0-100, по умолчанию 0)
-        logistics_cost: стоимость одного рейса (добавляется как строка доставки по числу рейсов)
-
-    Returns:
-        Словарь с итоговыми суммами
-    """
-    total_qty = 0
-    plates_total_with_vat = 0.0
-    dp = float(discount_percent or 0.0)
-    dp = min(max(dp, 0.0), 100.0)
-    discount_factor = 1.0 - dp / 100.0
-
-    for item in order_data:
-        qty = item.get('qty', 0)
-
-        # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
-        if 'unit_price' in item and item['unit_price'] is not None:
-            unit_price = item['unit_price']
-        else:
-            # Fallback: старая логика (только базовая цена из БД)
-            length_m = item.get('length_m', 0)
-            width_m = item.get('width_m', 0)
-            load_class = item.get('load_class', 800)
-            unit_price = get_plate_price(length_m, width_m, load_class)
-
-        discounted_price = float(unit_price) * discount_factor
-        item_cost = discounted_price * qty
-
-        total_qty += qty
-        plates_total_with_vat += item_cost
-
-    trip_cost = max(0.0, float(logistics_cost or 0.0))
-    cargo_kg = total_order_cargo_weight_kg(order_data)
-    delivery_total = delivery_service_charge_rub(trip_cost, cargo_kg)
-    vat_amount = round(plates_total_with_vat * 0.22, 2)
-    total_with_vat = round(plates_total_with_vat + delivery_total, 2)
-    subtotal = round(total_with_vat - vat_amount, 2)
-
-    return {
-        'total_qty': total_qty,
-        'subtotal': subtotal,
-        'vat_amount': vat_amount,
-        'total_with_vat': total_with_vat
-    }
-
-
-def format_phone(phone: str) -> str:
-    """
-    Форматирует телефон в читаемый вид: +7 (XXX) XXX-XX-XX
     
-    Args:
-        phone: телефон в виде строки цифр (например: "79621860029")
-        
-    Returns:
-        Отформатированный телефон (например: "+7 (962) 186-00-29")
+    Raises:
+        PriceNotFoundError: если цена отсутствует в прайс-листе
     """
-    if not phone:
-        return ""
-    
-    # Оставляем только цифры
-    phone = ''.join(filter(str.isdigit, phone))
-    
-    # Форматируем, если начинается с 7 и имеет 11 цифр
-    if phone.startswith('7') and len(phone) == 11:
-        return f"+7 ({phone[1:4]}) {phone[4:7]}-{phone[7:9]}-{phone[9:11]}"
-    
-    return phone
+    from core.commercial_pricing import lookup_plate_price
+
+    return lookup_plate_price(length_m, width_m, load_class, db_path=DB_PATH)
+
+
+from core.commercial_pricing import (  # noqa: E402
+    VAT_RATE,
+    calculate_total_cost as _calculate_total_cost,
+    format_phone,
+)
+
+
+def calculate_total_cost(
+    order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0
+) -> Dict:
+    return _calculate_total_cost(
+        order_data,
+        discount_percent,
+        logistics_cost,
+        db_path=DB_PATH,
+    )
 
 
 def _format_delivery_conditions_text(delivery_conditions: Optional[str]) -> str:
@@ -490,7 +404,7 @@ def generate_commercial_offer_pdf(
             story.append(Image(str(logo_path), width=logo_width, height=logo_height))
             story.append(Spacer(1, 4 * mm))
         except Exception as exc:
-            print(f"Ошибка загрузки логотипа: {exc}")
+            logger.warning("Ошибка загрузки логотипа: %s", exc)
     
     # 1. Адрес (отдельной строкой)
     story.append(Paragraph(COMPANY_ADDRESS, style_header_info))

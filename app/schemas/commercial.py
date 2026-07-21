@@ -17,8 +17,6 @@ class WizardStepId(str, Enum):
     """Канонические шаги мастера КП (совпадают с JSON-значениями на фронтенде)."""
 
     plates = "plates"
-    wide_plates = "wide-plates"
-    manager = "manager"
     client = "client"
     result = "result"
 
@@ -41,7 +39,9 @@ def _coerce_wizard_step_id(value: Any) -> WizardStepId:
     if not raw:
         return WizardStepId.plates
     legacy_aliases = {
-        "wide_plates": WizardStepId.wide_plates,
+        "wide-plates": WizardStepId.plates,
+        "wide_plates": WizardStepId.plates,
+        "manager": WizardStepId.client,
         "calculate": WizardStepId.client,
     }
     if raw in legacy_aliases:
@@ -89,6 +89,13 @@ class CommercialWidePlateLine(BaseModel):
     qty: int = 1
 
 
+class CommercialDoborPair(BaseModel):
+    id: str = Field(min_length=1)
+    source_line: str
+    primary_line: str
+    complement_line: str
+
+
 class CommercialPlateBatch(BaseModel):
     source_type: CommercialSourceType
     original_text: str = ""
@@ -134,6 +141,7 @@ class CommercialDraftMetadata(BaseModel):
     normalized_text: str = ""
     normalized_lines: list[str] = Field(default_factory=list)
     wide_plate_lines: list[CommercialWidePlateLine] = Field(default_factory=list)
+    dobor_pairs: list[CommercialDoborPair] = Field(default_factory=list)
     diagnostics: list[dict[str, Any]] = Field(default_factory=list)
     price_rows_count: int = 0
     breakdown_tables_count: int = 0
@@ -147,11 +155,27 @@ class CommercialDraftMetadata(BaseModel):
     current_save_mode: CommercialSaveMode | None = None
     execution_terms: str = ""
     logistics_cost: float = 0.0
+    ocr_recognition_mode: str = ""
+    ocr_cost_usd: float = 0.0
+    ocr_cost_rub: float = 0.0
+    ocr_api_calls: int = 0
     ocr_method: str = ""
     ocr_verify_applied: bool = False
     ocr_verify_failed: bool = False
+    ocr_verify_skipped_reason: str | None = None
+    ocr_verify_applied_reason: str | None = None
     ocr_corrections: list[dict[str, Any]] = Field(default_factory=list)
     ocr_row_count_on_image: int | None = None
+
+
+class CommercialBreakdownTable(BaseModel):
+    name: str
+    rows: list[list[str]] = Field(default_factory=list)
+
+
+class CommercialDraftBreakdownResponse(BaseModel):
+    draft_id: str
+    items: list[CommercialBreakdownTable] = Field(default_factory=list)
 
 
 class CommercialDraftDetailsResponse(BaseModel):

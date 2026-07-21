@@ -10,7 +10,7 @@ type KpPlatePreviewPanelProps = {
 };
 
 const flagLabel = (flag: "wide_direct" | "wide_split"): string =>
-  flag === "wide_direct" ? "Широкая (>12 дм)" : "Раскол широкой плиты";
+  flag === "wide_direct" ? "Шире стандартной" : "Разделена на стандартные позиции";
 
 export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPanelProps) => {
   const rows = buildKpPreviewRows(draft);
@@ -30,8 +30,8 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
         {showWideAlert && (
           <Alert tone="warning">
             {wideLines.length}{" "}
-            {wideLines.length === 1 ? "нестандартная позиция" : "нестандартных позиций"} в распознанном тексте —
-            состав предварительный, проверка на шаге 2.
+            {wideLines.length === 1 ? "позиция шире стандартной" : "позиций шире стандартной"} в списке —
+            примите решение в блоке ниже.
           </Alert>
         )}
 
@@ -46,7 +46,7 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
         )}
 
         {normalizedTextChanged && (
-          <Alert tone="info">Изменён нормализованный текст — нажмите «Обработать» для пересчёта состава.</Alert>
+          <Alert tone="info">Изменён список плит — нажмите «Список верен» для пересчёта состава.</Alert>
         )}
 
         {rows.length === 0 ? (
@@ -64,6 +64,16 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
             >
               <thead>
                 <tr style={{ textAlign: "left", color: "#475467", background: "#f2f4f7" }}>
+                  <th
+                    style={{
+                      padding: "0.55rem 0.65rem",
+                      borderBottom: "1px solid #e4e7ec",
+                      width: "1%",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    №
+                  </th>
                   <th style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #e4e7ec", minWidth: 280 }}>
                     Наименование
                   </th>
@@ -92,6 +102,18 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
               <tbody>
                 {rows.map((row, index) => (
                   <tr key={`${row.name}-${index}`}>
+                    <td
+                      style={{
+                        padding: "0.55rem 0.65rem",
+                        borderBottom: "1px solid #f2f4f7",
+                        fontVariantNumeric: "tabular-nums",
+                        whiteSpace: "nowrap",
+                        width: "1%",
+                        verticalAlign: "top",
+                      }}
+                    >
+                      {index + 1}
+                    </td>
                     <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7", verticalAlign: "top" }}>
                       <div style={{ whiteSpace: "nowrap" }}>{row.name}</div>
                       {row.flag && (

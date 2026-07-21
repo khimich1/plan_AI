@@ -18,6 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.repositories.auth_repository import AuthRepository
+from app.security.password_policy import PasswordPolicyError, validate_password
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,12 +61,13 @@ def main() -> int:
 
     try:
         password = prompt_password()
+        validate_password(password)
         user, created = repository.create_or_update_user(
             username=args.username,
             password=password,
             role=args.role,
         )
-    except ValueError as exc:
+    except (ValueError, PasswordPolicyError) as exc:
         print(f"Error: {exc}")
         return 1
 

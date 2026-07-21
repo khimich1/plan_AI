@@ -2,11 +2,9 @@ import type { WizardStepId } from "@/features/commercial-offer/types/commercialO
 import { Card } from "@/shared/ui/Card";
 
 const steps: Array<{ id: WizardStepId; title: string }> = [
-  { id: "plates", title: "1. Ввод плит" },
-  { id: "wide-plates", title: "2. Проверка проблемных плит" },
-  { id: "manager", title: "3. Менеджер" },
-  { id: "client", title: "4. Клиент и условия" },
-  { id: "result", title: "5. Расчёт и результат" },
+  { id: "plates", title: "1. Плиты" },
+  { id: "client", title: "2. Клиент" },
+  { id: "result", title: "3. Результат" },
 ];
 
 type WizardProgressProps = {

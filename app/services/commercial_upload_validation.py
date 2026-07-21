@@ -12,6 +12,11 @@ from app.core.settings import get_settings
 
 UploadFormat = Literal["jpeg", "png", "pdf"]
 
+MSG_EXTERNAL_OCR_DISABLED = (
+    "Внешнее распознавание изображений (OCR) отключено. "
+    "Введите список плит текстом или включите OCR_EXTERNAL_ENABLED."
+)
+
 _READ_CHUNK = 1024 * 1024
 
 
@@ -48,6 +53,15 @@ def reset_commercial_ocr_rate_limiter_for_tests() -> None:
 def check_commercial_ocr_rate_limit(user_id: int) -> None:
     lim = get_settings().commercial_ocr_uploads_per_hour
     _ocr_upload_limiter.check(user_id, max_events=lim)
+
+
+def ensure_external_ocr_enabled() -> None:
+    """Reject OCR / external image recognition when ``OCR_EXTERNAL_ENABLED`` is false."""
+    if not get_settings().ocr_external_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=MSG_EXTERNAL_OCR_DISABLED,
+        )
 
 
 async def read_upload_file_capped(upload: UploadFile, max_bytes: int | None = None) -> bytes:
@@ -122,6 +136,7 @@ async def prepare_commercial_ocr_upload(
     """
     if image is None:
         return None, None
+    ensure_external_ocr_enabled()
     check_commercial_ocr_rate_limit(user_id)
     raw = await read_upload_file_capped(image, max_bytes=max_bytes)
     if not raw:

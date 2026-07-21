@@ -7,6 +7,8 @@ export interface PlanMetaSummary {
   total_days?: number;
   total_tracks?: number;
   completed_days?: number[];
+  /** Optimistic-lock version from SQLite production_plans. */
+  version?: number;
   [key: string]: unknown;
 }
 
@@ -146,6 +148,8 @@ export interface BuildPlanRequest {
   /** КП → id строки kp_plates → количество для этого плана (не больше qty в БД). */
   selected_plate_qty?: Record<number, Record<number, number>>;
   active_plan_id?: string | null;
+  /** Optimistic-lock version активного плана при дозаписи существующего плана. */
+  expected_version?: number;
   plan_name?: string | null;
   fill_targets?: FillTargetItem[];
   /** asc — слабые первыми (по умолчанию); desc — сильные первыми (экспериментальный режим). */
@@ -160,7 +164,7 @@ export interface BuildPlanSummary {
 }
 
 export interface BuildPlanResponse {
-  plan: Record<string, unknown> & { id?: string; name?: string };
+  plan: Record<string, unknown> & { id?: string; name?: string; version?: number };
   stats: Record<string, unknown>;
   summary: BuildPlanSummary;
 }
@@ -169,6 +173,12 @@ export interface DeletePlanResponse {
   plan_id: string;
   deleted: boolean;
 }
+
+/** GET /production/plans/{id} — payload плана + version. */
+export type PlanDetailResponse = Record<string, unknown> & {
+  id: string;
+  version: number;
+};
 
 export interface RemoveTrackResponse {
   plan_id: string;

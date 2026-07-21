@@ -13,6 +13,8 @@ from app.services.archive_service import (
     ArchiveValidationError,
 )
 
+ADMIN = {"id": 1, "role": "admin"}
+
 
 def _make_raw(**overrides: Any) -> dict:
     base = {
@@ -29,6 +31,7 @@ def _make_raw(**overrides: Any) -> dict:
         "payment_conditions": "100% предоплата",
         "execution_terms": "",
         "status": "в архиве",
+        "owner_user_id": 1,
         "plates": [
             {
                 "position_number": 1,
@@ -57,7 +60,7 @@ def test_list_offers_for_archived_skips_completion(tmp_path: Path) -> None:
     repository.list_by_section.return_value = [_make_raw()]
     service = _make_service(repository, tmp_path)
 
-    items = service.list_offers("archived")
+    items = service.list_offers("archived", user=ADMIN)
 
     assert len(items) == 1
     assert items[0].kp_id == 42
@@ -71,7 +74,7 @@ def test_list_offers_for_production_includes_completion(tmp_path: Path) -> None:
     repository.get_completion_percentage.return_value = {"percentage": 42.5}
     service = _make_service(repository, tmp_path)
 
-    items = service.list_offers("in_production")
+    items = service.list_offers("in_production", user=ADMIN)
 
     assert items[0].completion_percentage == pytest.approx(42.5)
     repository.get_completion_percentage.assert_called_once_with(42)
@@ -83,32 +86,36 @@ def test_get_details_raises_when_missing(tmp_path: Path) -> None:
     service = _make_service(repository, tmp_path)
 
     with pytest.raises(ArchiveNotFoundError):
-        service.get_details(999)
+        service.get_details(999, user=ADMIN)
 
 
 def test_update_discount_out_of_range(tmp_path: Path) -> None:
-    service = _make_service(MagicMock(), tmp_path)
+    repository = MagicMock()
+    repository.get_by_id.return_value = _make_raw()
+    service = _make_service(repository, tmp_path)
 
     with pytest.raises(ArchiveValidationError):
-        service.update_discount(1, 150)
+        service.update_discount(1, 150, user=ADMIN)
 
 
 def test_update_discount_not_found(tmp_path: Path) -> None:
     repository = MagicMock()
+    repository.get_by_id.return_value = _make_raw()
     repository.update_discount.return_value = False
     service = _make_service(repository, tmp_path)
 
     with pytest.raises(ArchiveNotFoundError):
-        service.update_discount(1, 10)
+        service.update_discount(1, 10, user=ADMIN)
 
 
 def test_update_logistics_cost_not_found(tmp_path: Path) -> None:
     repository = MagicMock()
+    repository.get_by_id.return_value = _make_raw()
     repository.update_logistics_cost.return_value = False
     service = _make_service(repository, tmp_path)
 
     with pytest.raises(ArchiveNotFoundError):
-        service.update_logistics_cost(1, 100.0)
+        service.update_logistics_cost(1, 100.0, user=ADMIN)
 
 
 def test_update_logistics_cost_calls_repository_and_returns_details(tmp_path: Path) -> None:
@@ -138,7 +145,7 @@ def test_update_logistics_cost_calls_repository_and_returns_details(tmp_path: Pa
     )
     service = _make_service(repository, tmp_path)
 
-    details = service.update_logistics_cost(42, 100.0)
+    details = service.update_logistics_cost(42, 100.0, user=ADMIN)
 
     repository.update_logistics_cost.assert_called_once_with(42, 100.0)
     assert details.logistics_cost == 100.0
@@ -152,7 +159,7 @@ def test_move_to_production_requires_archived_status(tmp_path: Path) -> None:
     service = _make_service(repository, tmp_path)
 
     with pytest.raises(ArchiveValidationError):
-        service.move_to_production(42, "5 дней")
+        service.move_to_production(42, "5 дней", user=ADMIN)
 
 
 def test_move_to_production_happy_path(tmp_path: Path) -> None:
@@ -165,7 +172,7 @@ def test_move_to_production_happy_path(tmp_path: Path) -> None:
     repository.update_status.return_value = True
     service = _make_service(repository, tmp_path)
 
-    details = service.move_to_production(42, "01.04.2026")
+    details = service.move_to_production(42, "01.04.2026", user=ADMIN)
 
     assert details.status == "в работе"
     assert details.execution_terms == "01.04.2026"
@@ -183,7 +190,7 @@ def test_move_to_production_normalizes_iso_date(tmp_path: Path) -> None:
     repository.update_status.return_value = True
     service = _make_service(repository, tmp_path)
 
-    service.move_to_production(42, "2026-06-05")
+    service.move_to_production(42, "2026-06-05", user=ADMIN)
 
     repository.update_execution_date.assert_called_once_with(42, "05.06.2026")
 
@@ -198,7 +205,7 @@ def test_move_to_production_normalizes_ddmmyyyy(tmp_path: Path) -> None:
     repository.update_status.return_value = True
     service = _make_service(repository, tmp_path)
 
-    service.move_to_production(42, "05.06.2026")
+    service.move_to_production(42, "05.06.2026", user=ADMIN)
 
     repository.update_execution_date.assert_called_once_with(42, "05.06.2026")
 
@@ -226,7 +233,7 @@ def test_move_to_production_normalizes_five_days(
     repository.update_status.return_value = True
     service = _make_service(repository, tmp_path)
 
-    service.move_to_production(42, "5 дней")
+    service.move_to_production(42, "5 дней", user=ADMIN)
 
     repository.update_execution_date.assert_called_once_with(42, "05.06.2026")
 
@@ -255,7 +262,7 @@ def test_estimate_production(tmp_path: Path) -> None:
     )
     service = _make_service(repository, tmp_path)
 
-    estimate = service.estimate_production(42)
+    estimate = service.estimate_production(42, user=ADMIN)
 
     assert estimate["total_length_m"] == 200.0
     assert estimate["estimated_tracks"] >= 1
@@ -264,11 +271,11 @@ def test_estimate_production(tmp_path: Path) -> None:
 
 def test_delete_offer_not_found(tmp_path: Path) -> None:
     repository = MagicMock()
-    repository.delete.return_value = False
+    repository.get_by_id.return_value = None
     service = _make_service(repository, tmp_path)
 
     with pytest.raises(ArchiveNotFoundError):
-        service.delete_offer(42)
+        service.delete_offer(42, user=ADMIN)
 
 
 def test_generate_document_pdf(
@@ -288,7 +295,7 @@ def test_generate_document_pdf(
         fake_pdf,
     )
 
-    path = asyncio.run(service.generate_document(42, "pdf"))
+    path = asyncio.run(service.generate_document(42, "pdf", user=ADMIN))
 
     assert path.exists()
     assert path.name == "КП_42.pdf"
@@ -305,16 +312,19 @@ def test_generate_document_rejects_empty_plates(tmp_path: Path) -> None:
     service = _make_service(repository, tmp_path)
 
     with pytest.raises(ArchiveValidationError):
-        asyncio.run(service.generate_document(42, "xlsx"))
+        asyncio.run(service.generate_document(42, "xlsx", user=ADMIN))
 
 
 def test_generate_document_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from core.plate_order_context import PlateOrderContext
+
     repository = MagicMock()
     repository.get_by_id.return_value = _make_raw()
     repository.get_xlsx_file.return_value = None
     service = _make_service(repository, tmp_path)
+    request_ctx = PlateOrderContext.fresh_empty()
 
     schema_path = tmp_path / "Схема_test_КЗ.pdf"
     schema_path.write_bytes(b"%PDF-SCHEMA")
@@ -322,17 +332,25 @@ def test_generate_document_schema(
     class FakeContext:
         optimization_success = True
         optimization_error_message = None
+        optimization_result = {"_opt_status": "ok", "total_plates": 2}
+        plan_by_load = {}
+        load_to_reinforcement_map = {}
+
+    async def fake_run_in_order_context(ctx, fn, *args, **kwargs):
+        return (str(tmp_path / "schema.png"), str(schema_path))
 
     monkeypatch.setattr(
         "app.services.archive_service.OptimizationService.optimize",
-        lambda self, order, orders_2d=None: FakeContext(),
+        lambda self, order, orders_2d=None, plate_order_ctx=None: FakeContext(),
     )
     monkeypatch.setattr(
-        "app.services.archive_service.FileGenerationService.generate_visualization",
-        lambda self, **kwargs: (str(tmp_path / "schema.png"), str(schema_path)),
+        "app.services.archive_service.run_in_order_context",
+        fake_run_in_order_context,
     )
 
-    path = asyncio.run(service.generate_document(42, "schema"))
+    path = asyncio.run(
+        service.generate_document(42, "schema", user=ADMIN, plate_order_ctx=request_ctx)
+    )
 
     assert path.exists()
     assert path.name == "КП_42_schema.pdf"
@@ -344,7 +362,7 @@ def test_search_by_number_found(tmp_path: Path) -> None:
     repository.get_by_id.return_value = _make_raw(kp_id=42)
     service = _make_service(repository, tmp_path)
 
-    result = service.search(kp_id=42)
+    result = service.search(user=ADMIN, kp_id=42)
 
     assert result.mode == "number"
     assert result.total == 1
@@ -357,7 +375,7 @@ def test_search_by_number_not_found(tmp_path: Path) -> None:
     repository.get_by_id.return_value = None
     service = _make_service(repository, tmp_path)
 
-    result = service.search(kp_id=999)
+    result = service.search(user=ADMIN, kp_id=999)
 
     assert result.mode == "number"
     assert result.total == 0
@@ -372,7 +390,7 @@ def test_search_by_customer_delegates_to_repository(tmp_path: Path) -> None:
     )
     service = _make_service(repository, tmp_path)
 
-    result = service.search(customer="Ромашка")
+    result = service.search(user=ADMIN, customer="Ромашка")
 
     assert result.mode == "customer"
     assert result.total == 1
@@ -389,7 +407,7 @@ def test_search_by_customer_truncated_flag(tmp_path: Path) -> None:
     )
     service = _make_service(repository, tmp_path)
 
-    result = service.search(customer="Тест")
+    result = service.search(user=ADMIN, customer="Тест")
 
     assert result.truncated is True
     assert result.total == 60

@@ -14,9 +14,12 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from .plate_line_parser import match_bare_plate_line
+
+if TYPE_CHECKING:
+    from .dobor_split import DoborPair
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +85,7 @@ class NormalizeResult:
     normalized_lines: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     unrecognized_lines: List[str] = field(default_factory=list)
+    dobor_pairs: List["DoborPair"] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -374,8 +378,23 @@ def normalize_order_text(text: str) -> NormalizeResult:
 
     normalized_lines: List[str] = []
     warnings: List[str] = []
+    dobor_pairs: List["DoborPair"] = []
 
+    from .dobor_split import expand_dobor_line
+
+    pair_counter = 0
     for raw in raw_lines:
+        expanded_lines, pair, dobor_warnings = expand_dobor_line(raw, pair_index=pair_counter + 1)
+        if pair is not None:
+            pair_counter += 1
+            dobor_pairs.append(pair)
+        warnings.extend(dobor_warnings)
+
+        if pair is not None:
+            for expanded in expanded_lines:
+                normalized_lines.append(expanded)
+            continue
+
         canonical, warn = canonicalize_plate_line(raw)
         normalized_lines.append(canonical)
         if warn:
@@ -394,4 +413,5 @@ def normalize_order_text(text: str) -> NormalizeResult:
         normalized_lines=normalized_lines,
         warnings=warnings,
         unrecognized_lines=[],
+        dobor_pairs=dobor_pairs,
     )

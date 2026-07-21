@@ -4,6 +4,7 @@ import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { Spinner } from "@/shared/ui/Spinner";
+import { isPlanVersionConflict } from "@/shared/lib/planConflict";
 import {
   useSaveWorkCalendarMutation,
   useWorkCalendarQuery,
@@ -163,7 +164,9 @@ export const WorkCalendarEditor = () => {
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "1.25rem", gap: "0.75rem", alignItems: "center" }}>
         {saveMutation.isSuccess && <span style={{ color: "#067647" }}>Сохранено ✓</span>}
-        {saveMutation.isError && <span style={{ color: "#b42318" }}>Ошибка сохранения</span>}
+        {saveMutation.isError && !isPlanVersionConflict(saveMutation.error) && (
+          <span style={{ color: "#b42318" }}>Ошибка сохранения</span>
+        )}
         <Button onClick={handleSave} disabled={saveMutation.isPending}>
           {saveMutation.isPending ? "Сохранение…" : "Сохранить"}
         </Button>
