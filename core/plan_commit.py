@@ -449,6 +449,13 @@ def commit_plan_plates(
         lambda: defaultdict(list)
     )
 
+    # Общий mutable бюджет слотов дня на identity: повторные order-строки
+    # с тем же (kp_id, canonical name) не должны заново забирать уже
+    # израсходованные дни (иначе orphan kp_plates без ссылок с дорожек).
+    remaining_by_identity_day: dict[OrderIdentity, dict[int, int]] = {
+        ident: dict(days) for ident, days in counts_by_identity_and_day.items()
+    }
+
     for order, qty_to_mark in orders_with_qty:
         kp_id = order.get("kp_id")
         plate_name = order.get("plate_name")
@@ -478,27 +485,28 @@ def commit_plan_plates(
             continue
 
         identity = (int(kp_id), _plate_name.canonical(plate_name))
+        # Решение «есть ли дни в треках» — по исходному счётчику; аллокация —
+        # только из mutable бюджета (после декремента бюджет может быть 0).
         per_day = counts_by_identity_and_day.get(identity)
 
         if per_day:
-            # Распределяем qty_to_mark по дням пропорционально per_day.
-            # Если сумма per_day > qty_to_mark — режем (могут быть rescue-плиты,
-            # которые не считаются как ordered, но попали в треки). Если меньше —
-            # остаток помечаем без day_number.
-            total_in_days = sum(per_day.values())
+            budget = remaining_by_identity_day.setdefault(identity, {})
+            # Распределяем qty_to_mark по оставшемуся бюджету дней.
+            # Если сумма бюджета >= qty_to_mark — режем по дням. Если меньше —
+            # известные дни из бюджета, остаток без day_number (legacy mismatch).
+            total_in_days = sum(budget.values())
             if total_in_days >= qty_to_mark:
-                # есть достаточно — split строго по per_day, обрезая равномерно
-                ordered_days = sorted(per_day.keys())
+                ordered_days = sorted(budget.keys())
                 remaining = qty_to_mark
                 day_alloc: list[tuple[int, int]] = []
                 for d in ordered_days:
-                    take = min(per_day[d], remaining)
+                    take = min(budget.get(d, 0), remaining)
                     if take > 0:
-                        day_alloc.append((d, take))
+                        budget[d] -= take
                         remaining -= take
+                        day_alloc.append((d, take))
                     if remaining <= 0:
                         break
-                # mark_plates_as_planned per-day
                 for d, take in day_alloc:
                     mark_result = kp_db_plates.mark_plates_as_planned(
                         kp_id=int(kp_id),
@@ -516,21 +524,28 @@ def commit_plan_plates(
                         expected=take,
                     )
                     for pid, q in (mark_result.get("id_qty_pairs") or []):
-                        # mutable [id, remaining] для декремента при назначении items
                         ids_by_identity_day[identity][d].append([int(pid), int(q)])
                     if mark_result.get("success") and int(mark_result.get("processed_count", 0) or 0) > 0:
                         marked_any = True
             else:
-                # Несоответствие учёта (per_day < qty_to_mark): пишем день для
-                # известных, остаток — без дня. Логируем как warning.
+                # Несоответствие учёта (бюджет дней < qty_to_mark): пишем день
+                # для известных слотов, остаток — без дня.
                 logger.warning(
                     "[PLAN_COMMIT] Pro-rated plates accounting mismatch: "
                     "identity=%s qty_to_mark=%s sum_per_day=%s",
                     identity, qty_to_mark, total_in_days,
                 )
-                ordered_days = sorted(per_day.keys())
-                day_alloc = [(d, per_day[d]) for d in ordered_days]
-                day_alloc.append((0, qty_to_mark - total_in_days))
+                ordered_days = sorted(budget.keys())
+                remaining = qty_to_mark
+                day_alloc = []
+                for d in ordered_days:
+                    take = min(budget.get(d, 0), remaining)
+                    if take > 0:
+                        budget[d] -= take
+                        remaining -= take
+                        day_alloc.append((d, take))
+                if remaining > 0:
+                    day_alloc.append((0, remaining))
                 for d, take in day_alloc:
                     if take <= 0:
                         continue
@@ -610,6 +625,39 @@ def commit_plan_plates(
                         continue
                     physical["kp_plate_id"] = pair[0]
                     pair[1] -= 1
+
+        pool_leftovers: list[dict[str, Any]] = []
+        for ident, days in ids_by_identity_day.items():
+            for day_num, pool in days.items():
+                for pid, rem in pool:
+                    if rem > 0:
+                        pool_leftovers.append(
+                            {
+                                "identity": f"{ident[0]}|{ident[1]}",
+                                "day": day_num,
+                                "plate_id": pid,
+                                "remaining": rem,
+                            }
+                        )
+        if pool_leftovers:
+            leftover_qty = sum(int(x["remaining"]) for x in pool_leftovers)
+            logger.error(
+                "[PLAN_COMMIT] После привязки kp_plate_id остались непокрытые "
+                "слоты пула (orphan): qty=%s details=%s. Откатываю план %s.",
+                leftover_qty,
+                pool_leftovers[:30],
+                plan_id,
+            )
+            try:
+                kp_db_plates.return_plan_plates_to_production(plan_id, db_path)
+            except Exception:
+                logger.exception(
+                    "[PLAN_COMMIT] Ошибка при откате плит для плана %s",
+                    plan_id,
+                )
+            raise PlanCommitError(
+                "После привязки kp_plate_id остались непокрытые слоты пула (orphan)."
+            )
 
     logger.info(
         "[PLAN_COMMIT] План %s: помечено %s плит, пропущено %s",

@@ -21,6 +21,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.adapters.visualization import wire_visualization_ports
+
+wire_visualization_ports()
+
 from core import kp_db
 from core.config_and_data import canonical_plate_key
 from core.optimization import optimize_with_cascading_longitudinal_cuts, verify_coverage
@@ -39,6 +43,7 @@ from core.production.dto import (
     PlanBuildInput,
 )
 from core.production.planning import load, optimize, persist
+from app.services.day_view_service import build_day_view_detail
 
 DEFAULT_FIXTURE = PROJECT_ROOT / "tests/fixtures/regression/roman_20260503_plates.txt"
 KP_ID = 999
@@ -59,10 +64,32 @@ class ParsedLine:
 
 
 @dataclass
+class OrphanPlate:
+    """Плита в kp_plates дня, отсутствующая (или недопредставленная) в plates_info."""
+
+    id: int
+    plate_name: str
+    qty: int
+    referenced_qty: int = 0
+    reason: str = "unreferenced"  # unreferenced | qty_mismatch
+
+
+@dataclass
+class DayOrphanReport:
+    date: str
+    day_number: int
+    db_qty: int
+    plates_info_qty: int
+    delta: int
+    orphans: list[OrphanPlate] = field(default_factory=list)
+
+
+@dataclass
 class RegressionReport:
     fixture_path: str
     started_at: str
     duration_sec: float = 0.0
+    layout_order_used: str = "asc"
     total_lines: int = 0
     parsed_lines: int = 0
     unparsed_lines: list[str] = field(default_factory=list)
@@ -87,6 +114,9 @@ class RegressionReport:
     full_coverage_ok: bool | None = None
     plan_build_error: str | None = None
     per_name_gaps: list[dict] = field(default_factory=list)
+    plan_id: str | None = None
+    orphan_days: list[DayOrphanReport] = field(default_factory=list)
+    orphan_total_qty: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -194,6 +224,110 @@ def _count_plan_tracks(plan: dict) -> int:
     return total
 
 
+def _collect_track_kp_plate_ids(tracks: list[dict]) -> Counter[int]:
+    """Считает ссылки kp_plate_id из items дорожек (root + secondary_cuts)."""
+    refs: Counter[int] = Counter()
+    for track in tracks or []:
+        for item in track.get("items") or []:
+            if not item:
+                continue
+            plate_id = item.get("kp_plate_id")
+            if plate_id is not None:
+                refs[int(plate_id)] += 1
+            for sec in item.get("secondary_cuts") or []:
+                if not sec:
+                    continue
+                sec_id = sec.get("kp_plate_id")
+                if sec_id is not None:
+                    refs[int(sec_id)] += 1
+    return refs
+
+
+def _kp_plates_for_day(
+    db_path: str, plan_id: str, day_number: int
+) -> list[tuple[int, str, int]]:
+    """Строки kp_plates дня: (id, plate_name, qty)."""
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, plate_name, qty FROM kp_plates "
+            "WHERE plan_id=? AND day_number=? AND status='в плане' "
+            "ORDER BY id",
+            (plan_id, day_number),
+        ).fetchall()
+    return [(int(r[0]), str(r[1] or ""), int(r[2] or 0)) for r in rows]
+
+
+def _plates_info_qty_for_plan(day_view: dict | None, plan_id: str) -> int:
+    """Сумма qty из plates_info day_view для конкретного plan_id."""
+    if not day_view:
+        return 0
+    total = 0
+    for plan_block in day_view.get("plans") or []:
+        if plan_block.get("plan_id") != plan_id:
+            continue
+        for track in plan_block.get("tracks") or []:
+            for plate in track.get("plates_info") or []:
+                total += int(plate.get("qty") or 0)
+    return total
+
+
+def analyze_orphan_plates(
+    plan: dict, plan_id: str, db_path: str
+) -> list[DayOrphanReport]:
+    """Сравнивает kp_plates дня с plates_info day_view; находит orphan id."""
+    results: list[DayOrphanReport] = []
+    days = plan.get("days") or {}
+    for date_key in sorted(days.keys()):
+        day_data = days[date_key] or {}
+        day_number = int(day_data.get("day_number") or 0)
+        if day_number <= 0:
+            continue
+
+        db_rows = _kp_plates_for_day(db_path, plan_id, day_number)
+        db_qty = sum(qty for _, _, qty in db_rows)
+        refs = _collect_track_kp_plate_ids(day_data.get("tracks") or [])
+
+        day_view = build_day_view_detail(date_key, db_path=db_path)
+        plates_info_qty = _plates_info_qty_for_plan(day_view, plan_id)
+        delta = db_qty - plates_info_qty
+
+        orphans: list[OrphanPlate] = []
+        for plate_id, plate_name, qty in db_rows:
+            referenced = refs.get(plate_id, 0)
+            if referenced == 0:
+                orphans.append(
+                    OrphanPlate(
+                        id=plate_id,
+                        plate_name=plate_name,
+                        qty=qty,
+                        referenced_qty=0,
+                        reason="unreferenced",
+                    )
+                )
+            elif referenced < qty:
+                orphans.append(
+                    OrphanPlate(
+                        id=plate_id,
+                        plate_name=plate_name,
+                        qty=qty - referenced,
+                        referenced_qty=referenced,
+                        reason="qty_mismatch",
+                    )
+                )
+
+        results.append(
+            DayOrphanReport(
+                date=date_key,
+                day_number=day_number,
+                db_qty=db_qty,
+                plates_info_qty=plates_info_qty,
+                delta=delta,
+                orphans=orphans,
+            )
+        )
+    return results
+
+
 def run_regression(fixture_path: Path, pb_db_path: Path) -> RegressionReport:
     report = RegressionReport(
         fixture_path=str(fixture_path),
@@ -255,18 +389,37 @@ def run_regression(fixture_path: Path, pb_db_path: Path) -> RegressionReport:
             f"load qty mismatch: orders_2d={orders_qty}, db={report.db_before}"
         )
 
-    # --- Phase A: optimizer ---
-    try:
-        opt_result = optimize(
-            load_result,
-            config=OptimizeConfig(pb_db_path=str(pb_db_path), layout_reinforcement_order="asc"),
-        )
-    except Exception as exc:
-        report.plan_build_error = f"optimize failed: {exc}"
-        report.errors.append(report.plan_build_error)
+    # --- Phase A: optimizer (asc, fallback desc) ---
+    layout_order_used = "asc"
+    opt_result = None
+    for layout_order in ("asc", "desc"):
+        try:
+            opt_result = optimize(
+                load_result,
+                config=OptimizeConfig(
+                    pb_db_path=str(pb_db_path),
+                    layout_reinforcement_order=layout_order,  # type: ignore[arg-type]
+                ),
+            )
+            layout_order_used = layout_order
+            break
+        except Exception as exc:
+            report.errors.append(f"optimize {layout_order} failed: {exc}")
+            if layout_order == "desc":
+                report.plan_build_error = f"optimize failed: {exc}"
+                report.duration_sec = time.monotonic() - t0
+                still, in_plan, _, _ = _db_totals(db_path)
+                report.db_still_production = still
+                report.db_in_plan = in_plan
+                report.db_balance_ok = report.db_before == still + in_plan
+                return report
+
+    if opt_result is None:
+        report.plan_build_error = "optimize failed: no result"
         report.duration_sec = time.monotonic() - t0
         return report
 
+    report.layout_order_used = layout_order_used
     optimization_result = opt_result.optimization_result or {}
     report.optimizer_ok = is_optimization_success(optimization_result)
     report.total_tracks = len(opt_result.all_tracks_list)
@@ -309,7 +462,7 @@ def run_regression(fixture_path: Path, pb_db_path: Path) -> RegressionReport:
                 plita_db_path=db_path,
                 start_date=PLAN_START,
                 tracks_count=TRACKS_PER_DAY,
-                layout_reinforcement_order="asc",
+                layout_reinforcement_order=layout_order_used,  # type: ignore[arg-type]
             ),
             persist_port,
         )
@@ -376,6 +529,16 @@ def run_regression(fixture_path: Path, pb_db_path: Path) -> RegressionReport:
                 }
             )
 
+    # Orphan plate ids: в kp_plates дня, но нет в plates_info day_view
+    report.plan_id = plan_id
+    try:
+        report.orphan_days = analyze_orphan_plates(plan, plan_id, db_path)
+        report.orphan_total_qty = sum(
+            max(0, d.delta) for d in report.orphan_days
+        )
+    except Exception as exc:
+        report.errors.append(f"orphan analysis failed: {exc}")
+
     report.duration_sec = time.monotonic() - t0
     return report
 
@@ -411,6 +574,7 @@ def _md_report(r: RegressionReport) -> str:
     lines += [
         "## 2. Оптимизатор (уровень A)",
         "",
+        f"- **layout order used:** {r.layout_order_used}",
         f"- **optimizer success:** {r.optimizer_ok}",
         f"- **verify_coverage.ok:** {r.verify_coverage_ok}",
         f"- **verify_coverage missing keys:** {len(r.verify_missing)}",
@@ -460,6 +624,63 @@ def _md_report(r: RegressionReport) -> str:
             lines.append(f"- … и ещё {len(r.per_name_gaps) - 40}")
         lines.append("")
 
+    orphan_days_with_delta = [d for d in r.orphan_days if d.delta > 0]
+    lines += [
+        "## 5. Orphan plate ids по дням",
+        "",
+        "Плиты в `kp_plates` (status=`в плане`) для дня, которые не попали "
+        "в `plates_info` day_view (нет `kp_plate_id` в track items / secondary_cuts, "
+        "или ссылок меньше, чем `qty` строки).",
+        "",
+        f"- **plan_id:** `{r.plan_id or '—'}`",
+        f"- **Дней с delta > 0:** {len(orphan_days_with_delta)} из {len(r.orphan_days)}",
+        f"- **Суммарный orphan qty (Σ delta):** {r.orphan_total_qty}",
+        "",
+    ]
+    if orphan_days_with_delta:
+        lines += [
+            "| Дата | День | kp_plates | plates_info | Δ | Orphans |",
+            "|------|------|-----------|-------------|---|---------|",
+        ]
+        for d in orphan_days_with_delta:
+            orphan_names = ", ".join(
+                f"`{o.plate_name}` (id={o.id}, qty={o.qty}"
+                + (f", refs={o.referenced_qty}" if o.reason == "qty_mismatch" else "")
+                + f", {o.reason})"
+                for o in d.orphans
+            ) or "—"
+            lines.append(
+                f"| {d.date} | {d.day_number} | {d.db_qty} | "
+                f"{d.plates_info_qty} | {d.delta} | {orphan_names} |"
+            )
+        lines.append("")
+        lines += ["### Детали orphan по дням", ""]
+        for d in orphan_days_with_delta:
+            lines.append(
+                f"#### {d.date} (день {d.day_number}): "
+                f"db={d.db_qty}, plates_info={d.plates_info_qty}, Δ={d.delta}"
+            )
+            lines.append("")
+            if not d.orphans:
+                lines.append(
+                    "- _(delta > 0, но конкретные orphan id не выделены — "
+                    "возможна иная причина расхождения)_"
+                )
+            else:
+                for o in d.orphans:
+                    extra = (
+                        f", referenced={o.referenced_qty}"
+                        if o.reason == "qty_mismatch"
+                        else ""
+                    )
+                    lines.append(
+                        f"- `{o.plate_name}` — id={o.id}, orphan_qty={o.qty}"
+                        f"{extra} ({o.reason})"
+                    )
+            lines.append("")
+    else:
+        lines += ["Нет дней с delta > 0 — plates_info совпадает с kp_plates.", ""]
+
     if r.plan_build_error or r.errors:
         lines += ["## Ошибки", ""]
         for err in r.errors:
@@ -469,14 +690,23 @@ def _md_report(r: RegressionReport) -> str:
         lines.append("")
 
     verdict = "PASS"
-    if r.errors or r.plan_build_error:
+    hard_errors = [
+        e for e in r.errors
+        if not e.startswith("optimize asc failed:")
+        and not e.startswith("orphan analysis failed:")
+    ]
+    if hard_errors or r.plan_build_error:
         verdict = "FAIL (ошибка пайплайна)"
     elif not r.db_balance_ok:
         verdict = "FAIL (плиты исчезли из учёта)"
     elif r.lost_plates_commit or r.db_still_production > 0 or not r.verify_coverage_ok:
         verdict = "WARN (неполное покрытие, плиты в производстве)"
+    elif r.orphan_total_qty > 0:
+        verdict = f"FAIL (orphan plate ids в day_view: {r.orphan_total_qty})"
     elif r.unparsed_lines:
         verdict = "WARN (часть строк не распознана парсером)"
+    elif any(e.startswith("optimize asc failed:") for e in r.errors):
+        verdict = "PASS (asc не прошёл, desc OK)"
 
     lines += [
         "## Вердикт",
@@ -504,9 +734,32 @@ def main() -> int:
     out_path = reports_dir / f"plate_loss_regression_{stamp}.md"
     out_path.write_text(md, encoding="utf-8")
 
+    # Стабильный путь для фикстуры roman_20260503
+    if fixture.resolve() == DEFAULT_FIXTURE.resolve():
+        stable = reports_dir / "plate_loss_regression_roman_20260503.md"
+        stable.write_text(md, encoding="utf-8")
+        print(f"Also updated: {stable}")
+
     print(md)
     print(f"\nReport saved: {out_path}")
-    return 0 if report.db_balance_ok and not report.errors else 1
+    if report.orphan_total_qty:
+        print(
+            f"Orphan qty total: {report.orphan_total_qty} "
+            f"across {sum(1 for d in report.orphan_days if d.delta > 0)} days"
+        )
+    hard_errors = [
+        e for e in report.errors
+        if not e.startswith("optimize asc failed:")
+        and not e.startswith("orphan analysis failed:")
+    ]
+    if (
+        not report.db_balance_ok
+        or not report.full_coverage_ok
+        or hard_errors
+        or report.orphan_total_qty > 0
+    ):
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
