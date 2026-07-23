@@ -195,3 +195,4 @@ export interface WorkCalendarPayload {
 }
 
 export type ProductionTab = "calendar" | "create" | "plans" | "work-calendar";
+// `create` — скрытый programmatic route с корзины календаря (не в ProductionTabs).

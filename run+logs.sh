@@ -9,6 +9,26 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+_is_truthy_env() {
+    case "$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+if [ -f ".env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . ./.env
+    set +a
+fi
+
+if ! _is_truthy_env "${ALLOW_DESTRUCTIVE_DB_RESET:-}"; then
+    echo -e "${YELLOW}⚠ ALLOW_DESTRUCTIVE_DB_RESET не включён — обнуление БД через админку заблокировано.${NC}"
+    echo -e "${YELLOW}  Для локальной разработки см. .env.example${NC}"
+    echo ""
+fi
+
 LOGS_DIR="logs"
 mkdir -p "$LOGS_DIR"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"

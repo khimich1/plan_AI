@@ -9,24 +9,52 @@ import {
   useGlobalCalendarQuery,
   useWorkCalendarQuery,
 } from "@/features/production/hooks/useProductionQueries";
-import type { FillTargetItem } from "@/features/production/types/production";
+import type { BasketDayKind } from "@/features/production/lib/basketDayKind";
+import type {
+  DayInfo,
+  FillTargetItem,
+} from "@/features/production/types/production";
 
 const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
 
 export type GlobalCalendarViewProps = {
   basket: FillTargetItem[];
-  onAdd: (date: string, tracks: number) => void;
+  basketKind: BasketDayKind | null;
+  basketError: string | null;
+  /** daysInfo с родителя (для согласованности валидации); иначе из query. */
+  daysInfo?: Record<string, DayInfo>;
+  brushTracks: number;
+  maxBrushTracks: number;
+  freeSlotsByDate?: Record<string, number>;
+  onBrushTracksChange: (tracks: number) => void;
+  onChipTracksChange: (date: string, tracks: number) => void;
+  onDayActivate: (
+    iso: string,
+    meta: { shiftKey: boolean },
+    holidays: Set<string>,
+    extraWorkdays: Set<string>,
+  ) => void;
   onRemove: (date: string) => void;
   onClear: () => void;
   onProceed: () => void;
+  onDismissBasketError?: () => void;
 };
 
 export const GlobalCalendarView = ({
   basket,
-  onAdd,
+  basketKind,
+  basketError,
+  daysInfo: daysInfoProp,
+  brushTracks,
+  maxBrushTracks,
+  freeSlotsByDate,
+  onBrushTracksChange,
+  onChipTracksChange,
+  onDayActivate,
   onRemove,
   onClear,
   onProceed,
+  onDismissBasketError,
 }: GlobalCalendarViewProps) => {
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -34,7 +62,8 @@ export const GlobalCalendarView = ({
   const calendarQuery = useGlobalCalendarQuery();
   const workCalendar = useWorkCalendarQuery();
 
-  const daysInfo = calendarQuery.data?.days_info ?? {};
+  const daysInfo = daysInfoProp ?? calendarQuery.data?.days_info ?? {};
+  const maxPerDay = Object.values(daysInfo)[0]?.max ?? maxBrushTracks;
   const holidays = useMemo(
     () => new Set(workCalendar.data?.extra_holidays ?? []),
     [workCalendar.data],
@@ -49,16 +78,28 @@ export const GlobalCalendarView = ({
     [basket],
   );
 
+  const basketTracksByDate = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const item of basket) {
+      out[item.date] = item.tracks;
+    }
+    return out;
+  }, [basket]);
+
   const isLoading = calendarQuery.isLoading || workCalendar.isLoading;
-  const selectedInfo = selectedDate ? daysInfo[selectedDate] : undefined;
-  const alreadyInBasketTracks = selectedDate
-    ? basket.find((item) => item.date === selectedDate)?.tracks
+  const selectedInfo: DayInfo | undefined = selectedDate
+    ? (daysInfo[selectedDate] ?? {
+        occupied: 0,
+        max: maxPerDay,
+        completed: false,
+        day_number: 0,
+      })
     : undefined;
 
   return (
     <Card
       title="Календарный план"
-      subtitle="Сводная загрузка всех планов по датам. Клик по дню — посмотреть содержимое или добавить день в дозаполнение."
+      subtitle="Задайте N дорожек, кликните дни или Shift+клик для диапазона. Двойной клик или «i» — подробности дня. Свободные и частично занятые дни нельзя смешивать."
     >
       {isLoading && (
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -78,13 +119,28 @@ export const GlobalCalendarView = ({
           month={month}
           onMonthChange={setMonth}
           selectedDate={selectedDate}
-          onSelectDate={setSelectedDate}
+          onDayActivate={(iso, meta) => {
+            onDismissBasketError?.();
+            onDayActivate(iso, meta, holidays, extraWorkdays);
+          }}
+          onOpenDay={(iso) => {
+            onDismissBasketError?.();
+            setSelectedDate(iso);
+          }}
           highlightedDates={highlightedDates}
+          basketTracksByDate={basketTracksByDate}
         />
       )}
 
       <FillBasket
         items={basket}
+        basketKind={basketKind}
+        basketError={basketError}
+        brushTracks={brushTracks}
+        maxBrushTracks={maxBrushTracks}
+        freeSlotsByDate={freeSlotsByDate}
+        onBrushTracksChange={onBrushTracksChange}
+        onChipTracksChange={onChipTracksChange}
         onRemove={onRemove}
         onClear={onClear}
         onProceed={onProceed}
@@ -93,9 +149,8 @@ export const GlobalCalendarView = ({
       <DayDrawer
         date={selectedDate}
         summary={selectedInfo}
+        basketKind={basketKind}
         onClose={() => setSelectedDate(null)}
-        onAddToFillBasket={onAdd}
-        alreadyInBasketTracks={alreadyInBasketTracks}
       />
     </Card>
   );

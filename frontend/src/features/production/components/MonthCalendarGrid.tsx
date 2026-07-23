@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Button } from "@/shared/ui/Button";
 import type { DayInfo } from "@/features/production/types/production";
 
@@ -32,6 +33,10 @@ const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 
 const isWeekend = (d: Date) => d.getDay() === 0 || d.getDay() === 6;
 
+export type DayActivateMeta = {
+  shiftKey: boolean;
+};
+
 export type MonthCalendarGridProps = {
   daysInfo: Record<string, DayInfo>;
   holidays: Set<string>;
@@ -39,18 +44,25 @@ export type MonthCalendarGridProps = {
   month: Date;
   onMonthChange: (next: Date) => void;
   selectedDate: string | null;
-  onSelectDate: (iso: string) => void;
-  /** Дни, добавленные в корзину дозаполнения — выделяем рамкой/чек-меткой. */
+  /**
+   * Кисть: клик / Shift+клик. Не открывает drawer —
+   * для просмотра дня используйте onOpenDay.
+   */
+  onDayActivate: (iso: string, meta: DayActivateMeta) => void;
+  /** Двойной клик или кнопка «i» — открыть DayDrawer. */
+  onOpenDay?: (iso: string) => void;
+  /** @deprecated Используйте onDayActivate. */
+  onSelectDate?: (iso: string) => void;
+  /** Дни, добавленные в корзину — выделяем рамкой/чек-меткой. */
   highlightedDates?: Set<string>;
+  /** Число дорожек в корзине по дате (бейдж на ячейке). */
+  basketTracksByDate?: Record<string, number>;
 };
 
 /**
  * Презентационный компонент: сетка месяца + переключатели + легенда.
  *
- * Не знает ни про корзину, ни про DayDrawer — это ответственность
- * родителя. Выделение `highlightedDates` отдельным классом позволяет
- * использовать одну и ту же сетку и в `GlobalCalendarView`, и на шаге 1
- * мастера создания плана.
+ * Жесты: клик → onDayActivate; Shift+клик → range meta; double-click / «i» → onOpenDay.
  */
 export const MonthCalendarGrid = ({
   daysInfo,
@@ -59,14 +71,27 @@ export const MonthCalendarGrid = ({
   month,
   onMonthChange,
   selectedDate,
+  onDayActivate,
+  onOpenDay,
   onSelectDate,
   highlightedDates,
+  basketTracksByDate,
 }: MonthCalendarGridProps) => {
   const monthStart = startOfMonth(month);
   const monthEnd = endOfMonth(month);
   const gridStartOffset = (monthStart.getDay() + 6) % 7;
   const totalCells = Math.ceil((gridStartOffset + monthEnd.getDate()) / 7) * 7;
   const gridStart = addDays(monthStart, -gridStartOffset);
+  // Откладываем single-click, чтобы double-click не успел toggle+toggle.
+  const clickTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current != null) {
+        window.clearTimeout(clickTimerRef.current);
+      }
+    };
+  }, []);
 
   const buildCellState = (date: Date, info: DayInfo | undefined): CellState => {
     const iso = formatISO(date);
@@ -79,6 +104,12 @@ export const MonthCalendarGrid = ({
       return "holiday";
     }
     return "empty";
+  };
+
+  const activate = (iso: string, shiftKey: boolean) => {
+    onDayActivate(iso, { shiftKey });
+    // Back-compat for callers still using onSelectDate.
+    onSelectDate?.(iso);
   };
 
   const cells = Array.from({ length: totalCells }, (_, index) => {
@@ -136,6 +167,7 @@ export const MonthCalendarGrid = ({
             const disabled = state === "outside";
             const isHighlighted = highlightedDates?.has(iso) ?? false;
             const isSelected = selectedDate === iso;
+            const basketTracks = basketTracksByDate?.[iso];
             const className = [
               stateClass[state],
               isHighlighted ? "prod-calendar__day--in-basket" : "",
@@ -144,28 +176,74 @@ export const MonthCalendarGrid = ({
               .filter(Boolean)
               .join(" ");
             return (
-              <button
-                key={iso}
-                type="button"
-                disabled={disabled}
-                className={className}
-                onClick={() => {
-                  if (!disabled) onSelectDate(iso);
-                }}
-              >
-                <span className="prod-calendar__date-number">{date.getDate()}</span>
-                {info && (
-                  <span className="prod-calendar__occupancy">
-                    {occupied}/{max}
-                  </span>
-                )}
-                {info?.completed && <span className="prod-calendar__badge">✓</span>}
-                {isHighlighted && (
-                  <span className="prod-calendar__basket-mark" aria-label="В корзине">
-                    ●
-                  </span>
-                )}
-              </button>
+              <div key={iso} className="prod-calendar__day-wrap">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  className={className}
+                  onClick={(e) => {
+                    if (disabled) return;
+                    const shiftKey = e.shiftKey;
+                    if (clickTimerRef.current != null) {
+                      window.clearTimeout(clickTimerRef.current);
+                      clickTimerRef.current = null;
+                    }
+                    // Shift+range сразу; plain click ждёт dblclick, если есть onOpenDay.
+                    if (onOpenDay && !shiftKey) {
+                      clickTimerRef.current = window.setTimeout(() => {
+                        clickTimerRef.current = null;
+                        activate(iso, false);
+                      }, 250);
+                      return;
+                    }
+                    activate(iso, shiftKey);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.preventDefault();
+                    if (clickTimerRef.current != null) {
+                      window.clearTimeout(clickTimerRef.current);
+                      clickTimerRef.current = null;
+                    }
+                    if (disabled || !onOpenDay) return;
+                    onOpenDay(iso);
+                  }}
+                >
+                  <span className="prod-calendar__date-number">{date.getDate()}</span>
+                  {info && (
+                    <span className="prod-calendar__occupancy">
+                      {occupied}/{max}
+                    </span>
+                  )}
+                  {info?.completed && <span className="prod-calendar__badge">✓</span>}
+                  {isHighlighted && basketTracks != null && (
+                    <span
+                      className="prod-calendar__basket-tracks"
+                      aria-label={`${basketTracks} дорожек в корзине`}
+                    >
+                      {basketTracks} дор.
+                    </span>
+                  )}
+                  {isHighlighted && basketTracks == null && (
+                    <span className="prod-calendar__basket-mark" aria-label="В корзине">
+                      ●
+                    </span>
+                  )}
+                </button>
+                {!disabled && onOpenDay ? (
+                  <button
+                    type="button"
+                    className="prod-calendar__day-info"
+                    aria-label={`Открыть день ${iso}`}
+                    title="Подробнее о дне"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenDay(iso);
+                    }}
+                  >
+                    i
+                  </button>
+                ) : null}
+              </div>
             );
           })}
         </div>

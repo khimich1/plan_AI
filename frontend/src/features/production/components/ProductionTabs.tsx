@@ -5,9 +5,9 @@ type Props = {
   onChange: (next: ProductionTab) => void;
 };
 
+/** Вкладки UI. `create` остаётся в ProductionTab для programmatic routing с корзины. */
 const OPTIONS: { value: ProductionTab; label: string; emoji: string }[] = [
   { value: "calendar", label: "Календарный план", emoji: "📅" },
-  { value: "create", label: "Начать планирование", emoji: "🚀" },
   { value: "plans", label: "Планы", emoji: "📋" },
   { value: "work-calendar", label: "Производственный календарь", emoji: "🗓️" },
 ];

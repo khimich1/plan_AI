@@ -1,6 +1,6 @@
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
-import { FieldWrapper, Input } from "@/shared/ui/Field";
+import { FieldWrapper } from "@/shared/ui/Field";
 import { Spinner } from "@/shared/ui/Spinner";
 import type { ProductionEstimate } from "@/features/production/lib/productionEstimate";
 import type {
@@ -12,14 +12,13 @@ import { ProductionEstimateAlert } from "./ProductionEstimateAlert";
 
 type Props = {
   isFillMode: boolean;
-  planName: string;
   filterMethod: FilterMethod;
   candidatesLoading: boolean;
   candidatesError: boolean;
   candidates: KpCandidateItem[] | undefined;
   selectionEstimate: ProductionEstimate | null;
   tracksPerDay: number;
-  tracksPerDaySource: "шаг 2" | "дозаполнение";
+  tracksPerDaySource: "календарь";
   estimateByKpId: Map<number, ProductionEstimate | null>;
   selectedPlatesByKp: Record<number, number[]>;
   selectedPlateQtyByKp: Record<number, Record<number, number>>;
@@ -28,20 +27,17 @@ type Props = {
   buildSuccess: boolean;
   buildErrorMessage: string | null;
   canSubmit: boolean;
-  onPlanNameChange: (name: string) => void;
   onFilterMethodChange: (method: FilterMethod) => void;
   onToggleKp: (kp: KpCandidateItem) => void;
   onToggleExpand: (kpId: number) => void;
   onTogglePlate: (kp: KpCandidateItem, plateId: number) => void;
   onSetPlateQty: (kp: KpCandidateItem, plateId: number, qty: number) => void;
-  onBack: () => void;
   onCancelFill: () => void;
   onSubmit: (order: "asc" | "desc") => void;
 };
 
 export const Step3KpPlateSelection = ({
   isFillMode,
-  planName,
   filterMethod,
   candidatesLoading,
   candidatesError,
@@ -57,28 +53,15 @@ export const Step3KpPlateSelection = ({
   buildSuccess,
   buildErrorMessage,
   canSubmit,
-  onPlanNameChange,
   onFilterMethodChange,
   onToggleKp,
   onToggleExpand,
   onTogglePlate,
   onSetPlateQty,
-  onBack,
   onCancelFill,
   onSubmit,
 }: Props) => (
   <div style={{ display: "grid", gap: "1rem" }}>
-    {isFillMode && (
-      <FieldWrapper label="Название плана (необязательно)">
-        <Input
-          type="text"
-          placeholder="Например: «Дозаполнение 27-28.04»"
-          value={planName}
-          onChange={(e) => onPlanNameChange(e.target.value)}
-        />
-      </FieldWrapper>
-    )}
-
     <FieldWrapper label="Какие КП включить в план">
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
         <Button
@@ -147,15 +130,9 @@ export const Step3KpPlateSelection = ({
         возможен рост переармирования ранних дорожек.
       </p>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        {isFillMode ? (
-          <Button variant="ghost" onClick={onCancelFill}>
-            ← К календарю
-          </Button>
-        ) : (
-          <Button variant="ghost" onClick={onBack}>
-            ← Назад
-          </Button>
-        )}
+        <Button variant="ghost" onClick={onCancelFill}>
+          ← К календарю
+        </Button>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <Button
             variant="secondary"

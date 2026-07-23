@@ -12,7 +12,13 @@ class DbStatsResponse(BaseModel):
     plates_in_work: int = Field(..., description="Записей плит в kp_plates")
     plates_completed: int = Field(..., description="Записей в completed_plates")
     plate_rests: int = Field(..., description="Записей в plate_rests")
-    plans_count: int = Field(..., description="Количество JSON-планов в data/plans")
+    plans_count: int = Field(
+        ..., description="Количество планов в SQLite (production_plans / list_metadata)"
+    )
+    legacy_json_files_count: int = Field(
+        ...,
+        description="Legacy JSON-файлы планов в data/plans и bot_archived/data/plans",
+    )
     current_plan_present: bool = Field(
         ..., description="Существует ли файл current_plan.json"
     )

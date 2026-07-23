@@ -12,6 +12,7 @@ import {
   useDeleteTrackMutation,
   usePlansListQuery,
 } from "@/features/production/hooks/useProductionQueries";
+import type { BasketDayKind } from "@/features/production/lib/basketDayKind";
 import type {
   DayInfo,
   DayPlanBlock,
@@ -22,16 +23,9 @@ import type {
 type DayDrawerProps = {
   date: string | null;
   summary?: DayInfo;
+  /** Kind текущей корзины — зарезервирован для будущих подсказок. */
+  basketKind?: BasketDayKind | null;
   onClose: () => void;
-  /** Если передан — Drawer показывает секцию «Добавить в дозаполнение». */
-  onAddToFillBasket?: (date: string, tracks: number) => void;
-  /** Уже добавленный в корзину объём дорожек на этот день. */
-  alreadyInBasketTracks?: number;
-};
-
-const clamp = (value: number, min: number, max: number): number => {
-  if (Number.isNaN(value)) return min;
-  return Math.max(min, Math.min(max, value));
 };
 
 const formatDateRu = (iso: string): string => {
@@ -80,8 +74,6 @@ export const DayDrawer = ({
   date,
   summary,
   onClose,
-  onAddToFillBasket,
-  alreadyInBasketTracks,
 }: DayDrawerProps) => {
   const open = date !== null;
   const dayQuery = useDayViewQuery(date);
@@ -93,42 +85,9 @@ export const DayDrawer = ({
   const formovkaMutation = useDayDocumentMutation("formovka");
   const [rejectedByPlate, setRejectedByPlate] = useState<Record<string, number>>({});
 
-  // Свободные слоты для дозаполнения. Берём по summary, чтобы не ждать
-  // отдельный запрос: при изменении занятости родитель сам перерендерит.
-  const freeSlots = summary ? Math.max(0, summary.max - summary.occupied) : 0;
-  const showFillSection = Boolean(onAddToFillBasket) && freeSlots > 0;
-
-  // Default = либо «уже выбрано столько-то», либо все свободные слоты.
-  const initialTracksValue = clamp(
-    alreadyInBasketTracks && alreadyInBasketTracks > 0 ? alreadyInBasketTracks : freeSlots,
-    1,
-    Math.max(1, freeSlots),
-  );
-  const [fillTracks, setFillTracks] = useState<number>(initialTracksValue);
-
   useEffect(() => {
     setRejectedByPlate({});
   }, [date]);
-
-  // Сбрасываем значение input при смене дня или изменении свободных слотов.
-  useEffect(() => {
-    setFillTracks(
-      clamp(
-        alreadyInBasketTracks && alreadyInBasketTracks > 0
-          ? alreadyInBasketTracks
-          : freeSlots,
-        1,
-        Math.max(1, freeSlots),
-      ),
-    );
-  }, [date, freeSlots, alreadyInBasketTracks]);
-
-  const handleAddToBasket = () => {
-    if (!date || !onAddToFillBasket) return;
-    const safe = clamp(fillTracks, 1, freeSlots);
-    onAddToFillBasket(date, safe);
-    onClose();
-  };
 
   const plans: DayPlanBlock[] = useMemo(
     () => dayQuery.data?.plans ?? [],
@@ -303,38 +262,6 @@ export const DayDrawer = ({
 
       {dayQuery.isError && (
         <Alert tone="error">Не удалось загрузить информацию о дне.</Alert>
-      )}
-
-      {showFillSection && date && (
-        <section className="day-fill-add" style={{ marginBottom: "1rem" }}>
-          <div className="day-fill-add__row">
-            <span className="day-fill-add__label">
-              Свободно: <strong>{freeSlots}</strong> дор.
-              {alreadyInBasketTracks ? (
-                <span style={{ marginLeft: 8, color: "#475467" }}>
-                  · в корзине уже <strong>{alreadyInBasketTracks}</strong>
-                </span>
-              ) : null}
-            </span>
-            <label className="day-fill-add__field">
-              Положить дорожек:
-              <input
-                type="number"
-                min={1}
-                max={freeSlots}
-                value={fillTracks}
-                onChange={(e) =>
-                  setFillTracks(clamp(Number(e.target.value), 1, freeSlots))
-                }
-              />
-            </label>
-            <Button variant="primary" onClick={handleAddToBasket}>
-              {alreadyInBasketTracks
-                ? `Заменить (было ${alreadyInBasketTracks})`
-                : "+ Добавить в дозаполнение"}
-            </Button>
-          </div>
-        </section>
       )}
 
       {dayQuery.data && !hasTracks && (

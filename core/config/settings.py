@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     plans_metadata_path: Path = Field(default=PROJECT_ROOT / "data" / "plans_metadata.json")
     current_plan_path: Path = Field(default=PROJECT_ROOT / "data" / "current_plan.json")
     work_calendar_path: Path = Field(default=PROJECT_ROOT / "data" / "work_calendar.json")
+    archived_data_dir: Path = Field(default=PROJECT_ROOT / "bot_archived" / "data")
     logs_dir: Path = Field(default=PROJECT_ROOT / "logs")
     drafts_dir: Path = Field(default=PROJECT_ROOT / ".app_data" / "drafts")
     frontend_dist_dir: Path = Field(default=PROJECT_ROOT / "frontend" / "dist")
