@@ -19,6 +19,7 @@ import { downloadFile } from "@/shared/lib/downloadFile";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
 import { MoveToProductionDialog } from "./MoveToProductionDialog";
+import { KpReadinessBlock } from "./KpReadinessBlock";
 
 type Props = {
   open: boolean;
@@ -44,6 +45,8 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const financePending = discountMutation.isPending || logisticsMutation.isPending;
 
   const offer = query.data;
+  const showReadiness =
+    offer?.status === "в работе" || offer?.status === "На СГП";
   const platesToShow = offer
     ? showAllPlates
       ? offer.plates
@@ -135,14 +138,12 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   <div style={{ fontWeight: 600 }}>⏰ {offer.execution_terms}</div>
                 </div>
               )}
-              {offer.completion_percentage !== null && (
-                <div>
-                  <div style={{ color: "#667085", fontSize: "0.85rem" }}>Готовность</div>
-                  <div style={{ fontWeight: 600 }}>{offer.completion_percentage.toFixed(1)}%</div>
-                </div>
-              )}
             </div>
           </section>
+
+          {showReadiness && offer.readiness && (
+            <KpReadinessBlock kpId={offer.kp_id} readiness={offer.readiness} />
+          )}
 
           {/* Итоги: слева вес, НДС, рейс, доставка; справа скидка и под ней «Итого с НДС» */}
           <section

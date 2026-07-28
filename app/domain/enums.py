@@ -8,10 +8,11 @@
 
 Реальный набор значений в БД:
 - ``kp_plates.status``: ``'в производстве'``, ``'в плане'``
-- ``kp_meta.status``:   ``'в архиве'``, ``'в работе'``, ``'выполнено'``
+- ``kp_meta.status``:   ``'в архиве'``, ``'в работе'``, ``'выполнено'``, ``'На СГП'``
 
 Виртуальные («в логе аудита, но не в столбце») значения:
-- ``PlateStatus.COMPLETED`` — после переноса в ``completed_plates``
+- ``PlateStatus.ON_SGP`` — после отправки дня на склад готовой продукции
+- ``PlateStatus.COMPLETED`` — deprecated для новых записей; читать как on_sgp
 """
 from __future__ import annotations
 
@@ -23,9 +24,9 @@ class PlateStatus(str, Enum):
 
     IN_PRODUCTION = "в производстве"
     IN_PLAN = "в плане"
-    # COMPLETED — псевдо-статус: реальной строки в kp_plates с этим статусом
-    # нет, но в plate_status_log это полезное значение для записи
-    # завершения (move_plates_to_completed).
+    # ON_SGP — псевдо-статус: плита лежит в completed_plates (СГП).
+    ON_SGP = "on_sgp"
+    # COMPLETED — deprecated; совместимость со старым audit (читать как on_sgp).
     COMPLETED = "completed"
 
 
@@ -34,6 +35,8 @@ class KpStatus(str, Enum):
 
     ARCHIVED = "в архиве"
     IN_WORK = "в работе"
+    ON_SGP = "На СГП"
+    # DONE — отгрузка (OUT of MVP); не выставлять из send_to_sgp.
     DONE = "выполнено"
 
 
@@ -41,6 +44,10 @@ class PlateTransitionReason(str, Enum):
     """Причина перехода статуса в audit-логе."""
 
     PLANNED = "planned"
-    COMPLETED = "completed"
+    COMPLETED = "completed"  # deprecated; новые записи — SGP_SEND
     REJECTED = "rejected"
     PLAN_ROLLBACK = "plan_rollback"
+    SGP_SEND = "sgp_send"
+    SGP_UNLINK = "sgp_unlink"
+    SGP_RELINK = "sgp_relink"
+    SGP_RESERVE = "sgp_reserve"

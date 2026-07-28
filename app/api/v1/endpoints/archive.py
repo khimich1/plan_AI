@@ -20,6 +20,7 @@ from app.schemas.archive import (
     ArchiveOfferListItem,
     ArchiveSearchResponse,
     ArchiveSection,
+    KpReadinessPositionsResponse,
     MoveToProductionRequest,
     UpdateDiscountRequest,
     UpdateLogisticsCostRequest,
@@ -96,6 +97,22 @@ async def download_current_plan_gantt(
         filename=path.name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+@router.get("/{kp_id}/readiness/positions", response_model=KpReadinessPositionsResponse)
+def get_kp_readiness_positions(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> KpReadinessPositionsResponse:
+    try:
+        return service.get_readiness_positions(kp_id, user=user)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_kp_readiness_positions",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
 
 
 @router.get("/{kp_id}", response_model=ArchiveOfferDetails)

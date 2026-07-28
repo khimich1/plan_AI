@@ -248,7 +248,7 @@ def get_all_kp_list(
 
             if status == "в архиве":
                 result["archived"].append(kp)
-            elif status == "в работе":
+            elif status in ("в работе", "На СГП"):
                 result["in_production"].append(kp)
             elif status == "выполнено":
                 result["completed"].append(kp)

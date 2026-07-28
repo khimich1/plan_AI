@@ -18,7 +18,13 @@ from app.schemas.archive import (
     ArchiveOfferFinance,
     ArchiveOfferListItem,
     ArchiveSearchResponse,
+    KpReadinessPositionItem,
+    KpReadinessPositionsResponse,
+    KpReadinessStep,
+    KpReadinessStepState,
+    KpReadinessSummary,
 )
+from app.schemas.sgp import SgpProgress
 from app.security.session import create_session_token
 
 TESTER_USER = {
@@ -506,3 +512,151 @@ def test_download_file_returns_file(
 
     assert response.status_code == 200
     assert response.content == b"%PDF-TEST"
+
+
+def _fake_readiness_summary(*, kp_id: int = 42) -> KpReadinessSummary:
+    return KpReadinessSummary(
+        completion_percentage=72.0,
+        sgp_progress=SgpProgress(n=14, m=20),
+        issuable_qty=14,
+        in_production_qty=6,
+        summary_text="14 из 20 шт на складе, 6 в производстве. Можно выдать 14 шт.",
+        client_copy_text="Здравствуйте! По вашему заказу №42: 14 из 20 шт уже на складе.",
+        steps=[
+            KpReadinessStep(id="kp", label="КП", state=KpReadinessStepState.DONE),
+            KpReadinessStep(
+                id="production",
+                label="Производство",
+                state=KpReadinessStepState.ACTIVE,
+                hint="72%",
+            ),
+            KpReadinessStep(
+                id="sgp",
+                label="СГП",
+                state=KpReadinessStepState.ACTIVE,
+                hint="14/20",
+            ),
+            KpReadinessStep(id="release", label="Выдача", state=KpReadinessStepState.DISABLED),
+            KpReadinessStep(id="closed", label="Закрыто", state=KpReadinessStepState.DISABLED),
+        ],
+        release_note="Выдача с СГП — в следующем обновлении",
+    )
+
+
+def test_get_details_includes_readiness(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    details = _fake_details(status="в работе")
+    details = details.model_copy(update={"readiness": _fake_readiness_summary()})
+    fake_service.get_details.return_value = details
+
+    response = client.get("/api/v1/commercial/archive/42", cookies=auth_cookie)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["readiness"] is not None
+    assert payload["readiness"]["issuable_qty"] == 14
+    assert payload["readiness"]["sgp_progress"]["n"] == 14
+
+
+def test_get_details_readiness_null_for_archived(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.get_details.return_value = _fake_details(status="в архиве")
+
+    response = client.get("/api/v1/commercial/archive/42", cookies=auth_cookie)
+
+    assert response.status_code == 200
+    assert response.json()["readiness"] is None
+
+
+def test_get_details_readiness_null_for_completed(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.get_details.return_value = _fake_details(status="выполнено")
+
+    response = client.get("/api/v1/commercial/archive/42", cookies=auth_cookie)
+
+    assert response.status_code == 200
+    assert response.json()["readiness"] is None
+
+
+def test_readiness_positions_requires_auth(client: TestClient) -> None:
+    response = client.get("/api/v1/commercial/archive/42/readiness/positions")
+    assert response.status_code == 401
+
+
+def test_readiness_positions_ok(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.get_readiness_positions.return_value = KpReadinessPositionsResponse(
+        items=[
+            KpReadinessPositionItem(
+                position_number=1,
+                plate_name="ПБ 59-12-8",
+                length_m=5.9,
+                width_m=1.2,
+                load_class=800,
+                label="ПБ 59-12-8",
+                ordered=10,
+                in_plan=4,
+                on_sgp=6,
+                remaining=0,
+            )
+        ],
+        count=1,
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/readiness/positions",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["items"][0]["ordered"] == 10
+    fake_service.get_readiness_positions.assert_called_once_with(42, user=TESTER_USER)
+
+
+def test_readiness_positions_empty_for_archived(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.get_readiness_positions.return_value = KpReadinessPositionsResponse(
+        items=[], count=0
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/readiness/positions",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_readiness_positions_404(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveNotFoundError
+
+    fake_service.get_readiness_positions.side_effect = ArchiveNotFoundError("нет")
+
+    response = client.get(
+        "/api/v1/commercial/archive/999/readiness/positions",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 404

@@ -101,6 +101,12 @@ export const ArchiveOfferList = ({
               )}
             </div>
             <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", fontSize: "0.9rem", color: "#667085" }}>
+              {item.status === "На СГП" && <span>🏬 На СГП</span>}
+              {item.sgp_progress && item.sgp_progress.m > 0 && (
+                <span>
+                  {item.sgp_progress.n}/{item.sgp_progress.m} на СГП
+                </span>
+              )}
               {percentBadge && <span>Готовность: {percentBadge}</span>}
               {trailing && <span>{trailing}</span>}
             </div>

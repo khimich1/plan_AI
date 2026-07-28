@@ -13,6 +13,7 @@ export type ArchiveOfferListItem = {
   execution_terms: string | null;
   status: string | null;
   completion_percentage: number | null;
+  sgp_progress?: { n: number; m: number } | null;
 };
 
 export type ArchivePlateItem = {
@@ -36,6 +37,52 @@ export type ArchiveOfferFinance = {
   discount_percent: number;
 };
 
+export type SgpProgress = {
+  n: number;
+  m: number;
+};
+
+export type KpReadinessStepState = "done" | "active" | "pending" | "disabled";
+
+export type KpReadinessStep = {
+  id: "kp" | "production" | "sgp" | "release" | "closed";
+  label: string;
+  state: KpReadinessStepState;
+  hint?: string | null;
+};
+
+export type KpReadinessSummary = {
+  completion_percentage: number | null;
+  sgp_progress: SgpProgress | null;
+  issuable_qty: number;
+  in_production_qty: number;
+  summary_text: string;
+  client_copy_text: string;
+  steps: KpReadinessStep[];
+  release_note?: string | null;
+  expected_sgp_date?: string | null;
+  expected_sgp_date_label?: string | null;
+  fully_scheduled?: boolean;
+};
+
+export type KpReadinessPositionItem = {
+  position_number: number | null;
+  plate_name: string;
+  length_m: number | null;
+  width_m: number | null;
+  load_class: number | null;
+  label: string;
+  ordered: number;
+  in_plan: number;
+  on_sgp: number;
+  remaining: number;
+};
+
+export type KpReadinessPositionsResponse = {
+  items: KpReadinessPositionItem[];
+  count: number;
+};
+
 export type ArchiveOfferDetails = {
   kp_id: number;
   creation_date: string | null;
@@ -54,6 +101,7 @@ export type ArchiveOfferDetails = {
   delivery_service_total_rub: number;
   plates: ArchivePlateItem[];
   completion_percentage: number | null;
+  readiness?: KpReadinessSummary | null;
 };
 
 export type ArchiveSearchState =

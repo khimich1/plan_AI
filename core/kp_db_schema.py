@@ -107,23 +107,26 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
         
         # Таблица 4: kp_meta - Метаданные
         # kp_id - связь с KP_offers
-        # status - статус КП: выполнено, отклонено, в работе, в ожидании
+        # status - статус КП: выполнено, отклонено, в работе, в ожидании, На СГП
+        # ordered_qty - снимок заказного qty (M для бейджа N/M); freeze при уходе в производство
         cur.execute('''
             CREATE TABLE IF NOT EXISTS kp_meta (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kp_id INTEGER NOT NULL,
                 status TEXT DEFAULT 'в работе',
+                ordered_qty INTEGER,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE,
                 UNIQUE(kp_id)
             )
         ''')
         
-        # Таблица 5: completed_plates - Выполненные плиты
-        # Сюда переносятся плиты после завершения дня производства
+        # Таблица 5: completed_plates — склад готовой продукции (СГП)
+        # kp_id NULLABLE: отвязанные плиты остаются на складе без КП
+        # plan_id — план, с которого плита пришла; при удалении плана обнуляется
         cur.execute('''
             CREATE TABLE IF NOT EXISTS completed_plates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kp_id INTEGER NOT NULL,
+                kp_id INTEGER,
                 plate_name TEXT NOT NULL,
                 length_m REAL,
                 width_m REAL,
@@ -132,7 +135,8 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 completed_date TEXT NOT NULL,
                 production_day INTEGER,
                 nomenclature_id TEXT,
-                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+                plan_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE SET NULL
             )
         ''')
         
@@ -309,22 +313,106 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             cur.execute("ALTER TABLE kp_meta ADD COLUMN owner_user_id INTEGER")
             print("[DB] ✅ Колонка owner_user_id добавлена в kp_meta")
 
+        if "ordered_qty" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку ordered_qty в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN ordered_qty INTEGER")
+            print("[DB] ✅ Колонка ordered_qty добавлена в kp_meta")
+
         # === МИГРАЦИЯ: Добавляем nomenclature_id ===
         if 'nomenclature_id' not in columns:
             print("[DB] Миграция: добавляем колонку nomenclature_id в kp_plates...")
             cur.execute("ALTER TABLE kp_plates ADD COLUMN nomenclature_id TEXT")
             print("[DB] Колонка nomenclature_id добавлена в kp_plates")
 
-        cur.execute("PRAGMA table_info(completed_plates)")
-        cp_columns = [col[1] for col in cur.fetchall()]
-        if 'nomenclature_id' not in cp_columns:
-            print("[DB] Миграция: добавляем колонку nomenclature_id в completed_plates...")
-            cur.execute("ALTER TABLE completed_plates ADD COLUMN nomenclature_id TEXT")
-            print("[DB] Колонка nomenclature_id добавлена в completed_plates")
+        _migrate_completed_plates_for_sgp(cur)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_completed_plan_id ON completed_plates(plan_id)"
+        )
         
         conn.commit()
     finally:
         conn.close()
+
+
+def _migrate_completed_plates_for_sgp(cur: sqlite3.Cursor) -> None:
+    """Make ``completed_plates.kp_id`` nullable + add ``plan_id`` (SGP-000).
+
+    SQLite cannot ALTER column nullability / FK action, so when ``kp_id`` is
+    still NOT NULL we rebuild the table (copy → drop → rename).
+    """
+    cur.execute("PRAGMA table_info(completed_plates)")
+    cp_rows = cur.fetchall()
+    if not cp_rows:
+        return
+
+    cp_by_name = {row[1]: row for row in cp_rows}
+    kp_notnull = int(cp_by_name.get("kp_id", (None, None, None, 1))[3] or 0)
+    has_plan_id = "plan_id" in cp_by_name
+    has_nomenclature = "nomenclature_id" in cp_by_name
+
+    if not has_nomenclature:
+        print("[DB] Миграция: добавляем колонку nomenclature_id в completed_plates...")
+        cur.execute("ALTER TABLE completed_plates ADD COLUMN nomenclature_id TEXT")
+        print("[DB] Колонка nomenclature_id добавлена в completed_plates")
+        has_nomenclature = True
+
+    if kp_notnull == 0 and has_plan_id:
+        return
+
+    if kp_notnull == 0 and not has_plan_id:
+        print("[DB] Миграция: добавляем колонку plan_id в completed_plates...")
+        cur.execute("ALTER TABLE completed_plates ADD COLUMN plan_id TEXT")
+        print("[DB] ✅ Колонка plan_id добавлена в completed_plates")
+        return
+
+    print("[DB] Миграция СГП: пересоздаём completed_plates (kp_id NULLABLE, plan_id)...")
+    cur.execute("PRAGMA foreign_keys = OFF")
+    cur.execute(
+        """
+        CREATE TABLE completed_plates_sgp (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kp_id INTEGER,
+            plate_name TEXT NOT NULL,
+            length_m REAL,
+            width_m REAL,
+            load_class INTEGER,
+            qty INTEGER NOT NULL,
+            completed_date TEXT NOT NULL,
+            production_day INTEGER,
+            nomenclature_id TEXT,
+            plan_id TEXT,
+            FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE SET NULL
+        )
+        """
+    )
+    nomenclature_expr = "nomenclature_id" if has_nomenclature else "NULL"
+    plan_expr = "plan_id" if has_plan_id else "NULL"
+    cur.execute(
+        f"""
+        INSERT INTO completed_plates_sgp (
+            id, kp_id, plate_name, length_m, width_m, load_class,
+            qty, completed_date, production_day, nomenclature_id, plan_id
+        )
+        SELECT
+            id, kp_id, plate_name, length_m, width_m, load_class,
+            qty, completed_date, production_day, {nomenclature_expr}, {plan_expr}
+        FROM completed_plates
+        """
+    )
+    cur.execute("DROP TABLE completed_plates")
+    cur.execute("ALTER TABLE completed_plates_sgp RENAME TO completed_plates")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_completed_kp_id ON completed_plates(kp_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_completed_date ON completed_plates(completed_date)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_completed_plan_id ON completed_plates(plan_id)"
+    )
+    cur.execute("PRAGMA foreign_keys = ON")
+    print("[DB] ✅ completed_plates мигрирована под СГП")
+
 def ensure_schema(db_path: str = DEFAULT_DB) -> None:
     """Idempotent schema initialization (once per absolute db path per process)."""
     abs_path = os.path.abspath(db_path)

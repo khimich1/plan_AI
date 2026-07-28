@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Plate completion persistence (A1 slice)."""
+"""Plate completion persistence (A1 slice) + KP status on SGP."""
 
 from __future__ import annotations
 
 import sqlite3
 from typing import Dict, List, Optional
 
+from app.domain.enums import KpStatus
 from core.kp_db_common import DEFAULT_DB, _connect
+
 
 def move_plates_to_completed(
     kp_id: int,
@@ -36,6 +38,44 @@ def move_plates_to_completed(
         _external_conn=_external_conn,
     )
 
+
+def freeze_ordered_qty_if_needed(
+    cur: sqlite3.Cursor,
+    kp_id: int,
+) -> int | None:
+    """Freeze ``kp_meta.ordered_qty`` once (M for N/M badge).
+
+    M = SUM(kp_plates.qty) + SUM(completed_plates.qty WHERE kp_id=?) at freeze time.
+    Returns frozen value (existing or newly set), or None if kp_meta row missing.
+    """
+    cur.execute(
+        "SELECT ordered_qty FROM kp_meta WHERE kp_id = ?",
+        (kp_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    if row[0] is not None:
+        return int(row[0])
+
+    cur.execute(
+        "SELECT COALESCE(SUM(qty), 0) FROM kp_plates WHERE kp_id = ?",
+        (kp_id,),
+    )
+    in_kp = int(cur.fetchone()[0] or 0)
+    cur.execute(
+        "SELECT COALESCE(SUM(qty), 0) FROM completed_plates WHERE kp_id = ?",
+        (kp_id,),
+    )
+    on_sgp = int(cur.fetchone()[0] or 0)
+    ordered = in_kp + on_sgp
+    cur.execute(
+        "UPDATE kp_meta SET ordered_qty = ? WHERE kp_id = ? AND ordered_qty IS NULL",
+        (ordered, kp_id),
+    )
+    return ordered
+
+
 def check_and_update_kp_completion(
     kp_id: int,
     db_path: str = DEFAULT_DB,
@@ -43,21 +83,15 @@ def check_and_update_kp_completion(
     _external_conn: Optional[sqlite3.Connection] = None,
 ) -> bool:
     """
-    Проверяет, все ли плиты КП выполнены.
-    Если да — меняет статус КП на "выполнено".
+    Проверяет, все ли плиты КП на СГП и привязаны.
 
-    Простыми словами:
-    - Смотрит, остались ли ещё плиты в kp_plates для данного КП
-    - Если плит не осталось (все выполнены) — ставит статус "выполнено"
+    Если ``remaining_in_kp_plates == 0`` и есть linked qty на СГП —
+    ставит статус ``На СГП``. Иначе (после unlink и т.п.) — ``в работе``.
 
-    Аргументы:
-        kp_id: номер КП для проверки
-        db_path: путь к базе данных
-        _external_conn: если задано — функция работает в существующей транзакции
-            переданного соединения (P0). Не делает commit/rollback и не закрывает conn.
+    Не ставит ``выполнено`` (отгрузка — OUT of MVP).
 
     Возвращает:
-        True если КП полностью выполнен, False если ещё есть плиты
+        True если КП полностью на СГП (linked), False иначе
     """
     own_conn = _external_conn is None
     if own_conn:
@@ -67,28 +101,54 @@ def check_and_update_kp_completion(
 
     try:
         if own_conn:
-            conn.execute('PRAGMA foreign_keys = ON')
+            conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.cursor()
 
-        # Считаем оставшиеся плиты в КП
-        cur.execute('SELECT SUM(qty) FROM kp_plates WHERE kp_id = ?', (kp_id,))
-        result = cur.fetchone()
-        remaining = result[0] if result[0] else 0
+        freeze_ordered_qty_if_needed(cur, kp_id)
 
-        if remaining == 0:
-            # Все плиты выполнены — обновляем статус
-            cur.execute('''
-                UPDATE kp_meta SET status = 'выполнено' WHERE kp_id = ?
-            ''', (kp_id,))
+        cur.execute("SELECT COALESCE(SUM(qty), 0) FROM kp_plates WHERE kp_id = ?", (kp_id,))
+        remaining = int(cur.fetchone()[0] or 0)
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(qty), 0) FROM completed_plates
+            WHERE kp_id = ?
+            """,
+            (kp_id,),
+        )
+        linked_on_sgp = int(cur.fetchone()[0] or 0)
+
+        if remaining == 0 and linked_on_sgp > 0:
+            cur.execute(
+                "UPDATE kp_meta SET status = ? WHERE kp_id = ?",
+                (KpStatus.ON_SGP.value, kp_id),
+            )
             if own_conn:
                 conn.commit()
-            print(f"[DB] 🎉 КП #{kp_id} полностью выполнен! Статус обновлён.")
+            print(f"[DB] КП #{kp_id} полностью на СГП. Статус обновлён.")
             return True
 
+        # Есть потребность или нет linked СГП — держим «в работе»
+        # (не трогаем «в архиве» / другие статусы, если плит ещё нет и СГП пуст)
+        cur.execute("SELECT status FROM kp_meta WHERE kp_id = ?", (kp_id,))
+        meta = cur.fetchone()
+        current = meta[0] if meta else None
+        if current == KpStatus.ON_SGP.value and remaining > 0:
+            cur.execute(
+                "UPDATE kp_meta SET status = ? WHERE kp_id = ?",
+                (KpStatus.IN_WORK.value, kp_id),
+            )
+            if own_conn:
+                conn.commit()
+        elif remaining == 0 and linked_on_sgp == 0 and current == KpStatus.ON_SGP.value:
+            cur.execute(
+                "UPDATE kp_meta SET status = ? WHERE kp_id = ?",
+                (KpStatus.IN_WORK.value, kp_id),
+            )
+            if own_conn:
+                conn.commit()
         return False
 
     finally:
         if own_conn:
             conn.close()
-
-

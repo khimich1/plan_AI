@@ -18,6 +18,7 @@ from app.schemas.archive import (
     ArchiveOfferListItem,
     ArchivePlateItem,
     ArchiveSearchResponse,
+    KpReadinessPositionsResponse,
 )
 from app.repositories.plan_repository import PlanRepository
 from app.services.plan_distribution_service import PlanDistributionService
@@ -85,6 +86,19 @@ class ArchiveService:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         assert_offer_read_access(user, raw)
         return self._to_details(raw)
+
+    def get_readiness_positions(self, kp_id: int, *, user: dict) -> KpReadinessPositionsResponse:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_read_access(user, raw)
+        status = raw.get("status") or ""
+        from app.services.kp_readiness_service import KpReadinessService
+
+        items = KpReadinessService(db_path=self.repository.db_path).list_positions(
+            kp_id, status=status
+        )
+        return KpReadinessPositionsResponse(items=items, count=len(items))
 
     def search(
         self,
@@ -169,6 +183,19 @@ class ArchiveService:
             raise ArchiveError(f"Не удалось сохранить срок для КП №{kp_id}")
         if not self.repository.update_status(kp_id, "в работе"):
             raise ArchiveError(f"Не удалось изменить статус для КП №{kp_id}")
+
+        try:
+            from core.kp_db_plates_completion import freeze_ordered_qty_if_needed
+            from core.kp_db_common import _connect
+
+            conn = _connect(self.repository.db_path)
+            try:
+                freeze_ordered_qty_if_needed(conn.cursor(), kp_id)
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            pass
 
         return self.get_details(kp_id, user=user)
 
@@ -332,7 +359,8 @@ class ArchiveService:
         kp_id = int(raw.get("kp_id") or 0)
         status = raw.get("status") or None
         completion = None
-        if status in ("в работе", "выполнено"):
+        sgp_progress = None
+        if status in ("в работе", "выполнено", "На СГП"):
             try:
                 completion = float(
                     self.repository.get_completion_percentage(kp_id).get("percentage", 0.0)
@@ -340,6 +368,13 @@ class ArchiveService:
             except Exception:
                 logger.exception("Ошибка получения %% выполнения для КП %s", kp_id)
                 completion = None
+            try:
+                from app.services.sgp_service import SgpService
+
+                progress = SgpService(db_path=self.repository.db_path).sgp_progress(kp_id)
+                sgp_progress = {"n": progress.n, "m": progress.m}
+            except Exception:
+                logger.exception("Ошибка получения sgp_progress для КП %s", kp_id)
         return ArchiveOfferListItem(
             kp_id=kp_id,
             creation_date=raw.get("creation_date"),
@@ -352,13 +387,14 @@ class ArchiveService:
             execution_terms=raw.get("execution_terms") or None,
             status=status,
             completion_percentage=completion,
+            sgp_progress=sgp_progress,
         )
 
     def _to_details(self, raw: dict) -> ArchiveOfferDetails:
         plates = [self._plate_item(p) for p in (raw.get("plates") or [])]
         kp_id = int(raw.get("kp_id") or 0)
         completion = None
-        if raw.get("status") in ("в работе", "выполнено"):
+        if raw.get("status") in ("в работе", "выполнено", "На СГП"):
             try:
                 completion = float(
                     self.repository.get_completion_percentage(kp_id).get("percentage", 0.0)
@@ -370,6 +406,18 @@ class ArchiveService:
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
         total_cargo_weight_kg = float(total_order_cargo_weight_kg(order_data))
         delivery_total = delivery_service_charge_rub(logistics_cost, total_cargo_weight_kg)
+
+        readiness = None
+        status = raw.get("status") or ""
+        if status in ("в работе", "На СГП"):
+            try:
+                from app.services.kp_readiness_service import KpReadinessService
+
+                readiness = KpReadinessService(db_path=self.repository.db_path).build_summary(
+                    kp_id, status=status
+                )
+            except Exception:
+                logger.exception("Ошибка получения readiness для КП %s", kp_id)
 
         return ArchiveOfferDetails(
             kp_id=kp_id,
@@ -391,6 +439,7 @@ class ArchiveService:
             delivery_service_total_rub=delivery_total,
             plates=plates,
             completion_percentage=completion,
+            readiness=readiness,
         )
 
     @staticmethod

@@ -111,6 +111,19 @@ class OffersService:
             raise ValueError("update_execution_date_failed")
         if not self.kp_repository.update_offer_status(kp_id, "в работе"):
             raise ValueError("update_status_failed")
+        # SGP-105: freeze ordered_qty (M) once at first move to production
+        try:
+            from core.kp_db_plates_completion import freeze_ordered_qty_if_needed
+            from core.kp_db_common import _connect
+
+            conn = _connect(self.kp_repository.db_path)
+            try:
+                freeze_ordered_qty_if_needed(conn.cursor(), kp_id)
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            pass
         updated = self.kp_repository.get_offer(kp_id)
         if not updated:
             raise ValueError("not_found")

@@ -28,11 +28,13 @@ const parseSection = (value: string | null): ArchiveSection => {
   return "archived";
 };
 
-const sectionFromStatus = (item: ArchiveOfferListItem): ArchiveSection => {
+export const sectionFromStatus = (item: ArchiveOfferListItem): ArchiveSection => {
   switch (item.status) {
     case "в архиве":
       return "archived";
     case "в работе":
+      return "in_production";
+    case "На СГП":
       return "in_production";
     case "выполнено":
       return "completed";

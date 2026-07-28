@@ -7,6 +7,7 @@ import type {
   ArchiveSearchResponse,
   ArchiveSearchState,
   ArchiveSection,
+  KpReadinessPositionsResponse,
   ProductionEstimate,
 } from "@/features/commercial-archive/types/archive";
 import { saveBlobAs } from "@/shared/lib/downloadFile";
@@ -15,6 +16,7 @@ export const archiveKeys = {
   all: ["archive"] as const,
   list: (section: ArchiveSection) => ["archive", "list", section] as const,
   detail: (kpId: number) => ["archive", "offer", kpId] as const,
+  readinessPositions: (kpId: number) => ["archive", "readiness-positions", kpId] as const,
   search: (state: ArchiveSearchState) =>
     [
       "archive",
@@ -37,6 +39,17 @@ export const useArchiveOfferQuery = (kpId: number | null) =>
     queryKey: archiveKeys.detail(kpId ?? -1),
     queryFn: () => archiveApi.getById(kpId as number),
     enabled: kpId !== null,
+  });
+
+export const useKpReadinessPositionsQuery = (
+  kpId: number | null,
+  options?: { enabled?: boolean },
+) =>
+  useQuery<KpReadinessPositionsResponse>({
+    queryKey: archiveKeys.readinessPositions(kpId ?? -1),
+    queryFn: () => archiveApi.getReadinessPositions(kpId as number),
+    enabled: kpId !== null && (options?.enabled ?? true),
+    staleTime: 15_000,
   });
 
 export const useArchiveSearchQuery = (searchState: ArchiveSearchState) =>

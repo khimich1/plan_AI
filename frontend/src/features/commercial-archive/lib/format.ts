@@ -20,6 +20,8 @@ export const statusEmoji = (status: string | null | undefined): string => {
       return "📦";
     case "в работе":
       return "🏭";
+    case "На СГП":
+      return "🏬";
     case "выполнено":
       return "✅";
     case "отклонено":

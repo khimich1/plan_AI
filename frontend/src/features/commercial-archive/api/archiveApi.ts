@@ -5,6 +5,7 @@ import type {
   ArchiveOfferListItem,
   ArchiveSearchResponse,
   ArchiveSection,
+  KpReadinessPositionsResponse,
   ProductionEstimate,
 } from "@/features/commercial-archive/types/archive";
 
@@ -15,6 +16,9 @@ export const archiveApi = {
     httpClient.get<ArchiveOfferListItem[]>(`${BASE}?section=${encodeURIComponent(section)}`),
 
   getById: (kpId: number) => httpClient.get<ArchiveOfferDetails>(`${BASE}/${kpId}`),
+
+  getReadinessPositions: (kpId: number) =>
+    httpClient.get<KpReadinessPositionsResponse>(`${BASE}/${kpId}/readiness/positions`),
 
   search: ({ kpId, customer }: { kpId?: number; customer?: string }) => {
     const params = new URLSearchParams();
