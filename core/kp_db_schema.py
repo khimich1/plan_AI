@@ -318,6 +318,34 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             cur.execute("ALTER TABLE kp_meta ADD COLUMN ordered_qty INTEGER")
             print("[DB] ✅ Колонка ordered_qty добавлена в kp_meta")
 
+        if "product_type" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку product_type в kp_meta...")
+            cur.execute(
+                "ALTER TABLE kp_meta ADD COLUMN product_type TEXT DEFAULT 'plates'"
+            )
+            cur.execute(
+                "UPDATE kp_meta SET product_type = 'plates' WHERE product_type IS NULL"
+            )
+            print("[DB] ✅ Колонка product_type добавлена в kp_meta")
+
+        # Таблица kp_piles — позиции КП на сваи (отдельно от kp_plates)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_piles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_piles ON kp_piles(kp_id)'
+        )
+
         # === МИГРАЦИЯ: Добавляем nomenclature_id ===
         if 'nomenclature_id' not in columns:
             print("[DB] Миграция: добавляем колонку nomenclature_id в kp_plates...")

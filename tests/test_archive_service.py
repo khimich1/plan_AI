@@ -64,8 +64,10 @@ def test_list_offers_for_archived_skips_completion(tmp_path: Path) -> None:
 
     assert len(items) == 1
     assert items[0].kp_id == 42
+    assert items[0].product_type == "plates"
     assert items[0].completion_percentage is None
     repository.get_completion_percentage.assert_not_called()
+    repository.list_by_section.assert_called_once_with("archived", product_type="all")
 
 
 def test_list_offers_for_production_includes_completion(tmp_path: Path) -> None:

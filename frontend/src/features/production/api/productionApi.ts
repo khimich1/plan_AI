@@ -103,6 +103,12 @@ export const productionApi = {
       `Формовка_${date}.zip`,
     ),
 
+  downloadPlanSgpExport: (planId: string) =>
+    httpClient.download(
+      `${BASE}/plans/${encodeURIComponent(planId)}/sgp-export`,
+      `SGP_${planId}.xlsx`,
+    ),
+
   getWorkCalendar: () => httpClient.get<WorkCalendarPayload>(`${BASE}/work-calendar`),
 
   saveWorkCalendar: (payload: WorkCalendarPayload) =>

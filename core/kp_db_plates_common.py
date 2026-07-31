@@ -7,6 +7,7 @@ from __future__ import annotations
 import sqlite3
 from typing import List, Optional
 
+from app.domain.enums import PlateStatus, PlateTransitionReason
 from core.kp_db_audit import audit_append
 from core.kp_db_common import DEFAULT_DB, _connect
 
@@ -69,7 +70,7 @@ def _deduct_kp_plate_qty(cur: sqlite3.Cursor, row_id: int, deduct: int) -> None:
 def _insert_completed_plate(
     cur: sqlite3.Cursor,
     *,
-    row_kp_id: int,
+    row_kp_id: int | None,
     row_plate_name: str,
     length_m: float,
     row_width_m: float,
@@ -78,13 +79,14 @@ def _insert_completed_plate(
     completed_date: str,
     production_day: int,
     row_nomenclature_id,
+    plan_id: str | None = None,
 ) -> None:
     cur.execute(
         """
         INSERT INTO completed_plates (
             kp_id, plate_name, length_m, width_m, load_class,
-            qty, completed_date, production_day, nomenclature_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            qty, completed_date, production_day, nomenclature_id, plan_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             row_kp_id,
@@ -96,6 +98,7 @@ def _insert_completed_plate(
             completed_date,
             production_day,
             row_nomenclature_id,
+            plan_id,
         ),
     )
 
@@ -116,6 +119,7 @@ def _record_plate_completion(
     plan_ids: Optional[List[str]],
     actor: str | None,
 ) -> None:
+    plan_id = plan_ids[0] if plan_ids else None
     _deduct_kp_plate_qty(cur, row_id, deduct)
     _insert_completed_plate(
         cur,
@@ -128,18 +132,19 @@ def _record_plate_completion(
         completed_date=completed_date,
         production_day=production_day,
         row_nomenclature_id=row_nomenclature_id,
+        plan_id=plan_id,
     )
     audit_append(
         cur,
         plate_id=row_id,
         kp_id=row_kp_id,
         plate_name=row_plate_name,
-        plan_id=(plan_ids[0] if plan_ids else None),
+        plan_id=plan_id,
         day_number=production_day,
-        from_status="в плане",
-        to_status="completed",
+        from_status=PlateStatus.IN_PLAN.value,
+        to_status=PlateStatus.ON_SGP.value,
         qty=deduct,
-        reason="completed",
+        reason=PlateTransitionReason.SGP_SEND.value,
         actor=actor,
     )
 

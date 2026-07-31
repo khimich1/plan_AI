@@ -308,8 +308,8 @@ export const DayDrawer = ({
 
           {completionResult && (
             <Alert tone="success">
-              День отмечен выполненным. Списано:{" "}
-              {completionResult.moved_plates ?? 0}, возвращено брака:{" "}
+              День отправлен на СГП. Списано:{" "}
+              {completionResult.moved_plates ?? 0}, брак возвращён:{" "}
               {completionResult.rejected_returned ?? 0}.
             </Alert>
           )}
@@ -342,7 +342,7 @@ export const DayDrawer = ({
                   </span>
                   {plan.completed && (
                     <span className="day-plan-block__completed" style={{ marginLeft: 10 }}>
-                      ✓ Выполнен
+                      ✓ На СГП
                     </span>
                   )}
                 </div>
@@ -352,12 +352,35 @@ export const DayDrawer = ({
                   disabled={completeMutation.isPending || plan.completed}
                 >
                   {plan.completed
-                    ? "Уже отмечен"
+                    ? "Уже на СГП"
                     : completeMutation.isPending
                       ? "Сохранение…"
-                      : "Отметить выполненным"}
+                      : "Отправить на СГП"}
                 </Button>
               </header>
+
+              {(plan.from_sgp?.length ?? 0) > 0 && (
+                <div
+                  style={{
+                    margin: "0.75rem 0",
+                    padding: "0.75rem",
+                    borderRadius: 10,
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                    С СГП ({plan.from_sgp_qty ?? plan.from_sgp?.length} шт) — без дорожки
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
+                    {(plan.from_sgp ?? []).map((row) => (
+                      <li key={`${row.sgp_id}-${row.target_kp_id}`}>
+                        КП #{row.target_kp_id}: {row.plate_name || "плита"} × {row.qty}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {plan.tracks.map((track) => (
                 <div className="day-track" key={`${plan.plan_id}-${track.track_number}`}>
@@ -522,7 +545,7 @@ export const DayDrawer = ({
 
           {completeErrorMessage && (
             <Alert tone="error">
-              Не удалось отметить день выполненным: {completeErrorMessage}
+              Не удалось отправить день на СГП: {completeErrorMessage}
             </Alert>
           )}
         </div>

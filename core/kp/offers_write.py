@@ -22,6 +22,7 @@ def save_kp_to_db(
     status: str = "в работе",
     logistics_cost: float = 0.0,
     owner_user_id: int | None = None,
+    product_type: str = "plates",
     db_path: str = DEFAULT_DB,
 ) -> int:
     """Сохраняет КП в базу.
@@ -43,6 +44,7 @@ def save_kp_to_db(
         status,
         logistics_cost,
         owner_user_id,
+        product_type,
         db_path,
     )
 

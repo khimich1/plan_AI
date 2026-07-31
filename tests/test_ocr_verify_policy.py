@@ -3,7 +3,7 @@
 
 import pytest
 
-from core.ocr.verify_policy import OcrVerifySettings, should_run_verify
+from core.ocr.verify_policy import OcrVerifySettings, should_run_pile_verify, should_run_verify
 
 DEFAULT_SETTINGS = OcrVerifySettings(
     max_rows=10,
@@ -209,3 +209,60 @@ def test_unknown_mode_runs_verify():
     )
     assert run is True
     assert reason == "unknown_mode_bogus"
+
+
+def _pile(**kwargs):
+    base = {
+        "raw_name": "С90.30-11",
+        "normalized_candidate": "С90.30-11",
+        "qty": 189,
+        "confidence": 0.95,
+        "issues": [],
+    }
+    base.update(kwargs)
+    return base
+
+
+def _good_piles(count: int = 3):
+    marks = ["С90.30-11", "С110.30-13", "С120.30-12"]
+    qtys = [189, 26, 20]
+    return [
+        _pile(normalized_candidate=marks[i % 3], qty=qtys[i % 3])
+        for i in range(count)
+    ]
+
+
+def test_pile_auto_all_checks_passed_skips_verify():
+    run, reason = should_run_pile_verify(
+        mode="auto",
+        max_api_calls=2,
+        image_size_bytes=1000,
+        piles=_good_piles(3),
+        settings=DEFAULT_SETTINGS,
+    )
+    assert run is False
+    assert reason == "auto_all_checks_passed"
+
+
+def test_pile_auto_unparsed_runs_verify():
+    run, reason = should_run_pile_verify(
+        mode="auto",
+        max_api_calls=2,
+        image_size_bytes=1000,
+        piles=[_pile(normalized_candidate="???")],
+        settings=DEFAULT_SETTINGS,
+    )
+    assert run is True
+    assert reason == "auto_unparsed_pile"
+
+
+def test_pile_auto_low_confidence_runs_verify():
+    run, reason = should_run_pile_verify(
+        mode="auto",
+        max_api_calls=2,
+        image_size_bytes=1000,
+        piles=[_pile(confidence=DEFAULT_SETTINGS.min_confidence - 0.01)],
+        settings=DEFAULT_SETTINGS,
+    )
+    assert run is True
+    assert reason == "auto_low_confidence"

@@ -6,6 +6,7 @@ import { GlobalCalendarView } from "@/features/production/components/GlobalCalen
 import { CreatePlanWizard } from "@/features/production/components/CreatePlanWizard";
 import { PlansList } from "@/features/production/components/PlansList";
 import { WorkCalendarEditor } from "@/features/production/components/WorkCalendarEditor";
+import { SgpWarehouseView } from "@/features/production/components/SgpWarehouseView";
 import { useGlobalCalendarQuery } from "@/features/production/hooks/useProductionQueries";
 import {
   getBasketKind,
@@ -26,6 +27,7 @@ const VALID_TABS: readonly ProductionTab[] = [
   "create",
   "plans",
   "work-calendar",
+  "sgp",
 ];
 
 const CALENDAR_HINT = "Сначала выберите дни на календаре.";
@@ -260,6 +262,7 @@ export const ProductionPage = () => {
         {tab === "plans" && (
           <PlansList onOpenPlanCalendar={() => setSearchParams({ tab: "calendar" })} />
         )}
+        {tab === "sgp" && <SgpWarehouseView />}
         {tab === "work-calendar" && <WorkCalendarEditor />}
       </div>
     </main>

@@ -25,6 +25,7 @@ from app.services.draft_store import DraftStore
 from app.services.offers_service import OffersService
 from app.services.production_planning_service import ProductionPlanningService
 from app.services.production_service import ProductionService
+from app.services.sgp_service import SgpService
 
 
 def get_production_planning_service() -> ProductionPlanningService:
@@ -37,6 +38,12 @@ def get_production_service() -> ProductionService:
         plan_repository=planning_service.plan_repository,
         planning_service=planning_service,
     )
+
+
+def get_sgp_service() -> SgpService:
+    from app.repositories.kp_repository import KpRepository
+
+    return SgpService(db_path=KpRepository().db_path)
 
 
 def get_commercial_service() -> CommercialService:

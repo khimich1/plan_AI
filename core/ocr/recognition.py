@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any, Callable, Awaitable, Dict, Literal, Optional
 
 from core.config.settings import get_settings
-from core.ocr.pipeline import run_ocr_pipeline
+from core.ocr.pipeline import run_ocr_pipeline, run_pile_ocr_pipeline
 from core.ocr.providers.openai import (
     GPT_AVAILABLE,
     call_gpt_for_plates,
@@ -24,11 +24,13 @@ async def recognize_text_smart(
     mode: Literal["full_gpt", "hybrid"] = "full_gpt",
     verify_enabled: Optional[bool] = None,
     on_status: Optional[Callable[[str], Awaitable[None]]] = None,
+    product_type: Literal["plates", "piles"] = "plates",
 ) -> Optional[Dict]:
     """
     Распознавание таблицы через OCR pipeline (GigaChat или OpenAI).
 
     verify_enabled: legacy override (True → always verify, False → never).
+    product_type: "plates" (default) или "piles" для OCR свай.
     on_status оставлен для обратной совместимости.
     """
     _ = (force_gpt, on_status)
@@ -37,6 +39,7 @@ async def recognize_text_smart(
 
     settings = get_settings()
     provider_name = (settings.ocr_provider or "openai").strip().lower()
+    normalized_product_type = (product_type or "plates").strip().lower()
 
     if provider_name == "openai" and not GPT_AVAILABLE:
         print("[OCR] ❌ GPT недоступен. Установите: pip install openai")
@@ -44,9 +47,11 @@ async def recognize_text_smart(
 
     try:
         if on_status:
-            await on_status("Распознавание таблицы...")
+            label = "свай" if normalized_product_type == "piles" else "плит"
+            await on_status(f"Распознавание таблицы {label}...")
 
-        result = await run_ocr_pipeline(
+        pipeline = run_pile_ocr_pipeline if normalized_product_type == "piles" else run_ocr_pipeline
+        result = await pipeline(
             image_path=image_path,
             settings=settings,
             verify_enabled=verify_enabled,
@@ -115,6 +120,62 @@ async def apply_plates_with_ai(
         draft_plates=plates,
         corrections=[],
         row_count_on_image=len(plates),
+        method="GPT-4o+ai",
+        verify_applied=False,
+        verify_failed=False,
+        cost_usd=cost_usd,
+        cost_rub=cost_rub,
+        api_calls=1,
+    )
+
+
+async def apply_piles_with_ai(
+    *,
+    current_piles_text: str,
+    user_instruction: str,
+    image_path: str | None = None,
+    show_cost: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Применяет инструкцию пользователя к списку свай (опционально с изображением)."""
+    instruction = (user_instruction or "").strip()
+    if not instruction:
+        raise ValueError("Инструкция для ИИ не может быть пустой.")
+
+    from core.ocr.providers.openai import call_gpt_for_piles
+
+    client = require_openai_client()
+    current_text = (current_piles_text or "").strip() or "(пусто)"
+    user_text = (
+        f"Текущий список свай:\n{current_text}\n\n"
+        f"Инструкция пользователя:\n{instruction}"
+    )
+
+    image_base64: str | None = None
+    mime_type: str | None = None
+    if image_path:
+        _, image_base64, mime_type = load_image_payload(image_path)
+
+    print("[AI] GPT-4o (один вызов, инструкция пользователя, сваи)...")
+    piles, cost_usd = await call_gpt_for_piles(
+        user_text=user_text,
+        client=client,
+        image_base64=image_base64,
+        mime_type=mime_type,
+    )
+
+    if not piles:
+        return None
+
+    cost_rub = cost_usd * 75
+    if show_cost:
+        print(f"[AI] 💰 Стоимость: ${cost_usd:.4f} (~{cost_rub:.2f}₽)")
+
+    print(f"[AI] ✅ Итого {len(piles)} строк(и), method=GPT-4o+ai")
+    return build_result_payload(
+        plates=piles,
+        draft_plates=piles,
+        corrections=[],
+        row_count_on_image=len(piles),
         method="GPT-4o+ai",
         verify_applied=False,
         verify_failed=False,

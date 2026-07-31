@@ -43,7 +43,11 @@ function makeReadiness(): KpReadinessSummary {
   };
 }
 
-function makeOffer(status: string, readiness: KpReadinessSummary | null = null): ArchiveOfferDetails {
+function makeOffer(
+  status: string,
+  readiness: KpReadinessSummary | null = null,
+  overrides: Partial<ArchiveOfferDetails> = {},
+): ArchiveOfferDetails {
   return {
     kp_id: 42,
     creation_date: "01.03.2026",
@@ -65,7 +69,24 @@ function makeOffer(status: string, readiness: KpReadinessSummary | null = null):
     plates: [],
     completion_percentage: null,
     readiness,
+    ...overrides,
   };
+}
+
+function makePileOffer(status = "в архиве"): ArchiveOfferDetails {
+  return makeOffer(status, null, {
+    product_type: "piles",
+    piles: [
+      {
+        position_number: 1,
+        mark: "С80.30-8",
+        concrete_grade: "B25",
+        qty: 10,
+        unit_price: 5000,
+        discounted_price: 4750,
+      },
+    ],
+  });
 }
 
 describe("OfferDetailsDrawer readiness visibility", () => {
@@ -107,5 +128,78 @@ describe("OfferDetailsDrawer readiness visibility", () => {
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
     expect(screen.getByTestId("kp-readiness-block")).toBeInTheDocument();
+  });
+});
+
+describe("OfferDetailsDrawer pile offers", () => {
+  beforeEach(() => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("does not render KpReadinessBlock for pile offers in production", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makePileOffer("в работе"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId("kp-readiness-block")).not.toBeInTheDocument();
+  });
+
+  it("renders pile table columns and row data", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makePileOffer(),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Марка")).toBeInTheDocument();
+    expect(screen.getByText("Класс")).toBeInTheDocument();
+    expect(screen.getByText("С80.30-8")).toBeInTheDocument();
+    expect(screen.getByText("B25")).toBeInTheDocument();
+  });
+
+  it("hides schema button for pile offers", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makePileOffer(),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: /Схема/i })).not.toBeInTheDocument();
+  });
+
+  it("disables move to production for archived pile offers", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makePileOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const moveButton = screen.getByRole("button", { name: /В производство/i });
+    expect(moveButton).toBeDisabled();
+    expect(moveButton).toHaveAttribute("title", "скоро");
   });
 });

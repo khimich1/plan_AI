@@ -18,6 +18,7 @@ from app.schemas.archive import (
     ArchiveFileKind,
     ArchiveOfferDetails,
     ArchiveOfferListItem,
+    ArchiveProductTypeFilter,
     ArchiveSearchResponse,
     ArchiveSection,
     KpReadinessPositionsResponse,
@@ -41,10 +42,11 @@ router = APIRouter(prefix="/commercial/archive", tags=["commercial-archive"])
 @router.get("", response_model=list[ArchiveOfferListItem])
 def list_archive_offers(
     section: ArchiveSection = Query(default="archived"),
+    product_type: ArchiveProductTypeFilter = Query(default="all"),
     user: dict = Depends(require_roles("admin", "manager")),
     service: ArchiveService = Depends(get_archive_service),
 ) -> list[ArchiveOfferListItem]:
-    return service.list_offers(section, user=user)
+    return service.list_offers(section, product_type=product_type, user=user)
 
 
 @router.get("/search", response_model=ArchiveSearchResponse)

@@ -23,6 +23,14 @@ type Props = {
   selectedPlatesByKp: Record<number, number[]>;
   selectedPlateQtyByKp: Record<number, Record<number, number>>;
   expandedKpIds: Set<number>;
+  freeQtyByPlateKey: Map<string, number>;
+  sgpReservationsCount: number;
+  pendingClose: {
+    kp: KpCandidateItem;
+    plate: { id: number; plate_name: string };
+    freeQty: number;
+    closeQty: number;
+  } | null;
   buildPending: boolean;
   buildSuccess: boolean;
   buildErrorMessage: string | null;
@@ -32,6 +40,9 @@ type Props = {
   onToggleExpand: (kpId: number) => void;
   onTogglePlate: (kp: KpCandidateItem, plateId: number) => void;
   onSetPlateQty: (kp: KpCandidateItem, plateId: number, qty: number) => void;
+  onProposeCloseFromSgp: (kp: KpCandidateItem, plateId: number) => void;
+  onConfirmCloseFromSgp: () => void;
+  onCancelCloseFromSgp: () => void;
   onCancelFill: () => void;
   onSubmit: (order: "asc" | "desc") => void;
 };
@@ -49,6 +60,9 @@ export const Step3KpPlateSelection = ({
   selectedPlatesByKp,
   selectedPlateQtyByKp,
   expandedKpIds,
+  freeQtyByPlateKey,
+  sgpReservationsCount,
+  pendingClose,
   buildPending,
   buildSuccess,
   buildErrorMessage,
@@ -58,6 +72,9 @@ export const Step3KpPlateSelection = ({
   onToggleExpand,
   onTogglePlate,
   onSetPlateQty,
+  onProposeCloseFromSgp,
+  onConfirmCloseFromSgp,
+  onCancelCloseFromSgp,
   onCancelFill,
   onSubmit,
 }: Props) => (
@@ -98,7 +115,31 @@ export const Step3KpPlateSelection = ({
       />
     )}
 
-    {filterMethod === "kp" && (
+    {sgpReservationsCount > 0 && (
+      <Alert tone="info">
+        Со склада будет закрыто позиций: {sgpReservationsCount} (без дорожки).
+      </Alert>
+    )}
+
+    {pendingClose && (
+      <Alert tone="info">
+        <div style={{ display: "grid", gap: "0.75rem" }}>
+          <div>
+            Закрыть со склада <strong>{pendingClose.closeQty}</strong> шт
+            «{pendingClose.plate.plate_name}» для КП #{pendingClose.kp.kp_id}?
+            (свободно на СГП: {pendingClose.freeQty})
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Button onClick={onConfirmCloseFromSgp}>Подтвердить</Button>
+            <Button variant="secondary" onClick={onCancelCloseFromSgp}>
+              Отмена
+            </Button>
+          </div>
+        </div>
+      </Alert>
+    )}
+
+    {(filterMethod === "kp" || (candidates && candidates.length > 0)) && (
       <KpCandidatesTable
         loading={candidatesLoading}
         error={candidatesError}
@@ -107,10 +148,14 @@ export const Step3KpPlateSelection = ({
         selectedPlatesByKp={selectedPlatesByKp}
         selectedPlateQtyByKp={selectedPlateQtyByKp}
         expandedKpIds={expandedKpIds}
+        freeQtyByPlateKey={freeQtyByPlateKey}
         onToggleKp={onToggleKp}
         onToggleExpand={onToggleExpand}
         onTogglePlate={onTogglePlate}
         onSetPlateQty={onSetPlateQty}
+        onProposeCloseFromSgp={(kp, plateId) =>
+          onProposeCloseFromSgp(kp, plateId)
+        }
       />
     )}
 

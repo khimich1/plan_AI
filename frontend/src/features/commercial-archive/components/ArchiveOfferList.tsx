@@ -1,6 +1,7 @@
 import type {
   ArchiveOfferListItem,
   ArchiveSection,
+  ProductType,
 } from "@/features/commercial-archive/types/archive";
 import { formatMoney, truncate } from "@/features/commercial-archive/lib/format";
 
@@ -11,6 +12,9 @@ type Props = {
   sectionForItem?: (item: ArchiveOfferListItem) => ArchiveSection;
   emptyMessage?: string;
 };
+
+const productTypeBadge = (productType: ProductType | undefined): string =>
+  (productType ?? "plates") === "piles" ? "Сваи" : "Плиты";
 
 const rowStyle: React.CSSProperties = {
   display: "grid",
@@ -91,7 +95,21 @@ export const ArchiveOfferList = ({
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
-              <div style={{ fontWeight: 700 }}>КП №{item.kp_id}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700 }}>КП №{item.kp_id}</span>
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    padding: "0.15rem 0.5rem",
+                    borderRadius: 999,
+                    background: (item.product_type ?? "plates") === "piles" ? "#ecfdf3" : "#eef4ff",
+                    color: (item.product_type ?? "plates") === "piles" ? "#027a48" : "#1d4ed8",
+                  }}
+                >
+                  {productTypeBadge(item.product_type)}
+                </span>
+              </div>
               <div style={{ color: "#101828", fontWeight: 600 }}>{formatMoney(item.total_amount)}</div>
             </div>
             <div style={{ color: "#475467", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>

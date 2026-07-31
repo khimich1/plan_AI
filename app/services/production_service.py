@@ -71,6 +71,9 @@ class ProductionService:
         return {"plan_id": plan_id, "active": True}
 
     def delete_plan(self, plan_id: str) -> dict:
+        from app.services.sgp_service import SgpService
+
+        SgpService(db_path=self.kp_repository.db_path).clear_plan_links(plan_id)
         deleted = self.plan_repository.delete(plan_id)
         return {"plan_id": plan_id, "deleted": deleted}
 
@@ -104,20 +107,68 @@ class ProductionService:
         fill_targets: list[dict[str, Any]] | None = None,
         layout_reinforcement_order: str = "asc",
         plate_order_ctx: PlateOrderContext | None = None,
+        sgp_reservations: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        return self.planning_service.build_plan(
+        from app.services.sgp_service import SgpError, SgpService
+        import sqlite3
+
+        qty_for_optimize = selected_plate_qty
+        from_sgp_rows: list[dict[str, Any]] = []
+        if sgp_reservations:
+            sgp = SgpService(db_path=self.kp_repository.db_path)
+            qty_for_optimize = sgp.reduce_selected_qty_for_reservations(
+                selected_plate_qty=selected_plate_qty,
+                sgp_reservations=sgp_reservations,
+            )
+            from_sgp_rows = sgp.build_from_sgp_rows(sgp_reservations)
+
+        result = self.planning_service.build_plan(
             start_date=start_date,
             tracks_count=tracks_count,
             filter_method=filter_method,  # type: ignore[arg-type]
             selected_kp_ids=selected_kp_ids,
             selected_plate_ids=selected_plate_ids,
-            selected_plate_qty=selected_plate_qty,
+            selected_plate_qty=qty_for_optimize,
             active_plan_id=active_plan_id,
             plan_name=plan_name,
             fill_targets=fill_targets,
             layout_reinforcement_order=layout_reinforcement_order,
             plate_order_ctx=plate_order_ctx,
         )
+        if sgp_reservations:
+            plan = result.get("plan") or {}
+            plan_id = plan.get("id")
+            sgp = SgpService(db_path=self.kp_repository.db_path)
+            conn = sqlite3.connect(self.kp_repository.db_path)
+            try:
+                conn.execute("PRAGMA foreign_keys = ON")
+                cur = conn.cursor()
+                reserved_total = 0
+                for item in sgp_reservations:
+                    reserved_total += sgp.reserve_on_conn(
+                        cur,
+                        conn,
+                        sgp_id=int(item["sgp_id"]),
+                        target_kp_id=int(item["target_kp_id"]),
+                        qty=int(item["qty"]),
+                        plan_id=plan_id,
+                    )
+                plan["sgp_reservations"] = list(sgp_reservations)
+                plan["from_sgp_qty"] = reserved_total
+                plan["from_sgp"] = from_sgp_rows
+                if plan_id:
+                    self.plan_repository.save_plan(plan)
+                conn.commit()
+                result["sgp_reserved_qty"] = reserved_total
+            except SgpError:
+                conn.rollback()
+                raise
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        return result
 
     def get_calendar(self) -> dict | None:
         return self.planning_service.plan_distribution.get_global_calendar_info(

@@ -1,4 +1,10 @@
-import type { CommercialDraftDetails, PlateBatch } from "@/features/commercial-offer/types/commercialOffer";
+import type {
+  CommercialDraftDetails,
+  PileBatch,
+  PlateBatch,
+  ProductType,
+} from "@/features/commercial-offer/types/commercialOffer";
+import { resolveDraftProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 
 const normalizeLineKey = (line: string) => line.trim().toLowerCase();
 
@@ -13,14 +19,32 @@ const batchLineKeys = (batchText: string): Set<string> => {
   return keys;
 };
 
+export const getDraftProductType = (draft: CommercialDraftDetails | null): ProductType =>
+  resolveDraftProductType(draft?.metadata.product_type);
+
+const getBatches = (draft: CommercialDraftDetails | null): Array<PlateBatch | PileBatch> => {
+  if (!draft) {
+    return [];
+  }
+  if (getDraftProductType(draft) === "piles") {
+    return draft.metadata.pile_batches ?? [];
+  }
+  return draft.metadata.plate_batches ?? [];
+};
+
 export const getCurrentPlateBatch = (draft: CommercialDraftDetails | null): PlateBatch | null => {
   const batches = draft?.metadata.plate_batches ?? [];
   return batches.length > 0 ? batches[batches.length - 1]! : null;
 };
 
+export const getCurrentBatch = (draft: CommercialDraftDetails | null): PlateBatch | PileBatch | null => {
+  const batches = getBatches(draft);
+  return batches.length > 0 ? batches[batches.length - 1]! : null;
+};
+
 /** Text shown in OCR side-by-side review — last batch only, fallback for legacy drafts. */
 export const getCurrentBatchReviewText = (draft: CommercialDraftDetails | null): string => {
-  const batch = getCurrentPlateBatch(draft);
+  const batch = getCurrentBatch(draft);
   if (batch?.normalized_text?.trim()) {
     return batch.normalized_text;
   }
@@ -28,12 +52,15 @@ export const getCurrentBatchReviewText = (draft: CommercialDraftDetails | null):
 };
 
 export const needsBatchReview = (draft: CommercialDraftDetails | null, confirmedBatchCount: number): boolean => {
-  const batchCount = draft?.metadata.plate_batches?.length ?? 0;
+  const batchCount = getBatches(draft).length;
   return batchCount > confirmedBatchCount;
 };
 
 /** Rebuild full input text when the user edits the last batch before confirming. */
-export const mergeEditedBatchIntoFullText = (batches: PlateBatch[], editedLastBatchText: string): string => {
+export const mergeEditedBatchIntoFullText = (
+  batches: Array<PlateBatch | PileBatch>,
+  editedLastBatchText: string,
+): string => {
   const trimmedEdit = editedLastBatchText.trim();
   if (batches.length === 0) {
     return trimmedEdit;

@@ -430,8 +430,8 @@ def test_day_view_write_off_completed_false_before_complete_true_after_snapshot(
     )
 
 
-def test_kp_marked_done_only_when_no_remaining_plates(planning_service, tmp_plita):
-    """С браком КП остаётся 'в работе'; без брака — становится 'выполнено'."""
+def test_kp_marked_on_sgp_only_when_no_remaining_plates(planning_service, tmp_plita):
+    """С браком КП остаётся 'в работе'; без брака — становится 'На СГП'."""
     # 1) С полным браком → 'в работе'
     built = planning_service.build_plan(
         start_date="2026-04-21",
@@ -448,7 +448,7 @@ def test_kp_marked_done_only_when_no_remaining_plates(planning_service, tmp_plit
     )
     assert _kp_status(tmp_plita) == "в работе"
 
-    # 2) Перепланируем + завершим без брака → 'выполнено'
+    # 2) Перепланируем + отправим на СГП без брака → 'На СГП'
     built2 = planning_service.build_plan(
         start_date="2026-04-22",
         tracks_count=3,
@@ -457,7 +457,7 @@ def test_kp_marked_done_only_when_no_remaining_plates(planning_service, tmp_plit
     plan_id2 = built2["plan"]["id"]
 
     service.complete_day(plan_id=plan_id2, target_date="2026-04-22")
-    assert _kp_status(tmp_plita) == "выполнено"
+    assert _kp_status(tmp_plita) == "На СГП"
 
 
 def test_return_rejected_helper_idempotent(planning_service, tmp_plita):

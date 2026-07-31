@@ -3,6 +3,7 @@ import type {
   ArchiveFileKind,
   ArchiveOfferDetails,
   ArchiveOfferListItem,
+  ArchiveProductTypeFilter,
   ArchiveSearchResponse,
   ArchiveSection,
   KpReadinessPositionsResponse,
@@ -12,8 +13,13 @@ import type {
 const BASE = "/api/v1/commercial/archive";
 
 export const archiveApi = {
-  list: (section: ArchiveSection) =>
-    httpClient.get<ArchiveOfferListItem[]>(`${BASE}?section=${encodeURIComponent(section)}`),
+  list: (section: ArchiveSection, productType?: ArchiveProductTypeFilter) => {
+    const params = new URLSearchParams({ section });
+    if (productType && productType !== "all") {
+      params.set("product_type", productType);
+    }
+    return httpClient.get<ArchiveOfferListItem[]>(`${BASE}?${params.toString()}`);
+  },
 
   getById: (kpId: number) => httpClient.get<ArchiveOfferDetails>(`${BASE}/${kpId}`),
 

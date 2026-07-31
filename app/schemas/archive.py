@@ -10,6 +10,8 @@ from app.schemas.sgp import SgpProgress
 
 ArchiveSection = Literal["archived", "in_production", "completed"]
 ArchiveFileKind = Literal["pdf", "xlsx", "schema"]
+ProductType = Literal["plates", "piles"]
+ArchiveProductTypeFilter = Literal["all", "plates", "piles"]
 
 
 class ArchiveOfferListItem(BaseModel):
@@ -35,6 +37,16 @@ class ArchiveOfferListItem(BaseModel):
         default=None,
         description="Бейдж N/M на СГП: {n, m}.",
     )
+    product_type: ProductType = "plates"
+
+
+class ArchivePileItem(BaseModel):
+    position_number: int | None = None
+    mark: str = ""
+    concrete_grade: str = ""
+    qty: int = 0
+    unit_price: float | None = None
+    discounted_price: float | None = None
 
 
 class ArchivePlateItem(BaseModel):
@@ -128,7 +140,9 @@ class ArchiveOfferDetails(BaseModel):
         default=0.0,
         description="Строка «Услуга по доставке грузов»: рейсы × стоимость рейса.",
     )
+    product_type: ProductType = "plates"
     plates: list[ArchivePlateItem] = Field(default_factory=list)
+    piles: list[ArchivePileItem] = Field(default_factory=list)
     completion_percentage: float | None = None
     readiness: KpReadinessSummary | None = None
 

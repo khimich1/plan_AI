@@ -7,6 +7,11 @@ import {
   useKpCandidatesQuery,
   usePlansListQuery,
 } from "@/features/production/hooks/useProductionQueries";
+import { useSgpFreePlatesQuery } from "@/features/production/hooks/useSgpQueries";
+import {
+  freeQtyForPlate,
+  pickFreeReservations,
+} from "@/features/production/lib/sgpFreeMatch";
 import {
   getBasketKind,
   type BasketDayKind,
@@ -23,6 +28,8 @@ import type {
   FillTargetItem,
   FilterMethod,
   KpCandidateItem,
+  KpCandidatePlateItem,
+  SgpReservationItem,
 } from "@/features/production/types/production";
 import { formatRu } from "@/features/production/components/create-plan-wizard/utils";
 
@@ -50,10 +57,18 @@ export const useCreatePlanWizardState = ({
   const [planName, setPlanName] = useState<string>("");
   const [fillTargets, setFillTargets] = useState<FillTargetItem[] | null>(null);
   const [basketKind, setBasketKind] = useState<BasketDayKind | null>(null);
+  const [sgpReservations, setSgpReservations] = useState<SgpReservationItem[]>([]);
+  const [pendingClose, setPendingClose] = useState<{
+    kp: KpCandidateItem;
+    plate: KpCandidatePlateItem;
+    freeQty: number;
+    closeQty: number;
+  } | null>(null);
 
   const calendarQuery = useGlobalCalendarQuery();
   const plansQuery = usePlansListQuery();
   const candidatesQuery = useKpCandidatesQuery(true);
+  const freePlatesQuery = useSgpFreePlatesQuery(true);
   const buildMutation = useBuildPlanMutation();
 
   const daysInfo = calendarQuery.data?.days_info ?? {};
@@ -246,7 +261,8 @@ export const useCreatePlanWizardState = ({
 
   const hasAnyPlateSelected =
     filterMethod === "all" ||
-    Object.values(selectedPlatesByKp).some((ids) => ids.length > 0);
+    Object.values(selectedPlatesByKp).some((ids) => ids.length > 0) ||
+    sgpReservations.length > 0;
   const canSubmit =
     isFillMode &&
     hasAnyPlateSelected &&
@@ -263,6 +279,20 @@ export const useCreatePlanWizardState = ({
       ". Лишние плиты остаются «в производстве»."
     : undefined;
 
+  const freeItems = freePlatesQuery.data?.items ?? [];
+
+  const freeQtyByPlateKey = useMemo(() => {
+    const map = new Map<string, number>();
+    const candidates = candidatesQuery.data?.items ?? [];
+    for (const kp of candidates) {
+      for (const plate of kp.plates) {
+        const key = `${kp.kp_id}:${plate.id}`;
+        map.set(key, freeQtyForPlate(plate, freeItems));
+      }
+    }
+    return map;
+  }, [candidatesQuery.data, freeItems]);
+
   const resetSelection = () => {
     setSelectedPlatesByKp({});
     setSelectedPlateQtyByKp({});
@@ -270,14 +300,78 @@ export const useCreatePlanWizardState = ({
     setPlanName("");
     setFillTargets(null);
     setBasketKind(null);
+    setSgpReservations([]);
+    setPendingClose(null);
   };
+
+  const proposeCloseFromSgp = (kp: KpCandidateItem, plate: KpCandidatePlateItem) => {
+    const freeQty = freeQtyByPlateKey.get(`${kp.kp_id}:${plate.id}`) ?? 0;
+    const selectedQty =
+      selectedPlateQtyByKp[kp.kp_id]?.[plate.id] ?? plate.qty;
+    const closeQty = Math.min(freeQty, selectedQty, plate.qty);
+    if (closeQty <= 0) return;
+    setPendingClose({ kp, plate, freeQty, closeQty });
+  };
+
+  const confirmCloseFromSgp = () => {
+    if (!pendingClose) return;
+    const { kp, plate, closeQty } = pendingClose;
+    const picks = pickFreeReservations(plate, freeItems, closeQty);
+    if (picks.length === 0) {
+      setPendingClose(null);
+      return;
+    }
+    const reservedQty = picks.reduce((s, p) => s + p.qty, 0);
+    setSgpReservations((prev) => [
+      ...prev,
+      ...picks.map((p) => ({
+        sgp_id: p.sgp_id,
+        target_kp_id: kp.kp_id,
+        qty: p.qty,
+      })),
+    ]);
+    // If manual KP selection is active, reduce selected production qty.
+    if (filterMethod === "kp") {
+      setSelectedPlateQtyByKp((q) => {
+        const current = q[kp.kp_id]?.[plate.id] ?? plate.qty;
+        const nextQty = Math.max(0, current - reservedQty);
+        const kpMap = { ...(q[kp.kp_id] ?? {}) };
+        if (nextQty > 0) {
+          kpMap[plate.id] = nextQty;
+        } else {
+          delete kpMap[plate.id];
+        }
+        return { ...q, [kp.kp_id]: kpMap };
+      });
+      setSelectedPlatesByKp((prev) => {
+        const current = prev[kp.kp_id] ?? [];
+        const nextQty =
+          (selectedPlateQtyByKp[kp.kp_id]?.[plate.id] ?? plate.qty) - reservedQty;
+        let nextIds = current.includes(plate.id)
+          ? [...current]
+          : [...current, plate.id];
+        if (nextQty <= 0) {
+          nextIds = nextIds.filter((id) => id !== plate.id);
+        }
+        return { ...prev, [kp.kp_id]: nextIds };
+      });
+    }
+    setPendingClose(null);
+  };
+
+  const cancelCloseFromSgp = () => setPendingClose(null);
 
   const handleSubmit = (order: "asc" | "desc" = "asc") => {
     if (!fillTargets || fillTargets.length === 0) return;
 
-    const selectedKpIds = Object.entries(selectedPlatesByKp)
-      .filter(([, ids]) => ids.length > 0)
-      .map(([kpId]) => Number(kpId));
+    const selectedKpIds = Array.from(
+      new Set([
+        ...Object.entries(selectedPlatesByKp)
+          .filter(([, ids]) => ids.length > 0)
+          .map(([kpId]) => Number(kpId)),
+        ...sgpReservations.map((r) => r.target_kp_id),
+      ]),
+    );
 
     let partialPlateIds: Record<number, number[]> | undefined;
     if (filterMethod === "kp" && candidatesQuery.data) {
@@ -356,6 +450,8 @@ export const useCreatePlanWizardState = ({
         plan_name: autoName,
         fill_targets: fillTargets,
         layout_reinforcement_order: order,
+        sgp_reservations:
+          sgpReservations.length > 0 ? sgpReservations : undefined,
       },
       {
         onSuccess: () => {
@@ -399,6 +495,12 @@ export const useCreatePlanWizardState = ({
     cardTitle,
     cardSubtitle,
     basketKind,
+    freeQtyByPlateKey,
+    sgpReservations,
+    pendingClose,
+    proposeCloseFromSgp,
+    confirmCloseFromSgp,
+    cancelCloseFromSgp,
     toggleKp,
     togglePlate,
     setPlateQty,

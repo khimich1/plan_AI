@@ -4,6 +4,7 @@ import type {
   ArchiveFileKind,
   ArchiveOfferDetails,
   ArchiveOfferListItem,
+  ArchiveProductTypeFilter,
   ArchiveSearchResponse,
   ArchiveSearchState,
   ArchiveSection,
@@ -14,7 +15,8 @@ import { saveBlobAs } from "@/shared/lib/downloadFile";
 
 export const archiveKeys = {
   all: ["archive"] as const,
-  list: (section: ArchiveSection) => ["archive", "list", section] as const,
+  list: (section: ArchiveSection, productType: ArchiveProductTypeFilter = "all") =>
+    ["archive", "list", section, productType] as const,
   detail: (kpId: number) => ["archive", "offer", kpId] as const,
   readinessPositions: (kpId: number) => ["archive", "readiness-positions", kpId] as const,
   search: (state: ArchiveSearchState) =>
@@ -27,10 +29,13 @@ export const archiveKeys = {
   estimate: (kpId: number) => ["archive", "estimate", kpId] as const,
 };
 
-export const useArchiveListQuery = (section: ArchiveSection) =>
+export const useArchiveListQuery = (
+  section: ArchiveSection,
+  productTypeFilter: ArchiveProductTypeFilter = "all",
+) =>
   useQuery<ArchiveOfferListItem[]>({
-    queryKey: archiveKeys.list(section),
-    queryFn: () => archiveApi.list(section),
+    queryKey: archiveKeys.list(section, productTypeFilter),
+    queryFn: () => archiveApi.list(section, productTypeFilter),
     staleTime: 15_000,
   });
 

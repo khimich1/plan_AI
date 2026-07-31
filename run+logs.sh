@@ -196,8 +196,8 @@ fi
 
 echo ""
 echo -e "${GREEN}✅ Оба процесса запущены${NC}"
-echo -e "${YELLOW}UI (React): http://127.0.0.1:5173/commercial-offer/${NC}"
-echo -e "${YELLOW}UI (localhost): http://localhost:5173/commercial-offer/${NC}"
+echo -e "${YELLOW}UI (React): http://127.0.0.1:5173/commercial-offer/new${NC}"
+echo -e "${YELLOW}UI (localhost): http://localhost:5173/commercial-offer/new${NC}"
 echo -e "${YELLOW}API backend: http://127.0.0.1:8000${NC}"
 echo -e "${YELLOW}Swagger: http://127.0.0.1:8000/docs${NC}"
 echo -e "${YELLOW}Остановка: Ctrl+C${NC}"

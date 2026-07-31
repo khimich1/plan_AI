@@ -85,6 +85,47 @@ def test_gigachat_extract_plates_mocked():
     asyncio.run(_run_extract_plates_mocked())
 
 
+async def _run_extract_piles_mocked():
+    piles_json = json.dumps(
+        [
+            {
+                "raw_name": "С90.30-11",
+                "normalized_candidate": "С90.30-11",
+                "qty": 189,
+                "concrete_grade": "B25",
+                "confidence": 0.95,
+                "issues": [],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    uploaded = MagicMock(id_="file-pile")
+    mock_client = MagicMock()
+    mock_client.upload_file.return_value = uploaded
+    mock_client.chat.return_value = _mock_chat_response(piles_json, tokens=5000)
+
+    settings = _make_settings()
+    provider = GigaChatProvider(settings=settings, client=mock_client)
+
+    image_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode()
+    piles, cost_rub = await provider.extract_piles(
+        user_text="Распознай таблицу свай",
+        image_base64=image_b64,
+        mime_type="image/png",
+    )
+
+    assert len(piles) == 1
+    assert piles[0]["qty"] == 189
+    assert cost_rub == pytest.approx(_estimate_cost_rub(5000))
+    mock_client.chat.assert_called_once()
+    system_msg = mock_client.chat.call_args[0][0].messages[0].content
+    assert "сваи" in system_msg.lower()
+
+
+def test_gigachat_extract_piles_mocked():
+    asyncio.run(_run_extract_piles_mocked())
+
+
 async def _run_verify_plates_mocked():
     verify_json = json.dumps(
         {

@@ -4,6 +4,7 @@ import { Card } from "@/shared/ui/Card";
 import { Alert } from "@/shared/ui/Alert";
 import { Spinner } from "@/shared/ui/Spinner";
 import { ArchiveSectionTabs } from "@/features/commercial-archive/components/ArchiveSectionTabs";
+import { ArchiveProductTypeFilterTabs } from "@/features/commercial-archive/components/ArchiveProductTypeFilter";
 import { ArchiveOfferList } from "@/features/commercial-archive/components/ArchiveOfferList";
 import { ArchiveSearchBar } from "@/features/commercial-archive/components/ArchiveSearchBar";
 import { OfferDetailsDrawer } from "@/features/commercial-archive/components/OfferDetailsDrawer";
@@ -14,12 +15,26 @@ import {
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import type {
   ArchiveOfferListItem,
+  ArchiveProductTypeFilter,
   ArchiveSearchState,
   ArchiveSection,
+  ProductType,
 } from "@/features/commercial-archive/types/archive";
 import { getErrorMessage } from "@/shared/lib/apiError";
 
 const VALID_SECTIONS: readonly ArchiveSection[] = ["archived", "in_production", "completed"];
+
+const resolveProductType = (item: ArchiveOfferListItem): ProductType => item.product_type ?? "plates";
+
+const filterByProductType = (
+  items: ArchiveOfferListItem[],
+  productTypeFilter: ArchiveProductTypeFilter,
+): ArchiveOfferListItem[] => {
+  if (productTypeFilter === "all") {
+    return items;
+  }
+  return items.filter((item) => resolveProductType(item) === productTypeFilter);
+};
 
 const parseSection = (value: string | null): ArchiveSection => {
   if (value && (VALID_SECTIONS as readonly string[]).includes(value)) {
@@ -59,8 +74,9 @@ export const CommercialOfferArchivePage = () => {
 
   const [selectedKpId, setSelectedKpId] = useState<number | null>(null);
   const [searchState, setSearchState] = useState<ArchiveSearchState>(null);
+  const [productTypeFilter, setProductTypeFilter] = useState<ArchiveProductTypeFilter>("all");
 
-  const listQuery = useArchiveListQuery(section);
+  const listQuery = useArchiveListQuery(section, productTypeFilter);
   const searchQuery = useArchiveSearchQuery(searchState);
 
   useEffect(() => {
@@ -74,7 +90,10 @@ export const CommercialOfferArchivePage = () => {
     setSearchState(null);
   };
 
-  const filteredItems = useMemo(() => listQuery.data ?? [], [listQuery.data]);
+  const filteredItems = useMemo(
+    () => filterByProductType(listQuery.data ?? [], productTypeFilter),
+    [listQuery.data, productTypeFilter],
+  );
 
   return (
     <main style={{ maxWidth: 1280, margin: "0 auto", padding: "2rem 1rem 4rem" }}>
@@ -98,6 +117,7 @@ export const CommercialOfferArchivePage = () => {
           >
             <div style={{ display: "grid", gap: "0.75rem", flex: "1 0 320px" }}>
               <ArchiveSectionTabs value={section} onChange={onSectionChange} />
+              <ArchiveProductTypeFilterTabs value={productTypeFilter} onChange={setProductTypeFilter} />
               <ArchiveSearchBar
                 activeQuery={searchState}
                 onSubmit={setSearchState}
@@ -128,7 +148,7 @@ export const CommercialOfferArchivePage = () => {
                 )}
                 <ArchiveOfferList
                   section={section}
-                  items={searchQuery.data.items}
+                  items={filterByProductType(searchQuery.data.items, productTypeFilter)}
                   onSelect={(kpId) => setSelectedKpId(kpId)}
                   sectionForItem={sectionFromStatus}
                 />

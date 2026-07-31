@@ -16,6 +16,13 @@ vi.mock("@/features/production/hooks/useProductionQueries", () => ({
   useBuildPlanMutation: () => mockUseBuildPlanMutation(),
 }));
 
+vi.mock("@/features/production/hooks/useSgpQueries", () => ({
+  useSgpFreePlatesQuery: () => ({
+    data: { items: [], count: 0 },
+    isLoading: false,
+  }),
+}));
+
 const daysInfo: Record<string, DayInfo> = {
   "2026-06-21": {
     occupied: 2,

@@ -16,7 +16,9 @@ from app.schemas.archive import (
     ArchiveOfferDetails,
     ArchiveOfferFinance,
     ArchiveOfferListItem,
+    ArchivePileItem,
     ArchivePlateItem,
+    ArchiveProductTypeFilter,
     ArchiveSearchResponse,
     KpReadinessPositionsResponse,
 )
@@ -75,9 +77,19 @@ class ArchiveService:
 
     # ---------- Списки и карточка ----------
 
-    def list_offers(self, section: ArchiveSection, *, user: dict) -> list[ArchiveOfferListItem]:
+    def list_offers(
+        self,
+        section: ArchiveSection,
+        *,
+        user: dict,
+        product_type: ArchiveProductTypeFilter = "all",
+    ) -> list[ArchiveOfferListItem]:
         list_filters = list_filters_for_user(user)
-        raw_items = self.repository.list_by_section(section, **list_filters)
+        raw_items = self.repository.list_by_section(
+            section,
+            product_type=product_type,
+            **list_filters,
+        )
         return [self._to_list_item(raw) for raw in raw_items]
 
     def get_details(self, kp_id: int, *, user: dict) -> ArchiveOfferDetails:
@@ -388,10 +400,13 @@ class ArchiveService:
             status=status,
             completion_percentage=completion,
             sgp_progress=sgp_progress,
+            product_type=str(raw.get("product_type") or "plates"),
         )
 
     def _to_details(self, raw: dict) -> ArchiveOfferDetails:
         plates = [self._plate_item(p) for p in (raw.get("plates") or [])]
+        piles = [self._pile_item(p) for p in (raw.get("piles") or [])]
+        product_type = str(raw.get("product_type") or "plates")
         kp_id = int(raw.get("kp_id") or 0)
         completion = None
         if raw.get("status") in ("в работе", "выполнено", "На СГП"):
@@ -437,9 +452,22 @@ class ArchiveService:
             logistics_cost=logistics_cost,
             total_cargo_weight_kg=total_cargo_weight_kg,
             delivery_service_total_rub=delivery_total,
+            product_type=product_type,
             plates=plates,
+            piles=piles,
             completion_percentage=completion,
             readiness=readiness,
+        )
+
+    @staticmethod
+    def _pile_item(raw: dict) -> ArchivePileItem:
+        return ArchivePileItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
         )
 
     @staticmethod

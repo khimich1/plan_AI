@@ -24,6 +24,7 @@ class KpPersistenceService:
         status: str = "в работе",
         logistics_cost: float = 0.0,
         owner_user_id: int | None = None,
+        product_type: str = "plates",
         db_path: str = DEFAULT_DB,
     ) -> int:
         trip_logistics = max(0.0, float(logistics_cost or 0.0))
@@ -77,52 +78,85 @@ class KpPersistenceService:
             )
             kp_id = cur.lastrowid
 
-            from core.concrete_grade_resolver import resolve_concrete_grade_from_order
-            from core.db_config import PB_DB_PATH
+            from core.commercial_pricing import is_pile_order
 
-            for idx, item in enumerate(order_data, start=1):
-                qty = item.get("qty", 0)
-                unit_price = item.get("unit_price", 0.0)
-                discounted_price = unit_price * (1 - discount_percent / 100)
-                weight = item.get("weight", 0.0)
-                unit_weight = weight / qty if qty > 0 else 0.0
-                plate_name = item.get("name", "")
-                nomenclature_id = item.get("nomenclature_id", None)
-                concrete_grade = resolve_concrete_grade_from_order(
-                    {
-                        "concrete_grade": item.get("concrete_grade"),
-                        "plate_name": plate_name,
-                        "length": item.get("length_m", 0),
-                        "load_code": item.get("load_class", 800),
-                    },
-                    db_path=PB_DB_PATH,
-                )
-                cur.execute(
-                    """
-                    INSERT INTO kp_plates (
-                        kp_id, position_number, plate_name,
-                        length_m, width_m, load_class,
-                        qty, unit_weight, total_weight, discounted_price, unit_price,
-                        length_dm_raw, nomenclature_id, concrete_grade
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        kp_id,
-                        idx,
-                        plate_name,
-                        item.get("length_m", 0),
-                        item.get("width_m", 0),
-                        item.get("load_class", 800),
-                        qty,
-                        unit_weight,
-                        weight,
-                        discounted_price,
-                        unit_price,
-                        item.get("length_dm_raw", "") or "",
-                        nomenclature_id,
-                        concrete_grade,
-                    ),
-                )
+            normalized_product_type = (product_type or "plates").strip().lower()
+            if normalized_product_type not in {"plates", "piles"}:
+                normalized_product_type = "plates"
+            if is_pile_order(order_data):
+                normalized_product_type = "piles"
+
+            if normalized_product_type == "piles":
+                for idx, item in enumerate(order_data, start=1):
+                    qty = int(item.get("qty", 0) or 0)
+                    unit_price = float(item.get("unit_price", 0.0) or 0.0)
+                    discounted_price = unit_price * (1 - discount_percent / 100)
+                    mark = str(item.get("mark") or item.get("name") or "").strip()
+                    concrete_grade = str(item.get("concrete_grade") or "B25").strip()
+                    cur.execute(
+                        """
+                        INSERT INTO kp_piles (
+                            kp_id, position_number, mark, concrete_grade,
+                            qty, unit_price, discounted_price
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            kp_id,
+                            idx,
+                            mark,
+                            concrete_grade,
+                            qty,
+                            unit_price,
+                            discounted_price,
+                        ),
+                    )
+            else:
+                from core.concrete_grade_resolver import resolve_concrete_grade_from_order
+                from core.db_config import PB_DB_PATH
+
+                for idx, item in enumerate(order_data, start=1):
+                    qty = item.get("qty", 0)
+                    unit_price = item.get("unit_price", 0.0)
+                    discounted_price = unit_price * (1 - discount_percent / 100)
+                    weight = item.get("weight", 0.0)
+                    unit_weight = weight / qty if qty > 0 else 0.0
+                    plate_name = item.get("name", "")
+                    nomenclature_id = item.get("nomenclature_id", None)
+                    concrete_grade = resolve_concrete_grade_from_order(
+                        {
+                            "concrete_grade": item.get("concrete_grade"),
+                            "plate_name": plate_name,
+                            "length": item.get("length_m", 0),
+                            "load_code": item.get("load_class", 800),
+                        },
+                        db_path=PB_DB_PATH,
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO kp_plates (
+                            kp_id, position_number, plate_name,
+                            length_m, width_m, load_class,
+                            qty, unit_weight, total_weight, discounted_price, unit_price,
+                            length_dm_raw, nomenclature_id, concrete_grade
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            kp_id,
+                            idx,
+                            plate_name,
+                            item.get("length_m", 0),
+                            item.get("width_m", 0),
+                            item.get("load_class", 800),
+                            qty,
+                            unit_weight,
+                            weight,
+                            discounted_price,
+                            unit_price,
+                            item.get("length_dm_raw", "") or "",
+                            nomenclature_id,
+                            concrete_grade,
+                        ),
+                    )
 
             if xlsx_file_path:
                 from core.kp_file_paths import resolve_kp_xlsx_path_for_read
@@ -140,8 +174,8 @@ class KpPersistenceService:
                     )
 
             cur.execute(
-                "INSERT INTO kp_meta (kp_id, status, owner_user_id) VALUES (?, ?, ?)",
-                (kp_id, status, owner_user_id),
+                "INSERT INTO kp_meta (kp_id, status, owner_user_id, product_type) VALUES (?, ?, ?, ?)",
+                (kp_id, status, owner_user_id, normalized_product_type),
             )
             conn.commit()
             return kp_id

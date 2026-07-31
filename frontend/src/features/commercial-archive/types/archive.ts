@@ -1,5 +1,7 @@
 export type ArchiveSection = "archived" | "in_production" | "completed";
 export type ArchiveFileKind = "pdf" | "xlsx" | "schema";
+export type ProductType = "plates" | "piles";
+export type ArchiveProductTypeFilter = "all" | "plates" | "piles";
 
 export type ArchiveOfferListItem = {
   kp_id: number;
@@ -14,6 +16,7 @@ export type ArchiveOfferListItem = {
   status: string | null;
   completion_percentage: number | null;
   sgp_progress?: { n: number; m: number } | null;
+  product_type?: ProductType;
 };
 
 export type ArchivePlateItem = {
@@ -28,6 +31,15 @@ export type ArchivePlateItem = {
   unit_weight: number | null;
   total_weight: number | null;
   status: string | null;
+};
+
+export type ArchivePileItem = {
+  position_number: number | null;
+  mark: string;
+  concrete_grade: string;
+  qty: number;
+  unit_price: number | null;
+  discounted_price: number | null;
 };
 
 export type ArchiveOfferFinance = {
@@ -99,7 +111,9 @@ export type ArchiveOfferDetails = {
   total_cargo_weight_kg: number;
   /** Строка «Услуга по доставке грузов» = logistics_cost × число рейсов. */
   delivery_service_total_rub: number;
+  product_type?: ProductType;
   plates: ArchivePlateItem[];
+  piles?: ArchivePileItem[];
   completion_percentage: number | null;
   readiness?: KpReadinessSummary | null;
 };

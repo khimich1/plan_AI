@@ -18,6 +18,7 @@ from app.schemas.commercial import (
     CommercialGenerateFilesRequest,
     CommercialGenerateFilesResponse,
     CommercialParseRequest,
+    CommercialPileGradesUpdateRequest,
     CommercialPreviewRequest,
     CommercialSaveDraftRequest,
     CommercialSaveOfferResponse,
@@ -69,6 +70,7 @@ def parse_commercial_text(
 async def create_commercial_draft(
     text: str = Form(default=""),
     image: UploadFile | None = File(default=None),
+    product_type: str = Form(default="plates"),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
     plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
@@ -85,6 +87,7 @@ async def create_commercial_draft(
             image_filename=image_name,
             owner_user_id=int(user["id"]),
             plate_order_ctx=plate_order_ctx,
+            product_type=product_type,
         )
     except PlateParseError as exc:
         raise_parse_client_error(exc, where="create_commercial_draft")
@@ -92,6 +95,87 @@ async def create_commercial_draft(
         raise_validation_client_error(exc, where="create_commercial_draft", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="create_commercial_draft")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/piles", response_model=CommercialDraftDetailsResponse)
+async def update_commercial_draft_piles(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    mode: str = Form(default="append"),
+    text: str = Form(default=""),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.update_draft_piles(
+            draft_id,
+            mode=mode,
+            text=text,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="update_commercial_draft_piles", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="update_commercial_draft_piles")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/piles/ai", response_model=CommercialDraftDetailsResponse)
+async def apply_ai_piles_to_draft(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    instruction: str = Form(...),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    ensure_external_ocr_enabled()
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.apply_ai_piles_instruction(
+            draft_id,
+            instruction=instruction,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="apply_ai_piles_to_draft", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="apply_ai_piles_to_draft")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/piles/grades", response_model=CommercialDraftDetailsResponse)
+def update_draft_pile_grades(
+    payload: CommercialPileGradesUpdateRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = workflow.update_draft_pile_grades(
+            draft_id,
+            concrete_grade=payload.concrete_grade,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="update_draft_pile_grades", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="update_draft_pile_grades")
     return CommercialDraftDetailsResponse.model_validate(result)
 
 

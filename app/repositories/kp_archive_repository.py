@@ -18,8 +18,14 @@ class KpArchiveRepository:
         self.db_path = db_path or str(settings.plita_db_path)
         self._offers = KpOffersRepository(self.db_path)
 
-    def list_by_section(self, section: ArchiveSection, **list_filters) -> list[dict]:
-        return self._offers.list_by_section(section, **list_filters)
+    def list_by_section(
+        self,
+        section: ArchiveSection,
+        *,
+        product_type: str | None = None,
+        **list_filters,
+    ) -> list[dict]:
+        return self._offers.list_by_section(section, product_type=product_type, **list_filters)
 
     def get_by_id(self, kp_id: int) -> dict | None:
         return self._offers.get_by_id(kp_id)
@@ -29,9 +35,15 @@ class KpArchiveRepository:
         name: str,
         *,
         limit: int = 50,
+        product_type: str | None = None,
         **list_filters,
     ) -> tuple[list[dict], int]:
-        return self._offers.search_by_customer_name(name, limit=limit, **list_filters)
+        return self._offers.search_by_customer_name(
+            name,
+            limit=limit,
+            product_type=product_type,
+            **list_filters,
+        )
 
     def get_completion_percentage(self, kp_id: int) -> dict:
         return self._offers.get_completion_percentage(kp_id)

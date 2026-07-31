@@ -13,11 +13,13 @@ export type KpCandidateRowProps = {
   totalQty: number;
   selectedIds: number[];
   plateQtyById: Record<number, number>;
+  freeQtyByPlateId: Record<number, number>;
   rowEstimate: ProductionEstimate | null;
   onToggleKp: () => void;
   onToggleExpand: () => void;
   onTogglePlate: (plateId: number) => void;
   onSetPlateQty: (plateId: number, qty: number) => void;
+  onProposeCloseFromSgp: (plateId: number) => void;
 };
 
 export const KpCandidateRow = ({
@@ -29,11 +31,13 @@ export const KpCandidateRow = ({
   totalQty,
   selectedIds,
   plateQtyById,
+  freeQtyByPlateId,
   rowEstimate,
   onToggleKp,
   onToggleExpand,
   onTogglePlate,
   onSetPlateQty,
+  onProposeCloseFromSgp,
 }: KpCandidateRowProps) => {
   const checkboxRef = useRef<HTMLInputElement | null>(null);
   const totalPlates = kp.plates.length;
@@ -113,12 +117,14 @@ export const KpCandidateRow = ({
                     <th style={subThStyle}>Ширина, м</th>
                     <th style={subThStyle}>Кол-во</th>
                     <th style={subThStyle}>Нагрузка</th>
+                    <th style={subThStyle}>СГП</th>
                   </tr>
                 </thead>
                 <tbody>
                   {kp.plates.map((plate) => {
                     const plateChecked = selectedSet.has(plate.id);
                     const displayQty = plateQtyById[plate.id] ?? plate.qty;
+                    const freeQty = freeQtyByPlateId[plate.id] ?? 0;
                     return (
                       <tr key={plate.id} style={{ borderTop: "1px solid #eef2f6" }}>
                         <td style={subTdStyle}>
@@ -145,6 +151,33 @@ export const KpCandidateRow = ({
                         </td>
                         <td style={subTdStyle}>
                           {plate.load_class !== null ? plate.load_class : "—"}
+                        </td>
+                        <td style={subTdStyle}>
+                          {freeQty > 0 ? (
+                            <div style={{ display: "grid", gap: 4 }}>
+                              <span style={{ color: "#027a48", fontSize: "0.85rem" }}>
+                                на СГП есть {freeQty} свободных
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => onProposeCloseFromSgp(plate.id)}
+                                style={{
+                                  border: "1px solid #abefc6",
+                                  background: "#ecfdf3",
+                                  color: "#027a48",
+                                  borderRadius: 8,
+                                  padding: "0.25rem 0.5rem",
+                                  cursor: "pointer",
+                                  fontWeight: 600,
+                                  fontSize: "0.8rem",
+                                }}
+                              >
+                                Закрыть со склада?
+                              </button>
+                            </div>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                       </tr>
                     );

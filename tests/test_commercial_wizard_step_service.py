@@ -76,6 +76,68 @@ def test_wizard_state_legacy_wide_plates_step_maps_to_plates(wizard_service: Com
     assert state["next_required_action"] == WizardNextRequiredAction.resolve_wide_plates
 
 
+def test_wizard_state_ingest_piles_validation_errors(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {
+            "current_step": WizardStepId.piles.value,
+            "product_type": "piles",
+            "wide_plates_resolved": True,
+        },
+        "order_data": [],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["next_required_action"] == WizardNextRequiredAction.ingest_piles
+    assert state["validation_errors"] == ["Список свай пустой."]
+    assert state["can_proceed_to"] == []
+
+
+def test_wizard_state_piles_no_wide_plates_gate(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {
+            "current_step": WizardStepId.piles.value,
+            "product_type": "piles",
+            "wide_plate_lines": [{"id": "w1", "line": "X", "qty": 1}],
+            "wide_plates_resolved": False,
+        },
+        "order_data": [
+            {
+                "product_kind": "pile",
+                "mark": "С120.35-12",
+                "qty": 1,
+                "unit_price": 1.0,
+                "concrete_grade": "B25",
+            }
+        ],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.piles
+    assert state["can_proceed_to"] == [WizardStepId.client]
+    assert state["next_required_action"] == WizardNextRequiredAction.select_manager
+
+
+def test_wizard_state_piles_unpriced_blocks_proceed(wizard_service: CommercialWizardStepService) -> None:
+    payload = {
+        "metadata": {
+            "current_step": WizardStepId.piles.value,
+            "product_type": "piles",
+            "wide_plates_resolved": True,
+        },
+        "order_data": [
+            {
+                "product_kind": "pile",
+                "mark": "С120.35-99",
+                "name": "С120.35-99",
+                "qty": 2,
+                "unit_price": None,
+                "concrete_grade": "B25",
+            }
+        ],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["can_proceed_to"] == []
+    assert any("С120.35-99" in err for err in state["validation_errors"])
+
+
 def test_wizard_state_plates_can_proceed_to_client_when_ready(wizard_service: CommercialWizardStepService) -> None:
     payload = {
         "metadata": {

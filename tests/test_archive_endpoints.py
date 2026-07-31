@@ -142,7 +142,11 @@ def test_list_returns_items(
     payload = response.json()
     assert len(payload) == 1
     assert payload[0]["kp_id"] == 42
-    fake_service.list_offers.assert_called_once_with("archived", user=TESTER_USER)
+    fake_service.list_offers.assert_called_once_with(
+        "archived",
+        product_type="all",
+        user=TESTER_USER,
+    )
 
 
 def test_get_details_404(

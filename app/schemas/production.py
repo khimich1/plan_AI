@@ -120,6 +120,14 @@ class FillTargetItem(BaseModel):
 LayoutReinforcementOrder = Literal["asc", "desc"]
 
 
+class SgpReservationItem(BaseModel):
+    """Закрытие потребности со склада СГП (не уходит в оптимизатор)."""
+
+    sgp_id: int = Field(ge=1)
+    target_kp_id: int = Field(ge=1)
+    qty: int = Field(ge=1)
+
+
 class BuildPlanRequest(BaseModel):
     start_date: str
     tracks_count: int = Field(ge=1, le=50)
@@ -131,6 +139,7 @@ class BuildPlanRequest(BaseModel):
     plan_name: str | None = None
     fill_targets: list[FillTargetItem] | None = None
     layout_reinforcement_order: LayoutReinforcementOrder = "asc"
+    sgp_reservations: list[SgpReservationItem] = Field(default_factory=list)
 
     @field_validator("selected_kp_ids")
     @classmethod
@@ -226,6 +235,11 @@ class DayPlanBlock(BaseModel):
     plan_name: str
     completed: bool = False
     tracks: list[DayTrackDetail] = Field(default_factory=list)
+    from_sgp: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Позиции плана, закрытые со СГП (без дорожки).",
+    )
+    from_sgp_qty: int = 0
 
 
 class DayViewDetailResponse(BaseModel):

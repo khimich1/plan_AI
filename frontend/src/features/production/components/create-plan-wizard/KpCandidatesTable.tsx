@@ -13,10 +13,12 @@ type Props = {
   selectedPlatesByKp: Record<number, number[]>;
   selectedPlateQtyByKp: Record<number, Record<number, number>>;
   expandedKpIds: Set<number>;
+  freeQtyByPlateKey: Map<string, number>;
   onToggleKp: (kp: KpCandidateItem) => void;
   onToggleExpand: (kpId: number) => void;
   onTogglePlate: (kp: KpCandidateItem, plateId: number) => void;
   onSetPlateQty: (kp: KpCandidateItem, plateId: number, qty: number) => void;
+  onProposeCloseFromSgp: (kp: KpCandidateItem, plateId: number) => void;
 };
 
 export const KpCandidatesTable = ({
@@ -27,10 +29,12 @@ export const KpCandidatesTable = ({
   selectedPlatesByKp,
   selectedPlateQtyByKp,
   expandedKpIds,
+  freeQtyByPlateKey,
   onToggleKp,
   onToggleExpand,
   onTogglePlate,
   onSetPlateQty,
+  onProposeCloseFromSgp,
 }: Props) => (
   <div style={{ border: "1px solid #e4e7ec", borderRadius: 14, overflow: "hidden" }}>
     {loading && (
@@ -100,6 +104,11 @@ export const KpCandidatesTable = ({
               hasPartialQty;
             const isExpanded = expandedKpIds.has(kp.kp_id);
             const rowEstimate = estimateByKpId.get(kp.kp_id) ?? null;
+            const freeQtyByPlateId: Record<number, number> = {};
+            for (const plate of kp.plates) {
+              freeQtyByPlateId[plate.id] =
+                freeQtyByPlateKey.get(`${kp.kp_id}:${plate.id}`) ?? 0;
+            }
             return (
               <KpCandidateRow
                 key={kp.kp_id}
@@ -111,11 +120,15 @@ export const KpCandidatesTable = ({
                 totalQty={totalQty}
                 selectedIds={selectedIds}
                 plateQtyById={qtyByPlate}
+                freeQtyByPlateId={freeQtyByPlateId}
                 rowEstimate={rowEstimate}
                 onToggleKp={() => onToggleKp(kp)}
                 onToggleExpand={() => onToggleExpand(kp.kp_id)}
                 onTogglePlate={(plateId) => onTogglePlate(kp, plateId)}
                 onSetPlateQty={(plateId, qty) => onSetPlateQty(kp, plateId, qty)}
+                onProposeCloseFromSgp={(plateId) =>
+                  onProposeCloseFromSgp(kp, plateId)
+                }
               />
             );
           })}

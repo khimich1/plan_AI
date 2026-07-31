@@ -41,6 +41,9 @@ export const CreatePlanWizard = ({
         selectedPlatesByKp={wizard.selectedPlatesByKp}
         selectedPlateQtyByKp={wizard.selectedPlateQtyByKp}
         expandedKpIds={wizard.expandedKpIds}
+        freeQtyByPlateKey={wizard.freeQtyByPlateKey}
+        sgpReservationsCount={wizard.sgpReservations.length}
+        pendingClose={wizard.pendingClose}
         buildPending={wizard.buildMutation.isPending}
         buildSuccess={wizard.buildMutation.isSuccess}
         buildErrorMessage={wizard.buildErrorMessage}
@@ -50,6 +53,12 @@ export const CreatePlanWizard = ({
         onToggleExpand={wizard.toggleExpand}
         onTogglePlate={wizard.togglePlate}
         onSetPlateQty={wizard.setPlateQty}
+        onProposeCloseFromSgp={(kp, plateId) => {
+          const plate = kp.plates.find((p) => p.id === plateId);
+          if (plate) wizard.proposeCloseFromSgp(kp, plate);
+        }}
+        onConfirmCloseFromSgp={wizard.confirmCloseFromSgp}
+        onCancelCloseFromSgp={wizard.cancelCloseFromSgp}
         onCancelFill={wizard.handleCancelFill}
         onSubmit={wizard.handleSubmit}
       />
