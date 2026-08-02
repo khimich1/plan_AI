@@ -356,10 +356,123 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_completed_plan_id ON completed_plates(plan_id)"
         )
-        
+
+        _init_shipment_logistics_schema(cur)
+
         conn.commit()
     finally:
         conn.close()
+
+
+def _init_shipment_logistics_schema(cur: sqlite3.Cursor) -> None:
+    """Таблицы раздела «Логистика» (SHIP-000): рейсы, состав, справочники.
+
+    ``shipment_orders.kp_id`` — NULLABLE + ON DELETE SET NULL: рейс переживает
+    удаление КП (план P-H). ``shipment_items.completed_plate_id``/``kp_id`` —
+    snapshot-ссылки: списанные плиты остаются в completed_plates с qty=0,
+    поэтому done-рейс всегда можно показать.
+    """
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS shipments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shipment_date TEXT NOT NULL,
+            delivery_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'in_work',
+            attention INTEGER NOT NULL DEFAULT 0,
+            attention_comment TEXT,
+            carrier_id INTEGER REFERENCES carriers(id),
+            driver_name TEXT,
+            vehicle_text TEXT,
+            vehicle_class TEXT,
+            proxy_no TEXT,
+            upd_no TEXT,
+            freight_request_no TEXT,
+            planned_cost REAL,
+            time_slot TEXT,
+            propose_snapshot TEXT,
+            completed_at TEXT,
+            actor TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS shipment_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+            kp_id INTEGER REFERENCES KP_offers(kp_id) ON DELETE SET NULL,
+            ya_order_no TEXT,
+            UNIQUE (shipment_id, kp_id)
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS shipment_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+            item_type TEXT NOT NULL,
+            completed_plate_id INTEGER REFERENCES completed_plates(id),
+            kp_id INTEGER,
+            mark TEXT,
+            qty INTEGER NOT NULL,
+            unit_weight_kg REAL,
+            weight_kg REAL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            note TEXT
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS carriers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            name_normalized TEXT NOT NULL,
+            source_sheet TEXT,
+            note TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            merged_into_id INTEGER REFERENCES carriers(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS pile_catalog (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mark TEXT NOT NULL UNIQUE,
+            length_m REAL,
+            section_mm INTEGER,
+            volume_m3 REAL,
+            weight_kg REAL NOT NULL,
+            pcs_per_20t INTEGER
+        )
+    ''')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_shipments_date ON shipments(shipment_date)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_shipments_carrier ON shipments(carrier_id)')
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_shipment_orders_shipment ON shipment_orders(shipment_id)'
+    )
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_shipment_orders_kp ON shipment_orders(kp_id)')
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_shipment_items_shipment ON shipment_items(shipment_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_shipment_items_cp ON shipment_items(completed_plate_id)'
+    )
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_carriers_active ON carriers(active)')
+    # Один активный перевозчик на нормализованное имя; слитые дубли слот освобождают.
+    cur.execute(
+        '''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_carriers_name_normalized_active
+        ON carriers(name_normalized) WHERE merged_into_id IS NULL
+        '''
+    )
+
+    cur.execute("PRAGMA table_info(plate_status_log)")
+    log_columns = {row[1] for row in cur.fetchall()}
+    if "shipment_id" not in log_columns:
+        print("[DB] Миграция: добавляем колонку shipment_id в plate_status_log...")
+        cur.execute("ALTER TABLE plate_status_log ADD COLUMN shipment_id INTEGER")
+        print("[DB] ✅ Колонка shipment_id добавлена в plate_status_log")
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_status_log_shipment ON plate_status_log(shipment_id)'
+    )
 
 
 def _migrate_completed_plates_for_sgp(cur: sqlite3.Cursor) -> None:

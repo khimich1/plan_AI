@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink, useHref, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, useHref, useLocation, useNavigate } from "react-router";
 import { useCommercialDraftHeaderBridge } from "@/pages/commercial-offer-create/CommercialOfferHeaderBridge";
 import { useAuth } from "@/features/auth/model/AuthProvider";
 import { Modal } from "@/shared/ui/Modal";
@@ -9,6 +9,7 @@ import { DbManagementModal } from "@/features/admin/components/DbManagementModal
 const NEW_OFFER_PATH = "/new";
 const ARCHIVE_PATH = "/archive";
 const PRODUCTION_PATH = "/production";
+const LOGISTICS_PATH = "/logistics";
 
 export const AppHeader = () => {
   const { hasDraft, resetDraft } = useCommercialDraftHeaderBridge();
@@ -21,6 +22,10 @@ export const AppHeader = () => {
   const isAdmin = user?.role === "admin";
   const isProduction = user?.role === "production";
   const isManager = user?.role === "manager";
+  const isLogistics = user?.role === "logistics";
+  const canSeeCommercial = isAdmin || isManager;
+  const canSeeProduction = isAdmin || isProduction;
+  const canSeeLogistics = isAdmin || isLogistics;
 
   const onLogoutClick = async () => {
     try {
@@ -67,7 +72,7 @@ export const AppHeader = () => {
           </div>
         </div>
         <nav className="app-nav">
-          {!isProduction && (
+          {canSeeCommercial && (
             <>
               <a
                 href={newOfferHref}
@@ -88,7 +93,7 @@ export const AppHeader = () => {
               </NavLink>
             </>
           )}
-          {!isManager && (
+          {canSeeProduction && (
             <NavLink
               to={PRODUCTION_PATH}
               className={({ isActive }) =>
@@ -96,6 +101,16 @@ export const AppHeader = () => {
               }
             >
               Производство
+            </NavLink>
+          )}
+          {canSeeLogistics && (
+            <NavLink
+              to={LOGISTICS_PATH}
+              className={({ isActive }) =>
+                isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
+              }
+            >
+              Логистика
             </NavLink>
           )}
           {isAdmin && (

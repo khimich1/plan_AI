@@ -26,6 +26,8 @@ from app.services.offers_service import OffersService
 from app.services.production_planning_service import ProductionPlanningService
 from app.services.production_service import ProductionService
 from app.services.sgp_service import SgpService
+from app.services.carrier_service import CarrierService
+from app.services.shipment_service import ShipmentService
 
 
 def get_production_planning_service() -> ProductionPlanningService:
@@ -44,6 +46,21 @@ def get_sgp_service() -> SgpService:
     from app.repositories.kp_repository import KpRepository
 
     return SgpService(db_path=KpRepository().db_path)
+
+
+def get_shipment_service() -> ShipmentService:
+    from app.repositories.kp_repository import KpRepository
+    from app.repositories.shipment_repository import ShipmentRepository
+
+    db_path = KpRepository().db_path
+    repo = ShipmentRepository(db_path=db_path)
+    return ShipmentService(db_path=db_path, repo=repo)
+
+
+def get_carrier_service() -> CarrierService:
+    from app.repositories.kp_repository import KpRepository
+
+    return CarrierService(db_path=KpRepository().db_path)
 
 
 def get_commercial_service() -> CommercialService:

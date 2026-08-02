@@ -1,4 +1,4 @@
-import { Outlet } from "react-router-dom";
+import { Outlet } from "react-router";
 import { AppHeader } from "@/app/layout/AppHeader";
 import { CommercialOfferHeaderBridgeProvider } from "@/pages/commercial-offer-create/CommercialOfferHeaderBridge";
 
