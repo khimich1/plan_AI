@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { CommercialOfferWizard } from "@/features/commercial-offer/components/CommercialOfferWizard";
 import { ProductTypePicker } from "@/features/commercial-offer/components/ProductTypePicker";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";

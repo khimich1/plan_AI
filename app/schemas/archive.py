@@ -37,6 +37,10 @@ class ArchiveOfferListItem(BaseModel):
         default=None,
         description="Бейдж N/M на СГП: {n, m}.",
     )
+    shipped_progress: dict[str, int] | None = Field(
+        default=None,
+        description="Бейдж отгрузки: {x, m}, x = отгружено плит по done-рейсам, m = ordered_qty.",
+    )
     product_type: ProductType = "plates"
 
 

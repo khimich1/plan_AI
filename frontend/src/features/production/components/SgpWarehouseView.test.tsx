@@ -47,6 +47,95 @@ function mockPlates(items: SgpPlateItem[]) {
   });
 }
 
+function expandGroup(label: string) {
+  fireEvent.click(screen.getByRole("button", { name: `Развернуть ${label}` }));
+}
+
+function clickUnlinkForPlate(plateName: string) {
+  const plateRow = screen.getByText(plateName).closest("tr");
+  expect(plateRow).not.toBeNull();
+  fireEvent.click(within(plateRow!).getByRole("button", { name: "Отвязать" }));
+}
+
+describe("SgpWarehouseView grouping", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("renders collapsed groups with summary in header", () => {
+    mockPlates([
+      makePlate({ id: 1, plate_name: "Плита A", qty: 2 }),
+      makePlate({ id: 2, plate_name: "Плита B", qty: 3 }),
+      makePlate({ id: 3, kp_id: 2, customer_name: "Другой", qty: 1 }),
+    ]);
+
+    render(<SgpWarehouseView />);
+
+    expect(screen.getByText("#1")).toBeInTheDocument();
+    expect(screen.getByText("#2")).toBeInTheDocument();
+    expect(screen.queryByText("Плита A")).not.toBeInTheDocument();
+
+    const kp1Row = screen.getByText("#1").closest("tr");
+    expect(kp1Row).not.toBeNull();
+    expect(within(kp1Row!).getByText("2")).toBeInTheDocument();
+    expect(within(kp1Row!).getByText("5")).toBeInTheDocument();
+    expect(within(kp1Row!).getByText("1/10")).toBeInTheDocument();
+  });
+
+  it("expands and collapses a group via chevron", () => {
+    mockPlates([makePlate({ id: 1, plate_name: "Плита A" })]);
+
+    render(<SgpWarehouseView />);
+
+    expandGroup("#1");
+    expect(screen.getByText("Плита A")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Свернуть #1" }));
+    expect(screen.queryByText("Плита A")).not.toBeInTheDocument();
+  });
+
+  it("shows unlinked pseudo-group first", () => {
+    mockPlates([
+      makePlate({ id: 1, kp_id: 5 }),
+      makePlate({
+        id: 2,
+        kp_id: null,
+        plate_name: "Свободная",
+        sgp_progress: null,
+      }),
+    ]);
+
+    render(<SgpWarehouseView />);
+
+    const tbody = screen.getAllByRole("rowgroup")[1];
+    const headerRows = within(tbody).getAllByRole("row");
+    expect(within(headerRows[0]).getByText("Без КП")).toBeInTheDocument();
+    expect(within(headerRows[1]).getByText("#5")).toBeInTheDocument();
+  });
+
+  it("expands all groups with Развернуть все", () => {
+    mockPlates([
+      makePlate({ id: 1, plate_name: "Плита A" }),
+      makePlate({
+        id: 2,
+        kp_id: null,
+        plate_name: "Свободная",
+        sgp_progress: null,
+      }),
+    ]);
+
+    render(<SgpWarehouseView />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
+    expect(screen.getByText("Плита A")).toBeInTheDocument();
+    expect(screen.getByText("Свободная")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Свернуть все" }));
+    expect(screen.queryByText("Плита A")).not.toBeInTheDocument();
+  });
+});
+
 describe("SgpWarehouseView unlink/relink UX", () => {
   let scrollIntoViewMock: ReturnType<typeof vi.fn>;
 
@@ -84,26 +173,21 @@ describe("SgpWarehouseView unlink/relink UX", () => {
     ]);
 
     render(<SgpWarehouseView />);
+    expandGroup("#1");
 
-    const rows = screen.getAllByRole("row");
-    const firstDataRow = rows[1];
-    fireEvent.click(within(firstDataRow).getByRole("button", { name: "Отвязать" }));
+    clickUnlinkForPlate("Плита A");
 
     expect(screen.getByText("Отвязать 1 шт от КП #1?")).toBeInTheDocument();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-
-    const tbody = screen.getAllByRole("rowgroup")[1];
-    const tbodyRows = within(tbody).getAllByRole("row");
-    expect(tbodyRows).toHaveLength(3);
-    expect(within(tbodyRows[1]).getByText("Отвязать 1 шт от КП #1?")).toBeInTheDocument();
-    expect(within(tbodyRows[2]).getByText("Плита B")).toBeInTheDocument();
+    expect(screen.getByText("Плита B")).toBeInTheDocument();
   });
 
   it("shows quantity input for multi-qty unlink inline under the row", () => {
     mockPlates([makePlate({ id: 10, qty: 4, plate_name: "Плита bulk" })]);
 
     render(<SgpWarehouseView />);
-    fireEvent.click(screen.getByRole("button", { name: "Отвязать" }));
+    expandGroup("#1");
+    clickUnlinkForPlate("Плита bulk");
 
     expect(screen.getByText("Отвязать от КП #1: Плита bulk")).toBeInTheDocument();
     expect(screen.getByRole("spinbutton")).toBeInTheDocument();
@@ -114,8 +198,9 @@ describe("SgpWarehouseView unlink/relink UX", () => {
     mockPlates([makePlate({ id: 1, qty: 1 })]);
 
     render(<SgpWarehouseView />);
+    expandGroup("#1");
 
-    fireEvent.click(screen.getByRole("button", { name: "Отвязать" }));
+    clickUnlinkForPlate("Плиты ПБ 45-12-6п");
     expect(screen.getByText("Отвязать 1 шт от КП #1?")).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Отмена" })[0]);
@@ -126,8 +211,9 @@ describe("SgpWarehouseView unlink/relink UX", () => {
     mockPlates([makePlate({ id: 7, qty: 1 })]);
 
     render(<SgpWarehouseView />);
+    expandGroup("#1");
 
-    fireEvent.click(screen.getByRole("button", { name: "Отвязать" }));
+    clickUnlinkForPlate("Плиты ПБ 45-12-6п");
     fireEvent.click(screen.getByRole("button", { name: "Да, отвязать" }));
 
     expect(mockUnlinkMutateAsync).toHaveBeenCalledWith({ sgpId: 7, qty: 1 });
@@ -138,7 +224,8 @@ describe("SgpWarehouseView unlink/relink UX", () => {
     mockPlates([makePlate({ id: 1, qty: 1 })]);
 
     render(<SgpWarehouseView />);
-    fireEvent.click(screen.getByRole("button", { name: "Отвязать" }));
+    expandGroup("#1");
+    clickUnlinkForPlate("Плиты ПБ 45-12-6п");
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
   });
@@ -154,6 +241,7 @@ describe("SgpWarehouseView unlink/relink UX", () => {
     ]);
 
     render(<SgpWarehouseView />);
+    expandGroup("Без КП");
     fireEvent.click(screen.getByRole("button", { name: "Перепривязать" }));
 
     const dialog = screen.getByRole("dialog");
@@ -175,10 +263,12 @@ describe("SgpWarehouseView unlink/relink UX", () => {
     ]);
 
     render(<SgpWarehouseView />);
+    expandGroup("#1");
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Отвязать" })[0]);
+    clickUnlinkForPlate("Linked");
     expect(screen.getByText("Отвязать 1 шт от КП #1?")).toBeInTheDocument();
 
+    expandGroup("Без КП");
     fireEvent.click(screen.getByRole("button", { name: "Перепривязать" }));
     expect(screen.queryByText("Отвязать 1 шт от КП #1?")).not.toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();

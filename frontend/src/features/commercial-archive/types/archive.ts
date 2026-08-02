@@ -16,6 +16,8 @@ export type ArchiveOfferListItem = {
   status: string | null;
   completion_percentage: number | null;
   sgp_progress?: { n: number; m: number } | null;
+  /** Отгружено рейсами «обработано»: x из m (m = ordered_qty КП). */
+  shipped_progress?: { x: number; m: number } | null;
   product_type?: ProductType;
 };
 
@@ -129,6 +131,9 @@ export type ArchiveSearchResponse = {
   total: number;
   truncated: boolean;
 };
+
+/** Ответ /archive/search для admin/manager. */
+export type ArchiveSearchApiResponse = ArchiveSearchResponse;
 
 export type ProductionEstimate = {
   total_length_m: number;

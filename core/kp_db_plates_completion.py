@@ -7,7 +7,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Dict, List, Optional
 
-from app.domain.enums import KpStatus
+from core.domain.enums import KpStatus
 from core.kp_db_common import DEFAULT_DB, _connect
 
 

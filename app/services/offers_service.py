@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime
 from typing import Any
 
 from app.repositories.kp_repository import KpRepository
@@ -14,10 +16,12 @@ from core.execution_terms import parse_execution_terms
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 
+logger = logging.getLogger(__name__)
+
 
 class OffersService:
-    def __init__(self) -> None:
-        self.kp_repository = KpRepository()
+    def __init__(self, kp_repository: KpRepository | None = None) -> None:
+        self.kp_repository = kp_repository or KpRepository()
 
     def list_offers(
         self,
@@ -107,23 +111,13 @@ class OffersService:
         if item.get("status") != "в архиве":
             raise ValueError("invalid_status")
         execution_terms, used_default = self._parse_execution_terms(execution_terms_input)
-        if not self.kp_repository.update_offer_execution_date(kp_id, execution_terms):
-            raise ValueError("update_execution_date_failed")
-        if not self.kp_repository.update_offer_status(kp_id, "в работе"):
-            raise ValueError("update_status_failed")
-        # SGP-105: freeze ordered_qty (M) once at first move to production
         try:
-            from core.kp_db_plates_completion import freeze_ordered_qty_if_needed
-            from core.kp_db_common import _connect
+            from core.kp.offers_write import commit_move_to_production
 
-            conn = _connect(self.kp_repository.db_path)
-            try:
-                freeze_ordered_qty_if_needed(conn.cursor(), kp_id)
-                conn.commit()
-            finally:
-                conn.close()
-        except Exception:
-            pass
+            commit_move_to_production(kp_id, execution_terms, self.kp_repository.db_path)
+        except Exception as exc:
+            logger.exception("move_to_production failed for kp_id=%s", kp_id)
+            raise ValueError("move_to_production_failed") from exc
         updated = self.kp_repository.get_offer(kp_id)
         if not updated:
             raise ValueError("not_found")

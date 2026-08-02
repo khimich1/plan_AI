@@ -125,6 +125,11 @@ export const ArchiveOfferList = ({
                   {item.sgp_progress.n}/{item.sgp_progress.m} на СГП
                 </span>
               )}
+              {item.shipped_progress && item.shipped_progress.x > 0 && (
+                <span>
+                  отгружено {item.shipped_progress.x}/{item.shipped_progress.m}
+                </span>
+              )}
               {percentBadge && <span>Готовность: {percentBadge}</span>}
               {trailing && <span>{trailing}</span>}
             </div>

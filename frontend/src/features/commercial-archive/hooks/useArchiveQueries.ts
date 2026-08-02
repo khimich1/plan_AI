@@ -5,7 +5,7 @@ import type {
   ArchiveOfferDetails,
   ArchiveOfferListItem,
   ArchiveProductTypeFilter,
-  ArchiveSearchResponse,
+  ArchiveSearchApiResponse,
   ArchiveSearchState,
   ArchiveSection,
   KpReadinessPositionsResponse,
@@ -58,7 +58,7 @@ export const useKpReadinessPositionsQuery = (
   });
 
 export const useArchiveSearchQuery = (searchState: ArchiveSearchState) =>
-  useQuery<ArchiveSearchResponse>({
+  useQuery<ArchiveSearchApiResponse>({
     queryKey: archiveKeys.search(searchState),
     queryFn: () => {
       if (searchState?.kind === "number") {

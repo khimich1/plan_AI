@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { Alert } from "@/shared/ui/Alert";
 import { ProductionTabs } from "@/features/production/components/ProductionTabs";
 import { GlobalCalendarView } from "@/features/production/components/GlobalCalendarView";

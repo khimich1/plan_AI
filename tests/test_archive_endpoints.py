@@ -313,6 +313,24 @@ def test_move_to_production_validation_error(
     assert response.status_code == 400
 
 
+def test_move_to_production_archive_error_returns_500(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveError
+
+    fake_service.move_to_production.side_effect = ArchiveError("tx failed")
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/move-to-production",
+        json={"execution_terms": "01.04.2026"},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 500
+
+
 def _fake_list_item(kp_id: int = 42, customer_name: str = "ООО Тест") -> ArchiveOfferListItem:
     return ArchiveOfferListItem(
         kp_id=kp_id,

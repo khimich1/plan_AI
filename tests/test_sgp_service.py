@@ -175,3 +175,43 @@ def test_sgp_progress_n_m(db: str) -> None:
     progress2 = svc.sgp_progress(1)
     assert progress2.n == 8
     assert progress2.m == 10
+
+
+def test_sgp_progress_read_does_not_persist_ordered_qty(db: str) -> None:
+    """Read-path must not freeze/UPDATE ordered_qty (audit Q4/A9)."""
+    fx.seed_kp_offer(db, 1, customer_name="КлиентА")
+    fx.seed_plate(
+        db,
+        kp_id=1,
+        plate_name=PLATE,
+        length_m=6.0,
+        width_m=1.2,
+        qty=4,
+        status="в производстве",
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            INSERT INTO completed_plates (
+                kp_id, plate_name, length_m, width_m, load_class,
+                qty, completed_date, production_day, plan_id
+            ) VALUES (1, ?, 6.0, 1.2, 800, 2, '27.07.2026', 1, 'plan-1')
+            """,
+            (PLATE,),
+        )
+        conn.commit()
+        before = conn.execute(
+            "SELECT ordered_qty FROM kp_meta WHERE kp_id = 1"
+        ).fetchone()[0]
+
+    assert before is None
+    svc = SgpService(db_path=db)
+    progress = svc.sgp_progress(1)
+    assert progress.n == 2
+    assert progress.m == 6  # ephemeral: remaining 4 + on_sgp 2
+
+    with sqlite3.connect(db) as conn:
+        after = conn.execute(
+            "SELECT ordered_qty FROM kp_meta WHERE kp_id = 1"
+        ).fetchone()[0]
+    assert after is None

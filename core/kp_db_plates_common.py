@@ -7,7 +7,7 @@ from __future__ import annotations
 import sqlite3
 from typing import List, Optional
 
-from app.domain.enums import PlateStatus, PlateTransitionReason
+from core.domain.enums import PlateStatus, PlateTransitionReason
 from core.kp_db_audit import audit_append
 from core.kp_db_common import DEFAULT_DB, _connect
 

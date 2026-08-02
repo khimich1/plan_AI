@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import traceback
 from typing import Dict, List, Optional
 
@@ -252,7 +253,13 @@ def update_kp_logistics_cost(kp_id: int, logistics_cost: float, db_path: str = D
         conn.close()
 
 
-def update_kp_status(kp_id: int, new_status: str, db_path: str = DEFAULT_DB) -> bool:
+def update_kp_status(
+    kp_id: int,
+    new_status: str,
+    db_path: str = DEFAULT_DB,
+    *,
+    _external_conn: Optional[sqlite3.Connection] = None,
+) -> bool:
     """
     Обновляет статус КП.
 
@@ -262,13 +269,20 @@ def update_kp_status(kp_id: int, new_status: str, db_path: str = DEFAULT_DB) -> 
     Аргументы:
         kp_id: порядковый номер КП
         new_status: новый статус ("выполнено", "отклонено", "в работе", "в ожидании")
+        _external_conn: если задано — работает в транзакции переданного соединения
+            (без commit/rollback/close)
 
     Возвращает:
         True если успешно, False если КП не найдено
     """
-    conn = _connect(db_path)
+    own_conn = _external_conn is None
+    if own_conn:
+        conn = _connect(db_path)
+    else:
+        conn = _external_conn
     try:
-        conn.execute("PRAGMA foreign_keys = ON")
+        if own_conn:
+            conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.cursor()
         cur.execute(
             """
@@ -279,11 +293,13 @@ def update_kp_status(kp_id: int, new_status: str, db_path: str = DEFAULT_DB) -> 
             (new_status, kp_id),
         )
 
-        conn.commit()
+        if own_conn:
+            conn.commit()
         return cur.rowcount > 0
 
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def save_xlsx_file(kp_id: int, xlsx_file_path: str, db_path: str = DEFAULT_DB) -> bool:
@@ -539,7 +555,45 @@ def clear_all_kp(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         conn.close()
 
 
-def update_kp_execution_date(kp_id: int, new_date: str, db_path: str = DEFAULT_DB) -> bool:
+def commit_move_to_production(
+    kp_id: int,
+    execution_terms: str,
+    db_path: str = DEFAULT_DB,
+) -> int:
+    """Atomically set execution terms, status «в работе», and freeze ordered_qty (M).
+
+    Returns frozen ``ordered_qty``. Raises on any step failure after ROLLBACK.
+    """
+    from core.kp_db_plates_completion import freeze_ordered_qty_if_needed
+
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        if not update_kp_execution_date(
+            kp_id, execution_terms, db_path, _external_conn=conn
+        ):
+            raise ValueError("update_execution_date_failed")
+        if not update_kp_status(kp_id, "в работе", db_path, _external_conn=conn):
+            raise ValueError("update_status_failed")
+        ordered = freeze_ordered_qty_if_needed(conn.cursor(), kp_id)
+        if ordered is None:
+            raise ValueError("freeze_ordered_qty_failed")
+        conn.commit()
+        return int(ordered)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def update_kp_execution_date(
+    kp_id: int,
+    new_date: str,
+    db_path: str = DEFAULT_DB,
+    *,
+    _external_conn: Optional[sqlite3.Connection] = None,
+) -> bool:
     """
     Обновляет дату выполнения для КП.
 
@@ -547,11 +601,17 @@ def update_kp_execution_date(kp_id: int, new_date: str, db_path: str = DEFAULT_D
         kp_id: номер КП
         new_date: новая дата в формате "DD.MM.YYYY"
         db_path: путь к базе данных
+        _external_conn: если задано — работает в транзакции переданного соединения
+            (без commit/rollback/close)
 
     Returns:
         True при успехе, False при ошибке
     """
-    conn = _connect(db_path)
+    own_conn = _external_conn is None
+    if own_conn:
+        conn = _connect(db_path)
+    else:
+        conn = _external_conn
 
     try:
         cur = conn.cursor()
@@ -565,13 +625,16 @@ def update_kp_execution_date(kp_id: int, new_date: str, db_path: str = DEFAULT_D
             (new_date, kp_id),
         )
 
-        conn.commit()
+        if own_conn:
+            conn.commit()
 
         return cur.rowcount > 0
 
     except Exception:
-        conn.rollback()
+        if own_conn:
+            conn.rollback()
         return False
 
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()

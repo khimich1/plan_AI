@@ -4,7 +4,7 @@ import type {
   ArchiveOfferDetails,
   ArchiveOfferListItem,
   ArchiveProductTypeFilter,
-  ArchiveSearchResponse,
+  ArchiveSearchApiResponse,
   ArchiveSection,
   KpReadinessPositionsResponse,
   ProductionEstimate,
@@ -33,7 +33,7 @@ export const archiveApi = {
     } else if (customer !== undefined) {
       params.set("customer", customer);
     }
-    return httpClient.get<ArchiveSearchResponse>(`${BASE}/search?${params.toString()}`);
+    return httpClient.get<ArchiveSearchApiResponse>(`${BASE}/search?${params.toString()}`);
   },
 
   updateDiscount: (kpId: number, discount: number) =>

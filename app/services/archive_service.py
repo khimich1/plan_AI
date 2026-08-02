@@ -38,6 +38,7 @@ from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
 from core.kp_order_data import order_data_from_kp_info
+from core.gantt_excel import create_gantt_excel
 
 
 logger = logging.getLogger(__name__)
@@ -123,23 +124,22 @@ class ArchiveService:
         if kp_id is not None:
             raw = self.repository.get_by_id(kp_id)
             if not raw:
-                items = []
+                rows: list[dict] = []
             else:
                 assert_offer_read_access(user, raw)
-                items = [self._to_list_item(raw)]
+                rows = [raw]
             return ArchiveSearchResponse(
                 mode="number",
-                items=items,
-                total=len(items),
+                items=[self._to_list_item(r) for r in rows],
+                total=len(rows),
                 truncated=False,
             )
 
         name = (customer or "").strip()
         rows, total = self.repository.search_by_customer_name(name, limit=50, **list_filters)
-        items = [self._to_list_item(raw) for raw in rows]
         return ArchiveSearchResponse(
             mode="customer",
-            items=items,
+            items=[self._to_list_item(raw) for raw in rows],
             total=total,
             truncated=total > 50,
         )
@@ -191,23 +191,15 @@ class ArchiveService:
             )
 
         execution_terms = self._parse_execution_terms(terms_input)
-        if not self.repository.update_execution_date(kp_id, execution_terms):
-            raise ArchiveError(f"Не удалось сохранить срок для КП №{kp_id}")
-        if not self.repository.update_status(kp_id, "в работе"):
-            raise ArchiveError(f"Не удалось изменить статус для КП №{kp_id}")
-
         try:
-            from core.kp_db_plates_completion import freeze_ordered_qty_if_needed
-            from core.kp_db_common import _connect
+            from core.kp.offers_write import commit_move_to_production
 
-            conn = _connect(self.repository.db_path)
-            try:
-                freeze_ordered_qty_if_needed(conn.cursor(), kp_id)
-                conn.commit()
-            finally:
-                conn.close()
-        except Exception:
-            pass
+            commit_move_to_production(kp_id, execution_terms, self.repository.db_path)
+        except Exception as exc:
+            logger.exception("move_to_production failed for kp_id=%s", kp_id)
+            raise ArchiveError(
+                f"Не удалось перевести КП №{kp_id} в производство"
+            ) from exc
 
         return self.get_details(kp_id, user=user)
 
@@ -372,6 +364,7 @@ class ArchiveService:
         status = raw.get("status") or None
         completion = None
         sgp_progress = None
+        shipped_progress = None
         if status in ("в работе", "выполнено", "На СГП"):
             try:
                 completion = float(
@@ -387,6 +380,11 @@ class ArchiveService:
                 sgp_progress = {"n": progress.n, "m": progress.m}
             except Exception:
                 logger.exception("Ошибка получения sgp_progress для КП %s", kp_id)
+            try:
+                shipped_progress = self._shipped_progress(kp_id)
+            except Exception:
+                logger.exception("Ошибка получения shipped_progress для КП %s", kp_id)
+                shipped_progress = None
         return ArchiveOfferListItem(
             kp_id=kp_id,
             creation_date=raw.get("creation_date"),
@@ -400,8 +398,29 @@ class ArchiveService:
             status=status,
             completion_percentage=completion,
             sgp_progress=sgp_progress,
+            shipped_progress=shipped_progress,
             product_type=str(raw.get("product_type") or "plates"),
         )
+
+    def _shipped_progress(self, kp_id: int) -> dict[str, int] | None:
+        """SHIP-301: x = Σ плит в done-рейсах КП, m = kp_meta.ordered_qty (read-only)."""
+        from core.kp_db_common import _connect
+        from core.kp_db_shipments import shipped_qty_for_kp
+
+        conn = _connect(self.repository.db_path)
+        try:
+            cur = conn.cursor()
+            x = shipped_qty_for_kp(cur, kp_id)
+            cur.execute(
+                "SELECT ordered_qty FROM kp_meta WHERE kp_id = ?",
+                (kp_id,),
+            )
+            row = cur.fetchone()
+            if row is None or row[0] is None:
+                return None
+            return {"x": x, "m": int(row[0])}
+        finally:
+            conn.close()
 
     def _to_details(self, raw: dict) -> ArchiveOfferDetails:
         plates = [self._plate_item(p) for p in (raw.get("plates") or [])]

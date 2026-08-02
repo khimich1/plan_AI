@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { Card } from "@/shared/ui/Card";
 import { Alert } from "@/shared/ui/Alert";
 import { Spinner } from "@/shared/ui/Spinner";
@@ -148,7 +148,11 @@ export const CommercialOfferArchivePage = () => {
                 )}
                 <ArchiveOfferList
                   section={section}
-                  items={filterByProductType(searchQuery.data.items, productTypeFilter)}
+                  items={filterByProductType(
+                    // Archive page: admin/manager only — full commercial items.
+                    searchQuery.data.items as ArchiveOfferListItem[],
+                    productTypeFilter,
+                  )}
                   onSelect={(kpId) => setSelectedKpId(kpId)}
                   sectionForItem={sectionFromStatus}
                 />

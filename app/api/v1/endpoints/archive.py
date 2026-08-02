@@ -13,6 +13,7 @@ from app.core.http_errors import (
     MSG_VALIDATION,
     raise_bad_request_client_error,
     raise_not_found_client_error,
+    raise_unexpected_server_error,
 )
 from app.schemas.archive import (
     ArchiveFileKind,
@@ -27,6 +28,7 @@ from app.schemas.archive import (
     UpdateLogisticsCostRequest,
 )
 from app.services.archive_service import (
+    ArchiveError,
     ArchiveNotFoundError,
     ArchiveService,
     ArchiveValidationError,
@@ -49,7 +51,10 @@ def list_archive_offers(
     return service.list_offers(section, product_type=product_type, user=user)
 
 
-@router.get("/search", response_model=ArchiveSearchResponse)
+@router.get(
+    "/search",
+    response_model=ArchiveSearchResponse,
+)
 def search_archive_offers(
     kp_id: int | None = Query(default=None, ge=1, description="Номер КП"),
     customer: str | None = Query(default=None, max_length=128, description="Имя заказчика"),
@@ -259,6 +264,8 @@ def move_archive_offer_to_production(
             where="archive.download_archive_document",
             detail=MSG_VALIDATION,
         )
+    except ArchiveError as exc:
+        raise_unexpected_server_error(exc, where="archive.move_to_production")
 
 
 @router.get("/{kp_id}/production-estimate")

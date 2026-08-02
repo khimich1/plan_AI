@@ -21,9 +21,12 @@ from core.kp_db_audit import audit_append
 from core.kp_db_common import _connect
 from core.kp_db_plates_completion import (
     check_and_update_kp_completion,
-    freeze_ordered_qty_if_needed,
 )
 from core.kp_db_schema import ensure_schema
+from core.kp_db_shipments import (
+    allocated_qty_for_completed_plate,
+    open_reservation_for_completed_plate,
+)
 
 FilterKind = Literal["all", "linked", "unlinked"]
 
@@ -34,6 +37,27 @@ class SgpError(ValueError):
     def __init__(self, message: str, *, code: str = "sgp_error") -> None:
         super().__init__(message)
         self.code = code
+
+
+def _assert_not_allocated(cur: sqlite3.Cursor, sgp_id: int, row_qty: int, qty: int) -> None:
+    """SHIP-205: unlink/relink оперируют только свободной частью строки СГП.
+
+    Часть, зарезервированная open-рейсом, недоступна → 422 ``sgp_row_allocated``.
+    """
+    allocated = allocated_qty_for_completed_plate(cur, sgp_id)
+    if allocated <= 0 or qty <= row_qty - allocated:
+        return
+    reservation = open_reservation_for_completed_plate(cur, sgp_id)
+    if reservation:
+        shipment_id, shipment_date, _reserved = reservation
+        where = f"рейсом #{shipment_id} от {shipment_date}"
+    else:
+        where = "открытым рейсом"
+    raise SgpError(
+        f"Плита зарезервирована {where}: свободно {row_qty - allocated} из {row_qty}, "
+        f"запрошено {qty}",
+        code="sgp_row_allocated",
+    )
 
 
 class SgpService:
@@ -399,6 +423,7 @@ class SgpService:
                     f"Нельзя отвязать {qty} из {row_qty}",
                     code="sgp_qty_exceeds",
                 )
+            _assert_not_allocated(cur, sgp_id, row_qty, qty)
 
             source_kp_id = int(kp_id)
 
@@ -569,6 +594,7 @@ class SgpService:
                     f"Нельзя перепривязать {qty} из {row_qty}",
                     code="sgp_qty_exceeds",
                 )
+            _assert_not_allocated(cur, sgp_id, row_qty, qty)
 
             # Strict match open demand on target KP
             cur.execute(
@@ -845,7 +871,7 @@ class SgpService:
 
     @staticmethod
     def _sgp_progress_on_cursor(cur: sqlite3.Cursor, kp_id: int) -> SgpProgress:
-        freeze_ordered_qty_if_needed(cur, kp_id)
+        # Read-only: не freeze'им ordered_qty на GET/progress (freeze — только write-path).
         cur.execute(
             "SELECT ordered_qty FROM kp_meta WHERE kp_id = ?",
             (kp_id,),
