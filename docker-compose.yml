@@ -17,6 +17,7 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      UVICORN_WORKERS: "1"
       # Пути под постоянный том (базы, черновики, планы, выгрузки)
       PB_DB_PATH: /data/pb.db
       PLITA_DB_PATH: /data/plita.db

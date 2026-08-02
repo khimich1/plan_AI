@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -13,6 +14,13 @@ from typing import Literal
 from dotenv import load_dotenv
 from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+@dataclass(frozen=True)
+class VehicleClassLimits:
+    max_weight_kg: float
+    body_length_m: float = 13.2
+    max_tiers: int = 4
 
 _logger = logging.getLogger(__name__)
 
@@ -168,6 +176,21 @@ class Settings(BaseSettings):
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
 
+    # Логистика (SHIP-000): лимиты классов ТС — JSON {"t20": {"max_weight_kg": 19800, ...}}.
+    vehicle_class_limits_kg_raw: str = Field(
+        default=(
+            '{"t20": {"max_weight_kg": 19800, "body_length_m": 13.2, "max_tiers": 4}, '
+            '"t30plus": {"max_weight_kg": 30000, "body_length_m": 13.2, "max_tiers": 4}}'
+        ),
+        alias="VEHICLE_CLASS_LIMITS_KG",
+    )
+    # Событие shipment_completed в папку обмена 1С — выключено до интеграции G.
+    shipment_events_enabled: bool = Field(default=False, alias="SHIPMENT_EVENTS_ENABLED")
+    exchange_export_dir: Path = Field(
+        default=PROJECT_ROOT / "data" / "exchange_export",
+        alias="EXCHANGE_EXPORT_DIR",
+    )
+
     # Раскладка: жадное чередование целых и групп с резом по мин. армированию; сплиттер — согласованный выбор целых.
     layout_greedy_reinf_merge: bool = Field(default=True, alias="LAYOUT_GREEDY_REINF_MERGE")
     layout_track_reinf_preference: bool = Field(default=True, alias="LAYOUT_TRACK_REINF_PREFERENCE")
@@ -306,6 +329,12 @@ class Settings(BaseSettings):
         object.__setattr__(self, "app_secret_key", key)
         return self
 
+    @model_validator(mode="after")
+    def reject_debug_in_production(self) -> Settings:
+        if self.app_env.lower() == "production" and self.app_debug:
+            raise ValueError("APP_DEBUG must be false when APP_ENV=production")
+        return self
+
     @computed_field
     @property
     def cookie_secure_enabled(self) -> bool:
@@ -350,6 +379,55 @@ class Settings(BaseSettings):
     @property
     def trusted_proxy_ips(self) -> frozenset[str]:
         return self._split_proxy_ips(self.trusted_proxy_ips_raw)
+
+    @staticmethod
+    def _default_vehicle_class_limits() -> dict[str, VehicleClassLimits]:
+        return {
+            "t20": VehicleClassLimits(max_weight_kg=19_800.0, body_length_m=13.2, max_tiers=4),
+            "t30plus": VehicleClassLimits(
+                max_weight_kg=30_000.0, body_length_m=13.2, max_tiers=4
+            ),
+        }
+
+    @staticmethod
+    def _parse_vehicle_class_limits(raw: str) -> dict[str, VehicleClassLimits]:
+        defaults = Settings._default_vehicle_class_limits()
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return defaults
+        if not isinstance(parsed, dict) or not parsed:
+            return defaults
+
+        result: dict[str, VehicleClassLimits] = {}
+        for key, value in parsed.items():
+            cls = str(key)
+            if isinstance(value, (int, float)):
+                base = defaults.get(cls, defaults["t20"])
+                result[cls] = VehicleClassLimits(
+                    max_weight_kg=float(value),
+                    body_length_m=base.body_length_m,
+                    max_tiers=base.max_tiers,
+                )
+                continue
+            if isinstance(value, dict):
+                base = defaults.get(cls, defaults["t20"])
+                result[cls] = VehicleClassLimits(
+                    max_weight_kg=float(value.get("max_weight_kg", base.max_weight_kg)),
+                    body_length_m=float(value.get("body_length_m", base.body_length_m)),
+                    max_tiers=int(value.get("max_tiers", base.max_tiers)),
+                )
+        return result or defaults
+
+    @computed_field
+    @property
+    def vehicle_class_limits(self) -> dict[str, VehicleClassLimits]:
+        return self._parse_vehicle_class_limits(self.vehicle_class_limits_kg_raw)
+
+    @computed_field
+    @property
+    def vehicle_class_limits_kg(self) -> dict[str, int]:
+        return {k: int(v.max_weight_kg) for k, v in self.vehicle_class_limits.items()}
 
     def ensure_directories(self) -> None:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)

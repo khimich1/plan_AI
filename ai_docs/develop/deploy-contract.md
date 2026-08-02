@@ -4,13 +4,15 @@ Operational constraints until shared infrastructure lands in P7 (Redis rate limi
 
 ## Uvicorn workers
 
-Login and OCR upload rate limits use **in-process** counters. They are **not** shared across uvicorn/gunicorn workers.
+Login and OCR upload rate limits use **in-process** counters. They are **not** shared across uvicorn/gunicorn workers. SQLite and file drafts also assume a **single process** — see [`architecture/deployment-single-instance.md`](./architecture/deployment-single-instance.md).
 
 **Requirement:** run with a single worker until `RATE_LIMIT_SHARED_STORE` is implemented:
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
+
+Docker images and compose set `UVICORN_WORKERS=1` and pass `--workers 1` explicitly.
 
 ### Worker count env vars
 
@@ -29,6 +31,22 @@ UVICORN_WORKERS=1
 ```
 
 If any of these is `> 1` without a shared rate-limit store, the app logs a **warning** at startup. `GET /health` (non-production) includes `rate_limiting` metadata for ops checks.
+
+If **none** of these vars is set, startup logs a WARNING about undeclared workers and `/health` `rate_limiting` includes `workers_undeclared: true` (still no hard-fail).
+
+### Production hard-fail (A2)
+
+When `APP_ENV=production` **and** `APP_STORAGE_LAYOUT=single_instance` **and** configured workers `> 1`, lifespan raises `RuntimeError` and the process does not start. Fix: set `UVICORN_WORKERS=1` (or switch layout / shared store when available).
+
+## Frontend dependency audit (pre-release)
+
+Before release / merge of frontend dependency bumps, run:
+
+```bash
+cd frontend && npm run audit:ci
+```
+
+CI: `.github/workflows/frontend-audit.yml` (`npm ci` + `npm run audit:ci`).
 
 ### Shared store (P7)
 
