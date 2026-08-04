@@ -8,6 +8,7 @@ Backward-compatibility shim for core.ocr package.
 
 from core.ocr import (
     _validate_plate_item,
+    apply_piles_with_ai,
     apply_plates_with_ai,
     estimate_monthly_cost,
     format_corrections_for_user,
@@ -20,6 +21,7 @@ from core.ocr import (
 from core.ocr.providers.openai import (
     AsyncOpenAI,
     GPT_AVAILABLE,
+    call_gpt_for_piles,
     call_gpt_for_plates,
     image_mime_type,
     load_image_payload,
@@ -42,7 +44,9 @@ __all__ = [
     "_load_image_payload",
     "_require_openai_client",
     "_validate_plate_item",
+    "apply_piles_with_ai",
     "apply_plates_with_ai",
+    "call_gpt_for_piles",
     "call_gpt_for_plates",
     "estimate_monthly_cost",
     "format_corrections_for_user",

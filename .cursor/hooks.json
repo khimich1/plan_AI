@@ -1,0 +1,16 @@
+﻿{
+    "version":  1,
+    "hooks":  {
+                  "afterFileEdit":  [
+
+                                    ],
+                  "sessionStart":  [
+                                       {
+                                           "command":  ".cursor/hooks/session-start.ps1"
+                                       }
+                                   ],
+                  "subagentStop":  [
+
+                                   ]
+              }
+}

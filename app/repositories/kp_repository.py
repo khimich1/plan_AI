@@ -32,6 +32,7 @@ class KpRepository:
         order_data: Sequence[dict] | None = None,
         xlsx_path: str | None = None,
         owner_user_id: int | None = None,
+        product_type: str = "plates",
     ) -> int:
         return offers_write.save_kp_to_db(
             creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
@@ -46,6 +47,7 @@ class KpRepository:
             execution_terms=execution_terms,
             status=status,
             owner_user_id=owner_user_id,
+            product_type=product_type,
             db_path=self.db_path,
         )
 
@@ -70,9 +72,6 @@ class KpRepository:
 
     def get_offer(self, kp_id: int) -> dict | None:
         return self._offers.get_by_id(kp_id)
-
-    def get_next_kp_number(self) -> int:
-        return kp_db.get_next_kp_number(self.db_path)
 
     def update_offer_discount(self, kp_id: int, discount_percent: float) -> bool:
         return offers_write.update_kp_discount(kp_id, discount_percent, self.db_path)
@@ -114,6 +113,7 @@ class KpRepository:
         FROM KP_offers o
         JOIN kp_meta m ON m.kp_id = o.kp_id
         WHERE m.status = 'в работе'
+          AND COALESCE(m.product_type, 'plates') != 'piles'
         ORDER BY o.kp_id ASC
         """
         result: list[dict] = []

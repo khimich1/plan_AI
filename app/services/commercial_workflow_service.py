@@ -13,12 +13,16 @@ from app.repositories.manager_repository import ManagerRepository
 from app.services.commercial_calculation_service import CommercialCalculationService
 from app.services.commercial_draft_service import CommercialDraftService, _safe_ocr_temp_suffix
 from app.services.commercial_export_service import CommercialExportService
+from app.services.commercial_pile_service import CommercialPileService
 from app.services.commercial_service import CommercialService
 from app.services.commercial_wizard_step_service import CommercialWizardStepService
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from app.services.execution_terms_service import ExecutionTermsService
+from app.domain.models.optimization_context import OptimizationContext
+from app.domain.models.plate_order import PlateOrder
+from core.commercial_offer_xlsx import DB_PATH
 from core.commercial_pricing import ensure_order_priced
-from core.ocr_gpt import apply_plates_with_ai
+from core.ocr_gpt import apply_piles_with_ai, apply_plates_with_ai
 from core.plate_order_context import PlateOrderContext
 
 
@@ -36,6 +40,7 @@ class CommercialWorkflowService:
         self.execution_terms_service = ExecutionTermsService()
         self.calculation_service = CommercialCalculationService()
         self.draft_service = CommercialDraftService(commercial_service=self.commercial_service)
+        self.pile_service = CommercialPileService()
         self.export_service = CommercialExportService(draft_store=self.draft_store)
         self.file_generation_service = self.export_service.file_generation_service
         self.step_service = CommercialWizardStepService(
@@ -72,7 +77,19 @@ class CommercialWorkflowService:
         image_filename: str | None,
         owner_user_id: int,
         plate_order_ctx: PlateOrderContext,
+        product_type: str = "plates",
     ) -> dict[str, Any]:
+        normalized_product_type = (product_type or "plates").strip().lower()
+        if normalized_product_type not in {"plates", "piles"}:
+            raise ValueError("Некорректный тип продукта.")
+        if normalized_product_type == "piles":
+            return await self._create_pile_draft(
+                text=text,
+                image_bytes=image_bytes,
+                image_filename=image_filename,
+                owner_user_id=owner_user_id,
+            )
+
         source_text, source_metadata = await self.draft_service.resolve_source_input(
             text=text,
             image_bytes=image_bytes,
@@ -107,6 +124,259 @@ class CommercialWorkflowService:
             payload_snap["order_data"],
         )
         self._persist_wizard_step(draft_id, plates_step)
+        return self.get_draft_details(draft_id)
+
+    async def _create_pile_draft(
+        self,
+        *,
+        text: str | None,
+        image_bytes: bytes | None,
+        image_filename: str | None,
+        owner_user_id: int,
+    ) -> dict[str, Any]:
+        text_value = (text or "").strip()
+        if not text_value and not image_bytes:
+            metadata = {
+                "product_type": "piles",
+                "owner_user_id": owner_user_id,
+                "current_step": WizardStepId.piles.value,
+                "wide_plates_resolved": True,
+                "default_concrete_grade": "B25",
+            }
+            draft_id = self.draft_store.save_preview(
+                order=PlateOrder(),
+                optimization_context=OptimizationContext(order=PlateOrder()),
+                order_data=[],
+                metadata=metadata,
+            )
+            return self.get_draft_details(draft_id)
+
+        source_text, source_metadata = await self.draft_service.resolve_source_input(
+            text=text,
+            image_bytes=image_bytes,
+            image_filename=image_filename,
+            product_type="piles",
+        )
+        preview = self.pile_service.generate_preview(
+            source_text["input_text"],
+            db_path=str(DB_PATH),
+        )
+        batches = [source_text["batch"]]
+        metadata = self.draft_service.build_pile_preview_metadata(
+            preview=preview,
+            base_metadata={"product_type": "piles"},
+            source_type=source_text["source_type"],
+            original_text=source_text["original_text"],
+            ocr_text=source_text["ocr_text"],
+            input_text=source_text["input_text"],
+            last_source_filename=source_text["filename"],
+            pile_batches=batches,
+            source_metadata=source_metadata,
+            owner_user_id=owner_user_id,
+        )
+        draft_id = self.draft_store.save_preview(
+            order=PlateOrder(),
+            optimization_context=OptimizationContext(order=PlateOrder()),
+            order_data=preview.order_data,
+            metadata=metadata,
+        )
+        self._persist_wizard_step(draft_id, WizardStepId.piles)
+        return self.get_draft_details(draft_id)
+
+    async def update_draft_piles(
+        self,
+        draft_id: str,
+        *,
+        mode: str,
+        text: str | None,
+        image_bytes: bytes | None,
+        image_filename: str | None,
+    ) -> dict[str, Any]:
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata", {}))
+        if str(metadata.get("product_type", "plates")).lower() != "piles":
+            raise ValueError("Черновик не является КП на сваи.")
+
+        source_text, source_metadata = await self.draft_service.resolve_source_input(
+            text=text,
+            image_bytes=image_bytes,
+            image_filename=image_filename,
+            product_type="piles",
+        )
+        current_text = str(metadata.get("input_text", "") or "")
+        normalized_mode = mode.strip().lower()
+        if normalized_mode not in {"append", "replace"}:
+            raise ValueError("Некорректный режим обновления списка свай.")
+        if normalized_mode == "append" and current_text:
+            next_text = self._merge_plate_texts(current_text, source_text["input_text"])
+            batches = list(metadata.get("pile_batches") or [])
+            batches.append(source_text["batch"])
+        else:
+            next_text = source_text["input_text"]
+            batches = [source_text["batch"]]
+
+        preview = self.pile_service.generate_preview(next_text, db_path=str(DB_PATH))
+        next_metadata = self.draft_service.build_pile_preview_metadata(
+            preview=preview,
+            base_metadata=metadata,
+            source_type=source_text["source_type"],
+            original_text=source_text["original_text"],
+            ocr_text=source_text["ocr_text"],
+            input_text=next_text,
+            last_source_filename=source_text["filename"],
+            pile_batches=batches,
+            source_metadata=source_metadata,
+        )
+        self.draft_store.replace_preview(
+            draft_id,
+            order=PlateOrder(),
+            optimization_context=OptimizationContext(order=PlateOrder()),
+            order_data=preview.order_data,
+            metadata=next_metadata,
+        )
+        self._persist_wizard_step(draft_id, WizardStepId.piles)
+        return self.get_draft_details(draft_id)
+
+    async def apply_ai_piles_instruction(
+        self,
+        draft_id: str,
+        *,
+        instruction: str,
+        image_bytes: bytes | None,
+        image_filename: str | None,
+    ) -> dict[str, Any]:
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata", {}))
+        if str(metadata.get("product_type", "plates")).lower() != "piles":
+            raise ValueError("ИИ-редактирование свай доступно только для КП на сваи.")
+
+        instruction_value = (instruction or "").strip()
+        if len(instruction_value) < 3:
+            raise ValueError("Инструкция для ИИ должна содержать минимум 3 символа.")
+
+        current_text = str(metadata.get("input_text", "") or "")
+        tmp_path: Path | None = None
+        try:
+            if image_bytes:
+                suffix = _safe_ocr_temp_suffix(image_filename)
+                with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                    tmp_file.write(image_bytes)
+                    tmp_path = Path(tmp_file.name)
+                result = await apply_piles_with_ai(
+                    current_piles_text=current_text,
+                    user_instruction=instruction_value,
+                    image_path=str(tmp_path),
+                )
+            else:
+                result = await apply_piles_with_ai(
+                    current_piles_text=current_text,
+                    user_instruction=instruction_value,
+                )
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+
+        recognized_text = str((result or {}).get("text", "")).strip()
+        if not recognized_text:
+            raise ValueError("ИИ не смог обработать список свай. Попробуйте уточнить инструкцию.")
+
+        source_metadata = {
+            "ai_applied": True,
+            "last_ai_instruction": instruction_value,
+            "ai_cost_usd": float((result or {}).get("cost_usd", 0.0) or 0.0),
+            "ai_method": str((result or {}).get("method") or "GPT-4o+ai"),
+            "ai_plates": list((result or {}).get("plates") or []),
+            "ocr_plates": list((result or {}).get("plates") or []),
+            "ocr_draft_plates": list((result or {}).get("draft_plates") or []),
+            "ocr_corrections": list((result or {}).get("corrections") or []),
+            "ocr_verify_applied": False,
+            "ocr_verify_failed": False,
+            "ocr_method": str((result or {}).get("method") or "GPT-4o+ai"),
+            "ocr_row_count_on_image": (result or {}).get("row_count_on_image"),
+        }
+        ai_batch = {
+            "source_type": "ai",
+            "original_text": instruction_value,
+            "normalized_text": recognized_text,
+            "ocr_text": recognized_text,
+            "filename": image_filename or "",
+        }
+        preview = self.pile_service.generate_preview(
+            recognized_text,
+            db_path=str(DB_PATH),
+        )
+        next_metadata = self.draft_service.build_pile_preview_metadata(
+            preview=preview,
+            base_metadata=metadata,
+            source_type="ai",
+            original_text=instruction_value,
+            ocr_text=recognized_text,
+            input_text=recognized_text,
+            last_source_filename=image_filename or "",
+            pile_batches=[ai_batch],
+            source_metadata=source_metadata,
+        )
+        self.draft_store.replace_preview(
+            draft_id,
+            order=PlateOrder(),
+            optimization_context=OptimizationContext(order=PlateOrder()),
+            order_data=preview.order_data,
+            metadata=next_metadata,
+        )
+        self._persist_wizard_step(draft_id, WizardStepId.piles)
+        return self.get_draft_details(draft_id)
+
+    def update_draft_pile_grades(
+        self,
+        draft_id: str,
+        *,
+        concrete_grade: str,
+    ) -> dict[str, Any]:
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata", {}))
+        if str(metadata.get("product_type", "plates")).lower() != "piles":
+            raise ValueError("Черновик не является КП на сваи.")
+
+        grade = (concrete_grade or "").strip()
+        if not grade:
+            raise ValueError("Укажите класс бетона.")
+
+        order_data = list(payload.get("order_data") or [])
+        if not order_data:
+            raise ValueError("Список свай пустой.")
+
+        lines: list[str] = []
+        for item in order_data:
+            mark = str(item.get("mark") or item.get("name") or "").strip()
+            qty = int(item.get("qty") or 0)
+            if mark and qty > 0:
+                lines.append(f"{mark} {grade} {qty}")
+
+        if not lines:
+            raise ValueError("Список свай пустой.")
+
+        next_text = "\n".join(lines)
+        preview = self.pile_service.generate_preview(next_text, db_path=str(DB_PATH))
+        next_metadata = self.draft_service.build_pile_preview_metadata(
+            preview=preview,
+            base_metadata=metadata,
+            source_type=str(metadata.get("source_type") or "text"),
+            original_text=str(metadata.get("original_text", "") or ""),
+            ocr_text=str(metadata.get("ocr_text", "") or ""),
+            input_text=next_text,
+            last_source_filename=str(metadata.get("last_source_filename", "") or ""),
+            pile_batches=list(metadata.get("pile_batches") or []),
+            source_metadata={},
+        )
+        next_metadata["default_concrete_grade"] = grade
+        self.draft_store.replace_preview(
+            draft_id,
+            order=PlateOrder(),
+            optimization_context=OptimizationContext(order=PlateOrder()),
+            order_data=preview.order_data,
+            metadata=next_metadata,
+        )
+        self._persist_wizard_step(draft_id, WizardStepId.piles)
         return self.get_draft_details(draft_id)
 
     async def create_draft_from_form(
@@ -153,6 +423,8 @@ class CommercialWorkflowService:
     ) -> dict[str, Any]:
         payload = self._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
+        if str(metadata.get("product_type", "plates")).lower() == "piles":
+            raise ValueError("Для КП на сваи используйте endpoint /piles.")
         source_text, source_metadata = await self.draft_service.resolve_source_input(
             text=text,
             image_bytes=image_bytes,
@@ -578,6 +850,7 @@ class CommercialWorkflowService:
             status=status,
             order_data=payload["order_data"],
             xlsx_path=xlsx_path,
+            product_type=str(metadata.get("product_type", "plates") or "plates"),
         )
         saved_offer = {
             "kp_id": kp_id,

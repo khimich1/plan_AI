@@ -1,4 +1,6 @@
-export type WizardStepId = "plates" | "client" | "result";
+export type ProductType = "plates" | "piles";
+
+export type WizardStepId = "plates" | "piles" | "client" | "result";
 
 /** Legacy step ids from older drafts (localStorage / server metadata). */
 export type LegacyWizardStepId = "wide-plates" | "manager";
@@ -7,6 +9,7 @@ export type LegacyWizardStepId = "wide-plates" | "manager";
 export type WizardNextRequiredAction =
   | "none"
   | "ingest_plates"
+  | "ingest_piles"
   | "resolve_wide_plates"
   | "select_manager"
   | "complete_client_terms"
@@ -61,6 +64,18 @@ export type PlateBatch = {
   filename: string;
 };
 
+export type PileBatch = PlateBatch;
+
+export type PileOrderLine = {
+  mark: string;
+  name: string;
+  concrete_grade: string;
+  qty: number;
+  unit_price: number | null;
+  line_total?: number | null;
+  product_kind?: "pile";
+};
+
 export type CommercialGeneratedFile = {
   kind: FileKind;
   filename: string;
@@ -91,6 +106,7 @@ export type OcrCorrection = {
 };
 
 export type CommercialDraftMetadata = {
+  product_type?: ProductType;
   source_type: "text" | "image" | "ai" | null;
   original_text: string;
   ocr_text: string;
@@ -116,6 +132,8 @@ export type CommercialDraftMetadata = {
   breakdown_tables_count: number;
   total_sum: number;
   plate_batches: PlateBatch[];
+  pile_batches?: PileBatch[];
+  default_concrete_grade?: string;
   wide_plates_resolved: boolean;
   last_source_filename: string;
   ai_applied?: boolean;
@@ -181,6 +199,7 @@ export type CommercialSaveResult = {
 };
 
 export type WizardStoreState = {
+  productType: ProductType;
   draftId: string | null;
   currentStep: WizardStepId;
   sourceText: string;

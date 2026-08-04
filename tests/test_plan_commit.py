@@ -441,6 +441,170 @@ def test_commit_warns_when_legacy_branch_used_with_tracks_by_day(tmp_db, caplog)
     )
 
 
+def test_commit_plan_plates_duplicate_order_lines_same_identity_no_orphan(tmp_db):
+    """Две строки orders_2d с одной identity не должны порождать orphan kp_plates.
+
+    Регрессия H1: day-allocation без mutual budget повторно помечала ранние дни.
+    """
+    plate = "ПБ 60-12-8п"
+    _seed_kp_plate(tmp_db, kp_id=1, plate_name=plate, qty=4)
+    orders = [
+        {"kp_id": 1, "plate_name": plate, "qty": 2, "load_code": 8},
+        {"kp_id": 1, "plate_name": plate, "qty": 2, "load_code": 8},
+    ]
+    optimization_result = {
+        "plate_assignments": [
+            {"source": "primary", "kp_id": 1, "plate_name": plate}
+            for _ in range(4)
+        ],
+    }
+    items_day1 = [
+        {
+            "length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+            "kp_id": 1, "plate_name": plate,
+        },
+        {
+            "length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+            "kp_id": 1, "plate_name": plate,
+        },
+    ]
+    items_day2 = [
+        {
+            "length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+            "kp_id": 1, "plate_name": plate,
+        },
+        {
+            "length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+            "kp_id": 1, "plate_name": plate,
+        },
+    ]
+    tracks_by_day = {
+        "2026-04-01": [{"production_day": 1, "items": items_day1}],
+        "2026-04-02": [{"production_day": 2, "items": items_day2}],
+    }
+
+    commit_plan_plates(
+        plan_id="plan_dup_identity",
+        orders_2d=orders,
+        optimization_result=optimization_result,
+        all_tracks_list=[],
+        db_path=tmp_db,
+        tracks_by_day=tracks_by_day,
+    )
+
+    all_items = items_day1 + items_day2
+    assert all(it.get("kp_plate_id") is not None for it in all_items), (
+        f"все items должны получить kp_plate_id, получили: "
+        f"{[it.get('kp_plate_id') for it in all_items]}"
+    )
+
+    with sqlite3.connect(tmp_db) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, qty, day_number FROM kp_plates "
+            "WHERE plan_id = ? AND status = 'в плане' ORDER BY id",
+            ("plan_dup_identity",),
+        )
+        rows = cur.fetchall()
+        cur.execute(
+            "SELECT COALESCE(SUM(qty), 0) FROM kp_plates "
+            "WHERE plan_id = ? AND status = 'в плане'",
+            ("plan_dup_identity",),
+        )
+        total_qty = int(cur.fetchone()[0])
+
+    assert total_qty == 4, f"SUM(qty) в плане должен быть 4, получили {total_qty}"
+    assert rows, "ожидаем строки kp_plates со status='в плане'"
+
+    refs_by_id: dict[int, int] = {}
+    for it in all_items:
+        pid = int(it["kp_plate_id"])
+        refs_by_id[pid] = refs_by_id.get(pid, 0) + 1
+
+    for plate_id, qty, day_number in rows:
+        assert day_number is not None, f"orphan/undated id={plate_id}"
+        refs = refs_by_id.get(int(plate_id), 0)
+        assert refs >= 1, (
+            f"unreferenced kp_plates id={plate_id} qty={qty} day={day_number}"
+        )
+        assert refs == int(qty), (
+            f"qty_mismatch id={plate_id}: refs={refs} qty={qty} day={day_number}"
+        )
+
+
+def test_commit_plan_plates_leftover_pool_raises_and_rolls_back(tmp_db, monkeypatch):
+    """Leftover в пуле после link → PlanCommitError и откат «в плане»."""
+    plate = "ПБ 60-12-8п"
+    _seed_kp_plate(tmp_db, kp_id=1, plate_name=plate, qty=2)
+    orders = [{"kp_id": 1, "plate_name": plate, "qty": 2, "load_code": 8}]
+    optimization_result = {
+        "plate_assignments": [
+            {"source": "primary", "kp_id": 1, "plate_name": plate},
+            {"source": "primary", "kp_id": 1, "plate_name": plate},
+        ],
+    }
+    tracks_by_day = {
+        "2026-05-01": [
+            {
+                "production_day": 1,
+                "items": [
+                    {
+                        "length": 6.0, "mode": "solid", "width": 1.2,
+                        "load_code": 8, "kp_id": 1, "plate_name": plate,
+                    },
+                    {
+                        "length": 6.0, "mode": "solid", "width": 1.2,
+                        "load_code": 8, "kp_id": 1, "plate_name": plate,
+                    },
+                ],
+            },
+        ],
+    }
+
+    real_mark = kp_db.mark_plates_as_planned
+    rollback_calls: list[str] = []
+    real_return = kp_db.return_plan_plates_to_production
+
+    def inflate_mark(*, kp_id, plate_name, qty_to_plan, plan_id, db_path, day_number=None):
+        result = real_mark(
+            kp_id=kp_id,
+            plate_name=plate_name,
+            qty_to_plan=qty_to_plan,
+            plan_id=plan_id,
+            db_path=db_path,
+            day_number=day_number,
+        )
+        pairs = [list(p) for p in (result.get("id_qty_pairs") or [])]
+        if pairs:
+            pairs[0][1] = int(pairs[0][1]) + 1
+        out = dict(result)
+        out["id_qty_pairs"] = pairs
+        return out
+
+    def spy_return(plan_id, db_path):
+        rollback_calls.append(plan_id)
+        return real_return(plan_id, db_path)
+
+    monkeypatch.setattr("core.kp_db_plates.mark_plates_as_planned", inflate_mark)
+    monkeypatch.setattr("core.kp_db_plates.return_plan_plates_to_production", spy_return)
+
+    with pytest.raises(PlanCommitError, match="непокрытые слоты пула"):
+        commit_plan_plates(
+            plan_id="plan_leftover_pool",
+            orders_2d=orders,
+            optimization_result=optimization_result,
+            all_tracks_list=[],
+            db_path=tmp_db,
+            tracks_by_day=tracks_by_day,
+        )
+
+    assert "plan_leftover_pool" in rollback_calls
+    statuses = _fetch_status(tmp_db, 1, plate)
+    assert statuses, "ожидаем строки kp_plates после отката"
+    assert all(status == "в производстве" for status, _qty, _plan in statuses)
+    assert all(plan_id is None for _status, _qty, plan_id in statuses)
+
+
 def test_commit_plan_plates_rolls_back_on_mark_failure(tmp_db, monkeypatch):
     _seed_kp_plate(tmp_db, kp_id=1, plate_name="A", qty=2)
     orders = [{"kp_id": 1, "plate_name": "A", "qty": 2, "load_code": 8}]

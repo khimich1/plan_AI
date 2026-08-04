@@ -4,7 +4,7 @@ import type { ProductionEstimate } from "@/features/production/lib/productionEst
 type Props = {
   estimate: ProductionEstimate;
   tracksPerDay: number;
-  tracksPerDaySource: "шаг 2" | "дозаполнение";
+  tracksPerDaySource: "календарь";
   label: string;
 };
 

@@ -208,6 +208,8 @@ from core.commercial_pricing import (  # noqa: E402
     VAT_RATE,
     calculate_total_cost as _calculate_total_cost,
     format_phone,
+    is_pile_order,
+    lookup_pile_price,
 )
 
 
@@ -450,27 +452,30 @@ def generate_commercial_offer_pdf(
     
     story.append(Spacer(1, 6 * mm))
     
-    table_data = [['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']]
+    pile_order = is_pile_order(order_data)
+    if pile_order:
+        table_data = [['№', 'Наименование', 'Класс бетона', 'Кол-во', 'Цена', 'Сумма']]
+    else:
+        table_data = [['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']]
     
     trip_cost = max(0.0, float(logistics_cost or 0.0))
     totals = calculate_total_cost(order_data, discount_percent, logistics_cost=trip_cost)
     total_weight = 0.0
     
     for idx, item in enumerate(order_data, start=1):
-        name_raw = item.get('name', 'Плиты ПБ')
-        name = escape(name_raw)
         qty = item.get('qty', 0)
-        length_m = item.get('length_m', 0)
-        width_m = item.get('width_m', 0)
-        load_class = item.get('load_class')
 
-        # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
         if 'unit_price' in item and item['unit_price'] is not None:
             unit_price = item['unit_price']
+        elif pile_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            grade = str(item.get('concrete_grade') or 'B25').strip()
+            unit_price = lookup_pile_price(mark, grade, db_path=DB_PATH)
         else:
-            # Fallback: старая логика (только базовая цена из БД)
-            # Если класс нагрузки явно не передан, пробуем вытащить его из имени плиты.
-            # Формат имени: "Плиты ПБ 71-12-10п", "ПБ 69-12-12,5п" и т.п.
+            name_raw = item.get('name', 'Плиты ПБ')
+            length_m = item.get('length_m', 0)
+            width_m = item.get('width_m', 0)
+            load_class = item.get('load_class')
             if load_class is None:
                 try:
                     from config_and_data import parse_load_code_from_name
@@ -478,22 +483,32 @@ def generate_commercial_offer_pdf(
                     load_class = 800
                 else:
                     load_code = parse_load_code_from_name(name_raw, default=8)
-                    load_class = max(1, load_code) * 100  # 8 -> 800, 10 -> 1000 и т.п.
-            
+                    load_class = max(1, load_code) * 100
             unit_price = get_plate_price(length_m, width_m, load_class)
-        
-        # Применяем скидку к цене (если указана)
+
         discounted_price = unit_price * (1 - discount_percent / 100)
         item_sum = discounted_price * qty
-        
-        # Вес: plate_weights по размерам (нагрузка не учитывается), иначе approximate; как в XLSX
-        _, total_item_weight = resolve_kp_line_weight_kg(item)
-        total_weight += total_item_weight
-        
-        weight_str = f"{total_item_weight:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
         price_str = f"{discounted_price:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
         sum_str = f"{item_sum:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-        
+
+        if pile_order:
+            mark_raw = str(item.get('mark') or item.get('name') or '')
+            grade_raw = str(item.get('concrete_grade') or 'B25')
+            table_data.append([
+                str(idx),
+                Paragraph(escape(mark_raw), style_table_text),
+                escape(grade_raw),
+                str(qty),
+                price_str,
+                sum_str,
+            ])
+            continue
+
+        name_raw = item.get('name', 'Плиты ПБ')
+        name = escape(name_raw)
+        _, total_item_weight = resolve_kp_line_weight_kg(item)
+        total_weight += total_item_weight
+        weight_str = f"{total_item_weight:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
         table_data.append([
             str(idx),
             Paragraph(name, style_table_text),
@@ -504,46 +519,56 @@ def generate_commercial_offer_pdf(
             sum_str
         ])
 
-    delivery_trips = cargo_delivery_trips_count(total_weight)
-    if trip_cost > 0 and delivery_trips > 0:
-        delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
-        trip_str = f"{trip_cost:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-        delivery_total_str = f"{delivery_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-        table_data.append(
-            [
-                str(len(table_data)),
-                Paragraph(escape("Услуга по доставке грузов"), style_table_text),
-                str(delivery_trips),
-                "рейс",
-                "0,00",
-                trip_str,
-                delivery_total_str,
-            ]
-        )
+    if not pile_order:
+        delivery_trips = cargo_delivery_trips_count(total_weight)
+        if trip_cost > 0 and delivery_trips > 0:
+            delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
+            trip_str = f"{trip_cost:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+            delivery_total_str = f"{delivery_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+            table_data.append(
+                [
+                    str(len(table_data)),
+                    Paragraph(escape("Услуга по доставке грузов"), style_table_text),
+                    str(delivery_trips),
+                    "рейс",
+                    "0,00",
+                    trip_str,
+                    delivery_total_str,
+                ]
+            )
     
     no_width = 10 * mm
     qty_width = 14 * mm
-    unit_width = 11 * mm
-    weight_width = 20 * mm
     price_width = 25 * mm
     sum_width = 25 * mm
-    
-    fixed_total = no_width + qty_width + unit_width + weight_width + price_width + sum_width
-    name_width = content_width - fixed_total
-    
-    if name_width <= 0:
-        ratios = (0.05, 0.45, 0.08, 0.06, 0.18, 0.09, 0.09)
-        col_widths = [content_width * ratio for ratio in ratios]
+
+    if pile_order:
+        grade_width = 28 * mm
+        fixed_total = no_width + grade_width + qty_width + price_width + sum_width
+        name_width = content_width - fixed_total
+        if name_width <= 0:
+            ratios = (0.05, 0.40, 0.15, 0.10, 0.15, 0.15)
+            col_widths = [content_width * ratio for ratio in ratios]
+        else:
+            col_widths = [no_width, name_width, grade_width, qty_width, price_width, sum_width]
     else:
-        col_widths = [
-            no_width,
-            name_width,
-            qty_width,
-            unit_width,
-            weight_width,
-            price_width,
-            sum_width
-        ]
+        unit_width = 11 * mm
+        weight_width = 20 * mm
+        fixed_total = no_width + qty_width + unit_width + weight_width + price_width + sum_width
+        name_width = content_width - fixed_total
+        if name_width <= 0:
+            ratios = (0.05, 0.45, 0.08, 0.06, 0.18, 0.09, 0.09)
+            col_widths = [content_width * ratio for ratio in ratios]
+        else:
+            col_widths = [
+                no_width,
+                name_width,
+                qty_width,
+                unit_width,
+                weight_width,
+                price_width,
+                sum_width
+            ]
     
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([

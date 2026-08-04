@@ -1,7 +1,9 @@
-﻿import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { CommercialOfferWizard } from "@/features/commercial-offer/components/CommercialOfferWizard";
+import { ProductTypePicker } from "@/features/commercial-offer/components/ProductTypePicker";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
+import type { ProductType } from "@/features/commercial-offer/types/commercialOffer";
 import { Alert } from "@/shared/ui/Alert";
 
 const LEGACY_DRAFT_NOTICE =
@@ -17,12 +19,28 @@ export const CommercialOfferCreatePage = () => {
   const noticeFromUrl = searchParams.get("notice")?.trim() ?? "";
   const errorFromUrl = searchParams.get("error")?.trim() ?? "";
 
+  const [productTypeSelected, setProductTypeSelected] = useState(() => Boolean(draftIdFromUrl));
+  const prevDraftIdRef = useRef<string | null>(state.draftId);
+
   useEffect(() => {
     if (!draftIdFromUrl || state.draftId === draftIdFromUrl) {
       return;
     }
     dispatch({ type: "set-draft-id", draftId: draftIdFromUrl });
   }, [dispatch, draftIdFromUrl, state.draftId]);
+
+  useEffect(() => {
+    if (draftIdFromUrl) {
+      setProductTypeSelected(true);
+    }
+  }, [draftIdFromUrl]);
+
+  useEffect(() => {
+    if (prevDraftIdRef.current && !state.draftId && !draftIdFromUrl) {
+      setProductTypeSelected(false);
+    }
+    prevDraftIdRef.current = state.draftId;
+  }, [state.draftId, draftIdFromUrl]);
 
   const infoBannerMessage = useMemo(() => {
     if (dismissedBanner) {
@@ -50,6 +68,13 @@ export const CommercialOfferCreatePage = () => {
     next.delete("error");
     setSearchParams(next, { replace: true });
   };
+
+  const handleProductTypeSelect = (productType: ProductType) => {
+    dispatch({ type: "set-product-type", productType });
+    setProductTypeSelected(true);
+  };
+
+  const showProductTypePicker = !productTypeSelected && !state.draftId && !draftIdFromUrl;
 
   return (
     <main style={{ maxWidth: 1280, margin: "0 auto", padding: "2rem 1rem 4rem" }}>
@@ -97,7 +122,11 @@ export const CommercialOfferCreatePage = () => {
           </Alert>
         </div>
       ) : null}
-      <CommercialOfferWizard />
+      {showProductTypePicker ? (
+        <ProductTypePicker onSelect={handleProductTypeSelect} />
+      ) : (
+        <CommercialOfferWizard productType={state.productType} />
+      )}
     </main>
   );
 };

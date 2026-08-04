@@ -1,4 +1,4 @@
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate, Outlet } from "react-router";
 import { useAuth } from "@/features/auth/model/AuthProvider";
 import { defaultRouteForRole } from "@/shared/lib/roleRoutes";
 import type { UserRole } from "@/features/auth/types/user";

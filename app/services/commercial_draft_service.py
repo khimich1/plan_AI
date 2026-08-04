@@ -94,6 +94,7 @@ class CommercialDraftService:
         *,
         image_bytes: bytes,
         image_filename: str | None,
+        product_type: str = "plates",
     ) -> tuple[str, dict[str, Any]]:
         suffix = safe_ocr_temp_suffix(image_filename)
         with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
@@ -104,12 +105,17 @@ class CommercialDraftService:
         if recognition_mode not in {"full_gpt", "hybrid"}:
             recognition_mode = "full_gpt"
 
+        normalized_product_type = (product_type or "plates").strip().lower()
+        if normalized_product_type not in {"plates", "piles"}:
+            normalized_product_type = "plates"
+
         try:
             result = await recognize_text_smart(
                 str(tmp_path),
                 force_gpt=(recognition_mode == "full_gpt"),
                 show_cost=True,
                 mode=recognition_mode,
+                product_type=normalized_product_type,  # type: ignore[arg-type]
             )
         finally:
             tmp_path.unlink(missing_ok=True)
@@ -131,6 +137,7 @@ class CommercialDraftService:
         text: str | None,
         image_bytes: bytes | None,
         image_filename: str | None,
+        product_type: str = "plates",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         text_value = (text or "").strip()
         if not text_value and not image_bytes:
@@ -139,6 +146,7 @@ class CommercialDraftService:
             recognized_text, source_metadata = await self.extract_text_from_image(
                 image_bytes=image_bytes,
                 image_filename=image_filename,
+                product_type=product_type,
             )
             return (
                 {
@@ -200,6 +208,7 @@ class CommercialDraftService:
         metadata = dict(base_metadata)
         metadata.update(
             {
+                "product_type": metadata.get("product_type") or "plates",
                 "source_type": source_type,
                 "original_text": original_text,
                 "ocr_text": ocr_text,
@@ -237,6 +246,72 @@ class CommercialDraftService:
         metadata.setdefault("delivery_conditions", "")
         metadata.setdefault("payment_conditions", "")
         metadata.setdefault("logistics_cost", 0.0)
+        if owner_user_id is not None:
+            metadata["owner_user_id"] = int(owner_user_id)
+        return metadata
+
+    def build_pile_preview_metadata(
+        self,
+        *,
+        preview: Any,
+        base_metadata: dict[str, Any],
+        source_type: str,
+        original_text: str,
+        ocr_text: str,
+        input_text: str,
+        last_source_filename: str,
+        pile_batches: list[dict[str, Any]],
+        source_metadata: dict[str, Any],
+        owner_user_id: int | None = None,
+    ) -> dict[str, Any]:
+        source_metadata_payload = dict(source_metadata)
+        ocr_warnings = list(source_metadata_payload.pop("ocr_warnings", []) or [])
+        warnings = list(preview.warnings)
+        for warning in ocr_warnings:
+            if warning not in warnings:
+                warnings.append(warning)
+
+        metadata = dict(base_metadata)
+        metadata.update(
+            {
+                "product_type": "piles",
+                "source_type": source_type,
+                "original_text": original_text,
+                "ocr_text": ocr_text,
+                "input_text": input_text,
+                "accumulated_text": input_text,
+                "warnings": warnings,
+                "unparsed_lines": list(preview.unparsed_lines),
+                "normalized_text": preview.normalized_text,
+                "normalized_lines": list(preview.normalized_lines),
+                "wide_plate_lines": [],
+                "diagnostics": [],
+                "breakdown_tables": [],
+                "price_rows_count": len(preview.order_data),
+                "breakdown_tables_count": 0,
+                "total_sum": preview.total_sum,
+                "pile_batches": pile_batches,
+                "wide_plates_resolved": True,
+                "last_source_filename": last_source_filename,
+                "current_step": WizardStepId.piles.value,
+                "saved_offer": None,
+                "generated_files": [],
+                "current_save_mode": None,
+                "execution_terms": "",
+                **source_metadata_payload,
+            }
+        )
+        metadata.setdefault("manager_id", None)
+        metadata.setdefault("manager_name", "")
+        metadata.setdefault("manager_phone", "")
+        metadata.setdefault("manager_email", "")
+        metadata.setdefault("client_name", "")
+        metadata.setdefault("discount_percent", 0.0)
+        metadata.setdefault("conditions_mode", "standard")
+        metadata.setdefault("delivery_conditions", "")
+        metadata.setdefault("payment_conditions", "")
+        metadata.setdefault("logistics_cost", 0.0)
+        metadata.setdefault("default_concrete_grade", "B25")
         if owner_user_id is not None:
             metadata["owner_user_id"] = int(owner_user_id)
         return metadata

@@ -402,7 +402,7 @@ def test_complete_day_moves_plates_and_marks_kp_completed(planning_service, tmp_
             "SELECT COALESCE(SUM(qty), 0) FROM completed_plates WHERE kp_id = 1",
         ).fetchone()[0]
 
-    assert status == "выполнено"
+    assert status == "На СГП"
     assert remaining == 0
     assert completed == 3
 
@@ -546,7 +546,7 @@ def test_full_cycle_no_stuck_plates(tmp_plita, monkeypatch):
     разложенный на несколько дорожек/дней. После полного прохождения
     цикла build_plan → complete_day по всем дням ожидаем:
     - ``kp_plates`` для этого плана пуст (всё списано);
-    - KP помечен ``'выполнено'``.
+    - KP помечен ``'На СГП'``.
 
     Этот тест подтверждает, что secondary с backfilled identity не
     «зависают» с ``day_number=NULL`` и реально списываются complete_day.
@@ -710,6 +710,6 @@ def test_full_cycle_no_stuck_plates(tmp_plita, monkeypatch):
         f"в completed_plates ожидается 9 плит (3 primary + 6 secondary), "
         f"получено {completed_total}"
     )
-    assert kp_status == "выполнено", (
-        f"KP=1 должен иметь статус 'выполнено', получено '{kp_status}'"
+    assert kp_status == "На СГП", (
+        f"KP=1 должен иметь статус 'На СГП', получено '{kp_status}'"
     )

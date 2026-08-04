@@ -8,6 +8,7 @@ import { isPlanVersionConflict } from "@/shared/lib/planConflict";
 import {
   useActivatePlanMutation,
   useDeletePlanMutation,
+  usePlanSgpExportMutation,
   usePlansListQuery,
 } from "@/features/production/hooks/useProductionQueries";
 import type { PlanMetaSummary } from "@/features/production/types/production";
@@ -28,6 +29,7 @@ export const PlansList = ({ onOpenPlanCalendar }: Props) => {
   const plansQuery = usePlansListQuery();
   const activateMutation = useActivatePlanMutation();
   const deleteMutation = useDeletePlanMutation();
+  const sgpExportMutation = usePlanSgpExportMutation();
   const [confirmDelete, setConfirmDelete] = useState<PlanMetaSummary | null>(null);
 
   if (plansQuery.isLoading) {
@@ -102,6 +104,15 @@ export const PlansList = ({ onOpenPlanCalendar }: Props) => {
                     Открыть календарь
                   </Button>
                 )}
+                <Button
+                  variant="secondary"
+                  onClick={() => sgpExportMutation.mutate(plan.id)}
+                  disabled={sgpExportMutation.isPending}
+                >
+                  {sgpExportMutation.isPending && sgpExportMutation.variables === plan.id
+                    ? "Со склада…"
+                    : "Со склада (XLSX)"}
+                </Button>
                 <Button
                   variant="danger"
                   onClick={() => setConfirmDelete(plan)}

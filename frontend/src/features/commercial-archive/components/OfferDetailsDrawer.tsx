@@ -4,12 +4,10 @@ import { Button } from "@/shared/ui/Button";
 import { Spinner } from "@/shared/ui/Spinner";
 import { Alert } from "@/shared/ui/Alert";
 import { FieldWrapper } from "@/shared/ui/Field";
-import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
 import {
   useArchiveOfferQuery,
   useArchiveDocumentMutation,
-  useProductionEstimateQuery,
   useUpdateDiscountMutation,
   useUpdateLogisticsCostMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
@@ -17,10 +15,12 @@ import {
   cargoDeliveryTripsCount,
 } from "@/features/commercial-offer/utils/cargoDeliveryPricing";
 import { formatMoney, statusEmoji } from "@/features/commercial-archive/lib/format";
+import type { ArchiveOfferDetails, ArchivePileItem } from "@/features/commercial-archive/types/archive";
 import { downloadFile } from "@/shared/lib/downloadFile";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
 import { MoveToProductionDialog } from "./MoveToProductionDialog";
+import { KpReadinessBlock } from "./KpReadinessBlock";
 
 type Props = {
   open: boolean;
@@ -30,9 +30,32 @@ type Props = {
 
 const PLATES_PREVIEW = 10;
 
+const resolvePileItems = (offer: ArchiveOfferDetails): ArchivePileItem[] => {
+  if (offer.piles && offer.piles.length > 0) {
+    return offer.piles;
+  }
+  return offer.plates.map((plate, index) => ({
+    position_number: plate.position_number ?? index + 1,
+    mark: plate.plate_name,
+    concrete_grade: "—",
+    qty: plate.qty,
+    unit_price: plate.unit_price,
+    discounted_price: plate.discounted_price,
+  }));
+};
+
+const formatLinePrice = (discountedPrice: number | null, unitPrice: number | null): string => {
+  if (discountedPrice !== null) {
+    return formatMoney(discountedPrice);
+  }
+  if (unitPrice !== null) {
+    return formatMoney(unitPrice);
+  }
+  return "—";
+};
+
 export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const query = useArchiveOfferQuery(open ? kpId : null);
-  const estimateQuery = useProductionEstimateQuery(open ? kpId : null);
   const [showAllPlates, setShowAllPlates] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [discountDraft, setDiscountDraft] = useState("");
@@ -47,10 +70,19 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const financePending = discountMutation.isPending || logisticsMutation.isPending;
 
   const offer = query.data;
-  const platesToShow = offer
+  const isPileOffer = offer?.product_type === "piles";
+  const showReadiness =
+    !isPileOffer && (offer?.status === "в работе" || offer?.status === "На СГП");
+  const pileItems = offer && isPileOffer ? resolvePileItems(offer) : [];
+  const orderItemsCount = isPileOffer ? pileItems.length : (offer?.plates.length ?? 0);
+  const itemsToShow = offer
     ? showAllPlates
-      ? offer.plates
-      : offer.plates.slice(0, PLATES_PREVIEW)
+      ? isPileOffer
+        ? pileItems
+        : offer.plates
+      : isPileOffer
+        ? pileItems.slice(0, PLATES_PREVIEW)
+        : offer.plates.slice(0, PLATES_PREVIEW)
     : [];
 
   useEffect(() => {
@@ -138,14 +170,12 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   <div style={{ fontWeight: 600 }}>⏰ {offer.execution_terms}</div>
                 </div>
               )}
-              {offer.completion_percentage !== null && (
-                <div>
-                  <div style={{ color: "#667085", fontSize: "0.85rem" }}>Готовность</div>
-                  <div style={{ fontWeight: 600 }}>{offer.completion_percentage.toFixed(1)}%</div>
-                </div>
-              )}
             </div>
           </section>
+
+          {showReadiness && offer.readiness && (
+            <KpReadinessBlock kpId={offer.kp_id} readiness={offer.readiness} />
+          )}
 
           {/* Итоги: слева вес, НДС, рейс, доставка; справа скидка и под ней «Итого с НДС» */}
           <section
@@ -157,33 +187,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             }}
           >
             <h3 style={{ margin: "0 0 0.75rem", fontSize: "1rem" }}>Итоги</h3>
-            {estimateQuery.isPending && (
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.5rem",
-                  alignItems: "center",
-                  marginBottom: "0.75rem",
-                }}
-              >
-                <Spinner /> Подсчитываю ориентир по производству...
-              </div>
-            )}
-            {estimateQuery.data && (
-              <div style={{ marginBottom: "0.75rem" }}>
-                <ProductionEstimateAlert
-                  estimatedTracks={estimateQuery.data.estimated_tracks}
-                  estimatedDays={estimateQuery.data.estimated_days}
-                  totalLengthM={estimateQuery.data.total_length_m}
-                  label="Оценка заказа для производства"
-                  context={
-                    offer.execution_terms
-                      ? `текущий срок в карточке: ${offer.execution_terms}`
-                      : undefined
-                  }
-                />
-              </div>
-            )}
             <div
               style={{
                 display: "grid",
@@ -318,15 +321,42 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
 
           <section>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-              <h3 style={{ margin: 0 }}>Состав заказа ({offer.plates.length})</h3>
-              {offer.plates.length > PLATES_PREVIEW && (
+              <h3 style={{ margin: 0 }}>Состав заказа ({orderItemsCount})</h3>
+              {orderItemsCount > PLATES_PREVIEW && (
                 <Button variant="ghost" onClick={() => setShowAllPlates((prev) => !prev)}>
                   {showAllPlates ? "Свернуть" : "Показать все"}
                 </Button>
               )}
             </div>
-            {offer.plates.length === 0 ? (
-              <div style={{ color: "#667085" }}>Список плит пуст.</div>
+            {orderItemsCount === 0 ? (
+              <div style={{ color: "#667085" }}>{isPileOffer ? "Список свай пуст." : "Список плит пуст."}</div>
+            ) : isPileOffer ? (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.95rem" }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "#475467", background: "#f2f4f7" }}>
+                      <th style={{ padding: "0.5rem 0.75rem" }}>№</th>
+                      <th style={{ padding: "0.5rem 0.75rem" }}>Марка</th>
+                      <th style={{ padding: "0.5rem 0.75rem" }}>Класс</th>
+                      <th style={{ padding: "0.5rem 0.75rem" }}>Кол-во</th>
+                      <th style={{ padding: "0.5rem 0.75rem" }}>Цена</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(itemsToShow as ArchivePileItem[]).map((pile, index) => (
+                      <tr key={`${pile.mark}-${index}`} style={{ borderTop: "1px solid #e4e7ec" }}>
+                        <td style={{ padding: "0.5rem 0.75rem" }}>{pile.position_number ?? index + 1}</td>
+                        <td style={{ padding: "0.5rem 0.75rem" }}>{pile.mark || "—"}</td>
+                        <td style={{ padding: "0.5rem 0.75rem" }}>{pile.concrete_grade || "—"}</td>
+                        <td style={{ padding: "0.5rem 0.75rem" }}>{pile.qty} шт</td>
+                        <td style={{ padding: "0.5rem 0.75rem" }}>
+                          {formatLinePrice(pile.discounted_price, pile.unit_price)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ) : (
               <div style={{ overflowX: "auto" }}>
                 <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.95rem" }}>
@@ -339,17 +369,13 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {platesToShow.map((plate, index) => (
+                    {(itemsToShow as typeof offer.plates).map((plate, index) => (
                       <tr key={`${plate.plate_name}-${index}`} style={{ borderTop: "1px solid #e4e7ec" }}>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{plate.position_number ?? index + 1}</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{plate.plate_name || "—"}</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{plate.qty} шт</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>
-                          {plate.discounted_price !== null
-                            ? formatMoney(plate.discounted_price)
-                            : plate.unit_price !== null
-                              ? formatMoney(plate.unit_price)
-                              : "—"}
+                          {formatLinePrice(plate.discounted_price, plate.unit_price)}
                         </td>
                       </tr>
                     ))}
@@ -362,17 +388,25 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
           <section style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "pdf"))}>📄 PDF</Button>
             <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "xlsx"))}>📊 XLSX</Button>
-            <Button
-              variant="secondary"
-              disabled={schemaMutation.isPending}
-              onClick={() => schemaMutation.mutate(offer.kp_id)}
-            >
-              {schemaMutation.isPending ? "Формируем…" : "📐 Схема"}
-            </Button>
-            {offer.status === "в архиве" && (
-              <Button variant="secondary" onClick={() => setMoveOpen(true)}>
-                🏭 В производство
+            {!isPileOffer && (
+              <Button
+                variant="secondary"
+                disabled={schemaMutation.isPending}
+                onClick={() => schemaMutation.mutate(offer.kp_id)}
+              >
+                {schemaMutation.isPending ? "Формируем…" : "📐 Схема"}
               </Button>
+            )}
+            {offer.status === "в архиве" && (
+              isPileOffer ? (
+                <Button variant="secondary" disabled title="скоро">
+                  🏭 В производство
+                </Button>
+              ) : (
+                <Button variant="secondary" onClick={() => setMoveOpen(true)}>
+                  🏭 В производство
+                </Button>
+              )
             )}
             <Button variant="danger" onClick={() => setDeleteOpen(true)}>
               Удалить КП

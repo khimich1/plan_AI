@@ -23,6 +23,7 @@ import { StepLayout } from "@/shared/ui/StepLayout";
 
 type CalculationResultStepProps = {
   draft: CommercialDraftDetails;
+  isPileDraft?: boolean;
   breakdownTables: BreakdownTable[];
   isBreakdownLoading: boolean;
   errorMessage: string | null;
@@ -44,6 +45,7 @@ type CalculationResultStepProps = {
 
 export const CalculationResultStep = ({
   draft,
+  isPileDraft = false,
   breakdownTables,
   isBreakdownLoading,
   errorMessage,
@@ -67,7 +69,7 @@ export const CalculationResultStep = ({
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [logisticsError, setLogisticsError] = useState<string | null>(null);
   const [selectedPlateName, setSelectedPlateName] = useState<string | null>(null);
-  const breakdownAvailable = (draft.metadata.breakdown_tables_count ?? 0) > 0;
+  const breakdownAvailable = !isPileDraft && (draft.metadata.breakdown_tables_count ?? 0) > 0;
   const selectedBreakdownTable = useMemo(
     () => (selectedPlateName ? findBreakdownTable(breakdownTables, selectedPlateName) : undefined),
     [breakdownTables, selectedPlateName],
@@ -134,7 +136,7 @@ export const CalculationResultStep = ({
     <Card title="Готовность КП" subtitle="Перед отправкой клиенту проверьте ключевые пункты.">
       <ul style={{ margin: 0, paddingLeft: "1.25rem", display: "grid", gap: "0.5rem" }}>
         <li>✓ {draft.order_data.length} позиций в заказе</li>
-        <li>✓ {draft.totals.total_qty ?? 0} плит в заказе</li>
+        <li>✓ {draft.totals.total_qty ?? 0} {isPileDraft ? "свай" : "плит"} в заказе</li>
         <li>✓ Клиент: {draft.metadata.client_name || "не указан"}</li>
         <li>✓ Сумма с НДС: {totalWithVat}</li>
         {readinessWarnings.length > 0 && (
@@ -174,20 +176,50 @@ export const CalculationResultStep = ({
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {["№", "Наименование", "Кол-во", "Ед.", "Вес(кг)", "Цена", "Сумма"].map((column) => (
-                <th
-                  key={column}
-                  style={{ textAlign: "left", padding: "0.75rem", borderBottom: "1px solid #e4e7ec" }}
-                >
-                  {column}
-                </th>
-              ))}
+              {isPileDraft
+                ? ["№", "Марка", "Класс", "Кол-во", "Цена", "Сумма"].map((column) => (
+                    <th
+                      key={column}
+                      style={{ textAlign: "left", padding: "0.75rem", borderBottom: "1px solid #e4e7ec" }}
+                    >
+                      {column}
+                    </th>
+                  ))
+                : ["№", "Наименование", "Кол-во", "Ед.", "Вес(кг)", "Цена", "Сумма"].map((column) => (
+                    <th
+                      key={column}
+                      style={{ textAlign: "left", padding: "0.75rem", borderBottom: "1px solid #e4e7ec" }}
+                    >
+                      {column}
+                    </th>
+                  ))}
             </tr>
           </thead>
           <tbody>
             {draft.order_data.map((item, index) => {
-              const plateName = String(item.name ?? "");
-              const canOpenBreakdown = breakdownAvailable && !isBreakdownLoading && plateName.length > 0;
+              const itemName = String(item.name ?? item.mark ?? "");
+              const canOpenBreakdown = breakdownAvailable && !isBreakdownLoading && itemName.length > 0;
+
+              if (isPileDraft) {
+                return (
+                  <tr key={`${itemName}-${index}`}>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{itemName}</td>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
+                      {String(item.concrete_grade ?? "—")}
+                    </td>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.qty ?? "")}</td>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
+                      {formatOfferNumber(item.unit_price)}
+                    </td>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
+                      {formatOfferSum(item.qty, item.unit_price)}
+                    </td>
+                  </tr>
+                );
+              }
+
+              const plateName = itemName;
               return (
               <tr key={`${item.name ?? "row"}-${index}`}>
                 <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
@@ -243,7 +275,7 @@ export const CalculationResultStep = ({
         }}
       >
         <div style={{ display: "grid", gap: "0.75rem" }}>
-          <SummaryCell label="Общий вес (кг)" value={formatOfferNumber(totalWeight)} />
+          {!isPileDraft && <SummaryCell label="Общий вес (кг)" value={formatOfferNumber(totalWeight)} />}
           <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
             <FieldWrapper label="Стоимость рейса" error={logisticsError}>
               <div style={{ position: "relative" }}>
@@ -303,6 +335,7 @@ export const CalculationResultStep = ({
 
     <DownloadFilesSection
       draft={draft}
+      isPileDraft={isPileDraft}
       isPending={isGeneratingFiles}
       isSchemaPending={isGeneratingSchema}
       onGenerate={onGenerateFiles}
@@ -320,12 +353,14 @@ export const CalculationResultStep = ({
       }}
     />
 
-    <PlatePriceBreakdownModal
-      open={selectedPlateName !== null}
-      plateName={selectedPlateName}
-      table={selectedBreakdownTable}
-      onClose={() => setSelectedPlateName(null)}
-    />
+    {!isPileDraft && (
+      <PlatePriceBreakdownModal
+        open={selectedPlateName !== null}
+        plateName={selectedPlateName}
+        table={selectedBreakdownTable}
+        onClose={() => setSelectedPlateName(null)}
+      />
+    )}
 
     {(lastSaveResult?.result_card ?? null) && (
       <Card title="Карточка результата">

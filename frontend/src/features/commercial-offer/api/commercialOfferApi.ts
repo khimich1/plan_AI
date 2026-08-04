@@ -7,6 +7,7 @@ import type {
   ConditionsMode,
   ManagersResponse,
   PlateInputMode,
+  ProductType,
   SaveMode,
   WidePlateAction,
 } from "@/features/commercial-offer/types/commercialOffer";
@@ -14,11 +15,14 @@ import type {
 type DraftCreatePayload = {
   text: string;
   image: File | null;
+  productType?: ProductType;
 };
 
 type UpdateDraftPlatesPayload = DraftCreatePayload & {
   mode: PlateInputMode;
 };
+
+type UpdateDraftPilesPayload = UpdateDraftPlatesPayload;
 
 type UpdateDraftMetaPayload = {
   managerId?: number | null;
@@ -42,7 +46,12 @@ type SaveDraftPayload = {
   executionTermsInput?: string;
 };
 
-const createMultipartPayload = ({ text, image, mode }: DraftCreatePayload & { mode?: PlateInputMode }) => {
+const createMultipartPayload = ({
+  text,
+  image,
+  mode,
+  productType,
+}: DraftCreatePayload & { mode?: PlateInputMode }) => {
   const formData = new FormData();
   if (text.trim()) {
     formData.append("text", text.trim());
@@ -52,6 +61,9 @@ const createMultipartPayload = ({ text, image, mode }: DraftCreatePayload & { mo
   }
   if (mode) {
     formData.append("mode", mode);
+  }
+  if (productType) {
+    formData.append("product_type", productType);
   }
   return formData;
 };
@@ -82,10 +94,29 @@ export const commercialOfferApi = {
       createMultipartPayload(payload),
     ),
 
+  updateDraftPiles: (draftId: string, payload: UpdateDraftPilesPayload) =>
+    httpClient.patch<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/piles`,
+      createMultipartPayload(payload),
+    ),
+
   applyAiPlates: (draftId: string, payload: ApplyAiPlatesPayload) =>
     httpClient.post<CommercialDraftDetails>(
       `/api/v1/commercial/drafts/${draftId}/plates/ai`,
       createAiMultipartPayload(payload),
+    ),
+
+  applyAiPiles: (draftId: string, payload: ApplyAiPlatesPayload) =>
+    httpClient.post<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/piles/ai`,
+      createAiMultipartPayload(payload),
+    ),
+
+  updatePileGrades: (draftId: string, concreteGrade: string) =>
+    httpClient.patch<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/piles/grades`,
+      JSON.stringify({ concrete_grade: concreteGrade }),
+      { "Content-Type": "application/json" },
     ),
 
   resolveWidePlates: (draftId: string, decisions: WidePlateDecisionPayload[]) =>
@@ -128,7 +159,6 @@ export const commercialOfferApi = {
   generateFiles: (draftId: string, fileTypes?: CommercialGeneratedFile["kind"][]) =>
     httpClient.post<{ draft_id: string; files: CommercialGeneratedFile[] }>(
       `/api/v1/commercial/drafts/${draftId}/generate-files`,
-      // Схема (matplotlib) тяжёлая и на VPS может убить backend по OOM — генерируем отдельно по запросу.
       JSON.stringify({ file_types: fileTypes ?? ["pdf", "xlsx", "breakdown"] }),
       { "Content-Type": "application/json" },
     ),

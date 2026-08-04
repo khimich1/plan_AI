@@ -64,8 +64,10 @@ def test_list_offers_for_archived_skips_completion(tmp_path: Path) -> None:
 
     assert len(items) == 1
     assert items[0].kp_id == 42
+    assert items[0].product_type == "plates"
     assert items[0].completion_percentage is None
     repository.get_completion_percentage.assert_not_called()
+    repository.list_by_section.assert_called_once_with("archived", product_type="all")
 
 
 def test_list_offers_for_production_includes_completion(tmp_path: Path) -> None:
@@ -162,52 +164,66 @@ def test_move_to_production_requires_archived_status(tmp_path: Path) -> None:
         service.move_to_production(42, "5 дней", user=ADMIN)
 
 
-def test_move_to_production_happy_path(tmp_path: Path) -> None:
+def test_move_to_production_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repository = MagicMock()
+    repository.db_path = str(tmp_path / "plita.db")
     repository.get_by_id.side_effect = [
         _make_raw(status="в архиве"),
         _make_raw(status="в работе", execution_terms="01.04.2026"),
     ]
-    repository.update_execution_date.return_value = True
-    repository.update_status.return_value = True
+    commit = MagicMock(return_value=2)
+    monkeypatch.setattr(
+        "core.kp.offers_write.commit_move_to_production", commit
+    )
     service = _make_service(repository, tmp_path)
 
     details = service.move_to_production(42, "01.04.2026", user=ADMIN)
 
     assert details.status == "в работе"
     assert details.execution_terms == "01.04.2026"
-    repository.update_execution_date.assert_called_once_with(42, "01.04.2026")
-    repository.update_status.assert_called_once_with(42, "в работе")
+    commit.assert_called_once_with(42, "01.04.2026", repository.db_path)
 
 
-def test_move_to_production_normalizes_iso_date(tmp_path: Path) -> None:
+def test_move_to_production_normalizes_iso_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repository = MagicMock()
+    repository.db_path = str(tmp_path / "plita.db")
     repository.get_by_id.side_effect = [
         _make_raw(status="в архиве"),
         _make_raw(status="в работе", execution_terms="05.06.2026"),
     ]
-    repository.update_execution_date.return_value = True
-    repository.update_status.return_value = True
+    commit = MagicMock(return_value=1)
+    monkeypatch.setattr(
+        "core.kp.offers_write.commit_move_to_production", commit
+    )
     service = _make_service(repository, tmp_path)
 
     service.move_to_production(42, "2026-06-05", user=ADMIN)
 
-    repository.update_execution_date.assert_called_once_with(42, "05.06.2026")
+    commit.assert_called_once_with(42, "05.06.2026", repository.db_path)
 
 
-def test_move_to_production_normalizes_ddmmyyyy(tmp_path: Path) -> None:
+def test_move_to_production_normalizes_ddmmyyyy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repository = MagicMock()
+    repository.db_path = str(tmp_path / "plita.db")
     repository.get_by_id.side_effect = [
         _make_raw(status="в архиве"),
         _make_raw(status="в работе", execution_terms="05.06.2026"),
     ]
-    repository.update_execution_date.return_value = True
-    repository.update_status.return_value = True
+    commit = MagicMock(return_value=1)
+    monkeypatch.setattr(
+        "core.kp.offers_write.commit_move_to_production", commit
+    )
     service = _make_service(repository, tmp_path)
 
     service.move_to_production(42, "05.06.2026", user=ADMIN)
 
-    repository.update_execution_date.assert_called_once_with(42, "05.06.2026")
+    commit.assert_called_once_with(42, "05.06.2026", repository.db_path)
 
 
 def test_move_to_production_normalizes_five_days(
@@ -225,17 +241,38 @@ def test_move_to_production_normalizes_five_days(
 
     monkeypatch.setattr("core.execution_terms.datetime", FixedNowDatetime)
     repository = MagicMock()
+    repository.db_path = str(tmp_path / "plita.db")
     repository.get_by_id.side_effect = [
         _make_raw(status="в архиве"),
         _make_raw(status="в работе", execution_terms="05.06.2026"),
     ]
-    repository.update_execution_date.return_value = True
-    repository.update_status.return_value = True
+    commit = MagicMock(return_value=1)
+    monkeypatch.setattr(
+        "core.kp.offers_write.commit_move_to_production", commit
+    )
     service = _make_service(repository, tmp_path)
 
     service.move_to_production(42, "5 дней", user=ADMIN)
 
-    repository.update_execution_date.assert_called_once_with(42, "05.06.2026")
+    commit.assert_called_once_with(42, "05.06.2026", repository.db_path)
+
+
+def test_move_to_production_raises_archive_error_on_commit_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.archive_service import ArchiveError
+
+    repository = MagicMock()
+    repository.db_path = str(tmp_path / "plita.db")
+    repository.get_by_id.return_value = _make_raw(status="в архиве")
+    monkeypatch.setattr(
+        "core.kp.offers_write.commit_move_to_production",
+        MagicMock(side_effect=RuntimeError("boom")),
+    )
+    service = _make_service(repository, tmp_path)
+
+    with pytest.raises(ArchiveError, match="Не удалось перевести"):
+        service.move_to_production(42, "01.04.2026", user=ADMIN)
 
 
 def test_parse_execution_terms_formats() -> None:
@@ -313,48 +350,6 @@ def test_generate_document_rejects_empty_plates(tmp_path: Path) -> None:
 
     with pytest.raises(ArchiveValidationError):
         asyncio.run(service.generate_document(42, "xlsx", user=ADMIN))
-
-
-def test_generate_document_schema(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from core.plate_order_context import PlateOrderContext
-
-    repository = MagicMock()
-    repository.get_by_id.return_value = _make_raw()
-    repository.get_xlsx_file.return_value = None
-    service = _make_service(repository, tmp_path)
-    request_ctx = PlateOrderContext.fresh_empty()
-
-    schema_path = tmp_path / "Схема_test_КЗ.pdf"
-    schema_path.write_bytes(b"%PDF-SCHEMA")
-
-    class FakeContext:
-        optimization_success = True
-        optimization_error_message = None
-        optimization_result = {"_opt_status": "ok", "total_plates": 2}
-        plan_by_load = {}
-        load_to_reinforcement_map = {}
-
-    async def fake_run_in_order_context(ctx, fn, *args, **kwargs):
-        return (str(tmp_path / "schema.png"), str(schema_path))
-
-    monkeypatch.setattr(
-        "app.services.archive_service.OptimizationService.optimize",
-        lambda self, order, orders_2d=None, plate_order_ctx=None: FakeContext(),
-    )
-    monkeypatch.setattr(
-        "app.services.archive_service.run_in_order_context",
-        fake_run_in_order_context,
-    )
-
-    path = asyncio.run(
-        service.generate_document(42, "schema", user=ADMIN, plate_order_ctx=request_ctx)
-    )
-
-    assert path.exists()
-    assert path.name == "КП_42_schema.pdf"
-    assert path.read_bytes() == b"%PDF-SCHEMA"
 
 
 def test_search_by_number_found(tmp_path: Path) -> None:

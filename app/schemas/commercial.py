@@ -9,14 +9,17 @@ CommercialFileKind = Literal["pdf", "xlsx", "breakdown", "schema"]
 CommercialSourceType = Literal["text", "image", "ai"]
 CommercialConditionsMode = Literal["standard", "custom"]
 CommercialPlateUpdateMode = Literal["append", "replace"]
+CommercialPileUpdateMode = Literal["append", "replace"]
 CommercialWidePlateAction = Literal["confirm", "exclude", "replace"]
 CommercialSaveMode = Literal["database", "archive", "skip"]
+ProductType = Literal["plates", "piles"]
 
 
 class WizardStepId(str, Enum):
     """Канонические шаги мастера КП (совпадают с JSON-значениями на фронтенде)."""
 
     plates = "plates"
+    piles = "piles"
     client = "client"
     result = "result"
 
@@ -26,6 +29,7 @@ class WizardNextRequiredAction(str, Enum):
 
     none = "none"
     ingest_plates = "ingest_plates"
+    ingest_piles = "ingest_piles"
     resolve_wide_plates = "resolve_wide_plates"
     select_manager = "select_manager"
     complete_client_terms = "complete_client_terms"
@@ -104,6 +108,14 @@ class CommercialPlateBatch(BaseModel):
     filename: str = ""
 
 
+class CommercialPileBatch(BaseModel):
+    source_type: CommercialSourceType
+    original_text: str = ""
+    normalized_text: str = ""
+    ocr_text: str = ""
+    filename: str = ""
+
+
 class CommercialOfferIdentity(BaseModel):
     offer_number: str
     offer_date: str
@@ -122,6 +134,7 @@ class CommercialDraftMetadata(BaseModel):
     """Метаданные черновика; owner_user_id хранится на сервере и не отдаётся клиенту."""
 
     owner_user_id: int | None = Field(default=None, exclude=True)
+    product_type: ProductType = "plates"
     source_type: CommercialSourceType | None = None
     original_text: str = ""
     ocr_text: str = ""
@@ -147,6 +160,8 @@ class CommercialDraftMetadata(BaseModel):
     breakdown_tables_count: int = 0
     total_sum: float = 0.0
     plate_batches: list[CommercialPlateBatch] = Field(default_factory=list)
+    pile_batches: list[CommercialPileBatch] = Field(default_factory=list)
+    default_concrete_grade: str = "B25"
     wide_plates_resolved: bool = False
     last_source_filename: str = ""
     ai_applied: bool = False
@@ -214,6 +229,10 @@ class CommercialWidePlateDecision(BaseModel):
 
 class CommercialWidePlatesResolveRequest(BaseModel):
     decisions: list[CommercialWidePlateDecision] = Field(min_length=1)
+
+
+class CommercialPileGradesUpdateRequest(BaseModel):
+    concrete_grade: str = Field(min_length=2)
 
 
 class CommercialGenerateFilesRequest(BaseModel):

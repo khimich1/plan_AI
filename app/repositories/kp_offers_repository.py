@@ -27,16 +27,24 @@ class KpOffersRepository:
         owner_user_id: int | None = None,
         readable_statuses: tuple[str, ...] | None = None,
         deny_all: bool = False,
+        product_type: str | None = None,
     ) -> dict[str, list[dict]]:
         return offers_read.get_all_kp_list(
             self.db_path,
             owner_user_id=owner_user_id,
             readable_statuses=readable_statuses,
             deny_all=deny_all,
+            product_type=product_type,
         )
 
-    def list_by_section(self, section: ArchiveSection, **list_filters) -> list[dict]:
-        grouped = self.list_grouped(**list_filters)
+    def list_by_section(
+        self,
+        section: ArchiveSection,
+        *,
+        product_type: str | None = None,
+        **list_filters,
+    ) -> list[dict]:
+        grouped = self.list_grouped(product_type=product_type, **list_filters)
         return list(grouped.get(section, []))
 
     def search_by_customer_name(
@@ -47,6 +55,7 @@ class KpOffersRepository:
         owner_user_id: int | None = None,
         readable_statuses: tuple[str, ...] | None = None,
         deny_all: bool = False,
+        product_type: str | None = None,
     ) -> tuple[list[dict], int]:
         return offers_read.search_kp_by_customer_name(
             name,
@@ -55,6 +64,7 @@ class KpOffersRepository:
             owner_user_id=owner_user_id,
             readable_statuses=readable_statuses,
             deny_all=deny_all,
+            product_type=product_type,
         )
 
     def get_xlsx_file(self, kp_id: int, output_path: str | None = None) -> bytes | None:

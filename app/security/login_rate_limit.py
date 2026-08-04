@@ -138,7 +138,13 @@ def rate_limit_deployment_info() -> dict[str, Any]:
     }
     if shared_store:
         info["shared_store_config"] = shared_store
-    if workers is not None and workers > 1 and not has_shared_rate_limit_store():
+    if workers is None and not has_shared_rate_limit_store():
+        info["workers_undeclared"] = True
+        info["warning"] = (
+            "configured_workers undeclared; set UVICORN_WORKERS=1 "
+            "(or WEB_CONCURRENCY / APP_WORKERS) so ops can verify single-worker deploy"
+        )
+    elif workers is not None and workers > 1 and not has_shared_rate_limit_store():
         info["warning"] = (
             f"configured_workers={workers} without shared store; "
             "effective limits are split across workers"
@@ -151,7 +157,15 @@ def warn_if_multi_worker_without_shared_store() -> None:
     if has_shared_rate_limit_store():
         return
     workers = configured_worker_count()
-    if workers is None or workers <= 1:
+    if workers is None:
+        logger.warning(
+            "Worker count undeclared (UVICORN_WORKERS / WEB_CONCURRENCY / APP_WORKERS "
+            "not set) while rate limits use in-process store. Set UVICORN_WORKERS=1 "
+            "explicitly for single-instance deploy. See "
+            "ai_docs/develop/deploy-contract.md."
+        )
+        return
+    if workers <= 1:
         return
     logger.warning(
         "Rate limiting uses in-process store only; %s means limits are not "
@@ -160,6 +174,21 @@ def warn_if_multi_worker_without_shared_store() -> None:
         "ai_docs/develop/deploy-contract.md.",
         f"configured_workers={workers}",
     )
+
+
+def enforce_single_instance_workers(
+    *, app_env: str, storage_layout: str
+) -> None:
+    """Fail fast in production single-instance when multiple workers are configured."""
+    if app_env.lower() != "production" or storage_layout != "single_instance":
+        return
+    workers = configured_worker_count()
+    if workers is not None and workers > 1:
+        raise RuntimeError(
+            f"Refusing to start: configured_workers={workers} with "
+            "APP_ENV=production and APP_STORAGE_LAYOUT=single_instance. "
+            "Set UVICORN_WORKERS=1."
+        )
 
 
 def resolve_client_ip(request: Request) -> str:

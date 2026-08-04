@@ -16,8 +16,11 @@ from app.schemas.archive import (
     ArchiveOfferDetails,
     ArchiveOfferFinance,
     ArchiveOfferListItem,
+    ArchivePileItem,
     ArchivePlateItem,
+    ArchiveProductTypeFilter,
     ArchiveSearchResponse,
+    KpReadinessPositionsResponse,
 )
 from app.repositories.plan_repository import PlanRepository
 from app.services.plan_distribution_service import PlanDistributionService
@@ -35,7 +38,7 @@ from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
 from core.kp_order_data import order_data_from_kp_info
-from core.kp.xlsx_order_data import enrich_order_data_prices_from_xlsx
+from core.gantt_excel import create_gantt_excel
 
 
 logger = logging.getLogger(__name__)
@@ -75,9 +78,19 @@ class ArchiveService:
 
     # ---------- Списки и карточка ----------
 
-    def list_offers(self, section: ArchiveSection, *, user: dict) -> list[ArchiveOfferListItem]:
+    def list_offers(
+        self,
+        section: ArchiveSection,
+        *,
+        user: dict,
+        product_type: ArchiveProductTypeFilter = "all",
+    ) -> list[ArchiveOfferListItem]:
         list_filters = list_filters_for_user(user)
-        raw_items = self.repository.list_by_section(section, **list_filters)
+        raw_items = self.repository.list_by_section(
+            section,
+            product_type=product_type,
+            **list_filters,
+        )
         return [self._to_list_item(raw) for raw in raw_items]
 
     def get_details(self, kp_id: int, *, user: dict) -> ArchiveOfferDetails:
@@ -86,6 +99,19 @@ class ArchiveService:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         assert_offer_read_access(user, raw)
         return self._to_details(raw)
+
+    def get_readiness_positions(self, kp_id: int, *, user: dict) -> KpReadinessPositionsResponse:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_read_access(user, raw)
+        status = raw.get("status") or ""
+        from app.services.kp_readiness_service import KpReadinessService
+
+        items = KpReadinessService(db_path=self.repository.db_path).list_positions(
+            kp_id, status=status
+        )
+        return KpReadinessPositionsResponse(items=items, count=len(items))
 
     def search(
         self,
@@ -98,23 +124,22 @@ class ArchiveService:
         if kp_id is not None:
             raw = self.repository.get_by_id(kp_id)
             if not raw:
-                items = []
+                rows: list[dict] = []
             else:
                 assert_offer_read_access(user, raw)
-                items = [self._to_list_item(raw)]
+                rows = [raw]
             return ArchiveSearchResponse(
                 mode="number",
-                items=items,
-                total=len(items),
+                items=[self._to_list_item(r) for r in rows],
+                total=len(rows),
                 truncated=False,
             )
 
         name = (customer or "").strip()
         rows, total = self.repository.search_by_customer_name(name, limit=50, **list_filters)
-        items = [self._to_list_item(raw) for raw in rows]
         return ArchiveSearchResponse(
             mode="customer",
-            items=items,
+            items=[self._to_list_item(raw) for raw in rows],
             total=total,
             truncated=total > 50,
         )
@@ -166,10 +191,15 @@ class ArchiveService:
             )
 
         execution_terms = self._parse_execution_terms(terms_input)
-        if not self.repository.update_execution_date(kp_id, execution_terms):
-            raise ArchiveError(f"Не удалось сохранить срок для КП №{kp_id}")
-        if not self.repository.update_status(kp_id, "в работе"):
-            raise ArchiveError(f"Не удалось изменить статус для КП №{kp_id}")
+        try:
+            from core.kp.offers_write import commit_move_to_production
+
+            commit_move_to_production(kp_id, execution_terms, self.repository.db_path)
+        except Exception as exc:
+            logger.exception("move_to_production failed for kp_id=%s", kp_id)
+            raise ArchiveError(
+                f"Не удалось перевести КП №{kp_id} в производство"
+            ) from exc
 
         return self.get_details(kp_id, user=user)
 
@@ -207,26 +237,12 @@ class ArchiveService:
         if not order_data:
             raise ArchiveValidationError("В КП нет позиций для формирования документа")
 
-        stored_xlsx = self.repository.get_xlsx_file(kp_id)
-        if isinstance(stored_xlsx, (bytes, bytearray)) and stored_xlsx:
-            order_data = enrich_order_data_prices_from_xlsx(
-                order_data,
-                bytes(stored_xlsx),
-                discount_percent=float(raw.get("discount_percent") or 0),
-            )
-
         offer_number = str(kp_id)
         offer_date = raw.get("creation_date") or datetime.now().strftime("%d.%m.%Y")
         customer_name = raw.get("customer_name")
         manager_name = raw.get("manager_name")
         discount_percent = float(raw.get("discount_percent") or 0)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
-
-        if kind == "xlsx" and isinstance(stored_xlsx, (bytes, bytearray)) and stored_xlsx:
-            filename = f"КП_{kp_id}.xlsx"
-            target_path = self.outputs_dir / filename
-            await asyncio.to_thread(_write_bytes, target_path, bytes(stored_xlsx))
-            return target_path
 
         if kind == "pdf":
             buffer = await asyncio.to_thread(
@@ -347,7 +363,9 @@ class ArchiveService:
         kp_id = int(raw.get("kp_id") or 0)
         status = raw.get("status") or None
         completion = None
-        if status in ("в работе", "выполнено"):
+        sgp_progress = None
+        shipped_progress = None
+        if status in ("в работе", "выполнено", "На СГП"):
             try:
                 completion = float(
                     self.repository.get_completion_percentage(kp_id).get("percentage", 0.0)
@@ -355,6 +373,18 @@ class ArchiveService:
             except Exception:
                 logger.exception("Ошибка получения %% выполнения для КП %s", kp_id)
                 completion = None
+            try:
+                from app.services.sgp_service import SgpService
+
+                progress = SgpService(db_path=self.repository.db_path).sgp_progress(kp_id)
+                sgp_progress = {"n": progress.n, "m": progress.m}
+            except Exception:
+                logger.exception("Ошибка получения sgp_progress для КП %s", kp_id)
+            try:
+                shipped_progress = self._shipped_progress(kp_id)
+            except Exception:
+                logger.exception("Ошибка получения shipped_progress для КП %s", kp_id)
+                shipped_progress = None
         return ArchiveOfferListItem(
             kp_id=kp_id,
             creation_date=raw.get("creation_date"),
@@ -367,13 +397,38 @@ class ArchiveService:
             execution_terms=raw.get("execution_terms") or None,
             status=status,
             completion_percentage=completion,
+            sgp_progress=sgp_progress,
+            shipped_progress=shipped_progress,
+            product_type=str(raw.get("product_type") or "plates"),
         )
+
+    def _shipped_progress(self, kp_id: int) -> dict[str, int] | None:
+        """SHIP-301: x = Σ плит в done-рейсах КП, m = kp_meta.ordered_qty (read-only)."""
+        from core.kp_db_common import _connect
+        from core.kp_db_shipments import shipped_qty_for_kp
+
+        conn = _connect(self.repository.db_path)
+        try:
+            cur = conn.cursor()
+            x = shipped_qty_for_kp(cur, kp_id)
+            cur.execute(
+                "SELECT ordered_qty FROM kp_meta WHERE kp_id = ?",
+                (kp_id,),
+            )
+            row = cur.fetchone()
+            if row is None or row[0] is None:
+                return None
+            return {"x": x, "m": int(row[0])}
+        finally:
+            conn.close()
 
     def _to_details(self, raw: dict) -> ArchiveOfferDetails:
         plates = [self._plate_item(p) for p in (raw.get("plates") or [])]
+        piles = [self._pile_item(p) for p in (raw.get("piles") or [])]
+        product_type = str(raw.get("product_type") or "plates")
         kp_id = int(raw.get("kp_id") or 0)
         completion = None
-        if raw.get("status") in ("в работе", "выполнено"):
+        if raw.get("status") in ("в работе", "выполнено", "На СГП"):
             try:
                 completion = float(
                     self.repository.get_completion_percentage(kp_id).get("percentage", 0.0)
@@ -385,6 +440,18 @@ class ArchiveService:
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
         total_cargo_weight_kg = float(total_order_cargo_weight_kg(order_data))
         delivery_total = delivery_service_charge_rub(logistics_cost, total_cargo_weight_kg)
+
+        readiness = None
+        status = raw.get("status") or ""
+        if status in ("в работе", "На СГП"):
+            try:
+                from app.services.kp_readiness_service import KpReadinessService
+
+                readiness = KpReadinessService(db_path=self.repository.db_path).build_summary(
+                    kp_id, status=status
+                )
+            except Exception:
+                logger.exception("Ошибка получения readiness для КП %s", kp_id)
 
         return ArchiveOfferDetails(
             kp_id=kp_id,
@@ -404,8 +471,22 @@ class ArchiveService:
             logistics_cost=logistics_cost,
             total_cargo_weight_kg=total_cargo_weight_kg,
             delivery_service_total_rub=delivery_total,
+            product_type=product_type,
             plates=plates,
+            piles=piles,
             completion_percentage=completion,
+            readiness=readiness,
+        )
+
+    @staticmethod
+    def _pile_item(raw: dict) -> ArchivePileItem:
+        return ArchivePileItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
         )
 
     @staticmethod

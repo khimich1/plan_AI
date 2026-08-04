@@ -20,7 +20,7 @@ With `N` uvicorn/gunicorn workers:
 - Worker restarts clear counters for that process.
 - Horizontal scaling (multiple hosts) multiplies the same issue.
 
-This is acceptable when the app runs as a **single worker** (current production recommendation).
+This is acceptable when the app runs as a **single worker** (current production recommendation). See also the deployment ADR: [`deployment-single-instance.md`](./deployment-single-instance.md) and [`../deploy-contract.md`](../deploy-contract.md).
 
 ## Production deployment
 

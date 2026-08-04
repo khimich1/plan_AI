@@ -4,6 +4,7 @@ from typing import Any
 
 from app.schemas.commercial import WizardNextRequiredAction, WizardStepId, _coerce_wizard_step_id
 from app.services.commercial_calculation_service import (
+    ERR_EMPTY_PILES,
     ERR_EMPTY_PLATES,
     ERR_NO_MANAGER,
     ERR_WIDE_PLATES,
@@ -33,8 +34,14 @@ class CommercialWizardStepService:
     def normalize_stored_step(self, metadata: dict[str, Any]) -> WizardStepId:
         return _coerce_wizard_step_id(metadata.get("current_step"))
 
+    def is_pile_draft(self, metadata: dict[str, Any]) -> bool:
+        return self.calculation_service.is_pile_draft(metadata)
+
+    def product_step(self, metadata: dict[str, Any]) -> WizardStepId:
+        return WizardStepId.piles if self.is_pile_draft(metadata) else WizardStepId.plates
+
     def wizard_step_after_plate_snapshot(self, metadata: dict[str, Any], order_data: list[Any]) -> WizardStepId:
-        return WizardStepId.plates
+        return self.product_step(metadata)
 
     def persist_wizard_step(self, draft_id: str, step: WizardStepId) -> None:
         self.draft_store.update_metadata(draft_id, current_step=step.value)
@@ -55,9 +62,10 @@ class CommercialWizardStepService:
             return WizardStepId.client
 
         if order_data and self.wide_lines_blocking(metadata):
+            product_step = self.product_step(metadata)
             if stored in (WizardStepId.client, WizardStepId.result):
-                return WizardStepId.plates
-            return WizardStepId.plates
+                return product_step
+            return product_step
 
         return stored
 
@@ -77,6 +85,8 @@ class CommercialWizardStepService:
             first = errors[0]
             if first == ERR_EMPTY_PLATES:
                 return WizardNextRequiredAction.ingest_plates
+            if first == ERR_EMPTY_PILES:
+                return WizardNextRequiredAction.ingest_piles
             if first == ERR_WIDE_PLATES:
                 return WizardNextRequiredAction.resolve_wide_plates
             if first == ERR_NO_MANAGER:
@@ -97,10 +107,12 @@ class CommercialWizardStepService:
         metadata = dict(payload.get("metadata") or {})
         order_data = payload.get("order_data") or []
 
-        if effective_step == WizardStepId.plates:
+        if effective_step in (WizardStepId.plates, WizardStepId.piles):
             if not order_data:
                 return []
             if self.wide_lines_blocking(metadata):
+                return []
+            if self.calculation_service.unpriced_position_labels(order_data):
                 return []
             return [WizardStepId.client]
 
@@ -127,17 +139,24 @@ class CommercialWizardStepService:
             metadata=metadata,
         )
 
+        messages: list[str] = []
         if next_action == WizardNextRequiredAction.complete_client_terms:
-            return errors
+            messages.extend(errors)
+        else:
+            action_message = {
+                WizardNextRequiredAction.ingest_plates: ERR_EMPTY_PLATES,
+                WizardNextRequiredAction.ingest_piles: ERR_EMPTY_PILES,
+                WizardNextRequiredAction.resolve_wide_plates: ERR_WIDE_PLATES,
+                WizardNextRequiredAction.select_manager: ERR_NO_MANAGER,
+            }.get(next_action)
+            if action_message is not None:
+                messages.append(action_message)
 
-        action_message = {
-            WizardNextRequiredAction.ingest_plates: ERR_EMPTY_PLATES,
-            WizardNextRequiredAction.resolve_wide_plates: ERR_WIDE_PLATES,
-            WizardNextRequiredAction.select_manager: ERR_NO_MANAGER,
-        }.get(next_action)
-        if action_message is None:
-            return []
-        return [action_message]
+        unpriced = self.calculation_service.unpriced_position_labels(order_data)
+        if unpriced:
+            messages.append(f"Нет цен для позиций: {', '.join(unpriced)}")
+
+        return messages
 
     def build_wizard_state(self, payload: dict[str, Any]) -> dict[str, Any]:
         current = self.infer_wizard_current_step(payload)

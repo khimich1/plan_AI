@@ -64,6 +64,19 @@ export interface DayPlanBlock {
   plan_name: string;
   completed: boolean;
   tracks: DayTrackDetail[];
+  from_sgp?: FromSgpItem[];
+  from_sgp_qty?: number;
+}
+
+export interface FromSgpItem {
+  sgp_id: number;
+  target_kp_id: number;
+  qty: number;
+  plate_name?: string;
+  length_m?: number | null;
+  width_m?: number | null;
+  load_class?: number | null;
+  source?: string;
 }
 
 export interface DayViewResponse {
@@ -154,6 +167,14 @@ export interface BuildPlanRequest {
   fill_targets?: FillTargetItem[];
   /** asc — слабые первыми (по умолчанию); desc — сильные первыми (экспериментальный режим). */
   layout_reinforcement_order?: LayoutReinforcementOrder;
+  /** Закрытие потребности со СГП (не уходит в оптимизатор). */
+  sgp_reservations?: SgpReservationItem[];
+}
+
+export interface SgpReservationItem {
+  sgp_id: number;
+  target_kp_id: number;
+  qty: number;
 }
 
 export interface BuildPlanSummary {
@@ -194,4 +215,5 @@ export interface WorkCalendarPayload {
   extra_workdays: string[];
 }
 
-export type ProductionTab = "calendar" | "create" | "plans" | "work-calendar";
+export type ProductionTab = "calendar" | "create" | "plans" | "work-calendar" | "sgp";
+// `create` — скрытый programmatic route с корзины календаря (не в ProductionTabs).

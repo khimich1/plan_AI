@@ -29,30 +29,51 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
         kp_data = dict(row)
 
         cur.execute(
-            """
-            SELECT * FROM kp_plates
-            WHERE kp_id = ?
-            ORDER BY position_number
-            """,
+            "SELECT status, owner_user_id, COALESCE(product_type, 'plates') AS product_type "
+            "FROM kp_meta WHERE kp_id = ?",
             (kp_id,),
         )
-        raw_plates = [dict(plate_row) for plate_row in cur.fetchall()]
-        kp_data["plates"] = resolve_plates_for_kp_documents(
-            raw_plates,
-            kp_id=kp_id,
-            db_path=db_path,
-        )
+        meta_row = cur.fetchone()
+        if meta_row:
+            kp_data["status"] = meta_row["status"]
+            kp_data["owner_user_id"] = meta_row["owner_user_id"]
+            kp_data["product_type"] = meta_row["product_type"] or "plates"
+        else:
+            kp_data["product_type"] = "plates"
+
+        product_type = str(kp_data.get("product_type") or "plates").lower()
+        if product_type == "piles":
+            cur.execute(
+                """
+                SELECT * FROM kp_piles
+                WHERE kp_id = ?
+                ORDER BY position_number
+                """,
+                (kp_id,),
+            )
+            kp_data["piles"] = [dict(pile_row) for pile_row in cur.fetchall()]
+            kp_data["plates"] = []
+        else:
+            cur.execute(
+                """
+                SELECT * FROM kp_plates
+                WHERE kp_id = ?
+                ORDER BY position_number
+                """,
+                (kp_id,),
+            )
+            raw_plates = [dict(plate_row) for plate_row in cur.fetchall()]
+            kp_data["plates"] = resolve_plates_for_kp_documents(
+                raw_plates,
+                kp_id=kp_id,
+                db_path=db_path,
+            )
+            kp_data["piles"] = []
 
         cur.execute("SELECT * FROM kp_files WHERE kp_id = ?", (kp_id,))
         file_row = cur.fetchone()
         if file_row:
             kp_data["file"] = dict(file_row)
-
-        cur.execute("SELECT status, owner_user_id FROM kp_meta WHERE kp_id = ?", (kp_id,))
-        meta_row = cur.fetchone()
-        if meta_row:
-            kp_data["status"] = meta_row["status"]
-            kp_data["owner_user_id"] = meta_row["owner_user_id"]
 
         return kp_data
 
@@ -173,6 +194,16 @@ def get_next_kp_number(db_path: str = DEFAULT_DB) -> int:
         conn.close()
 
 
+def _product_type_sql_filter(product_type: str | None) -> tuple[str, list]:
+    """Optional filter: plates | piles (all/empty → no extra clause)."""
+    if not product_type or product_type == "all":
+        return "", []
+    normalized = str(product_type).strip().lower()
+    if normalized not in ("plates", "piles"):
+        return "", []
+    return " AND COALESCE(m.product_type, 'plates') = ?", [normalized]
+
+
 def _offer_access_sql_filters(
     *,
     owner_user_id: int | None = None,
@@ -202,6 +233,7 @@ def get_all_kp_list(
     owner_user_id: int | None = None,
     readable_statuses: tuple[str, ...] | None = None,
     deny_all: bool = False,
+    product_type: str | None = None,
 ) -> Dict[str, List[Dict]]:
     """Все КП, сгруппированные по статусам: archived / in_production / completed."""
     conn = _connect(db_path)
@@ -216,6 +248,7 @@ def get_all_kp_list(
             readable_statuses=readable_statuses,
             deny_all=deny_all,
         )
+        product_sql, product_params = _product_type_sql_filter(product_type)
 
         cur.execute(
             f"""
@@ -232,13 +265,14 @@ def get_all_kp_list(
                 ko.payment_conditions,
                 ko.execution_terms,
                 m.status,
-                m.owner_user_id
+                m.owner_user_id,
+                COALESCE(m.product_type, 'plates') AS product_type
             FROM KP_offers ko
             LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
-            WHERE 1 = 1{access_sql}
+            WHERE 1 = 1{access_sql}{product_sql}
             ORDER BY ko.kp_id ASC
             """,
-            access_params,
+            (*access_params, *product_params),
         )
 
         all_kp = [dict(row) for row in cur.fetchall()]
@@ -254,7 +288,7 @@ def get_all_kp_list(
 
             if status == "в архиве":
                 result["archived"].append(kp)
-            elif status == "в работе":
+            elif status in ("в работе", "На СГП"):
                 result["in_production"].append(kp)
             elif status == "выполнено":
                 result["completed"].append(kp)
@@ -278,6 +312,7 @@ def search_kp_by_customer_name(
     owner_user_id: int | None = None,
     readable_statuses: tuple[str, ...] | None = None,
     deny_all: bool = False,
+    product_type: str | None = None,
 ) -> tuple[List[Dict], int]:
     """Ищет КП по частичному совпадению имени заказчика."""
     conn = _connect(db_path)
@@ -295,6 +330,7 @@ def search_kp_by_customer_name(
             readable_statuses=readable_statuses,
             deny_all=deny_all,
         )
+        product_sql, product_params = _product_type_sql_filter(product_type)
 
         base_select = f"""
             SELECT
@@ -308,15 +344,16 @@ def search_kp_by_customer_name(
                 ko.total_amount,
                 ko.execution_terms,
                 m.status,
-                m.owner_user_id
+                m.owner_user_id,
+                COALESCE(m.product_type, 'plates') AS product_type
             FROM KP_offers ko
             LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
-            WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'{access_sql}
+            WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'{access_sql}{product_sql}
         """
 
         cur.execute(
             f"{base_select} ORDER BY ko.kp_id DESC LIMIT ?",
-            (pattern, *access_params, fetch_limit),
+            (pattern, *access_params, *product_params, fetch_limit),
         )
         rows = [dict(row) for row in cur.fetchall()]
 
@@ -326,9 +363,9 @@ def search_kp_by_customer_name(
                 SELECT COUNT(*) AS cnt
                 FROM KP_offers ko
                 LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
-                WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'{access_sql}
+                WHERE casefold(ko.customer_name) LIKE casefold(?) ESCAPE '\\'{access_sql}{product_sql}
                 """,
-                (pattern, *access_params),
+                (pattern, *access_params, *product_params),
             )
             total = int(cur.fetchone()["cnt"])
             return rows[:limit], total

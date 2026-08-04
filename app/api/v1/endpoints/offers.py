@@ -80,6 +80,11 @@ def move_to_production(
             raise HTTPException(status_code=404, detail="Offer not found") from exc
         if str(exc) == "invalid_status":
             raise HTTPException(status_code=400, detail="Only archived offers can be moved to production") from exc
+        if str(exc) == "move_to_production_failed":
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to move offer to production",
+            ) from exc
         raise HTTPException(status_code=400, detail="Failed to move offer to production") from exc
     return MoveToProductionResponse.model_validate(result)
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
+import { resolveDraftProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
 import type { CommercialDraftDetails, SaveMode, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
 
@@ -27,9 +28,13 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
+  const currentDraft = draftQuery.data ?? state.lastDraft;
+  const isPileDraft =
+    resolveDraftProductType(currentDraft?.metadata.product_type ?? state.productType) === "piles";
+
   const breakdownQuery = useQuery({
     queryKey: breakdownQueryKey(state.draftId),
-    enabled: Boolean(state.draftId) && state.currentStep === "result",
+    enabled: Boolean(state.draftId) && state.currentStep === "result" && !isPileDraft,
     queryFn: async () => {
       if (!state.draftId) {
         throw new Error("Draft is not initialized.");
@@ -77,6 +82,15 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
+  const updatePilesMutation = useMutation({
+    mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
+      commercialOfferApi.updateDraftPiles(draftId, { text, image, mode }),
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
   const applyAiPlatesMutation = useMutation({
     mutationFn: ({
       draftId,
@@ -89,6 +103,33 @@ export const useCommercialOfferWizard = () => {
     }) => commercialOfferApi.applyAiPlates(draftId, { instruction, image }),
     onSuccess: (draft, variables) => {
       dispatch({ type: "start-batch-review", payload: draft });
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
+  const applyAiPilesMutation = useMutation({
+    mutationFn: ({
+      draftId,
+      instruction,
+      image,
+    }: {
+      draftId: string;
+      instruction: string;
+      image: File | null;
+    }) => commercialOfferApi.applyAiPiles(draftId, { instruction, image }),
+    onSuccess: (draft, variables) => {
+      dispatch({ type: "start-batch-review", payload: draft });
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
+  const updatePileGradesMutation = useMutation({
+    mutationFn: ({ draftId, concreteGrade }: { draftId: string; concreteGrade: string }) =>
+      commercialOfferApi.updatePileGrades(draftId, concreteGrade),
+    onSuccess: (draft, variables) => {
+      dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
     },
@@ -153,9 +194,10 @@ export const useCommercialOfferWizard = () => {
   });
 
   const generateFilesMutation = useMutation({
-    mutationFn: (draftId: string) => commercialOfferApi.generateFiles(draftId),
-    onSettled: (_data, _error, draftId) => {
-      invalidateDraft(draftId);
+    mutationFn: ({ draftId, fileTypes }: { draftId: string; fileTypes?: Array<"pdf" | "xlsx" | "breakdown" | "schema"> }) =>
+      commercialOfferApi.generateFiles(draftId, fileTypes),
+    onSettled: (_data, _error, variables) => {
+      invalidateDraft(variables.draftId);
     },
   });
 
@@ -190,13 +232,17 @@ export const useCommercialOfferWizard = () => {
     breakdownQuery,
     createDraftMutation,
     updatePlatesMutation,
+    updatePilesMutation,
     applyAiPlatesMutation,
+    applyAiPilesMutation,
+    updatePileGradesMutation,
     resolveWidePlatesMutation,
     updateMetaMutation,
     calculateMutation,
     generateFilesMutation,
     generateSchemaMutation,
     saveDraftMutation,
-    currentDraft: draftQuery.data ?? state.lastDraft,
+    currentDraft,
+    isPileDraft,
   };
 };

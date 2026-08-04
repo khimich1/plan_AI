@@ -90,6 +90,8 @@ from core.commercial_pricing import (  # noqa: E402
     VAT_RATE,
     calculate_total_cost as _calculate_total_cost,
     format_phone,
+    is_pile_order,
+    lookup_pile_price,
 )
 
 
@@ -189,23 +191,28 @@ def generate_commercial_offer_xlsx(
     
     # Формируем таблицу товаров
     table_data = []
-    table_headers = ['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']
+    pile_order = is_pile_order(order_data)
+    if pile_order:
+        table_headers = ['№', 'Наименование', 'Класс бетона', 'Кол-во', 'Цена', 'Сумма']
+    else:
+        table_headers = ['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']
     
     total_weight = 0.0
     
     for idx, item in enumerate(order_data, start=1):
-        name = item.get('name', 'Плиты ПБ')
         qty = item.get('qty', 0)
-        length_m = item.get('length_m', 0)
-        width_m = item.get('width_m', 0)
-        load_class = item.get('load_class')
-        
-        # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
+
         if 'unit_price' in item and item['unit_price'] is not None:
             unit_price = item['unit_price']
+        elif pile_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            grade = str(item.get('concrete_grade') or 'B25').strip()
+            unit_price = lookup_pile_price(mark, grade, db_path=DB_PATH)
         else:
-            # Fallback: старая логика (только базовая цена из БД)
-            # Определяем класс нагрузки из имени, если не передан
+            name = item.get('name', 'Плиты ПБ')
+            length_m = item.get('length_m', 0)
+            width_m = item.get('width_m', 0)
+            load_class = item.get('load_class')
             if load_class is None:
                 try:
                     from config_and_data import parse_load_code_from_name
@@ -213,16 +220,24 @@ def generate_commercial_offer_xlsx(
                     load_class = max(1, load_code) * 100
                 except ImportError:
                     load_class = 800
-            
             unit_price = get_plate_price(length_m, width_m, load_class)
-        
-        # Вес: plate_weights по размерам, иначе approximate (как в PDF)
+
+        discounted_price = unit_price * (1 - discount_percent / 100)
+
+        if pile_order:
+            table_data.append({
+                '№': idx,
+                'Наименование': str(item.get('mark') or item.get('name') or ''),
+                'Класс бетона': str(item.get('concrete_grade') or 'B25'),
+                'Кол-во': qty,
+                'Цена': discounted_price,
+                'Сумма': discounted_price * qty,
+            })
+            continue
+
+        name = item.get('name', 'Плиты ПБ')
         _, total_item_weight = resolve_kp_line_weight_kg(item)
         total_weight += total_item_weight
-        
-        # Применяем скидку к цене (если указана)
-        discounted_price = unit_price * (1 - discount_percent / 100)
-        
         table_data.append({
             '№': idx,
             'Наименование': name,
@@ -230,12 +245,12 @@ def generate_commercial_offer_xlsx(
             'Ед.': 'шт',
             'Вес(кг)': total_item_weight,
             'Цена': discounted_price,
-            'Сумма': discounted_price * qty  # Сначала вставим значение, потом заменим на формулу
+            'Сумма': discounted_price * qty
         })
     
     trip_cost = max(0.0, float(logistics_cost or 0.0))
     delivery_trips = cargo_delivery_trips_count(total_weight)
-    has_delivery_line = trip_cost > 0 and delivery_trips > 0
+    has_delivery_line = (not pile_order) and trip_cost > 0 and delivery_trips > 0
     if has_delivery_line:
         delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
         table_data.append(
@@ -475,11 +490,17 @@ def generate_commercial_offer_xlsx(
         # Настройка ширины столбцов
         worksheet.column_dimensions['A'].width = 5
         worksheet.column_dimensions['B'].width = 45
-        worksheet.column_dimensions['C'].width = 10
-        worksheet.column_dimensions['D'].width = 8
-        worksheet.column_dimensions['E'].width = 15
-        worksheet.column_dimensions['F'].width = 18
-        worksheet.column_dimensions['G'].width = 18
+        if pile_order:
+            worksheet.column_dimensions['C'].width = 14
+            worksheet.column_dimensions['D'].width = 8
+            worksheet.column_dimensions['E'].width = 15
+            worksheet.column_dimensions['F'].width = 18
+        else:
+            worksheet.column_dimensions['C'].width = 10
+            worksheet.column_dimensions['D'].width = 8
+            worksheet.column_dimensions['E'].width = 15
+            worksheet.column_dimensions['F'].width = 18
+            worksheet.column_dimensions['G'].width = 18
         
         # Высота строк
         worksheet.row_dimensions[table_header_row].height = 25

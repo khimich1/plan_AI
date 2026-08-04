@@ -21,16 +21,11 @@ htmlcov/
 .tox/
 .hypothesis/
 
-# Cursor, локальная AI-документация, логи отладки (не в репозитории)
-.cursor/
-ai_docs/
+# Cursor: временный workspace агентов (config и skills — в репозитории)
+.cursor/workspace/
 
 # VS Code settings
 .vscode/
-
-# Cursor workspace (временные файлы)
-.cursor/workspace/
-.cursor/
 
 # JetBrains
 .idea/
@@ -87,14 +82,18 @@ node_modules/
 dist/
 .vite/
 
-# Папка с описанием изменений
+# Личные заметки (не для команды)
 описание изменений/
+_spec_snip.txt
+Лехе.md
 
-# AI-generated docs
-ai_docs/
+# Локальные дампы pytest
+pytest_out*.txt
+pytest_summary.txt
+pytest_wp*_out.txt
+
+# Дубликат skills (основной набор в .cursor/skills/)
+agent-skills-main/
 
 #json files
 .app_data/drafts/
-
-#.md файлы и описание всякой херни
-*.md

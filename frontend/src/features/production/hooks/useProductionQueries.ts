@@ -189,6 +189,16 @@ export const useDayDocumentMutation = (kind: DayDocumentKind) =>
     },
   });
 
+export const usePlanSgpExportMutation = () =>
+  useMutation({
+    mutationKey: ["production", "sgp-export"],
+    mutationFn: async (planId: string) => {
+      const result = await productionApi.downloadPlanSgpExport(planId);
+      saveBlobAs(result.blob, result.filename);
+      return result;
+    },
+  });
+
 export const useSaveWorkCalendarMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({

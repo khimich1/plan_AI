@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from app.dependencies.auth import require_roles
 from app.dependencies.plate_context import get_plate_order_context
-from app.dependencies.services import get_production_service
+from app.dependencies.services import get_production_service, get_sgp_service
 from app.services.day_documents_service import (
     DayDocumentsError,
     generate_day_breakdown,
@@ -26,6 +26,13 @@ from app.schemas.production import (
     KpCandidatesResponse,
     RemoveTrackResponse,
     SaveWorkCalendarRequest,
+)
+from app.schemas.sgp import (
+    SgpFreePlatesResponse,
+    SgpMutationResponse,
+    SgpPlatesResponse,
+    SgpRelinkRequest,
+    SgpUnlinkRequest,
 )
 from app.concurrency.cpu_bound import run_cpu_bound
 from app.core.http_errors import (
@@ -47,6 +54,7 @@ from app.services.production_completion_service import (
 )
 from app.services.production_planning_service import ProductionPlanBuildError
 from app.services.production_service import ProductionService, ProductionTrackRemovalError
+from app.services.sgp_service import SgpError, SgpService
 
 logger = logging.getLogger(__name__)
 
@@ -95,11 +103,24 @@ async def build_plan_from_filters(
                 ),
                 layout_reinforcement_order=payload.layout_reinforcement_order,
                 plate_order_ctx=plate_order_ctx,
+                sgp_reservations=(
+                    [item.model_dump() for item in payload.sgp_reservations]
+                    if payload.sgp_reservations
+                    else None
+                ),
             ),
             plate_order_ctx=plate_order_ctx,
         )
     except ProductionPlanBuildError as exc:
         raise_unprocessable_client_error(exc, where="production.build_plan")
+    except SgpError as exc:
+        raise_structured_error(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=exc.code,
+            message=str(exc),
+            details={},
+            where="production.build_plan.sgp_reservations",
+        )
     except PlanVersionConflict as exc:
         raise_structured_error(
             status_code=status.HTTP_409_CONFLICT,
@@ -130,6 +151,28 @@ def get_plan(
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     return plan
+
+
+@router.get("/plans/{plan_id}/sgp-export")
+def export_plan_sgp(
+    plan_id: str,
+    _user: dict = Depends(require_roles("admin", "production")),
+    service: ProductionService = Depends(get_production_service),
+    sgp: SgpService = Depends(get_sgp_service),
+):
+    """XLSX «Со склада» — позиции плана, закрытые со СГП (не в схеме/формовке)."""
+    from fastapi.responses import Response
+
+    plan = service.get_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    data = sgp.export_plan_sgp_xlsx(plan_id, plan)
+    filename = f"SGP_{plan_id}.xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete("/plans/{plan_id}", response_model=DeletePlanResponse)
@@ -374,6 +417,82 @@ def list_candidates(
 ) -> dict:
     items = service.load_candidates_for_plan(limit=limit)
     return {"items": items, "count": len(items)}
+
+
+@router.get("/sgp/plates", response_model=SgpPlatesResponse)
+def list_sgp_plates(
+    filter: str = "all",
+    _user: dict = Depends(require_roles("admin", "production")),
+    sgp: SgpService = Depends(get_sgp_service),
+) -> SgpPlatesResponse:
+    if filter not in ("all", "linked", "unlinked"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="filter must be all|linked|unlinked",
+        )
+    return sgp.list_plates(filter=filter)  # type: ignore[arg-type]
+
+
+@router.get("/sgp/free-plates", response_model=SgpFreePlatesResponse)
+def list_sgp_free_plates(
+    plate_name: str | None = None,
+    length_m: float | None = None,
+    width_m: float | None = None,
+    load_class: int | None = None,
+    _user: dict = Depends(require_roles("admin", "production")),
+    sgp: SgpService = Depends(get_sgp_service),
+) -> SgpFreePlatesResponse:
+    return sgp.free_plates(
+        plate_name=plate_name,
+        length_m=length_m,
+        width_m=width_m,
+        load_class=load_class,
+    )
+
+
+@router.post("/sgp/plates/{sgp_id}/unlink", response_model=SgpMutationResponse)
+def unlink_sgp_plate(
+    sgp_id: int,
+    payload: SgpUnlinkRequest,
+    user: dict = Depends(require_roles("admin", "production")),
+    sgp: SgpService = Depends(get_sgp_service),
+) -> SgpMutationResponse:
+    actor = user.get("email") or user.get("login") or user.get("user_id")
+    try:
+        return sgp.unlink(sgp_id, payload.qty, actor=str(actor) if actor else None)
+    except SgpError as exc:
+        raise_structured_error(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=exc.code,
+            message=str(exc),
+            details={"sgp_id": sgp_id},
+            where="production.unlink_sgp_plate",
+        )
+
+
+@router.post("/sgp/plates/{sgp_id}/relink", response_model=SgpMutationResponse)
+def relink_sgp_plate(
+    sgp_id: int,
+    payload: SgpRelinkRequest,
+    user: dict = Depends(require_roles("admin", "production")),
+    sgp: SgpService = Depends(get_sgp_service),
+) -> SgpMutationResponse:
+    actor = user.get("email") or user.get("login") or user.get("user_id")
+    try:
+        return sgp.relink(
+            sgp_id,
+            target_kp_id=payload.target_kp_id,
+            qty=payload.qty,
+            actor=str(actor) if actor else None,
+        )
+    except SgpError as exc:
+        raise_structured_error(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=exc.code,
+            message=str(exc),
+            details={"sgp_id": sgp_id, "target_kp_id": payload.target_kp_id},
+            where="production.relink_sgp_plate",
+        )
 
 
 @router.get("/work-calendar")
