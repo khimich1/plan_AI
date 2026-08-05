@@ -1,7 +1,7 @@
 export type ArchiveSection = "archived" | "in_production" | "completed";
 export type ArchiveFileKind = "pdf" | "xlsx" | "schema";
-export type ProductType = "plates" | "piles";
-export type ArchiveProductTypeFilter = "all" | "plates" | "piles";
+export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
+export type ArchiveProductTypeFilter = "all" | "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
 
 export type ArchiveOfferListItem = {
   kp_id: number;
@@ -36,6 +36,32 @@ export type ArchivePlateItem = {
 };
 
 export type ArchivePileItem = {
+  position_number: number | null;
+  mark: string;
+  concrete_grade: string;
+  qty: number;
+  unit_price: number | null;
+  discounted_price: number | null;
+};
+
+export type ArchiveStepItem = {
+  position_number: number | null;
+  mark: string;
+  qty: number;
+  unit_price: number | null;
+  discounted_price: number | null;
+};
+
+export type ArchiveMarchItem = {
+  position_number: number | null;
+  mark: string;
+  concrete_grade: string;
+  qty: number;
+  unit_price: number | null;
+  discounted_price: number | null;
+};
+
+export type ArchiveBridgePileItem = {
   position_number: number | null;
   mark: string;
   concrete_grade: string;
@@ -116,6 +142,10 @@ export type ArchiveOfferDetails = {
   product_type?: ProductType;
   plates: ArchivePlateItem[];
   piles?: ArchivePileItem[];
+  steps?: ArchiveStepItem[];
+  marches?: ArchiveMarchItem[];
+  bridge_piles?: ArchiveBridgePileItem[];
+  fbs?: ArchiveBridgePileItem[];
   completion_percentage: number | null;
   readiness?: KpReadinessSummary | null;
 };

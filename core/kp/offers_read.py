@@ -53,6 +53,70 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
             )
             kp_data["piles"] = [dict(pile_row) for pile_row in cur.fetchall()]
             kp_data["plates"] = []
+            kp_data["steps"] = []
+            kp_data["marches"] = []
+            kp_data["bridge_piles"] = []
+            kp_data["fbs"] = []
+        elif product_type == "bridge_piles":
+            cur.execute(
+                """
+                SELECT * FROM kp_bridge_piles
+                WHERE kp_id = ?
+                ORDER BY position_number
+                """,
+                (kp_id,),
+            )
+            kp_data["bridge_piles"] = [dict(row) for row in cur.fetchall()]
+            kp_data["plates"] = []
+            kp_data["piles"] = []
+            kp_data["steps"] = []
+            kp_data["marches"] = []
+            kp_data["fbs"] = []
+        elif product_type == "fbs":
+            cur.execute(
+                """
+                SELECT * FROM kp_fbs
+                WHERE kp_id = ?
+                ORDER BY position_number
+                """,
+                (kp_id,),
+            )
+            kp_data["fbs"] = [dict(row) for row in cur.fetchall()]
+            kp_data["plates"] = []
+            kp_data["piles"] = []
+            kp_data["steps"] = []
+            kp_data["marches"] = []
+            kp_data["bridge_piles"] = []
+        elif product_type == "marches":
+            cur.execute(
+                """
+                SELECT * FROM kp_marches
+                WHERE kp_id = ?
+                ORDER BY position_number
+                """,
+                (kp_id,),
+            )
+            kp_data["marches"] = [dict(march_row) for march_row in cur.fetchall()]
+            kp_data["plates"] = []
+            kp_data["piles"] = []
+            kp_data["steps"] = []
+            kp_data["bridge_piles"] = []
+            kp_data["fbs"] = []
+        elif product_type == "steps":
+            cur.execute(
+                """
+                SELECT * FROM kp_steps
+                WHERE kp_id = ?
+                ORDER BY position_number
+                """,
+                (kp_id,),
+            )
+            kp_data["steps"] = [dict(step_row) for step_row in cur.fetchall()]
+            kp_data["plates"] = []
+            kp_data["piles"] = []
+            kp_data["marches"] = []
+            kp_data["bridge_piles"] = []
+            kp_data["fbs"] = []
         else:
             cur.execute(
                 """
@@ -69,6 +133,10 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
                 db_path=db_path,
             )
             kp_data["piles"] = []
+            kp_data["steps"] = []
+            kp_data["marches"] = []
+            kp_data["bridge_piles"] = []
+            kp_data["fbs"] = []
 
         cur.execute("SELECT * FROM kp_files WHERE kp_id = ?", (kp_id,))
         file_row = cur.fetchone()
@@ -195,11 +263,11 @@ def get_next_kp_number(db_path: str = DEFAULT_DB) -> int:
 
 
 def _product_type_sql_filter(product_type: str | None) -> tuple[str, list]:
-    """Optional filter: plates | piles (all/empty → no extra clause)."""
+    """Optional filter: plates | piles | steps (all/empty → no extra clause)."""
     if not product_type or product_type == "all":
         return "", []
     normalized = str(product_type).strip().lower()
-    if normalized not in ("plates", "piles"):
+    if normalized not in ("plates", "piles", "steps", "marches", "bridge_piles", "fbs"):
         return "", []
     return " AND COALESCE(m.product_type, 'plates') = ?", [normalized]
 

@@ -90,8 +90,16 @@ from core.commercial_pricing import (  # noqa: E402
     VAT_RATE,
     calculate_total_cost as _calculate_total_cost,
     format_phone,
+    is_bridge_pile_order,
+    is_fbs_order,
+    is_march_order,
     is_pile_order,
+    is_step_order,
+    lookup_bridge_pile_price,
+    lookup_fbs_price,
+    lookup_march_price,
     lookup_pile_price,
+    lookup_step_price,
 )
 
 
@@ -192,8 +200,14 @@ def generate_commercial_offer_xlsx(
     # Формируем таблицу товаров
     table_data = []
     pile_order = is_pile_order(order_data)
-    if pile_order:
+    bridge_pile_order = is_bridge_pile_order(order_data)
+    fbs_order = is_fbs_order(order_data)
+    march_order = is_march_order(order_data)
+    step_order = is_step_order(order_data)
+    if pile_order or bridge_pile_order or fbs_order or march_order:
         table_headers = ['№', 'Наименование', 'Класс бетона', 'Кол-во', 'Цена', 'Сумма']
+    elif step_order:
+        table_headers = ['№', 'Наименование', 'Кол-во', 'Цена', 'Сумма']
     else:
         table_headers = ['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']
     
@@ -208,6 +222,21 @@ def generate_commercial_offer_xlsx(
             mark = str(item.get('mark') or item.get('name') or '').strip()
             grade = str(item.get('concrete_grade') or 'B25').strip()
             unit_price = lookup_pile_price(mark, grade, db_path=DB_PATH)
+        elif bridge_pile_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            grade = str(item.get('concrete_grade') or 'B25').strip()
+            unit_price = lookup_bridge_pile_price(mark, grade, db_path=DB_PATH)
+        elif fbs_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            grade = str(item.get('concrete_grade') or 'B25').strip()
+            unit_price = lookup_fbs_price(mark, grade, db_path=DB_PATH)
+        elif march_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            grade = str(item.get('concrete_grade') or 'B25').strip()
+            unit_price = lookup_march_price(mark, grade, db_path=DB_PATH)
+        elif step_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            unit_price = lookup_step_price(mark, db_path=DB_PATH)
         else:
             name = item.get('name', 'Плиты ПБ')
             length_m = item.get('length_m', 0)
@@ -224,11 +253,21 @@ def generate_commercial_offer_xlsx(
 
         discounted_price = unit_price * (1 - discount_percent / 100)
 
-        if pile_order:
+        if pile_order or bridge_pile_order or fbs_order or march_order:
             table_data.append({
                 '№': idx,
                 'Наименование': str(item.get('mark') or item.get('name') or ''),
                 'Класс бетона': str(item.get('concrete_grade') or 'B25'),
+                'Кол-во': qty,
+                'Цена': discounted_price,
+                'Сумма': discounted_price * qty,
+            })
+            continue
+
+        if step_order:
+            table_data.append({
+                '№': idx,
+                'Наименование': str(item.get('mark') or item.get('name') or ''),
                 'Кол-во': qty,
                 'Цена': discounted_price,
                 'Сумма': discounted_price * qty,
@@ -250,7 +289,7 @@ def generate_commercial_offer_xlsx(
     
     trip_cost = max(0.0, float(logistics_cost or 0.0))
     delivery_trips = cargo_delivery_trips_count(total_weight)
-    has_delivery_line = (not pile_order) and trip_cost > 0 and delivery_trips > 0
+    has_delivery_line = (not pile_order and not bridge_pile_order and not fbs_order and not march_order and not step_order) and trip_cost > 0 and delivery_trips > 0
     if has_delivery_line:
         delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
         table_data.append(
@@ -477,24 +516,19 @@ def generate_commercial_offer_xlsx(
         # Используем только имя менеджера (телефон и email теперь в шапке)
         worksheet[f'A{signature_row}'] = manager_name or "Менеджер"
         worksheet[f'A{signature_row}'].font = table_font
-        
-        # Примечание
-        note_row = signature_row + 2
-        worksheet[f'A{note_row}'] = ('Доборные плиты ПБ отгружаются только при наличии в наименовании "+доб", '
-                                      'для получения доборов, просим сообщить Вашему менеджеру до начала изготовления. '
-                                      'Все доборы по умолчанию отправляем на утилизацию.')
-        worksheet[f'A{note_row}'].font = Font(name='Tahoma', size=9)
-        worksheet[f'A{note_row}'].alignment = left_align
-        worksheet.merge_cells(f'A{note_row}:G{note_row}')
-        
+
         # Настройка ширины столбцов
         worksheet.column_dimensions['A'].width = 5
         worksheet.column_dimensions['B'].width = 45
-        if pile_order:
+        if pile_order or bridge_pile_order or fbs_order or march_order:
             worksheet.column_dimensions['C'].width = 14
             worksheet.column_dimensions['D'].width = 8
             worksheet.column_dimensions['E'].width = 15
             worksheet.column_dimensions['F'].width = 18
+        elif step_order:
+            worksheet.column_dimensions['C'].width = 8
+            worksheet.column_dimensions['D'].width = 15
+            worksheet.column_dimensions['E'].width = 18
         else:
             worksheet.column_dimensions['C'].width = 10
             worksheet.column_dimensions['D'].width = 8

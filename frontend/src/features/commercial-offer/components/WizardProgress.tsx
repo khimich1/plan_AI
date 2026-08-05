@@ -12,6 +12,10 @@ type WizardProgressProps = {
 const stepTitles: Record<WizardStepId, string> = {
   plates: "1. Плиты",
   piles: "1. Сваи",
+  steps: "1. Ступени",
+  marches: "1. Марши",
+  bridge_piles: "1. Мостовые сваи",
+  fbs: "1. ФБС",
   client: "2. Клиент",
   result: "3. Результат",
 };

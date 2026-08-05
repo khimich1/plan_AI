@@ -10,7 +10,7 @@ import { Card } from "@/shared/ui/Card";
 
 type DownloadFilesSectionProps = {
   draft: CommercialDraftDetails;
-  isPileDraft?: boolean;
+  isSimpleKpDraft?: boolean;
   isPending: boolean;
   isSchemaPending: boolean;
   onGenerate: () => void;
@@ -25,7 +25,7 @@ const FILE_KIND_LABELS: Record<Exclude<FileKind, "schema">, string> = {
 
 export const DownloadFilesSection = ({
   draft,
-  isPileDraft = false,
+  isSimpleKpDraft = false,
   isPending,
   isSchemaPending,
   onGenerate,
@@ -71,7 +71,7 @@ export const DownloadFilesSection = ({
       ) : (
         <div style={{ display: "grid", gap: "0.75rem" }}>
           {(["pdf", "xlsx", "breakdown"] as const).map((kind) => {
-            if (isPileDraft && kind === "breakdown") {
+            if (isSimpleKpDraft && kind === "breakdown") {
               return null;
             }
             const file = filesByKind.get(kind);
@@ -97,7 +97,7 @@ export const DownloadFilesSection = ({
         </div>
       )}
 
-      {hasAnyMainFile && !isPileDraft && (
+      {hasAnyMainFile && !isSimpleKpDraft && (
         <div
           style={{
             display: "flex",

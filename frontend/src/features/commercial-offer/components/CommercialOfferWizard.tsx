@@ -6,6 +6,18 @@ import {
   buildPilePreviewRows,
 } from "@/features/commercial-offer/lib/buildPilePreviewRows";
 import {
+  buildBridgePileLinesFromOrderData,
+  buildBridgePilePreviewRows,
+} from "@/features/commercial-offer/lib/buildBridgePilePreviewRows";
+import {
+  buildFbsLinesFromOrderData,
+  buildFbsPreviewRows,
+} from "@/features/commercial-offer/lib/buildFbsPreviewRows";
+import {
+  buildMarchLinesFromOrderData,
+  buildMarchPreviewRows,
+} from "@/features/commercial-offer/lib/buildMarchPreviewRows";
+import {
   getProductInputStep,
   getWizardStepOrder,
   mapLegacyWizardStep,
@@ -18,6 +30,10 @@ import { useRecognizedImagePreview } from "@/features/commercial-offer/hooks/use
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
 import { PileInputStep } from "@/features/commercial-offer/components/steps/PileInputStep";
+import { MarchInputStep } from "@/features/commercial-offer/components/steps/MarchInputStep";
+import { BridgePileInputStep } from "@/features/commercial-offer/components/steps/BridgePileInputStep";
+import { FbsInputStep } from "@/features/commercial-offer/components/steps/FbsInputStep";
+import { StepInputStep } from "@/features/commercial-offer/components/steps/StepInputStep";
 import { ClientConditionsStep } from "@/features/commercial-offer/components/steps/ClientConditionsStep";
 import { CalculationResultStep } from "@/features/commercial-offer/components/steps/CalculationResultStep";
 
@@ -39,9 +55,20 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     createDraftMutation,
     updatePlatesMutation,
     updatePilesMutation,
+    updateStepsMutation,
+    updateMarchesMutation,
+    updateBridgePilesMutation,
+    updateFbsMutation,
     applyAiPlatesMutation,
     applyAiPilesMutation,
+    applyAiStepsMutation,
+    applyAiMarchesMutation,
+    applyAiBridgePilesMutation,
+    applyAiFbsMutation,
     updatePileGradesMutation,
+    updateMarchGradesMutation,
+    updateBridgePileGradesMutation,
+    updateFbsGradesMutation,
     resolveWidePlatesMutation,
     updateMetaMutation,
     calculateMutation,
@@ -49,6 +76,11 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     generateSchemaMutation,
     saveDraftMutation,
     isPileDraft,
+    isStepDraft,
+    isMarchDraft,
+    isBridgePileDraft,
+    isFbsDraft,
+    isSimpleKpDraft,
   } = useCommercialOfferWizard();
 
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
@@ -63,10 +95,35 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
 
   const productType = state.productType;
   const isPileFlow = productType === "piles";
+  const isStepFlow = productType === "steps";
+  const isMarchFlow = productType === "marches";
+  const isBridgePileFlow = productType === "bridge_piles";
+  const isFbsFlow = productType === "fbs";
+  const isSimpleProductFlow = isPileFlow || isStepFlow || isMarchFlow || isBridgePileFlow || isFbsFlow;
   const stepOrder = getWizardStepOrder(productType);
   const inputStep = getProductInputStep(productType);
-  const updateInputMutation = isPileFlow ? updatePilesMutation : updatePlatesMutation;
-  const applyAiMutation = isPileFlow ? applyAiPilesMutation : applyAiPlatesMutation;
+  const updateInputMutation = isFbsFlow
+    ? updateFbsMutation
+    : isBridgePileFlow
+    ? updateBridgePilesMutation
+    : isMarchFlow
+      ? updateMarchesMutation
+      : isStepFlow
+        ? updateStepsMutation
+        : isPileFlow
+          ? updatePilesMutation
+          : updatePlatesMutation;
+  const applyAiMutation = isFbsFlow
+    ? applyAiFbsMutation
+    : isBridgePileFlow
+    ? applyAiBridgePilesMutation
+    : isMarchFlow
+      ? applyAiMarchesMutation
+      : isStepFlow
+        ? applyAiStepsMutation
+        : isPileFlow
+          ? applyAiPilesMutation
+          : applyAiPlatesMutation;
 
   const managers = managersQuery.data?.items ?? [];
 
@@ -112,9 +169,17 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     setStepError(null);
     if (!state.sourceText.trim() && !selectedImage) {
       setStepError(
-        isPileFlow
-          ? "Введите текст списка свай или загрузите изображение."
-          : "Введите текст списка плит или загрузите изображение.",
+        isFbsFlow
+          ? "Введите текст списка ФБС или загрузите изображение."
+          : isBridgePileFlow
+          ? "Введите текст списка мостовых свай или загрузите изображение."
+          : isMarchFlow
+          ? "Введите текст списка маршей или загрузите изображение."
+          : isStepFlow
+          ? "Введите текст списка ступеней или загрузите изображение."
+          : isPileFlow
+            ? "Введите текст списка свай или загрузите изображение."
+            : "Введите текст списка плит или загрузите изображение.",
       );
       return;
     }
@@ -138,7 +203,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         draft = await createDraftMutation.mutateAsync({
           text: sourceText,
           image: imageForRecognition,
-          productType: isPileFlow ? "piles" : "plates",
+          productType,
         });
       }
       dispatch({ type: "start-batch-review", payload: draft });
@@ -157,9 +222,13 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
     if (!currentDraft?.draft_id) {
       setStepError(
-        isPileFlow
-          ? "Сначала распознайте список свай, затем используйте помощника."
-          : "Сначала распознайте список плит, затем используйте помощника.",
+        isMarchFlow
+          ? "Сначала распознайте список маршей, затем используйте помощника."
+          : isStepFlow
+          ? "Сначала распознайте список ступеней, затем используйте помощника."
+          : isPileFlow
+            ? "Сначала распознайте список свай, затем используйте помощника."
+            : "Сначала распознайте список плит, затем используйте помощника.",
       );
       return;
     }
@@ -188,9 +257,13 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
 
     let draft = currentDraft;
-    const batches = isPileFlow
-      ? (draft.metadata.pile_batches ?? [])
-      : (draft.metadata.plate_batches ?? []);
+    const batches = isMarchFlow
+      ? (draft.metadata.march_batches ?? [])
+      : isStepFlow
+      ? (draft.metadata.step_batches ?? [])
+      : isPileFlow
+        ? (draft.metadata.pile_batches ?? [])
+        : (draft.metadata.plate_batches ?? []);
     const lastBatch = batches.length > 0 ? batches[batches.length - 1] : undefined;
     const editedText = state.batchReviewText.trim();
     const originalBatchText = (lastBatch?.normalized_text ?? "").trim();
@@ -207,9 +280,13 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
         dispatch({
           type: "confirm-batch-review",
-          batchCount: isPileFlow
-            ? (draft.metadata.pile_batches?.length ?? 0)
-            : (draft.metadata.plate_batches?.length ?? 0),
+          batchCount: isMarchFlow
+            ? (draft.metadata.march_batches?.length ?? 0)
+            : isStepFlow
+            ? (draft.metadata.step_batches?.length ?? 0)
+            : isPileFlow
+              ? (draft.metadata.pile_batches?.length ?? 0)
+              : (draft.metadata.plate_batches?.length ?? 0),
         });
       } catch (error) {
         setStepError(getErrorMessage(error));
@@ -278,13 +355,127 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     dispatch({ type: "set-step", step: next });
   };
 
+  const handleFinishSteps = async () => {
+    setStepError(null);
+    if (state.pendingBatchReview) {
+      setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
+      return;
+    }
+    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
+      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
+      return;
+    }
+
+    const draft = currentDraft;
+    const next = draft.wizard_state.can_proceed_to[0];
+    if (!next) {
+      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
+      if (serverMsgs.length > 0) {
+        setStepError(serverMsgs.join(" "));
+      } else if (draft.wizard_state.next_required_action === "ingest_steps") {
+        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
+      } else {
+        setStepError("Нельзя перейти дальше — проверьте список ступеней и повторите.");
+      }
+      return;
+    }
+    dispatch({ type: "set-step", step: next });
+  };
+
+  const handleFinishMarches = async () => {
+    setStepError(null);
+    if (state.pendingBatchReview) {
+      setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
+      return;
+    }
+    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
+      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
+      return;
+    }
+
+    const draft = currentDraft;
+    const next = draft.wizard_state.can_proceed_to[0];
+    if (!next) {
+      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
+      if (serverMsgs.length > 0) {
+        setStepError(serverMsgs.join(" "));
+      } else if (draft.wizard_state.next_required_action === "ingest_marches") {
+        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
+      } else {
+        setStepError("Нельзя перейти дальше — проверьте список маршей и повторите.");
+      }
+      return;
+    }
+    dispatch({ type: "set-step", step: next });
+  };
+const handleFinishBridgePiles = async () => {
+    setStepError(null);
+    if (state.pendingBatchReview) {
+      setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
+      return;
+    }
+    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
+      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
+      return;
+    }
+
+    const draft = currentDraft;
+    const next = draft.wizard_state.can_proceed_to[0];
+    if (!next) {
+      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
+      if (serverMsgs.length > 0) {
+        setStepError(serverMsgs.join(" "));
+      } else if (draft.wizard_state.next_required_action === "ingest_bridge_piles") {
+        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
+      } else {
+        setStepError("Нельзя перейти дальше — проверьте список мостовых свай и повторите.");
+      }
+      return;
+    }
+    dispatch({ type: "set-step", step: next });
+  };
+
+  const handleFinishFbs = async () => {
+    setStepError(null);
+    if (state.pendingBatchReview) {
+      setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
+      return;
+    }
+    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
+      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
+      return;
+    }
+
+    const draft = currentDraft;
+    const next = draft.wizard_state.can_proceed_to[0];
+    if (!next) {
+      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
+      if (serverMsgs.length > 0) {
+        setStepError(serverMsgs.join(" "));
+      } else if (draft.wizard_state.next_required_action === "ingest_fbs") {
+        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
+      } else {
+        setStepError("Нельзя перейти дальше — проверьте список ФБС и повторите.");
+      }
+      return;
+    }
+    dispatch({ type: "set-step", step: next });
+  };
+
   const handleApplyGradeToAll = async (grade: string) => {
     if (!currentDraft?.draft_id) {
       return;
     }
     setStepError(null);
     try {
-      await updatePileGradesMutation.mutateAsync({
+      const gradesMutation = isFbsFlow
+        ? updateFbsGradesMutation
+        : isBridgePileFlow
+        ? updateBridgePileGradesMutation
+        : isMarchFlow
+          ? updateMarchGradesMutation
+          : updatePileGradesMutation;
+      await gradesMutation.mutateAsync({
         draftId: currentDraft.draft_id,
         concreteGrade: grade,
       });
@@ -299,6 +490,46 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
     setStepError(null);
     try {
+      if (isFbsFlow) {
+        const rows = buildFbsPreviewRows(currentDraft);
+        const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
+        const text = buildFbsLinesFromOrderData(updated);
+        await updateFbsMutation.mutateAsync({
+          draftId: currentDraft.draft_id,
+          text,
+          image: null,
+          mode: "replace",
+        });
+        return;
+      }
+      if (isBridgePileFlow) {
+        const rows = buildBridgePilePreviewRows(currentDraft);
+        const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
+        const text = buildBridgePileLinesFromOrderData(updated);
+        await updateBridgePilesMutation.mutateAsync({
+          draftId: currentDraft.draft_id,
+          text,
+          image: null,
+          mode: "replace",
+        });
+        return;
+      }
+      if (isMarchFlow) {
+        const rows = buildMarchPreviewRows(currentDraft);
+        if (lineIndex < 0 || lineIndex >= rows.length) {
+          return;
+        }
+        const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
+        const text = buildMarchLinesFromOrderData(updated);
+        await updateMarchesMutation.mutateAsync({
+          draftId: currentDraft.draft_id,
+          text,
+          image: null,
+          mode: "replace",
+        });
+        return;
+      }
+
       const rows = buildPilePreviewRows(currentDraft);
       if (lineIndex < 0 || lineIndex >= rows.length) {
         return;
@@ -395,7 +626,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     try {
       await generateFilesMutation.mutateAsync({
         draftId: currentDraft.draft_id,
-        fileTypes: isPileDraft ? ["pdf", "xlsx"] : undefined,
+        fileTypes: isSimpleKpDraft ? ["pdf", "xlsx"] : undefined,
       });
     } catch (error) {
       setStepError(getErrorMessage(error));
@@ -504,13 +735,17 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     if (!canNavigateToStep(step)) {
       if (!currentDraft && step !== inputStep) {
         setStepError(
-          isPileFlow
-            ? "Сначала распознайте и обработайте список свай."
-            : "Сначала распознайте и обработайте список плит.",
+          isMarchFlow
+            ? "Сначала распознайте и обработайте список маршей."
+            : isStepFlow
+            ? "Сначала распознайте и обработайте список ступеней."
+            : isPileFlow
+              ? "Сначала распознайте и обработайте список свай."
+              : "Сначала распознайте и обработайте список плит.",
         );
         return;
       }
-      if (step === "client" && !isPileFlow && (hasUnresolvedWidePlates || state.pendingBatchReview)) {
+      if (step === "client" && !isSimpleProductFlow && (hasUnresolvedWidePlates || state.pendingBatchReview)) {
         setStepError(
           state.pendingBatchReview
             ? "Сначала подтвердите список текущего источника — «Список верен»."
@@ -518,7 +753,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         );
         return;
       }
-      if (step === "client" && isPileFlow && state.pendingBatchReview) {
+      if (step === "client" && isSimpleProductFlow && state.pendingBatchReview) {
         setStepError("Сначала подтвердите список текущего источника — «Список верен».");
         return;
       }
@@ -529,7 +764,124 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   };
 
   const currentStepContent =
-    state.currentStep === "piles" ? (
+    state.currentStep === "fbs" ? (
+      <FbsInputStep
+        draft={currentDraft}
+        pendingBatchReview={state.pendingBatchReview}
+        sourceText={state.sourceText}
+        batchReviewText={state.batchReviewText}
+        normalizedText={state.normalizedText}
+        selectedImageName={state.selectedImageName}
+        recognizedImageUrl={recognizedImagePreview?.url ?? null}
+        recognizedImageName={recognizedImagePreview?.name ?? null}
+        errorMessage={stepError}
+        isRecognizing={createDraftMutation.isPending || updateFbsMutation.isPending}
+        isAiProcessing={applyAiFbsMutation.isPending}
+        isUpdatingGrades={updateFbsGradesMutation.isPending}
+        isConfirmingBatch={updateFbsMutation.isPending}
+        isProceeding={false}
+        aiInstruction={aiInstruction}
+        onAiInstructionChange={setAiInstruction}
+        onApplyAi={() => void handleApplyAi()}
+        onTextChange={handleSourceTextChange}
+        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
+        onFileChange={handleImageSelect}
+        onImagePaste={handleImageSelect}
+        onRecognize={handleRecognize}
+        onConfirmBatch={() => void handleConfirmBatch()}
+        onFinishFbs={() => void handleFinishFbs()}
+        onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
+        onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
+        onReset={handleCreateNewOffer}
+      />
+    ) :     state.currentStep === "bridge_piles" ? (
+      <BridgePileInputStep
+        draft={currentDraft}
+        pendingBatchReview={state.pendingBatchReview}
+        sourceText={state.sourceText}
+        batchReviewText={state.batchReviewText}
+        normalizedText={state.normalizedText}
+        selectedImageName={state.selectedImageName}
+        recognizedImageUrl={recognizedImagePreview?.url ?? null}
+        recognizedImageName={recognizedImagePreview?.name ?? null}
+        errorMessage={stepError}
+        isRecognizing={createDraftMutation.isPending || updateBridgePilesMutation.isPending}
+        isAiProcessing={applyAiBridgePilesMutation.isPending}
+        isUpdatingGrades={updateBridgePileGradesMutation.isPending}
+        isConfirmingBatch={updateBridgePilesMutation.isPending}
+        isProceeding={false}
+        aiInstruction={aiInstruction}
+        onAiInstructionChange={setAiInstruction}
+        onApplyAi={() => void handleApplyAi()}
+        onTextChange={handleSourceTextChange}
+        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
+        onFileChange={handleImageSelect}
+        onImagePaste={handleImageSelect}
+        onRecognize={handleRecognize}
+        onConfirmBatch={() => void handleConfirmBatch()}
+        onFinishBridgePiles={() => void handleFinishBridgePiles()}
+        onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
+        onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
+        onReset={handleCreateNewOffer}
+      />
+    ) : state.currentStep === "marches" ? (
+      <MarchInputStep
+        draft={currentDraft}
+        pendingBatchReview={state.pendingBatchReview}
+        sourceText={state.sourceText}
+        batchReviewText={state.batchReviewText}
+        normalizedText={state.normalizedText}
+        selectedImageName={state.selectedImageName}
+        recognizedImageUrl={recognizedImagePreview?.url ?? null}
+        recognizedImageName={recognizedImagePreview?.name ?? null}
+        errorMessage={stepError}
+        isRecognizing={createDraftMutation.isPending || updateMarchesMutation.isPending}
+        isAiProcessing={applyAiMarchesMutation.isPending}
+        isUpdatingGrades={updateMarchGradesMutation.isPending}
+        isConfirmingBatch={updateMarchesMutation.isPending}
+        isProceeding={false}
+        aiInstruction={aiInstruction}
+        onAiInstructionChange={setAiInstruction}
+        onApplyAi={() => void handleApplyAi()}
+        onTextChange={handleSourceTextChange}
+        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
+        onFileChange={handleImageSelect}
+        onImagePaste={handleImageSelect}
+        onRecognize={handleRecognize}
+        onConfirmBatch={() => void handleConfirmBatch()}
+        onFinishMarches={() => void handleFinishMarches()}
+        onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
+        onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
+        onReset={handleCreateNewOffer}
+      />
+    ) : state.currentStep === "steps" ? (
+      <StepInputStep
+        draft={currentDraft}
+        pendingBatchReview={state.pendingBatchReview}
+        sourceText={state.sourceText}
+        batchReviewText={state.batchReviewText}
+        normalizedText={state.normalizedText}
+        selectedImageName={state.selectedImageName}
+        recognizedImageUrl={recognizedImagePreview?.url ?? null}
+        recognizedImageName={recognizedImagePreview?.name ?? null}
+        errorMessage={stepError}
+        isRecognizing={createDraftMutation.isPending || updateStepsMutation.isPending}
+        isAiProcessing={applyAiStepsMutation.isPending}
+        isConfirmingBatch={updateStepsMutation.isPending}
+        isProceeding={false}
+        aiInstruction={aiInstruction}
+        onAiInstructionChange={setAiInstruction}
+        onApplyAi={() => void handleApplyAi()}
+        onTextChange={handleSourceTextChange}
+        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
+        onFileChange={handleImageSelect}
+        onImagePaste={handleImageSelect}
+        onRecognize={handleRecognize}
+        onConfirmBatch={() => void handleConfirmBatch()}
+        onFinishSteps={() => void handleFinishSteps()}
+        onReset={handleCreateNewOffer}
+      />
+    ) : state.currentStep === "piles" ? (
       <PileInputStep
         draft={currentDraft}
         pendingBatchReview={state.pendingBatchReview}
@@ -616,6 +968,11 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         isBreakdownLoading={breakdownQuery.isPending || breakdownQuery.isFetching}
         errorMessage={stepError}
         isPileDraft={isPileDraft}
+        isStepDraft={isStepDraft}
+        isMarchDraft={isMarchDraft}
+        isBridgePileDraft={isBridgePileDraft}
+        isFbsDraft={isFbsDraft}
+        isSimpleKpDraft={isSimpleKpDraft}
         isGeneratingFiles={generateFilesMutation.isPending}
         isGeneratingSchema={generateSchemaMutation.isPending}
         isSaving={saveDraftMutation.isPending}

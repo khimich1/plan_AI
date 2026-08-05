@@ -208,8 +208,16 @@ from core.commercial_pricing import (  # noqa: E402
     VAT_RATE,
     calculate_total_cost as _calculate_total_cost,
     format_phone,
+    is_bridge_pile_order,
+    is_fbs_order,
+    is_march_order,
     is_pile_order,
+    is_step_order,
+    lookup_bridge_pile_price,
+    lookup_fbs_price,
+    lookup_march_price,
     lookup_pile_price,
+    lookup_step_price,
 )
 
 
@@ -384,17 +392,7 @@ def generate_commercial_offer_pdf(
         fontSize=12,
         leading=16
     )
-    
-    style_note = ParagraphStyle(
-        'Note',
-        parent=styles['Normal'],
-        fontName=FONT_NORMAL,
-        fontSize=9,
-        leading=12,
-        textColor=colors.HexColor('#333333'),
-        spaceBefore=2 * mm
-    )
-    
+
     story = []
     
     # Логотип (плашка)
@@ -453,8 +451,14 @@ def generate_commercial_offer_pdf(
     story.append(Spacer(1, 6 * mm))
     
     pile_order = is_pile_order(order_data)
-    if pile_order:
+    bridge_pile_order = is_bridge_pile_order(order_data)
+    fbs_order = is_fbs_order(order_data)
+    march_order = is_march_order(order_data)
+    step_order = is_step_order(order_data)
+    if pile_order or bridge_pile_order or fbs_order or march_order:
         table_data = [['№', 'Наименование', 'Класс бетона', 'Кол-во', 'Цена', 'Сумма']]
+    elif step_order:
+        table_data = [['№', 'Наименование', 'Кол-во', 'Цена', 'Сумма']]
     else:
         table_data = [['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']]
     
@@ -471,6 +475,21 @@ def generate_commercial_offer_pdf(
             mark = str(item.get('mark') or item.get('name') or '').strip()
             grade = str(item.get('concrete_grade') or 'B25').strip()
             unit_price = lookup_pile_price(mark, grade, db_path=DB_PATH)
+        elif bridge_pile_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            grade = str(item.get('concrete_grade') or 'B25').strip()
+            unit_price = lookup_bridge_pile_price(mark, grade, db_path=DB_PATH)
+        elif fbs_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            grade = str(item.get('concrete_grade') or 'B25').strip()
+            unit_price = lookup_fbs_price(mark, grade, db_path=DB_PATH)
+        elif march_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            grade = str(item.get('concrete_grade') or 'B25').strip()
+            unit_price = lookup_march_price(mark, grade, db_path=DB_PATH)
+        elif step_order:
+            mark = str(item.get('mark') or item.get('name') or '').strip()
+            unit_price = lookup_step_price(mark, db_path=DB_PATH)
         else:
             name_raw = item.get('name', 'Плиты ПБ')
             length_m = item.get('length_m', 0)
@@ -491,13 +510,24 @@ def generate_commercial_offer_pdf(
         price_str = f"{discounted_price:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
         sum_str = f"{item_sum:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
 
-        if pile_order:
+        if pile_order or bridge_pile_order or fbs_order or march_order:
             mark_raw = str(item.get('mark') or item.get('name') or '')
             grade_raw = str(item.get('concrete_grade') or 'B25')
             table_data.append([
                 str(idx),
                 Paragraph(escape(mark_raw), style_table_text),
                 escape(grade_raw),
+                str(qty),
+                price_str,
+                sum_str,
+            ])
+            continue
+
+        if step_order:
+            mark_raw = str(item.get('mark') or item.get('name') or '')
+            table_data.append([
+                str(idx),
+                Paragraph(escape(mark_raw), style_table_text),
                 str(qty),
                 price_str,
                 sum_str,
@@ -519,7 +549,7 @@ def generate_commercial_offer_pdf(
             sum_str
         ])
 
-    if not pile_order:
+    if not pile_order and not bridge_pile_order and not fbs_order and not march_order and not step_order:
         delivery_trips = cargo_delivery_trips_count(total_weight)
         if trip_cost > 0 and delivery_trips > 0:
             delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
@@ -542,7 +572,7 @@ def generate_commercial_offer_pdf(
     price_width = 25 * mm
     sum_width = 25 * mm
 
-    if pile_order:
+    if pile_order or bridge_pile_order or fbs_order or march_order:
         grade_width = 28 * mm
         fixed_total = no_width + grade_width + qty_width + price_width + sum_width
         name_width = content_width - fixed_total
@@ -551,6 +581,14 @@ def generate_commercial_offer_pdf(
             col_widths = [content_width * ratio for ratio in ratios]
         else:
             col_widths = [no_width, name_width, grade_width, qty_width, price_width, sum_width]
+    elif step_order:
+        fixed_total = no_width + qty_width + price_width + sum_width
+        name_width = content_width - fixed_total
+        if name_width <= 0:
+            ratios = (0.05, 0.50, 0.15, 0.15, 0.15)
+            col_widths = [content_width * ratio for ratio in ratios]
+        else:
+            col_widths = [no_width, name_width, qty_width, price_width, sum_width]
     else:
         unit_width = 11 * mm
         weight_width = 20 * mm
@@ -643,14 +681,7 @@ def generate_commercial_offer_pdf(
     # Подпись менеджера (только имя, контакты теперь в шапке)
     story.append(Paragraph("С уважением,", style_signature_label))
     story.append(Paragraph(manager_name or "Менеджер", style_signature))
-    
-    story.append(Paragraph(
-        'Доборные плиты ПБ отгружаются только при наличии в наименовании "+доб", '
-        "для получения доборов, просим сообщить Вашему менеджеру до начала изготовления.<br/>"
-        "Все доборы по умолчанию отправляем на утилизацию.",
-        style_note
-    ))
-    
+
     doc.build(story)
     buffer.seek(0)
     return buffer

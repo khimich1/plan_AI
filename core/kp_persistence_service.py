@@ -78,13 +78,34 @@ class KpPersistenceService:
             )
             kp_id = cur.lastrowid
 
-            from core.commercial_pricing import is_pile_order
+            from core.commercial_pricing import (
+                is_bridge_pile_order,
+    is_fbs_order,
+                is_march_order,
+                is_pile_order,
+                is_step_order,
+            )
 
             normalized_product_type = (product_type or "plates").strip().lower()
-            if normalized_product_type not in {"plates", "piles"}:
+            if normalized_product_type not in {
+                "plates",
+                "piles",
+                "steps",
+                "marches",
+                "bridge_piles",
+                "fbs",
+            }:
                 normalized_product_type = "plates"
             if is_pile_order(order_data):
                 normalized_product_type = "piles"
+            elif is_bridge_pile_order(order_data):
+                normalized_product_type = "bridge_piles"
+            elif is_fbs_order(order_data):
+                normalized_product_type = "fbs"
+            elif is_step_order(order_data):
+                normalized_product_type = "steps"
+            elif is_march_order(order_data):
+                normalized_product_type = "marches"
 
             if normalized_product_type == "piles":
                 for idx, item in enumerate(order_data, start=1):
@@ -105,6 +126,100 @@ class KpPersistenceService:
                             idx,
                             mark,
                             concrete_grade,
+                            qty,
+                            unit_price,
+                            discounted_price,
+                        ),
+                    )
+            elif normalized_product_type == "bridge_piles":
+                for idx, item in enumerate(order_data, start=1):
+                    qty = int(item.get("qty", 0) or 0)
+                    unit_price = float(item.get("unit_price", 0.0) or 0.0)
+                    discounted_price = unit_price * (1 - discount_percent / 100)
+                    mark = str(item.get("mark") or item.get("name") or "").strip()
+                    concrete_grade = str(item.get("concrete_grade") or "B25").strip()
+                    cur.execute(
+                        """
+                        INSERT INTO kp_bridge_piles (
+                            kp_id, position_number, mark, concrete_grade,
+                            qty, unit_price, discounted_price
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            kp_id,
+                            idx,
+                            mark,
+                            concrete_grade,
+                            qty,
+                            unit_price,
+                            discounted_price,
+                        ),
+                    )
+            elif normalized_product_type == "fbs":
+                for idx, item in enumerate(order_data, start=1):
+                    qty = int(item.get("qty", 0) or 0)
+                    unit_price = float(item.get("unit_price", 0.0) or 0.0)
+                    discounted_price = unit_price * (1 - discount_percent / 100)
+                    mark = str(item.get("mark") or item.get("name") or "").strip()
+                    concrete_grade = str(item.get("concrete_grade") or "B25").strip()
+                    cur.execute(
+                        """
+                        INSERT INTO kp_fbs (
+                            kp_id, position_number, mark, concrete_grade,
+                            qty, unit_price, discounted_price
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            kp_id,
+                            idx,
+                            mark,
+                            concrete_grade,
+                            qty,
+                            unit_price,
+                            discounted_price,
+                        ),
+                    )
+            elif normalized_product_type == "marches":
+                for idx, item in enumerate(order_data, start=1):
+                    qty = int(item.get("qty", 0) or 0)
+                    unit_price = float(item.get("unit_price", 0.0) or 0.0)
+                    discounted_price = unit_price * (1 - discount_percent / 100)
+                    mark = str(item.get("mark") or item.get("name") or "").strip()
+                    concrete_grade = str(item.get("concrete_grade") or "B25").strip()
+                    cur.execute(
+                        """
+                        INSERT INTO kp_marches (
+                            kp_id, position_number, mark, concrete_grade,
+                            qty, unit_price, discounted_price
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            kp_id,
+                            idx,
+                            mark,
+                            concrete_grade,
+                            qty,
+                            unit_price,
+                            discounted_price,
+                        ),
+                    )
+            elif normalized_product_type == "steps":
+                for idx, item in enumerate(order_data, start=1):
+                    qty = int(item.get("qty", 0) or 0)
+                    unit_price = float(item.get("unit_price", 0.0) or 0.0)
+                    discounted_price = unit_price * (1 - discount_percent / 100)
+                    mark = str(item.get("mark") or item.get("name") or "").strip()
+                    cur.execute(
+                        """
+                        INSERT INTO kp_steps (
+                            kp_id, position_number, mark,
+                            qty, unit_price, discounted_price
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            kp_id,
+                            idx,
+                            mark,
                             qty,
                             unit_price,
                             discounted_price,

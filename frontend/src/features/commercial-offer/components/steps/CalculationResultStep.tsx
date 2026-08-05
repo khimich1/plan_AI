@@ -9,6 +9,13 @@ import { DownloadFilesSection } from "@/features/commercial-offer/components/Dow
 import { SaveOfferSection } from "@/features/commercial-offer/components/SaveOfferSection";
 import { PlatePriceBreakdownModal } from "@/features/commercial-offer/components/PlatePriceBreakdownModal";
 import { findBreakdownTable } from "@/features/commercial-offer/lib/findBreakdownTable";
+import {
+  baseProductsTotal,
+  discountPercentFromTargetSum,
+  requiresHighDiscountConfirmation,
+  targetSumFromDiscountPercent,
+} from "@/features/commercial-offer/lib/discountFromTargetSum";
+import { HighDiscountConfirmDialog } from "@/features/commercial-offer/components/HighDiscountConfirmDialog";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -24,6 +31,11 @@ import { StepLayout } from "@/shared/ui/StepLayout";
 type CalculationResultStepProps = {
   draft: CommercialDraftDetails;
   isPileDraft?: boolean;
+  isStepDraft?: boolean;
+  isMarchDraft?: boolean;
+  isBridgePileDraft?: boolean;
+  isFbsDraft?: boolean;
+  isSimpleKpDraft?: boolean;
   breakdownTables: BreakdownTable[];
   isBreakdownLoading: boolean;
   errorMessage: string | null;
@@ -46,6 +58,11 @@ type CalculationResultStepProps = {
 export const CalculationResultStep = ({
   draft,
   isPileDraft = false,
+  isStepDraft = false,
+  isMarchDraft = false,
+  isBridgePileDraft = false,
+  isFbsDraft = false,
+  isSimpleKpDraft = false,
   breakdownTables,
   isBreakdownLoading,
   errorMessage,
@@ -65,11 +82,15 @@ export const CalculationResultStep = ({
   onLogisticsCostSubmit,
 }: CalculationResultStepProps) => {
   const [discountDraft, setDiscountDraft] = useState(String(draft.metadata.discount_percent ?? 0));
+  const [targetSumDraft, setTargetSumDraft] = useState("");
   const [logisticsCostDraft, setLogisticsCostDraft] = useState(String(draft.metadata.logistics_cost ?? 0));
   const [discountError, setDiscountError] = useState<string | null>(null);
+  const [targetSumError, setTargetSumError] = useState<string | null>(null);
   const [logisticsError, setLogisticsError] = useState<string | null>(null);
   const [selectedPlateName, setSelectedPlateName] = useState<string | null>(null);
-  const breakdownAvailable = !isPileDraft && (draft.metadata.breakdown_tables_count ?? 0) > 0;
+  const [pendingDiscountPercent, setPendingDiscountPercent] = useState<number | null>(null);
+  const isGradeSimpleDraft = isPileDraft || isMarchDraft || isBridgePileDraft || isFbsDraft;
+  const breakdownAvailable = !isSimpleKpDraft && (draft.metadata.breakdown_tables_count ?? 0) > 0;
   const selectedBreakdownTable = useMemo(
     () => (selectedPlateName ? findBreakdownTable(breakdownTables, selectedPlateName) : undefined),
     [breakdownTables, selectedPlateName],
@@ -78,23 +99,122 @@ export const CalculationResultStep = ({
   const serverSubtotal = draft.totals.subtotal;
   const serverVat = draft.totals.vat_amount;
   const serverTotalWithVat = draft.totals.total_with_vat;
+  const baseProducts = useMemo(() => baseProductsTotal(draft.order_data), [draft.order_data]);
+  const savedDiscountPercent = draft.metadata.discount_percent ?? 0;
+  const derivedDelivery = useMemo(() => {
+    if (typeof serverTotalWithVat !== "number" || !Number.isFinite(serverTotalWithVat) || baseProducts <= 0) {
+      return null;
+    }
+    const delivery = serverTotalWithVat - baseProducts * (1 - savedDiscountPercent / 100);
+    return delivery >= -0.01 ? Math.max(0, delivery) : null;
+  }, [baseProducts, savedDiscountPercent, serverTotalWithVat]);
+  const savedTargetSum =
+    derivedDelivery === null
+      ? null
+      : targetSumFromDiscountPercent({
+          discountPercent: savedDiscountPercent,
+          baseProductsTotalWithVat: baseProducts,
+          deliveryTotal: derivedDelivery,
+        });
 
   useEffect(() => {
     setDiscountDraft(String(draft.metadata.discount_percent ?? 0));
-  }, [draft.metadata.discount_percent]);
+    setTargetSumDraft(savedTargetSum === null ? "" : String(savedTargetSum).replace(".", ","));
+    setDiscountError(null);
+    setTargetSumError(null);
+  }, [draft.metadata.discount_percent, savedTargetSum]);
 
   useEffect(() => {
     setLogisticsCostDraft(String(draft.metadata.logistics_cost ?? 0).replace(".", ","));
   }, [draft.metadata.logistics_cost]);
 
-  const handleDiscountSave = async () => {
+  const restoreDiscountDrafts = () => {
+    setDiscountDraft(String(savedDiscountPercent));
+    setTargetSumDraft(savedTargetSum === null ? "" : String(savedTargetSum).replace(".", ","));
+    setDiscountError(null);
+    setTargetSumError(null);
+  };
+
+  const applyDiscount = async (discountPercent: number) => {
+    setPendingDiscountPercent(null);
+    await onDiscountSubmit(discountPercent);
+  };
+
+  const requestDiscountApply = (discountPercent: number) => {
+    if (requiresHighDiscountConfirmation(discountPercent)) {
+      setPendingDiscountPercent(discountPercent);
+      return;
+    }
+    void applyDiscount(discountPercent);
+  };
+
+  const handleDiscountSave = () => {
     const parsed = toNumber(discountDraft);
     if (parsed === null || parsed < 0 || parsed > 100) {
       setDiscountError("Скидка должна быть числом от 0 до 100.");
       return;
     }
     setDiscountError(null);
-    await onDiscountSubmit(parsed);
+    if (derivedDelivery === null || baseProducts <= 0) {
+      setDiscountError("Не удалось определить стоимость доставки для расчёта целевой суммы.");
+      return;
+    }
+    const target = targetSumFromDiscountPercent({
+      discountPercent: parsed,
+      baseProductsTotalWithVat: baseProducts,
+      deliveryTotal: derivedDelivery,
+    });
+    if (target === null) {
+      setDiscountError("Скидка должна быть числом от 0 до 100.");
+      return;
+    }
+    setTargetSumDraft(String(target).replace(".", ","));
+    requestDiscountApply(parsed);
+  };
+
+  const handleTargetSumChange = (value: string) => {
+    setTargetSumDraft(value);
+    const parsed = toNumber(value);
+    if (parsed === null) {
+      setTargetSumError(value.trim() ? "Введите корректную целевую сумму." : null);
+      return;
+    }
+    if (derivedDelivery === null) {
+      setTargetSumError("Не удалось определить стоимость доставки для расчёта целевой суммы.");
+      return;
+    }
+    const result = discountPercentFromTargetSum({
+      targetTotalWithVat: parsed,
+      baseProductsTotalWithVat: baseProducts,
+      deliveryTotal: derivedDelivery,
+    });
+    if (!result.ok) {
+      setTargetSumError(result.error);
+      return;
+    }
+    setTargetSumError(null);
+    setDiscountError(null);
+    setDiscountDraft(String(result.discountPercent).replace(".", ","));
+  };
+
+  const handleTargetSumSave = () => {
+    const parsed = toNumber(targetSumDraft);
+    if (parsed === null || derivedDelivery === null) {
+      setTargetSumError("Введите корректную целевую сумму.");
+      return;
+    }
+    const result = discountPercentFromTargetSum({
+      targetTotalWithVat: parsed,
+      baseProductsTotalWithVat: baseProducts,
+      deliveryTotal: derivedDelivery,
+    });
+    if (!result.ok) {
+      setTargetSumError(result.error);
+      return;
+    }
+    setTargetSumError(null);
+    setDiscountDraft(String(result.discountPercent).replace(".", ","));
+    requestDiscountApply(result.discountPercent);
   };
 
   const handleApplyLogisticsCost = async () => {
@@ -136,7 +256,7 @@ export const CalculationResultStep = ({
     <Card title="Готовность КП" subtitle="Перед отправкой клиенту проверьте ключевые пункты.">
       <ul style={{ margin: 0, paddingLeft: "1.25rem", display: "grid", gap: "0.5rem" }}>
         <li>✓ {draft.order_data.length} позиций в заказе</li>
-        <li>✓ {draft.totals.total_qty ?? 0} {isPileDraft ? "свай" : "плит"} в заказе</li>
+        <li>✓ {draft.totals.total_qty ?? 0} {isStepDraft ? "ступеней" : isMarchDraft ? "маршей" : isBridgePileDraft ? "мостовых свай" : isFbsDraft ? "ФБС" : isPileDraft ? "свай" : "плит"} в заказе</li>
         <li>✓ Клиент: {draft.metadata.client_name || "не указан"}</li>
         <li>✓ Сумма с НДС: {totalWithVat}</li>
         {readinessWarnings.length > 0 && (
@@ -176,7 +296,16 @@ export const CalculationResultStep = ({
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {isPileDraft
+              {isStepDraft
+                ? ["№", "Марка", "Кол-во", "Цена", "Сумма"].map((column) => (
+                    <th
+                      key={column}
+                      style={{ textAlign: "left", padding: "0.75rem", borderBottom: "1px solid #e4e7ec" }}
+                    >
+                      {column}
+                    </th>
+                  ))
+                : isGradeSimpleDraft
                 ? ["№", "Марка", "Класс", "Кол-во", "Цена", "Сумма"].map((column) => (
                     <th
                       key={column}
@@ -200,7 +329,23 @@ export const CalculationResultStep = ({
               const itemName = String(item.name ?? item.mark ?? "");
               const canOpenBreakdown = breakdownAvailable && !isBreakdownLoading && itemName.length > 0;
 
-              if (isPileDraft) {
+              if (isStepDraft) {
+                return (
+                  <tr key={`${itemName}-${index}`}>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{itemName}</td>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.qty ?? "")}</td>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
+                      {formatOfferNumber(item.unit_price)}
+                    </td>
+                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
+                      {formatOfferSum(item.qty, item.unit_price)}
+                    </td>
+                  </tr>
+                );
+              }
+
+              if (isGradeSimpleDraft) {
                 return (
                   <tr key={`${itemName}-${index}`}>
                     <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
@@ -275,7 +420,7 @@ export const CalculationResultStep = ({
         }}
       >
         <div style={{ display: "grid", gap: "0.75rem" }}>
-          {!isPileDraft && <SummaryCell label="Общий вес (кг)" value={formatOfferNumber(totalWeight)} />}
+          {!isSimpleKpDraft && <SummaryCell label="Общий вес (кг)" value={formatOfferNumber(totalWeight)} />}
           <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
             <FieldWrapper label="Стоимость рейса" error={logisticsError}>
               <div style={{ position: "relative" }}>
@@ -318,10 +463,37 @@ export const CalculationResultStep = ({
           <SummaryCell label="Стоимость с НДС" value={formatTotalsMoney(serverTotalWithVat)} />
         </div>
         <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
+          <FieldWrapper label="Целевая сумма (₽)" error={targetSumError}>
+            <Input
+              value={targetSumDraft}
+              onChange={(event) => handleTargetSumChange(event.target.value)}
+              inputMode="decimal"
+              placeholder="Например, 2 000 000"
+              disabled={baseProducts <= 0 || derivedDelivery === null}
+            />
+          </FieldWrapper>
+          <Button type="button" variant="secondary" onClick={handleTargetSumSave} disabled={isUpdatingDiscount || baseProducts <= 0 || derivedDelivery === null}>
+            Применить сумму
+          </Button>
           <FieldWrapper label="Скидка (%)" error={discountError}>
             <Input
               value={discountDraft}
-              onChange={(event) => setDiscountDraft(event.target.value)}
+              onChange={(event) => {
+                setDiscountDraft(event.target.value);
+                const discount = toNumber(event.target.value);
+                if (discount === null || derivedDelivery === null) {
+                  return;
+                }
+                const target = targetSumFromDiscountPercent({
+                  discountPercent: discount,
+                  baseProductsTotalWithVat: baseProducts,
+                  deliveryTotal: derivedDelivery,
+                });
+                if (target !== null) {
+                  setTargetSumDraft(String(target).replace(".", ","));
+                  setTargetSumError(null);
+                }
+              }}
               inputMode="decimal"
               placeholder="Например, 5"
             />
@@ -335,7 +507,7 @@ export const CalculationResultStep = ({
 
     <DownloadFilesSection
       draft={draft}
-      isPileDraft={isPileDraft}
+      isSimpleKpDraft={isSimpleKpDraft}
       isPending={isGeneratingFiles}
       isSchemaPending={isGeneratingSchema}
       onGenerate={onGenerateFiles}
@@ -353,7 +525,7 @@ export const CalculationResultStep = ({
       }}
     />
 
-    {!isPileDraft && (
+    {!isSimpleKpDraft && (
       <PlatePriceBreakdownModal
         open={selectedPlateName !== null}
         plateName={selectedPlateName}
@@ -361,6 +533,17 @@ export const CalculationResultStep = ({
         onClose={() => setSelectedPlateName(null)}
       />
     )}
+
+    <HighDiscountConfirmDialog
+      open={pendingDiscountPercent !== null}
+      discountPercent={pendingDiscountPercent ?? 0}
+      isPending={isUpdatingDiscount}
+      onConfirm={() => pendingDiscountPercent !== null && void applyDiscount(pendingDiscountPercent)}
+      onCancel={() => {
+        setPendingDiscountPercent(null);
+        restoreDiscountDrafts();
+      }}
+    />
 
     {(lastSaveResult?.result_card ?? null) && (
       <Card title="Карточка результата">

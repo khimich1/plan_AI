@@ -113,7 +113,7 @@ class KpRepository:
         FROM KP_offers o
         JOIN kp_meta m ON m.kp_id = o.kp_id
         WHERE m.status = 'в работе'
-          AND COALESCE(m.product_type, 'plates') != 'piles'
+          AND COALESCE(m.product_type, 'plates') = 'plates'
         ORDER BY o.kp_id ASC
         """
         result: list[dict] = []

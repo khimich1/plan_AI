@@ -12,12 +12,16 @@ from app.core.settings import get_settings
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.repositories.kp_archive_repository import ArchiveSection, KpArchiveRepository
 from app.schemas.archive import (
+    ArchiveBridgePileItem,
+    ArchiveFbsItem,
     ArchiveFileKind,
     ArchiveOfferDetails,
     ArchiveOfferFinance,
     ArchiveOfferListItem,
+    ArchiveMarchItem,
     ArchivePileItem,
     ArchivePlateItem,
+    ArchiveStepItem,
     ArchiveProductTypeFilter,
     ArchiveSearchResponse,
     KpReadinessPositionsResponse,
@@ -425,6 +429,10 @@ class ArchiveService:
     def _to_details(self, raw: dict) -> ArchiveOfferDetails:
         plates = [self._plate_item(p) for p in (raw.get("plates") or [])]
         piles = [self._pile_item(p) for p in (raw.get("piles") or [])]
+        steps = [self._step_item(s) for s in (raw.get("steps") or [])]
+        marches = [self._march_item(m) for m in (raw.get("marches") or [])]
+        bridge_piles = [self._bridge_pile_item(b) for b in (raw.get("bridge_piles") or [])]
+        fbs = [self._fbs_item(b) for b in (raw.get("fbs") or [])]
         product_type = str(raw.get("product_type") or "plates")
         kp_id = int(raw.get("kp_id") or 0)
         completion = None
@@ -474,8 +482,45 @@ class ArchiveService:
             product_type=product_type,
             plates=plates,
             piles=piles,
+            steps=steps,
+            marches=marches,
+            bridge_piles=bridge_piles,
+            fbs=fbs,
             completion_percentage=completion,
             readiness=readiness,
+        )
+
+    @staticmethod
+    def _march_item(raw: dict) -> ArchiveMarchItem:
+        return ArchiveMarchItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
+        )
+
+    @staticmethod
+    def _bridge_pile_item(raw: dict) -> ArchiveBridgePileItem:
+        return ArchiveBridgePileItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
+        )
+
+    @staticmethod
+    def _fbs_item(raw: dict) -> ArchiveFbsItem:
+        return ArchiveFbsItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
         )
 
     @staticmethod
@@ -484,6 +529,16 @@ class ArchiveService:
             position_number=raw.get("position_number"),
             mark=raw.get("mark") or "",
             concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
+        )
+
+    @staticmethod
+    def _step_item(raw: dict) -> ArchiveStepItem:
+        return ArchiveStepItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
             qty=int(raw.get("qty") or 0),
             unit_price=_nullable_float(raw.get("unit_price")),
             discounted_price=_nullable_float(raw.get("discounted_price")),

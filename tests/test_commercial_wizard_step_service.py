@@ -205,3 +205,34 @@ def test_wizard_state_select_manager_on_client_step(wizard_service: CommercialWi
     assert state["current_step"] == WizardStepId.client
     assert state["next_required_action"] == WizardNextRequiredAction.select_manager
     assert state["validation_errors"] == ["Выберите менеджера."]
+
+
+def test_wizard_state_product_step_hides_manager_validation_error(
+    wizard_service: CommercialWizardStepService,
+) -> None:
+    """На шаге ввода ступеней next_action может быть select_manager, но UI не должен показывать это."""
+    payload = {
+        "metadata": {
+            "current_step": "steps",
+            "product_type": "steps",
+            "manager_id": None,
+            "client_name": "",
+            "conditions_mode": "standard",
+            "wide_plate_lines": [],
+            "wide_plates_resolved": True,
+        },
+        "order_data": [
+            {
+                "product_kind": "step",
+                "name": "ЛС11",
+                "mark": "ЛС11",
+                "qty": 1,
+                "unit_price": 1409.91,
+            }
+        ],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.steps
+    assert state["next_required_action"] == WizardNextRequiredAction.select_manager
+    assert "Выберите менеджера." not in state["validation_errors"]
+    assert state["can_proceed_to"] == [WizardStepId.client]

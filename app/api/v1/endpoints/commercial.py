@@ -18,7 +18,10 @@ from app.schemas.commercial import (
     CommercialGenerateFilesRequest,
     CommercialGenerateFilesResponse,
     CommercialParseRequest,
+    CommercialMarchGradesUpdateRequest,
     CommercialPileGradesUpdateRequest,
+    CommercialBridgePileGradesUpdateRequest,
+    CommercialFbsGradesUpdateRequest,
     CommercialPreviewRequest,
     CommercialSaveDraftRequest,
     CommercialSaveOfferResponse,
@@ -178,6 +181,310 @@ def update_draft_pile_grades(
         raise_validation_client_error(exc, where="update_draft_pile_grades", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="update_draft_pile_grades")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/marches", response_model=CommercialDraftDetailsResponse)
+async def update_commercial_draft_marches(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    mode: str = Form(default="append"),
+    text: str = Form(default=""),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.update_draft_marches(
+            draft_id,
+            mode=mode,
+            text=text,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="update_commercial_draft_marches", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="update_commercial_draft_marches")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/marches/ai", response_model=CommercialDraftDetailsResponse)
+async def apply_ai_marches_to_draft(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    instruction: str = Form(...),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    ensure_external_ocr_enabled()
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.apply_ai_marches_instruction(
+            draft_id,
+            instruction=instruction,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="apply_ai_marches_to_draft", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="apply_ai_marches_to_draft")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/marches/grades", response_model=CommercialDraftDetailsResponse)
+def update_draft_march_grades(
+    payload: CommercialMarchGradesUpdateRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = workflow.update_draft_march_grades(
+            draft_id,
+            concrete_grade=payload.concrete_grade,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="update_draft_march_grades", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="update_draft_march_grades")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/bridge-piles", response_model=CommercialDraftDetailsResponse)
+async def update_commercial_draft_bridge_piles(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    mode: str = Form(default="append"),
+    text: str = Form(default=""),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.update_draft_bridge_piles(
+            draft_id,
+            mode=mode,
+            text=text,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="update_commercial_draft_bridge_piles", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="update_commercial_draft_bridge_piles")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/bridge-piles/ai", response_model=CommercialDraftDetailsResponse)
+async def apply_ai_bridge_piles_to_draft(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    instruction: str = Form(...),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    ensure_external_ocr_enabled()
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.apply_ai_bridge_piles_instruction(
+            draft_id,
+            instruction=instruction,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="apply_ai_bridge_piles_to_draft", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="apply_ai_bridge_piles_to_draft")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/bridge-piles/grades", response_model=CommercialDraftDetailsResponse)
+def update_draft_bridge_pile_grades(
+    payload: CommercialBridgePileGradesUpdateRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = workflow.update_draft_bridge_pile_grades(
+            draft_id,
+            concrete_grade=payload.concrete_grade,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="update_draft_bridge_pile_grades", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="update_draft_bridge_pile_grades")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/fbs", response_model=CommercialDraftDetailsResponse)
+async def update_commercial_draft_fbs(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    mode: str = Form(default="append"),
+    text: str = Form(default=""),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.update_draft_fbs(
+            draft_id,
+            mode=mode,
+            text=text,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="update_commercial_draft_fbs", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="update_commercial_draft_fbs")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/fbs/ai", response_model=CommercialDraftDetailsResponse)
+async def apply_ai_fbs_to_draft(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    instruction: str = Form(...),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    ensure_external_ocr_enabled()
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.apply_ai_fbs_instruction(
+            draft_id,
+            instruction=instruction,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="apply_ai_fbs_to_draft", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="apply_ai_fbs_to_draft")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/fbs/grades", response_model=CommercialDraftDetailsResponse)
+def update_draft_fbs_grades(
+    payload: CommercialFbsGradesUpdateRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = workflow.update_draft_fbs_grades(
+            draft_id,
+            concrete_grade=payload.concrete_grade,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="update_draft_fbs_grades", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="update_draft_fbs_grades")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.patch("/drafts/{draft_id}/steps", response_model=CommercialDraftDetailsResponse)
+async def update_commercial_draft_steps(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    mode: str = Form(default="append"),
+    text: str = Form(default=""),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.update_draft_steps(
+            draft_id,
+            mode=mode,
+            text=text,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="update_commercial_draft_steps", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="update_commercial_draft_steps")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/steps/ai", response_model=CommercialDraftDetailsResponse)
+async def apply_ai_steps_to_draft(
+    draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+    instruction: str = Form(...),
+    image: UploadFile | None = File(default=None),
+) -> CommercialDraftDetailsResponse:
+    ensure_external_ocr_enabled()
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image,
+        user_id=int(user["id"]),
+    )
+
+    try:
+        result = await workflow.apply_ai_steps_instruction(
+            draft_id,
+            instruction=instruction,
+            image_bytes=image_bytes,
+            image_filename=image_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="apply_ai_steps_to_draft", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="apply_ai_steps_to_draft")
     return CommercialDraftDetailsResponse.model_validate(result)
 
 

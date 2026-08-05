@@ -10,9 +10,11 @@ CommercialSourceType = Literal["text", "image", "ai"]
 CommercialConditionsMode = Literal["standard", "custom"]
 CommercialPlateUpdateMode = Literal["append", "replace"]
 CommercialPileUpdateMode = Literal["append", "replace"]
+CommercialStepUpdateMode = Literal["append", "replace"]
+CommercialMarchUpdateMode = Literal["append", "replace"]
 CommercialWidePlateAction = Literal["confirm", "exclude", "replace"]
 CommercialSaveMode = Literal["database", "archive", "skip"]
-ProductType = Literal["plates", "piles"]
+ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs"]
 
 
 class WizardStepId(str, Enum):
@@ -20,6 +22,10 @@ class WizardStepId(str, Enum):
 
     plates = "plates"
     piles = "piles"
+    steps = "steps"
+    marches = "marches"
+    bridge_piles = "bridge_piles"
+    fbs = "fbs"
     client = "client"
     result = "result"
 
@@ -30,6 +36,10 @@ class WizardNextRequiredAction(str, Enum):
     none = "none"
     ingest_plates = "ingest_plates"
     ingest_piles = "ingest_piles"
+    ingest_steps = "ingest_steps"
+    ingest_marches = "ingest_marches"
+    ingest_bridge_piles = "ingest_bridge_piles"
+    ingest_fbs = "ingest_fbs"
     resolve_wide_plates = "resolve_wide_plates"
     select_manager = "select_manager"
     complete_client_terms = "complete_client_terms"
@@ -116,6 +126,22 @@ class CommercialPileBatch(BaseModel):
     filename: str = ""
 
 
+class CommercialStepBatch(BaseModel):
+    source_type: CommercialSourceType
+    original_text: str = ""
+    normalized_text: str = ""
+    ocr_text: str = ""
+    filename: str = ""
+
+
+class CommercialMarchBatch(BaseModel):
+    source_type: CommercialSourceType
+    original_text: str = ""
+    normalized_text: str = ""
+    ocr_text: str = ""
+    filename: str = ""
+
+
 class CommercialOfferIdentity(BaseModel):
     offer_number: str
     offer_date: str
@@ -161,6 +187,8 @@ class CommercialDraftMetadata(BaseModel):
     total_sum: float = 0.0
     plate_batches: list[CommercialPlateBatch] = Field(default_factory=list)
     pile_batches: list[CommercialPileBatch] = Field(default_factory=list)
+    step_batches: list[CommercialStepBatch] = Field(default_factory=list)
+    march_batches: list[CommercialMarchBatch] = Field(default_factory=list)
     default_concrete_grade: str = "B25"
     wide_plates_resolved: bool = False
     last_source_filename: str = ""
@@ -232,6 +260,19 @@ class CommercialWidePlatesResolveRequest(BaseModel):
 
 
 class CommercialPileGradesUpdateRequest(BaseModel):
+    concrete_grade: str = Field(min_length=2)
+
+
+class CommercialMarchGradesUpdateRequest(BaseModel):
+    concrete_grade: str = Field(min_length=2)
+
+
+class CommercialBridgePileGradesUpdateRequest(BaseModel):
+    concrete_grade: str = Field(min_length=2)
+
+
+
+class CommercialFbsGradesUpdateRequest(BaseModel):
     concrete_grade: str = Field(min_length=2)
 
 

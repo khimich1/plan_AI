@@ -13,8 +13,43 @@ type Props = {
   emptyMessage?: string;
 };
 
-const productTypeBadge = (productType: ProductType | undefined): string =>
-  (productType ?? "plates") === "piles" ? "Сваи" : "Плиты";
+const productTypeBadge = (productType: ProductType | undefined): string => {
+  if (productType === "piles") {
+    return "Сваи";
+  }
+  if (productType === "steps") {
+    return "Ступени";
+  }
+  if (productType === "marches") {
+    return "Марши";
+  }
+  if (productType === "bridge_piles") {
+    return "Мостовые сваи";
+  }
+  if (productType === "fbs") {
+    return "ФБС";
+  }
+  return "Плиты";
+};
+
+const productTypeBadgeStyle = (productType: ProductType | undefined): { background: string; color: string } => {
+  if (productType === "piles") {
+    return { background: "#ecfdf3", color: "#027a48" };
+  }
+  if (productType === "steps") {
+    return { background: "#fff6ed", color: "#b54708" };
+  }
+  if (productType === "marches") {
+    return { background: "#f4f3ff", color: "#5925dc" };
+  }
+  if (productType === "bridge_piles") {
+    return { background: "#f0f9ff", color: "#026aa2" };
+  }
+  if (productType === "fbs") {
+    return { background: "#eef4ff", color: "#3538cd" };
+  }
+  return { background: "#eef4ff", color: "#1d4ed8" };
+};
 
 const rowStyle: React.CSSProperties = {
   display: "grid",
@@ -103,8 +138,7 @@ export const ArchiveOfferList = ({
                     fontWeight: 600,
                     padding: "0.15rem 0.5rem",
                     borderRadius: 999,
-                    background: (item.product_type ?? "plates") === "piles" ? "#ecfdf3" : "#eef4ff",
-                    color: (item.product_type ?? "plates") === "piles" ? "#027a48" : "#1d4ed8",
+                    ...productTypeBadgeStyle(item.product_type),
                   }}
                 >
                   {productTypeBadge(item.product_type)}

@@ -346,6 +346,77 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             'CREATE INDEX IF NOT EXISTS idx_kp_id_piles ON kp_piles(kp_id)'
         )
 
+        # Таблица kp_steps — позиции КП на лестничные ступени (без класса бетона)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_steps ON kp_steps(kp_id)'
+        )
+
+        # Таблица kp_marches — позиции КП на лестничные марши (с классом бетона)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_marches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_marches ON kp_marches(kp_id)'
+        )
+
+        # Таблица kp_bridge_piles — позиции КП на мостовые сваи (отдельно от kp_piles)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_bridge_piles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_bridge_piles ON kp_bridge_piles(kp_id)'
+        )
+
+        # Таблица kp_fbs — позиции КП на ФБС (отдельно от kp_piles / kp_bridge_piles)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_fbs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_fbs ON kp_fbs(kp_id)'
+        )
+
         # === МИГРАЦИЯ: Добавляем nomenclature_id ===
         if 'nomenclature_id' not in columns:
             print("[DB] Миграция: добавляем колонку nomenclature_id в kp_plates...")

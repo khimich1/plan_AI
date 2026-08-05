@@ -8,6 +8,10 @@ from core.commercial_pricing import calculate_total_cost, ensure_order_priced
 # Wizard / calculate prerequisite messages (single source of truth).
 ERR_EMPTY_PLATES = "Список плит пустой."
 ERR_EMPTY_PILES = "Список свай пустой."
+ERR_EMPTY_STEPS = "Список ступеней пустой."
+ERR_EMPTY_MARCHES = "Список маршей пустой."
+ERR_EMPTY_BRIDGE_PILES = "Список мостовых свай пустой."
+ERR_EMPTY_FBS = "Список ФБС пустой."
 ERR_WIDE_PLATES = "Сначала примите решение по позициям шире стандартной."
 ERR_NO_MANAGER = "Выберите менеджера."
 ERR_NO_CLIENT = "Укажите клиента."
@@ -22,8 +26,30 @@ class CommercialCalculationService:
     def is_pile_draft(metadata: dict[str, Any]) -> bool:
         return str(metadata.get("product_type", "plates") or "plates").lower() == "piles"
 
+    @staticmethod
+    def is_step_draft(metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "steps"
+
+    @staticmethod
+    def is_march_draft(metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "marches"
+
+    @staticmethod
+    def is_bridge_pile_draft(metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "bridge_piles"
+
+    @staticmethod
+    def is_fbs_draft(metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "fbs"
+
     def _wide_plate_errors(self, metadata: dict[str, Any]) -> list[str]:
-        if self.is_pile_draft(metadata):
+        if (
+            self.is_pile_draft(metadata)
+            or self.is_step_draft(metadata)
+            or self.is_march_draft(metadata)
+            or self.is_bridge_pile_draft(metadata)
+            or self.is_fbs_draft(metadata)
+        ):
             return []
         lines = metadata.get("wide_plate_lines") or []
         if lines and not metadata.get("wide_plates_resolved"):
@@ -51,9 +77,18 @@ class CommercialCalculationService:
     ) -> list[str]:
         errors: list[str] = []
         if order_data == []:
-            errors.append(
-                ERR_EMPTY_PILES if self.is_pile_draft(metadata) else ERR_EMPTY_PLATES
-            )
+            if self.is_step_draft(metadata):
+                errors.append(ERR_EMPTY_STEPS)
+            elif self.is_march_draft(metadata):
+                errors.append(ERR_EMPTY_MARCHES)
+            elif self.is_bridge_pile_draft(metadata):
+                errors.append(ERR_EMPTY_BRIDGE_PILES)
+            elif self.is_fbs_draft(metadata):
+                errors.append(ERR_EMPTY_FBS)
+            elif self.is_pile_draft(metadata):
+                errors.append(ERR_EMPTY_PILES)
+            else:
+                errors.append(ERR_EMPTY_PLATES)
         errors.extend(self._wide_plate_errors(metadata))
         errors.extend(self._metadata_errors(metadata))
         return errors

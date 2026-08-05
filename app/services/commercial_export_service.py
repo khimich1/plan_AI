@@ -23,6 +23,7 @@ class CommercialExportService:
     }
     DEFAULT_FILE_TYPES = ("pdf", "xlsx", "breakdown")
     PILE_FILE_TYPES = ("pdf", "xlsx")
+    STEP_FILE_TYPES = ("pdf", "xlsx")
     ALL_FILE_TYPES = ("pdf", "xlsx", "breakdown", "schema")
 
     def __init__(
@@ -166,8 +167,29 @@ class CommercialExportService:
     def _is_pile_draft(self, metadata: dict[str, Any]) -> bool:
         return str(metadata.get("product_type", "plates") or "plates").lower() == "piles"
 
+    def _is_step_draft(self, metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "steps"
+
+    def _is_march_draft(self, metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "marches"
+
+    def _is_bridge_pile_draft(self, metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "bridge_piles"
+
+    def _is_fbs_draft(self, metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "fbs"
+
+    def _is_non_plate_draft(self, metadata: dict[str, Any]) -> bool:
+        return (
+            self._is_pile_draft(metadata)
+            or self._is_step_draft(metadata)
+            or self._is_march_draft(metadata)
+            or self._is_bridge_pile_draft(metadata)
+            or self._is_fbs_draft(metadata)
+        )
+
     def _default_file_types(self, metadata: dict[str, Any]) -> tuple[str, ...]:
-        if self._is_pile_draft(metadata):
+        if self._is_non_plate_draft(metadata):
             return self.PILE_FILE_TYPES
         return self.DEFAULT_FILE_TYPES
 
@@ -182,7 +204,7 @@ class CommercialExportService:
         normalized: list[str] = []
         for item in requested:
             key = str(item).strip().lower()
-            if self._is_pile_draft(metadata or {}) and key in {"breakdown", "schema"}:
+            if self._is_non_plate_draft(metadata or {}) and key in {"breakdown", "schema"}:
                 continue
             if key in self.FILE_LABELS and key not in normalized:
                 normalized.append(key)

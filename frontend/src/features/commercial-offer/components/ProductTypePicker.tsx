@@ -18,6 +18,30 @@ const options: Array<{ id: ProductType; title: string; description: string; emoj
     description: "Коммерческое предложение на цельные железобетонные сваи.",
     emoji: "🏗️",
   },
+  {
+    id: "steps",
+    title: "Ступени",
+    description: "Коммерческое предложение на лестничные ступени.",
+    emoji: "🪜",
+  },
+  {
+    id: "marches",
+    title: "Марши",
+    description: "Коммерческое предложение на лестничные марши.",
+    emoji: "🪜",
+  },
+  {
+    id: "bridge_piles",
+    title: "Мостовые сваи",
+    description: "Коммерческое предложение на мостовые железобетонные сваи.",
+    emoji: "🌉",
+  },
+  {
+    id: "fbs",
+    title: "ФБС",
+    description: "Коммерческое предложение на фундаментные блоки ФБС.",
+    emoji: "📦",
+  },
 ];
 
 export const ProductTypePicker = ({ onSelect }: ProductTypePickerProps) => (
@@ -25,7 +49,7 @@ export const ProductTypePicker = ({ onSelect }: ProductTypePickerProps) => (
     <header>
       <h1 style={{ margin: 0, fontSize: "1.75rem" }}>Создание коммерческого предложения</h1>
       <p style={{ margin: "0.4rem 0 0", color: "#475467" }}>
-        Выберите тип продукта — в одном КП могут быть только плиты или только сваи.
+        Выберите тип продукта — в одном КП только один тип: плиты, сваи, ступени, марши, мостовые сваи или ФБС.
       </p>
     </header>
 

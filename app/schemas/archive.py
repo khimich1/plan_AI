@@ -10,8 +10,8 @@ from app.schemas.sgp import SgpProgress
 
 ArchiveSection = Literal["archived", "in_production", "completed"]
 ArchiveFileKind = Literal["pdf", "xlsx", "schema"]
-ProductType = Literal["plates", "piles"]
-ArchiveProductTypeFilter = Literal["all", "plates", "piles"]
+ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs"]
+ArchiveProductTypeFilter = Literal["all", "plates", "piles", "steps", "marches", "bridge_piles"]
 
 
 class ArchiveOfferListItem(BaseModel):
@@ -45,6 +45,42 @@ class ArchiveOfferListItem(BaseModel):
 
 
 class ArchivePileItem(BaseModel):
+    position_number: int | None = None
+    mark: str = ""
+    concrete_grade: str = ""
+    qty: int = 0
+    unit_price: float | None = None
+    discounted_price: float | None = None
+
+
+class ArchiveStepItem(BaseModel):
+    position_number: int | None = None
+    mark: str = ""
+    qty: int = 0
+    unit_price: float | None = None
+    discounted_price: float | None = None
+
+
+class ArchiveMarchItem(BaseModel):
+    position_number: int | None = None
+    mark: str = ""
+    concrete_grade: str = ""
+    qty: int = 0
+    unit_price: float | None = None
+    discounted_price: float | None = None
+
+
+class ArchiveBridgePileItem(BaseModel):
+    position_number: int | None = None
+    mark: str = ""
+    concrete_grade: str = ""
+    qty: int = 0
+    unit_price: float | None = None
+    discounted_price: float | None = None
+
+
+
+class ArchiveFbsItem(BaseModel):
     position_number: int | None = None
     mark: str = ""
     concrete_grade: str = ""
@@ -147,6 +183,10 @@ class ArchiveOfferDetails(BaseModel):
     product_type: ProductType = "plates"
     plates: list[ArchivePlateItem] = Field(default_factory=list)
     piles: list[ArchivePileItem] = Field(default_factory=list)
+    steps: list[ArchiveStepItem] = Field(default_factory=list)
+    marches: list[ArchiveMarchItem] = Field(default_factory=list)
+    bridge_piles: list[ArchiveBridgePileItem] = Field(default_factory=list)
+    fbs: list[ArchiveFbsItem] = Field(default_factory=list)
     completion_percentage: float | None = None
     readiness: KpReadinessSummary | None = None
 

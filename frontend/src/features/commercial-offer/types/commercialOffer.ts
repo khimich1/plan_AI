@@ -1,6 +1,6 @@
-export type ProductType = "plates" | "piles";
+export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
 
-export type WizardStepId = "plates" | "piles" | "client" | "result";
+export type WizardStepId = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "client" | "result";
 
 /** Legacy step ids from older drafts (localStorage / server metadata). */
 export type LegacyWizardStepId = "wide-plates" | "manager";
@@ -10,6 +10,10 @@ export type WizardNextRequiredAction =
   | "none"
   | "ingest_plates"
   | "ingest_piles"
+  | "ingest_steps"
+  | "ingest_marches"
+  | "ingest_bridge_piles"
+  | "ingest_fbs"
   | "resolve_wide_plates"
   | "select_manager"
   | "complete_client_terms"
@@ -66,14 +70,38 @@ export type PlateBatch = {
 
 export type PileBatch = PlateBatch;
 
+export type StepBatch = PlateBatch;
+
+export type MarchBatch = PlateBatch;
+
 export type PileOrderLine = {
+  mark: string;
+  name: string;
+  concrete_grade: string;
+  available_grades?: string[];
+  qty: number;
+  unit_price: number | null;
+  line_total?: number | null;
+  product_kind?: "pile";
+};
+
+export type StepOrderLine = {
+  mark: string;
+  name: string;
+  qty: number;
+  unit_price: number | null;
+  line_total?: number | null;
+  product_kind?: "step";
+};
+
+export type MarchOrderLine = {
   mark: string;
   name: string;
   concrete_grade: string;
   qty: number;
   unit_price: number | null;
   line_total?: number | null;
-  product_kind?: "pile";
+  product_kind?: "march";
 };
 
 export type CommercialGeneratedFile = {
@@ -133,6 +161,8 @@ export type CommercialDraftMetadata = {
   total_sum: number;
   plate_batches: PlateBatch[];
   pile_batches?: PileBatch[];
+  step_batches?: StepBatch[];
+  march_batches?: MarchBatch[];
   default_concrete_grade?: string;
   wide_plates_resolved: boolean;
   last_source_filename: string;

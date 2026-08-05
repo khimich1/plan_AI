@@ -454,13 +454,15 @@ export const PileInputStep = ({
             </>
           )}
 
-          <KpPilePreviewPanel
-            draft={draft}
-            normalizedText={normalizedText}
-            isUpdatingGrades={isUpdatingGrades}
-            onApplyGradeToAll={onApplyGradeToAll}
-            onLineGradeChange={onLineGradeChange}
-          />
+          {!isBatchReviewMode && draft && (
+            <KpPilePreviewPanel
+              draft={draft}
+              normalizedText={normalizedText}
+              isUpdatingGrades={isUpdatingGrades}
+              onApplyGradeToAll={onApplyGradeToAll}
+              onLineGradeChange={onLineGradeChange}
+            />
+          )}
 
           {!isBatchReviewMode ? (
             sourceInputCard

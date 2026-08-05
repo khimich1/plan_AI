@@ -741,9 +741,9 @@ export const PlateInputStep = ({
 
           )}
 
-
-
-          <KpPlatePreviewPanel draft={draft} normalizedText={normalizedText} />
+          {!isBatchReviewMode && draft && (
+            <KpPlatePreviewPanel draft={draft} normalizedText={normalizedText} />
+          )}
 
           {!isBatchReviewMode ? (
             sourceInputCard

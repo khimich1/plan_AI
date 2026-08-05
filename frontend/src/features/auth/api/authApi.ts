@@ -27,6 +27,11 @@ export const authApi = {
       if (error instanceof ApiError && error.status === 401) {
         return null;
       }
+      // Network / proxy-down during startup: treat as logged-out so LoginPage can mount.
+      // CSRF for subsequent login is bootstrapped in httpClient on unsafe methods.
+      if (!(error instanceof ApiError)) {
+        return null;
+      }
       throw error;
     }
   },

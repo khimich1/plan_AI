@@ -9,6 +9,10 @@ const OPTIONS: { value: ArchiveProductTypeFilter; label: string }[] = [
   { value: "all", label: "Все" },
   { value: "plates", label: "Плиты" },
   { value: "piles", label: "Сваи" },
+  { value: "steps", label: "Ступени" },
+  { value: "marches", label: "Марши" },
+  { value: "bridge_piles", label: "Мостовые сваи" },
+  { value: "fbs", label: "ФБС" },
 ];
 
 export const ArchiveProductTypeFilterTabs = ({ value, onChange }: Props) => (

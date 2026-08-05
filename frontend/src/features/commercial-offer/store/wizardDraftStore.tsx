@@ -109,6 +109,18 @@ const getBatchCount = (draft: CommercialDraftDetails): number => {
   if (productType === "piles") {
     return draft.metadata.pile_batches?.length ?? 0;
   }
+  if (productType === "steps") {
+    return draft.metadata.step_batches?.length ?? 0;
+  }
+  if (productType === "marches") {
+    return draft.metadata.march_batches?.length ?? 0;
+  }
+  if (productType === "bridge_piles") {
+    return (draft.metadata as { bridge_pile_batches?: unknown[] }).bridge_pile_batches?.length ?? 0;
+  }
+  if (productType === "fbs") {
+    return (draft.metadata as { fbs_batches?: unknown[] }).fbs_batches?.length ?? 0;
+  }
   return draft.metadata.plate_batches?.length ?? 0;
 };
 
