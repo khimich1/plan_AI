@@ -488,13 +488,12 @@ def test_archive_search_forbids_logistics_admin_still_works(
     details = client.get("/api/v1/commercial/archive/1", cookies=logistics_cookie)
     assert details.status_code == 403
 
-    # Manager на чужом КП (без owner_user_id) — 403, как и раньше.
-    assert (
-        client.get(
-            "/api/v1/commercial/archive/search?kp_id=1", cookies=manager_cookie
-        ).status_code
-        == 403
+    # Manager имеет полный доступ к commercial archive (включая КП без owner_user_id).
+    manager_search = client.get(
+        "/api/v1/commercial/archive/search?kp_id=1", cookies=manager_cookie
     )
+    assert manager_search.status_code == 200, manager_search.text
+    assert manager_search.json()["total"] == 1
 
 
 def test_logistics_kp_search_slim_fields_and_acl_b(

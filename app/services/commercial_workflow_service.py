@@ -1870,6 +1870,8 @@ class CommercialWorkflowService:
             resolved = self.export_service.resolve_generated_file(xlsx_file["filename"])
             xlsx_path = str(resolved) if resolved.exists() else None
 
+        raw_owner = metadata.get("owner_user_id")
+        owner_user_id = int(raw_owner) if raw_owner is not None else None
         kp_id = self.kp_repository.save_offer(
             creation_date=datetime.now().strftime("%d.%m.%Y"),
             customer_name=str(metadata.get("client_name", "") or "Клиент"),
@@ -1882,6 +1884,7 @@ class CommercialWorkflowService:
             status=status,
             order_data=payload["order_data"],
             xlsx_path=xlsx_path,
+            owner_user_id=owner_user_id,
             product_type=str(metadata.get("product_type", "plates") or "plates"),
         )
         saved_offer = {

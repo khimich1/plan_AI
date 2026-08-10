@@ -1114,6 +1114,40 @@ def test_save_draft_archive_empty_execution_terms_input_skips_normalize(
     assert captured["execution_terms"] == ""
 
 
+def test_save_draft_persists_owner_user_id_from_draft_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """owner_user_id is still persisted on save for audit/attribution."""
+    workflow = CommercialWorkflowService()
+    fake_xlsx = tmp_path / "kp-out.xlsx"
+    fake_xlsx.write_bytes(b"x")
+
+    draft = _sample_draft()
+    draft["metadata"]["owner_user_id"] = 2
+
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft)
+    monkeypatch.setattr(
+        workflow,
+        "generate_files",
+        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+    )
+    monkeypatch.setattr(workflow, "_resolve_generated_file", lambda filename: fake_xlsx)
+
+    captured: dict[str, Any] = {}
+
+    def fake_save_offer(**kwargs: Any) -> int:
+        captured["owner_user_id"] = kwargs.get("owner_user_id")
+        return 103
+
+    monkeypatch.setattr(workflow.kp_repository, "save_offer", fake_save_offer)
+    monkeypatch.setattr(workflow.draft_store, "update_metadata", lambda *args, **kwargs: None)
+
+    workflow.save_draft("draft-123", mode="archive", execution_terms_input="")
+
+    assert captured["owner_user_id"] == 2
+
+
 def test_wizard_state_ingest_plates_validation_errors() -> None:
     wf = CommercialWorkflowService()
     payload = {
