@@ -430,9 +430,78 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
 
         _init_shipment_logistics_schema(cur)
 
+        _init_delivery_schedule_schema(cur)
+
         conn.commit()
     finally:
         conn.close()
+
+
+def _init_delivery_schedule_schema(cur: sqlite3.Cursor) -> None:
+    """Таблицы «Графика поставки»: партии с датами внутри одного заказа (КП).
+
+    Один график на КП (``UNIQUE kp_id``): пересогласование = правка того же
+    графика, истории версий нет. Удаление КП удаляет график каскадно.
+    """
+    # Таблица 10: delivery_schedule — график поставки, шапка (один на КП)
+    # invoice_number — № счёта; NULL пока не выставлен
+    # contract_number — № договора (шапка документа)
+    # status — draft | active | completed
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_schedule (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kp_id INTEGER NOT NULL UNIQUE,
+            invoice_number TEXT,
+            contract_number TEXT,
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+        )
+    ''')
+
+    # Таблица 11: delivery_batch — партия внутри графика
+    # name — свободный текст («1 этаж, 2 подъезд»)
+    # deliver_from / deliver_to — «поставка с/по» (ISO date)
+    # produce_by — «произвести до» (ISO date, задаёт менеджер вручную)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_batch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            deliver_from TEXT NOT NULL,
+            deliver_to TEXT NOT NULL,
+            produce_by TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (schedule_id) REFERENCES delivery_schedule(id) ON DELETE CASCADE
+        )
+    ''')
+
+    # Таблица 12: delivery_batch_item — позиция партии (плита КП + количество)
+    # Инвариант Σ qty ≤ kp_plates.qty проверяется в сервисе, не в БД
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_batch_item (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            plate_id INTEGER NOT NULL,
+            qty INTEGER NOT NULL CHECK (qty >= 1),
+            FOREIGN KEY (batch_id) REFERENCES delivery_batch(id) ON DELETE CASCADE,
+            FOREIGN KEY (plate_id) REFERENCES kp_plates(id) ON DELETE CASCADE
+        )
+    ''')
+
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_batch_schedule '
+        'ON delivery_batch(schedule_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_batch_item_batch '
+        'ON delivery_batch_item(batch_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_batch_item_plate '
+        'ON delivery_batch_item(plate_id)'
+    )
 
 
 def _init_shipment_logistics_schema(cur: sqlite3.Cursor) -> None:

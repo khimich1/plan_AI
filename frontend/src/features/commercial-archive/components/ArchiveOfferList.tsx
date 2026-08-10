@@ -143,6 +143,20 @@ export const ArchiveOfferList = ({
                 >
                   {productTypeBadge(item.product_type)}
                 </span>
+                {item.has_delivery_schedule === true && (
+                  <span
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: 999,
+                      background: "#ecfdf3",
+                      color: "#067647",
+                    }}
+                  >
+                    есть график
+                  </span>
+                )}
               </div>
               <div style={{ color: "#101828", fontWeight: 600 }}>{formatMoney(item.total_amount)}</div>
             </div>

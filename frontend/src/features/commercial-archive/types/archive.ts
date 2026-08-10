@@ -19,9 +19,13 @@ export type ArchiveOfferListItem = {
   /** Отгружено рейсами «обработано»: x из m (m = ordered_qty КП). */
   shipped_progress?: { x: number; m: number } | null;
   product_type?: ProductType;
+  /** Optional: backend may omit — list badge skipped when absent. */
+  has_delivery_schedule?: boolean;
 };
 
 export type ArchivePlateItem = {
+  /** kp_plates.id — нужен для графика поставки; может отсутствовать у агрегатов. */
+  id?: number | null;
   position_number: number | null;
   plate_name: string;
   length_m: number | null;
