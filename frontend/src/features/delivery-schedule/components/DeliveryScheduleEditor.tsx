@@ -31,6 +31,8 @@ type Props = {
   unmatchedRows?: UnmatchedRowOut[];
   onDismissUnmatched?: () => void;
   onImportClick?: () => void;
+  /** Светофор недоступен (readiness/calendar) — statuses null. */
+  trafficLightDegraded?: boolean;
 };
 
 const metaInputStyle: CSSProperties = {
@@ -57,6 +59,7 @@ export const DeliveryScheduleEditor = ({
   unmatchedRows = [],
   onDismissUnmatched,
   onImportClick,
+  trafficLightDegraded = false,
 }: Props) => {
   const splits = computePositionSplits(plates, batches);
   const { allocatedPositions, totalPositions } = splitProgress(splits);
@@ -151,6 +154,12 @@ export const DeliveryScheduleEditor = ({
               ))}
             </ul>
           </div>
+        </Alert>
+      )}
+
+      {trafficLightDegraded && (
+        <Alert tone="warning">
+          Светофор временно недоступен (календарь или готовность СГП). Статусы партий не рассчитаны.
         </Alert>
       )}
 

@@ -17,6 +17,7 @@ from core.delivery_schedule_xlsx import (
     HEADERS,
     REASON_BAD_DATE,
     REASON_BAD_QTY,
+    REASON_CONFLICTING_BATCH_DATES,
     REASON_UNKNOWN_MARK,
     BatchDraft,
     BatchDraftItem,
@@ -171,3 +172,31 @@ def test_same_batch_name_groups_into_one_draft(tmp_path: Path) -> None:
         BatchDraftItem(plate_id=10, plate_name="ПБ 60-12-8", qty=4),
         BatchDraftItem(plate_id=20, plate_name="ПБ 72-15-8", qty=7),
     ]
+
+
+def test_conflicting_batch_dates_go_to_unmatched(tmp_path: Path) -> None:
+    path = tmp_path / "conflict.xlsx"
+    build_template(path)
+    data = _write_data_rows(
+        path,
+        [
+            ("Партия X", "01.04.2026", "10.04.2026", "25.03.2026", "ПБ 60-12-8", 4),
+            ("Партия X", "15.04.2026", "20.04.2026", "05.04.2026", "ПБ 72-15-8", 7),
+        ],
+    )
+
+    batches, unmatched = parse_template(data, _KP_PLATES)
+
+    assert len(batches) == 1
+    assert batches[0].name == "Партия X"
+    assert batches[0].deliver_from == "2026-04-01"
+    assert batches[0].deliver_to == "2026-04-10"
+    assert batches[0].produce_by == "2026-03-25"
+    assert batches[0].items == [
+        BatchDraftItem(plate_id=10, plate_name="ПБ 60-12-8", qty=4),
+    ]
+    assert len(unmatched) == 1
+    assert unmatched[0].row_number == 3
+    assert unmatched[0].reason == REASON_CONFLICTING_BATCH_DATES
+    assert unmatched[0].raw is not None
+    assert unmatched[0].raw["Марка"] == "ПБ 72-15-8"

@@ -99,6 +99,8 @@ class DeliveryScheduleView(BaseModel):
     status: ScheduleStatus = "draft"
     batches: list[BatchOut] = Field(default_factory=list)
     updated_at: str
+    # True, если светофор недоступен (readiness/calendar) — statuses у партий null.
+    traffic_light_degraded: bool = False
 
 
 class BatchDraftItemOut(BaseModel):

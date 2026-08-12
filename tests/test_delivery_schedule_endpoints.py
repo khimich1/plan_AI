@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.core.settings import get_settings
@@ -20,6 +21,7 @@ from app.schemas.delivery_schedule import (
     ImportDraftResponse,
     UnmatchedRowOut,
 )
+from app.security.offer_access import FORBIDDEN_OFFER_DETAIL
 from app.security.session import create_session_token
 from app.services.delivery_schedule_service import (
     DeliveryScheduleNotFoundError,
@@ -65,6 +67,15 @@ USERS = [
         "created_at": "2026-01-01 00:00:00",
         "session_version": 0,
     },
+    {
+        "id": 4,
+        "username": "manager_b",
+        "role": "manager",
+        "manager_id": None,
+        "is_active": 1,
+        "created_at": "2026-01-01 00:00:00",
+        "session_version": 0,
+    },
 ]
 
 
@@ -101,6 +112,10 @@ def _admin_cookie() -> dict[str, str]:
 
 def _manager_cookie() -> dict[str, str]:
     return _session_cookie(2, "manager", "manager_a")
+
+
+def _manager_b_cookie() -> dict[str, str]:
+    return _session_cookie(4, "manager", "manager_b")
 
 
 def _customer_cookie() -> dict[str, str]:
@@ -176,11 +191,14 @@ def _filled_template_bytes(tmp_path: Path, rows: list[tuple]) -> bytes:
     return path.read_bytes()
 
 
-def _import_draft_from_bytes(kp_id: int, file_bytes: bytes) -> ImportDraftResponse:
+def _import_draft_from_bytes(
+    kp_id: int, file_bytes: bytes, *, user: dict | None = None
+) -> ImportDraftResponse:
     """Разбор XLSX как в сервисе (без БД) — для side_effect MagicMock."""
     from core.delivery_schedule_xlsx import parse_template
 
     _ = kp_id
+    _ = user
     drafts, unmatched = parse_template(
         file_bytes,
         [{"id": 10, "plate_name": "ПБ 60-12-8"}],
@@ -276,7 +294,11 @@ def test_put_creates_and_get_returns(
     assert get_payload["kp_id"] == 42
     assert get_payload["batches"][0]["name"] == "1 этаж"
     assert get_payload["batches"][0]["items"][0]["qty"] == 3
-    fake_service.get.assert_called_once_with(42)
+    fake_service.get.assert_called_once()
+    get_call = fake_service.get.call_args
+    assert get_call.args[0] == 42
+    assert get_call.kwargs["user"]["id"] == user["id"]
+    assert get_call.kwargs["user"]["role"] == user["role"]
 
 
 def test_get_not_found(
@@ -290,7 +312,61 @@ def test_get_not_found(
     response = client.get(API.format(kp_id=999), cookies=_admin_cookie())
 
     assert response.status_code == 404
-    fake_service.get.assert_called_once_with(999)
+    fake_service.get.assert_called_once()
+    get_call = fake_service.get.call_args
+    assert get_call.args[0] == 999
+    assert get_call.kwargs["user"]["id"] == 1
+
+
+def test_get_foreign_manager_returns_403(
+    client: TestClient,
+    fake_service: MagicMock,
+) -> None:
+    fake_service.get.side_effect = HTTPException(
+        status_code=403, detail=FORBIDDEN_OFFER_DETAIL
+    )
+
+    response = client.get(API.format(kp_id=42), cookies=_manager_b_cookie())
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == FORBIDDEN_OFFER_DETAIL
+    fake_service.get.assert_called_once()
+    assert fake_service.get.call_args.kwargs["user"]["id"] == 4
+
+
+def test_import_foreign_manager_returns_403(
+    client: TestClient,
+    fake_service: MagicMock,
+) -> None:
+    fake_service.import_draft.side_effect = HTTPException(
+        status_code=403, detail=FORBIDDEN_OFFER_DETAIL
+    )
+
+    response = client.post(
+        IMPORT_API.format(kp_id=42),
+        files={"file": ("schedule.xlsx", b"PK\x03\x04", XLSX_MEDIA)},
+        cookies=_manager_b_cookie(),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == FORBIDDEN_OFFER_DETAIL
+    fake_service.import_draft.assert_called_once()
+    assert fake_service.import_draft.call_args.kwargs["user"]["id"] == 4
+
+
+def test_get_own_kp_without_schedule_returns_404(
+    client: TestClient,
+    fake_service: MagicMock,
+) -> None:
+    fake_service.get.side_effect = DeliveryScheduleNotFoundError(
+        "График поставки для КП №42 не найден"
+    )
+
+    response = client.get(API.format(kp_id=42), cookies=_manager_cookie())
+
+    assert response.status_code == 404
+    fake_service.get.assert_called_once()
+    assert fake_service.get.call_args.kwargs["user"]["id"] == 2
 
 
 def test_put_qty_exceeded_returns_422(
@@ -381,11 +457,14 @@ def test_post_import_valid_xlsx_returns_draft_without_db_schedule(
     call_args = fake_service.import_draft.call_args
     assert call_args.args[0] == 42
     assert call_args.args[1] == xlsx_bytes
+    assert call_args.kwargs["user"]["id"] == 1
     fake_service.replace.assert_not_called()
 
     get_response = client.get(API.format(kp_id=42), cookies=_admin_cookie())
     assert get_response.status_code == 404
-    fake_service.get.assert_called_once_with(42)
+    fake_service.get.assert_called_once()
+    assert fake_service.get.call_args.args[0] == 42
+    assert fake_service.get.call_args.kwargs["user"]["id"] == 1
 
 
 @pytest.mark.parametrize(

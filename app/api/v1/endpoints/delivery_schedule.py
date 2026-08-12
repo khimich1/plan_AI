@@ -41,11 +41,11 @@ _TEMPLATE_FILENAME = "delivery_schedule_template.xlsx"
 @router.get("", response_model=DeliveryScheduleView)
 def get_delivery_schedule(
     kp_id: int,
-    _user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(require_roles("admin", "manager")),
     service: DeliveryScheduleService = Depends(get_delivery_schedule_service),
 ) -> DeliveryScheduleView:
     try:
-        return service.get(kp_id)
+        return service.get(kp_id, user=user)
     except DeliveryScheduleNotFoundError as exc:
         raise_not_found_client_error(
             exc,
@@ -103,12 +103,12 @@ def download_delivery_schedule_template(
 async def import_delivery_schedule_template(
     kp_id: int,
     file: UploadFile = File(...),
-    _user: dict = Depends(require_roles("admin", "manager")),
+    user: dict = Depends(require_roles("admin", "manager")),
     service: DeliveryScheduleService = Depends(get_delivery_schedule_service),
 ) -> ImportDraftResponse:
     file_bytes = await read_upload_file_capped(file)
     try:
-        return service.import_draft(kp_id, file_bytes)
+        return service.import_draft(kp_id, file_bytes, user=user)
     except DeliveryScheduleNotFoundError as exc:
         raise_not_found_client_error(
             exc,

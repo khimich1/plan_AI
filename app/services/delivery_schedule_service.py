@@ -48,6 +48,10 @@ DocumentFmt = Literal["xlsx", "pdf"]
 _WORKDAYS_HORIZON_DAYS = 400
 _WORKDAYS_AFTER_PRODUCE_BY = 60
 
+# Ожидаемые сбои источников светофора (readiness / calendar / workdays / БД).
+# Прочие исключения (TypeError и т.п.) не глотаем — пусть уходят в 500.
+_TRAFFIC_LIGHT_SOURCE_ERRORS = (OSError, RuntimeError, sqlite3.Error, ConnectionError)
+
 
 class DeliveryScheduleError(Exception):
     """Базовое исключение сервиса графика поставки."""
@@ -77,12 +81,16 @@ class DeliveryScheduleService:
         # Для детерминированных тестов: ISO YYYY-MM-DD.
         self._today_override: str | None = None
 
-    def get(self, kp_id: int, *, today: str | None = None) -> DeliveryScheduleView:
+    def get(self, kp_id: int, *, user: dict, today: str | None = None) -> DeliveryScheduleView:
         ensure_schema(self.db_path)
         conn = _connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
+            offer = self._fetch_offer(cur, kp_id)
+            if offer is None:
+                raise DeliveryScheduleNotFoundError(f"КП №{kp_id} не найдено")
+            assert_offer_read_access(user, offer)
             schedule = self._fetch_schedule(cur, kp_id)
             if schedule is None:
                 raise DeliveryScheduleNotFoundError(
@@ -133,7 +141,7 @@ class DeliveryScheduleService:
         finally:
             conn.close()
 
-        return self.get(kp_id, today=today)
+        return self.get(kp_id, user=user, today=today)
 
     def build_template_bytes(self) -> bytes:
         """Пустой XLSX-шаблон графика (через ``build_template``)."""
@@ -141,7 +149,9 @@ class DeliveryScheduleService:
             path = build_template(Path(tmpdir) / "delivery_schedule_template.xlsx")
             return path.read_bytes()
 
-    def import_draft(self, kp_id: int, file_bytes: bytes) -> ImportDraftResponse:
+    def import_draft(
+        self, kp_id: int, file_bytes: bytes, *, user: dict
+    ) -> ImportDraftResponse:
         """Разбор XLSX → черновик партий; в БД ничего не пишет."""
         if not file_bytes:
             raise DeliveryScheduleValidationError("Пустой файл импорта")
@@ -154,6 +164,7 @@ class DeliveryScheduleService:
             offer = self._fetch_offer(cur, kp_id)
             if offer is None:
                 raise DeliveryScheduleNotFoundError(f"КП №{kp_id} не найдено")
+            assert_offer_read_access(user, offer)
             kp_plates = self._load_kp_plates_for_import(cur, kp_id)
         finally:
             conn.close()
@@ -274,7 +285,7 @@ class DeliveryScheduleService:
         *,
         today: str | None = None,
     ) -> DeliveryScheduleView:
-        """Считает светофор; при сбое внешних источников возвращает view без status."""
+        """Считает светофор; при сбое источников — statuses null + degraded flag."""
         if not view.batches:
             return view
 
@@ -326,12 +337,20 @@ class DeliveryScheduleService:
                 produced=produced,
                 today=today_iso,
             )
-        except Exception:
+        except _TRAFFIC_LIGHT_SOURCE_ERRORS:
             logger.exception(
                 "Светофор графика поставки недоступен для КП %s — отдаём без status",
                 kp_id,
             )
-            return view
+            cleared = [
+                batch.model_copy(
+                    update={"status": None, "ready_date": None, "hint": None}
+                )
+                for batch in view.batches
+            ]
+            return view.model_copy(
+                update={"batches": cleared, "traffic_light_degraded": True}
+            )
 
         enriched: list[BatchOut] = []
         for batch, check, flags in zip(view.batches, checks, item_flags, strict=True):
@@ -351,7 +370,9 @@ class DeliveryScheduleService:
                     }
                 )
             )
-        return view.model_copy(update={"batches": enriched})
+        return view.model_copy(
+            update={"batches": enriched, "traffic_light_degraded": False}
+        )
 
     def _load_plates_meta(self, kp_id: int) -> dict[int, dict[str, Any]]:
         ensure_schema(self.db_path)
@@ -385,14 +406,19 @@ class DeliveryScheduleService:
         kp_id: int,
         plates: dict[int, dict[str, Any]],
     ) -> dict[int, int]:
-        """produced[plate_id] = on_sgp из readiness по идентичности марки."""
+        """produced[plate_id]: on_sgp по identity, распределённый пропорционально qty.
+
+        Сумма allocated по группе = min(on_sgp, Σ qty); без дублирования полного
+        on_sgp на каждый plate_id одной марки.
+        """
         try:
             positions = KpReadinessService(db_path=self.db_path).list_positions(kp_id)
-        except Exception:
-            logger.exception(
-                "KpReadinessService.list_positions недоступен для КП %s", kp_id
-            )
-            return {pid: 0 for pid in plates}
+        except _TRAFFIC_LIGHT_SOURCE_ERRORS:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"KpReadinessService.list_positions недоступен для КП {kp_id}"
+            ) from exc
 
         by_identity: dict[tuple[Any, ...], int] = {}
         for pos in positions:
@@ -401,7 +427,7 @@ class DeliveryScheduleService:
             )
             by_identity[key] = int(pos.on_sgp or 0)
 
-        produced: dict[int, int] = {}
+        groups: dict[tuple[Any, ...], list[tuple[int, int]]] = {}
         for plate_id, meta in plates.items():
             key = self._plate_identity_key(
                 meta.get("plate_name"),
@@ -409,8 +435,38 @@ class DeliveryScheduleService:
                 meta.get("width_m"),
                 meta.get("load_class"),
             )
-            produced[plate_id] = by_identity.get(key, 0)
+            qty = int(meta.get("qty") or 0)
+            groups.setdefault(key, []).append((int(plate_id), qty))
+
+        produced: dict[int, int] = {}
+        for key, members in groups.items():
+            on_sgp = by_identity.get(key, 0)
+            qtys = [q for _, q in members]
+            allocated = self._allocate_largest_remainder(on_sgp, qtys)
+            for (plate_id, _), alloc in zip(members, allocated, strict=True):
+                produced[plate_id] = alloc
         return produced
+
+    @staticmethod
+    def _allocate_largest_remainder(total: int, weights: list[int]) -> list[int]:
+        """Пропорциональное целое распределение: Σ result = min(total, Σ weights)."""
+        n = len(weights)
+        if n == 0:
+            return []
+        sum_w = sum(weights)
+        if total <= 0 or sum_w <= 0:
+            return [0] * n
+        capped = min(int(total), sum_w)
+        exact = [capped * w / sum_w for w in weights]
+        floors = [int(x) for x in exact]
+        leftover = capped - sum(floors)
+        order = sorted(
+            range(n),
+            key=lambda i: (-(exact[i] - floors[i]), i),
+        )
+        for i in order[:leftover]:
+            floors[i] += 1
+        return floors
 
     @staticmethod
     def _plate_identity_key(
@@ -433,9 +489,10 @@ class DeliveryScheduleService:
     def _load_occupancy() -> dict[str, dict]:
         try:
             calendar = get_global_calendar_info()
-        except Exception:
-            logger.exception("get_global_calendar_info недоступен — occupancy пустой")
-            return {}
+        except _TRAFFIC_LIGHT_SOURCE_ERRORS:
+            raise
+        except Exception as exc:
+            raise RuntimeError("get_global_calendar_info недоступен") from exc
         if not calendar:
             return {}
         days_info = calendar.get("days_info") or {}

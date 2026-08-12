@@ -152,6 +152,7 @@ export const DeliveryScheduleDialog = ({
               unmatchedRows={unmatchedRows}
               onDismissUnmatched={() => setUnmatchedRows([])}
               onImportClick={readOnly ? undefined : () => setImportOpen(true)}
+              trafficLightDegraded={Boolean(query.data?.traffic_light_degraded)}
             />
 
             {putMutation.isError && (

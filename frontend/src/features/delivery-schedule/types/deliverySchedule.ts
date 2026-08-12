@@ -55,6 +55,8 @@ export type DeliveryScheduleView = {
   status: ScheduleStatus;
   batches: BatchOut[];
   updated_at: string;
+  /** True, если светофор недоступен — statuses у партий null. */
+  traffic_light_degraded?: boolean;
 };
 
 export type BatchDraftItemOut = {

@@ -6,6 +6,7 @@
 
 ### Added
 
+- **Карта маршрутов ГСМ:** скрипт `scripts/build_gsm_routes_map.py` собирает `ГСМ/карта_маршрутов.html` (Leaflet) из `пул_поездок.xlsx` — линии A→B по дорогам (OSRM), цвет/фильтр по машине, поиск адреса → топ-3 ближайших трека; кэш `ГСМ/geo_cache/` (~177/244 адресов, 434 features). Зависимости: `xlrd`, `requests`. Тесты: 35. [Report](../develop/reports/2026-08-11-gsm-routes-map.md)
 - **График поставки (неделя 3 / MVP):** документ XLSX/PDF (`GET .../document`), frontend-редактор партий со светофором, импорт шаблона и скачивание из drawer архива КП. Автотесты: backend 95, frontend 239. Статус: READY_FOR_HUMAN_QA. [Report](../develop/reports/delivery-schedule-week3.md)
 - **График поставки (неделя 2):** API GET/PUT `/commercial/archive/{kp_id}/delivery-schedule` с живым светофором; XLSX `/template` и `/import` (черновик без сохранения). [Report](../develop/reports/delivery-schedule-week2.md)
 - **Порядок армирования в раскладке:** параметр `layout_reinforcement_order` (asc/desc) управляет алгоритмом выбора целых плит при построении раскладки плана. Режим `desc` (сильные первыми) автоматически применяет match-greedy стратегию. Добавлен в Settings, API endpoint, ProductionPlanningService, LayoutRuntimeSnapshot, helpers (reinforcement_order_key, should_pick_solid_greedy). Frontend: выпадающий список в CreatePlanWizard. Полностью обратно совместимо (default `asc`). [Report](../reports/2026-06-02-layout-reinf-order-implementation.md)

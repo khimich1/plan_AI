@@ -736,11 +736,10 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             {!isSimpleProductOffer && (
               <Button
                 variant="secondary"
-                disabled={!canEditDeliverySchedule}
                 title={
                   canEditDeliverySchedule
-                    ? "Разбить заказ на партии поставки"
-                    : "График доступен для КП «в работе» / «На СГП»"
+                    ? "Редактирование графика поставки"
+                    : "Просмотр графика поставки"
                 }
                 onClick={() => setScheduleOpen(true)}
               >

@@ -150,7 +150,7 @@ describe("OfferDetailsDrawer readiness visibility", () => {
     expect(screen.getByTestId("kp-readiness-block")).toBeInTheDocument();
   });
 
-  it("enables delivery schedule button for в работе and disables for архиве", () => {
+  it("enables delivery schedule button for в работе and архиве (read-only for archive)", () => {
     mockUseArchiveOfferQuery.mockReturnValue({
       data: makeOffer("в работе", makeReadiness()),
       isPending: false,
@@ -159,6 +159,10 @@ describe("OfferDetailsDrawer readiness visibility", () => {
     });
     const { rerender } = render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
     expect(screen.getByRole("button", { name: "График поставки" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "График поставки" })).toHaveAttribute(
+      "title",
+      "Редактирование графика поставки",
+    );
 
     mockUseArchiveOfferQuery.mockReturnValue({
       data: makeOffer("в архиве", makeReadiness()),
@@ -167,7 +171,11 @@ describe("OfferDetailsDrawer readiness visibility", () => {
       error: null,
     });
     rerender(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "График поставки" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "График поставки" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "График поставки" })).toHaveAttribute(
+      "title",
+      "Просмотр графика поставки",
+    );
   });
 });
 

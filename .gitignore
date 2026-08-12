@@ -95,5 +95,8 @@ pytest_wp*_out.txt
 # Дубликат skills (основной набор в .cursor/skills/)
 agent-skills-main/
 
+# Личный offline-модуль ГСМ (ПДн, кэши, Excel, HTML-карта)
+ГСМ/
+
 #json files
 .app_data/drafts/

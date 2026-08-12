@@ -57,6 +57,7 @@ _CENTER = Alignment(horizontal="center", vertical="top", wrap_text=True)
 REASON_UNKNOWN_MARK = "unknown mark"
 REASON_BAD_DATE = "bad date"
 REASON_BAD_QTY = "bad qty"
+REASON_CONFLICTING_BATCH_DATES = "conflicting batch dates"
 
 
 @dataclass
@@ -323,6 +324,18 @@ def parse_template(
                 )
                 batches_map[batch_name] = draft
                 batches_order.append(batch_name)
+            elif (
+                existing.deliver_from != iso_from
+                or existing.deliver_to != iso_to
+                or existing.produce_by != iso_produce
+            ):
+                unmatched.append(
+                    UnmatchedRow(
+                        row_number=row_idx,
+                        reason=REASON_CONFLICTING_BATCH_DATES,
+                        raw=raw,
+                    )
+                )
             else:
                 _merge_item(existing, item)
 

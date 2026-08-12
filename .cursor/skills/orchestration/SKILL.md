@@ -5,37 +5,105 @@ description: Full implementation cycle with planning, testing, review, and auto-
 
 # Orchestration Workflow Skill
 
-**Purpose**: Orchestrate complete development cycle - from planning to documentation with automatic error fixing.
+**Purpose**: Orchestrate complete development cycle — from planning to documentation with conditional pipelines, dependency-aware scheduling, and automatic error fixing.
 
 ## Workflow Architecture
 
 ```mermaid
 flowchart TD
-    Planner[Planner: creates plan with tasks] --> Loop{Any tasks?}
-    Loop -->|Yes| Worker[Worker: implements task]
-    Worker --> TestWriter[Test-Writer: writes tests]
-    TestWriter --> TestRunner[Test-Runner: runs tests & verifies]
-    TestRunner -->|Tests fail or incomplete| Debugger1[Debugger: fixes bugs]
-    Debugger1 --> TestRunner
-    TestRunner -->|Tests pass & verified| Reviewer[Reviewer: checks quality]
-    Reviewer -->|Issues found| Debugger2[Debugger: improves code]
-    Debugger2 --> Reviewer
-    Reviewer -->|Quality OK| NextTask[Move to next task]
-    NextTask --> Loop
-    Loop -->|No tasks| Documenter[Documenter: creates documentation]
-    Documenter --> Done[Completed]
+    Pre[Pre-flight: context / spec / spike?] --> Planner[Planner: tasks with type + dependsOn]
+    Planner --> Approve{User checkpoint}
+    Approve -->|yes| DAG[Schedule ready tasks by DAG]
+    DAG --> Explore[explore if needed]
+    Explore --> Work[worker or refactor]
+    Work --> Tests[test-writer? → test-runner ↔ debugger]
+    Tests --> Rev[reviewer]
+    Rev -->|structural| Ref[refactor → test-runner]
+    Rev -->|security-sensitive| Sec[security-auditor]
+    Rev -->|arch / complex| SR[senior-reviewer]
+    Ref --> Next[Mark complete → next ready]
+    Sec --> Next
+    SR --> Next
+    Tests --> Next
+    Next --> DAG
+    DAG -->|all done| Doc[documenter]
+    Doc --> Done[Archive workspace]
 ```
 
 ## How It Works
 
+### Phase 0: Pre-flight (coordinator, before planner)
+
+**Always inject project context into planner/worker prompts:**
+- Read `.cursor/skills/plan-web-context/SKILL.md` (or `project-shishov`) and pass a short summary + relevant paths into every implementation agent.
+
+**Gate — what are we building?**
+
+```javascript
+hasSpec = userAttachedSpec || existsInDocs("specs|features|ideas") // from user input
+isSpikeOnly = userAskedValidation || ideaHasUncheckedAssumptions // e.g. A1–A3
+
+if (!hasSpec && !isSpikeOnly && taskIsNonTrivial) {
+  // Prefer clarifying before a full code cycle
+  askUser("Нет спеки. Сначала spec/idea-refine, spike-валидация, или сразу план?")
+  // If user chooses spec → call planner only after spec exists, OR route to
+  // Task(subagent_type="planner") with mode focused on validation tasks (type: spike)
+}
+
+if (isSpikeOnly) {
+  // Planner must emit mostly type:spike tasks — no full UI/MVP until validated
+}
+```
+
+Do **not** silently invent product requirements. Surface assumptions in the plan.
+
 ### Phase 1: Planning
 
-1. Call **planner** with the full task description
-2. Planner creates:
+1. Call **planner** with the full task description + pre-flight notes
+2. Planner **must** create for each task: `type`, `dependsOn`, `pipeline` (see Task Types)
+3. Planner creates:
    - Workspace: `.cursor/workspace/active/orch-{id}/`
-   - Plan file: `workspace/plan.md` OR uses user's file
+   - Plan file: `workspace/plan.md` OR user's file / `ai_docs/develop/plans/`
    - Metadata: `progress.json`, `tasks.json`, `links.json`
-3. Planner returns orchestration ID
+4. Planner returns orchestration ID
+
+**Planner output contract** — every task in `tasks.json`:
+
+```json
+{
+  "AUTH-001": {
+    "id": "AUTH-001",
+    "name": "User Model",
+    "type": "feat-be",
+    "dependsOn": [],
+    "pipeline": ["explore", "worker", "test-writer", "test-runner", "reviewer"],
+    "securitySensitive": false,
+    "needsExplore": true,
+    "status": "pending"
+  }
+}
+```
+
+Plan markdown should also show type and dependencies per task.
+
+### Phase 1b: User checkpoint (MANDATORY)
+
+After planner finishes, **stop and show the plan**. Do not start Task 1 until the user approves.
+
+```markdown
+📋 Plan ready: {orchestrationId}
+Tasks: …
+DAG: …
+Pipelines: (summary by type)
+
+Proceed with execution? (yes / change plan / spike-only first)
+```
+
+- `yes` → Phase 2
+- `change plan` → planner again with feedback
+- `spike-only first` → execute only `type:spike` tasks, leave rest pending
+
+**Exception:** User already said `/orchestrate execute {id}` or explicitly «выполняй без подтверждения».
 
 ### Phase 2: Load Orchestration
 
@@ -49,97 +117,177 @@ workspacePath = config.workspace.path
 ```javascript
 orchestrationId = userInput || findLatestActive()
 workspaceDir = `${workspacePath}/active/${orchestrationId}`
+// Also check failed/ for resume:
+// `${workspacePath}/failed/${orchestrationId}`
 
 progress = readJSON(`${workspaceDir}/progress.json`)
 tasksState = readJSON(`${workspaceDir}/tasks.json`)
 links = readJSON(`${workspaceDir}/links.json`)
 
-// Read plan from documentation
-planContent = read(links.plan)
+planContent = read(links.plan || `${workspaceDir}/plan.md`)
 taskIds = extractTaskIds(planContent)
 ```
 
-### Phase 3: Task Loop
+**Resume:** If `progress.status` is `failed` / interrupted, skip `completed` tasks, continue from first non-completed ready task. Prefer `/orchestrate resume [{id}]`.
 
-**CRITICAL**: Iterate through ALL tasks.
+### Phase 3: Task Loop (DAG)
 
-For EACH task ID from plan:
+**CRITICAL:** Do not blindly iterate list order. Schedule by dependencies.
 
-**Before starting task:**
 ```javascript
-// Skip if already completed
+function readyTasks(tasksState) {
+  return Object.values(tasksState).filter(t =>
+    t.status === "pending" &&
+    (t.dependsOn || []).every(id => tasksState[id]?.status === "completed")
+  )
+}
+
+function markBlocked(tasksState) {
+  for (const t of Object.values(tasksState)) {
+    if (t.status !== "pending") continue
+    const blockedBy = (t.dependsOn || []).filter(
+      id => tasksState[id]?.status !== "completed"
+    )
+    if (blockedBy.length) {
+      t.status = "blocked"
+      t.blockedBy = blockedBy
+    }
+  }
+}
+```
+
+**Parallelism:** If several tasks are `ready` and do not touch the same files (planner should note `parallelSafe: true`), launch multiple worker pipelines via parallel `Task` calls. Default: one task at a time if unsure.
+
+**Before starting each task:**
+```javascript
 if (tasksState[taskId]?.status === "completed") continue
 
-// Update task status: pending → in-progress
 tasksState[taskId] = {
-  id: taskId,
+  ...tasksState[taskId],
   status: "in-progress",
   startedAt: now()
 }
 write(`${workspaceDir}/tasks.json`, tasksState)
-
-// Update plan file
-updateTaskInPlan(links.plan, taskId, "🔄 In Progress")
-
-// Update orchestration progress
+updateTaskInPlan(links.plan || `${workspaceDir}/plan.md`, taskId, "🔄 In Progress")
 updateJSON(`${workspaceDir}/progress.json`, {
+  status: "in-progress",
   currentTask: taskId,
   lastUpdated: now()
 })
 ```
 
-**During task:**
-
-#### Step 1: Implementation
-- Call **worker** with current subtask
-- Wait for completion
-- Extract what was created
-- (Hook auto-fixes formatting in background)
-
-#### Step 2: Test Creation
-- Call **test-writer** to write comprehensive tests for the implemented code
-- Test-writer auto-detects stack and follows project test conventions
-- Wait for completion
-- Extract test files created
-
-#### Step 3: Linting + Testing + Verification
-- Call **test-runner** to verify code quality, functionality, and completeness
-- Test-runner checks:
-  - Linter (code quality, style issues)
-  - Tests (functionality verification)
-  - Verification (acceptance criteria met, implementation complete)
-- **If tests fail or verification incomplete**:
-  - Call **debugger** to fix issues or complete missing parts
-  - Re-run **test-runner**
-  - Max 3 retry attempts
-
-#### Step 4: Code Review
-- Call **reviewer** to check code quality
-- **If reviewer finds problems**:
-  - Call **debugger** to improve code
-  - Re-run **reviewer**
-  - Max 3 retry attempts
-
-#### Step 5: Update Task Status
-
-**After test-runner verifies and reviewer approves:**
+#### Resolve pipeline
 
 ```javascript
-// Update task status: in-progress → completed
+const PIPELINES = {
+  "feat-be": ["explore", "worker", "test-writer", "test-runner", "reviewer"],
+  "feat-fe": ["explore", "worker", "test-writer", "test-runner", "reviewer"],
+  "ui":      ["explore", "worker", "test-writer", "test-runner", "reviewer"], // worker gets frontend-ui skill
+  "api":     ["explore", "worker", "test-writer", "test-runner", "reviewer", "security-auditor"],
+  "auth":    ["explore", "worker", "test-writer", "test-runner", "reviewer", "security-auditor"],
+  "arch":    ["explore", "senior-reviewer", "worker", "test-writer", "test-runner", "reviewer", "senior-reviewer"],
+  "refactor":["senior-reviewer", "refactor", "test-runner"],
+  "spike":   ["explore", "worker", "test-runner", "documenter-lite"],
+  "docs":    ["documenter"],
+  "chore":   ["worker", "test-runner"]
+}
+
+pipeline = task.pipeline || PIPELINES[task.type] || PIPELINES["feat-be"]
+
+// Auto-extend:
+if (task.securitySensitive || ["auth", "api"].includes(task.type)) {
+  appendUnique(pipeline, "security-auditor")
+}
+if (task.type === "ui") {
+  workerExtraSkills.push("frontend-ui-engineering")
+  // optional: browser-testing-with-devtools after test-runner if UI behavior changed
+}
+```
+
+#### Step A: Explore (optional)
+
+If `explore` in pipeline or `needsExplore !== false` for feat/arch:
+
+```
+Task(subagent_type="explore", prompt="Find existing code for: {task}.
+Return: key files, functions, patterns to reuse, risks.
+Project context: {plan-web-context summary}")
+```
+
+Pass explore result into worker prompt.
+
+#### Step B: Implementation
+
+- `worker` — default implementation
+- `refactor` — when `type === "refactor"` (no behavior change)
+- For `docs` — skip to documenter only
+- For `spike` — scripts/measurements/validation only; no production UI unless asked
+
+Prompt must include: task acceptance criteria, explore findings, plan goal, `plan-web-context` paths.
+
+#### Step C: Tests (conditional)
+
+Skip **test-writer** when:
+- `type` in `docs`, `spike` (unless spike produced code under test)
+- `type === "chore"` and no logic files changed
+- `type === "refactor"` (existing tests must cover; test-runner only)
+
+Otherwise:
+1. **test-writer** for changed code
+2. **test-runner** — linter + tests + acceptance criteria
+
+**On failure:**
+- Call **debugger** with error details
+- Re-run **test-runner**
+- Max **3** attempts; after **2** failures, include a root-cause hypothesis in the debugger prompt
+- If still failing → set task `status: "failed"`, report to user, ask guidance (do not silently continue)
+
+#### Step D: Review (conditional)
+
+Skip **reviewer** for `docs` and pure `spike` (unless code landed in repo).
+
+Otherwise call **reviewer**.
+
+**Route findings:**
+| Finding class | Agent |
+|---------------|--------|
+| Bugs / test gaps / small fixes | **debugger** → re-review |
+| Structural / complexity / DRY | **refactor** → **test-runner** → re-review |
+| Security | **security-auditor** (or debugger if trivial) |
+
+Max 3 review fix cycles. If exceeded → pause for user.
+
+#### Step E: Conditional heavy agents
+
+- **security-auditor** — if in pipeline or reviewer flagged security, or files touch auth/upload/SQL/raw queries/API tokens
+- **senior-reviewer** — if `type === "arch"`, or task touches >5 modules / optimizer / calendar planning cores, or planner set `needsArchitectureReview: true`
+  - For `arch`: once before worker (approach) and once after reviewer (delta) is ideal; at minimum after implementation
+
+Do **not** run full audit (senior + security + reviewer on whole repo) inside every task — that is `/audit`.
+
+#### Step F: Complete task
+
+```javascript
 tasksState[taskId] = {
   ...tasksState[taskId],
   status: "completed",
   completedAt: now(),
   filesChanged: result.filesChanged,
-  testsRun: testResult.total,
-  testsPassed: testResult.passed
+  testsRun: testResult?.total ?? 0,
+  testsPassed: testResult?.passed ?? 0
 }
 write(`${workspaceDir}/tasks.json`, tasksState)
+updateTaskInPlan(..., taskId, "✅ Completed")
 
-// Update plan file
-updateTaskInPlan(links.plan, taskId, "✅ Completed")
+// Unblock dependents: blocked → pending when dependsOn satisfied
+for (const t of Object.values(tasksState)) {
+  if (t.status === "blocked" &&
+      (t.dependsOn || []).every(id => tasksState[id]?.status === "completed")) {
+    t.status = "pending"
+    delete t.blockedBy
+  }
+}
 
-// Update orchestration progress
 updateJSON(`${workspaceDir}/progress.json`, {
   tasksCompleted: progress.tasksCompleted + 1,
   currentTask: null,
@@ -147,148 +295,88 @@ updateJSON(`${workspaceDir}/progress.json`, {
 })
 ```
 
+Show progress: `Task k/N complete — ready next: […]`.
+
 ### Phase 4: Finalization
 
-**After all tasks complete:**
+After all tasks `completed` (or user accepts partial done with spikes only):
 
 ```javascript
-// Update orchestration status
-updateJSON(`${workspaceDir}/progress.json`, {
-  status: "documenting",
-  lastUpdated: now()
-})
+updateJSON(`${workspaceDir}/progress.json`, { status: "documenting", lastUpdated: now() })
 
-// Call documenter to create final report
 reportFile = callDocumenter({
   orchestrationId: progress.id,
   planFile: links.plan,
   tasksState: tasksState
 })
 
-// Save report link
-updateJSON(`${workspaceDir}/links.json`, {
-  report: reportFile
-})
-
-// Mark orchestration as completed
+updateJSON(`${workspaceDir}/links.json`, { report: reportFile })
 updateJSON(`${workspaceDir}/progress.json`, {
   status: "completed",
   completedAt: now(),
   reportFile: reportFile
 })
 
-// Archive workspace
 move(
   `${workspacePath}/active/${orchestrationId}`,
   `${workspacePath}/completed/${orchestrationId}`
 )
 ```
 
+On unrecoverable failure: move to `failed/` (keep for resume), set `status: "failed"`.
+
+## Task Types
+
+| Type | Use when | Default pipeline |
+|------|----------|------------------|
+| `feat-be` | Backend feature | explore → worker → test-writer → test-runner → reviewer |
+| `feat-fe` | Frontend feature | explore → worker → test-writer → test-runner → reviewer |
+| `ui` | User-facing UI | same + frontend-ui skill; optional browser verify |
+| `api` | Public/internal API | feat-be + security-auditor |
+| `auth` | Authz/authn | feat-be + security-auditor |
+| `arch` | Cross-module design | senior-reviewer + full feat pipeline |
+| `refactor` | Behavior-preserving restructure | senior-reviewer → refactor → test-runner |
+| `spike` | Validate assumption / measure | explore → worker → test-runner (light) |
+| `docs` | Documentation only | documenter |
+| `chore` | Config/tooling | worker → test-runner |
+
 ## Important Rules
 
-### Sequential Execution
-- Wait for each agent to complete before calling next
-- Pass context from previous agent to next
-- Track state across the entire workflow
+### Sequential agents within a task
+- Wait for each agent before the next step in the same task
+- Pass context forward (files, errors, explore map)
+- Debugger only when there are real failures/findings
+
+### DAG across tasks
+- Honor `dependsOn`
+- Parallelize only `parallelSafe` ready tasks
+- Never start a task whose dependencies failed — mark `blocked`, ask user
 
 ### Error Handling
-- Automatic retry with debugger on failures
-- **Max 3 retry attempts per stage** (test/review)
-- If max attempts reached, report to user and ask for guidance
+- Max 3 retries per stage (test / review)
+- After 2 test failures → debugger gets explicit hypothesis request
+- Max retries exhausted → user guidance, workspace stays resumable
 
 ### Task Limits
-- **Recommended max: 10 tasks per orchestration cycle**
-- If Planner creates more than 10 tasks:
-  - Complete first 10 tasks
-  - Report progress to user
-  - Ask if should continue with remaining tasks
-- **Max task execution time: check context window usage**
-- If approaching context limit, save progress and ask user
-
-### Task Tracking
-- Keep track of completed vs pending tasks
-- Show progress after each task completion (e.g., "Task 3/7")
-- Show estimated remaining tasks
-- Final summary lists all accomplished work
+- **Recommended max: 10 tasks per cycle**
+- If more: complete first 10, report, ask to continue
+- If context window pressure: save progress, ask user to `/orchestrate resume` in a new chat
 
 ### Context Management
-- Each agent gets context about what previous agents did
-- Debugger gets specific error details to fix
-- Documenter gets full picture of all changes
+- Every worker/planner prompt: project context + task acceptance criteria
+- Debugger: concrete errors + files
+- Documenter: full tasksState + plan
 
-## Example Usage
-
-User says: `/orchestrate Build user authentication with email/password and OAuth`
-
-Your response:
-
-```markdown
-I'll orchestrate the full development cycle for this complex task.
-
-**Task**: Build user authentication with email/password and OAuth
-
-### Phase 1: Planning
-[Call planner to break down into subtasks]
-
-[Wait for planner result - extract tasks]
-
-**Plan created:**
-1. Database schema for users
-2. Email/password authentication
-3. OAuth integration (Google, GitHub)
-4. Session management
-5. Protected routes middleware
-
-### Phase 2: Implementation Cycle
-
-**Task 1/5: Database schema for users**
-- [Call worker to implement]
-- [Call test-writer to create tests]
-- [Call test-runner for tests & verification]
-- [If failed: call debugger and retry]
-- [Call reviewer]
-- [If issues: call debugger and retry]
-- ✅ Task 1 complete
-
-**Task 2/5: Email/password authentication**
-...
-
-[Continue for all tasks]
-
-### Phase 3: Documentation
-[Call documenter with all changes]
-
-### Summary
-✅ All 5 tasks completed
-✅ Tests passing
-✅ Code reviewed
-✅ Documentation created
-
-Files changed: [list]
-Documentation: [list]
-```
-
-## Retry Logic
-
-### Test/Verification Failures
-```
-test-runner → FAIL → debugger → test-runner
-  ↓ (max 3 attempts)
-  ↓
-  If still failing: report to user
-```
-
-### Review Issues
-```
-review → PROBLEMS → debugger → review
-  ↓ (max 3 attempts)
-  ↓
-  If still issues: report to user
-```
+### Do not over-agent
+- Skip test-writer/reviewer when pipeline says so
+- Do not call senior-reviewer + security-auditor on every chore
+- Full-repo health → `/audit`, not in-task
 
 ## Trigger Phrases
 
 - `/orchestrate [task]`
+- `/orchestrate execute [orch-id]`
+- `/orchestrate resume [orch-id]`
 - "Orchestrate [X]"
 - "Full implementation of [Y]"
 
@@ -301,43 +389,60 @@ review → PROBLEMS → debugger → review
 | No planning needed | Needs breakdown |
 | Quick task | Complex project |
 
-## Key Features
+## Example: Conditional cycle
 
-1. **Automatic Planning**: Breaks complex tasks into manageable pieces
-2. **Test Writing**: Test-writer creates tests for every implemented task (auto-detects stack)
-3. **Auto-fixing**: Debugger automatically fixes test/review failures
-4. **Quality Gates**: Every task goes through test-writer → test-runner (with verification) → reviewer
-5. **Progress Tracking**: See which tasks are done, which are pending
-6. **Comprehensive Docs**: Full documentation after all work complete
+```markdown
+### Phase 0–1
+Pre-flight → planner tags PLAN-001 spike, PLAN-002 feat-be, PLAN-003 ui
+Checkpoint → user: yes
 
-## Example Tasks
+### Task PLAN-001 (spike)
+explore → worker (validation script) → test-runner → ✅
 
-Good for `/orchestrate`:
-- Build authentication system
-- Create admin dashboard with CRUD
-- Implement payment integration
-- Migrate database schema
-- Refactor major module with tests
+### Task PLAN-002 (feat-be, dependsOn: PLAN-001)
+explore → worker → test-writer → test-runner → reviewer → ✅
 
-Bad for `/orchestrate` (use `/implement`):
-- Add one function
-- Fix simple bug
-- Create single component
-- Update one file
+### Task PLAN-003 (ui, dependsOn: PLAN-002)
+explore → worker(+frontend-ui) → test-writer → test-runner → reviewer → ✅
+
+### Phase 4
+documenter → archive
+```
+
+## Retry Logic
+
+### Test/Verification Failures
+```
+test-runner → FAIL → debugger → test-runner
+  ↓ (max 3 attempts; hypothesis after 2)
+  ↓
+  If still failing: status=failed, report to user
+```
+
+### Review Issues
+```
+review → bugs → debugger → review
+review → structural → refactor → test-runner → review
+review → security → security-auditor → (debugger if needed) → review
+  ↓ (max 3 attempts)
+  ↓
+  If still issues: report to user
+```
 
 ## Success Criteria
 
 Workflow is complete when:
-- ✅ All planned tasks implemented
-- ✅ All tests passing
-- ✅ Code review approved
-- ✅ All acceptance criteria verified (by test-runner)
-- ✅ Documentation created
+- ✅ All planned tasks completed (or explicit partial acceptance)
+- ✅ Required tests passing per pipeline
+- ✅ Reviews/security gates required by type passed
+- ✅ Acceptance criteria verified (test-runner)
+- ✅ Documentation created (documenter)
+- ✅ Workspace archived to `completed/` (or `failed/` if stopped)
 
 ## Notes
 
-- This skill replaces hook-based orchestration
-- All execution happens in same chat, visible to user
-- User can intervene at any point if needed
-- Debugger is only called when there are actual errors/issues
-- Max 3 retry attempts prevents infinite loops
+- Replaces hook-based orchestration; coordinator runs in the same chat
+- User can intervene at checkpoint and on failures
+- Subagents via `Task` tool; coordinator updates workspace metadata
+- Max 3 retries prevents infinite loops
+- Aligns with `/audit` and `/refactor` agent roles without duplicating full audit each task

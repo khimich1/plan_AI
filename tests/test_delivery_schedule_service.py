@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.domain.enums import KpStatus
@@ -15,6 +16,7 @@ from app.schemas.delivery_schedule import (
     BatchItemIn,
     DeliverySchedulePut,
 )
+from app.security.offer_access import FORBIDDEN_OFFER_DETAIL
 from app.services.delivery_schedule_service import (
     DeliveryScheduleNotFoundError,
     DeliveryScheduleService,
@@ -25,6 +27,7 @@ from core.kp_db_common import _connect
 
 ADMIN = {"id": 1, "role": "admin"}
 MANAGER = {"id": 10, "role": "manager"}
+MANAGER_B = {"id": 20, "role": "manager"}
 
 _TRAFFIC_STATUSES = frozenset({"green", "yellow", "red"})
 _TODAY = "2026-08-07"
@@ -170,7 +173,38 @@ def test_get_raises_not_found_when_no_schedule(tmp_path: Path) -> None:
     service = DeliveryScheduleService(db_path=db_path)
 
     with pytest.raises(DeliveryScheduleNotFoundError, match="не найден"):
-        service.get(1)
+        service.get(1, user=ADMIN)
+
+
+def test_get_raises_not_found_when_kp_missing(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    service = DeliveryScheduleService(db_path=db_path)
+
+    with pytest.raises(DeliveryScheduleNotFoundError, match="не найдено"):
+        service.get(999, user=ADMIN)
+
+
+def test_get_foreign_manager_forbidden(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    plate_id = _seed_kp(db_path, kp_id=1, owner_user_id=MANAGER["id"])
+    service = DeliveryScheduleService(db_path=db_path)
+    service.replace(1, _payload(plate_id, qty=1), MANAGER)
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.get(1, user=MANAGER_B)
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == FORBIDDEN_OFFER_DETAIL
+
+
+def test_import_draft_foreign_manager_forbidden(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    _seed_kp(db_path, kp_id=1, owner_user_id=MANAGER["id"])
+    service = DeliveryScheduleService(db_path=db_path)
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.import_draft(1, b"PK\x03\x04", user=MANAGER_B)
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == FORBIDDEN_OFFER_DETAIL
 
 
 def test_replace_creates_schedule_and_is_idempotent_by_content(tmp_path: Path) -> None:
@@ -279,7 +313,7 @@ def test_replace_updates_invoice_number(tmp_path: Path) -> None:
     assert updated.invoice_number == "СЧ-NEW"
     assert updated.id == first.id
 
-    loaded = service.get(1)
+    loaded = service.get(1, user=ADMIN)
     assert loaded.invoice_number == "СЧ-NEW"
 
 
@@ -366,9 +400,10 @@ def test_replace_and_get_set_traffic_status_green_when_capacity_free(
     assert replaced.batches[0].status in _TRAFFIC_STATUSES
     assert replaced.batches[0].status == "green"
 
-    loaded = service.get(1)
+    loaded = service.get(1, user=ADMIN)
     assert loaded.batches[0].status in _TRAFFIC_STATUSES
     assert loaded.batches[0].status == "green"
+    assert loaded.traffic_light_degraded is False
 
 
 def test_get_marks_changed_when_kp_plate_qty_drops_below_batch(
@@ -394,7 +429,7 @@ def test_get_marks_changed_when_kp_plate_qty_drops_below_batch(
         conn.execute("UPDATE kp_plates SET qty = 2 WHERE id = ?", (plate_id,))
         conn.commit()
 
-    view = service.get(1)
+    view = service.get(1, user=ADMIN)
     assert view.batches[0].changed is True
     assert view.batches[0].items[0].changed is True
     assert view.batches[0].status in _TRAFFIC_STATUSES
@@ -431,8 +466,99 @@ def test_get_green_when_completed_plates_cover_batch(
         load_class=800,
     )
 
-    view = service.get(1)
+    view = service.get(1, user=ADMIN)
     assert view.batches[0].status == "green"
     # Полностью закрытая партия: tracks_needed=0 → ready_date/hint пустые.
     assert view.batches[0].ready_date is None
     assert view.batches[0].hint is None
+
+
+def test_produced_splits_on_sgp_across_same_identity_plates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Две строки одной марки: on_sgp не дублируется на каждый plate_id."""
+    _patch_empty_occupancy(monkeypatch)
+    plate_name = "ПБ 60-12-8п"
+    db_path = _fresh_db(tmp_path)
+    plate_a = _seed_kp(
+        db_path,
+        kp_id=1,
+        plate_qty=10,
+        plate_name=plate_name,
+        length_m=6.0,
+        width_m=1.2,
+        load_class=800,
+    )
+    with _connect(db_path) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, qty,
+                length_m, width_m, load_class
+            )
+            VALUES (1, 2, ?, 10, 6.0, 1.2, 800)
+            """,
+            (plate_name,),
+        )
+        plate_b = int(cur.lastrowid)
+        conn.commit()
+
+    service = DeliveryScheduleService(db_path=db_path)
+    plates = service._load_plates_meta(1)
+    assert plate_a in plates and plate_b in plates
+
+    _seed_completed_plates(
+        db_path,
+        kp_id=1,
+        plate_name=plate_name,
+        qty=10,
+        length_m=6.0,
+        width_m=1.2,
+        load_class=800,
+    )
+
+    produced = service._load_produced_by_plate_id(1, plates)
+    assert produced[plate_a] == 5
+    assert produced[plate_b] == 5
+    assert produced[plate_a] + produced[plate_b] == 10
+
+
+def test_traffic_light_degraded_when_calendar_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ожидаемый сбой calendar → degraded=True, status=None; TypeError не глотаем."""
+    _patch_empty_occupancy(monkeypatch)
+    db_path = _fresh_db(tmp_path)
+    plate_id = _seed_kp(
+        db_path,
+        kp_id=1,
+        plate_qty=10,
+        length_m=6.0,
+        width_m=1.2,
+        load_class=800,
+    )
+    service = DeliveryScheduleService(db_path=db_path)
+    service._today_override = _TODAY
+    service.replace(1, _payload(plate_id, qty=2), ADMIN)
+
+    monkeypatch.setattr(
+        "app.services.delivery_schedule_service.get_global_calendar_info",
+        lambda: (_ for _ in ()).throw(RuntimeError("calendar down")),
+    )
+    view = service.get(1, user=ADMIN)
+    assert view.traffic_light_degraded is True
+    assert view.batches[0].status is None
+    assert view.batches[0].ready_date is None
+    assert view.batches[0].hint is None
+
+    monkeypatch.setattr(
+        "app.services.delivery_schedule_service.get_global_calendar_info",
+        lambda: {"days_info": {}},
+    )
+    monkeypatch.setattr(
+        "app.services.delivery_schedule_service.check_batches",
+        lambda **_kwargs: (_ for _ in ()).throw(TypeError("bug in check")),
+    )
+    with pytest.raises(TypeError, match="bug in check"):
+        service.get(1, user=ADMIN)
