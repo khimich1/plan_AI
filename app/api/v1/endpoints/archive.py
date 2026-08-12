@@ -27,6 +27,7 @@ from app.schemas.archive import (
     UpdateDiscountRequest,
     UpdateLogisticsCostRequest,
 )
+from app.schemas.commercial import CommercialDraftDetailsResponse
 from app.services.archive_service import (
     ArchiveError,
     ArchiveNotFoundError,
@@ -136,6 +137,29 @@ def get_archive_offer(
             where="archive.get_archive_offer",
             detail=MSG_ARCHIVE_NOT_FOUND,
         )
+
+
+@router.post("/{kp_id}/resume", response_model=CommercialDraftDetailsResponse)
+def resume_archive_offer_as_draft(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = service.resume_as_draft(kp_id, user=user)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.resume_archive_offer_as_draft",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.resume_archive_offer_as_draft",
+            detail=MSG_VALIDATION,
+        )
+    return CommercialDraftDetailsResponse.model_validate(result)
 
 
 @router.get("/{kp_id}/files/{kind}")

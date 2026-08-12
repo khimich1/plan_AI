@@ -79,6 +79,7 @@ type WizardDraftAction =
   | { type: "hydrate-draft"; payload: CommercialDraftDetails; refreshBatchText?: boolean }
   | { type: "sync-after-wide-plates"; payload: CommercialDraftDetails }
   | { type: "set-save-result"; payload: CommercialSaveResult | null }
+  | { type: "start-append-cycle" }
   | { type: "reset" };
 
 const initialState: WizardStoreState = {
@@ -102,6 +103,7 @@ const initialState: WizardStoreState = {
   widePlateActions: {},
   lastDraft: null,
   lastSaveResult: null,
+  isPickingProductType: false,
 };
 
 const getBatchCount = (draft: CommercialDraftDetails): number => {
@@ -131,6 +133,19 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         ...state,
         productType: resolveDraftProductType(action.productType),
         currentStep: getProductInputStep(action.productType),
+        isPickingProductType: false,
+      };
+    case "start-append-cycle":
+      return {
+        ...state,
+        sourceText: "",
+        selectedImageName: null,
+        normalizedText: "",
+        batchReviewText: "",
+        pendingBatchReview: false,
+        confirmedBatchCount: 0,
+        widePlateActions: {},
+        isPickingProductType: true,
       };
     case "set-step":
       return { ...state, currentStep: mapLegacyWizardStep(action.step) };
@@ -275,6 +290,7 @@ export const WizardDraftProvider = ({ children }: PropsWithChildren) => {
       productType,
       currentStep: mapLegacyWizardStep(loaded.currentStep),
       normalizedText: loaded.normalizedText ?? "",
+      isPickingProductType: loaded.isPickingProductType ?? false,
     };
   });
 

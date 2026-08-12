@@ -10,7 +10,7 @@ from app.schemas.sgp import SgpProgress
 
 ArchiveSection = Literal["archived", "in_production", "completed"]
 ArchiveFileKind = Literal["pdf", "xlsx", "schema"]
-ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs"]
+ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs", "mixed"]
 ArchiveProductTypeFilter = Literal["all", "plates", "piles", "steps", "marches", "bridge_piles"]
 
 
@@ -42,6 +42,10 @@ class ArchiveOfferListItem(BaseModel):
         description="Бейдж отгрузки: {x, m}, x = отгружено плит по done-рейсам, m = ordered_qty.",
     )
     product_type: ProductType = "plates"
+    product_types: list[str] = Field(
+        default_factory=list,
+        description="Типы номенклатуры в КП для бейджей (Q3: N badges; mixed → concrete types).",
+    )
 
 
 class ArchivePileItem(BaseModel):

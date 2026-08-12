@@ -350,7 +350,7 @@ def calculate_total_cost(
         plates_total_with_vat += item_cost
 
     trip_cost = max(0.0, float(logistics_cost or 0.0))
-    cargo_kg = total_order_cargo_weight_kg(order_data)
+    cargo_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
     delivery_total = delivery_service_charge_rub(trip_cost, cargo_kg)
     vat_amount = round(plates_total_with_vat * VAT_RATE, 2)
     total_with_vat = round(plates_total_with_vat + delivery_total, 2)

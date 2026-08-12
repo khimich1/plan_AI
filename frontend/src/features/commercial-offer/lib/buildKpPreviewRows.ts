@@ -1,4 +1,5 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
+import { getCurrentCycleOrderData } from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export type KpPreviewFlag = "wide_direct" | "wide_split";
@@ -104,7 +105,7 @@ const buildWideSplitIndex = (
 };
 
 export const buildKpPreviewRows = (draft: CommercialDraftDetails): KpPreviewRow[] => {
-  const orderData = draft.order_data ?? [];
+  const orderData = getCurrentCycleOrderData(draft, "plates");
   const wideLines = draft.metadata.wide_plate_lines ?? [];
   const widePlatesResolved = draft.metadata.wide_plates_resolved ?? false;
   const splitSourceByIndex =

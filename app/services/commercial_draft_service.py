@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Iterable
+from uuid import uuid4
 
 from app.core.settings import get_settings
 from app.schemas.commercial import WizardStepId
@@ -229,7 +230,7 @@ class CommercialDraftService:
                 "wide_plates_resolved": wide_plates_resolved,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.plates.value,
-                "saved_offer": None,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
                 "generated_files": [],
                 "current_save_mode": None,
                 "execution_terms": "",
@@ -294,7 +295,7 @@ class CommercialDraftService:
                 "wide_plates_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.piles.value,
-                "saved_offer": None,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
                 "generated_files": [],
                 "current_save_mode": None,
                 "execution_terms": "",
@@ -360,7 +361,7 @@ class CommercialDraftService:
                 "wide_plates_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.marches.value,
-                "saved_offer": None,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
                 "generated_files": [],
                 "current_save_mode": None,
                 "execution_terms": "",
@@ -426,7 +427,7 @@ class CommercialDraftService:
                 "wide_plates_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.bridge_piles.value,
-                "saved_offer": None,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
                 "generated_files": [],
                 "current_save_mode": None,
                 "execution_terms": "",
@@ -492,7 +493,7 @@ class CommercialDraftService:
                 "wide_plates_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.fbs.value,
-                "saved_offer": None,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
                 "generated_files": [],
                 "current_save_mode": None,
                 "execution_terms": "",
@@ -558,7 +559,7 @@ class CommercialDraftService:
                 "wide_plates_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.steps.value,
-                "saved_offer": None,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
                 "generated_files": [],
                 "current_save_mode": None,
                 "execution_terms": "",
@@ -578,6 +579,80 @@ class CommercialDraftService:
         if owner_user_id is not None:
             metadata["owner_user_id"] = int(owner_user_id)
         return metadata
+
+    @staticmethod
+    def _order_line_identity_key(line: dict[str, Any]) -> tuple[Any, ...]:
+        """Fingerprint used to reuse line_id across recalculate / identical replace."""
+        mark = str(line.get("mark") or line.get("name") or "").strip().casefold()
+        try:
+            qty = int(line.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        grade = str(line.get("concrete_grade") or "").strip().casefold()
+
+        def _num(value: Any) -> float | None:
+            if value is None or value == "":
+                return None
+            try:
+                return round(float(value), 6)
+            except (TypeError, ValueError):
+                return None
+
+        load = line.get("load_class")
+        return (
+            mark,
+            qty,
+            grade,
+            _num(line.get("length_m")),
+            _num(line.get("width_m")),
+            _num(load) if load is not None and load != "" else None,
+        )
+
+    @staticmethod
+    def stamp_order_line_identity(
+        order_data: list[dict[str, Any]] | None,
+        *,
+        product_type: str,
+        previous_order_data: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Ensure every order line has non-empty line_id and product_type.
+
+        Prefer reusing previous line_id when identity (mark/name/qty/…) matches.
+        """
+        normalized_product_type = (product_type or "plates").strip().lower() or "plates"
+        pools: dict[tuple[Any, ...], list[str]] = {}
+        for prev in list(previous_order_data or []):
+            if not isinstance(prev, dict):
+                continue
+            prev_id = str(prev.get("line_id") or "").strip()
+            if not prev_id:
+                continue
+            key = CommercialDraftService._order_line_identity_key(prev)
+            pools.setdefault(key, []).append(prev_id)
+
+        stamped: list[dict[str, Any]] = []
+        used_ids: set[str] = set()
+        for raw in list(order_data or []):
+            line = dict(raw) if isinstance(raw, dict) else {}
+            line["product_type"] = normalized_product_type
+            existing = str(line.get("line_id") or "").strip()
+            if existing and existing not in used_ids:
+                line_id = existing
+            else:
+                key = CommercialDraftService._order_line_identity_key(line)
+                pool = pools.get(key) or []
+                line_id = ""
+                while pool:
+                    candidate = pool.pop(0)
+                    if candidate not in used_ids:
+                        line_id = candidate
+                        break
+                if not line_id:
+                    line_id = str(uuid4())
+            used_ids.add(line_id)
+            line["line_id"] = line_id
+            stamped.append(line)
+        return stamped
 
     @staticmethod
     def serialize_wide_plate_lines(items: Iterable[Any]) -> list[dict[str, Any]]:

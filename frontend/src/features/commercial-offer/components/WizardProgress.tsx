@@ -7,6 +7,7 @@ type WizardProgressProps = {
   currentStep: WizardStepId;
   onStepClick: (step: WizardStepId) => void;
   canNavigateToStep: (step: WizardStepId) => boolean;
+  skipClient?: boolean;
 };
 
 const stepTitles: Record<WizardStepId, string> = {
@@ -25,8 +26,12 @@ export const WizardProgress = ({
   currentStep,
   onStepClick,
   canNavigateToStep,
+  skipClient = false,
 }: WizardProgressProps) => {
-  const steps = getWizardStepOrder(productType).map((id) => ({ id, title: stepTitles[id] }));
+  const steps = getWizardStepOrder(productType, { skipClient }).map((id) => ({
+    id,
+    title: stepTitles[id],
+  }));
 
   return (
     <Card title="Шаги мастера" subtitle="Состояние сохраняется в браузере до завершения сценария.">

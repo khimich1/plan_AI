@@ -133,6 +133,13 @@ export type OcrCorrection = {
   reason?: string;
 };
 
+/** One sealed append cycle (MNA-101 / MNA-501). Used for undo last batch. */
+export type CommercialAppendBatch = {
+  batch_id: string;
+  product_type: ProductType;
+  line_ids: string[];
+};
+
 export type CommercialDraftMetadata = {
   product_type?: ProductType;
   source_type: "text" | "image" | "ai" | null;
@@ -177,6 +184,10 @@ export type CommercialDraftMetadata = {
   ocr_verify_failed?: boolean;
   ocr_corrections?: OcrCorrection[];
   ocr_row_count_on_image?: number | null;
+  /** Sealed append cycles for undo (empty on mono one-shot before first seal). */
+  append_batches?: CommercialAppendBatch[];
+  /** Archive resume C: existing kp_id being appended. */
+  resume_kp_id?: number | null;
 };
 
 export type BreakdownTable = {
@@ -249,4 +260,6 @@ export type WizardStoreState = {
   widePlateActions: Record<string, { action: WidePlateAction; replacementText: string }>;
   lastDraft: CommercialDraftDetails | null;
   lastSaveResult: CommercialSaveResult | null;
+  /** True while re-picking product type for an append cycle (sticky header retained). */
+  isPickingProductType: boolean;
 };

@@ -21,13 +21,14 @@ import {
   getProductInputStep,
   getWizardStepOrder,
   mapLegacyWizardStep,
-  wizardStepIndex,
+  shouldSkipClientStep,
 } from "@/features/commercial-offer/lib/wizardStepOrder";
 
 import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
 import { useRecognizedImagePreview } from "@/features/commercial-offer/hooks/useRecognizedImagePreview";
 
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
+import { ProductTypePicker } from "@/features/commercial-offer/components/ProductTypePicker";
 import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
 import { PileInputStep } from "@/features/commercial-offer/components/steps/PileInputStep";
 import { MarchInputStep } from "@/features/commercial-offer/components/steps/MarchInputStep";
@@ -75,6 +76,9 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     generateFilesMutation,
     generateSchemaMutation,
     saveDraftMutation,
+    startAppendCycleMutation,
+    undoLastAppendBatchMutation,
+    deleteDraftLineMutation,
     isPileDraft,
     isStepDraft,
     isMarchDraft,
@@ -100,8 +104,14 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const isBridgePileFlow = productType === "bridge_piles";
   const isFbsFlow = productType === "fbs";
   const isSimpleProductFlow = isPileFlow || isStepFlow || isMarchFlow || isBridgePileFlow || isFbsFlow;
-  const stepOrder = getWizardStepOrder(productType);
+  const skipClient = shouldSkipClientStep({
+    clientName: state.clientName,
+    appendBatches: state.lastDraft?.metadata.append_batches ?? currentDraft?.metadata.append_batches,
+    resumeKpId: state.lastDraft?.metadata.resume_kp_id ?? currentDraft?.metadata.resume_kp_id ?? null,
+  });
+  const stepOrder = getWizardStepOrder(productType, { skipClient });
   const inputStep = getProductInputStep(productType);
+  const stepIndex = (step: WizardStepId) => stepOrder.indexOf(step);
   const updateInputMutation = isFbsFlow
     ? updateFbsMutation
     : isBridgePileFlow
@@ -128,15 +138,22 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const managers = managersQuery.data?.items ?? [];
 
   useEffect(() => {
+    if (state.isPickingProductType) {
+      return;
+    }
     if (productTypeProp !== state.productType) {
       dispatch({ type: "set-product-type", productType: productTypeProp });
     }
-  }, [productTypeProp, state.productType, dispatch]);
+  }, [productTypeProp, state.productType, state.isPickingProductType, dispatch]);
 
   useEffect(() => {
     const step = mapLegacyWizardStep(state.currentStep);
     if (step !== state.currentStep) {
       dispatch({ type: "set-step", step });
+      return;
+    }
+    if (skipClient && step === "client") {
+      dispatch({ type: "set-step", step: state.draftId ? "result" : inputStep });
       return;
     }
     if (!stepOrder.includes(step)) {
@@ -146,7 +163,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     if (step === "result" && !state.draftId) {
       dispatch({ type: "set-step", step: inputStep });
     }
-  }, [state.currentStep, state.draftId, dispatch, stepOrder, inputStep]);
+  }, [state.currentStep, state.draftId, dispatch, stepOrder, inputStep, skipClient]);
 
   const resetSource = () => {
     setSelectedImage(null);
@@ -299,6 +316,34 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     clearRecognizedImagePreview();
   };
 
+  const proceedFromInputStep = async (next: WizardStepId) => {
+    if (next !== "result") {
+      dispatch({ type: "set-step", step: next });
+      return;
+    }
+    if (!currentDraft?.draft_id) {
+      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
+      return;
+    }
+    try {
+      const calculated = await calculateMutation.mutateAsync(currentDraft.draft_id);
+      dispatch({ type: "hydrate-draft", payload: calculated });
+      const ws = calculated.wizard_state;
+      if (ws.current_step !== "result") {
+        const msgs = (ws.validation_errors ?? []).filter(Boolean);
+        setStepError(
+          msgs.length > 0
+            ? msgs.join(" ")
+            : "Расчёт не завершён. Проверьте данные заказа и условия.",
+        );
+        return;
+      }
+      dispatch({ type: "set-step", step: "result" });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
   const handleFinishPlates = async () => {
     setStepError(null);
     if (state.pendingBatchReview) {
@@ -325,7 +370,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       }
       return;
     }
-    dispatch({ type: "set-step", step: next });
+    await proceedFromInputStep(next);
   };
 
   const handleFinishPiles = async () => {
@@ -352,7 +397,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       }
       return;
     }
-    dispatch({ type: "set-step", step: next });
+    await proceedFromInputStep(next);
   };
 
   const handleFinishSteps = async () => {
@@ -379,7 +424,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       }
       return;
     }
-    dispatch({ type: "set-step", step: next });
+    await proceedFromInputStep(next);
   };
 
   const handleFinishMarches = async () => {
@@ -406,7 +451,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       }
       return;
     }
-    dispatch({ type: "set-step", step: next });
+    await proceedFromInputStep(next);
   };
 const handleFinishBridgePiles = async () => {
     setStepError(null);
@@ -432,7 +477,7 @@ const handleFinishBridgePiles = async () => {
       }
       return;
     }
-    dispatch({ type: "set-step", step: next });
+    await proceedFromInputStep(next);
   };
 
   const handleFinishFbs = async () => {
@@ -459,7 +504,7 @@ const handleFinishBridgePiles = async () => {
       }
       return;
     }
-    dispatch({ type: "set-step", step: next });
+    await proceedFromInputStep(next);
   };
 
   const handleApplyGradeToAll = async (grade: string) => {
@@ -489,6 +534,12 @@ const handleFinishBridgePiles = async () => {
       return;
     }
     setStepError(null);
+    // During append cycles, preview shows only unsealed lines. Use append+text so sealed
+    // same-type batches are preserved (replace would wipe them).
+    const hasSealedLines = (currentDraft.order_data ?? []).some(
+      (item) => String(item.append_batch_id ?? "").trim().length > 0,
+    );
+    const updateMode = hasSealedLines ? "append" : "replace";
     try {
       if (isFbsFlow) {
         const rows = buildFbsPreviewRows(currentDraft);
@@ -498,7 +549,7 @@ const handleFinishBridgePiles = async () => {
           draftId: currentDraft.draft_id,
           text,
           image: null,
-          mode: "replace",
+          mode: updateMode,
         });
         return;
       }
@@ -510,7 +561,7 @@ const handleFinishBridgePiles = async () => {
           draftId: currentDraft.draft_id,
           text,
           image: null,
-          mode: "replace",
+          mode: updateMode,
         });
         return;
       }
@@ -525,7 +576,7 @@ const handleFinishBridgePiles = async () => {
           draftId: currentDraft.draft_id,
           text,
           image: null,
-          mode: "replace",
+          mode: updateMode,
         });
         return;
       }
@@ -540,7 +591,7 @@ const handleFinishBridgePiles = async () => {
         draftId: currentDraft.draft_id,
         text,
         image: null,
-        mode: "replace",
+        mode: updateMode,
       });
     } catch (error) {
       setStepError(getErrorMessage(error));
@@ -711,6 +762,59 @@ const handleFinishBridgePiles = async () => {
     dispatch({ type: "reset" });
   };
 
+  const handleAddOtherNomenclature = () => {
+    setStepError(null);
+    setSelectedImage(null);
+    clearRecognizedImagePreview();
+    dispatch({ type: "start-append-cycle" });
+  };
+
+  const handleAppendProductTypeSelect = async (nextProductType: ProductType) => {
+    if (!state.draftId) {
+      dispatch({ type: "set-product-type", productType: nextProductType });
+      return;
+    }
+    setStepError(null);
+    try {
+      const draft = await startAppendCycleMutation.mutateAsync({
+        draftId: state.draftId,
+        productType: nextProductType,
+      });
+      dispatch({ type: "set-product-type", productType: nextProductType });
+      dispatch({ type: "hydrate-draft", payload: draft });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleUndoLastBatch = async () => {
+    if (!state.draftId) {
+      return;
+    }
+    setStepError(null);
+    try {
+      const draft = await undoLastAppendBatchMutation.mutateAsync(state.draftId);
+      dispatch({ type: "hydrate-draft", payload: draft });
+      dispatch({ type: "set-step", step: "result" });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleDeleteLine = async (lineId: string) => {
+    if (!state.draftId) {
+      return;
+    }
+    setStepError(null);
+    try {
+      const draft = await deleteDraftLineMutation.mutateAsync({ draftId: state.draftId, lineId });
+      dispatch({ type: "hydrate-draft", payload: draft });
+      dispatch({ type: "set-step", step: "result" });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
   const hasUnresolvedWidePlates =
     Boolean(currentDraft?.metadata.wide_plate_lines?.length) && !currentDraft?.metadata.wide_plates_resolved;
 
@@ -725,7 +829,7 @@ const handleFinishBridgePiles = async () => {
     if (step === state.currentStep) {
       return true;
     }
-    if (wizardStepIndex(step, productType) < wizardStepIndex(ws.current_step as WizardStepId, productType)) {
+    if (stepIndex(step) < stepIndex(ws.current_step as WizardStepId)) {
       return true;
     }
     return ws.can_proceed_to.includes(step);
@@ -978,7 +1082,7 @@ const handleFinishBridgePiles = async () => {
         isSaving={saveDraftMutation.isPending}
         lastSaveResult={state.lastSaveResult}
         executionTermsInput={state.executionTermsInput}
-        onBack={() => dispatch({ type: "set-step", step: "client" })}
+        onBack={() => dispatch({ type: "set-step", step: skipClient ? inputStep : "client" })}
         onCreateNew={handleCreateNewOffer}
         onGenerateFiles={handleGenerateFiles}
         onGenerateSchema={handleGenerateSchema}
@@ -987,6 +1091,9 @@ const handleFinishBridgePiles = async () => {
         isUpdatingDiscount={updateMetaMutation.isPending || calculateMutation.isPending}
         onDiscountSubmit={handleDiscountSubmit}
         onLogisticsCostSubmit={handleLogisticsCostSubmit}
+        onAddOtherNomenclature={handleAddOtherNomenclature}
+        onUndoLastBatch={() => void handleUndoLastBatch()}
+        onDeleteLine={(lineId) => void handleDeleteLine(lineId)}
       />
     ) : null;
 
@@ -1048,21 +1155,34 @@ const handleFinishBridgePiles = async () => {
   return (
     <div style={{ display: "grid", gap: "1.25rem" }}>
       {managersQuery.error && <Alert tone="error">{getErrorMessage(managersQuery.error)}</Alert>}
+      {state.isPickingProductType ? (
+        <div style={{ display: "grid", gap: "1rem" }}>
+          {stepError ? <Alert tone="error">{stepError}</Alert> : null}
+          {(state.clientName || state.discountPercent > 0) && (
+            <Alert tone="info">
+              Клиент: {state.clientName || "не указан"}
+              {state.discountPercent > 0 ? ` · Скидка: ${state.discountPercent}%` : ""}
+            </Alert>
+          )}
+          <ProductTypePicker onSelect={(nextType) => void handleAppendProductTypeSelect(nextType)} />
+        </div>
+      ) : (
+        <div className="wizard-shell">
+          <div className="wizard-main">{resolvedStepContent}</div>
 
-      <div className="wizard-shell">
-        <div className="wizard-main">{resolvedStepContent}</div>
-
-        <aside className="wizard-sidebar">
-          <div className="wizard-sidebar__inner">
-            <WizardProgress
-              productType={productType}
-              currentStep={state.currentStep}
-              onStepClick={handleSidebarStepClick}
-              canNavigateToStep={canNavigateToStep}
-            />
-          </div>
-        </aside>
-      </div>
+          <aside className="wizard-sidebar">
+            <div className="wizard-sidebar__inner">
+              <WizardProgress
+                productType={productType}
+                currentStep={state.currentStep}
+                onStepClick={handleSidebarStepClick}
+                canNavigateToStep={canNavigateToStep}
+                skipClient={skipClient}
+              />
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
   );
 };

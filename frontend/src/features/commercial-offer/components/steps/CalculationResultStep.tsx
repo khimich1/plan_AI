@@ -3,6 +3,7 @@ import type {
   BreakdownTable,
   CommercialDraftDetails,
   CommercialSaveResult,
+  ProductType,
   SaveMode,
 } from "@/features/commercial-offer/types/commercialOffer";
 import { DownloadFilesSection } from "@/features/commercial-offer/components/DownloadFilesSection";
@@ -12,6 +13,7 @@ import { findBreakdownTable } from "@/features/commercial-offer/lib/findBreakdow
 import {
   baseProductsTotal,
   discountPercentFromTargetSum,
+  formatDiscountPercentInput,
   requiresHighDiscountConfirmation,
   targetSumFromDiscountPercent,
 } from "@/features/commercial-offer/lib/discountFromTargetSum";
@@ -27,6 +29,25 @@ import {
   toNumber,
 } from "@/features/commercial-offer/lib/formatOfferNumbers";
 import { StepLayout } from "@/shared/ui/StepLayout";
+
+const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
+  plates: "Плиты",
+  piles: "Сваи",
+  steps: "Ступени",
+  marches: "Марши",
+  bridge_piles: "Мостовые сваи",
+  fbs: "ФБС",
+};
+
+const formatProductTypeLabel = (productType: unknown): string => {
+  if (typeof productType === "string" && productType in PRODUCT_TYPE_LABELS) {
+    return PRODUCT_TYPE_LABELS[productType as ProductType];
+  }
+  return typeof productType === "string" && productType.length > 0 ? productType : "—";
+};
+
+const thStyle = { textAlign: "left" as const, padding: "0.75rem", borderBottom: "1px solid #e4e7ec" };
+const tdStyle = { padding: "0.75rem", borderBottom: "1px solid #f2f4f7" };
 
 type CalculationResultStepProps = {
   draft: CommercialDraftDetails;
@@ -53,6 +74,9 @@ type CalculationResultStepProps = {
   isUpdatingDiscount: boolean;
   onDiscountSubmit: (discountPercent: number) => Promise<void>;
   onLogisticsCostSubmit: (logisticsCost: number) => Promise<void>;
+  onAddOtherNomenclature?: () => void;
+  onUndoLastBatch?: () => Promise<void> | void;
+  onDeleteLine?: (lineId: string) => Promise<void> | void;
 };
 
 export const CalculationResultStep = ({
@@ -80,6 +104,9 @@ export const CalculationResultStep = ({
   isUpdatingDiscount,
   onDiscountSubmit,
   onLogisticsCostSubmit,
+  onAddOtherNomenclature,
+  onUndoLastBatch,
+  onDeleteLine,
 }: CalculationResultStepProps) => {
   const [discountDraft, setDiscountDraft] = useState(String(draft.metadata.discount_percent ?? 0));
   const [targetSumDraft, setTargetSumDraft] = useState("");
@@ -95,6 +122,19 @@ export const CalculationResultStep = ({
     () => (selectedPlateName ? findBreakdownTable(breakdownTables, selectedPlateName) : undefined),
     [breakdownTables, selectedPlateName],
   );
+  const appendBatches = draft.metadata.append_batches ?? [];
+  const distinctProductTypes = useMemo(() => {
+    const types = new Set<string>();
+    for (const item of draft.order_data) {
+      if (typeof item.product_type === "string" && item.product_type.length > 0) {
+        types.add(item.product_type);
+      }
+    }
+    return types;
+  }, [draft.order_data]);
+  const showTypeColumn = distinctProductTypes.size > 1 || appendBatches.length > 1;
+  const hasPlateLines = draft.order_data.some((item) => item.product_type === "plates");
+  const tripCostDisabled = !hasPlateLines;
   const totalWeight = draft.order_data.reduce((acc, item) => acc + (toNumber(item.weight) ?? 0), 0);
   const serverSubtotal = draft.totals.subtotal;
   const serverVat = draft.totals.vat_amount;
@@ -194,7 +234,7 @@ export const CalculationResultStep = ({
     }
     setTargetSumError(null);
     setDiscountError(null);
-    setDiscountDraft(String(result.discountPercent).replace(".", ","));
+    setDiscountDraft(formatDiscountPercentInput(result.discountPercent));
   };
 
   const handleTargetSumSave = () => {
@@ -213,7 +253,7 @@ export const CalculationResultStep = ({
       return;
     }
     setTargetSumError(null);
-    setDiscountDraft(String(result.discountPercent).replace(".", ","));
+    setDiscountDraft(formatDiscountPercentInput(result.discountPercent));
     requestDiscountApply(result.discountPercent);
   };
 
@@ -296,117 +336,124 @@ export const CalculationResultStep = ({
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {isStepDraft
-                ? ["№", "Марка", "Кол-во", "Цена", "Сумма"].map((column) => (
-                    <th
-                      key={column}
-                      style={{ textAlign: "left", padding: "0.75rem", borderBottom: "1px solid #e4e7ec" }}
-                    >
-                      {column}
-                    </th>
-                  ))
+              {(isStepDraft
+                ? ["№", "Марка", "Кол-во", "Цена", "Сумма"]
                 : isGradeSimpleDraft
-                ? ["№", "Марка", "Класс", "Кол-во", "Цена", "Сумма"].map((column) => (
-                    <th
-                      key={column}
-                      style={{ textAlign: "left", padding: "0.75rem", borderBottom: "1px solid #e4e7ec" }}
-                    >
-                      {column}
-                    </th>
-                  ))
-                : ["№", "Наименование", "Кол-во", "Ед.", "Вес(кг)", "Цена", "Сумма"].map((column) => (
-                    <th
-                      key={column}
-                      style={{ textAlign: "left", padding: "0.75rem", borderBottom: "1px solid #e4e7ec" }}
-                    >
-                      {column}
-                    </th>
-                  ))}
+                  ? ["№", "Марка", "Класс", "Кол-во", "Цена", "Сумма"]
+                  : ["№", "Наименование", "Кол-во", "Ед.", "Вес(кг)", "Цена", "Сумма"]
+              )
+                .flatMap((column, columnIndex) =>
+                  columnIndex === 1 && showTypeColumn ? ["Тип", column] : [column],
+                )
+                .concat([""])
+                .map((column, columnIndex) => (
+                  <th key={`${column || "actions"}-${columnIndex}`} style={thStyle}>
+                    {column}
+                  </th>
+                ))}
             </tr>
           </thead>
           <tbody>
             {draft.order_data.map((item, index) => {
               const itemName = String(item.name ?? item.mark ?? "");
               const canOpenBreakdown = breakdownAvailable && !isBreakdownLoading && itemName.length > 0;
+              const lineId = typeof item.line_id === "string" ? item.line_id : null;
+              const typeCell = showTypeColumn ? (
+                <td style={tdStyle}>{formatProductTypeLabel(item.product_type)}</td>
+              ) : null;
+              const deleteCell = (
+                <td style={tdStyle}>
+                  {lineId ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      aria-label={`Удалить строку ${lineId}`}
+                      onClick={() => void onDeleteLine?.(lineId)}
+                    >
+                      Удалить
+                    </Button>
+                  ) : null}
+                </td>
+              );
 
               if (isStepDraft) {
                 return (
-                  <tr key={`${itemName}-${index}`}>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{itemName}</td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.qty ?? "")}</td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                      {formatOfferNumber(item.unit_price)}
-                    </td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                      {formatOfferSum(item.qty, item.unit_price)}
-                    </td>
+                  <tr key={lineId ?? `${itemName}-${index}`}>
+                    <td style={tdStyle}>{index + 1}</td>
+                    {typeCell}
+                    <td style={tdStyle}>{itemName}</td>
+                    <td style={tdStyle}>{String(item.qty ?? "")}</td>
+                    <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
+                    <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
+                    {deleteCell}
                   </tr>
                 );
               }
 
               if (isGradeSimpleDraft) {
                 return (
-                  <tr key={`${itemName}-${index}`}>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{itemName}</td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                      {String(item.concrete_grade ?? "—")}
-                    </td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.qty ?? "")}</td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                      {formatOfferNumber(item.unit_price)}
-                    </td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                      {formatOfferSum(item.qty, item.unit_price)}
-                    </td>
+                  <tr key={lineId ?? `${itemName}-${index}`}>
+                    <td style={tdStyle}>{index + 1}</td>
+                    {typeCell}
+                    <td style={tdStyle}>{itemName}</td>
+                    <td style={tdStyle}>{String(item.concrete_grade ?? "—")}</td>
+                    <td style={tdStyle}>{String(item.qty ?? "")}</td>
+                    <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
+                    <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
+                    {deleteCell}
                   </tr>
                 );
               }
 
               const plateName = itemName;
               return (
-              <tr key={`${item.name ?? "row"}-${index}`}>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                  {canOpenBreakdown ? (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPlateName(plateName)}
-                      title="Показать детальную разбивку цены"
-                      style={{
-                        color: "#175cd3",
-                        textDecoration: "underline",
-                        cursor: "pointer",
-                        background: "none",
-                        border: "none",
-                        padding: 0,
-                        textAlign: "left",
-                        font: "inherit",
-                      }}
-                    >
-                      {plateName}
-                    </button>
-                  ) : (
-                    plateName
-                  )}
-                </td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>{String(item.qty ?? "")}</td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>шт</td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                  {formatOfferNumber(item.weight)}
-                </td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                  {formatOfferNumber(item.unit_price)}
-                </td>
-                <td style={{ padding: "0.75rem", borderBottom: "1px solid #f2f4f7" }}>
-                  {formatOfferSum(item.qty, item.unit_price)}
-                </td>
-              </tr>
-            );
+                <tr key={lineId ?? `${item.name ?? "row"}-${index}`}>
+                  <td style={tdStyle}>{index + 1}</td>
+                  {typeCell}
+                  <td style={tdStyle}>
+                    {canOpenBreakdown ? (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPlateName(plateName)}
+                        title="Показать детальную разбивку цены"
+                        style={{
+                          color: "#175cd3",
+                          textDecoration: "underline",
+                          cursor: "pointer",
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          textAlign: "left",
+                          font: "inherit",
+                        }}
+                      >
+                        {plateName}
+                      </button>
+                    ) : (
+                      plateName
+                    )}
+                  </td>
+                  <td style={tdStyle}>{String(item.qty ?? "")}</td>
+                  <td style={tdStyle}>шт</td>
+                  <td style={tdStyle}>{formatOfferNumber(item.weight)}</td>
+                  <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
+                  <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
+                  {deleteCell}
+                </tr>
+              );
             })}
           </tbody>
         </table>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "1rem" }}>
+        <Button type="button" variant="secondary" onClick={() => onAddOtherNomenclature?.()}>
+          Добавить другое наименование
+        </Button>
+        {appendBatches.length > 0 && (
+          <Button type="button" variant="ghost" onClick={() => void onUndoLastBatch?.()}>
+            Отменить последний заход
+          </Button>
+        )}
       </div>
     </Card>
 
@@ -429,19 +476,20 @@ export const CalculationResultStep = ({
                   onChange={(event) => setLogisticsCostDraft(event.target.value)}
                   inputMode="decimal"
                   placeholder="Стоимость одного рейса"
+                  disabled={tripCostDisabled}
                   style={{
                     width: "100%",
                     border: "1px solid #d0d5dd",
                     borderRadius: 12,
                     padding: "0.8rem 3.5rem 0.8rem 0.9rem",
-                    background: "#ffffff",
+                    background: tripCostDisabled ? "#f2f4f7" : "#ffffff",
                   }}
                 />
                 <Button
                   type="button"
                   variant="secondary"
                   onClick={handleApplyLogisticsCost}
-                  disabled={isUpdatingDiscount}
+                  disabled={isUpdatingDiscount || tripCostDisabled}
                   style={{
                     position: "absolute",
                     right: "0.35rem",

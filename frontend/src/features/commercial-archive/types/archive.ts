@@ -1,6 +1,6 @@
 export type ArchiveSection = "archived" | "in_production" | "completed";
 export type ArchiveFileKind = "pdf" | "xlsx" | "schema";
-export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
+export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "mixed";
 export type ArchiveProductTypeFilter = "all" | "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
 
 export type ArchiveOfferListItem = {
@@ -19,6 +19,8 @@ export type ArchiveOfferListItem = {
   /** Отгружено рейсами «обработано»: x из m (m = ordered_qty КП). */
   shipped_progress?: { x: number; m: number } | null;
   product_type?: ProductType;
+  /** Concrete types for multi badges (Q3); preferred over a single mixed product_type. */
+  product_types?: ProductType[];
 };
 
 export type ArchivePlateItem = {

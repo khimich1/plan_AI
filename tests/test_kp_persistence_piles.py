@@ -54,6 +54,8 @@ def _plate_order_item(**overrides: object) -> dict:
         "unit_price": 1000.0,
         "weight": 500.0,
         "length_dm_raw": "60",
+        # Explicit grade so resolve_concrete_grade short-circuits (no pb.db).
+        "concrete_grade": "М500",
     }
     base.update(overrides)
     return base

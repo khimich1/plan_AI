@@ -355,55 +355,35 @@ export const PlateInputStep = ({
 
           {hasDraft && (
 
-            <>
+            <button
 
-              <Button
+              type="button"
 
-                type="button"
+              onClick={() => setShowAdditionalActions((open) => !open)}
 
-                variant="secondary"
+              disabled={isRecognizing || isAiProcessing}
 
-                onClick={() => onRecognize("append")}
+              style={{
 
-                disabled={isRecognizing || isAiProcessing || !hasSourceInput}
+                border: "none",
 
-              >
+                background: "none",
 
-                {isRecognizing ? "Добавление..." : "Добавить к списку"}
+                color: "#175cd3",
 
-              </Button>
+                cursor: "pointer",
 
-              <button
+                padding: "0.5rem 0",
 
-                type="button"
+                font: "inherit",
 
-                onClick={() => setShowAdditionalActions((open) => !open)}
+              }}
 
-                disabled={isRecognizing || isAiProcessing}
+            >
 
-                style={{
+              {showAdditionalActions ? "▾ Дополнительно" : "▸ Дополнительно"}
 
-                  border: "none",
-
-                  background: "none",
-
-                  color: "#175cd3",
-
-                  cursor: "pointer",
-
-                  padding: "0.5rem 0",
-
-                  font: "inherit",
-
-                }}
-
-              >
-
-                {showAdditionalActions ? "▾ Дополнительно" : "▸ Дополнительно"}
-
-              </button>
-
-            </>
+            </button>
 
           )}
 
@@ -546,21 +526,47 @@ export const PlateInputStep = ({
                   {isConfirmingBatch ? "Сохранение..." : "Список верен"}
                 </Button>
               )}
-              <Button
-                type="button"
-                variant={isBatchReviewMode ? "secondary" : "primary"}
-                onClick={onFinishPlates}
-                disabled={!canFinishPlates}
-                title={
-                  pendingBatchReview
-                    ? "Сначала подтвердите текущий источник — «Список верен»"
-                    : hasUnresolvedWidePlates
-                      ? "Сначала примите решение по позициям шире стандартной"
-                      : undefined
-                }
-              >
-                {isProceeding ? "Переход..." : "Готово, далее"}
-              </Button>
+              {isBatchReviewMode ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={onFinishPlates}
+                  disabled={!canFinishPlates}
+                  title={
+                    pendingBatchReview
+                      ? "Сначала подтвердите текущий источник — «Список верен»"
+                      : hasUnresolvedWidePlates
+                        ? "Сначала примите решение по позициям шире стандартной"
+                        : undefined
+                  }
+                >
+                  {isProceeding ? "Переход..." : "Готово, далее"}
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={onFinishPlates}
+                    disabled={!canFinishPlates}
+                    title={
+                      hasUnresolvedWidePlates
+                        ? "Сначала примите решение по позициям шире стандартной"
+                        : undefined
+                    }
+                  >
+                    {isProceeding ? "Переход..." : "Готово, далее"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => onRecognize("append")}
+                    disabled={isRecognizing || isAiProcessing || !hasSourceInput}
+                  >
+                    {isRecognizing ? "Добавление..." : "Добавить к списку"}
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         ) : undefined

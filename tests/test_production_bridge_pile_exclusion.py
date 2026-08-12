@@ -47,6 +47,7 @@ def test_list_kps_in_production_excludes_bridge_piles(db_path: str) -> None:
                 "qty": 1,
                 "unit_price": 1000.0,
                 "weight": 500.0,
+                "concrete_grade": "М500",
             }
         ],
         customer_name="Plate KP",

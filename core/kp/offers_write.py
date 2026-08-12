@@ -50,6 +50,42 @@ def save_kp_to_db(
     )
 
 
+def update_kp_from_order_data(
+    kp_id: int,
+    order_data: List[Dict],
+    xlsx_file_path: Optional[str] = None,
+    customer_name: Optional[str] = None,
+    manager_name: Optional[str] = None,
+    discount_percent: float | None = None,
+    delivery_conditions: Optional[str] = None,
+    payment_conditions: Optional[str] = None,
+    execution_terms: Optional[str] = None,
+    logistics_cost: float | None = None,
+    product_type: str = "plates",
+    db_path: str = DEFAULT_DB,
+) -> int:
+    """Обновляет существующее КП (sync по line_id). Тот же ``kp_id``.
+
+    Оркестрация — :class:`core.kp_persistence_service.KpPersistenceService`.
+    """
+    from core.kp_persistence_service import KpPersistenceService
+
+    return KpPersistenceService.update_kp_from_order_data(
+        kp_id,
+        order_data,
+        xlsx_file_path=xlsx_file_path,
+        customer_name=customer_name,
+        manager_name=manager_name,
+        discount_percent=discount_percent,
+        delivery_conditions=delivery_conditions,
+        payment_conditions=payment_conditions,
+        execution_terms=execution_terms,
+        logistics_cost=logistics_cost,
+        product_type=product_type,
+        db_path=db_path,
+    )
+
+
 def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_DB) -> bool:
     """
     Обновляет процент скидки для КП, пересчитывает итоги и discounted_price по плитам.

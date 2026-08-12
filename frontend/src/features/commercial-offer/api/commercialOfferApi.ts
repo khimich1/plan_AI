@@ -252,4 +252,17 @@ export const commercialOfferApi = {
       }),
       { "Content-Type": "application/json" },
     ),
+
+  startAppendCycle: (draftId: string, productType: ProductType) =>
+    httpClient.post<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/append/start`,
+      JSON.stringify({ product_type: productType }),
+      { "Content-Type": "application/json" },
+    ),
+
+  undoLastAppendBatch: (draftId: string) =>
+    httpClient.post<CommercialDraftDetails>(`/api/v1/commercial/drafts/${draftId}/append/undo-last`),
+
+  deleteDraftLine: (draftId: string, lineId: string) =>
+    httpClient.delete<CommercialDraftDetails>(`/api/v1/commercial/drafts/${draftId}/lines/${lineId}`),
 };

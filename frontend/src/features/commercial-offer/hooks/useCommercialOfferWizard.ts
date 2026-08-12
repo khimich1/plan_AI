@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
 import { resolveDraftProductType, isSimpleKpProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
-import type { CommercialDraftDetails, SaveMode, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
+import type { CommercialDraftDetails, ProductType, SaveMode, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
 
 const draftQueryKey = (draftId: string | null) => ["commercial-offer-draft", draftId] as const;
 const breakdownQueryKey = (draftId: string | null) => ["commercial-offer-breakdown", draftId] as const;
@@ -363,6 +363,32 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
+  const startAppendCycleMutation = useMutation({
+    mutationFn: ({ draftId, productType }: { draftId: string; productType: ProductType }) =>
+      commercialOfferApi.startAppendCycle(draftId, productType),
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
+  const undoLastAppendBatchMutation = useMutation({
+    mutationFn: (draftId: string) => commercialOfferApi.undoLastAppendBatch(draftId),
+    onSuccess: (draft, draftId) => {
+      setDraftCache(draftId, draft);
+      invalidateDraft(draftId);
+    },
+  });
+
+  const deleteDraftLineMutation = useMutation({
+    mutationFn: ({ draftId, lineId }: { draftId: string; lineId: string }) =>
+      commercialOfferApi.deleteDraftLine(draftId, lineId),
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
   return {
     state,
     dispatch,
@@ -392,6 +418,9 @@ export const useCommercialOfferWizard = () => {
     generateFilesMutation,
     generateSchemaMutation,
     saveDraftMutation,
+    startAppendCycleMutation,
+    undoLastAppendBatchMutation,
+    deleteDraftLineMutation,
     currentDraft,
     isPileDraft,
     isStepDraft,

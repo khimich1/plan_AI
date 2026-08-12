@@ -86,6 +86,13 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
     return lookup_plate_price(length_m, width_m, load_class, db_path=DB_PATH)
 
 
+from core.commercial_line_format import format_line_name  # noqa: E402
+from core.commercial_offer_layout import (  # noqa: E402
+    commercial_offer_table_headers,
+    is_unified_commercial_document,
+    line_product_type,
+    product_type_label,
+)
 from core.commercial_pricing import (  # noqa: E402
     VAT_RATE,
     calculate_total_cost as _calculate_total_cost,
@@ -114,6 +121,41 @@ def calculate_total_cost(
     )
 
 
+def _resolve_line_unit_price(item: Dict, *, order_mode: str) -> float:
+    """Resolve unit price for one line (unified uses per-line type)."""
+    if "unit_price" in item and item["unit_price"] is not None:
+        return float(item["unit_price"])
+
+    pt = line_product_type(item) if order_mode == "unified" else order_mode
+    mark = str(item.get("mark") or item.get("name") or "").strip()
+    grade = str(item.get("concrete_grade") or "B25").strip()
+
+    if pt in ("piles", "pile"):
+        return lookup_pile_price(mark, grade, db_path=DB_PATH)
+    if pt in ("bridge_piles", "bridge_pile"):
+        return lookup_bridge_pile_price(mark, grade, db_path=DB_PATH)
+    if pt == "fbs":
+        return lookup_fbs_price(mark, grade, db_path=DB_PATH)
+    if pt in ("marches", "march"):
+        return lookup_march_price(mark, grade, db_path=DB_PATH)
+    if pt in ("steps", "step"):
+        return lookup_step_price(mark, db_path=DB_PATH)
+
+    name = item.get("name", "Плиты ПБ")
+    length_m = item.get("length_m", 0)
+    width_m = item.get("width_m", 0)
+    load_class = item.get("load_class")
+    if load_class is None:
+        try:
+            from config_and_data import parse_load_code_from_name
+
+            load_code = parse_load_code_from_name(name, default=8)
+            load_class = max(1, load_code) * 100
+        except ImportError:
+            load_class = 800
+    return get_plate_price(length_m, width_m, load_class)
+
+
 def generate_commercial_offer_xlsx(
     order_data: List[Dict],
     offer_number: str,
@@ -127,6 +169,7 @@ def generate_commercial_offer_xlsx(
     payment_conditions: Optional[str] = None,
     kp_db_id: Optional[int] = None,
     logistics_cost: float = 0.0,
+    append_batches: Optional[List[Dict]] = None,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате XLSX с расчётными формулами
@@ -144,6 +187,7 @@ def generate_commercial_offer_xlsx(
         payment_conditions: условия оплаты (строка 29, если указано)
         kp_db_id: номер КП из базы данных (если КП сохранен в БД)
         logistics_cost: стоимость одного рейса (без НДС по плитам; итог по формуле рейсов)
+        append_batches: metadata заходов (для unified при multi-append одного типа)
     
     Returns:
         BytesIO буфер с XLSX файлом
@@ -199,59 +243,51 @@ def generate_commercial_offer_xlsx(
     
     # Формируем таблицу товаров
     table_data = []
+    unified = is_unified_commercial_document(order_data, append_batches=append_batches)
     pile_order = is_pile_order(order_data)
     bridge_pile_order = is_bridge_pile_order(order_data)
     fbs_order = is_fbs_order(order_data)
     march_order = is_march_order(order_data)
     step_order = is_step_order(order_data)
-    if pile_order or bridge_pile_order or fbs_order or march_order:
-        table_headers = ['№', 'Наименование', 'Класс бетона', 'Кол-во', 'Цена', 'Сумма']
+    table_headers = commercial_offer_table_headers(order_data, append_batches=append_batches)
+    col_count = len(table_headers)
+
+    if unified:
+        order_mode = "unified"
+    elif pile_order:
+        order_mode = "piles"
+    elif bridge_pile_order:
+        order_mode = "bridge_piles"
+    elif fbs_order:
+        order_mode = "fbs"
+    elif march_order:
+        order_mode = "marches"
     elif step_order:
-        table_headers = ['№', 'Наименование', 'Кол-во', 'Цена', 'Сумма']
+        order_mode = "steps"
     else:
-        table_headers = ['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']
-    
+        order_mode = "plates"
+
     total_weight = 0.0
-    
+
     for idx, item in enumerate(order_data, start=1):
         qty = item.get('qty', 0)
-
-        if 'unit_price' in item and item['unit_price'] is not None:
-            unit_price = item['unit_price']
-        elif pile_order:
-            mark = str(item.get('mark') or item.get('name') or '').strip()
-            grade = str(item.get('concrete_grade') or 'B25').strip()
-            unit_price = lookup_pile_price(mark, grade, db_path=DB_PATH)
-        elif bridge_pile_order:
-            mark = str(item.get('mark') or item.get('name') or '').strip()
-            grade = str(item.get('concrete_grade') or 'B25').strip()
-            unit_price = lookup_bridge_pile_price(mark, grade, db_path=DB_PATH)
-        elif fbs_order:
-            mark = str(item.get('mark') or item.get('name') or '').strip()
-            grade = str(item.get('concrete_grade') or 'B25').strip()
-            unit_price = lookup_fbs_price(mark, grade, db_path=DB_PATH)
-        elif march_order:
-            mark = str(item.get('mark') or item.get('name') or '').strip()
-            grade = str(item.get('concrete_grade') or 'B25').strip()
-            unit_price = lookup_march_price(mark, grade, db_path=DB_PATH)
-        elif step_order:
-            mark = str(item.get('mark') or item.get('name') or '').strip()
-            unit_price = lookup_step_price(mark, db_path=DB_PATH)
-        else:
-            name = item.get('name', 'Плиты ПБ')
-            length_m = item.get('length_m', 0)
-            width_m = item.get('width_m', 0)
-            load_class = item.get('load_class')
-            if load_class is None:
-                try:
-                    from config_and_data import parse_load_code_from_name
-                    load_code = parse_load_code_from_name(name, default=8)
-                    load_class = max(1, load_code) * 100
-                except ImportError:
-                    load_class = 800
-            unit_price = get_plate_price(length_m, width_m, load_class)
-
+        unit_price = _resolve_line_unit_price(item, order_mode=order_mode)
         discounted_price = unit_price * (1 - discount_percent / 100)
+
+        if unified:
+            pt = line_product_type(item)
+            if pt == "plates":
+                _, line_kg = resolve_kp_line_weight_kg(item)
+                total_weight += line_kg
+            table_data.append({
+                '№': idx,
+                'Тип': product_type_label(pt),
+                'Наименование': format_line_name(item),
+                'Кол-во': qty,
+                'Цена': discounted_price,
+                'Сумма': discounted_price * qty,
+            })
+            continue
 
         if pile_order or bridge_pile_order or fbs_order or march_order:
             table_data.append({
@@ -288,27 +324,48 @@ def generate_commercial_offer_xlsx(
         })
     
     trip_cost = max(0.0, float(logistics_cost or 0.0))
-    delivery_trips = cargo_delivery_trips_count(total_weight)
-    has_delivery_line = (not pile_order and not bridge_pile_order and not fbs_order and not march_order and not step_order) and trip_cost > 0 and delivery_trips > 0
-    if has_delivery_line:
-        delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
-        table_data.append(
-            {
-                '№': len(table_data) + 1,
-                'Наименование': 'Услуга по доставке грузов',
-                'Кол-во': delivery_trips,
-                'Ед.': 'рейс',
-                'Вес(кг)': 0.0,
-                'Цена': trip_cost,
-                'Сумма': delivery_total,
-            }
-        )
+    if unified:
+        plates_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
+        total_weight = plates_kg
+        delivery_trips = cargo_delivery_trips_count(plates_kg)
+        has_delivery_line = trip_cost > 0 and delivery_trips > 0
+        if has_delivery_line:
+            delivery_total = delivery_service_charge_rub(trip_cost, plates_kg)
+            table_data.append(
+                {
+                    '№': len(table_data) + 1,
+                    'Тип': '',
+                    'Наименование': 'Услуга по доставке грузов',
+                    'Кол-во': delivery_trips,
+                    'Цена': trip_cost,
+                    'Сумма': delivery_total,
+                }
+            )
+    else:
+        delivery_trips = cargo_delivery_trips_count(total_weight)
+        has_delivery_line = (
+            not pile_order
+            and not bridge_pile_order
+            and not fbs_order
+            and not march_order
+            and not step_order
+        ) and trip_cost > 0 and delivery_trips > 0
+        if has_delivery_line:
+            delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
+            table_data.append(
+                {
+                    '№': len(table_data) + 1,
+                    'Наименование': 'Услуга по доставке грузов',
+                    'Кол-во': delivery_trips,
+                    'Ед.': 'рейс',
+                    'Вес(кг)': 0.0,
+                    'Цена': trip_cost,
+                    'Сумма': delivery_total,
+                }
+            )
 
-    df_table = pd.DataFrame(table_data)
-    
-    # Рассчитываем итоги с учётом скидки
-    totals = calculate_total_cost(order_data, discount_percent, logistics_cost=logistics_cost)
-    
+    df_table = pd.DataFrame(table_data, columns=table_headers)
+
     # Создаем строку итогов
     total_items = len(table_data)
     
@@ -408,7 +465,7 @@ def generate_commercial_offer_xlsx(
         
         # Форматируем заголовок таблицы
         table_header_row = start_row + 1
-        for col_idx in range(1, 8):  # 7 столбцов
+        for col_idx in range(1, col_count + 1):
             cell = worksheet.cell(row=table_header_row, column=col_idx)
             cell.font = table_header_font
             cell.alignment = center_align
@@ -417,42 +474,29 @@ def generate_commercial_offer_xlsx(
         
         # Форматируем строки таблицы
         table_rows_count = len(table_data)
+        qty_col = table_headers.index('Кол-во') + 1
+        price_col = table_headers.index('Цена') + 1
+        sum_col = table_headers.index('Сумма') + 1
+        qty_letter = chr(ord('A') + qty_col - 1)
+        price_letter = chr(ord('A') + price_col - 1)
+        sum_letter = chr(ord('A') + sum_col - 1)
+
         for row_idx in range(table_header_row + 1, table_header_row + 1 + table_rows_count):
-            # №
-            worksheet.cell(row=row_idx, column=1).alignment = center_align
-            worksheet.cell(row=row_idx, column=1).border = thin_border
-            worksheet.cell(row=row_idx, column=1).font = table_font
-            
-            # Наименование
-            worksheet.cell(row=row_idx, column=2).alignment = left_align
-            worksheet.cell(row=row_idx, column=2).border = thin_border
-            worksheet.cell(row=row_idx, column=2).font = table_font
-            
-            # Кол-во
-            worksheet.cell(row=row_idx, column=3).alignment = center_align
-            worksheet.cell(row=row_idx, column=3).border = thin_border
-            worksheet.cell(row=row_idx, column=3).font = table_font
-            
-            # Ед.
-            worksheet.cell(row=row_idx, column=4).alignment = center_align
-            worksheet.cell(row=row_idx, column=4).border = thin_border
-            worksheet.cell(row=row_idx, column=4).font = table_font
-            
-            # Вес
-            worksheet.cell(row=row_idx, column=5).alignment = right_align
-            worksheet.cell(row=row_idx, column=5).border = thin_border
-            worksheet.cell(row=row_idx, column=5).font = table_font
-            worksheet.cell(row=row_idx, column=5).number_format = '#,##0.00'
-            
-            # Цена
-            worksheet.cell(row=row_idx, column=6).alignment = right_align
-            worksheet.cell(row=row_idx, column=6).border = thin_border
-            worksheet.cell(row=row_idx, column=6).font = table_font
-            worksheet.cell(row=row_idx, column=6).number_format = '#,##0.00'
-            
-            # Сумма - добавляем ФОРМУЛУ!
-            sum_cell = worksheet.cell(row=row_idx, column=7)
-            sum_cell.value = f"=C{row_idx}*F{row_idx}"  # Кол-во * Цена
+            for col_idx in range(1, col_count + 1):
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                cell.border = thin_border
+                cell.font = table_font
+                header_name = table_headers[col_idx - 1]
+                if header_name in ("№", "Тип", "Кол-во", "Ед.", "Класс бетона"):
+                    cell.alignment = center_align
+                elif header_name in ("Цена", "Сумма", "Вес(кг)"):
+                    cell.alignment = right_align
+                    cell.number_format = '#,##0.00'
+                else:
+                    cell.alignment = left_align
+
+            sum_cell = worksheet.cell(row=row_idx, column=sum_col)
+            sum_cell.value = f"={qty_letter}{row_idx}*{price_letter}{row_idx}"
             sum_cell.alignment = right_align
             sum_cell.border = thin_border
             sum_cell.font = table_font
@@ -463,30 +507,33 @@ def generate_commercial_offer_xlsx(
         
         # Итого по таблице: сумма позиций (цены с НДС) + услуга доставки при наличии.
         subtotal_row = summary_row
-        worksheet.merge_cells(f'A{subtotal_row}:F{subtotal_row}')
+        pre_sum_letter = chr(ord('A') + sum_col - 2)
+        worksheet.merge_cells(f'A{subtotal_row}:{pre_sum_letter}{subtotal_row}')
         worksheet[f'A{subtotal_row}'] = f"Всего наименований {total_items}, общим весом {total_weight:,.3f} кг."
         worksheet[f'A{subtotal_row}'].font = summary_font
         worksheet[f'A{subtotal_row}'].alignment = left_align
 
         first_data_row = table_header_row + 1
         last_data_row = table_header_row + table_rows_count
-        subtotal_cell = worksheet[f'G{subtotal_row}']
-        subtotal_cell.value = f"=SUM(G{first_data_row}:G{last_data_row})"
+        subtotal_cell = worksheet[f'{sum_letter}{subtotal_row}']
+        subtotal_cell.value = f"=SUM({sum_letter}{first_data_row}:{sum_letter}{last_data_row})"
         subtotal_cell.font = summary_font
         subtotal_cell.number_format = '#,##0.00'
         subtotal_cell.alignment = right_align
 
-        # НДС 22% только от суммы плит (без строки «Услуга по доставке грузов»).
+        # НДС 22% только от суммы позиций (без строки «Услуга по доставке грузов»).
         last_plate_row = last_data_row - 1 if has_delivery_line else last_data_row
         vat_row = summary_row + 1
-        worksheet.merge_cells(f'A{vat_row}:F{vat_row}')
+        worksheet.merge_cells(f'A{vat_row}:{pre_sum_letter}{vat_row}')
         worksheet[f'A{vat_row}'] = "в том числе НДС (22%)"
         worksheet[f'A{vat_row}'].font = summary_font
         worksheet[f'A{vat_row}'].alignment = left_align
-        worksheet[f'G{vat_row}'] = f"=SUM(G{first_data_row}:G{last_plate_row})*{VAT_RATE}"
-        worksheet[f'G{vat_row}'].font = summary_font
-        worksheet[f'G{vat_row}'].number_format = '#,##0.00'
-        worksheet[f'G{vat_row}'].alignment = right_align
+        worksheet[f'{sum_letter}{vat_row}'] = (
+            f"=SUM({sum_letter}{first_data_row}:{sum_letter}{last_plate_row})*{VAT_RATE}"
+        )
+        worksheet[f'{sum_letter}{vat_row}'].font = summary_font
+        worksheet[f'{sum_letter}{vat_row}'].number_format = '#,##0.00'
+        worksheet[f'{sum_letter}{vat_row}'].alignment = right_align
         
         # Условия
         conditions_row = vat_row + 2
@@ -519,22 +566,29 @@ def generate_commercial_offer_xlsx(
 
         # Настройка ширины столбцов
         worksheet.column_dimensions['A'].width = 5
-        worksheet.column_dimensions['B'].width = 45
-        if pile_order or bridge_pile_order or fbs_order or march_order:
-            worksheet.column_dimensions['C'].width = 14
-            worksheet.column_dimensions['D'].width = 8
+        if unified:
+            worksheet.column_dimensions['B'].width = 14
+            worksheet.column_dimensions['C'].width = 45
+            worksheet.column_dimensions['D'].width = 10
             worksheet.column_dimensions['E'].width = 15
             worksheet.column_dimensions['F'].width = 18
-        elif step_order:
-            worksheet.column_dimensions['C'].width = 8
-            worksheet.column_dimensions['D'].width = 15
-            worksheet.column_dimensions['E'].width = 18
         else:
-            worksheet.column_dimensions['C'].width = 10
-            worksheet.column_dimensions['D'].width = 8
-            worksheet.column_dimensions['E'].width = 15
-            worksheet.column_dimensions['F'].width = 18
-            worksheet.column_dimensions['G'].width = 18
+            worksheet.column_dimensions['B'].width = 45
+            if pile_order or bridge_pile_order or fbs_order or march_order:
+                worksheet.column_dimensions['C'].width = 14
+                worksheet.column_dimensions['D'].width = 8
+                worksheet.column_dimensions['E'].width = 15
+                worksheet.column_dimensions['F'].width = 18
+            elif step_order:
+                worksheet.column_dimensions['C'].width = 8
+                worksheet.column_dimensions['D'].width = 15
+                worksheet.column_dimensions['E'].width = 18
+            else:
+                worksheet.column_dimensions['C'].width = 10
+                worksheet.column_dimensions['D'].width = 8
+                worksheet.column_dimensions['E'].width = 15
+                worksheet.column_dimensions['F'].width = 18
+                worksheet.column_dimensions['G'].width = 18
         
         # Высота строк
         worksheet.row_dimensions[table_header_row].height = 25

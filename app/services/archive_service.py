@@ -104,6 +104,23 @@ class ArchiveService:
         assert_offer_read_access(user, raw)
         return self._to_details(raw)
 
+    def resume_as_draft(self, kp_id: int, *, user: dict) -> dict:
+        """Hydrate a commercial draft from archive KP (status «в работе» only)."""
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_write_access(user, raw)
+
+        from app.services.commercial_workflow_service import CommercialWorkflowService
+
+        try:
+            return CommercialWorkflowService().hydrate_draft_from_saved_kp(
+                kp_id,
+                owner_user_id=int(user["id"]),
+            )
+        except ValueError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+
     def get_readiness_positions(self, kp_id: int, *, user: dict) -> KpReadinessPositionsResponse:
         raw = self.repository.get_by_id(kp_id)
         if not raw:
@@ -247,6 +264,7 @@ class ArchiveService:
         manager_name = raw.get("manager_name")
         discount_percent = float(raw.get("discount_percent") or 0)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
+        append_batches = raw.get("append_batches")
 
         if kind == "pdf":
             buffer = await asyncio.to_thread(
@@ -263,6 +281,7 @@ class ArchiveService:
                 logistics_cost=logistics_cost,
                 delivery_conditions=raw.get("delivery_conditions"),
                 payment_conditions=raw.get("payment_conditions"),
+                append_batches=append_batches,
             )
             filename = f"КП_{kp_id}.pdf"
         elif kind == "xlsx":
@@ -280,6 +299,7 @@ class ArchiveService:
                 payment_conditions=raw.get("payment_conditions"),
                 kp_db_id=kp_id,
                 logistics_cost=logistics_cost,
+                append_batches=append_batches,
             )
             filename = f"КП_{kp_id}.xlsx"
         elif kind == "schema":
@@ -363,6 +383,31 @@ class ArchiveService:
 
     # ---------- helpers ----------
 
+    @staticmethod
+    def _resolve_product_types(raw: dict) -> list[str]:
+        """Concrete types for archive list badges (Q3 / MNA-602)."""
+        explicit = raw.get("product_types")
+        if isinstance(explicit, list) and explicit:
+            return [str(t) for t in explicit if str(t).strip() and str(t) != "mixed"]
+
+        product_type = str(raw.get("product_type") or "plates").strip().lower() or "plates"
+        if product_type != "mixed":
+            return [product_type]
+
+        # Mixed mock/detail payloads may carry typed line arrays without product_types.
+        derived: list[str] = []
+        for key, _table in (
+            ("plates", "kp_plates"),
+            ("piles", "kp_piles"),
+            ("steps", "kp_steps"),
+            ("marches", "kp_marches"),
+            ("bridge_piles", "kp_bridge_piles"),
+            ("fbs", "kp_fbs"),
+        ):
+            if raw.get(key):
+                derived.append(key)
+        return derived
+
     def _to_list_item(self, raw: dict) -> ArchiveOfferListItem:
         kp_id = int(raw.get("kp_id") or 0)
         status = raw.get("status") or None
@@ -404,6 +449,7 @@ class ArchiveService:
             sgp_progress=sgp_progress,
             shipped_progress=shipped_progress,
             product_type=str(raw.get("product_type") or "plates"),
+            product_types=self._resolve_product_types(raw),
         )
 
     def _shipped_progress(self, kp_id: int) -> dict[str, int] | None:
@@ -446,7 +492,10 @@ class ArchiveService:
 
         order_data = order_data_from_kp_info(raw)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
-        total_cargo_weight_kg = float(total_order_cargo_weight_kg(order_data))
+        # Delivery / cargo for archive details: plates only (mixed KP ignores piles etc.).
+        total_cargo_weight_kg = float(
+            total_order_cargo_weight_kg(order_data, product_types={"plates"})
+        )
         delivery_total = delivery_service_charge_rub(logistics_cost, total_cargo_weight_kg)
 
         readiness = None

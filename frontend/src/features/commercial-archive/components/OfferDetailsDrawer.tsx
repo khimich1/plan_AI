@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { Spinner } from "@/shared/ui/Spinner";
@@ -16,6 +17,7 @@ import {
 } from "@/features/commercial-offer/utils/cargoDeliveryPricing";
 import { formatMoney, statusEmoji } from "@/features/commercial-archive/lib/format";
 import type { ArchiveOfferDetails, ArchiveMarchItem, ArchivePileItem, ArchiveStepItem } from "@/features/commercial-archive/types/archive";
+import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
 import { downloadFile } from "@/shared/lib/downloadFile";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
@@ -25,6 +27,7 @@ import { HighDiscountConfirmDialog } from "@/features/commercial-offer/component
 import {
   baseProductsTotal,
   discountPercentFromTargetSum,
+  formatDiscountPercentInput,
   requiresHighDiscountConfirmation,
   targetSumFromDiscountPercent,
 } from "@/features/commercial-offer/lib/discountFromTargetSum";
@@ -92,6 +95,8 @@ const formatLinePrice = (discountedPrice: number | null, unitPrice: number | nul
 };
 
 export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
+  const navigate = useNavigate();
+  const { dispatch } = useWizardDraftStore();
   const query = useArchiveOfferQuery(open ? kpId : null);
   const [showAllPlates, setShowAllPlates] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -103,6 +108,8 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [logisticsError, setLogisticsError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [pendingDiscountPercent, setPendingDiscountPercent] = useState<number | null>(null);
+  const [resumePending, setResumePending] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
 
   const discountMutation = useUpdateDiscountMutation();
   const logisticsMutation = useUpdateLogisticsCostMutation();
@@ -191,6 +198,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       setDiscountError(null);
       setTargetSumError(null);
       setLogisticsError(null);
+      setResumeError(null);
     }
   }, [offer?.kp_id, offer?.finance.discount_percent, offer?.logistics_cost, offer?.delivery_service_total_rub, savedTargetSum]);
 
@@ -202,6 +210,25 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     setTargetSumDraft(savedTargetSum === null ? "" : String(savedTargetSum).replace(".", ","));
     setDiscountError(null);
     setTargetSumError(null);
+  };
+
+  const handleResumeAppend = async () => {
+    if (!offer || resumePending) {
+      return;
+    }
+    setResumePending(true);
+    setResumeError(null);
+    try {
+      const draft = await archiveApi.resume(offer.kp_id);
+      dispatch({ type: "hydrate-draft", payload: draft });
+      dispatch({ type: "start-append-cycle" });
+      navigate(`/new?draft=${encodeURIComponent(draft.draft_id)}`);
+      onClose();
+    } catch (error) {
+      setResumeError(getErrorMessage(error));
+    } finally {
+      setResumePending(false);
+    }
   };
 
   const applyDiscount = async (discount: number) => {
@@ -261,7 +288,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     }
     setTargetSumError(null);
     setDiscountError(null);
-    setDiscountDraft(String(result.discountPercent).replace(".", ","));
+    setDiscountDraft(formatDiscountPercentInput(result.discountPercent));
   };
 
   const handleTargetSumOk = () => {
@@ -280,7 +307,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       return;
     }
     setTargetSumError(null);
-    setDiscountDraft(String(result.discountPercent).replace(".", ","));
+    setDiscountDraft(formatDiscountPercentInput(result.discountPercent));
     requestDiscountApply(result.discountPercent);
   };
 
@@ -681,6 +708,17 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 {schemaMutation.isPending ? "Формируем…" : "📐 Схема"}
               </Button>
             )}
+            {offer.status === "в работе" && (
+              <Button
+                variant="secondary"
+                disabled={resumePending}
+                onClick={() => {
+                  void handleResumeAppend();
+                }}
+              >
+                {resumePending ? "Открываем…" : "Добавить другое наименование"}
+              </Button>
+            )}
             {offer.status === "в архиве" && (
               isSimpleProductOffer ? (
                 <Button variant="secondary" disabled title="скоро">
@@ -700,6 +738,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
           {schemaMutation.isError && (
             <Alert tone="error">{getErrorMessage(schemaMutation.error)}</Alert>
           )}
+          {resumeError && <Alert tone="error">{resumeError}</Alert>}
         </div>
       )}
 

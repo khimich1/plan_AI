@@ -21,10 +21,22 @@ except ImportError:
 CARGO_DELIVERY_TRUCK_CAPACITY_KG: float = 18600.0
 
 
-def total_order_cargo_weight_kg(order_data: List[Mapping[str, Any]]) -> float:
-    """Суммарная масса всех позиций заказа в кг (та же логика, что в PDF/XLSX КП)."""
+def total_order_cargo_weight_kg(
+    order_data: List[Mapping[str, Any]],
+    product_types: set[str] | None = None,
+) -> float:
+    """Суммарная масса позиций заказа в кг (та же логика, что в PDF/XLSX КП).
+
+    product_types=None — все позиции (обратная совместимость).
+    Иначе учитываются только строки с product_type из множества;
+    отсутствие product_type трактуется как «plates» (legacy mono).
+    """
     total = 0.0
     for item in order_data:
+        if product_types is not None:
+            line_type = item.get("product_type") or "plates"
+            if line_type not in product_types:
+                continue
         _, line_kg = resolve_kp_line_weight_kg(item)
         total += line_kg
     return total
