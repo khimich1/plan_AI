@@ -94,6 +94,7 @@ class ArchiveFbsItem(BaseModel):
 
 
 class ArchivePlateItem(BaseModel):
+    id: int | None = None  # kp_plates.id — нужен для графика поставки
     position_number: int | None = None
     plate_name: str = ""
     length_m: float | None = None

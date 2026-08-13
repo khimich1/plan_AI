@@ -43,12 +43,10 @@ from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
 from core.kp_order_data import order_data_from_kp_info
 from core.gantt_excel import create_gantt_excel
+from core.production_capacity import MAX_TRACK_LENGTH_M, TRACKS_PER_DAY_DEFAULT
 
 
 logger = logging.getLogger(__name__)
-
-_MAX_TRACK_LENGTH_M = 101.0
-_DAYS_PER_TRACK_FACTOR = 5.0
 
 
 class ArchiveError(Exception):
@@ -231,8 +229,8 @@ class ArchiveService:
         assert_offer_read_access(user, raw)
         plates = raw.get("plates") or []
         total_length = sum((p.get("length_m") or 0) * (p.get("qty") or 1) for p in plates)
-        estimated_tracks = max(1, int(round(total_length / _MAX_TRACK_LENGTH_M + 0.5)))
-        estimated_days = max(1, int(round(estimated_tracks / _DAYS_PER_TRACK_FACTOR + 0.5)))
+        estimated_tracks = max(1, int(round(total_length / MAX_TRACK_LENGTH_M + 0.5)))
+        estimated_days = max(1, int(round(estimated_tracks / TRACKS_PER_DAY_DEFAULT + 0.5)))
         return {
             "total_length_m": total_length,
             "estimated_tracks": estimated_tracks,
@@ -596,6 +594,7 @@ class ArchiveService:
     @staticmethod
     def _plate_item(raw: dict) -> ArchivePlateItem:
         return ArchivePlateItem(
+            id=_nullable_int(raw.get("id")),
             position_number=raw.get("position_number"),
             plate_name=raw.get("plate_name") or "",
             length_m=_nullable_float(raw.get("length_m")),

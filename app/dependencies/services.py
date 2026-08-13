@@ -21,6 +21,7 @@ from app.services.commercial_calculation_service import CommercialCalculationSer
 from app.services.commercial_service import CommercialService
 from app.services.commercial_wizard_step_service import CommercialWizardStepService
 from app.services.commercial_workflow_service import CommercialWorkflowService
+from app.services.delivery_schedule_service import DeliveryScheduleService
 from app.services.draft_store import DraftStore
 from app.services.offers_service import OffersService
 from app.services.production_planning_service import ProductionPlanningService
@@ -88,6 +89,12 @@ def get_admin_service() -> AdminService:
 
 def get_archive_service() -> ArchiveService:
     return ArchiveService()
+
+
+def get_delivery_schedule_service() -> DeliveryScheduleService:
+    from app.repositories.kp_repository import KpRepository
+
+    return DeliveryScheduleService(db_path=KpRepository().db_path)
 
 
 def get_auth_service(

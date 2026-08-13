@@ -60,17 +60,25 @@ This skill explains:
 ### 3. Subtask Definition
 For each subtask, specify:
 - **Task name**: Clear, actionable description
+- **Type** (REQUIRED): one of `feat-be` | `feat-fe` | `ui` | `api` | `auth` | `arch` | `refactor` | `spike` | `docs` | `chore`
 - **Priority**: Critical / High / Medium / Low
-- **Dependencies**: Which tasks must complete first
+- **dependsOn**: Task IDs that must complete first (array; `[]` if none)
+- **pipeline**: Optional override; default from type (see orchestration skill)
+- **securitySensitive**: true if auth, uploads, SQL, tokens, public API
+- **needsExplore**: true if worker should discover existing code first (default true for feat/arch)
+- **needsArchitectureReview**: true for cross-module / optimizer / calendar-core changes
+- **parallelSafe**: true only if no shared file overlap with sibling ready tasks
 - **Estimated complexity**: Simple / Moderate / Complex
 - **Files/components affected**: Specific locations in codebase
 - **Acceptance criteria**: How to verify completion
 
 ### 4. Execution Strategy
-- Recommend execution order (sequential vs parallel)
-- Suggest which subagents to use for each subtask
-- Identify tasks that can run in parallel
+- Build a dependency DAG (`dependsOn`); do not assume list order is enough
+- Assign `type` so orchestration can pick conditional pipelines
+- Prefer early `spike` tasks when idea/spec has unchecked assumptions (A1–A3 style)
+- Identify tasks that can run in parallel (`parallelSafe`)
 - Propose verification steps after completion
+- Remind orchestrator: **user checkpoint** after plan before code
 
 ## File Creation (CRITICAL)
 
@@ -136,16 +144,18 @@ Save plan to configured documentation path:
 ## Tasks Overview
 
 1. **User Model** → AUTH-001
+   - Type: feat-be
    - Priority: High
    - Time: 1 hour
-   - Dependencies: None
+   - dependsOn: []
 
 2. **JWT Utilities** → AUTH-002
+   - Type: auth
    - Priority: High
    - Time: 1 hour
-   - Dependencies: AUTH-001
+   - dependsOn: [AUTH-001]
 
-[... list all tasks with IDs]
+[... list all tasks with IDs, each with type + dependsOn]
 
 ## Dependencies Graph
 ```
@@ -153,9 +163,9 @@ AUTH-001 → AUTH-002 → AUTH-003
 ```
 
 ## Progress (updated by orchestrator)
-- ⏳ AUTH-001: User Model (Pending)
-- ⏳ AUTH-002: JWT Utilities (Pending)
-- ⏳ AUTH-003: Auth Middleware (Pending)
+- ⏳ AUTH-001: User Model `(feat-be)` (Pending)
+- ⏳ AUTH-002: JWT Utilities `(auth)` (Pending)
+- ⏳ AUTH-003: Auth Middleware `(feat-be)` (Pending)
 
 ## Architecture Decisions
 - Using JWT with refresh tokens
@@ -189,16 +199,29 @@ AUTH-001 → AUTH-002 → AUTH-003
   "AUTH-001": {
     "id": "AUTH-001",
     "name": "User Model",
+    "type": "feat-be",
+    "dependsOn": [],
+    "pipeline": ["explore", "worker", "test-writer", "test-runner", "reviewer"],
+    "securitySensitive": false,
+    "needsExplore": true,
+    "parallelSafe": false,
     "status": "pending"
   },
   "AUTH-002": {
     "id": "AUTH-002",
     "name": "JWT Utilities",
-    "status": "pending",
-    "dependencies": ["AUTH-001"]
+    "type": "auth",
+    "dependsOn": ["AUTH-001"],
+    "pipeline": ["explore", "worker", "test-writer", "test-runner", "reviewer", "security-auditor"],
+    "securitySensitive": true,
+    "needsExplore": true,
+    "parallelSafe": false,
+    "status": "pending"
   }
 }
 ```
+
+**Field name is `dependsOn` (not `dependencies`).** Orchestrator schedules by this DAG.
 
 **File:** `.cursor/workspace/active/orch-{id}/links.json`
 
@@ -276,8 +299,10 @@ After creating workspace and plan, return summary:
 
 ## Next Steps
 
+**Checkpoint:** wait for user approval of this plan (types + DAG), then:
 Execute with: `/orchestrate execute orch-2026-02-10-15-30-auth`
 Or simply: `/orchestrate execute` (uses latest)
+Resume failed: `/orchestrate resume orch-2026-02-10-15-30-auth`
 
 ## Files Created
 
@@ -288,12 +313,15 @@ Or simply: `/orchestrate execute` (uses latest)
 ## Best Practices
 
 - **Use consistent task IDs**: AUTH-001, AUTH-002, etc.
+- **Always set type + dependsOn** in plan and `tasks.json`
 - **Be specific**: Avoid vague tasks like "implement feature X"
-- **Clear dependencies**: Show which tasks block others
-- **Think modular**: Break large tasks into independent units
-- **Plan for verification**: Include testing subtasks
+- **Clear DAG**: `dependsOn` must match Dependencies Graph
+- **Spike first** when assumptions are unchecked — do not plan full UI before validation
+- **Think modular**: Break large tasks into independent units; mark `parallelSafe` only when true
+- **Plan for verification**: acceptance criteria per task (test-writer may be skipped for docs/spike)
 - **Estimate time**: Help with planning
 - **Tasks inline**: Define tasks directly in plan file, not separate files
+- **Context**: Tell orchestrator to inject `plan-web-context` into workers
 
 ## Questions to Consider
 
