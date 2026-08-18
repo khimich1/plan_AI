@@ -469,7 +469,18 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         cur.execute("SELECT COUNT(*) FROM plate_status_log")
         status_log_count = cur.fetchone()[0]
 
+        cur.execute("SELECT COUNT(*) FROM shipments")
+        shipments_count = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM shipment_items")
+        shipment_items_count = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM shipment_orders")
+        shipment_orders_count = cur.fetchone()[0]
+
         cur.execute("DELETE FROM plate_status_log")
+        # shipment_items.completed_plate_id → completed_plates без ON DELETE CASCADE
+        cur.execute("DELETE FROM shipments")
         cur.execute("DELETE FROM kp_plates")
         cur.execute("DELETE FROM completed_plates")
         cur.execute("DELETE FROM plate_rests")
@@ -482,7 +493,8 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
             DELETE FROM sqlite_sequence
             WHERE name IN ('KP_offers', 'kp_plates', 'completed_plates',
                           'plate_rests', 'kp_files', 'kp_meta',
-                          'plate_status_log')
+                          'plate_status_log', 'shipments', 'shipment_items',
+                          'shipment_orders')
         """
         )
 
@@ -496,6 +508,9 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
             "kp_files": files_count,
             "kp_meta": meta_count,
             "plate_status_log": status_log_count,
+            "shipments": shipments_count,
+            "shipment_items": shipment_items_count,
+            "shipment_orders": shipment_orders_count,
             "total": (
                 kp_count
                 + plates_count
@@ -504,6 +519,9 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
                 + files_count
                 + meta_count
                 + status_log_count
+                + shipments_count
+                + shipment_items_count
+                + shipment_orders_count
             ),
         }
 
@@ -515,6 +533,9 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         print(f"  - Удалено файлов: {files_count}")
         print(f"  - Удалено метаданных: {meta_count}")
         print(f"  - Удалено записей журнала статусов: {status_log_count}")
+        print(f"  - Удалено рейсов: {shipments_count}")
+        print(f"  - Удалено позиций рейсов: {shipment_items_count}")
+        print(f"  - Удалено заказов рейсов: {shipment_orders_count}")
         print(f"  - ВСЕГО ЗАПИСЕЙ: {result['total']}")
 
         return result
