@@ -64,6 +64,7 @@ describe("buildPilePreviewRows", () => {
         concrete_grade: "B25",
         qty: 5,
         unit_price: 44634.03,
+        product_type: "piles",
       },
     ]);
 
@@ -78,6 +79,53 @@ describe("buildPilePreviewRows", () => {
         product_kind: "pile",
       },
     ]);
+  });
+
+  it("hides sealed prior plates during piles append cycle", () => {
+    const draft = makePileDraft([
+      {
+        line_id: "ln-plate",
+        product_type: "plates",
+        append_batch_id: "b1",
+        name: "Плиты ПБ 45-12-8п",
+        qty: 14,
+        unit_price: 1000,
+      },
+      {
+        line_id: "ln-pile",
+        product_type: "piles",
+        mark: "С120.35-12",
+        concrete_grade: "B25",
+        qty: 5,
+        unit_price: 44634.03,
+      },
+    ]);
+    draft.metadata.append_batches = [{ batch_id: "b1", product_type: "plates", line_ids: ["ln-plate"] }];
+
+    expect(buildPilePreviewRows(draft)).toEqual([
+      {
+        mark: "С120.35-12",
+        name: "С120.35-12",
+        concrete_grade: "B25",
+        qty: 5,
+        unit_price: 44634.03,
+        line_total: 223170.15,
+        product_kind: "pile",
+      },
+    ]);
+  });
+
+  it("shows empty preview when only sealed prior lines exist", () => {
+    const draft = makePileDraft([
+      {
+        line_id: "ln-plate",
+        product_type: "plates",
+        append_batch_id: "b1",
+        name: "Плиты ПБ 45-12-8п",
+        qty: 14,
+      },
+    ]);
+    expect(buildPilePreviewRows(draft)).toEqual([]);
   });
 
   it("builds normalized lines for grade re-ingest", () => {

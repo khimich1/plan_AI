@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 CommercialFileKind = Literal["pdf", "xlsx", "breakdown", "schema"]
 CommercialSourceType = Literal["text", "image", "ai"]
@@ -156,6 +156,24 @@ class CommercialSavedOffer(BaseModel):
     saved_at: str = ""
 
 
+class CommercialAppendBatch(BaseModel):
+    """Один цикл append: product_type + line_ids, добавленные в этом батче."""
+
+    batch_id: str = Field(min_length=1)
+    product_type: ProductType
+    line_ids: list[str] = Field(default_factory=list)
+
+
+class CommercialOrderLine(BaseModel):
+    """Строка заказа КП; product-specific поля допускаются через extra."""
+
+    model_config = ConfigDict(extra="allow")
+
+    line_id: Annotated[str, Field(min_length=1)] | None = None
+    product_type: ProductType | None = None
+    append_batch_id: Annotated[str, Field(min_length=1)] | None = None
+
+
 class CommercialDraftMetadata(BaseModel):
     """Метаданные черновика; owner_user_id хранится на сервере и не отдаётся клиенту."""
 
@@ -209,6 +227,8 @@ class CommercialDraftMetadata(BaseModel):
     ocr_verify_applied_reason: str | None = None
     ocr_corrections: list[dict[str, Any]] = Field(default_factory=list)
     ocr_row_count_on_image: int | None = None
+    append_batches: list[CommercialAppendBatch] = Field(default_factory=list)
+    resume_kp_id: int | None = Field(default=None, ge=1)
 
 
 class CommercialBreakdownTable(BaseModel):
@@ -225,7 +245,7 @@ class CommercialDraftDetailsResponse(BaseModel):
     draft_id: str
     order: dict[str, Any]
     optimization: dict[str, Any]
-    order_data: list[dict[str, Any]]
+    order_data: list[CommercialOrderLine]
     metadata: CommercialDraftMetadata
     wizard_state: CommercialWizardState
     files: list[CommercialGeneratedFile] = Field(default_factory=list)
@@ -246,6 +266,12 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
     delivery_conditions: str | None = None
     payment_conditions: str | None = None
     logistics_cost: float | None = None
+
+
+class CommercialAppendStartRequest(BaseModel):
+    """Start a new append cycle: switch product_type, clear cycle input, keep header."""
+
+    product_type: ProductType
 
 
 class CommercialWidePlateDecision(BaseModel):

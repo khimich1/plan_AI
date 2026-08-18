@@ -3,24 +3,59 @@ import {
   discountPercentFromTargetSum,
   requiresHighDiscountConfirmation,
   targetSumFromDiscountPercent,
+  totalWithDiscountPercent,
 } from "@/features/commercial-offer/lib/discountFromTargetSum";
 
 describe("target-sum discount math", () => {
-  it("calculates discounts while preserving delivery", () => {
+  it("calculates a discount that reconstructs the target sum exactly", () => {
+    const target = 2_000_000;
+    const base = 2_400_000;
+    const delivery = 100_000;
+    const result = discountPercentFromTargetSum({
+      targetTotalWithVat: target,
+      baseProductsTotalWithVat: base,
+      deliveryTotal: delivery,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
     expect(
-      discountPercentFromTargetSum({
-        targetTotalWithVat: 2_000_000,
-        baseProductsTotalWithVat: 2_400_000,
-        deliveryTotal: 100_000,
+      totalWithDiscountPercent({
+        baseProductsTotalWithVat: base,
+        deliveryTotal: delivery,
+        discountPercent: result.discountPercent,
       }),
-    ).toEqual({ ok: true, discountPercent: 20.83 });
+    ).toBe(target);
     expect(
       targetSumFromDiscountPercent({
-        discountPercent: 20.83,
-        baseProductsTotalWithVat: 2_400_000,
-        deliveryTotal: 100_000,
+        discountPercent: result.discountPercent,
+        baseProductsTotalWithVat: base,
+        deliveryTotal: delivery,
       }),
-    ).toBe(2_000_080);
+    ).toBe(target);
+  });
+
+  it("hits exact round targets like 2_500_000", () => {
+    const target = 2_500_000;
+    const base = 2_901_234.56;
+    const delivery = 50_000;
+    const result = discountPercentFromTargetSum({
+      targetTotalWithVat: target,
+      baseProductsTotalWithVat: base,
+      deliveryTotal: delivery,
+    });
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) {
+      return;
+    }
+    expect(
+      targetSumFromDiscountPercent({
+        discountPercent: result.discountPercent,
+        baseProductsTotalWithVat: base,
+        deliveryTotal: delivery,
+      }),
+    ).toBe(target);
   });
 
   it("handles minimum and maximum targets", () => {

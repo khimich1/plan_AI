@@ -236,3 +236,170 @@ def test_wizard_state_product_step_hides_manager_validation_error(
     assert state["next_required_action"] == WizardNextRequiredAction.select_manager
     assert "Выберите менеджера." not in state["validation_errors"]
     assert state["can_proceed_to"] == [WizardStepId.client]
+
+
+# --- MNA-104: skip client on cycle ≥2 / resume ---
+
+
+def _priced_plate_line() -> dict:
+    return {"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}
+
+
+def _mono_first_cycle_meta(**overrides: object) -> dict:
+    meta = {
+        "current_step": WizardStepId.plates.value,
+        "product_type": "plates",
+        "client_name": "",
+        "append_batches": [],
+        "resume_kp_id": None,
+        "wide_plate_lines": [],
+        "wide_plates_resolved": True,
+    }
+    meta.update(overrides)
+    return meta
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        ({"client_name": "", "append_batches": [], "resume_kp_id": None}, False),
+        ({"client_name": "   ", "append_batches": [], "resume_kp_id": None}, False),
+        ({"client_name": "ООО А", "append_batches": [], "resume_kp_id": None}, True),
+        (
+            {
+                "client_name": "",
+                "append_batches": [
+                    {"batch_id": "b1", "product_type": "plates", "line_ids": ["ln1"]}
+                ],
+                "resume_kp_id": None,
+            },
+            True,
+        ),
+        ({"client_name": "", "append_batches": [], "resume_kp_id": 42}, True),
+        (
+            {
+                "client_name": "ООО А",
+                "append_batches": [
+                    {"batch_id": "b1", "product_type": "piles", "line_ids": ["ln1"]}
+                ],
+                "resume_kp_id": 7,
+            },
+            True,
+        ),
+    ],
+)
+def test_should_skip_client_step_mna104(
+    wizard_service: CommercialWizardStepService,
+    metadata: dict,
+    expected: bool,
+) -> None:
+    assert wizard_service.should_skip_client_step(metadata) is expected
+
+
+def test_wizard_step_order_mono_first_cycle_includes_client(
+    wizard_service: CommercialWizardStepService,
+) -> None:
+    """Mono first cycle: product → client → result (unchanged)."""
+    order = wizard_service.wizard_step_order(_mono_first_cycle_meta())
+    assert order == [WizardStepId.plates, WizardStepId.client, WizardStepId.result]
+
+
+@pytest.mark.parametrize(
+    ("product_type", "product_step"),
+    [
+        ("plates", WizardStepId.plates),
+        ("piles", WizardStepId.piles),
+        ("steps", WizardStepId.steps),
+        ("marches", WizardStepId.marches),
+        ("bridge_piles", WizardStepId.bridge_piles),
+        ("fbs", WizardStepId.fbs),
+    ],
+)
+def test_wizard_step_order_skips_client_when_client_name_set(
+    wizard_service: CommercialWizardStepService,
+    product_type: str,
+    product_step: WizardStepId,
+) -> None:
+    order = wizard_service.wizard_step_order(
+        _mono_first_cycle_meta(
+            product_type=product_type,
+            current_step=product_step.value,
+            client_name="ООО Клиент",
+        )
+    )
+    assert order == [product_step, WizardStepId.result]
+    assert WizardStepId.client not in order
+
+
+def test_wizard_step_order_skips_client_when_append_batches_nonempty(
+    wizard_service: CommercialWizardStepService,
+) -> None:
+    order = wizard_service.wizard_step_order(
+        _mono_first_cycle_meta(
+            append_batches=[
+                {"batch_id": "batch-1", "product_type": "plates", "line_ids": ["ln1"]}
+            ]
+        )
+    )
+    assert order == [WizardStepId.plates, WizardStepId.result]
+
+
+def test_wizard_step_order_skips_client_when_resume_kp_id_set(
+    wizard_service: CommercialWizardStepService,
+) -> None:
+    order = wizard_service.wizard_step_order(
+        _mono_first_cycle_meta(resume_kp_id=99)
+    )
+    assert order == [WizardStepId.plates, WizardStepId.result]
+
+
+def test_can_proceed_to_result_when_skip_client_client_name(
+    wizard_service: CommercialWizardStepService,
+) -> None:
+    """Cycle ≥2: from product step proceed to result, not client."""
+    payload = {
+        "metadata": _mono_first_cycle_meta(client_name="ООО А"),
+        "order_data": [_priced_plate_line()],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["current_step"] == WizardStepId.plates
+    assert state["can_proceed_to"] == [WizardStepId.result]
+
+
+def test_can_proceed_to_result_when_skip_client_append_batches(
+    wizard_service: CommercialWizardStepService,
+) -> None:
+    payload = {
+        "metadata": _mono_first_cycle_meta(
+            append_batches=[
+                {"batch_id": "b1", "product_type": "plates", "line_ids": ["ln1"]}
+            ]
+        ),
+        "order_data": [_priced_plate_line()],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["can_proceed_to"] == [WizardStepId.result]
+
+
+def test_can_proceed_to_result_when_skip_client_resume_kp_id(
+    wizard_service: CommercialWizardStepService,
+) -> None:
+    payload = {
+        "metadata": _mono_first_cycle_meta(resume_kp_id=15),
+        "order_data": [_priced_plate_line()],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert state["can_proceed_to"] == [WizardStepId.result]
+
+
+def test_can_proceed_to_still_client_on_mono_first_cycle(
+    wizard_service: CommercialWizardStepService,
+) -> None:
+    """Regression: first cycle without client/append/resume still goes to client."""
+    payload = {
+        "metadata": _mono_first_cycle_meta(),
+        "order_data": [_priced_plate_line()],
+    }
+    state = wizard_service.build_wizard_state(payload)
+    assert wizard_service.should_skip_client_step(payload["metadata"]) is False
+    assert state["can_proceed_to"] == [WizardStepId.client]

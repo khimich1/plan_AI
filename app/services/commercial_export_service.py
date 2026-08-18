@@ -63,6 +63,7 @@ class CommercialExportService:
         delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
         payment_conditions = str(metadata.get("payment_conditions", "") or "")
         logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
+        append_batches = metadata.get("append_batches")
         offer_number, offer_date, file_stem = self.build_offer_identity(draft_id)
 
         for file_type in requested_types:
@@ -89,6 +90,7 @@ class CommercialExportService:
                     logistics_cost=logistics_cost,
                     delivery_conditions=delivery_conditions or None,
                     payment_conditions=payment_conditions or None,
+                    append_batches=append_batches,
                 )
                 files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, output_path)
             elif file_type == "xlsx":
@@ -106,6 +108,7 @@ class CommercialExportService:
                     delivery_conditions=delivery_conditions,
                     payment_conditions=payment_conditions,
                     logistics_cost=logistics_cost,
+                    append_batches=append_batches,
                 )
                 files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, output_path)
             elif file_type == "breakdown":

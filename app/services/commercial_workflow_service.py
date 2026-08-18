@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Iterable
+from uuid import uuid4
 
 from app.core.settings import get_settings
 from app.schemas.commercial import WizardStepId
@@ -28,6 +29,7 @@ from core.commercial_offer_xlsx import DB_PATH
 from core.commercial_pricing import ensure_order_priced
 from core.bridge_pile_price_db import list_available_grades
 from core.fbs_price_db import list_available_grades as list_fbs_available_grades
+from core.kp_order_data import order_data_from_kp_info
 from core.ocr_gpt import (
     apply_bridge_piles_with_ai,
     apply_fbs_with_ai,
@@ -37,6 +39,18 @@ from core.ocr_gpt import (
     apply_steps_with_ai,
 )
 from core.plate_order_context import PlateOrderContext
+
+_APPEND_PRODUCT_TYPES = frozenset(
+    {"plates", "piles", "steps", "marches", "bridge_piles", "fbs"}
+)
+_PRODUCT_TYPE_TO_WIZARD_STEP = {
+    "plates": WizardStepId.plates,
+    "piles": WizardStepId.piles,
+    "steps": WizardStepId.steps,
+    "marches": WizardStepId.marches,
+    "bridge_piles": WizardStepId.bridge_piles,
+    "fbs": WizardStepId.fbs,
+}
 
 
 class CommercialWorkflowService:
@@ -79,6 +93,321 @@ class CommercialWorkflowService:
 
     def _persist_wizard_step(self, draft_id: str, step: WizardStepId) -> None:
         self.step_service.persist_wizard_step(draft_id, step)
+
+    def _stamp_order_data(
+        self,
+        order_data: list[Any] | None,
+        *,
+        product_type: str,
+        previous_order_data: list[Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.draft_service.stamp_order_line_identity(
+            list(order_data or []),
+            product_type=product_type,
+            previous_order_data=list(previous_order_data or []) if previous_order_data else None,
+        )
+
+    @staticmethod
+    def _line_product_type(line: dict[str, Any] | None) -> str:
+        if not isinstance(line, dict):
+            return ""
+        return str(line.get("product_type") or "").strip().lower()
+
+    @staticmethod
+    def _line_is_sealed(line: dict[str, Any] | None) -> bool:
+        """Sealed lines carry append_batch_id (assigned by ``_seal_unbatched_lines``)."""
+        if not isinstance(line, dict):
+            return False
+        return bool(str(line.get("append_batch_id") or "").strip())
+
+    def _partition_order_by_product_type(
+        self,
+        order_data: list[Any] | None,
+        *,
+        product_type: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Split order into (other types kept, same product_type lines)."""
+        normalized = (product_type or "").strip().lower()
+        others: list[dict[str, Any]] = []
+        same: list[dict[str, Any]] = []
+        for raw in list(order_data or []):
+            if not isinstance(raw, dict):
+                continue
+            line = dict(raw)
+            if self._line_product_type(line) == normalized:
+                same.append(line)
+            else:
+                others.append(line)
+        return others, same
+
+    def _stamp_previous_for_product_update(
+        self,
+        same_previous: list[dict[str, Any]],
+        *,
+        mode: str,
+        merged_cycle_text: bool,
+    ) -> list[dict[str, Any]]:
+        """Pick prior same-type lines whose line_ids may be reused when stamping.
+
+        Append+merged cycle text reuses only unsealed same-type (current cycle).
+        Replace reuses all same-type. Fresh append cycle reuses none.
+        """
+        normalized_mode = (mode or "").strip().lower()
+        if merged_cycle_text:
+            return [ln for ln in same_previous if not self._line_is_sealed(ln)]
+        if normalized_mode == "replace":
+            return list(same_previous)
+        return []
+
+    def _compose_order_data_for_product_update(
+        self,
+        *,
+        previous_order_data: list[Any] | None,
+        new_type_lines: list[dict[str, Any]],
+        product_type: str,
+        mode: str,
+        merged_cycle_text: bool,
+    ) -> list[dict[str, Any]]:
+        """Keep other product types; compose same-type lines for append/replace.
+
+        Append with cleared cycle input preserves chronological order (full previous
+        list + new lines). Append with merged cycle text keeps sealed lines of any
+        type chronologically and replaces only unsealed same-type lines.
+        Replace keeps other types + new same-type.
+        """
+        normalized_mode = (mode or "").strip().lower()
+        normalized_type = (product_type or "").strip().lower()
+        if normalized_mode == "append" and not merged_cycle_text:
+            return list(previous_order_data or []) + list(new_type_lines)
+        if normalized_mode == "append" and merged_cycle_text:
+            kept: list[dict[str, Any]] = []
+            for raw in list(previous_order_data or []):
+                if not isinstance(raw, dict):
+                    continue
+                line = dict(raw)
+                unsealed_same_type = (
+                    self._line_product_type(line) == normalized_type
+                    and not self._line_is_sealed(line)
+                )
+                if not unsealed_same_type:
+                    kept.append(line)
+            return kept + list(new_type_lines)
+        others, _same_previous = self._partition_order_by_product_type(
+            previous_order_data,
+            product_type=product_type,
+        )
+        return others + list(new_type_lines)
+
+    def _current_cycle_lines(
+        self,
+        order_data: list[Any] | None,
+        *,
+        product_type: str,
+    ) -> list[dict[str, Any]]:
+        """Unsealed lines of product_type for the in-progress append/input cycle.
+
+        Sealed lines (append_batch_id set) belong to prior batches and must not
+        appear in input-step grade edits or cycle text rebuilds.
+        """
+        normalized = (product_type or "").strip().lower()
+        out: list[dict[str, Any]] = []
+        for raw in list(order_data or []):
+            if not isinstance(raw, dict):
+                continue
+            if self._line_is_sealed(raw):
+                continue
+            line_type = self._line_product_type(raw)
+            if not line_type or line_type == normalized:
+                # Untyped legacy mono: include only when nothing in order is sealed
+                # and no conflicting typed lines exist.
+                if not line_type:
+                    continue
+                out.append(dict(raw))
+        if out:
+            return out
+        unsealed = [
+            dict(raw)
+            for raw in list(order_data or [])
+            if isinstance(raw, dict) and not self._line_is_sealed(raw)
+        ]
+        if unsealed and all(not self._line_product_type(line) for line in unsealed):
+            return unsealed
+        return []
+
+    def _seal_unbatched_lines(
+        self,
+        order_data: list[Any] | None,
+        metadata: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Assign append_batch_id to unsealed lines; append metadata.append_batches entry."""
+        lines = [dict(raw) for raw in list(order_data or []) if isinstance(raw, dict)]
+        batches = [
+            {
+                "batch_id": str(batch.get("batch_id") or "").strip(),
+                "product_type": str(batch.get("product_type") or "").strip().lower(),
+                "line_ids": [str(lid) for lid in list(batch.get("line_ids") or []) if str(lid).strip()],
+            }
+            for batch in list(metadata.get("append_batches") or [])
+            if isinstance(batch, dict) and str(batch.get("batch_id") or "").strip()
+        ]
+
+        unsealed_ids: list[str] = []
+        for line in lines:
+            if str(line.get("append_batch_id") or "").strip():
+                continue
+            line_id = str(line.get("line_id") or "").strip()
+            if not line_id:
+                continue
+            unsealed_ids.append(line_id)
+
+        if not unsealed_ids:
+            return lines, batches
+
+        product_type = str(metadata.get("product_type") or "plates").strip().lower() or "plates"
+        if product_type not in _APPEND_PRODUCT_TYPES:
+            product_type = "plates"
+        batch_id = uuid4().hex
+        unsealed_set = set(unsealed_ids)
+        for line in lines:
+            line_id = str(line.get("line_id") or "").strip()
+            if line_id in unsealed_set:
+                line["append_batch_id"] = batch_id
+        batches.append(
+            {
+                "batch_id": batch_id,
+                "product_type": product_type,
+                "line_ids": unsealed_ids,
+            }
+        )
+        return lines, batches
+
+    def _persist_order_and_metadata(
+        self,
+        draft_id: str,
+        *,
+        payload: dict[str, Any],
+        order_data: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> None:
+        self.draft_store.replace_preview(
+            draft_id,
+            order=payload["order"],
+            optimization_context=payload["optimization_context"],
+            order_data=order_data,
+            metadata=metadata,
+        )
+
+    def start_append_cycle(self, draft_id: str, *, product_type: str) -> dict[str, Any]:
+        """Switch cycle product_type, clear cycle input, keep header + prior order_data."""
+        normalized = (product_type or "").strip().lower()
+        if normalized not in _APPEND_PRODUCT_TYPES:
+            raise ValueError("Некорректный тип продукта.")
+
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata") or {})
+        order_data = list(payload.get("order_data") or [])
+
+        sealed_order, sealed_batches = self._seal_unbatched_lines(order_data, metadata)
+        metadata["append_batches"] = sealed_batches
+        metadata["product_type"] = normalized
+        metadata["input_text"] = ""
+        metadata["original_text"] = ""
+        metadata["ocr_text"] = ""
+        metadata["normalized_text"] = ""
+        metadata["normalized_lines"] = []
+        metadata["accumulated_text"] = ""
+        metadata["plate_batches"] = []
+        metadata["pile_batches"] = []
+        metadata["step_batches"] = []
+        metadata["march_batches"] = []
+        metadata["wide_plate_lines"] = []
+        metadata["wide_plates_resolved"] = True
+        metadata["unparsed_lines"] = []
+        metadata["warnings"] = []
+        metadata["last_source_filename"] = ""
+        metadata["source_type"] = None
+
+        wizard_step = _PRODUCT_TYPE_TO_WIZARD_STEP.get(normalized, WizardStepId.plates)
+        metadata["current_step"] = wizard_step.value
+
+        self._persist_order_and_metadata(
+            draft_id,
+            payload=payload,
+            order_data=sealed_order,
+            metadata=metadata,
+        )
+        return self.get_draft_details(draft_id)
+
+    def undo_last_append_batch(self, draft_id: str) -> dict[str, Any]:
+        """Remove the last append_batches entry and its lines from order_data."""
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata") or {})
+        batches = list(metadata.get("append_batches") or [])
+        if not batches:
+            raise ValueError("Нет циклов append для отмены.")
+
+        last = batches[-1]
+        if not isinstance(last, dict):
+            raise ValueError("Нет циклов append для отмены.")
+        remove_ids = {
+            str(lid).strip()
+            for lid in list(last.get("line_ids") or [])
+            if str(lid).strip()
+        }
+        order_data = [
+            dict(line)
+            for line in list(payload.get("order_data") or [])
+            if isinstance(line, dict)
+            and str(line.get("line_id") or "").strip() not in remove_ids
+        ]
+        metadata["append_batches"] = batches[:-1]
+        self._persist_order_and_metadata(
+            draft_id,
+            payload=payload,
+            order_data=order_data,
+            metadata=metadata,
+        )
+        return self.get_draft_details(draft_id)
+
+    def delete_order_line(self, draft_id: str, line_id: str) -> dict[str, Any]:
+        """Remove one order line and scrub its id from append_batches.line_ids."""
+        target_id = (line_id or "").strip()
+        if not target_id:
+            raise ValueError("Не указан идентификатор строки.")
+
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata") or {})
+        order_data = [
+            dict(line)
+            for line in list(payload.get("order_data") or [])
+            if isinstance(line, dict)
+        ]
+        if not any(str(line.get("line_id") or "").strip() == target_id for line in order_data):
+            raise FileNotFoundError("Строка не найдена.")
+
+        next_order = [
+            line for line in order_data if str(line.get("line_id") or "").strip() != target_id
+        ]
+        next_batches: list[dict[str, Any]] = []
+        for batch in list(metadata.get("append_batches") or []):
+            if not isinstance(batch, dict):
+                continue
+            next_batch = dict(batch)
+            next_batch["line_ids"] = [
+                str(lid)
+                for lid in list(batch.get("line_ids") or [])
+                if str(lid).strip() and str(lid).strip() != target_id
+            ]
+            if next_batch["line_ids"]:
+                next_batches.append(next_batch)
+        metadata["append_batches"] = next_batches
+        self._persist_order_and_metadata(
+            draft_id,
+            payload=payload,
+            order_data=next_order,
+            metadata=metadata,
+        )
+        return self.get_draft_details(draft_id)
 
     def infer_wizard_current_step(self, payload: dict[str, Any]) -> WizardStepId:
         return self.step_service.infer_wizard_current_step(payload)
@@ -157,10 +486,11 @@ class CommercialWorkflowService:
             source_metadata=source_metadata,
             owner_user_id=owner_user_id,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="plates")
         draft_id = self.draft_store.save_preview(
             order=preview.parse_result.order,
             optimization_context=preview.optimization_context,
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=metadata,
         )
         payload_snap = self._load_draft_or_raise(draft_id)
@@ -219,10 +549,11 @@ class CommercialWorkflowService:
             source_metadata=source_metadata,
             owner_user_id=owner_user_id,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="piles")
         draft_id = self.draft_store.save_preview(
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.piles)
@@ -422,7 +753,8 @@ class CommercialWorkflowService:
         normalized_mode = mode.strip().lower()
         if normalized_mode not in {"append", "replace"}:
             raise ValueError("Некорректный режим обновления списка свай.")
-        if normalized_mode == "append" and current_text:
+        merged_cycle_text = bool(normalized_mode == "append" and current_text.strip())
+        if merged_cycle_text:
             next_text = self._merge_plate_texts(current_text, source_text["input_text"])
             batches = list(metadata.get("pile_batches") or [])
             batches.append(source_text["batch"])
@@ -442,11 +774,33 @@ class CommercialWorkflowService:
             pile_batches=batches,
             source_metadata=source_metadata,
         )
+        previous_order_data = list(payload.get("order_data") or [])
+        _, same_previous = self._partition_order_by_product_type(
+            previous_order_data,
+            product_type="piles",
+        )
+        stamp_previous = self._stamp_previous_for_product_update(
+            same_previous,
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
+        new_pile_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="piles",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_pile_lines,
+            product_type="piles",
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.piles)
@@ -556,12 +910,13 @@ class CommercialWorkflowService:
         if not grade:
             raise ValueError("Укажите класс бетона.")
 
-        order_data = list(payload.get("order_data") or [])
-        if not order_data:
+        previous_order_data = list(payload.get("order_data") or [])
+        cycle_items = self._current_cycle_lines(previous_order_data, product_type="piles")
+        if not cycle_items:
             raise ValueError("Список свай пустой.")
 
         lines: list[str] = []
-        for item in order_data:
+        for item in cycle_items:
             mark = str(item.get("mark") or item.get("name") or "").strip()
             qty = int(item.get("qty") or 0)
             if mark and qty > 0:
@@ -584,11 +939,28 @@ class CommercialWorkflowService:
             source_metadata={},
         )
         next_metadata["default_concrete_grade"] = grade
+        stamp_previous = self._stamp_previous_for_product_update(
+            cycle_items,
+            mode="append",
+            merged_cycle_text=True,
+        )
+        new_pile_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="piles",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_pile_lines,
+            product_type="piles",
+            mode="append",
+            merged_cycle_text=True,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.piles)
@@ -618,7 +990,8 @@ class CommercialWorkflowService:
         normalized_mode = mode.strip().lower()
         if normalized_mode not in {"append", "replace"}:
             raise ValueError("Некорректный режим обновления списка маршей.")
-        if normalized_mode == "append" and current_text:
+        merged_cycle_text = bool(normalized_mode == "append" and current_text.strip())
+        if merged_cycle_text:
             next_text = self._merge_plate_texts(current_text, source_text["input_text"])
             batches = list(metadata.get("march_batches") or [])
             batches.append(source_text["batch"])
@@ -638,11 +1011,33 @@ class CommercialWorkflowService:
             march_batches=batches,
             source_metadata=source_metadata,
         )
+        previous_order_data = list(payload.get("order_data") or [])
+        _, same_previous = self._partition_order_by_product_type(
+            previous_order_data,
+            product_type="marches",
+        )
+        stamp_previous = self._stamp_previous_for_product_update(
+            same_previous,
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
+        new_march_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="marches",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_march_lines,
+            product_type="marches",
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.marches)
@@ -752,12 +1147,13 @@ class CommercialWorkflowService:
         if not grade:
             raise ValueError("Укажите класс бетона.")
 
-        order_data = list(payload.get("order_data") or [])
-        if not order_data:
+        previous_order_data = list(payload.get("order_data") or [])
+        cycle_items = self._current_cycle_lines(previous_order_data, product_type="marches")
+        if not cycle_items:
             raise ValueError("Список маршей пустой.")
 
         lines: list[str] = []
-        for item in order_data:
+        for item in cycle_items:
             mark = str(item.get("mark") or item.get("name") or "").strip()
             qty = int(item.get("qty") or 0)
             if mark and qty > 0:
@@ -780,11 +1176,28 @@ class CommercialWorkflowService:
             source_metadata={},
         )
         next_metadata["default_concrete_grade"] = grade
+        stamp_previous = self._stamp_previous_for_product_update(
+            cycle_items,
+            mode="append",
+            merged_cycle_text=True,
+        )
+        new_march_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="marches",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_march_lines,
+            product_type="marches",
+            mode="append",
+            merged_cycle_text=True,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.marches)
@@ -814,7 +1227,8 @@ class CommercialWorkflowService:
         normalized_mode = mode.strip().lower()
         if normalized_mode not in {"append", "replace"}:
             raise ValueError("Некорректный режим обновления списка мостовых свай.")
-        if normalized_mode == "append" and current_text:
+        merged_cycle_text = bool(normalized_mode == "append" and current_text.strip())
+        if merged_cycle_text:
             next_text = self._merge_plate_texts(current_text, source_text["input_text"])
             batches = list(metadata.get("bridge_pile_batches") or [])
             batches.append(source_text["batch"])
@@ -834,11 +1248,33 @@ class CommercialWorkflowService:
             bridge_pile_batches=batches,
             source_metadata=source_metadata,
         )
+        previous_order_data = list(payload.get("order_data") or [])
+        _, same_previous = self._partition_order_by_product_type(
+            previous_order_data,
+            product_type="bridge_piles",
+        )
+        stamp_previous = self._stamp_previous_for_product_update(
+            same_previous,
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
+        new_bridge_pile_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="bridge_piles",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_bridge_pile_lines,
+            product_type="bridge_piles",
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.bridge_piles)
@@ -937,13 +1373,14 @@ class CommercialWorkflowService:
         if not grade:
             raise ValueError("Укажите класс бетона.")
 
-        order_data = list(payload.get("order_data") or [])
-        if not order_data:
+        previous_order_data = list(payload.get("order_data") or [])
+        cycle_items = self._current_cycle_lines(previous_order_data, product_type="bridge_piles")
+        if not cycle_items:
             raise ValueError("Список мостовых свай пустой.")
 
         lines: list[str] = []
         skipped: list[str] = []
-        for item in order_data:
+        for item in cycle_items:
             mark = str(item.get("mark") or item.get("name") or "").strip()
             qty = int(item.get("qty") or 0)
             if not mark or qty <= 0:
@@ -988,11 +1425,28 @@ class CommercialWorkflowService:
         else:
             next_metadata.pop("grade_bulk_skipped_marks", None)
 
+        stamp_previous = self._stamp_previous_for_product_update(
+            cycle_items,
+            mode="append",
+            merged_cycle_text=True,
+        )
+        new_bridge_pile_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="bridge_piles",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_bridge_pile_lines,
+            product_type="bridge_piles",
+            mode="append",
+            merged_cycle_text=True,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.bridge_piles)
@@ -1079,7 +1533,8 @@ class CommercialWorkflowService:
         normalized_mode = mode.strip().lower()
         if normalized_mode not in {"append", "replace"}:
             raise ValueError("Некорректный режим обновления списка ФБС.")
-        if normalized_mode == "append" and current_text:
+        merged_cycle_text = bool(normalized_mode == "append" and current_text.strip())
+        if merged_cycle_text:
             next_text = self._merge_plate_texts(current_text, source_text["input_text"])
             batches = list(metadata.get("fbs_batches") or [])
             batches.append(source_text["batch"])
@@ -1099,11 +1554,33 @@ class CommercialWorkflowService:
             fbs_batches=batches,
             source_metadata=source_metadata,
         )
+        previous_order_data = list(payload.get("order_data") or [])
+        _, same_previous = self._partition_order_by_product_type(
+            previous_order_data,
+            product_type="fbs",
+        )
+        stamp_previous = self._stamp_previous_for_product_update(
+            same_previous,
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
+        new_fbs_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="fbs",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_fbs_lines,
+            product_type="fbs",
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.fbs)
@@ -1202,13 +1679,14 @@ class CommercialWorkflowService:
         if not grade:
             raise ValueError("Укажите класс бетона.")
 
-        order_data = list(payload.get("order_data") or [])
-        if not order_data:
+        previous_order_data = list(payload.get("order_data") or [])
+        cycle_items = self._current_cycle_lines(previous_order_data, product_type="fbs")
+        if not cycle_items:
             raise ValueError("Список ФБС пустой.")
 
         lines: list[str] = []
         skipped: list[str] = []
-        for item in order_data:
+        for item in cycle_items:
             mark = str(item.get("mark") or item.get("name") or "").strip()
             qty = int(item.get("qty") or 0)
             if not mark or qty <= 0:
@@ -1253,11 +1731,28 @@ class CommercialWorkflowService:
         else:
             next_metadata.pop("grade_bulk_skipped_marks", None)
 
+        stamp_previous = self._stamp_previous_for_product_update(
+            cycle_items,
+            mode="append",
+            merged_cycle_text=True,
+        )
+        new_fbs_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="fbs",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_fbs_lines,
+            product_type="fbs",
+            mode="append",
+            merged_cycle_text=True,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.fbs)
@@ -1287,7 +1782,8 @@ class CommercialWorkflowService:
         normalized_mode = mode.strip().lower()
         if normalized_mode not in {"append", "replace"}:
             raise ValueError("Некорректный режим обновления списка ступеней.")
-        if normalized_mode == "append" and current_text:
+        merged_cycle_text = bool(normalized_mode == "append" and current_text.strip())
+        if merged_cycle_text:
             next_text = self._merge_plate_texts(current_text, source_text["input_text"])
             batches = list(metadata.get("step_batches") or [])
             batches.append(source_text["batch"])
@@ -1307,11 +1803,33 @@ class CommercialWorkflowService:
             step_batches=batches,
             source_metadata=source_metadata,
         )
+        previous_order_data = list(payload.get("order_data") or [])
+        _, same_previous = self._partition_order_by_product_type(
+            previous_order_data,
+            product_type="steps",
+        )
+        stamp_previous = self._stamp_previous_for_product_update(
+            same_previous,
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
+        new_step_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="steps",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_step_lines,
+            product_type="steps",
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.steps)
@@ -1466,7 +1984,8 @@ class CommercialWorkflowService:
         normalized_mode = mode.strip().lower()
         if normalized_mode not in {"append", "replace"}:
             raise ValueError("Некорректный режим обновления списка плит.")
-        if normalized_mode == "append" and current_text:
+        merged_cycle_text = bool(normalized_mode == "append" and current_text.strip())
+        if merged_cycle_text:
             next_text = self._merge_plate_texts(current_text, source_text["input_text"])
             batches = list(metadata.get("plate_batches") or [])
             batches.append(source_text["batch"])
@@ -1490,11 +2009,33 @@ class CommercialWorkflowService:
             wide_plates_resolved=not bool(preview.parse_result.wide_plate_lines),
             source_metadata=source_metadata,
         )
+        previous_order_data = list(payload.get("order_data") or [])
+        _, same_previous = self._partition_order_by_product_type(
+            previous_order_data,
+            product_type="plates",
+        )
+        stamp_previous = self._stamp_previous_for_product_update(
+            same_previous,
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
+        new_plate_lines = self._stamp_order_data(
+            preview.order_data,
+            product_type="plates",
+            previous_order_data=stamp_previous,
+        )
+        order_data = self._compose_order_data_for_product_update(
+            previous_order_data=previous_order_data,
+            new_type_lines=new_plate_lines,
+            product_type="plates",
+            mode=normalized_mode,
+            merged_cycle_text=merged_cycle_text,
+        )
         self.draft_store.replace_preview(
             draft_id,
             order=preview.parse_result.order,
             optimization_context=preview.optimization_context,
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         payload_snap = self._load_draft_or_raise(draft_id)
@@ -1774,11 +2315,47 @@ class CommercialWorkflowService:
     def calculate_draft(self, draft_id: str) -> dict[str, Any]:
         details = self.get_draft_details(draft_id)
         metadata = details["metadata"]
+        product_type = str(metadata.get("product_type", "plates") or "plates").lower()
+        order_data = list(details["order_data"] or [])
+        # Fill any missing identity (legacy drafts) without reminting existing ids.
+        if any(
+            not str((line or {}).get("line_id") or "").strip()
+            or not str((line or {}).get("product_type") or "").strip()
+            for line in order_data
+            if isinstance(line, dict)
+        ):
+            stamped = self._stamp_order_data(
+                order_data,
+                product_type=product_type,
+                previous_order_data=order_data,
+            )
+            payload = self._load_draft_or_raise(draft_id)
+            self.draft_store.replace_preview(
+                draft_id,
+                order=payload["order"],
+                optimization_context=payload["optimization_context"],
+                order_data=stamped,
+                metadata=dict(payload.get("metadata") or {}),
+            )
+            order_data = stamped
         self.calculation_service.enforce_calculate_prerequisites(
-            order_data=list(details["order_data"]),
+            order_data=order_data,
             metadata=dict(metadata),
         )
-        self.draft_store.update_metadata(draft_id, current_step=WizardStepId.result.value)
+        payload = self._load_draft_or_raise(draft_id)
+        meta = dict(payload.get("metadata") or {})
+        sealed_order, sealed_batches = self._seal_unbatched_lines(
+            list(payload.get("order_data") or order_data),
+            meta,
+        )
+        meta["append_batches"] = sealed_batches
+        meta["current_step"] = WizardStepId.result.value
+        self._persist_order_and_metadata(
+            draft_id,
+            payload=payload,
+            order_data=sealed_order,
+            metadata=meta,
+        )
         return self.get_draft_details(draft_id)
 
     def get_draft_breakdown(self, draft_id: str) -> dict[str, Any]:
@@ -1838,6 +2415,98 @@ class CommercialWorkflowService:
             "offer_identity": self.export_service.build_offer_identity_payload(draft_id),
         }
 
+    def hydrate_draft_from_saved_kp(
+        self,
+        kp_id: int,
+        *,
+        owner_user_id: int,
+    ) -> dict[str, Any]:
+        """Create a draft bound to an existing KP for append (status «в работе» only)."""
+        kp_raw = self.kp_repository.get_offer(kp_id)
+        if not kp_raw:
+            raise ValueError(f"КП №{kp_id} не найдено")
+
+        status = str(kp_raw.get("status") or "").strip()
+        if status != "в работе":
+            raise ValueError("Дополнить КП можно только в статусе «в работе».")
+
+        order_data = [
+            dict(line)
+            for line in order_data_from_kp_info(kp_raw)
+            if isinstance(line, dict)
+        ]
+        cycle_type = "plates"
+        for line in reversed(order_data):
+            pt = str(line.get("product_type") or "").strip().lower()
+            if pt in _APPEND_PRODUCT_TYPES:
+                cycle_type = pt
+                break
+
+        manager_name = str(kp_raw.get("manager_name") or "").strip()
+        manager_id, manager_phone, manager_email = self._resolve_manager_for_hydrate(
+            manager_name
+        )
+        delivery = str(kp_raw.get("delivery_conditions") or "").strip()
+        payment = str(kp_raw.get("payment_conditions") or "").strip()
+        conditions_mode = "custom" if (delivery or payment) else "standard"
+        execution_terms = str(kp_raw.get("execution_terms") or "")
+        saved_offer = {
+            "kp_id": int(kp_id),
+            "status": status,
+            "mode": "database",
+            "execution_terms": execution_terms,
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        metadata: dict[str, Any] = {
+            "product_type": cycle_type,
+            "owner_user_id": owner_user_id,
+            "client_name": str(kp_raw.get("customer_name") or "").strip(),
+            "manager_name": manager_name,
+            "manager_id": manager_id,
+            "manager_phone": manager_phone,
+            "manager_email": manager_email,
+            "discount_percent": float(kp_raw.get("discount_percent") or 0.0),
+            "logistics_cost": float(kp_raw.get("logistics_cost") or 0.0),
+            "delivery_conditions": delivery,
+            "payment_conditions": payment,
+            "conditions_mode": conditions_mode,
+            "execution_terms": execution_terms,
+            "wide_plates_resolved": True,
+            "wide_plate_lines": [],
+            "append_batches": [],
+            "resume_kp_id": int(kp_id),
+            "current_step": WizardStepId.result.value,
+            "saved_offer": saved_offer,
+        }
+        draft_id = self.draft_store.save_preview(
+            order=PlateOrder(),
+            optimization_context=OptimizationContext(order=PlateOrder()),
+            order_data=order_data,
+            metadata=metadata,
+        )
+        return self.get_draft_details(draft_id)
+
+    def _resolve_manager_for_hydrate(
+        self,
+        manager_name: str,
+    ) -> tuple[int | None, str, str]:
+        """Match managers.fio; keep a truthy manager_id when only the name is known."""
+        name = (manager_name or "").strip()
+        if not name:
+            return None, "", ""
+        needle = name.casefold()
+        for manager in self.manager_repository.list_managers():
+            fio = str(manager.get("fio") or "").strip()
+            if fio.casefold() != needle:
+                continue
+            return (
+                int(manager["id"]),
+                str(manager.get("contact_number") or ""),
+                str(manager.get("email") or ""),
+            )
+        # Name known from KP but not in managers table — still sticky for result step.
+        return 1, "", ""
+
     def generate_files(
         self,
         draft_id: str,
@@ -1870,20 +2539,64 @@ class CommercialWorkflowService:
             resolved = self.export_service.resolve_generated_file(xlsx_file["filename"])
             xlsx_path = str(resolved) if resolved.exists() else None
 
-        kp_id = self.kp_repository.save_offer(
-            creation_date=datetime.now().strftime("%d.%m.%Y"),
-            customer_name=str(metadata.get("client_name", "") or "Клиент"),
-            manager_name=str(metadata.get("manager_name", "") or ""),
-            discount_percent=float(metadata.get("discount_percent", 0.0) or 0.0),
-            logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
-            delivery_conditions=str(metadata.get("delivery_conditions", "") or ""),
-            payment_conditions=str(metadata.get("payment_conditions", "") or ""),
-            execution_terms=execution_terms,
-            status=status,
-            order_data=payload["order_data"],
-            xlsx_path=xlsx_path,
-            product_type=str(metadata.get("product_type", "plates") or "plates"),
-        )
+        raw_owner = metadata.get("owner_user_id")
+        owner_user_id = int(raw_owner) if raw_owner is not None else None
+        customer_name = str(metadata.get("client_name", "") or "Клиент")
+        manager_name = str(metadata.get("manager_name", "") or "")
+        discount_percent = float(metadata.get("discount_percent", 0.0) or 0.0)
+        logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
+        delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
+        payment_conditions = str(metadata.get("payment_conditions", "") or "")
+        product_type = str(metadata.get("product_type", "plates") or "plates")
+        order_data = payload["order_data"]
+
+        # MNA-304 / Q1=C: resume append updates the same kp_id when draft is bound.
+        existing_saved = payload.get("saved_offer") or metadata.get("saved_offer") or {}
+        existing_kp_id = existing_saved.get("kp_id")
+        if existing_kp_id is None:
+            resume_kp_id = metadata.get("resume_kp_id")
+            if resume_kp_id is not None:
+                existing_kp_id = resume_kp_id
+                existing_saved = {
+                    **existing_saved,
+                    "kp_id": resume_kp_id,
+                    "status": existing_saved.get("status") or "в работе",
+                }
+        if existing_kp_id is not None:
+            existing_status = str(existing_saved.get("status", "") or "").strip()
+            if existing_status != "в работе":
+                raise ValueError(
+                    "Дополнить КП можно только в статусе «в работе»."
+                )
+            kp_id = self.kp_repository.update_offer_from_order_data(
+                int(existing_kp_id),
+                order_data=order_data,
+                customer_name=customer_name,
+                manager_name=manager_name,
+                discount_percent=discount_percent,
+                logistics_cost=logistics_cost,
+                delivery_conditions=delivery_conditions,
+                payment_conditions=payment_conditions,
+                execution_terms=execution_terms,
+                xlsx_path=xlsx_path,
+                product_type=product_type,
+            )
+        else:
+            kp_id = self.kp_repository.save_offer(
+                creation_date=datetime.now().strftime("%d.%m.%Y"),
+                customer_name=customer_name,
+                manager_name=manager_name,
+                discount_percent=discount_percent,
+                logistics_cost=logistics_cost,
+                delivery_conditions=delivery_conditions,
+                payment_conditions=payment_conditions,
+                execution_terms=execution_terms,
+                status=status,
+                order_data=order_data,
+                xlsx_path=xlsx_path,
+                owner_user_id=owner_user_id,
+                product_type=product_type,
+            )
         saved_offer = {
             "kp_id": kp_id,
             "status": status,

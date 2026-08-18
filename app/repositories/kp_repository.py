@@ -51,6 +51,37 @@ class KpRepository:
             db_path=self.db_path,
         )
 
+    def update_offer_from_order_data(
+        self,
+        kp_id: int,
+        order_data: Sequence[dict] | None = None,
+        *,
+        customer_name: str | None = None,
+        manager_name: str | None = None,
+        discount_percent: float | None = None,
+        logistics_cost: float | None = None,
+        delivery_conditions: str | None = None,
+        payment_conditions: str | None = None,
+        execution_terms: str | None = None,
+        xlsx_path: str | None = None,
+        product_type: str = "plates",
+    ) -> int:
+        """Append/update existing KP by ``line_id`` (same ``kp_id``)."""
+        return offers_write.update_kp_from_order_data(
+            kp_id,
+            list(order_data or []),
+            xlsx_file_path=xlsx_path,
+            customer_name=customer_name,
+            manager_name=manager_name,
+            discount_percent=discount_percent,
+            logistics_cost=logistics_cost,
+            delivery_conditions=delivery_conditions,
+            payment_conditions=payment_conditions,
+            execution_terms=execution_terms,
+            product_type=product_type,
+            db_path=self.db_path,
+        )
+
     def list_offers_grouped(self, **list_filters) -> dict[str, list[dict]]:
         return self._offers.list_grouped(**list_filters)
 
@@ -108,12 +139,16 @@ class KpRepository:
 
     def list_kps_in_production(self) -> list[dict]:
         """Возвращает список КП со статусом 'в работе' с метриками выполнения."""
+        # Include mono plates and mixed-with-plates; exclude non-plate KPs
+        # (piles/FBS/etc.) via presence of kp_plates rows, not product_type alone.
         query = """
         SELECT o.kp_id, o.customer_name, o.creation_date, o.execution_terms
         FROM KP_offers o
         JOIN kp_meta m ON m.kp_id = o.kp_id
         WHERE m.status = 'в работе'
-          AND COALESCE(m.product_type, 'plates') = 'plates'
+          AND EXISTS (
+              SELECT 1 FROM kp_plates p WHERE p.kp_id = o.kp_id
+          )
         ORDER BY o.kp_id ASC
         """
         result: list[dict] = []

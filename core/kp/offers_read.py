@@ -8,12 +8,64 @@ from typing import Dict, List, Optional
 from core.kp.plates_resolve import resolve_plates_for_kp_documents
 from core.kp_db_common import DEFAULT_DB, _connect
 
+# (kp_data key, SQL table) for typed line tables.
+_KP_LINE_TABLES: tuple[tuple[str, str], ...] = (
+    ("plates", "kp_plates"),
+    ("piles", "kp_piles"),
+    ("steps", "kp_steps"),
+    ("marches", "kp_marches"),
+    ("bridge_piles", "kp_bridge_piles"),
+    ("fbs", "kp_fbs"),
+)
+
+
+def _stamp_product_type(rows: List[Dict], product_type: str) -> List[Dict]:
+    """Copy rows and set product_type (DB tables have no product_type column)."""
+    stamped: List[Dict] = []
+    for row in rows:
+        item = dict(row)
+        item["product_type"] = product_type
+        stamped.append(item)
+    return stamped
+
+
+def _fetch_typed_rows(cur: sqlite3.Cursor, table: str, kp_id: int) -> List[Dict]:
+    cur.execute(
+        f"""
+        SELECT * FROM {table}
+        WHERE kp_id = ?
+        ORDER BY position_number
+        """,
+        (kp_id,),
+    )
+    return [dict(r) for r in cur.fetchall()]
+
+
+def _load_plates_for_kp(
+    cur: sqlite3.Cursor,
+    *,
+    kp_id: int,
+    db_path: str,
+) -> List[Dict]:
+    raw_plates = _fetch_typed_rows(cur, "kp_plates", kp_id)
+    return resolve_plates_for_kp_documents(
+        raw_plates,
+        kp_id=kp_id,
+        db_path=db_path,
+    )
+
+
+def _empty_typed_arrays() -> Dict[str, List]:
+    return {key: [] for key, _ in _KP_LINE_TABLES}
+
 
 def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
     """
     Получает информацию о КП по порядковому номеру.
 
     Возвращает словарь с информацией о КП или None, если не найдено.
+    Для product_type=mixed загружает все kp_* таблицы и проставляет product_type
+    на каждой строке (сквозной порядок — по position_number).
     """
     conn = _connect(db_path)
     try:
@@ -42,101 +94,32 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
             kp_data["product_type"] = "plates"
 
         product_type = str(kp_data.get("product_type") or "plates").lower()
-        if product_type == "piles":
-            cur.execute(
-                """
-                SELECT * FROM kp_piles
-                WHERE kp_id = ?
-                ORDER BY position_number
-                """,
-                (kp_id,),
-            )
-            kp_data["piles"] = [dict(pile_row) for pile_row in cur.fetchall()]
-            kp_data["plates"] = []
-            kp_data["steps"] = []
-            kp_data["marches"] = []
-            kp_data["bridge_piles"] = []
-            kp_data["fbs"] = []
+        if product_type == "mixed":
+            kp_data.update(_empty_typed_arrays())
+            for key, table in _KP_LINE_TABLES:
+                if key == "plates":
+                    rows = _load_plates_for_kp(cur, kp_id=kp_id, db_path=db_path)
+                else:
+                    rows = _fetch_typed_rows(cur, table, kp_id)
+                kp_data[key] = _stamp_product_type(rows, key)
+        elif product_type == "piles":
+            kp_data.update(_empty_typed_arrays())
+            kp_data["piles"] = _fetch_typed_rows(cur, "kp_piles", kp_id)
         elif product_type == "bridge_piles":
-            cur.execute(
-                """
-                SELECT * FROM kp_bridge_piles
-                WHERE kp_id = ?
-                ORDER BY position_number
-                """,
-                (kp_id,),
-            )
-            kp_data["bridge_piles"] = [dict(row) for row in cur.fetchall()]
-            kp_data["plates"] = []
-            kp_data["piles"] = []
-            kp_data["steps"] = []
-            kp_data["marches"] = []
-            kp_data["fbs"] = []
+            kp_data.update(_empty_typed_arrays())
+            kp_data["bridge_piles"] = _fetch_typed_rows(cur, "kp_bridge_piles", kp_id)
         elif product_type == "fbs":
-            cur.execute(
-                """
-                SELECT * FROM kp_fbs
-                WHERE kp_id = ?
-                ORDER BY position_number
-                """,
-                (kp_id,),
-            )
-            kp_data["fbs"] = [dict(row) for row in cur.fetchall()]
-            kp_data["plates"] = []
-            kp_data["piles"] = []
-            kp_data["steps"] = []
-            kp_data["marches"] = []
-            kp_data["bridge_piles"] = []
+            kp_data.update(_empty_typed_arrays())
+            kp_data["fbs"] = _fetch_typed_rows(cur, "kp_fbs", kp_id)
         elif product_type == "marches":
-            cur.execute(
-                """
-                SELECT * FROM kp_marches
-                WHERE kp_id = ?
-                ORDER BY position_number
-                """,
-                (kp_id,),
-            )
-            kp_data["marches"] = [dict(march_row) for march_row in cur.fetchall()]
-            kp_data["plates"] = []
-            kp_data["piles"] = []
-            kp_data["steps"] = []
-            kp_data["bridge_piles"] = []
-            kp_data["fbs"] = []
+            kp_data.update(_empty_typed_arrays())
+            kp_data["marches"] = _fetch_typed_rows(cur, "kp_marches", kp_id)
         elif product_type == "steps":
-            cur.execute(
-                """
-                SELECT * FROM kp_steps
-                WHERE kp_id = ?
-                ORDER BY position_number
-                """,
-                (kp_id,),
-            )
-            kp_data["steps"] = [dict(step_row) for step_row in cur.fetchall()]
-            kp_data["plates"] = []
-            kp_data["piles"] = []
-            kp_data["marches"] = []
-            kp_data["bridge_piles"] = []
-            kp_data["fbs"] = []
+            kp_data.update(_empty_typed_arrays())
+            kp_data["steps"] = _fetch_typed_rows(cur, "kp_steps", kp_id)
         else:
-            cur.execute(
-                """
-                SELECT * FROM kp_plates
-                WHERE kp_id = ?
-                ORDER BY position_number
-                """,
-                (kp_id,),
-            )
-            raw_plates = [dict(plate_row) for plate_row in cur.fetchall()]
-            kp_data["plates"] = resolve_plates_for_kp_documents(
-                raw_plates,
-                kp_id=kp_id,
-                db_path=db_path,
-            )
-            kp_data["piles"] = []
-            kp_data["steps"] = []
-            kp_data["marches"] = []
-            kp_data["bridge_piles"] = []
-            kp_data["fbs"] = []
+            kp_data.update(_empty_typed_arrays())
+            kp_data["plates"] = _load_plates_for_kp(cur, kp_id=kp_id, db_path=db_path)
 
         cur.execute("SELECT * FROM kp_files WHERE kp_id = ?", (kp_id,))
         file_row = cur.fetchone()
@@ -262,14 +245,56 @@ def get_next_kp_number(db_path: str = DEFAULT_DB) -> int:
         conn.close()
 
 
+_PRODUCT_TYPE_LINE_TABLE: dict[str, str] = {key: table for key, table in _KP_LINE_TABLES}
+
+
 def _product_type_sql_filter(product_type: str | None) -> tuple[str, list]:
-    """Optional filter: plates | piles | steps (all/empty → no extra clause)."""
+    """Optional «contains type» filter (Q3/MNA-602).
+
+    Matches mono KP with that meta product_type **or** any KP that has rows in the
+    corresponding line table (so mixed-with-plates passes product_type=plates).
+    """
     if not product_type or product_type == "all":
         return "", []
     normalized = str(product_type).strip().lower()
-    if normalized not in ("plates", "piles", "steps", "marches", "bridge_piles", "fbs"):
+    table = _PRODUCT_TYPE_LINE_TABLE.get(normalized)
+    if not table:
         return "", []
-    return " AND COALESCE(m.product_type, 'plates') = ?", [normalized]
+    return (
+        " AND ("
+        "COALESCE(m.product_type, 'plates') = ? "
+        f"OR EXISTS (SELECT 1 FROM {table} t WHERE t.kp_id = ko.kp_id)"
+        ")",
+        [normalized],
+    )
+
+
+def _attach_product_types(cur: sqlite3.Cursor, rows: List[Dict]) -> None:
+    """Mutate list/search rows: set product_types for UI badges (mono or mixed)."""
+    if not rows:
+        return
+    mixed_ids = [
+        int(row["kp_id"])
+        for row in rows
+        if str(row.get("product_type") or "plates").lower() == "mixed"
+    ]
+    types_by_kp: dict[int, list[str]] = {kp_id: [] for kp_id in mixed_ids}
+    if mixed_ids:
+        placeholders = ",".join("?" * len(mixed_ids))
+        for key, table in _KP_LINE_TABLES:
+            cur.execute(
+                f"SELECT DISTINCT kp_id FROM {table} WHERE kp_id IN ({placeholders})",
+                mixed_ids,
+            )
+            for found in cur.fetchall():
+                types_by_kp[int(found["kp_id"])].append(key)
+
+    for row in rows:
+        meta = str(row.get("product_type") or "plates").lower()
+        if meta == "mixed":
+            row["product_types"] = list(types_by_kp.get(int(row["kp_id"]), []))
+        else:
+            row["product_types"] = [meta]
 
 
 def _offer_access_sql_filters(
@@ -344,6 +369,7 @@ def get_all_kp_list(
         )
 
         all_kp = [dict(row) for row in cur.fetchall()]
+        _attach_product_types(cur, all_kp)
 
         result: Dict[str, List[Dict]] = {
             "archived": [],
@@ -424,6 +450,7 @@ def search_kp_by_customer_name(
             (pattern, *access_params, *product_params, fetch_limit),
         )
         rows = [dict(row) for row in cur.fetchall()]
+        _attach_product_types(cur, rows)
 
         if len(rows) > limit:
             cur.execute(

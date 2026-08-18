@@ -69,6 +69,24 @@ class CommercialWizardStepService:
             return WizardStepId.piles
         return WizardStepId.plates
 
+    def should_skip_client_step(self, metadata: dict[str, Any]) -> bool:
+        """Skip client when header is sticky (cycle ≥2, resume, or client already known)."""
+        client_name = str(metadata.get("client_name") or "").strip()
+        if client_name:
+            return True
+        append_batches = metadata.get("append_batches") or []
+        if append_batches:
+            return True
+        resume_kp_id = metadata.get("resume_kp_id")
+        return resume_kp_id is not None
+
+    def wizard_step_order(self, metadata: dict[str, Any]) -> list[WizardStepId]:
+        """Product → [client] → result; omits client when ``should_skip_client_step``."""
+        product = self.product_step(metadata)
+        if self.should_skip_client_step(metadata):
+            return [product, WizardStepId.result]
+        return [product, WizardStepId.client, WizardStepId.result]
+
     def wizard_step_after_plate_snapshot(self, metadata: dict[str, Any], order_data: list[Any]) -> WizardStepId:
         return self.product_step(metadata)
 
@@ -156,6 +174,8 @@ class CommercialWizardStepService:
                 return []
             if self.calculation_service.unpriced_position_labels(order_data):
                 return []
+            if self.should_skip_client_step(metadata):
+                return [WizardStepId.result]
             return [WizardStepId.client]
 
         if effective_step == WizardStepId.client:

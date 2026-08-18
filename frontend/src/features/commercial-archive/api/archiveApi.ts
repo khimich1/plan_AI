@@ -9,6 +9,7 @@ import type {
   KpReadinessPositionsResponse,
   ProductionEstimate,
 } from "@/features/commercial-archive/types/archive";
+import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 
 const BASE = "/api/v1/commercial/archive";
 
@@ -76,4 +77,7 @@ export const archiveApi = {
   },
 
   buildCurrentPlanUrl: (): string => resolveApiUrl(`${BASE}/current-plan/gantt`),
+
+  resume: (kpId: number) =>
+    httpClient.post<CommercialDraftDetails>(`${BASE}/${kpId}/resume`),
 };

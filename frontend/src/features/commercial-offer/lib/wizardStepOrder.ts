@@ -10,6 +10,29 @@ export const FBS_WIZARD_STEP_ORDER: WizardStepId[] = ["fbs", "client", "result"]
 /** @deprecated use getWizardStepOrder(productType) */
 export const WIZARD_STEP_ORDER = PLATES_WIZARD_STEP_ORDER;
 
+export type SkipClientStepInput = {
+  clientName?: string | null;
+  appendBatches?: ReadonlyArray<unknown> | null;
+  resumeKpId?: number | null;
+};
+
+export type WizardStepOrderOptions = {
+  skipClient?: boolean;
+};
+
+/** Aligns with BE CommercialWizardStepService.should_skip_client_step. */
+export const shouldSkipClientStep = (input: SkipClientStepInput): boolean => {
+  const clientName = String(input.clientName ?? "").trim();
+  if (clientName) {
+    return true;
+  }
+  const appendBatches = input.appendBatches ?? [];
+  if (appendBatches.length > 0) {
+    return true;
+  }
+  return input.resumeKpId != null;
+};
+
 export const getProductInputStep = (productType: ProductType): WizardStepId => {
   if (productType === "piles") {
     return "piles";
@@ -29,7 +52,7 @@ export const getProductInputStep = (productType: ProductType): WizardStepId => {
   return "plates";
 };
 
-export const getWizardStepOrder = (productType: ProductType): WizardStepId[] => {
+const fullWizardStepOrder = (productType: ProductType): WizardStepId[] => {
   if (productType === "piles") {
     return PILES_WIZARD_STEP_ORDER;
   }
@@ -46,6 +69,17 @@ export const getWizardStepOrder = (productType: ProductType): WizardStepId[] => 
     return FBS_WIZARD_STEP_ORDER;
   }
   return PLATES_WIZARD_STEP_ORDER;
+};
+
+export const getWizardStepOrder = (
+  productType: ProductType,
+  options?: WizardStepOrderOptions,
+): WizardStepId[] => {
+  const order = fullWizardStepOrder(productType);
+  if (options?.skipClient) {
+    return order.filter((step) => step !== "client");
+  }
+  return order;
 };
 
 export const isSimpleKpProductType = (productType: ProductType): boolean =>

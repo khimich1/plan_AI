@@ -209,31 +209,21 @@ export const PileInputStep = ({
           )}
 
           {hasDraft && (
-            <>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => onRecognize("append")}
-                disabled={isRecognizing || isAiProcessing || !hasSourceInput}
-              >
-                {isRecognizing ? "Добавление..." : "Добавить к списку"}
-              </Button>
-              <button
-                type="button"
-                onClick={() => setShowAdditionalActions((open) => !open)}
-                disabled={isRecognizing || isAiProcessing}
-                style={{
-                  border: "none",
-                  background: "none",
-                  color: "#175cd3",
-                  cursor: "pointer",
-                  padding: "0.5rem 0",
-                  font: "inherit",
-                }}
-              >
-                {showAdditionalActions ? "▾ Дополнительно" : "▸ Дополнительно"}
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => setShowAdditionalActions((open) => !open)}
+              disabled={isRecognizing || isAiProcessing}
+              style={{
+                border: "none",
+                background: "none",
+                color: "#175cd3",
+                cursor: "pointer",
+                padding: "0.5rem 0",
+                font: "inherit",
+              }}
+            >
+              {showAdditionalActions ? "▾ Дополнительно" : "▸ Дополнительно"}
+            </button>
           )}
         </div>
 
@@ -309,15 +299,36 @@ export const PileInputStep = ({
                   {isConfirmingBatch ? "Сохранение..." : "Список верен"}
                 </Button>
               )}
-              <Button
-                type="button"
-                variant={isBatchReviewMode ? "secondary" : "primary"}
-                onClick={onFinishPiles}
-                disabled={!canFinishPiles}
-                title={pendingBatchReview ? "Сначала подтвердите текущий источник — «Список верен»" : undefined}
-              >
-                {isProceeding ? "Переход..." : "Готово, далее"}
-              </Button>
+              {isBatchReviewMode ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={onFinishPiles}
+                  disabled={!canFinishPiles}
+                  title={pendingBatchReview ? "Сначала подтвердите текущий источник — «Список верен»" : undefined}
+                >
+                  {isProceeding ? "Переход..." : "Готово, далее"}
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={onFinishPiles}
+                    disabled={!canFinishPiles}
+                  >
+                    {isProceeding ? "Переход..." : "Готово, далее"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => onRecognize("append")}
+                    disabled={isRecognizing || isAiProcessing || !hasSourceInput}
+                  >
+                    {isRecognizing ? "Добавление..." : "Добавить к списку"}
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         ) : undefined

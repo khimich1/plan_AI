@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.domain.enums import KpStatus
@@ -17,7 +16,6 @@ from app.schemas.delivery_schedule import (
     BatchItemIn,
     DeliverySchedulePut,
 )
-from app.security.offer_access import FORBIDDEN_OFFER_DETAIL
 from app.services.delivery_schedule_service import (
     DeliveryScheduleNotFoundError,
     DeliveryScheduleService,
@@ -196,27 +194,26 @@ def test_get_raises_not_found_when_kp_missing(tmp_path: Path) -> None:
         service.get(999, user=ADMIN)
 
 
-def test_get_foreign_manager_forbidden(tmp_path: Path) -> None:
+def test_get_foreign_manager_allowed(tmp_path: Path) -> None:
+    """Managers share the commercial archive, including another owner's schedule."""
     db_path = _fresh_db(tmp_path)
     plate_id = _seed_kp(db_path, kp_id=1, owner_user_id=MANAGER["id"])
     service = DeliveryScheduleService(db_path=db_path)
     service.replace(1, _payload(plate_id, qty=1), MANAGER)
 
-    with pytest.raises(HTTPException) as exc_info:
-        service.get(1, user=MANAGER_B)
-    assert exc_info.value.status_code == 403
-    assert exc_info.value.detail == FORBIDDEN_OFFER_DETAIL
+    view = service.get(1, user=MANAGER_B)
+    assert view.kp_id == 1
+    assert view.batches[0].items[0].plate_id == plate_id
 
 
-def test_import_draft_foreign_manager_forbidden(tmp_path: Path) -> None:
+def test_import_draft_foreign_manager_passes_acl(tmp_path: Path) -> None:
+    """Shared archive ACL: another manager is not 403'd before XLSX parse."""
     db_path = _fresh_db(tmp_path)
     _seed_kp(db_path, kp_id=1, owner_user_id=MANAGER["id"])
     service = DeliveryScheduleService(db_path=db_path)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(DeliveryScheduleValidationError, match="шаблон"):
         service.import_draft(1, b"PK\x03\x04", user=MANAGER_B)
-    assert exc_info.value.status_code == 403
-    assert exc_info.value.detail == FORBIDDEN_OFFER_DETAIL
 
 
 def test_replace_creates_schedule_and_is_idempotent_by_content(tmp_path: Path) -> None:

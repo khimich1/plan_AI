@@ -9,8 +9,10 @@ import {
   MARCHES_WIZARD_STEP_ORDER,
   PLATES_WIZARD_STEP_ORDER,
   PILES_WIZARD_STEP_ORDER,
+  shouldSkipClientStep,
   STEPS_WIZARD_STEP_ORDER,
 } from "@/features/commercial-offer/lib/wizardStepOrder";
+import type { ProductType, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
 
 describe("wizardStepOrder", () => {
   it("defines plate, pile, step, march, bridge pile, and fbs step orders", () => {
@@ -63,4 +65,53 @@ describe("wizardStepOrder", () => {
     expect(mapLegacyWizardStep("not-a-real-step")).toBe("plates");
     expect(mapLegacyWizardStep("")).toBe("plates");
   });
+});
+
+/** MNA-104 — skip client on cycle ≥2 / resume (aligned with BE CommercialWizardStepService). */
+describe("wizardStepOrder skip client (MNA-104)", () => {
+  it("does not skip client on mono first cycle", () => {
+    expect(
+      shouldSkipClientStep({
+        clientName: "",
+        appendBatches: [],
+        resumeKpId: null,
+      }),
+    ).toBe(false);
+    expect(shouldSkipClientStep({ clientName: "   ", appendBatches: [], resumeKpId: null })).toBe(false);
+    expect(getWizardStepOrder("plates")).toEqual(["plates", "client", "result"]);
+    expect(getWizardStepOrder("plates", { skipClient: false })).toEqual(["plates", "client", "result"]);
+  });
+
+  it("skips client when clientName is already set", () => {
+    expect(shouldSkipClientStep({ clientName: "ООО А" })).toBe(true);
+  });
+
+  it("skips client when appendBatches is non-empty", () => {
+    expect(
+      shouldSkipClientStep({
+        clientName: "",
+        appendBatches: [{ batch_id: "b1", product_type: "plates", line_ids: ["ln1"] }],
+      }),
+    ).toBe(true);
+  });
+
+  it("skips client when resumeKpId is set", () => {
+    expect(shouldSkipClientStep({ clientName: "", appendBatches: [], resumeKpId: 42 })).toBe(true);
+  });
+
+  it.each([
+    ["plates", ["plates", "result"]],
+    ["piles", ["piles", "result"]],
+    ["steps", ["steps", "result"]],
+    ["marches", ["marches", "result"]],
+    ["bridge_piles", ["bridge_piles", "result"]],
+    ["fbs", ["fbs", "result"]],
+  ] as const satisfies ReadonlyArray<readonly [ProductType, WizardStepId[]]>)(
+    "getWizardStepOrder(%s, { skipClient: true }) omits client",
+    (productType, expected) => {
+      const order = getWizardStepOrder(productType, { skipClient: true });
+      expect(order).toEqual(expected);
+      expect(order).not.toContain("client");
+    },
+  );
 });

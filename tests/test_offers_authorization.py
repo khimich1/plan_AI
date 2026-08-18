@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app.core.settings import get_settings
 from app.main import create_app
 from tests.helpers.auth_fixtures import patch_auth_users
+from tests.helpers.csrf import CsrfAwareTestClient
 from app.security.session import create_session_token
 from core.kp_persistence_service import KpPersistenceService
 from tests.helpers import kp_db_fixtures as fx
@@ -77,17 +77,19 @@ def _save_owned_offer(db_path: str, *, owner_user_id: int, customer_name: str) -
 
 
 @pytest.fixture()
-def auth_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, str]:
+def auth_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CsrfAwareTestClient, str]:
     db_path = fx.make_iso_db(tmp_path)
     monkeypatch.setenv("APP_SECRET_KEY", VALID_APP_SECRET_KEY)
     monkeypatch.setenv("PLITA_DB_PATH", db_path)
     get_settings.cache_clear()
     patch_auth_users(monkeypatch, USERS)
-    client = TestClient(create_app())
+    client = CsrfAwareTestClient(create_app())
     return client, db_path
 
 
-def test_manager_list_excludes_other_managers_offers(auth_client: tuple[TestClient, str]) -> None:
+def test_manager_list_includes_all_managers_offers(
+    auth_client: tuple[CsrfAwareTestClient, str],
+) -> None:
     client, db_path = auth_client
     _save_owned_offer(db_path, owner_user_id=2, customer_name="Клиент A")
     _save_owned_offer(db_path, owner_user_id=3, customer_name="Клиент B")
@@ -99,11 +101,12 @@ def test_manager_list_excludes_other_managers_offers(auth_client: tuple[TestClie
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["count"] == 1
-    assert payload["items"][0]["customer_name"] == "Клиент A"
+    assert payload["count"] == 2
+    names = {item["customer_name"] for item in payload["items"]}
+    assert names == {"Клиент A", "Клиент B"}
 
 
-def test_manager_cannot_get_foreign_offer(auth_client: tuple[TestClient, str]) -> None:
+def test_manager_can_get_foreign_offer(auth_client: tuple[CsrfAwareTestClient, str]) -> None:
     client, db_path = auth_client
     foreign_kp_id = _save_owned_offer(db_path, owner_user_id=3, customer_name="Чужой")
 
@@ -112,10 +115,13 @@ def test_manager_cannot_get_foreign_offer(auth_client: tuple[TestClient, str]) -
         cookies=_session_cookie(2, "manager", "manager_a"),
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["customer_name"] == "Чужой"
 
 
-def test_manager_cannot_patch_foreign_offer_discount(auth_client: tuple[TestClient, str]) -> None:
+def test_manager_can_patch_foreign_offer_discount(
+    auth_client: tuple[CsrfAwareTestClient, str],
+) -> None:
     client, db_path = auth_client
     foreign_kp_id = _save_owned_offer(db_path, owner_user_id=3, customer_name="Чужой")
 
@@ -125,10 +131,10 @@ def test_manager_cannot_patch_foreign_offer_discount(auth_client: tuple[TestClie
         cookies=_session_cookie(2, "manager", "manager_a"),
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
-def test_manager_cannot_delete_foreign_offer(auth_client: tuple[TestClient, str]) -> None:
+def test_manager_can_delete_foreign_offer(auth_client: tuple[CsrfAwareTestClient, str]) -> None:
     client, db_path = auth_client
     foreign_kp_id = _save_owned_offer(db_path, owner_user_id=3, customer_name="Чужой")
 
@@ -137,10 +143,10 @@ def test_manager_cannot_delete_foreign_offer(auth_client: tuple[TestClient, str]
         cookies=_session_cookie(2, "manager", "manager_a"),
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
-def test_admin_sees_all_offers(auth_client: tuple[TestClient, str]) -> None:
+def test_admin_sees_all_offers(auth_client: tuple[CsrfAwareTestClient, str]) -> None:
     client, db_path = auth_client
     _save_owned_offer(db_path, owner_user_id=2, customer_name="Клиент A")
     _save_owned_offer(db_path, owner_user_id=3, customer_name="Клиент B")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -223,3 +224,281 @@ def test_archive_download_pdf_http_for_pile_kp(
     assert response.status_code == 200, response.text
     assert response.headers["content-type"] == "application/pdf"
     assert len(response.content) > 100
+
+
+# --- MNA-402: archive regen agrees with export (mixed layout + append_batches) ---
+
+
+MIXED_ORDER = [
+    {
+        "line_id": "ln_plate",
+        "product_type": "plates",
+        "name": "ПБ 60-12-8п",
+        "mark": "ПБ 60-12-8п",
+        "length_m": 6.0,
+        "width_m": 1.2,
+        "load_class": 800,
+        "qty": 10,
+        "unit_price": 100.0,
+        "weight": 2000.0,
+        # Explicit grade so resolve_concrete_grade short-circuits (no pb.db).
+        "concrete_grade": "М500",
+    },
+    {
+        "line_id": "ln_pile",
+        "product_type": "piles",
+        "product_kind": "pile",
+        "name": "С120.35-12",
+        "mark": "С120.35-12",
+        "concrete_grade": "B25",
+        "qty": 3,
+        "unit_price": 44634.03,
+    },
+]
+
+
+def _save_mixed_kp(db_path: str, *, logistics_cost: float = 0.0) -> int:
+    return KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        MIXED_ORDER,
+        customer_name="Mixed client",
+        status="в архиве",
+        logistics_cost=logistics_cost,
+        db_path=db_path,
+    )
+
+
+def _xlsx_headers_and_names(path: Path) -> tuple[list[str], list[str]]:
+    import pandas as pd
+
+    df = pd.read_excel(path, sheet_name="КП", header=None)
+    header_idx = None
+    headers: list[str] = []
+    for i, row in df.iterrows():
+        vals = [str(v).strip() for v in row.tolist() if pd.notna(v)]
+        if vals and vals[0] == "№":
+            header_idx = int(i)
+            raw = [v if pd.notna(v) else "" for v in row.tolist()]
+            while raw and raw[-1] == "":
+                raw.pop()
+            headers = [str(c).strip() if c != "" else "" for c in raw]
+            break
+    assert header_idx is not None, f"№ header not found in {path}"
+    name_col = headers.index("Наименование")
+    names: list[str] = []
+    for _, row in df.iloc[header_idx + 1 :].iterrows():
+        cells = list(row.tolist())
+        if all(pd.isna(v) or str(v).strip() == "" for v in cells):
+            continue
+        if name_col >= len(cells) or pd.isna(cells[name_col]):
+            names.append("")
+        else:
+            names.append(str(cells[name_col]).strip())
+    return headers, names
+
+
+def test_archive_generate_xlsx_mixed_uses_unified_layout(
+    archive_client: tuple[TestClient, str],
+    tmp_path: Path,
+) -> None:
+    """MNA-402: archive regen of mixed KP uses unified columns (Тип)."""
+    _client, db_path = archive_client
+    kp_id = _save_mixed_kp(db_path)
+
+    from app.repositories.kp_archive_repository import KpArchiveRepository
+
+    out = tmp_path / "outputs"
+    out.mkdir()
+    service = ArchiveService(
+        repository=KpArchiveRepository(db_path=db_path),
+        outputs_dir=out,
+    )
+    path = asyncio.run(
+        service.generate_document(kp_id, "xlsx", user={"id": 1, "role": "admin"})
+    )
+    headers, _names = _xlsx_headers_and_names(path)
+    assert headers == ["№", "Тип", "Наименование", "Кол-во", "Цена", "Сумма"]
+
+
+def test_archive_generate_xlsx_mixed_pb_only_delivery(
+    archive_client: tuple[TestClient, str],
+    tmp_path: Path,
+) -> None:
+    """MNA-402: archive regen delivery row only when PB logistics > 0."""
+    _client, db_path = archive_client
+    kp_id = _save_mixed_kp(db_path, logistics_cost=5000.0)
+
+    from app.repositories.kp_archive_repository import KpArchiveRepository
+
+    out = tmp_path / "outputs"
+    out.mkdir()
+    service = ArchiveService(
+        repository=KpArchiveRepository(db_path=db_path),
+        outputs_dir=out,
+    )
+    path = asyncio.run(
+        service.generate_document(kp_id, "xlsx", user={"id": 1, "role": "admin"})
+    )
+    headers, names = _xlsx_headers_and_names(path)
+    assert headers[1] == "Тип"
+    assert any("доставк" in n.lower() for n in names), names
+
+
+def test_archive_generate_pdf_passes_append_batches_for_same_type_multi(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MNA-402: archive regen must pass append_batches so same-type multi is unified.
+
+    Order lines omit append_batch_id (as after DB round-trip); batches live on KP raw
+    (or equivalent) and must be forwarded into generate_commercial_offer_pdf.
+    """
+    batches = [
+        {"batch_id": "batch-a", "product_type": "plates", "line_ids": ["p1"]},
+        {"batch_id": "batch-b", "product_type": "plates", "line_ids": ["p2"]},
+    ]
+    order_data = [
+        {
+            "line_id": "p1",
+            "product_type": "plates",
+            "name": "ПБ-A",
+            "mark": "ПБ-A",
+            "length_m": 6.0,
+            "width_m": 1.2,
+            "qty": 1,
+            "unit_price": 1000.0,
+            "weight": 500.0,
+            "load_class": 800,
+        },
+        {
+            "line_id": "p2",
+            "product_type": "plates",
+            "name": "ПБ-B",
+            "mark": "ПБ-B",
+            "length_m": 4.8,
+            "width_m": 1.2,
+            "qty": 1,
+            "unit_price": 900.0,
+            "weight": 400.0,
+            "load_class": 800,
+        },
+    ]
+
+    repository = MagicMock()
+    repository.get_by_id.return_value = {
+        "kp_id": 402,
+        "creation_date": "12.08.2026",
+        "customer_name": "Same-type multi",
+        "manager_name": "Иван",
+        "discount_percent": 0.0,
+        "logistics_cost": 1000.0,
+        "delivery_conditions": None,
+        "payment_conditions": None,
+        "owner_user_id": 1,
+        "product_type": "plates",
+        "plates": order_data,
+        "append_batches": batches,
+    }
+    monkeypatch.setattr(
+        "app.services.archive_service.order_data_from_kp_info",
+        lambda _raw: order_data,
+    )
+
+    class FakeBuffer:
+        def getvalue(self) -> bytes:
+            return b"%PDF-FAKE"
+
+    fake_pdf = MagicMock(return_value=FakeBuffer())
+    monkeypatch.setattr(
+        "app.services.archive_service.generate_commercial_offer_pdf",
+        fake_pdf,
+    )
+
+    service = ArchiveService(repository=repository, outputs_dir=tmp_path)
+    path = asyncio.run(
+        service.generate_document(402, "pdf", user={"id": 1, "role": "admin"})
+    )
+    assert path.exists()
+    fake_pdf.assert_called_once()
+    call_kwargs = fake_pdf.call_args.kwargs
+    assert "append_batches" in call_kwargs, (
+        "ArchiveService.generate_document must pass append_batches into PDF generator"
+    )
+    assert call_kwargs["append_batches"] == batches
+
+
+def test_archive_generate_xlsx_passes_append_batches_for_same_type_multi(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MNA-402: archive xlsx regen forwards append_batches for same-type multi."""
+    batches = [
+        {"batch_id": "batch-a", "product_type": "plates", "line_ids": ["p1"]},
+        {"batch_id": "batch-b", "product_type": "plates", "line_ids": ["p2"]},
+    ]
+    order_data = [
+        {
+            "line_id": "p1",
+            "product_type": "plates",
+            "name": "ПБ-A",
+            "length_m": 6.0,
+            "width_m": 1.2,
+            "qty": 1,
+            "unit_price": 1000.0,
+            "weight": 500.0,
+            "load_class": 800,
+        },
+        {
+            "line_id": "p2",
+            "product_type": "plates",
+            "name": "ПБ-B",
+            "length_m": 4.8,
+            "width_m": 1.2,
+            "qty": 1,
+            "unit_price": 900.0,
+            "weight": 400.0,
+            "load_class": 800,
+        },
+    ]
+
+    repository = MagicMock()
+    repository.get_by_id.return_value = {
+        "kp_id": 403,
+        "creation_date": "12.08.2026",
+        "customer_name": "Same-type multi",
+        "manager_name": "Иван",
+        "discount_percent": 0.0,
+        "logistics_cost": 0.0,
+        "delivery_conditions": None,
+        "payment_conditions": None,
+        "owner_user_id": 1,
+        "product_type": "plates",
+        "plates": order_data,
+        "append_batches": batches,
+    }
+    monkeypatch.setattr(
+        "app.services.archive_service.order_data_from_kp_info",
+        lambda _raw: order_data,
+    )
+
+    class FakeBuffer:
+        def getvalue(self) -> bytes:
+            return b"PK\x03\x04fake-xlsx"
+
+    fake_xlsx = MagicMock(return_value=FakeBuffer())
+    monkeypatch.setattr(
+        "app.services.archive_service.generate_commercial_offer_xlsx",
+        fake_xlsx,
+    )
+
+    service = ArchiveService(repository=repository, outputs_dir=tmp_path)
+    path = asyncio.run(
+        service.generate_document(403, "xlsx", user={"id": 1, "role": "admin"})
+    )
+    assert path.exists()
+    fake_xlsx.assert_called_once()
+    call_kwargs = fake_xlsx.call_args.kwargs
+    assert "append_batches" in call_kwargs, (
+        "ArchiveService.generate_document must pass append_batches into XLSX generator"
+    )
+    assert call_kwargs["append_batches"] == batches

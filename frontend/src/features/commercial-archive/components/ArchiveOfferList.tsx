@@ -51,6 +51,19 @@ const productTypeBadgeStyle = (productType: ProductType | undefined): { backgrou
   return { background: "#eef4ff", color: "#1d4ed8" };
 };
 
+const resolveBadgeTypes = (item: ArchiveOfferListItem): ProductType[] => {
+  const fromList = (item.product_types ?? []).filter(
+    (type): type is ProductType => Boolean(type) && type !== "mixed",
+  );
+  if (fromList.length > 0) {
+    return fromList;
+  }
+  if (item.product_type && item.product_type !== "mixed") {
+    return [item.product_type];
+  }
+  return ["plates"];
+};
+
 const rowStyle: React.CSSProperties = {
   display: "grid",
   gap: "0.5rem",
@@ -132,17 +145,20 @@ export const ArchiveOfferList = ({
             <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 700 }}>КП №{item.kp_id}</span>
-                <span
-                  style={{
-                    fontSize: "0.75rem",
-                    fontWeight: 600,
-                    padding: "0.15rem 0.5rem",
-                    borderRadius: 999,
-                    ...productTypeBadgeStyle(item.product_type),
-                  }}
-                >
-                  {productTypeBadge(item.product_type)}
-                </span>
+                {resolveBadgeTypes(item).map((type) => (
+                  <span
+                    key={type}
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: 999,
+                      ...productTypeBadgeStyle(type),
+                    }}
+                  >
+                    {productTypeBadge(type)}
+                  </span>
+                ))}
                 {item.has_delivery_schedule === true && (
                   <span
                     style={{

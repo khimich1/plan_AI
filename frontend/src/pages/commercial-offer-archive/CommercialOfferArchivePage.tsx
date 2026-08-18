@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Card } from "@/shared/ui/Card";
 import { Alert } from "@/shared/ui/Alert";
@@ -24,16 +24,33 @@ import { getErrorMessage } from "@/shared/lib/apiError";
 
 const VALID_SECTIONS: readonly ArchiveSection[] = ["archived", "in_production", "completed"];
 
-const resolveProductType = (item: ArchiveOfferListItem): ProductType => item.product_type ?? "plates";
+/** Concrete types for contains-type filter (never the literal "mixed" token). */
+export const concreteProductTypes = (item: ArchiveOfferListItem): ProductType[] => {
+  const fromList = (item.product_types ?? []).filter(
+    (type): type is ProductType => Boolean(type) && type !== "mixed",
+  );
+  if (fromList.length > 0) {
+    return fromList;
+  }
+  if (item.product_type && item.product_type !== "mixed") {
+    return [item.product_type];
+  }
+  // Legacy mono without product_type defaults to plates; bare "mixed" has no concrete types.
+  if (!item.product_type) {
+    return ["plates"];
+  }
+  return [];
+};
 
-const filterByProductType = (
+/** Contains-type match for client-side search results (list trusts API filter). */
+export const filterByProductType = (
   items: ArchiveOfferListItem[],
   productTypeFilter: ArchiveProductTypeFilter,
 ): ArchiveOfferListItem[] => {
   if (productTypeFilter === "all") {
     return items;
   }
-  return items.filter((item) => resolveProductType(item) === productTypeFilter);
+  return items.filter((item) => concreteProductTypes(item).includes(productTypeFilter));
 };
 
 const parseSection = (value: string | null): ArchiveSection => {
@@ -90,10 +107,8 @@ export const CommercialOfferArchivePage = () => {
     setSearchState(null);
   };
 
-  const filteredItems = useMemo(
-    () => filterByProductType(listQuery.data ?? [], productTypeFilter),
-    [listQuery.data, productTypeFilter],
-  );
+  // Section list is already filtered server-side (contains-type); do not re-filter client-side.
+  const listItems = listQuery.data ?? [];
 
   return (
     <main style={{ maxWidth: 1280, margin: "0 auto", padding: "2rem 1rem 4rem" }}>
@@ -171,7 +186,7 @@ export const CommercialOfferArchivePage = () => {
           {!listQuery.isPending && !listQuery.isError && (
             <ArchiveOfferList
               section={section}
-              items={filteredItems}
+              items={listItems}
               onSelect={(kpId) => setSelectedKpId(kpId)}
             />
           )}

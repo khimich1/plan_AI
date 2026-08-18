@@ -148,14 +148,54 @@ def order_data_from_kp_plates(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+_MIXED_ORDER_BUILDERS: tuple[tuple[str, Any], ...] = (
+    ("plates", order_data_from_kp_plates),
+    ("piles", order_data_from_kp_piles),
+    ("steps", order_data_from_kp_steps),
+    ("marches", order_data_from_kp_marches),
+    ("bridge_piles", order_data_from_kp_bridge_piles),
+    ("fbs", order_data_from_kp_fbs),
+)
+
+
+def _order_data_from_kp_mixed(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
+    """Merge typed kp_* arrays into chronological order_data by position_number."""
+    tagged: list[tuple[int, dict[str, Any]]] = []
+    for key, builder in _MIXED_ORDER_BUILDERS:
+        source_rows = list(kp_info.get(key) or [])
+        if not source_rows:
+            continue
+        # Builder reads only its own key; pass full kp_info for discount_percent.
+        converted = builder(kp_info)
+        for src, line in zip(source_rows, converted):
+            item = dict(line)
+            item["product_type"] = str(src.get("product_type") or key)
+            line_id = src.get("line_id")
+            if line_id is not None and str(line_id).strip():
+                item["line_id"] = line_id
+            pos = int(src.get("position_number") or 0)
+            tagged.append((pos, item))
+    tagged.sort(key=lambda pair: pair[0])
+    return [item for _, item in tagged]
+
+
 def order_data_from_kp_info(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Собирает order_data для генераторов КП из kp_info.
 
     unit_price берётся из колонки или восстанавливается из discounted_price и скидки.
     Каноническая реализация для archive_service и повторного использования в боте.
+    Для mixed — сквозной порядок по position_number со штампом product_type.
+    Mono (одна typed-таблица) тоже идёт через mixed-builder, чтобы restore
+    ``line_id`` + ``product_type`` для resume/append (MNA-601 / SC-6).
     """
     product_type = str(kp_info.get("product_type") or "plates").lower()
+    if product_type == "mixed" or any(
+        kp_info.get(key) for key, _ in _MIXED_ORDER_BUILDERS
+    ):
+        mixed = _order_data_from_kp_mixed(kp_info)
+        if mixed:
+            return mixed
     if product_type == "piles" or kp_info.get("piles"):
         return order_data_from_kp_piles(kp_info)
     if product_type == "bridge_piles" or kp_info.get("bridge_piles"):

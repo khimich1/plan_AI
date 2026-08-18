@@ -42,14 +42,37 @@ class CommercialCalculationService:
     def is_fbs_draft(metadata: dict[str, Any]) -> bool:
         return str(metadata.get("product_type", "plates") or "plates").lower() == "fbs"
 
-    def _wide_plate_errors(self, metadata: dict[str, Any]) -> list[str]:
-        if (
+    @staticmethod
+    def order_has_plates(order_data: list[Any]) -> bool:
+        """True if any line is plates; missing product_type counts as plates (legacy)."""
+        for item in order_data or []:
+            if not isinstance(item, dict):
+                continue
+            line_type = str(item.get("product_type") or "plates").strip().lower()
+            if line_type == "plates":
+                return True
+        return False
+
+    def _non_plate_cycle(self, metadata: dict[str, Any]) -> bool:
+        return (
             self.is_pile_draft(metadata)
             or self.is_step_draft(metadata)
             or self.is_march_draft(metadata)
             or self.is_bridge_pile_draft(metadata)
             or self.is_fbs_draft(metadata)
-        ):
+        )
+
+    def _wide_plate_errors(
+        self,
+        metadata: dict[str, Any],
+        *,
+        order_data: list[Any] | None = None,
+    ) -> list[str]:
+        # Prefer actual plate lines over metadata cycle type (mixed drafts).
+        if order_data is not None:
+            if not self.order_has_plates(order_data):
+                return []
+        elif self._non_plate_cycle(metadata):
             return []
         lines = metadata.get("wide_plate_lines") or []
         if lines and not metadata.get("wide_plates_resolved"):
@@ -89,12 +112,17 @@ class CommercialCalculationService:
                 errors.append(ERR_EMPTY_PILES)
             else:
                 errors.append(ERR_EMPTY_PLATES)
-        errors.extend(self._wide_plate_errors(metadata))
+        errors.extend(self._wide_plate_errors(metadata, order_data=order_data))
         errors.extend(self._metadata_errors(metadata))
         return errors
 
-    def wide_lines_blocking(self, metadata: dict[str, Any]) -> bool:
-        return bool(self._wide_plate_errors(metadata))
+    def wide_lines_blocking(
+        self,
+        metadata: dict[str, Any],
+        *,
+        order_data: list[Any] | None = None,
+    ) -> bool:
+        return bool(self._wide_plate_errors(metadata, order_data=order_data))
 
     def meta_ready_for_calculate(self, metadata: dict[str, Any]) -> bool:
         return not self._metadata_errors(metadata)

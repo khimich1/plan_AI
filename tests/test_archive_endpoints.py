@@ -149,6 +149,41 @@ def test_list_returns_items(
     )
 
 
+def test_list_returns_product_types_for_mixed_badges(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    """MNA-602 / Q3: archive list JSON includes product_types for multi badges."""
+    assert "product_types" in ArchiveOfferListItem.model_fields, (
+        "ArchiveOfferListItem.product_types missing (MNA-602)"
+    )
+    fake_service.list_offers.return_value = [
+        ArchiveOfferListItem(
+            kp_id=42,
+            creation_date="01.03.2026",
+            customer_name="ООО Тест",
+            manager_name="Иван",
+            discount_percent=5.0,
+            subtotal=1000,
+            vat_amount=220,
+            total_amount=1220,
+            status="в архиве",
+            product_type="plates",
+            product_types=["plates", "piles"],
+        )
+    ]
+
+    response = client.get(
+        "/api/v1/commercial/archive?section=archived",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["product_types"] == ["plates", "piles"]
+
+
 def test_get_details_404(
     client: TestClient,
     auth_cookie: dict[str, str],
@@ -682,3 +717,292 @@ def test_readiness_positions_404(
     )
 
     assert response.status_code == 404
+
+
+# --- MNA-402: HTTP archive download/regen for mixed KP (real service) ---------
+
+
+_MIXED_ORDER_HTTP = [
+    {
+        "line_id": "ln_plate",
+        "product_type": "plates",
+        "name": "ПБ 60-12-8п",
+        "mark": "ПБ 60-12-8п",
+        "length_m": 6.0,
+        "width_m": 1.2,
+        "load_class": 800,
+        "qty": 10,
+        "unit_price": 100.0,
+        "weight": 2000.0,
+        # Explicit grade so resolve_concrete_grade short-circuits (no pb.db).
+        "concrete_grade": "М500",
+    },
+    {
+        "line_id": "ln_pile",
+        "product_type": "piles",
+        "product_kind": "pile",
+        "name": "С120.35-12",
+        "mark": "С120.35-12",
+        "concrete_grade": "B25",
+        "qty": 3,
+        "unit_price": 44634.03,
+    },
+]
+
+
+@pytest.fixture()
+def mixed_archive_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[TestClient, str, Path]:
+    """Real app + iso DB for mixed archive file download/regen."""
+    from tests.helpers import kp_db_fixtures as fx
+    from tests.helpers.auth_fixtures import patch_auth_users
+
+    db_path = fx.make_iso_db(tmp_path)
+    outputs_dir = tmp_path / "archive_outputs"
+    outputs_dir.mkdir()
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
+    monkeypatch.setenv("PLITA_DB_PATH", db_path)
+    monkeypatch.setenv("OUTPUTS_DIR", str(outputs_dir))
+    get_settings.cache_clear()
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": 1,
+                "username": "tester",
+                "role": "admin",
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+                "session_version": 0,
+            }
+        ],
+    )
+    return CsrfAwareTestClient(create_app()), db_path, outputs_dir
+
+
+def _admin_cookie_mna402() -> dict[str, str]:
+    return {
+        "app_session": create_session_token(
+            {"id": 1, "username": "tester", "role": "admin"},
+            ttl_seconds=300,
+        )
+    }
+
+
+def test_download_mixed_xlsx_regenerates_unified_layout(
+    mixed_archive_client: tuple[TestClient, str, Path],
+) -> None:
+    """MNA-402: GET archive .../files/xlsx for mixed KP returns unified workbook."""
+    import io
+
+    import pandas as pd
+    from core.kp_persistence_service import KpPersistenceService
+
+    client, db_path, _outputs = mixed_archive_client
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        _MIXED_ORDER_HTTP,
+        customer_name="Mixed HTTP",
+        status="в архиве",
+        logistics_cost=5000.0,
+        db_path=db_path,
+    )
+
+    response = client.get(
+        f"/api/v1/commercial/archive/{kp_id}/files/xlsx",
+        cookies=_admin_cookie_mna402(),
+    )
+    assert response.status_code == 200, response.text
+    assert (
+        response.headers.get("content-type", "")
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    df = pd.read_excel(io.BytesIO(response.content), sheet_name="КП", header=None)
+    headers: list[str] = []
+    for _, row in df.iterrows():
+        vals = [str(v).strip() for v in row.tolist() if pd.notna(v)]
+        if vals and vals[0] == "№":
+            raw = [v if pd.notna(v) else "" for v in row.tolist()]
+            while raw and raw[-1] == "":
+                raw.pop()
+            headers = [str(c).strip() if c != "" else "" for c in raw]
+            break
+    assert headers == ["№", "Тип", "Наименование", "Кол-во", "Цена", "Сумма"], headers
+    # PB-only delivery present when logistics_cost > 0 and plates have weight
+    name_col = headers.index("Наименование")
+    names = [
+        str(row.tolist()[name_col]).strip()
+        for _, row in df.iterrows()
+        if name_col < len(row.tolist()) and pd.notna(row.tolist()[name_col])
+    ]
+    assert any("доставк" in n.lower() for n in names), names
+
+
+def test_download_mixed_pdf_regenerates_successfully(
+    mixed_archive_client: tuple[TestClient, str, Path],
+) -> None:
+    """MNA-402: GET archive .../files/pdf for mixed KP regenerates a PDF."""
+    from core.kp_persistence_service import KpPersistenceService
+
+    client, db_path, _outputs = mixed_archive_client
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        _MIXED_ORDER_HTTP,
+        customer_name="Mixed PDF",
+        status="в архиве",
+        db_path=db_path,
+    )
+
+    response = client.get(
+        f"/api/v1/commercial/archive/{kp_id}/files/pdf",
+        cookies=_admin_cookie_mna402(),
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content[:4] == b"%PDF"
+    assert len(response.content) > 100
+
+
+# --- MNA-601: hydrate / resume draft from archive KP (status «в работе» only) ---
+#
+# Assumed HTTP contract:
+#   POST /api/v1/commercial/archive/{kp_id}/resume
+#     → 200 CommercialDraftDetailsResponse
+#        order_data + header from KP; saved_offer.kp_id == kp_id; resume_kp_id set
+#     → 401 without session
+#     → 404 if KP missing
+#     → 409 or 400 if status ≠ «в работе»
+#   Service method (ArchiveService): resume_as_draft(kp_id, *, user) -> draft details dict
+
+
+def _fake_resume_draft_details(kp_id: int = 42) -> dict:
+    """Minimal draft body matching CommercialDraftDetailsResponse for resume HTTP tests."""
+    return {
+        "draft_id": f"draft-resume-{kp_id}",
+        "order": {},
+        "optimization": {},
+        "order_data": [
+            {
+                "line_id": "ln_plate_resume",
+                "product_type": "plates",
+                "name": "ПБ 78-12-8п",
+                "qty": 2,
+                "unit_price": 1000.0,
+            },
+            {
+                "line_id": "ln_pile_resume",
+                "product_type": "piles",
+                "mark": "С120.35-12",
+                "concrete_grade": "B25",
+                "qty": 3,
+                "unit_price": 40000.0,
+            },
+        ],
+        "metadata": {
+            "product_type": "plates",
+            "client_name": "ООО Тест",
+            "manager_name": "Иван Иванов",
+            "discount_percent": 5.0,
+            "logistics_cost": 0.0,
+            "wide_plates_resolved": True,
+            "current_step": "result",
+            "resume_kp_id": kp_id,
+            "append_batches": [],
+        },
+        "wizard_state": {
+            "current_step": "result",
+            "can_proceed_to": [],
+            "next_required_action": "none",
+            "validation_errors": [],
+        },
+        "files": [],
+        "saved_offer": {
+            "kp_id": kp_id,
+            "status": "в работе",
+            "mode": "database",
+            "execution_terms": "",
+            "saved_at": "2026-08-12T12:00:00",
+        },
+        "totals": {"subtotal": 1000.0, "vat_amount": 200.0, "total_with_vat": 1200.0},
+        "offer_identity": {
+            "offer_number": str(kp_id),
+            "offer_date": "12.08.2026",
+            "file_stem": f"kp_{kp_id}",
+        },
+    }
+
+
+def test_resume_archive_kp_as_draft_requires_auth(client: TestClient) -> None:
+    """MNA-601: POST .../archive/{kp_id}/resume requires session."""
+    response = client.post("/api/v1/commercial/archive/42/resume")
+    assert response.status_code == 401
+
+
+def test_resume_archive_kp_as_draft_ok(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    """MNA-601: resume hydrates draft bound to same kp_id with order_data + header."""
+    fake_service.resume_as_draft.return_value = _fake_resume_draft_details(42)
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/resume",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["draft_id"]
+    assert body["saved_offer"]["kp_id"] == 42
+    assert body["saved_offer"]["status"] == "в работе"
+    assert body["metadata"]["resume_kp_id"] == 42
+    assert body["metadata"]["client_name"] == "ООО Тест"
+    assert len(body["order_data"]) >= 2
+    product_types = {line.get("product_type") for line in body["order_data"]}
+    assert "plates" in product_types
+    assert "piles" in product_types
+    fake_service.resume_as_draft.assert_called_once_with(42, user=TESTER_USER)
+
+
+def test_resume_archive_kp_as_draft_rejects_non_in_progress(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    """MNA-601 / R2: non-«в работе» → 409 Conflict or 400 Bad Request."""
+    from app.services.archive_service import ArchiveValidationError
+
+    fake_service.resume_as_draft.side_effect = ArchiveValidationError(
+        "Дополнить КП можно только в статусе «в работе»."
+    )
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/resume",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code in (400, 409), response.text
+    fake_service.resume_as_draft.assert_called_once_with(42, user=TESTER_USER)
+
+
+def test_resume_archive_kp_as_draft_not_found(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    """MNA-601: missing KP → 404."""
+    from app.services.archive_service import ArchiveNotFoundError
+
+    fake_service.resume_as_draft.side_effect = ArchiveNotFoundError("нет такого")
+
+    response = client.post(
+        "/api/v1/commercial/archive/999/resume",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 404
+    fake_service.resume_as_draft.assert_called_once_with(999, user=TESTER_USER)

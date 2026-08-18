@@ -1,8 +1,9 @@
 import type { CommercialDraftDetails, StepOrderLine } from "@/features/commercial-offer/types/commercialOffer";
+import { getCurrentCycleOrderData } from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export const buildStepPreviewRows = (draft: CommercialDraftDetails): StepOrderLine[] =>
-  (draft.order_data ?? []).map((item) => {
+  getCurrentCycleOrderData(draft, "steps").map((item) => {
     const mark = String(item.mark ?? item.name ?? "").trim();
     const qty = toNumber(item.qty) ?? 0;
     const unitPrice = toNumber(item.unit_price);

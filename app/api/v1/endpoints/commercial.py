@@ -11,6 +11,7 @@ from app.dependencies.plate_context import get_plate_order_context
 from app.dependencies.services import get_commercial_service, get_commercial_workflow_service
 from core.plate_order_context import PlateOrderContext
 from app.schemas.commercial import (
+    CommercialAppendStartRequest,
     CommercialCreateFromFormResponse,
     CommercialDraftBreakdownResponse,
     CommercialDraftDetailsResponse,
@@ -622,6 +623,56 @@ async def calculate_draft(
         raise_validation_client_error(exc, where="calculate_draft", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="calculate_draft")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/append/start", response_model=CommercialDraftDetailsResponse)
+def start_append_cycle(
+    payload: CommercialAppendStartRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = workflow.start_append_cycle(draft_id, product_type=payload.product_type)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="start_append_cycle", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="start_append_cycle")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/append/undo-last", response_model=CommercialDraftDetailsResponse)
+def undo_last_append_batch(
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = workflow.undo_last_append_batch(draft_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="undo_last_append_batch", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="undo_last_append_batch")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.delete("/drafts/{draft_id}/lines/{line_id}", response_model=CommercialDraftDetailsResponse)
+def delete_draft_line(
+    line_id: str,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = workflow.delete_order_line(draft_id, line_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Строка не найдена.") from exc
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="delete_draft_line", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="delete_draft_line")
     return CommercialDraftDetailsResponse.model_validate(result)
 
 

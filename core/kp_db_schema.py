@@ -66,6 +66,7 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 plan_id TEXT,
                 length_dm_raw TEXT,
                 nomenclature_id TEXT,
+                line_id TEXT,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
             )
         ''')
@@ -240,6 +241,11 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             cur.execute("ALTER TABLE kp_plates ADD COLUMN day_number INTEGER")
             print("[DB] ✅ Колонка day_number добавлена")
 
+        if 'length_dm_raw' not in columns:
+            print("[DB] Миграция: добавляем колонку length_dm_raw в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN length_dm_raw TEXT")
+            print("[DB] ✅ Колонка length_dm_raw добавлена")
+
         cur.execute(
             'CREATE INDEX IF NOT EXISTS idx_plates_plan_day '
             'ON kp_plates(plan_id, day_number)'
@@ -270,13 +276,13 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             'ON production_plans(is_active)'
         )
         
-        if 'length_dm_raw' not in columns:
-            print("[DB] Миграция: добавляем колонку length_dm_raw в kp_plates...")
-            cur.execute("ALTER TABLE kp_plates ADD COLUMN length_dm_raw TEXT")
-            print("[DB] ✅ Колонка length_dm_raw добавлена")
-        
         # Обратная засылка length_dm_raw из plate_name для существующих строк (один раз после ADD COLUMN)
-        cur.execute("SELECT id, plate_name, length_m FROM kp_plates WHERE length_dm_raw IS NULL OR length_dm_raw = ''")
+        # length_m may be absent on very old shapes — use NULL fallback then.
+        length_m_expr = "length_m" if "length_m" in columns else "NULL"
+        cur.execute(
+            f"SELECT id, plate_name, {length_m_expr} FROM kp_plates "
+            "WHERE length_dm_raw IS NULL OR length_dm_raw = ''"
+        )
         rows = cur.fetchall()
         if rows:
             from core.config_and_data import extract_length_dm_raw_from_plate_name
@@ -339,6 +345,7 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 qty INTEGER NOT NULL,
                 unit_price REAL NOT NULL,
                 discounted_price REAL NOT NULL,
+                line_id TEXT,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
             )
         ''')
@@ -356,6 +363,7 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 qty INTEGER NOT NULL,
                 unit_price REAL NOT NULL,
                 discounted_price REAL NOT NULL,
+                line_id TEXT,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
             )
         ''')
@@ -374,6 +382,7 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 qty INTEGER NOT NULL,
                 unit_price REAL NOT NULL,
                 discounted_price REAL NOT NULL,
+                line_id TEXT,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
             )
         ''')
@@ -392,6 +401,7 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 qty INTEGER NOT NULL,
                 unit_price REAL NOT NULL,
                 discounted_price REAL NOT NULL,
+                line_id TEXT,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
             )
         ''')
@@ -410,12 +420,17 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 qty INTEGER NOT NULL,
                 unit_price REAL NOT NULL,
                 discounted_price REAL NOT NULL,
+                line_id TEXT,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
             )
         ''')
         cur.execute(
             'CREATE INDEX IF NOT EXISTS idx_kp_id_fbs ON kp_fbs(kp_id)'
         )
+
+        # MNA-301: line_id на всех kp_* line-таблицах (idempotent ALTER для legacy БД).
+        # kp_plates уже мигрирована выше (try/except рядом с unit_price); остальные — здесь.
+        _ensure_line_id_columns(cur)
 
         # === МИГРАЦИЯ: Добавляем nomenclature_id ===
         if 'nomenclature_id' not in columns:
@@ -439,6 +454,31 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _ensure_line_id_columns(cur: sqlite3.Cursor) -> None:
+    """MNA-301: add nullable ``line_id TEXT`` to every kp_* line table (idempotent).
+
+    Fresh CREATE already includes the column; this covers legacy DBs where
+    ``CREATE TABLE IF NOT EXISTS`` left the old shape unchanged.
+    ``kp_meta.product_type`` remains unconstrained TEXT (accepts ``mixed``).
+    """
+    line_tables = (
+        "kp_plates",
+        "kp_piles",
+        "kp_steps",
+        "kp_marches",
+        "kp_bridge_piles",
+        "kp_fbs",
+    )
+    for table in line_tables:
+        cur.execute(f"PRAGMA table_info({table})")
+        columns = {row[1] for row in cur.fetchall()}
+        if "line_id" in columns:
+            continue
+        print(f"[DB] Миграция: добавляем колонку line_id в {table}...")
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN line_id TEXT")
+        print(f"[DB] ✅ Колонка line_id добавлена в {table}")
 
 
 def _init_gsm_schema(cur: sqlite3.Cursor) -> None:

@@ -143,7 +143,7 @@ def test_production_allowed_on_kp_candidates(auth_client: tuple[TestClient, str]
     assert len(payload["items"]) >= 1
 
 
-def test_manager_can_list_own_offers(auth_client: tuple[TestClient, str]) -> None:
+def test_manager_can_list_all_offers(auth_client: tuple[TestClient, str]) -> None:
     client, db_path = auth_client
     KpPersistenceService.save_kp_to_db(
         "01.03.2026",
@@ -154,12 +154,21 @@ def test_manager_can_list_own_offers(auth_client: tuple[TestClient, str]) -> Non
         owner_user_id=3,
         db_path=db_path,
     )
+    KpPersistenceService.save_kp_to_db(
+        "01.03.2026",
+        ORDER_DATA,
+        customer_name="Чужой архивный",
+        manager_name="Менеджер",
+        status="в архиве",
+        owner_user_id=1,
+        db_path=db_path,
+    )
     response = client.get(
         "/api/v1/offers?status=archived",
         cookies=_session_cookie(3, "manager", "manager_a"),
     )
     assert response.status_code == 200
-    assert response.json()["count"] >= 1
+    assert response.json()["count"] >= 2
 
 
 def test_admin_can_list_offers(auth_client: tuple[TestClient, str]) -> None:
