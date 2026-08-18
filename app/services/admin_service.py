@@ -72,10 +72,10 @@ class AdminService:
     # ---------- Reset ----------
 
     def reset_full(self) -> DbResetReport:
-        """Полное обнуление: SQLite КП/плиты + SQLite-планы + legacy JSON + календарь.
+        """Полное обнуление: SQLite КП/плиты/рейсы + SQLite-планы + legacy JSON + календарь.
 
-        Таблицы ``app_users`` и ``managers`` НЕ затрагиваются — администратор
-        не теряет сессию.
+        Таблицы ``app_users``, ``managers``, ``carriers`` и ``pile_catalog``
+        НЕ затрагиваются — администратор не теряет сессию, справочники сохраняются.
         """
         require_destructive_db_reset()
         sqlite_report = kp_db_offers.clear_all_plates_data(self.db_path)

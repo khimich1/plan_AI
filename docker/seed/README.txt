@@ -11,6 +11,8 @@
   (на сервере — в контейнере backend или с PLITA_DB_PATH на смонтированный /data)
 
 - pb.db (прайсы) — опциональный seed; если файла нет в образе, entrypoint пропустит копирование.
+  pb.db НЕ коммитится в git (коммерческая тайна: цены и себестоимость) — кладите файл
+  сюда только локально перед build; .gitignore его игнорирует.
 - Файлы в /data при named volume (web_split_data) лежат в хранилище Docker, не в папке
   репозитория на хосте. Проверка: docker compose -f docker-compose.split.yml run --rm backend ls -la /data
 

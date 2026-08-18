@@ -1,6 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/shared/ui/Button";
-import type { DayInfo } from "@/features/production/types/production";
+import type {
+  CalendarViewMode,
+  DayInfo,
+} from "@/features/production/types/production";
 
 const WEEK_DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
@@ -14,6 +17,17 @@ const stateClass: Record<CellState, string> = {
   holiday: "prod-calendar__day prod-calendar__day--holiday",
   outside: "prod-calendar__day prod-calendar__day--outside",
 };
+
+const MODE_OPTIONS: { value: CalendarViewMode; label: string }[] = [
+  { value: "planning", label: "Планирование" },
+  { value: "capacity", label: "Ёмкость" },
+];
+
+/** Hard factory cap: day max tracks cannot exceed this. */
+const TRACKS_PER_DAY_HARD_CAP = 5;
+
+const clampCapacityTracks = (value: number): number =>
+  Math.max(0, Math.min(TRACKS_PER_DAY_HARD_CAP, value));
 
 const formatISO = (d: Date) => {
   const y = d.getFullYear();
@@ -57,12 +71,22 @@ export type MonthCalendarGridProps = {
   highlightedDates?: Set<string>;
   /** Число дорожек в корзине по дате (бейдж на ячейке). */
   basketTracksByDate?: Record<string, number>;
+  /** Режим сетки; если не передан — внутренний toggle. */
+  mode?: CalendarViewMode;
+  onModeChange?: (mode: CalendarViewMode) => void;
+  /** max_tracks по дате (режим ёмкости). */
+  dayCapacity?: Record<string, number>;
+  /** Сохранить override ёмкости. */
+  onSaveDayCapacity?: (date: string, maxTracks: number) => void | Promise<void>;
+  capacitySaving?: boolean;
 };
 
 /**
  * Презентационный компонент: сетка месяца + переключатели + легенда.
  *
- * Жесты: клик → onDayActivate; Shift+клик → range meta; double-click / «i» → onOpenDay.
+ * Жесты (планирование): клик → onDayActivate; Shift+клик → range meta;
+ * double-click / «i» → onOpenDay.
+ * Режим ёмкости: кисть отключена; клик по числу max → inline edit.
  */
 export const MonthCalendarGrid = ({
   daysInfo,
@@ -76,7 +100,21 @@ export const MonthCalendarGrid = ({
   onSelectDate,
   highlightedDates,
   basketTracksByDate,
+  mode: modeProp,
+  onModeChange,
+  dayCapacity,
+  onSaveDayCapacity,
+  capacitySaving = false,
 }: MonthCalendarGridProps) => {
+  const [internalMode, setInternalMode] = useState<CalendarViewMode>("planning");
+  const mode = modeProp ?? internalMode;
+  const setMode = (next: CalendarViewMode) => {
+    if (modeProp === undefined) setInternalMode(next);
+    onModeChange?.(next);
+  };
+
+  const [editingDate, setEditingDate] = useState<string | null>(null);
+  const [draftTracks, setDraftTracks] = useState(0);
   const monthStart = startOfMonth(month);
   const monthEnd = endOfMonth(month);
   const gridStartOffset = (monthStart.getDay() + 6) % 7;
@@ -84,6 +122,7 @@ export const MonthCalendarGrid = ({
   const gridStart = addDays(monthStart, -gridStartOffset);
   // Откладываем single-click, чтобы double-click не успел toggle+toggle.
   const clickTimerRef = useRef<number | null>(null);
+  const isCapacity = mode === "capacity";
 
   useEffect(() => {
     return () => {
@@ -93,10 +132,15 @@ export const MonthCalendarGrid = ({
     };
   }, []);
 
+  useEffect(() => {
+    setEditingDate(null);
+  }, [mode, month]);
+
   const buildCellState = (date: Date, info: DayInfo | undefined): CellState => {
     const iso = formatISO(date);
     const isOutside = date.getMonth() !== month.getMonth();
     if (isOutside) return "outside";
+    if (isCapacity) return "empty";
     if (info?.completed) return "completed";
     if (info && info.occupied >= info.max) return "full";
     if (info && info.occupied > 0) return "partial";
@@ -112,6 +156,25 @@ export const MonthCalendarGrid = ({
     onSelectDate?.(iso);
   };
 
+  const beginEdit = (iso: string, current: number) => {
+    setEditingDate(iso);
+    setDraftTracks(clampCapacityTracks(current));
+  };
+
+  const commitEdit = async () => {
+    if (!editingDate || !onSaveDayCapacity) {
+      setEditingDate(null);
+      return;
+    }
+    const value = clampCapacityTracks(Math.floor(Number(draftTracks)));
+    if (!Number.isFinite(value)) {
+      setEditingDate(null);
+      return;
+    }
+    await onSaveDayCapacity(editingDate, value);
+    setEditingDate(null);
+  };
+
   const cells = Array.from({ length: totalCells }, (_, index) => {
     const date = addDays(gridStart, index);
     const iso = formatISO(date);
@@ -122,6 +185,32 @@ export const MonthCalendarGrid = ({
 
   return (
     <>
+      <div
+        role="tablist"
+        aria-label="Режим календаря"
+        className="prod-calendar__mode-toggle"
+      >
+        {MODE_OPTIONS.map((option) => {
+          const isActive = mode === option.value;
+          return (
+            <button
+              key={option.value}
+              role="tab"
+              type="button"
+              aria-selected={isActive}
+              className={
+                isActive
+                  ? "prod-calendar__mode-btn prod-calendar__mode-btn--active"
+                  : "prod-calendar__mode-btn"
+              }
+              onClick={() => setMode(option.value)}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div
         style={{
           display: "flex",
@@ -165,71 +254,157 @@ export const MonthCalendarGrid = ({
             const max = info?.max ?? 5;
             const occupied = info?.occupied ?? 0;
             const disabled = state === "outside";
-            const isHighlighted = highlightedDates?.has(iso) ?? false;
-            const isSelected = selectedDate === iso;
+            const isHighlighted = !isCapacity && (highlightedDates?.has(iso) ?? false);
+            const isSelected = !isCapacity && selectedDate === iso;
             const basketTracks = basketTracksByDate?.[iso];
+            const capacityValue = dayCapacity?.[iso] ?? max;
             const className = [
-              stateClass[state],
+              isCapacity && !disabled
+                ? "prod-calendar__day prod-calendar__day--capacity"
+                : stateClass[state],
               isHighlighted ? "prod-calendar__day--in-basket" : "",
               isSelected ? "prod-calendar__day--selected" : "",
             ]
               .filter(Boolean)
               .join(" ");
+            const isEditing = isCapacity && editingDate === iso;
+            const capacityBody =
+              isCapacity && !disabled ? (
+                isEditing ? (
+                  <span className="prod-calendar__capacity-edit">
+                    <button
+                      type="button"
+                      className="prod-calendar__capacity-step"
+                      aria-label="Уменьшить ёмкость"
+                      disabled={capacitySaving || draftTracks <= 0}
+                      onClick={() => setDraftTracks((v) => Math.max(0, v - 1))}
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min={0}
+                      max={TRACKS_PER_DAY_HARD_CAP}
+                      step={1}
+                      className="prod-calendar__capacity-input"
+                      aria-label={`Ёмкость ${iso}`}
+                      value={draftTracks}
+                      disabled={capacitySaving}
+                      onChange={(e) => {
+                        const next = Number(e.target.value);
+                        setDraftTracks(
+                          Number.isFinite(next) ? clampCapacityTracks(next) : 0,
+                        );
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void commitEdit();
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setEditingDate(null);
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      className="prod-calendar__capacity-step"
+                      aria-label="Увеличить ёмкость"
+                      disabled={
+                        capacitySaving || draftTracks >= TRACKS_PER_DAY_HARD_CAP
+                      }
+                      onClick={() =>
+                        setDraftTracks((v) => clampCapacityTracks(v + 1))
+                      }
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      className="prod-calendar__capacity-save"
+                      aria-label="Сохранить ёмкость"
+                      disabled={capacitySaving}
+                      onClick={() => void commitEdit()}
+                    >
+                      ✓
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="prod-calendar__capacity-value"
+                    aria-label={`Изменить ёмкость ${iso}`}
+                    onClick={() => beginEdit(iso, capacityValue)}
+                  >
+                    {capacityValue}
+                  </button>
+                )
+              ) : null;
+
             return (
               <div key={iso} className="prod-calendar__day-wrap">
-                <button
-                  type="button"
-                  disabled={disabled}
-                  className={className}
-                  onClick={(e) => {
-                    if (disabled) return;
-                    const shiftKey = e.shiftKey;
-                    if (clickTimerRef.current != null) {
-                      window.clearTimeout(clickTimerRef.current);
-                      clickTimerRef.current = null;
-                    }
-                    // Shift+range сразу; plain click ждёт dblclick, если есть onOpenDay.
-                    if (onOpenDay && !shiftKey) {
-                      clickTimerRef.current = window.setTimeout(() => {
+                {isCapacity ? (
+                  <div className={className} aria-disabled={disabled || undefined}>
+                    <span className="prod-calendar__date-number">{date.getDate()}</span>
+                    {capacityBody}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    className={className}
+                    onClick={(e) => {
+                      if (disabled) return;
+                      const shiftKey = e.shiftKey;
+                      if (clickTimerRef.current != null) {
+                        window.clearTimeout(clickTimerRef.current);
                         clickTimerRef.current = null;
-                        activate(iso, false);
-                      }, 250);
-                      return;
-                    }
-                    activate(iso, shiftKey);
-                  }}
-                  onDoubleClick={(e) => {
-                    e.preventDefault();
-                    if (clickTimerRef.current != null) {
-                      window.clearTimeout(clickTimerRef.current);
-                      clickTimerRef.current = null;
-                    }
-                    if (disabled || !onOpenDay) return;
-                    onOpenDay(iso);
-                  }}
-                >
-                  <span className="prod-calendar__date-number">{date.getDate()}</span>
-                  {info && (
-                    <span className="prod-calendar__occupancy">
-                      {occupied}/{max}
-                    </span>
-                  )}
-                  {info?.completed && <span className="prod-calendar__badge">✓</span>}
-                  {isHighlighted && basketTracks != null && (
-                    <span
-                      className="prod-calendar__basket-tracks"
-                      aria-label={`${basketTracks} дорожек в корзине`}
-                    >
-                      {basketTracks} дор.
-                    </span>
-                  )}
-                  {isHighlighted && basketTracks == null && (
-                    <span className="prod-calendar__basket-mark" aria-label="В корзине">
-                      ●
-                    </span>
-                  )}
-                </button>
-                {!disabled && onOpenDay ? (
+                      }
+                      // Shift+range сразу; plain click ждёт dblclick, если есть onOpenDay.
+                      if (onOpenDay && !shiftKey) {
+                        clickTimerRef.current = window.setTimeout(() => {
+                          clickTimerRef.current = null;
+                          activate(iso, false);
+                        }, 250);
+                        return;
+                      }
+                      activate(iso, shiftKey);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      if (clickTimerRef.current != null) {
+                        window.clearTimeout(clickTimerRef.current);
+                        clickTimerRef.current = null;
+                      }
+                      if (disabled || !onOpenDay) return;
+                      onOpenDay(iso);
+                    }}
+                  >
+                    <span className="prod-calendar__date-number">{date.getDate()}</span>
+                    {info && (
+                      <span className="prod-calendar__occupancy">
+                        {occupied}/{max}
+                      </span>
+                    )}
+                    {info?.completed && <span className="prod-calendar__badge">✓</span>}
+                    {isHighlighted && basketTracks != null && (
+                      <span
+                        className="prod-calendar__basket-tracks"
+                        aria-label={`${basketTracks} дорожек в корзине`}
+                      >
+                        {basketTracks} дор.
+                      </span>
+                    )}
+                    {isHighlighted && basketTracks == null && (
+                      <span className="prod-calendar__basket-mark" aria-label="В корзине">
+                        ●
+                      </span>
+                    )}
+                  </button>
+                )}
+                {!disabled && !isCapacity && onOpenDay ? (
                   <button
                     type="button"
                     className="prod-calendar__day-info"
@@ -248,11 +423,29 @@ export const MonthCalendarGrid = ({
           })}
         </div>
         <div className="prod-calendar__legend">
-          <span className="prod-calendar__legend-item prod-calendar__day--empty">Свободен</span>
-          <span className="prod-calendar__legend-item prod-calendar__day--partial">Частично</span>
-          <span className="prod-calendar__legend-item prod-calendar__day--full">Заполнен</span>
-          <span className="prod-calendar__legend-item prod-calendar__day--completed">Выполнен</span>
-          <span className="prod-calendar__legend-item prod-calendar__day--holiday">Выходной</span>
+          {isCapacity ? (
+            <span className="prod-calendar__legend-item prod-calendar__day--capacity">
+              Ёмкость (дорожек/день)
+            </span>
+          ) : (
+            <>
+              <span className="prod-calendar__legend-item prod-calendar__day--empty">
+                Свободен
+              </span>
+              <span className="prod-calendar__legend-item prod-calendar__day--partial">
+                Частично
+              </span>
+              <span className="prod-calendar__legend-item prod-calendar__day--full">
+                Заполнен
+              </span>
+              <span className="prod-calendar__legend-item prod-calendar__day--completed">
+                Выполнен
+              </span>
+              <span className="prod-calendar__legend-item prod-calendar__day--holiday">
+                Выходной
+              </span>
+            </>
+          )}
         </div>
       </div>
     </>

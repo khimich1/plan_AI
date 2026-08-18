@@ -115,6 +115,12 @@ description: Task tracking and plan management. Used by planner to create plans 
   "AUTH-001": {
     "id": "AUTH-001",
     "name": "User Model",
+    "type": "feat-be",
+    "dependsOn": [],
+    "pipeline": ["explore", "worker", "test-writer", "test-runner", "reviewer"],
+    "securitySensitive": false,
+    "needsExplore": true,
+    "parallelSafe": false,
     "status": "completed",
     "startedAt": "2026-02-10T15:30:00Z",
     "completedAt": "2026-02-10T15:40:00Z",
@@ -124,11 +130,32 @@ description: Task tracking and plan management. Used by planner to create plans 
   },
   "AUTH-002": {
     "id": "AUTH-002",
+    "name": "JWT Utilities",
+    "type": "auth",
+    "dependsOn": ["AUTH-001"],
+    "pipeline": ["explore", "worker", "test-writer", "test-runner", "reviewer", "security-auditor"],
+    "securitySensitive": true,
+    "needsExplore": true,
+    "parallelSafe": false,
     "status": "in-progress",
     "startedAt": "2026-02-10T15:40:00Z"
+  },
+  "AUTH-003": {
+    "id": "AUTH-003",
+    "name": "Login page",
+    "type": "ui",
+    "dependsOn": ["AUTH-002"],
+    "status": "blocked",
+    "blockedBy": ["AUTH-002"]
   }
 }
 ```
+
+**Required fields (planner must set):** `id`, `name`, `type`, `dependsOn`, `status`  
+**Optional:** `pipeline` (override default for `type`), `securitySensitive`, `needsExplore`, `needsArchitectureReview`, `parallelSafe`, `blockedBy`
+
+**Types:** `feat-be` | `feat-fe` | `ui` | `api` | `auth` | `arch` | `refactor` | `spike` | `docs` | `chore`  
+See `.cursor/skills/orchestration/SKILL.md` for default pipelines per type.
 
 #### links.json
 ```json
@@ -160,15 +187,17 @@ description: Task tracking and plan management. Used by planner to create plans 
 Implement JWT-based authentication with user management.
 
 ## Tasks
-- [ ] AUTH-001: User Model (⏳ Pending)
-- [ ] AUTH-002: JWT Utilities (⏳ Pending)
-- [ ] AUTH-003: Auth Middleware (⏳ Pending)
-- [ ] AUTH-004: API Endpoints (⏳ Pending)
-- [ ] AUTH-005: Testing (⏳ Pending)
+- [ ] AUTH-001: User Model `(type: feat-be)` (⏳ Pending)
+- [ ] AUTH-002: JWT Utilities `(type: auth, dependsOn: AUTH-001)` (⏳ Pending)
+- [ ] AUTH-003: Auth Middleware `(type: feat-be, dependsOn: AUTH-002)` (⏳ Pending)
+- [ ] AUTH-004: API Endpoints `(type: api, dependsOn: AUTH-003)` (⏳ Pending)
+- [ ] AUTH-005: Login UI `(type: ui, dependsOn: AUTH-004)` (⏳ Pending)
 
 ## Dependencies
 - AUTH-002 requires AUTH-001
 - AUTH-003 requires AUTH-002
+- AUTH-004 requires AUTH-003
+- AUTH-005 requires AUTH-004
 
 ## Architecture Decisions
 - Using JWT with refresh tokens
@@ -438,65 +467,58 @@ planContent = read(links.plan)
 taskIds = extractTaskIds(planContent)
 ```
 
-### Step 2: Execute Tasks Loop
+### Step 2: Execute Tasks Loop (DAG + conditional pipeline)
+
+Full pipeline rules: `.cursor/skills/orchestration/SKILL.md`.
 
 ```javascript
-for (taskId of taskIds) {
-  // Skip if already completed
-  if (tasksState[taskId]?.status === "completed") continue
-  
-  // Update task status: in-progress
-  tasksState[taskId] = {
-    id: taskId,
-    status: "in-progress",
-    startedAt: now()
-  }
-  write(`${workspaceDir}/tasks.json`, tasksState)
-  
-  // Update plan/task file
-  if (links.plan) {
-    // Mode B: Update user's task file
-    updateTaskInFile(links.plan, taskId, "🔄 In Progress")
-  } else {
-    // Mode A: Update workspace plan
-    updateTaskInFile(`${workspaceDir}/plan.md`, taskId, "🔄 In Progress")
-  }
-  
-  // Execute task
-  result = callWorker(taskId, taskDetails)
+// After planner: user checkpoint before first task (unless execute/resume)
 
-  // Write tests for implemented code
-  testWriterResult = callTestWriter(result.filesChanged)
-
-  // Run tests & verify
-  testAndVerifyPassed = callTestRunner()
-  reviewPassed = callReview()
-  
-  // Update task status: completed
-  tasksState[taskId] = {
-    ...tasksState[taskId],
-    status: "completed",
-    completedAt: now(),
-    filesChanged: result.filesChanged,
-    testsRun: testsPassed.total,
-    testsPassed: testsPassed.passed
-  }
-  write(`${workspaceDir}/tasks.json`, tasksState)
-  
-  // Update plan/task file
-  if (links.plan) {
-    // Mode B: Update user's task file
-    updateTaskInFile(links.plan, taskId, "✅ Completed")
-  } else {
-    // Mode A: Update workspace plan
-    updateTaskInFile(`${workspaceDir}/plan.md`, taskId, "✅ Completed")
-  }
-  
-  // Update progress
-  updateJSON(`${workspaceDir}/progress.json`, {
-    tasksCompleted: progress.tasksCompleted + 1,
-    lastUpdated: now()
+while (hasIncomplete(tasksState)) {
+  ready = Object.values(tasksState).filter(t =>
+    (t.status === "pending" || t.status === "blocked") &&
+    (t.dependsOn || []).every(id => tasksState[id]?.status === "completed")
+  ).map(t => {
+    if (t.status === "blocked") { t.status = "pending"; delete t.blockedBy }
+    return t
   })
+
+  if (ready.length === 0) {
+    // remaining tasks blocked by failed deps or empty — stop for user
+    break
+  }
+
+  // Prefer sequential; parallel only if all ready have parallelSafe: true
+  batch = ready[0].parallelSafe
+    ? ready.filter(t => t.parallelSafe)
+    : [ready[0]]
+
+  for (task of batch) {
+    taskId = task.id
+    tasksState[taskId] = { ...task, status: "in-progress", startedAt: now() }
+    write(`${workspaceDir}/tasks.json`, tasksState)
+    updateTaskInFile(links.plan || `${workspaceDir}/plan.md`, taskId, "🔄 In Progress")
+
+    pipeline = task.pipeline || defaultPipelineFor(task.type)
+    // Run agents per orchestration skill: explore? → worker|refactor →
+    // test-writer? → test-runner ↔ debugger → reviewer →
+    // refactor|security-auditor|senior-reviewer as routed
+
+    tasksState[taskId] = {
+      ...tasksState[taskId],
+      status: "completed",
+      completedAt: now(),
+      filesChanged: result.filesChanged,
+      testsRun: testResult?.total ?? 0,
+      testsPassed: testResult?.passed ?? 0
+    }
+    write(`${workspaceDir}/tasks.json`, tasksState)
+    updateTaskInFile(links.plan || `${workspaceDir}/plan.md`, taskId, "✅ Completed")
+    updateJSON(`${workspaceDir}/progress.json`, {
+      tasksCompleted: progress.tasksCompleted + 1,
+      lastUpdated: now()
+    })
+  }
 }
 ```
 
@@ -796,10 +818,11 @@ Permanent: Feature documentation (configured paths)
 - ❌ **failed** - Interrupted/crashed
 
 ### Task Status
-- ⏳ **pending** - Not started
+- ⏳ **pending** - Not started (deps satisfied or none)
 - 🔄 **in-progress** - Being worked on
 - ✅ **completed** - Done and verified
-- 🚫 **blocked** - Waiting on dependency
+- 🚫 **blocked** - Waiting on dependency (`blockedBy`)
+- ❌ **failed** - Pipeline exhausted retries; resumable after fix
 
 ### Issue Severity
 - 🔴 **Critical** (P1) - Fix immediately

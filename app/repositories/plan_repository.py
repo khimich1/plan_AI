@@ -101,10 +101,20 @@ class PlanRepository:
             "version": int(row["version"]),
         }
 
-    def create(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def create(
+        self,
+        payload: dict[str, Any],
+        *,
+        _external_conn: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
         plan_id = self._require_plan_id(payload)
         payload_json = self._serialize_payload(payload)
-        with self._connect() as conn:
+        own_conn = _external_conn is None
+        if own_conn:
+            conn = self._connect()
+        else:
+            conn = _external_conn
+        try:
             conn.execute(
                 """
                 INSERT INTO production_plans (id, payload_json, version, is_active)
@@ -112,13 +122,32 @@ class PlanRepository:
                 """,
                 (plan_id, payload_json),
             )
-            conn.commit()
+            if own_conn:
+                conn.commit()
+        except Exception:
+            if own_conn:
+                conn.rollback()
+            raise
+        finally:
+            if own_conn:
+                conn.close()
         return {"payload": self._deserialize_payload(payload_json), "version": 1}
 
-    def save(self, payload: dict[str, Any], expected_version: int) -> dict[str, Any]:
+    def save(
+        self,
+        payload: dict[str, Any],
+        expected_version: int,
+        *,
+        _external_conn: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
         plan_id = self._require_plan_id(payload)
         payload_json = self._serialize_payload(payload)
-        with self._connect() as conn:
+        own_conn = _external_conn is None
+        if own_conn:
+            conn = self._connect()
+        else:
+            conn = _external_conn
+        try:
             cursor = conn.execute(
                 """
                 UPDATE production_plans
@@ -139,12 +168,20 @@ class PlanRepository:
                 """,
                 (plan_id,),
             ).fetchone()
-            conn.commit()
-        if row is None:
-            raise PlanVersionConflict(plan_id, expected_version)
+            if row is None:
+                raise PlanVersionConflict(plan_id, expected_version)
+            if own_conn:
+                conn.commit()
+        except Exception:
+            if own_conn:
+                conn.rollback()
+            raise
+        finally:
+            if own_conn:
+                conn.close()
         return {
-            "payload": self._deserialize_payload(row["payload_json"]),
-            "version": int(row["version"]),
+            "payload": self._deserialize_payload(row[0]),
+            "version": int(row[1]),
         }
 
     def delete(self, plan_id: str) -> bool:
@@ -255,10 +292,27 @@ class PlanRepository:
         date_key: str,
         *,
         expected_version: int | None = None,
+        _external_conn: sqlite3.Connection | None = None,
     ) -> bool:
-        record = self.get(plan_id)
-        if not record:
-            return False
+        if _external_conn is not None:
+            row = _external_conn.execute(
+                """
+                SELECT payload_json, version
+                FROM production_plans
+                WHERE id = ?
+                """,
+                (plan_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            record = {
+                "payload": self._deserialize_payload(row[0]),
+                "version": int(row[1]),
+            }
+        else:
+            record = self.get(plan_id)
+            if not record:
+                return False
 
         plan = record["payload"]
         if date_key not in plan.get("days", {}):
@@ -274,7 +328,7 @@ class PlanRepository:
             plan["completed_days"].sort()
 
         version = expected_version if expected_version is not None else record["version"]
-        self.save(plan, expected_version=version)
+        self.save(plan, expected_version=version, _external_conn=_external_conn)
         return True
 
     def get_global_occupancy(self, exclude_plan_id: str | None = None) -> dict[str, int]:

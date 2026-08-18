@@ -12,6 +12,26 @@ vi.mock("@/features/commercial-archive/hooks/useArchiveQueries", () => ({
   useUpdateLogisticsCostMutation: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
 }));
 
+vi.mock("@/features/delivery-schedule/hooks/useDeliveryScheduleQueries", () => ({
+  useDeliveryScheduleQuery: () => ({
+    data: null,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  usePutDeliveryScheduleMutation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+    reset: vi.fn(),
+  }),
+}));
+
+vi.mock("@/features/delivery-schedule/components/DeliveryScheduleDialog", () => ({
+  DeliveryScheduleDialog: () => null,
+}));
+
 vi.mock("@/features/commercial-archive/components/KpReadinessBlock", () => ({
   KpReadinessBlock: () => <div data-testid="kp-readiness-block">KpReadinessBlock</div>,
 }));
@@ -128,6 +148,34 @@ describe("OfferDetailsDrawer readiness visibility", () => {
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
     expect(screen.getByTestId("kp-readiness-block")).toBeInTheDocument();
+  });
+
+  it("enables delivery schedule button for в работе and архиве (read-only for archive)", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в работе", makeReadiness()),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const { rerender } = render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "График поставки" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "График поставки" })).toHaveAttribute(
+      "title",
+      "Редактирование графика поставки",
+    );
+
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", makeReadiness()),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    rerender(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "График поставки" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "График поставки" })).toHaveAttribute(
+      "title",
+      "Просмотр графика поставки",
+    );
   });
 });
 

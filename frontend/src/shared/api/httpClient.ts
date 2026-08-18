@@ -187,14 +187,41 @@ const extractFilename = (response: Response, fallback: string): string => {
   return fallback;
 };
 
+type DownloadRequestOptions = {
+  method?: "GET" | "POST";
+  body?: BodyInit | null;
+  headers?: HeadersInit;
+};
+
 const downloadRequest = async (
   path: string,
   fallbackFilename: string,
+  options: DownloadRequestOptions = {},
 ): Promise<DownloadResult> => {
-  const response = await fetch(buildUrl(path), {
-    method: "GET",
-    credentials: "include",
-  });
+  const method = options.method ?? "GET";
+  const headers = new Headers(options.headers);
+  if (!SAFE_METHODS.has(method)) {
+    const csrfToken = await ensureCsrfToken();
+    if (csrfToken) {
+      headers.set(CSRF_HEADER_NAME, csrfToken);
+    }
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(path), {
+      method,
+      body: options.body ?? null,
+      headers,
+      credentials: "include",
+    });
+  } catch {
+    throw new ApiError(
+      "Сервер недоступен. Подождите пару секунд после запуска и обновите страницу.",
+      0,
+    );
+  }
+
   if (!response.ok) {
     if (response.status === 401) {
       handleUnauthorized(path);
@@ -218,8 +245,11 @@ export const httpClient = {
   delete: <TResponse>(path: string) => request<TResponse>(path, { method: "DELETE" }),
   request: <TResponse>(path: string, options: RequestOptions) =>
     request<TResponse>(path, options),
-  download: (path: string, fallbackFilename = "download"): Promise<DownloadResult> =>
-    downloadRequest(path, fallbackFilename),
+  download: (
+    path: string,
+    fallbackFilename = "download",
+    options?: DownloadRequestOptions,
+  ): Promise<DownloadResult> => downloadRequest(path, fallbackFilename, options),
 };
 
 export const resolveApiUrl = (path: string): string => buildUrl(path);

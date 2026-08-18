@@ -49,9 +49,9 @@ bot.env
 # База данных
 *.db
 pb.db
-# Опционально: закоммитьте стартовую копию прайсов для Docker (docker/seed/README.txt)
+# pb.db НЕ коммитится (коммерческая тайна: цены и себестоимость).
+# Для Docker-сида положите файл в docker/seed/ локально перед build (docker/seed/README.txt).
 # plita.db НЕ коммитится — admin создаётся через scripts/create_admin.py
-!docker/seed/pb.db
 # SQLite временные файлы
 *.db-shm
 *.db-wal
@@ -94,6 +94,9 @@ pytest_wp*_out.txt
 
 # Дубликат skills (основной набор в .cursor/skills/)
 agent-skills-main/
+
+# Личный offline-модуль ГСМ (ПДн, кэши, Excel, HTML-карта)
+ГСМ/
 
 #json files
 .app_data/drafts/

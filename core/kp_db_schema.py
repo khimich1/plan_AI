@@ -430,9 +430,236 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
 
         _init_shipment_logistics_schema(cur)
 
+        _init_delivery_schedule_schema(cur)
+
+        _init_day_capacity_override_schema(cur)
+
+        _init_gsm_schema(cur)
+
         conn.commit()
     finally:
         conn.close()
+
+
+def _init_gsm_schema(cur: sqlite3.Cursor) -> None:
+    """GSM module tables (fuel cards, transactions, waybills).
+
+    FK order: ``gsm_driver`` before ``gsm_vehicle`` (``primary_driver_id``).
+    Physical DELETE of cards is forbidden — archive via ``archived_at``.
+    Drivers/vehicles are deactivated via ``is_active`` (not ``archived_at``).
+    """
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_driver (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            license_number TEXT NOT NULL,
+            license_issued_at TEXT,
+            personnel_number TEXT,
+            snils TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_vehicle (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            plate_number TEXT NOT NULL,
+            tank_volume_liters REAL NOT NULL,
+            norm_summer REAL NOT NULL,
+            norm_winter REAL NOT NULL,
+            primary_driver_id INTEGER REFERENCES gsm_driver(id),
+            is_active INTEGER NOT NULL DEFAULT 1
+        )
+    ''')
+
+    # vehicle_id NULL: unmatched cards from transaction import (link later).
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_fuel_card (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_number TEXT NOT NULL UNIQUE,
+            vehicle_id INTEGER REFERENCES gsm_vehicle(id),
+            assigned_at TEXT NOT NULL,
+            archived_at TEXT
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_station (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            address TEXT NOT NULL UNIQUE,
+            brand TEXT,
+            lat REAL,
+            lon REAL,
+            geocode_source TEXT
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_import_batch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            period_from TEXT,
+            period_to TEXT,
+            rows_total INTEGER,
+            sum_liters REAL,
+            sum_amount REAL,
+            uploaded_by TEXT,
+            uploaded_at TEXT NOT NULL
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_transaction (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_id INTEGER NOT NULL REFERENCES gsm_fuel_card(id),
+            ts TEXT NOT NULL,
+            service_type TEXT NOT NULL,
+            fuel_grade TEXT,
+            qty_liters REAL,
+            amount REAL NOT NULL,
+            station_id INTEGER REFERENCES gsm_station(id),
+            raw_address TEXT NOT NULL,
+            batch_id INTEGER NOT NULL REFERENCES gsm_import_batch(id)
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_route (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_id INTEGER NOT NULL REFERENCES gsm_vehicle(id),
+            addr_a TEXT NOT NULL,
+            addr_b TEXT NOT NULL,
+            km INTEGER NOT NULL,
+            frequency INTEGER NOT NULL DEFAULT 1,
+            typical_station_ids TEXT
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_waybill (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_id INTEGER NOT NULL REFERENCES gsm_vehicle(id),
+            date TEXT NOT NULL,
+            driver_id INTEGER NOT NULL REFERENCES gsm_driver(id),
+            status TEXT NOT NULL DEFAULT 'draft',
+            source TEXT NOT NULL DEFAULT 'auto',
+            odometer_start INTEGER,
+            odometer_end INTEGER,
+            fuel_start REAL,
+            fuel_issued REAL,
+            fuel_end REAL,
+            route_json TEXT NOT NULL,
+            warnings_json TEXT,
+            UNIQUE(vehicle_id, date)
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_setting (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
+
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_gsm_transaction_card_ts '
+        'ON gsm_transaction(card_id, ts)'
+    )
+    # Spec D14: UNIQUE(card_id, ts, qty_liters, amount). SQLite treats NULLs as
+    # distinct in UNIQUE, so washes (qty_liters NULL) need COALESCE in the index.
+    cur.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_gsm_transaction_dedup '
+        'ON gsm_transaction(card_id, ts, COALESCE(qty_liters, 0), amount)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_gsm_waybill_vehicle_date '
+        'ON gsm_waybill(vehicle_id, date)'
+    )
+
+
+def _init_day_capacity_override_schema(cur: sqlite3.Cursor) -> None:
+    """Per-day production capacity overrides (tracks/day).
+
+    Fallback when no row exists: ``TRACKS_PER_DAY_DEFAULT`` from
+    ``core.production_capacity`` (read by ``DayCapacityRepository``).
+    """
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS day_capacity_override (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            max_tracks INTEGER NOT NULL CHECK (max_tracks >= 0),
+            updated_at TEXT NOT NULL,
+            updated_by TEXT
+        )
+    ''')
+
+
+def _init_delivery_schedule_schema(cur: sqlite3.Cursor) -> None:
+    """Таблицы «Графика поставки»: партии с датами внутри одного заказа (КП).
+
+    Один график на КП (``UNIQUE kp_id``): пересогласование = правка того же
+    графика, истории версий нет. Удаление КП удаляет график каскадно.
+    """
+    # Таблица 10: delivery_schedule — график поставки, шапка (один на КП)
+    # invoice_number — № счёта; NULL пока не выставлен
+    # contract_number — № договора (шапка документа)
+    # status — draft | active | completed
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_schedule (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kp_id INTEGER NOT NULL UNIQUE,
+            invoice_number TEXT,
+            contract_number TEXT,
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+        )
+    ''')
+
+    # Таблица 11: delivery_batch — партия внутри графика
+    # name — свободный текст («1 этаж, 2 подъезд»)
+    # deliver_from / deliver_to — «поставка с/по» (ISO date)
+    # produce_by — «произвести до» (ISO date, задаёт менеджер вручную)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_batch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            deliver_from TEXT NOT NULL,
+            deliver_to TEXT NOT NULL,
+            produce_by TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (schedule_id) REFERENCES delivery_schedule(id) ON DELETE CASCADE
+        )
+    ''')
+
+    # Таблица 12: delivery_batch_item — позиция партии (плита КП + количество)
+    # Инвариант Σ qty ≤ kp_plates.qty проверяется в сервисе, не в БД
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_batch_item (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            plate_id INTEGER NOT NULL,
+            qty INTEGER NOT NULL CHECK (qty >= 1),
+            FOREIGN KEY (batch_id) REFERENCES delivery_batch(id) ON DELETE CASCADE,
+            FOREIGN KEY (plate_id) REFERENCES kp_plates(id) ON DELETE CASCADE
+        )
+    ''')
+
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_batch_schedule '
+        'ON delivery_batch(schedule_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_batch_item_batch '
+        'ON delivery_batch_item(batch_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_batch_item_plate '
+        'ON delivery_batch_item(plate_id)'
+    )
 
 
 def _init_shipment_logistics_schema(cur: sqlite3.Cursor) -> None:

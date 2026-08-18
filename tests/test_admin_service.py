@@ -222,6 +222,69 @@ def test_reset_full_clears_all_plate_tables_and_plans(
     assert calendar_data == {"extra_holidays": [], "extra_workdays": []}
 
 
+def _seed_shipment_with_completed_plate(
+    db_path: Path,
+    *,
+    kp_id: int,
+    completed_plate_id: int,
+) -> None:
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO shipments (shipment_date, delivery_type, status)
+            VALUES (?, ?, ?)
+            """,
+            ("2026-07-31", "delivery", "in_work"),
+        )
+        shipment_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO shipment_orders (shipment_id, kp_id) VALUES (?, ?)",
+            (shipment_id, kp_id),
+        )
+        cur.execute(
+            """
+            INSERT INTO shipment_items (
+                shipment_id, item_type, completed_plate_id, kp_id, mark, qty
+            ) VALUES (?, 'plate', ?, ?, 'ПБ 78-12-8п', 1)
+            """,
+            (shipment_id, completed_plate_id, kp_id),
+        )
+        conn.commit()
+
+
+def test_reset_full_clears_shipments_referencing_completed_plates(
+    admin_settings: Settings,
+    populated_db: Path,
+    populated_plans: None,
+) -> None:
+    with sqlite3.connect(str(populated_db)) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT kp_id FROM KP_offers LIMIT 1")
+        kp_id = int(cur.fetchone()[0])
+        cur.execute("SELECT id FROM completed_plates LIMIT 1")
+        completed_plate_id = int(cur.fetchone()[0])
+
+    _seed_shipment_with_completed_plate(
+        populated_db,
+        kp_id=kp_id,
+        completed_plate_id=completed_plate_id,
+    )
+    assert _table_count(populated_db, "shipments") == 1
+    assert _table_count(populated_db, "shipment_items") == 1
+
+    service = _make_service(admin_settings)
+    report = service.reset_full()
+
+    assert _table_count(populated_db, "shipments") == 0
+    assert _table_count(populated_db, "shipment_items") == 0
+    assert _table_count(populated_db, "shipment_orders") == 0
+    assert _table_count(populated_db, "completed_plates") == 0
+    assert report.sqlite["shipments"] == 1
+    assert report.sqlite["shipment_items"] == 1
+
+
 def test_reset_full_preserves_app_users(
     admin_settings: Settings,
     populated_db: Path,

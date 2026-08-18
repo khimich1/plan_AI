@@ -222,6 +222,67 @@ def test_complete_day_atomic_rollback(planning_service, tmp_plita, monkeypatch):
     assert _snapshot(tmp_plita, "kp_plates") == snap_kp_before
 
 
+def test_complete_day_mark_failure_rolls_back_kp(planning_service, tmp_plita, monkeypatch):
+    """D4: fail mark_day_completed after KP move → rollback; day not completed."""
+    from app.repositories.plan_repository import PlanRepository
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21", tracks_count=3, filter_method="all"
+    )
+    plan_id = built["plan"]["id"]
+
+    snap_kp_before = _snapshot(tmp_plita, "kp_plates")
+    snap_completed_before = _snapshot(tmp_plita, "completed_plates")
+
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("mark boom")
+
+    monkeypatch.setattr(PlanRepository, "mark_day_completed", boom)
+
+    service = _make_production_service(planning_service, tmp_plita)
+    with pytest.raises(RuntimeError, match="mark boom"):
+        service.complete_day(plan_id=plan_id, target_date="2026-04-21")
+
+    assert _snapshot(tmp_plita, "completed_plates") == snap_completed_before
+    assert _snapshot(tmp_plita, "kp_plates") == snap_kp_before
+
+    plan = PlanRepository(db_path=tmp_plita).load_plan(plan_id)
+    assert plan is not None
+    assert not (plan.get("days") or {}).get("2026-04-21", {}).get("completed")
+
+
+def test_complete_day_mark_returns_false_rolls_back_kp(
+    planning_service, tmp_plita, monkeypatch
+):
+    """D4 / review: mark_day_completed → False must not commit KP write-off."""
+    from app.repositories.plan_repository import PlanRepository
+    from app.services.production_completion_service import ProductionCompletionError
+
+    built = planning_service.build_plan(
+        start_date="2026-04-21", tracks_count=3, filter_method="all"
+    )
+    plan_id = built["plan"]["id"]
+
+    snap_kp_before = _snapshot(tmp_plita, "kp_plates")
+    snap_completed_before = _snapshot(tmp_plita, "completed_plates")
+
+    def mark_false(self, *args, **kwargs):
+        return False
+
+    monkeypatch.setattr(PlanRepository, "mark_day_completed", mark_false)
+
+    service = _make_production_service(planning_service, tmp_plita)
+    with pytest.raises(ProductionCompletionError, match="пометить день"):
+        service.complete_day(plan_id=plan_id, target_date="2026-04-21")
+
+    assert _snapshot(tmp_plita, "completed_plates") == snap_completed_before
+    assert _snapshot(tmp_plita, "kp_plates") == snap_kp_before
+
+    plan = PlanRepository(db_path=tmp_plita).load_plan(plan_id)
+    assert plan is not None
+    assert not (plan.get("days") or {}).get("2026-04-21", {}).get("completed")
+
+
 def test_rescue_tracks_deterministic():
     """Инвариант 4: core/rescue_tracks даёт детерминированные missing_counts (web path).
 

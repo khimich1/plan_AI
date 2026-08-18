@@ -4,11 +4,18 @@ import { FieldWrapper } from "@/shared/ui/Field";
 import { Spinner } from "@/shared/ui/Spinner";
 import type { ProductionEstimate } from "@/features/production/lib/productionEstimate";
 import type {
+  CapacityDeficit,
+  CapacityOption,
   FilterMethod,
   KpCandidateItem,
+  SubstrateRecommendation,
+  UrgentPosition,
 } from "@/features/production/types/production";
+import { CapacityDeficitAlert } from "./CapacityDeficitAlert";
 import { KpCandidatesTable } from "./KpCandidatesTable";
 import { ProductionEstimateAlert } from "./ProductionEstimateAlert";
+import { SubstrateRecommendationsBlock } from "./SubstrateRecommendationsBlock";
+import { UrgentPositionsBlock } from "./UrgentPositionsBlock";
 
 type Props = {
   isFillMode: boolean;
@@ -35,6 +42,13 @@ type Props = {
   buildSuccess: boolean;
   buildErrorMessage: string | null;
   canSubmit: boolean;
+  urgentPositions: UrgentPosition[];
+  substrateRecommendations: SubstrateRecommendation[];
+  capacityDeficit: CapacityDeficit | null;
+  analyzePending: boolean;
+  analyzeErrorMessage: string | null;
+  /** Ошибка подложек: HTTP analyze или analysis_meta.error_message. */
+  substrateErrorMessage: string | null;
   onFilterMethodChange: (method: FilterMethod) => void;
   onToggleKp: (kp: KpCandidateItem) => void;
   onToggleExpand: (kpId: number) => void;
@@ -43,6 +57,12 @@ type Props = {
   onProposeCloseFromSgp: (kp: KpCandidateItem, plateId: number) => void;
   onConfirmCloseFromSgp: () => void;
   onCancelCloseFromSgp: () => void;
+  onToggleUrgentPosition: (position: UrgentPosition) => void;
+  onAnalyzeSubstrates: () => void;
+  onToggleSubstrateRecommendation: (
+    recommendation: SubstrateRecommendation,
+  ) => void;
+  onApplyCapacityOption: (option: CapacityOption) => void;
   onCancelFill: () => void;
   onSubmit: (order: "asc" | "desc") => void;
 };
@@ -67,6 +87,12 @@ export const Step3KpPlateSelection = ({
   buildSuccess,
   buildErrorMessage,
   canSubmit,
+  urgentPositions,
+  substrateRecommendations,
+  capacityDeficit,
+  analyzePending,
+  analyzeErrorMessage,
+  substrateErrorMessage,
   onFilterMethodChange,
   onToggleKp,
   onToggleExpand,
@@ -75,6 +101,10 @@ export const Step3KpPlateSelection = ({
   onProposeCloseFromSgp,
   onConfirmCloseFromSgp,
   onCancelCloseFromSgp,
+  onToggleUrgentPosition,
+  onAnalyzeSubstrates,
+  onToggleSubstrateRecommendation,
+  onApplyCapacityOption,
   onCancelFill,
   onSubmit,
 }: Props) => (
@@ -95,6 +125,30 @@ export const Step3KpPlateSelection = ({
         </Button>
       </div>
     </FieldWrapper>
+
+    {isFillMode && (
+      <>
+        <UrgentPositionsBlock
+          positions={urgentPositions}
+          selectedPlatesByKp={selectedPlatesByKp}
+          loading={analyzePending}
+          errorMessage={analyzeErrorMessage}
+          onTogglePosition={onToggleUrgentPosition}
+        />
+        <SubstrateRecommendationsBlock
+          recommendations={substrateRecommendations}
+          selectedPlatesByKp={selectedPlatesByKp}
+          loading={analyzePending}
+          errorMessage={substrateErrorMessage}
+          onAnalyze={onAnalyzeSubstrates}
+          onToggleRecommendation={onToggleSubstrateRecommendation}
+        />
+        <CapacityDeficitAlert
+          deficit={capacityDeficit}
+          onApplyOption={onApplyCapacityOption}
+        />
+      </>
+    )}
 
     {candidatesLoading && (
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>

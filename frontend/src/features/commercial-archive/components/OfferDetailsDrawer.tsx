@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { Spinner } from "@/shared/ui/Spinner";
@@ -16,6 +16,9 @@ import {
 } from "@/features/commercial-offer/utils/cargoDeliveryPricing";
 import { formatMoney, statusEmoji } from "@/features/commercial-archive/lib/format";
 import type { ArchiveOfferDetails, ArchiveMarchItem, ArchivePileItem, ArchiveStepItem } from "@/features/commercial-archive/types/archive";
+import { DeliveryScheduleDialog } from "@/features/delivery-schedule/components/DeliveryScheduleDialog";
+import { useDeliveryScheduleQuery } from "@/features/delivery-schedule/hooks/useDeliveryScheduleQueries";
+import type { OfferPlateForSchedule } from "@/features/delivery-schedule/lib/scheduleDraft";
 import { downloadFile } from "@/shared/lib/downloadFile";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
@@ -28,6 +31,8 @@ import {
   requiresHighDiscountConfirmation,
   targetSumFromDiscountPercent,
 } from "@/features/commercial-offer/lib/discountFromTargetSum";
+
+const DELIVERY_SCHEDULE_EDITABLE_STATUSES = new Set(["в работе", "На СГП"]);
 
 type Props = {
   open: boolean;
@@ -108,6 +113,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const logisticsMutation = useUpdateLogisticsCostMutation();
   const schemaMutation = useArchiveDocumentMutation("schema");
   const financePending = discountMutation.isPending || logisticsMutation.isPending;
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const offer = query.data;
   const isPileOffer = offer?.product_type === "piles";
@@ -118,6 +124,25 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const isSimpleProductOffer = isPileOffer || isStepOffer || isMarchOffer || isBridgePileOffer || isFbsOffer;
   const showReadiness =
     !isSimpleProductOffer && (offer?.status === "в работе" || offer?.status === "На СГП");
+  const canEditDeliverySchedule =
+    !isSimpleProductOffer && Boolean(offer?.status && DELIVERY_SCHEDULE_EDITABLE_STATUSES.has(offer.status));
+  const scheduleQuery = useDeliveryScheduleQuery(
+    open && offer && !isSimpleProductOffer ? offer.kp_id : null,
+  );
+  const hasDeliverySchedule = scheduleQuery.data != null;
+  const schedulePlates: OfferPlateForSchedule[] = useMemo(() => {
+    if (!offer || isSimpleProductOffer) {
+      return [];
+    }
+    return offer.plates
+      .filter((plate): plate is typeof plate & { id: number } => typeof plate.id === "number" && plate.id > 0)
+      .map((plate) => ({
+        id: plate.id,
+        plate_name: plate.plate_name,
+        qty: plate.qty,
+        position_number: plate.position_number,
+      }));
+  }, [offer, isSimpleProductOffer]);
   const pileItems = offer && isPileOffer ? resolvePileItems(offer) : [];
   const stepItems = offer && isStepOffer ? resolveStepItems(offer) : [];
   const marchItems = offer && isMarchOffer ? resolveMarchItems(offer) : [];
@@ -301,7 +326,34 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const clientTrips = offer ? cargoDeliveryTripsCount(Math.max(0, offer.total_cargo_weight_kg ?? 0)) : 0;
 
   return (
-    <Modal open={open} onClose={onClose} title={offer ? `КП №${offer.kp_id}` : "Карточка КП"} maxWidth={720}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={
+        offer ? (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+            <span>КП №{offer.kp_id}</span>
+            {!isSimpleProductOffer && hasDeliverySchedule && (
+              <span
+                style={{
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                  padding: "0.15rem 0.5rem",
+                  borderRadius: 999,
+                  background: "#ecfdf3",
+                  color: "#067647",
+                }}
+              >
+                есть график
+              </span>
+            )}
+          </span>
+        ) : (
+          "Карточка КП"
+        )
+      }
+      maxWidth={720}
+    >
       {query.isPending && (
         <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
           <Spinner /> Загружаю данные...
@@ -681,6 +733,19 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 {schemaMutation.isPending ? "Формируем…" : "📐 Схема"}
               </Button>
             )}
+            {!isSimpleProductOffer && (
+              <Button
+                variant="secondary"
+                title={
+                  canEditDeliverySchedule
+                    ? "Редактирование графика поставки"
+                    : "Просмотр графика поставки"
+                }
+                onClick={() => setScheduleOpen(true)}
+              >
+                График поставки
+              </Button>
+            )}
             {offer.status === "в архиве" && (
               isSimpleProductOffer ? (
                 <Button variant="secondary" disabled title="скоро">
@@ -728,6 +793,15 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               restoreDiscountDrafts();
             }}
           />
+          {!isSimpleProductOffer && (
+            <DeliveryScheduleDialog
+              open={scheduleOpen}
+              onClose={() => setScheduleOpen(false)}
+              kpId={offer.kp_id}
+              plates={schedulePlates}
+              readOnly={!canEditDeliverySchedule}
+            />
+          )}
         </>
       )}
     </Modal>
