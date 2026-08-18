@@ -566,6 +566,16 @@ def test_complete_day_succeeds_for_1250_load_class(tmp_path, monkeypatch):
         def load_plan(self, _plan_id: str) -> dict:
             return {"id": "plan-1250", "days": {"2026-04-30": {"day_number": 1}}}
 
+        def mark_day_completed(
+            self,
+            _plan_id: str,
+            _date_key: str,
+            *,
+            expected_version: int | None = None,
+            _external_conn=None,
+        ) -> bool:
+            return True
+
     db_path = str(tmp_path / "plita_1250.db")
     kp_db.init_schema(db_path)
 
@@ -899,6 +909,16 @@ def test_rest_db_error_rolls_back_without_partial_state(tmp_path, monkeypatch):
     class _PlanRepositoryStub:
         def load_plan(self, _plan_id: str) -> dict:
             return {"id": plan_id, "days": {"2026-04-30": {"day_number": 1}}}
+
+        def mark_day_completed(
+            self,
+            _plan_id: str,
+            _date_key: str,
+            *,
+            expected_version: int | None = None,
+            _external_conn=None,
+        ) -> bool:
+            return True
 
     def _fake_day_view(_target_date: str, **_kwargs) -> dict:
         return {

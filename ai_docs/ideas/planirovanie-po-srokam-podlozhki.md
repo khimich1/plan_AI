@@ -1,8 +1,10 @@
 # Планирование от ёмкости: срочные плиты + подложки из поздних КП
 
-Дата: 2026-08-10. Статус: направление зафиксировано, MVP не начат.
+Дата: 2026-08-10. Статус: **MVP реализован** (2026-08-12, orch-2026-08-12-podlozhki).
 Связь: соседняя идея `grafik-postavki-partii.md` — график поставки является
 приоритетным источником дедлайнов для этой фичи.
+Документация: [`ai_docs/develop/features/planirovanie-po-srokam-podlozhki.md`](../develop/features/planirovanie-po-srokam-podlozhki.md),
+отчёт [`ai_docs/develop/reports/2026-08-12-planirovanie-po-srokam-podlozhki-implementation.md`](../develop/reports/2026-08-12-planirovanie-po-srokam-podlozhki-implementation.md).
 
 ## Problem Statement
 

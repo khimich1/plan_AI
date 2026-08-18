@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import kp_db
+from core.production.capacity import validate_fill_targets
 from core.production.dto import (
     LoadConfig,
     OptimizeConfig,
@@ -26,7 +27,6 @@ from core.production.planning import (
     persist,
     trim_assignments_to_tracks,
     validate,
-    validate_fill_targets,
 )
 
 PLATE_NAME = "ПБ 60-12-8п"
@@ -363,8 +363,44 @@ def test_validate_fill_targets_rejects_over_capacity() -> None:
     with pytest.raises(PlanBuildError, match="свободно"):
         validate_fill_targets(
             [{"date": "2026-04-27", "tracks": 3}],
-            {"2026-04-27": 4},
-            max_tracks_per_day=5,
+            {"2026-04-27": 5},
+            occupancy={"2026-04-27": 4},
+        )
+
+
+def test_validate_fill_targets_uses_day_capacity_override() -> None:
+    """Override day_max=3 → free=3−1=2; requesting 3 fails."""
+    with pytest.raises(PlanBuildError, match="свободно 2"):
+        validate_fill_targets(
+            [{"date": "2026-04-27", "tracks": 3}],
+            {"2026-04-27": 3},
+            occupancy={"2026-04-27": 1},
+        )
+
+
+def test_validate_fill_targets_clamps_day_capacity_above_hard_cap() -> None:
+    """Stale override 9 is clamped to 5; free=5−0=5; requesting 6 fails."""
+    with pytest.raises(PlanBuildError, match="свободно 5"):
+        validate_fill_targets(
+            [{"date": "2026-04-27", "tracks": 6}],
+            {"2026-04-27": 9},
+        )
+
+
+def test_validate_fill_targets_occupancy_free_slots() -> None:
+    """occupancy=3, max=5 → free=2; tracks=2 OK; tracks=4 → PlanBuildError."""
+    day_capacity = {"2026-04-27": 5}
+    occupancy = {"2026-04-27": 3}
+    validate_fill_targets(
+        [{"date": "2026-04-27", "tracks": 2}],
+        day_capacity,
+        occupancy=occupancy,
+    )
+    with pytest.raises(PlanBuildError, match=r"свободно 2.*запрошено 4"):
+        validate_fill_targets(
+            [{"date": "2026-04-27", "tracks": 4}],
+            day_capacity,
+            occupancy=occupancy,
         )
 
 

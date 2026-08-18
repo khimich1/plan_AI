@@ -155,17 +155,15 @@ def test_fill_targets_split_across_days(planning_service, tmp_plita):
     assert statuses.get("в производстве") == 3
 
 
-def test_fill_targets_validation_too_many(planning_service, monkeypatch):
-    """Запрос 4 дорожек на день, где свободно лишь 2 — ошибка планирования."""
+def test_fill_targets_validation_too_many(planning_service, monkeypatch, tmp_plita):
+    """Запрос 2 дорожек при day_max=3 и occupied=2 → free=1 — ошибка планирования."""
+    from app.services.production_capacity_service import ProductionCapacityService
     from app.services.production_planning_service import ProductionPlanBuildError
 
     target_date = "2026-04-27"
-    fake_max_per_day = 3
+    capacity = ProductionCapacityService(db_path=tmp_plita)
+    capacity.set_day_capacity(target_date, 3)
 
-    monkeypatch.setattr(
-        "app.services.production_planning_service.MAX_TRACKS_PER_DAY",
-        fake_max_per_day,
-    )
     monkeypatch.setattr(
         planning_service.plan_repository,
         "get_global_occupancy",
@@ -179,7 +177,7 @@ def test_fill_targets_validation_too_many(planning_service, monkeypatch):
             fill_targets=[{"date": target_date, "tracks": 2}],
         )
     assert "свободно" in str(exc_info.value).lower()
-
+    assert "1" in str(exc_info.value)
 
 def test_fill_targets_duplicate_dates_rejected():
     """Pydantic-схема ругается на повторяющиеся даты в корзине."""

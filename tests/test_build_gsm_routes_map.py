@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -150,6 +151,38 @@ def test_simplify_address_for_geocode_strips_labels_and_org() -> None:
     ) == "Владимир, проспект Октябрьский 27"
     assert simplify_address_for_geocode("Москва, Россия") == "Москва"
     assert simplify_address_for_geocode("Moscow, Russia") == "Moscow"
+
+
+def test_simplify_address_keeps_words_starting_with_abbrev() -> None:
+    """Регрессия: «пер/пос/пл/обл» без точки — не аббревиатура."""
+    out = simplify_address_for_geocode(
+        "ул. Московская, 150А, Переславль-Залесский, Ярославская обл."
+    )
+    assert "Переславль-Залесский" in out
+    assert "Ярославская область" in out
+    assert "поселение" in simplify_address_for_geocode(
+        "М-8, подъезд к Костроме, 11-й километр, Туношенское сельское поселение, "
+        "Ярославский район, Ярославская обл., Россия, 150032"
+    )
+    assert "плюс" in simplify_address_for_geocode(
+        "137 км плюс 100м, ФАД М-7 Волга, Пекша, Владимирская обл."
+    )
+    # Аббревиатуры с точкой по-прежнему раскрываются
+    assert simplify_address_for_geocode("г. Бор, пос. Сосновый") == "Бор, посёлок Сосновый"
+
+
+def test_simplify_address_keeps_cities_ending_in_sk() -> None:
+    """Регрессия: «СК» как отдельный токен — организация, внутри слова — нет."""
+    assert "Приволжск" in simplify_address_for_geocode(
+        "ул. Фурманова, 53, Приволжск, Ивановская обл., Россия, 155550"
+    )
+    assert "Волгореченск" in simplify_address_for_geocode(
+        "Р-600 110 км., Волгореченск, Костромская область"
+    )
+    # А организация по-прежнему отрезается
+    assert simplify_address_for_geocode(
+        'г.Кострома, ул. Кузнецкая, д.18Б, СК "Гамма-Строй"'
+    ) == "Кострома, Кузнецкая 18Б"
 
 
 def test_nominatim_query_prefers_simplified_form() -> None:
@@ -1307,6 +1340,7 @@ def test_run_writes_html(tmp_path: Path) -> None:
         offline=False,
         geo_cache_path=cache_path,
         routes_cache_path=routes_path,
+        stations_path=tmp_path / "нет_такого_stations.geojson",
         geocode_fn=lambda _q: (_ for _ in ()).throw(AssertionError("cache")),
         osrm_fn=lambda lon1, lat1, lon2, lat2: (
             [[lon1, lat1], [lon2, lat2]],
@@ -1317,8 +1351,299 @@ def test_run_writes_html(tmp_path: Path) -> None:
     )
     assert out.is_file()
     assert report["html_features"] == 2
+    assert report["stations"] == 0
     html = out.read_text(encoding="utf-8")
     assert "leaflet" in html.lower()
     assert "FEATURE_COUNT = 2" in html
     assert "KNOWN_ADDRESSES" in html
     assert "nearestRoutes" in html
+
+
+_STATIONS_SAMPLE = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [40.93, 57.77]},
+            "properties": {
+                "тип": "азс",
+                "бренд": "Газпромнефть",
+                "адрес": "г.Кострома, ул.Ленина, д.1",
+                "город": "Кострома",
+                "транзакций": 5,
+                "заправок": 5,
+                "моек": 0,
+                "литров": 250.0,
+                "сумма_руб": 12500.0,
+                "машины": "МАЗ",
+                "первая_дата": "2026-01-12",
+                "последняя_дата": "2026-03-01",
+                "вне_поездок": 0,
+                "источник_координат": "nominatim",
+            },
+        },
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [40.90, 57.75]},
+            "properties": {
+                "тип": "мойка",
+                "бренд": "",
+                "адрес": "г.Кострома, пр.Мира, д.5",
+                "город": "Кострома",
+                "транзакций": 3,
+                "заправок": 0,
+                "моек": 3,
+                "литров": 0.0,
+                "сумма_руб": 1500.0,
+                "машины": "МАЗ",
+                "первая_дата": "2026-02-01",
+                "последняя_дата": "2026-02-20",
+                "вне_поездок": 3,
+                "источник_координат": "nominatim",
+            },
+        },
+    ],
+}
+
+
+def test_write_map_html_station_layers(tmp_path: Path) -> None:
+    out = tmp_path / "map.html"
+    write_map_html(
+        out,
+        {"type": "FeatureCollection", "features": []},
+        VEHICLE_COLORS,
+        stations=_STATIONS_SAMPLE,
+    )
+    html = out.read_text(encoding="utf-8")
+    assert 'id="chk-azs"' in html
+    assert 'id="chk-wash"' in html
+    assert "const STATIONS" in html
+    assert "azsGroup" in html and "washGroup" in html
+    assert "АЗС (1)" in html and "Мойки (1)" in html
+    assert "Газпромнефть" in html  # точка АЗС попала в данные
+
+
+def test_load_stations_missing_and_ok(tmp_path: Path) -> None:
+    from scripts.build_gsm_routes_map import load_stations
+
+    assert load_stations(tmp_path / "нет.geojson") is None
+    path = tmp_path / "stations.geojson"
+    path.write_text(json.dumps(_STATIONS_SAMPLE), encoding="utf-8")
+    loaded = load_stations(path)
+    assert loaded is not None
+    assert len(loaded["features"]) == 2
+
+
+# ——— via-треки A→АЗС→B ———
+
+
+def _addr_cache_entry(lat: float, lon: float) -> dict:
+    return {"lat": lat, "lon": lon, "display": "", "error": None}
+
+
+def _via_links() -> list[dict]:
+    return [
+        {
+            "машина": "МАЗ",
+            "адрес_A": "Кострома",
+            "адрес_B": "Ярославль",
+            "address_a_norm": "a",
+            "address_b_norm": "b",
+            "station_norm": "s",
+            "станция": "Кострома, Магистральная 8",
+            "заправок": 14,
+        },
+        # дубль связи — должен склеиться
+        {
+            "машина": "МАЗ",
+            "адрес_A": "Кострома",
+            "адрес_B": "Ярославль",
+            "address_a_norm": "a",
+            "address_b_norm": "b",
+            "station_norm": "s",
+            "станция": "Кострома, Магистральная 8",
+            "заправок": 14,
+        },
+        # станция без координат
+        {
+            "машина": "МАЗ",
+            "адрес_A": "Кострома",
+            "адрес_B": "Ярославль",
+            "address_a_norm": "a",
+            "address_b_norm": "b",
+            "station_norm": "s_no_coords",
+            "станция": "М-8, 11 км",
+            "заправок": 3,
+        },
+    ]
+
+
+def _via_address_cache() -> dict:
+    return {
+        "addresses": {
+            "a": _addr_cache_entry(57.77, 40.93),
+            "b": _addr_cache_entry(57.63, 39.87),
+            "s": _addr_cache_entry(57.80, 40.95),
+        }
+    }
+
+
+def _direct_routes_collection() -> dict:
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "машина": "МАЗ",
+                    "address_a_norm": "a",
+                    "address_b_norm": "b",
+                    "cache_key": "k",
+                    "osrm_distance_m": 92000.0,
+                },
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[40.93, 57.77], [39.87, 57.63]],
+                },
+            }
+        ],
+    }
+
+
+def test_via_cache_key_format() -> None:
+    from scripts.build_gsm_routes_map import via_osrm_cache_key
+
+    key = via_osrm_cache_key(40.93, 57.77, 40.95, 57.8, 39.87, 57.63)
+    assert key == "40.93000,57.77000|40.95000,57.80000|39.87000,57.63000"
+
+
+def test_load_route_station_links_missing(tmp_path: Path) -> None:
+    from scripts.build_gsm_routes_map import load_route_station_links
+
+    assert load_route_station_links(tmp_path / "нет.json") == []
+
+
+def test_build_via_geojson_detour_and_cache(tmp_path: Path) -> None:
+    from scripts.build_gsm_routes_map import build_via_geojson, load_routes_geojson
+
+    via_path = tmp_path / "routes_via.geojson"
+    calls: list[list] = []
+
+    def fake_osrm(points):
+        calls.append(points)
+        coords = [[lon, lat] for lon, lat in points]
+        return coords, 92800.0  # 92.8 км против 92.0 напрямую
+
+    stats = build_via_geojson(
+        _via_links(),
+        _via_address_cache(),
+        _direct_routes_collection(),
+        via_path,
+        osrm_multi_fn=fake_osrm,
+        sleep_sec=0,
+    )
+    assert stats.links == 2  # дубль склеен
+    assert stats.routed == 1
+    assert stats.skipped_missing_coords == 1
+    assert len(calls) == 1
+    # waypoint — середина тройки
+    assert calls[0][1] == (40.95, 57.8)
+
+    fc = load_routes_geojson(via_path)
+    assert len(fc["features"]) == 1
+    props = fc["features"][0]["properties"]
+    assert props["км_напрямую"] == 92.0
+    assert props["км_с_заездом"] == 92.8
+    assert props["крюк_км"] == 0.8
+    assert props["station_ll"] == "57.8000,40.9500"
+
+    # второй прогон — из кэша, без сети
+    stats2 = build_via_geojson(
+        _via_links(),
+        _via_address_cache(),
+        _direct_routes_collection(),
+        via_path,
+        offline=True,
+        sleep_sec=0,
+    )
+    assert stats2.from_cache == 1
+    assert stats2.routed == 0
+
+
+def test_recommend_via_threshold_and_histogram() -> None:
+    from scripts.build_gsm_routes_map import (
+        recommend_via_threshold_km,
+        via_detour_histogram,
+    )
+
+    assert recommend_via_threshold_km([]) == 5.0
+    # 9 из 10 ≤ 2 км → порог 2
+    assert recommend_via_threshold_km([0.5] * 9 + [15.0]) == 2.0
+    # 60% ≤ 2, 85% ≤ 5 → порог 5
+    detours = [0.5, 1.0, 1.5, 0.2, 0.8, 1.9] + [4.0, 4.5, 5.0] + [30.0]
+    assert recommend_via_threshold_km(detours) == 5.0
+
+    feats = [
+        {"properties": {"крюк_км": d}} for d in (0.5, 1.5, 2.5, 4.0, 60.0)
+    ] + [{"properties": {}}]
+    hist = dict(via_detour_histogram(feats))
+    assert hist["≤1"] == 1
+    assert hist["1–2"] == 1
+    assert hist["2–3"] == 1
+    assert hist["3–5"] == 1
+    assert hist[">55"] == 1
+
+
+def test_apply_via_threshold() -> None:
+    from scripts.build_gsm_routes_map import apply_via_threshold
+
+    feats = [
+        {"properties": {"крюк_км": 2.0}},
+        {"properties": {"крюк_км": 7.0}},
+        {"properties": {}},
+    ]
+    apply_via_threshold(feats, 5.0)
+    assert feats[0]["properties"]["крюк_по_пути"] is True
+    assert feats[1]["properties"]["крюк_по_пути"] is False
+    assert feats[2]["properties"]["крюк_по_пути"] is None
+
+
+def test_write_map_html_via_layer(tmp_path: Path) -> None:
+    via = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "машина": "МАЗ",
+                    "станция": "Кострома, Магистральная 8",
+                    "station_ll": "57.8000,40.9500",
+                    "заправок": 14,
+                    "км_напрямую": 92.0,
+                    "км_с_заездом": 92.8,
+                    "крюк_км": 0.8,
+                    "крюк_по_пути": True,
+                },
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[40.93, 57.77], [40.95, 57.8], [39.87, 57.63]],
+                },
+            }
+        ],
+    }
+    out = tmp_path / "map.html"
+    write_map_html(
+        out,
+        {"type": "FeatureCollection", "features": []},
+        VEHICLE_COLORS,
+        stations=_STATIONS_SAMPLE,
+        via=via,
+        via_threshold_km=5.0,
+    )
+    html = out.read_text(encoding="utf-8")
+    assert 'id="chk-via"' in html
+    assert "const VIA" in html
+    assert "viaGroup" in html
+    assert "Через АЗС (1), порог 5 км" in html
+    assert "highlightStationRoutes" in html
+    assert "Магистральная 8" in html

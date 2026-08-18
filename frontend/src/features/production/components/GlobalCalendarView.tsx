@@ -6,16 +6,27 @@ import { DayDrawer } from "@/features/production/components/DayDrawer";
 import { FillBasket } from "@/features/production/components/FillBasket";
 import { MonthCalendarGrid } from "@/features/production/components/MonthCalendarGrid";
 import {
+  useDayCapacityQuery,
   useGlobalCalendarQuery,
+  useSaveDayCapacityMutation,
   useWorkCalendarQuery,
 } from "@/features/production/hooks/useProductionQueries";
 import type { BasketDayKind } from "@/features/production/lib/basketDayKind";
 import type {
+  CalendarViewMode,
   DayInfo,
   FillTargetItem,
 } from "@/features/production/types/production";
 
 const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
+const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
+
+const formatISO = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
 
 export type GlobalCalendarViewProps = {
   basket: FillTargetItem[];
@@ -58,9 +69,15 @@ export const GlobalCalendarView = ({
 }: GlobalCalendarViewProps) => {
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [mode, setMode] = useState<CalendarViewMode>("planning");
 
   const calendarQuery = useGlobalCalendarQuery();
   const workCalendar = useWorkCalendarQuery();
+
+  const monthFrom = formatISO(startOfMonth(month));
+  const monthTo = formatISO(endOfMonth(month));
+  const capacityQuery = useDayCapacityQuery(monthFrom, monthTo, mode === "capacity");
+  const saveCapacityMutation = useSaveDayCapacityMutation();
 
   const daysInfo = daysInfoProp ?? calendarQuery.data?.days_info ?? {};
   const maxPerDay = Object.values(daysInfo)[0]?.max ?? maxBrushTracks;
@@ -111,6 +128,16 @@ export const GlobalCalendarView = ({
         <Alert tone="error">Не удалось загрузить календарь производства.</Alert>
       )}
 
+      {mode === "capacity" && capacityQuery.isError && (
+        <Alert tone="error">Не удалось загрузить ёмкость дней.</Alert>
+      )}
+
+      {mode === "capacity" && capacityQuery.isLoading && !capacityQuery.data && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+          <Spinner /> Загрузка ёмкости…
+        </div>
+      )}
+
       {!isLoading && (
         <MonthCalendarGrid
           daysInfo={daysInfo}
@@ -119,11 +146,20 @@ export const GlobalCalendarView = ({
           month={month}
           onMonthChange={setMonth}
           selectedDate={selectedDate}
+          mode={mode}
+          onModeChange={setMode}
+          dayCapacity={capacityQuery.data?.capacity}
+          capacitySaving={saveCapacityMutation.isPending}
+          onSaveDayCapacity={async (date, maxTracks) => {
+            await saveCapacityMutation.mutateAsync({ date, max_tracks: maxTracks });
+          }}
           onDayActivate={(iso, meta) => {
+            if (mode === "capacity") return;
             onDismissBasketError?.();
             onDayActivate(iso, meta, holidays, extraWorkdays);
           }}
           onOpenDay={(iso) => {
+            if (mode === "capacity") return;
             onDismissBasketError?.();
             setSelectedDate(iso);
           }}
@@ -132,19 +168,21 @@ export const GlobalCalendarView = ({
         />
       )}
 
-      <FillBasket
-        items={basket}
-        basketKind={basketKind}
-        basketError={basketError}
-        brushTracks={brushTracks}
-        maxBrushTracks={maxBrushTracks}
-        freeSlotsByDate={freeSlotsByDate}
-        onBrushTracksChange={onBrushTracksChange}
-        onChipTracksChange={onChipTracksChange}
-        onRemove={onRemove}
-        onClear={onClear}
-        onProceed={onProceed}
-      />
+      {mode === "planning" && (
+        <FillBasket
+          items={basket}
+          basketKind={basketKind}
+          basketError={basketError}
+          brushTracks={brushTracks}
+          maxBrushTracks={maxBrushTracks}
+          freeSlotsByDate={freeSlotsByDate}
+          onBrushTracksChange={onBrushTracksChange}
+          onChipTracksChange={onChipTracksChange}
+          onRemove={onRemove}
+          onClear={onClear}
+          onProceed={onProceed}
+        />
+      )}
 
       <DayDrawer
         date={selectedDate}

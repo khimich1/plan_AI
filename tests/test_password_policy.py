@@ -62,6 +62,20 @@ def test_register_user_request_accepts_strong_password() -> None:
     assert payload.password == _VALID_PASSWORD
 
 
+@pytest.mark.parametrize(
+    "role",
+    ["admin", "manager", "production", "logistics", "accountant"],
+)
+def test_register_user_request_accepts_valid_roles(role: str) -> None:
+    payload = RegisterUserRequest(
+        username="new_user",
+        password=_VALID_PASSWORD,
+        role=role,  # type: ignore[arg-type]
+    )
+    assert payload.role == role
+    assert payload.password == _VALID_PASSWORD
+
+
 def test_register_user_request_rejects_invalid_role() -> None:
     with pytest.raises(ValidationError):
         RegisterUserRequest(

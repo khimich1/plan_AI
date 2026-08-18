@@ -23,7 +23,12 @@ from app.services.commercial_wizard_step_service import CommercialWizardStepServ
 from app.services.commercial_workflow_service import CommercialWorkflowService
 from app.services.delivery_schedule_service import DeliveryScheduleService
 from app.services.draft_store import DraftStore
+from app.services.gsm_export_service import GsmExportService
+from app.services.gsm_generation_service import GsmGenerationService
+from app.services.gsm_registry_service import GsmRegistryService
+from app.services.gsm_transaction_service import GsmTransactionService
 from app.services.offers_service import OffersService
+from app.services.production_capacity_service import ProductionCapacityService
 from app.services.production_planning_service import ProductionPlanningService
 from app.services.production_service import ProductionService
 from app.services.sgp_service import SgpService
@@ -47,6 +52,12 @@ def get_sgp_service() -> SgpService:
     from app.repositories.kp_repository import KpRepository
 
     return SgpService(db_path=KpRepository().db_path)
+
+
+def get_production_capacity_service() -> ProductionCapacityService:
+    from app.repositories.kp_repository import KpRepository
+
+    return ProductionCapacityService(db_path=KpRepository().db_path)
 
 
 def get_shipment_service() -> ShipmentService:
@@ -95,6 +106,34 @@ def get_delivery_schedule_service() -> DeliveryScheduleService:
     from app.repositories.kp_repository import KpRepository
 
     return DeliveryScheduleService(db_path=KpRepository().db_path)
+
+
+def get_gsm_transaction_service() -> GsmTransactionService:
+    from app.repositories.gsm_repository import GsmRepository
+    from app.repositories.kp_repository import KpRepository
+
+    return GsmTransactionService(repo=GsmRepository(db_path=KpRepository().db_path))
+
+
+def get_gsm_registry_service() -> GsmRegistryService:
+    from app.repositories.gsm_repository import GsmRepository
+    from app.repositories.kp_repository import KpRepository
+
+    return GsmRegistryService(repo=GsmRepository(db_path=KpRepository().db_path))
+
+
+def get_gsm_generation_service() -> GsmGenerationService:
+    from app.repositories.gsm_repository import GsmRepository
+    from app.repositories.kp_repository import KpRepository
+
+    return GsmGenerationService(repo=GsmRepository(db_path=KpRepository().db_path))
+
+
+def get_gsm_export_service() -> GsmExportService:
+    from app.repositories.gsm_repository import GsmRepository
+    from app.repositories.kp_repository import KpRepository
+
+    return GsmExportService(repo=GsmRepository(db_path=KpRepository().db_path))
 
 
 def get_auth_service(

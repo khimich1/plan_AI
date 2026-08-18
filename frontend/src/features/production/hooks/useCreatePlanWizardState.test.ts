@@ -1,19 +1,31 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DayInfo, FillTargetItem } from "@/features/production/types/production";
+import type {
+  AnalyzeSubstratesResponse,
+  CapacityDeficit,
+  CapacityOption,
+  DayInfo,
+  FillTargetItem,
+  SubstrateRecommendation,
+  UrgentPosition,
+} from "@/features/production/types/production";
 import { useCreatePlanWizardState } from "./useCreatePlanWizardState";
 
 const mockMutate = vi.fn();
+const mockAnalyzeMutate = vi.fn();
+const mockAnalyzeReset = vi.fn();
 const mockUseGlobalCalendarQuery = vi.fn();
 const mockUsePlansListQuery = vi.fn();
 const mockUseKpCandidatesQuery = vi.fn();
 const mockUseBuildPlanMutation = vi.fn();
+const mockUseAnalyzeSubstratesMutation = vi.fn();
 
 vi.mock("@/features/production/hooks/useProductionQueries", () => ({
   useGlobalCalendarQuery: () => mockUseGlobalCalendarQuery(),
   usePlansListQuery: () => mockUsePlansListQuery(),
   useKpCandidatesQuery: (enabled: boolean) => mockUseKpCandidatesQuery(enabled),
   useBuildPlanMutation: () => mockUseBuildPlanMutation(),
+  useAnalyzeSubstratesMutation: () => mockUseAnalyzeSubstratesMutation(),
 }));
 
 vi.mock("@/features/production/hooks/useSgpQueries", () => ({
@@ -65,6 +77,14 @@ function setupQueryMocks() {
   });
   mockUseBuildPlanMutation.mockReturnValue({
     mutate: mockMutate,
+    isPending: false,
+    isSuccess: false,
+    isError: false,
+    error: null,
+  });
+  mockUseAnalyzeSubstratesMutation.mockReturnValue({
+    mutate: mockAnalyzeMutate,
+    reset: mockAnalyzeReset,
     isPending: false,
     isSuccess: false,
     isError: false,
@@ -193,4 +213,362 @@ describe("useCreatePlanWizardState", () => {
 
     expect(result.current.canSubmit).toBe(true);
   });
+
+  it("calls analyze-substrates once when fillTargets appear", () => {
+    renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      {
+        initialProps: { fillRequest: partialFillRequest },
+      },
+    );
+
+    expect(mockAnalyzeMutate).toHaveBeenCalledWith(
+      {
+        fill_targets: partialFillRequest,
+        deadline_until: "2026-06-22",
+      },
+      expect.any(Object),
+    );
+  });
+
+  it("analyze success preselects urgent plates (default on) into selection+qty", () => {
+    const urgent: UrgentPosition = {
+      plate_id: 123,
+      kp_id: 115,
+      plate_name: "ПБ 57-7,2 ×8п",
+      qty_remaining: 2,
+      deadline: "2026-06-22",
+      deadline_source: "delivery_batch",
+      deadline_details: [],
+      conflict: null,
+    };
+    const analyzeData: AnalyzeSubstratesResponse = {
+      urgent_positions: [urgent],
+      substrate_recommendations: [],
+      capacity_deficit: null,
+      analysis_meta: {
+        orders_count: 1,
+        analysis_duration_ms: 10,
+        optimization_status: "ok",
+        error_message: null,
+      },
+    };
+
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      {
+        initialProps: { fillRequest: partialFillRequest },
+      },
+    );
+
+    const onSuccess = mockAnalyzeMutate.mock.calls[0][1]?.onSuccess as
+      | ((data: AnalyzeSubstratesResponse) => void)
+      | undefined;
+    expect(onSuccess).toBeTypeOf("function");
+
+    act(() => {
+      onSuccess!(analyzeData);
+    });
+
+    expect(result.current.analyzeResult?.urgent_positions).toEqual([urgent]);
+    expect(result.current.selectedPlatesByKp).toEqual({ 115: [123] });
+    expect(result.current.selectedPlateQtyByKp).toEqual({ 115: { 123: 2 } });
+    expect(result.current.filterMethod).toBe("kp");
+  });
+
+  it("toggleUrgentPosition syncs selectedPlatesByKp and selectedPlateQtyByKp", () => {
+    const urgent: UrgentPosition = {
+      plate_id: 123,
+      kp_id: 115,
+      plate_name: "ПБ 57-7,2 ×8п",
+      qty_remaining: 2,
+      deadline: "2026-06-22",
+      deadline_source: "delivery_batch",
+      deadline_details: [],
+      conflict: null,
+    };
+    const analyzeData: AnalyzeSubstratesResponse = {
+      urgent_positions: [urgent],
+      substrate_recommendations: [],
+      capacity_deficit: null,
+      analysis_meta: {
+        orders_count: 1,
+        analysis_duration_ms: 10,
+        optimization_status: "ok",
+        error_message: null,
+      },
+    };
+
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      {
+        initialProps: { fillRequest: partialFillRequest },
+      },
+    );
+
+    const onSuccess = mockAnalyzeMutate.mock.calls[0][1]?.onSuccess as
+      | ((data: AnalyzeSubstratesResponse) => void)
+      | undefined;
+
+    act(() => {
+      onSuccess!(analyzeData);
+    });
+
+    act(() => {
+      result.current.toggleUrgentPosition(urgent);
+    });
+
+    expect(result.current.selectedPlatesByKp).toEqual({});
+    expect(result.current.selectedPlateQtyByKp).toEqual({});
+
+    act(() => {
+      result.current.toggleUrgentPosition(urgent);
+    });
+
+    expect(result.current.selectedPlatesByKp).toEqual({ 115: [123] });
+    expect(result.current.selectedPlateQtyByKp).toEqual({ 115: { 123: 2 } });
+  });
+
+  it("analyze success preselects substrate recommendations with qty_recommended", () => {
+    const substrate: SubstrateRecommendation = {
+      plate_id: 456,
+      kp_id: 127,
+      plate_name: "ПБ 57-4,8 ×8п",
+      qty_recommended: 3,
+      under_plate_id: 123,
+      under_kp_id: 115,
+      under_plate_name: "ПБ 57-7,2 ×8п",
+      needed_by: "2026-09-05",
+      storage_days: 24,
+      saving_mm: 480,
+      saving_m: 2.4,
+    };
+    const analyzeData: AnalyzeSubstratesResponse = {
+      urgent_positions: [],
+      substrate_recommendations: [substrate],
+      capacity_deficit: null,
+      analysis_meta: {
+        orders_count: 1,
+        analysis_duration_ms: 10,
+        optimization_status: "ok",
+        error_message: null,
+      },
+    };
+
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      {
+        initialProps: { fillRequest: partialFillRequest },
+      },
+    );
+
+    const onSuccess = mockAnalyzeMutate.mock.calls[0][1]?.onSuccess as
+      | ((data: AnalyzeSubstratesResponse) => void)
+      | undefined;
+
+    act(() => {
+      onSuccess!(analyzeData);
+    });
+
+    expect(result.current.analyzeResult?.substrate_recommendations).toEqual([
+      substrate,
+    ]);
+    expect(result.current.selectedPlatesByKp).toEqual({ 127: [456] });
+    expect(result.current.selectedPlateQtyByKp).toEqual({ 127: { 456: 3 } });
+    expect(result.current.filterMethod).toBe("kp");
+  });
+
+  it("runAnalyzeSubstrates re-triggers mutation; toggleSubstrateRecommendation syncs selection", () => {
+    const substrate: SubstrateRecommendation = {
+      plate_id: 456,
+      kp_id: 127,
+      plate_name: "ПБ 57-4,8 ×8п",
+      qty_recommended: 3,
+      under_plate_id: 123,
+      under_kp_id: 115,
+      under_plate_name: "ПБ 57-7,2 ×8п",
+      needed_by: "2026-09-05",
+      storage_days: 24,
+      saving_mm: 480,
+      saving_m: 2.4,
+    };
+    const analyzeData: AnalyzeSubstratesResponse = {
+      urgent_positions: [],
+      substrate_recommendations: [substrate],
+      capacity_deficit: null,
+      analysis_meta: {
+        orders_count: 1,
+        analysis_duration_ms: 10,
+        optimization_status: "ok",
+        error_message: null,
+      },
+    };
+
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      {
+        initialProps: { fillRequest: partialFillRequest },
+      },
+    );
+
+    expect(mockAnalyzeMutate).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.runAnalyzeSubstrates();
+    });
+
+    expect(mockAnalyzeMutate).toHaveBeenCalledTimes(2);
+
+    const onSuccess = mockAnalyzeMutate.mock.calls[1][1]?.onSuccess as
+      | ((data: AnalyzeSubstratesResponse) => void)
+      | undefined;
+
+    act(() => {
+      onSuccess!(analyzeData);
+    });
+
+    act(() => {
+      result.current.toggleSubstrateRecommendation(substrate);
+    });
+
+    expect(result.current.selectedPlatesByKp).toEqual({});
+    expect(result.current.selectedPlateQtyByKp).toEqual({});
+
+    act(() => {
+      result.current.toggleSubstrateRecommendation(substrate);
+    });
+
+    expect(result.current.selectedPlatesByKp).toEqual({ 127: [456] });
+    expect(result.current.selectedPlateQtyByKp).toEqual({ 127: { 456: 3 } });
+  });
+
+  it("applyCapacityOption bumps fillTargets without saving day capacity", () => {
+    const deficit: CapacityDeficit = {
+      tracks_needed: 10,
+      tracks_available: 5,
+      tracks_missing: 2,
+      deficit_until: "2026-06-22",
+      options: [
+        { action: "bump_fill", date: "2026-06-21", add_tracks: 2, free: 5 },
+      ],
+    };
+    const analyzeData: AnalyzeSubstratesResponse = {
+      urgent_positions: [],
+      substrate_recommendations: [],
+      capacity_deficit: deficit,
+      analysis_meta: {
+        orders_count: 1,
+        analysis_duration_ms: 10,
+        optimization_status: "ok",
+        error_message: null,
+      },
+    };
+
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      {
+        initialProps: { fillRequest: partialFillRequest },
+      },
+    );
+
+    const onSuccess = mockAnalyzeMutate.mock.calls[0][1]?.onSuccess as
+      | ((data: AnalyzeSubstratesResponse) => void)
+      | undefined;
+
+    act(() => {
+      onSuccess!(analyzeData);
+    });
+
+    expect(mockAnalyzeMutate).toHaveBeenCalledTimes(1);
+
+    const option: CapacityOption = deficit.options[0];
+    act(() => {
+      result.current.applyCapacityOption(option);
+    });
+
+    expect(result.current.fillTargets).toEqual([
+      { date: "2026-06-21", tracks: 4 },
+      { date: "2026-06-22", tracks: 3 },
+    ]);
+    // targetsKey includes tracks → analyze re-runs
+    expect(mockAnalyzeMutate).toHaveBeenCalledTimes(2);
+    expect(mockAnalyzeMutate).toHaveBeenLastCalledWith(
+      {
+        fill_targets: [
+          { date: "2026-06-21", tracks: 4 },
+          { date: "2026-06-22", tracks: 3 },
+        ],
+        deadline_until: "2026-06-22",
+      },
+      expect.any(Object),
+    );
+  });
+
+  it("applyCapacityOption propose_day adds a new date to fillTargets", () => {
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      {
+        initialProps: { fillRequest: partialFillRequest },
+      },
+    );
+
+    act(() => {
+      result.current.applyCapacityOption({
+        action: "propose_day",
+        date: "2026-06-20",
+        add_tracks: 3,
+        free: 3,
+      });
+    });
+
+    expect(result.current.fillTargets).toEqual([
+      { date: "2026-06-20", tracks: 3 },
+      { date: "2026-06-21", tracks: 2 },
+      { date: "2026-06-22", tracks: 3 },
+    ]);
+  });
+
+  it("exposes substrateErrorMessage from analysis_meta when optimization_status is error", () => {
+    const analyzeData: AnalyzeSubstratesResponse = {
+      urgent_positions: [],
+      substrate_recommendations: [],
+      capacity_deficit: null,
+      analysis_meta: {
+        orders_count: 2,
+        analysis_duration_ms: 12,
+        optimization_status: "error",
+        error_message:
+          "Оптимизатор вернул ошибку при анализе подложек: infeasible",
+      },
+    };
+
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      {
+        initialProps: { fillRequest: partialFillRequest },
+      },
+    );
+
+    const onSuccess = mockAnalyzeMutate.mock.calls[0][1]?.onSuccess as
+      | ((data: AnalyzeSubstratesResponse) => void)
+      | undefined;
+
+    act(() => {
+      onSuccess!(analyzeData);
+    });
+
+    expect(result.current.analyzeErrorMessage).toBeNull();
+    expect(result.current.substrateErrorMessage).toBe(
+      "Оптимизатор вернул ошибку при анализе подложек: infeasible",
+    );
+  });
 });
+

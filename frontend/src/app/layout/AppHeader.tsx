@@ -10,6 +10,7 @@ const NEW_OFFER_PATH = "/new";
 const ARCHIVE_PATH = "/archive";
 const PRODUCTION_PATH = "/production";
 const LOGISTICS_PATH = "/logistics";
+const GSM_PATH = "/gsm";
 
 export const AppHeader = () => {
   const { hasDraft, resetDraft } = useCommercialDraftHeaderBridge();
@@ -23,9 +24,11 @@ export const AppHeader = () => {
   const isProduction = user?.role === "production";
   const isManager = user?.role === "manager";
   const isLogistics = user?.role === "logistics";
+  const isAccountant = user?.role === "accountant";
   const canSeeCommercial = isAdmin || isManager;
   const canSeeProduction = isAdmin || isProduction;
   const canSeeLogistics = isAdmin || isLogistics;
+  const canSeeGsm = isAdmin || isAccountant;
 
   const onLogoutClick = async () => {
     try {
@@ -111,6 +114,16 @@ export const AppHeader = () => {
               }
             >
               Логистика
+            </NavLink>
+          )}
+          {canSeeGsm && (
+            <NavLink
+              to={GSM_PATH}
+              className={({ isActive }) =>
+                isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
+              }
+            >
+              ГСМ
             </NavLink>
           )}
           {isAdmin && (

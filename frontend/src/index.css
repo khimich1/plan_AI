@@ -343,6 +343,113 @@ a {
   color: #98a2b3;
 }
 
+/* Distinct from holiday gray (#f2f4f7): cool slate for capacity mode. */
+.prod-calendar__day--capacity {
+  background: #dbe4f0;
+  border-color: #b8c7db;
+  color: #344054;
+  cursor: default;
+}
+
+.prod-calendar__day--capacity:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.prod-calendar__mode-toggle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: 0.85rem;
+  border-radius: 14px;
+  background: #eef2ff;
+  border: 1px solid #d6defa;
+}
+
+.prod-calendar__mode-btn {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+  background: transparent;
+  color: #475467;
+  font: inherit;
+  font-weight: 600;
+}
+
+.prod-calendar__mode-btn--active {
+  background: #ffffff;
+  color: #23366f;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.prod-calendar__capacity-value {
+  appearance: none;
+  border: 1px dashed #667085;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+  padding: 0.15rem 0.45rem;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #101828;
+  cursor: pointer;
+  justify-self: start;
+  align-self: end;
+}
+
+.prod-calendar__capacity-value:hover {
+  border-color: #2b5cff;
+  color: #2b5cff;
+}
+
+.prod-calendar__capacity-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  align-self: end;
+}
+
+.prod-calendar__capacity-input {
+  width: 3rem;
+  border: 1px solid #98a2b3;
+  border-radius: 6px;
+  padding: 0.15rem 0.25rem;
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+}
+
+.prod-calendar__capacity-step,
+.prod-calendar__capacity-save {
+  appearance: none;
+  border: 1px solid #d0d5dd;
+  background: #ffffff;
+  border-radius: 6px;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  line-height: 1;
+  color: #344054;
+}
+
+.prod-calendar__capacity-step:disabled,
+.prod-calendar__capacity-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.prod-calendar__capacity-save {
+  border-color: #abefc6;
+  background: #ecfdf3;
+  color: #067647;
+}
+
 .prod-calendar__day--outside {
   background: transparent;
   border-color: transparent;

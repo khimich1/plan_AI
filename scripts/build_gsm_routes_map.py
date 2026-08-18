@@ -31,6 +31,7 @@ DEFAULT_XLSX = PROJECT_ROOT / "ГСМ" / "пул_поездок.xlsx"
 DEFAULT_OUT = PROJECT_ROOT / "ГСМ" / "карта_маршрутов.html"
 DEFAULT_GEO_CACHE = PROJECT_ROOT / "ГСМ" / "geo_cache" / "addresses.json"
 DEFAULT_ROUTES_CACHE = PROJECT_ROOT / "ГСМ" / "geo_cache" / "routes.geojson"
+DEFAULT_STATIONS = PROJECT_ROOT / "ГСМ" / "geo_cache" / "stations.geojson"
 SHEET_ROUTES_AB = "routes_ab"
 
 REQUIRED_HEADERS = ("машина", "адрес_A", "адрес_B", "км", "частота")
@@ -332,9 +333,12 @@ def cache_entry_should_skip_network(
 
 
 _COUNTRY_TAIL_RE = re.compile(r",?\s*(?:Россия|Russia|РФ)\s*$", re.IGNORECASE)
-# ООО/СК/ИП и т.п. — хвост до конца строки (в т.ч. ООО СЗ "…", Завод ЖБИ "…")
+# Почтовый индекс в хвосте: «…, Россия, 150032» / «…, Россия 150032»
+_POSTAL_TAIL_RE = re.compile(r",?\s*\d{6}\s*$")
+# ООО/СК/ИП и т.п. — хвост до конца строки (в т.ч. ООО СЗ "…", Завод ЖБИ "…").
+# \b слева обязателен: иначе «СК» съедает окончание «Приволжск» → «Приволж».
 _ORG_TAIL_RE = re.compile(
-    r",?\s*(?:"
+    r",?\s*\b(?:"
     r"(?:ООО|OOO|АО|ЗАО|ПАО|ОАО|ИП|СК|ГК|СЗ|НКО|ТСЖ|СНТ|МБУ|МУП|ГУП)\b"
     r"|Завод\b"
     r").*$",
@@ -346,15 +350,18 @@ _STRUCT_DROP_RE = re.compile(
     r"|,\s*\bк\.\s*[А-Яа-яA-Za-z0-9]+\b",
     re.IGNORECASE,
 )
+# Однобуквенные/короткие аббревиатуры: справа обязательны точка, пробел или конец
+# строки — иначе «Переславль» → «переулок еславль», «поселение» → «посёлок еление».
 _ABBREV_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bпр-д\.?\s*", re.IGNORECASE), "проезд "),
     (re.compile(r"\bпр-кт\.?\s*", re.IGNORECASE), "проспект "),
     (re.compile(r"\bпр-т\.?\s*", re.IGNORECASE), "проспект "),
-    (re.compile(r"\bпл\.?\s*", re.IGNORECASE), "площадь "),
-    (re.compile(r"\bобл\.?\s*", re.IGNORECASE), "область "),
-    (re.compile(r"\bпер\.?\s*", re.IGNORECASE), "переулок "),
-    (re.compile(r"\bпос\.?\s*", re.IGNORECASE), "посёлок "),
+    (re.compile(r"\bпл(?:\.\s*|\s+|$)", re.IGNORECASE), "площадь "),
+    (re.compile(r"\bобл(?:\.\s*|\s+|$)", re.IGNORECASE), "область "),
+    (re.compile(r"\bпер(?:\.\s*|\s+|$)", re.IGNORECASE), "переулок "),
+    (re.compile(r"\bпос(?:\.\s*|\s+|$)", re.IGNORECASE), "посёлок "),
     (re.compile(r"\bш\.\s*", re.IGNORECASE), "шоссе "),
+    (re.compile(r"\bпр(?:ос)?(?:\.\s*|\s+|$)", re.IGNORECASE), "проспект "),
 )
 # г./ул./д./дом — точка или пробел обязательны (не трогать «готово»)
 _ADDR_LABEL_RE = re.compile(
@@ -373,11 +380,19 @@ def _is_house_token(token: str) -> bool:
     return bool(_HOUSE_TOKEN_RE.fullmatch(token.strip()))
 
 
+_REGION_PART_RE = re.compile(r"область|район|округ|Россия", re.IGNORECASE)
+
+
 def _merge_street_house(parts: list[str]) -> list[str]:
-    """«…, Кузнецкая, 18Б» → «…, Кузнецкая 18Б»."""
-    if len(parts) >= 2 and _is_house_token(parts[-1]):
-        return [*parts[:-2], f"{parts[-2]} {parts[-1]}"]
-    return parts
+    """«…, Кузнецкая, 18Б» → «…, Кузнецкая 18Б» (дом склеиваем с улицей,
+    где бы он ни стоял; не склеиваем с регионом/районом)."""
+    out: list[str] = []
+    for part in parts:
+        if out and _is_house_token(part) and not _REGION_PART_RE.search(out[-1]):
+            out[-1] = f"{out[-1]} {part}"
+        else:
+            out.append(part)
+    return out
 
 
 def simplify_address_for_geocode(display: str) -> str:
@@ -385,6 +400,9 @@ def simplify_address_for_geocode(display: str) -> str:
     text = (display or "").strip()
     if not text:
         return ""
+    text = _POSTAL_TAIL_RE.sub("", text)
+    text = _COUNTRY_TAIL_RE.sub("", text).strip().rstrip(",").strip()
+    text = _POSTAL_TAIL_RE.sub("", text)
     text = _COUNTRY_TAIL_RE.sub("", text).strip().rstrip(",").strip()
     text = _ORG_TAIL_RE.sub("", text).strip().rstrip(",").strip()
     text = _STRUCT_DROP_RE.sub(" ", text)
@@ -606,6 +624,17 @@ def load_routes_geojson(path: Path) -> dict[str, Any]:
     return {"type": "FeatureCollection", "features": features}
 
 
+def load_stations(path: Path) -> dict[str, Any] | None:
+    """Точки АЗС/моек для слоёв карты; None, если файла нет (слои не рисуем)."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("features"), list):
+        raise ValueError(f"stations.geojson: ожидалась FeatureCollection: {path}")
+    return {"type": "FeatureCollection", "features": raw["features"]}
+
+
 def save_routes_geojson(path: Path, collection: dict[str, Any]) -> None:
     """Записать FeatureCollection (атомарно через .tmp, компактный JSON)."""
     path = Path(path)
@@ -784,30 +813,12 @@ def osrm_route(
     base_url: str = OSRM_BASE_URL,
 ) -> tuple[list[list[float]], float] | None:
     """Запрос к публичному OSRM. (coordinates GeoJSON, distance_m) или None."""
-    http = session or requests.Session()
-    url = f"{base_url}/{lon1},{lat1};{lon2},{lat2}"
-    params = {"overview": OSRM_OVERVIEW, "geometries": "geojson"}
-    headers = {"User-Agent": NOMINATIM_USER_AGENT}
-    resp = http.get(url, params=params, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    data = resp.json()
-    if not isinstance(data, dict) or data.get("code") != "Ok":
-        return None
-    routes = data.get("routes")
-    if not isinstance(routes, list) or not routes:
-        return None
-    first = routes[0]
-    if not isinstance(first, dict):
-        return None
-    geom = first.get("geometry")
-    if not isinstance(geom, dict) or geom.get("type") != "LineString":
-        return None
-    coords = geom.get("coordinates")
-    if not isinstance(coords, list) or len(coords) < 2:
-        return None
-    distance = first.get("distance")
-    dist_m = float(distance) if isinstance(distance, (int, float)) else 0.0
-    return simplify_linestring_coords(coords), dist_m
+    return osrm_route_multi(
+        [(lon1, lat1), (lon2, lat2)],
+        session=session,
+        timeout=timeout,
+        base_url=base_url,
+    )
 
 
 def build_routes_geojson(
@@ -985,6 +996,344 @@ def build_routes_geojson(
         features=len(features),
         skips=tuple(skip_msgs),
     )
+
+
+# ——— треки «маршрут через типовую АЗС» (waypoint OSRM) ———
+
+DEFAULT_ROUTE_STATIONS = (
+    PROJECT_ROOT / "ГСМ" / "geo_cache" / "route_stations.json"
+)
+DEFAULT_VIA_CACHE = PROJECT_ROOT / "ГСМ" / "geo_cache" / "routes_via.geojson"
+
+
+@dataclass
+class ViaStats:
+    """Счётчики построения via-треков A→АЗС→B."""
+
+    links: int = 0
+    routed: int = 0
+    from_cache: int = 0
+    skipped_missing_coords: int = 0
+    skipped_osrm_error: int = 0
+    skipped_offline: int = 0
+    features: int = 0
+    skips: tuple[str, ...] = ()
+
+
+def load_route_station_links(path: Path) -> list[dict[str, Any]]:
+    """Связи маршрут↔АЗС из route_stations.json (пишет build_gsm_trip_feed)."""
+    path = Path(path)
+    if not path.is_file():
+        return []
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("links"), list):
+        raise ValueError(f"route_stations.json: ожидался объект с links: {path}")
+    return [lk for lk in raw["links"] if isinstance(lk, dict)]
+
+
+def osrm_route_multi(
+    points: list[tuple[float, float]],
+    *,
+    session: requests.Session | None = None,
+    timeout: float = OSRM_TIMEOUT_SEC,
+    base_url: str = OSRM_BASE_URL,
+) -> tuple[list[list[float]], float] | None:
+    """OSRM-трек через произвольное число точек (lon, lat)."""
+    if len(points) < 2:
+        return None
+    http = session or requests.Session()
+    url = f"{base_url}/" + ";".join(f"{lon},{lat}" for lon, lat in points)
+    params = {"overview": OSRM_OVERVIEW, "geometries": "geojson"}
+    headers = {"User-Agent": NOMINATIM_USER_AGENT}
+    resp = http.get(url, params=params, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict) or data.get("code") != "Ok":
+        return None
+    routes = data.get("routes")
+    if not isinstance(routes, list) or not routes:
+        return None
+    first = routes[0]
+    if not isinstance(first, dict):
+        return None
+    geom = first.get("geometry")
+    if not isinstance(geom, dict) or geom.get("type") != "LineString":
+        return None
+    coords = geom.get("coordinates")
+    if not isinstance(coords, list) or len(coords) < 2:
+        return None
+    distance = first.get("distance")
+    dist_m = float(distance) if isinstance(distance, (int, float)) else 0.0
+    return simplify_linestring_coords(coords), dist_m
+
+
+def via_osrm_cache_key(
+    lon1: float, lat1: float, slon: float, slat: float, lon2: float, lat2: float
+) -> str:
+    """Ключ кэша via-трека: A→АЗС→B (координаты, 5 знаков)."""
+    return (
+        f"{lon1:.5f},{lat1:.5f}|{slon:.5f},{slat:.5f}|{lon2:.5f},{lat2:.5f}"
+    )
+
+
+def build_via_geojson(
+    links: list[dict[str, Any]],
+    address_cache: dict[str, Any],
+    routes_collection: dict[str, Any],
+    via_cache_path: Path,
+    *,
+    offline: bool = False,
+    sleep_sec: float = OSRM_RATE_LIMIT_SEC,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    osrm_multi_fn: (
+        Callable[[list[tuple[float, float]]], tuple[list[list[float]], float] | None]
+        | None
+    ) = None,
+    session: requests.Session | None = None,
+) -> ViaStats:
+    """Треки A→АЗС→B для связей маршрут↔типовая АЗС → routes_via.geojson.
+
+    «Крюк» считается против OSRM-дистанции прямого трека (тот же измеритель).
+    Кэш геометрии — по координатам тройки точек; свойства маршрута/станции
+    обновляются в кэше при каждом прогоне (геометрия переиспользуется).
+    """
+    addresses = address_cache.get("addresses") or {}
+    if not isinstance(addresses, dict):
+        addresses = {}
+
+    _, by_route = _index_routes_cache(
+        list(routes_collection.get("features") or [])
+    )
+
+    collection = load_routes_geojson(via_cache_path)
+    features: list[dict[str, Any]] = [
+        f
+        for f in (collection.get("features") or [])
+        if isinstance(f, dict)
+    ]
+    by_key: dict[str, dict[str, Any]] = {}
+    for feat in features:
+        props = feat.get("properties") or {}
+        key = _as_str(props.get("cache_key"))
+        if key and (feat.get("geometry") or {}).get("type") == "LineString":
+            by_key.setdefault(key, feat)
+
+    stats_links = 0
+    routed = from_cache = 0
+    skipped_missing = skipped_error = skipped_offline = 0
+    skip_msgs: list[str] = []
+    network_calls = 0
+    dirty = False
+    seen: set[tuple[str, str, str, str]] = set()
+    referenced_keys: set[str] = set()
+
+    def _do_osrm(
+        points: list[tuple[float, float]],
+    ) -> tuple[list[list[float]], float] | None:
+        if osrm_multi_fn is not None:
+            result = osrm_multi_fn(points)
+            if result is None:
+                return None
+            coords, dist_m = result
+            return simplify_linestring_coords(coords), dist_m
+        return osrm_route_multi(points, session=session)
+
+    for link in links:
+        vehicle = _as_str(link.get("машина"))
+        a_norm = _as_str(link.get("address_a_norm"))
+        b_norm = _as_str(link.get("address_b_norm"))
+        station_norm = _as_str(link.get("station_norm"))
+        dedup_key = (vehicle, a_norm, b_norm, station_norm)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        stats_links += 1
+
+        coords_a = coords_for_norm(addresses, a_norm)
+        coords_b = coords_for_norm(addresses, b_norm)
+        coords_s = coords_for_norm(addresses, station_norm)
+        if coords_a is None or coords_b is None or coords_s is None:
+            skipped_missing += 1
+            missing_parts = []
+            if coords_a is None:
+                missing_parts.append(f"A={a_norm or link.get('адрес_A')!r}")
+            if coords_b is None:
+                missing_parts.append(f"B={b_norm or link.get('адрес_B')!r}")
+            if coords_s is None:
+                missing_parts.append(
+                    f"station={station_norm or link.get('станция')!r}"
+                )
+            skip_msgs.append(
+                f"via skip missing coords: {vehicle!r} {' '.join(missing_parts)}"
+            )
+            continue
+
+        lat1, lon1 = coords_a
+        lat2, lon2 = coords_b
+        slat, slon = coords_s
+        cache_key = via_osrm_cache_key(lon1, lat1, slon, slat, lon2, lat2)
+        referenced_keys.add(cache_key)
+
+        direct = by_route.get((vehicle, a_norm, b_norm))
+        direct_props = (direct or {}).get("properties") or {}
+        direct_m = direct_props.get("osrm_distance_m")
+        direct_km = (
+            round(float(direct_m) / 1000.0, 2)
+            if isinstance(direct_m, (int, float))
+            else None
+        )
+
+        props: dict[str, Any] = {
+            "cache_key": cache_key,
+            "машина": vehicle,
+            "адрес_A": _as_str(link.get("адрес_A")),
+            "адрес_B": _as_str(link.get("адрес_B")),
+            "address_a_norm": a_norm,
+            "address_b_norm": b_norm,
+            "станция": _as_str(link.get("станция")),
+            "station_norm": station_norm,
+            "station_ll": f"{slat:.4f},{slon:.4f}",
+            "заправок": link.get("заправок"),
+            "км_напрямую": direct_km,
+        }
+
+        existing = by_key.get(cache_key)
+        if existing is not None:
+            geom = existing.get("geometry") or {}
+            coords_exist = geom.get("coordinates")
+            if isinstance(coords_exist, list) and len(coords_exist) >= 2:
+                merged = {**(existing.get("properties") or {}), **props}
+                via_m = merged.get("osrm_distance_m")
+                _finalize_via_props(merged, via_m)
+                if merged != existing.get("properties"):
+                    existing["properties"] = merged
+                    dirty = True
+                from_cache += 1
+                continue
+
+        if offline:
+            skipped_offline += 1
+            skip_msgs.append(f"via skip offline: {vehicle!r} {cache_key}")
+            continue
+
+        if network_calls > 0 and sleep_sec > 0:
+            sleep_fn(sleep_sec)
+        network_calls += 1
+        try:
+            result = _do_osrm([(lon1, lat1), (slon, slat), (lon2, lat2)])
+        except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+            skipped_error += 1
+            skip_msgs.append(f"via OSRM error: {vehicle!r} {cache_key}: {exc}")
+            continue
+        if result is None:
+            skipped_error += 1
+            skip_msgs.append(f"via OSRM empty/no route: {vehicle!r} {cache_key}")
+            continue
+
+        coordinates, dist_m = result
+        feat = {
+            "type": "Feature",
+            "properties": props,
+            "geometry": {"type": "LineString", "coordinates": coordinates},
+        }
+        _finalize_via_props(feat["properties"], dist_m)
+        features.append(feat)
+        by_key[cache_key] = feat
+        routed += 1
+        dirty = True
+
+    # Убрать фичи устаревших геометрий (координаты станции/точек изменились
+    # или связь удалена): их ключи больше не запрошены текущими связями.
+    if links:
+        pruned = [
+            f
+            for f in features
+            if (f.get("properties") or {}).get("cache_key") in referenced_keys
+        ]
+        if len(pruned) != len(features):
+            features = pruned
+            dirty = True
+
+    if dirty:
+        save_routes_geojson(
+            via_cache_path,
+            {"type": "FeatureCollection", "features": features},
+        )
+
+    return ViaStats(
+        links=stats_links,
+        routed=routed,
+        from_cache=from_cache,
+        skipped_missing_coords=skipped_missing,
+        skipped_osrm_error=skipped_error,
+        skipped_offline=skipped_offline,
+        features=len(features),
+        skips=tuple(skip_msgs),
+    )
+
+
+def _finalize_via_props(props: dict[str, Any], via_m: Any) -> None:
+    """км_с_заездом/крюк_км из OSRM-дистанции via-трека."""
+    if not isinstance(via_m, (int, float)):
+        return
+    props["osrm_distance_m"] = via_m
+    via_km = round(float(via_m) / 1000.0, 2)
+    props["км_с_заездом"] = via_km
+    direct_km = props.get("км_напрямую")
+    if isinstance(direct_km, (int, float)):
+        props["крюк_км"] = round(via_km - float(direct_km), 2)
+
+
+def recommend_via_threshold_km(detours: list[float]) -> float:
+    """Порог «заправка по пути»: минимум из 2/3/5/8 км, покрывающий ≥85% крюков.
+
+    Смотрим только на правдоподобные значения (≤ 20 км); большие крюки —
+    аномалии геокода или реальные заезды, их порог определять не должен.
+    """
+    plausible = sorted(d for d in detours if 0.0 <= d <= 20.0)
+    if not plausible:
+        return 5.0
+    for threshold in (2.0, 3.0, 5.0, 8.0):
+        covered = sum(1 for d in plausible if d <= threshold) / len(plausible)
+        if covered >= 0.85:
+            return threshold
+    return 13.0
+
+
+def via_detour_histogram(
+    features: list[dict[str, Any]],
+) -> list[tuple[str, int]]:
+    """Распределение крюков по корзинам для отчёта калибровки."""
+    bins = (1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 21.0, 34.0, 55.0)
+    counts = [0] * (len(bins) + 1)
+    for feat in features:
+        detour = (feat.get("properties") or {}).get("крюк_км")
+        if not isinstance(detour, (int, float)):
+            continue
+        idx = 0
+        while idx < len(bins) and detour > bins[idx]:
+            idx += 1
+        counts[idx] += 1
+    labels = [f"≤{bins[0]:g}"]
+    labels += [f"{bins[i]:g}–{bins[i + 1]:g}" for i in range(len(bins) - 1)]
+    labels.append(f">{bins[-1]:g}")
+    return list(zip(labels, counts))
+
+
+def apply_via_threshold(
+    features: list[dict[str, Any]], threshold_km: float
+) -> None:
+    """Флаг «крюк_по_пути» в properties по порогу (в HTML, не в кэш)."""
+    for feat in features:
+        props = feat.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            feat["properties"] = props
+        detour = props.get("крюк_км")
+        if isinstance(detour, (int, float)):
+            props["крюк_по_пути"] = bool(detour <= threshold_km)
+        else:
+            props["крюк_по_пути"] = None
 
 
 def count_geocoded_addresses(address_cache: dict[str, Any]) -> int:
@@ -1165,6 +1514,9 @@ def write_map_html(
     known_addresses: list[dict[str, Any]] | None = None,
     *,
     embed_max_bytes: int = EMBED_GEOJSON_MAX_BYTES,
+    stations: dict[str, Any] | None = None,
+    via: dict[str, Any] | None = None,
+    via_threshold_km: float | None = None,
 ) -> None:
     """Собрать Leaflet HTML: встроенный GeoJSON или sibling routes.geojson + fetch.
 
@@ -1172,6 +1524,8 @@ def write_map_html(
     known_addresses — список {{norm, display, lat, lon}} для офлайн-поиска.
     Если сериализованный GeoJSON > embed_max_bytes — пишем sibling routes.geojson
     рядом с HTML и подгружаем через fetch (нужен http.server, не file://).
+    stations — FeatureCollection точек АЗС/моек (опционально): слои с чекбоксами.
+    via — FeatureCollection треков A→АЗС→B с крюк_км (опционально).
     """
     colors = dict(vehicle_colors) if vehicle_colors is not None else dict(VEHICLE_COLORS)
     collection = {
@@ -1202,6 +1556,29 @@ def write_map_html(
     vehicles_js = _json_for_script(vehicles)
     addresses_js = _json_for_script(addresses)
     photon_js = _json_for_script(PHOTON_API_URL)
+    stations_fc = (
+        {"type": "FeatureCollection", "features": list(stations.get("features") or [])}
+        if stations
+        else {"type": "FeatureCollection", "features": []}
+    )
+    stations_js = _json_for_script(stations_fc)
+    azs_count = sum(
+        1
+        for f in stations_fc["features"]
+        if (f.get("properties") or {}).get("тип") != "мойка"
+    )
+    wash_count = len(stations_fc["features"]) - azs_count
+    via_fc = (
+        {"type": "FeatureCollection", "features": list(via.get("features") or [])}
+        if via
+        else {"type": "FeatureCollection", "features": []}
+    )
+    via_js = _json_for_script(via_fc)
+    via_count = len(via_fc["features"])
+    via_threshold_js = _json_for_script(via_threshold_km)
+    via_threshold_label = (
+        f"{via_threshold_km:g}" if via_threshold_km is not None else "—"
+    )
     center_lat, center_lon = DEFAULT_MAP_CENTER
     addr_count = len(addresses)
     load_hint = (
@@ -1279,6 +1656,22 @@ def write_map_html(
     <p class="meta" id="load-hint">{load_hint}</p>
     <label><input type="checkbox" id="chk-all" checked/> Все</label>
     <div id="vehicle-checks"></div>
+    <hr style="border: none; border-top: 1px solid #ddd; margin: 8px 0;"/>
+    <label>
+      <input type="checkbox" id="chk-azs" checked/>
+      <span class="swatch" style="border-radius: 50%; background: #0079c2;"></span>
+      АЗС ({azs_count})
+    </label>
+    <label>
+      <input type="checkbox" id="chk-wash" checked/>
+      <span class="swatch" style="border-radius: 50%; background: #8e44ad;"></span>
+      Мойки ({wash_count})
+    </label>
+    <label title="Треки A→АЗС→B. Зелёный — крюк ≤ порога, красный — больше, серый — нет данных">
+      <input type="checkbox" id="chk-via" checked/>
+      <span class="swatch" style="background: repeating-linear-gradient(90deg,#27ae60 0 4px,#fff 4px 6px);"></span>
+      Через АЗС ({via_count}), порог {via_threshold_label} км
+    </label>
   </div>
   <script>
     let ROUTES_GEOJSON = {geojson_js};
@@ -1287,6 +1680,17 @@ def write_map_html(
     const VEHICLES = {vehicles_js};
     const KNOWN_ADDRESSES = {addresses_js};
     const PHOTON_API = {photon_js};
+    const STATIONS = {stations_js};
+    const VIA = {via_js};
+    const VIA_THRESHOLD_KM = {via_threshold_js};
+    const BRAND_COLORS = {{
+      "Газпромнефть": "#0079c2", "ГПН": "#0079c2",
+      "TATNEFT": "#d9261c", "Татнефть": "#d9261c",
+      "Роснефть": "#f5a800", "ЛУКОЙЛ": "#c8102e",
+      "КТК": "#27ae60", "ТНК": "#16a085", "Shell": "#fbce07"
+    }};
+    const STATION_DEFAULT_COLOR = "#e67e22";
+    const WASH_COLOR = "#8e44ad";
     let FEATURE_COUNT = {feature_count};
     const DEFAULT_CENTER = [{center_lat}, {center_lon}];
     const DEFAULT_ZOOM = {DEFAULT_MAP_ZOOM};
@@ -1456,6 +1860,173 @@ def write_map_html(
     }} else {{
       mountRoutes({{ type: "FeatureCollection", features: [] }});
     }}
+
+    /* —— точки АЗС и моек —— */
+    const azsGroup = L.layerGroup();
+    const washGroup = L.layerGroup();
+    const stationMarkers = [];
+    const viaLayers = [];
+    let activeStationKey = null;
+
+    function stationColor(props) {{
+      if (props["тип"] === "мойка") return WASH_COLOR;
+      return BRAND_COLORS[props["бренд"]] || STATION_DEFAULT_COLOR;
+    }}
+
+    function stationRadius(props) {{
+      const liters = Number(props["литров"]) || 0;
+      if (props["тип"] === "мойка") return 6;
+      return Math.max(5, Math.min(14, 5 + Math.sqrt(liters) / 12));
+    }}
+
+    function stationPopup(props) {{
+      const p = props || {{}};
+      const kind =
+        p["тип"] === "мойка" ? "Мойка" :
+        (p["тип"] === "азс+мойка" ? "АЗС + мойка" : "АЗС");
+      let html =
+        "<b>" + kind +
+        (p["бренд"] ? " · " + escapeHtml(p["бренд"]) : "") + "</b><br/>" +
+        escapeHtml(p["адрес"] || "—") + "<br/>";
+      if (p["тип"] !== "мойка") {{
+        html +=
+          "заправок: " + escapeHtml(p["заправок"]) +
+          " · литров: " + escapeHtml(p["литров"]) +
+          " · сумма: " + escapeHtml(p["сумма_руб"]) + " ₽<br/>";
+      }} else {{
+        html +=
+          "моек: " + escapeHtml(p["моек"]) +
+          " · сумма: " + escapeHtml(p["сумма_руб"]) + " ₽<br/>";
+      }}
+      if (p["машины"]) html += "машины: " + escapeHtml(p["машины"]) + "<br/>";
+      html +=
+        "период: " + escapeHtml(p["первая_дата"]) +
+        " → " + escapeHtml(p["последняя_дата"]);
+      if (Number(p["вне_поездок"]) > 0) {{
+        html += "<br/><span style='color:#a33'>вне поездок: " +
+          escapeHtml(p["вне_поездок"]) + "</span>";
+      }}
+      return html;
+    }}
+
+    (STATIONS.features || []).forEach(function (feat) {{
+      const geom = feat && feat.geometry;
+      if (!geom || geom.type !== "Point") return;
+      const p = feat.properties || {{}};
+      const allUnmatched =
+        Number(p["вне_поездок"]) > 0 &&
+        Number(p["вне_поездок"]) === Number(p["транзакций"]);
+      const marker = L.circleMarker(
+        [geom.coordinates[1], geom.coordinates[0]],
+        {{
+          radius: stationRadius(p),
+          color: "#222",
+          weight: 1,
+          fillColor: stationColor(p),
+          fillOpacity: allUnmatched ? 0.35 : 0.9
+        }}
+      );
+      marker.bindPopup(stationPopup(p));
+      marker._stationKey = p["коорд"] || null;
+      marker.on("click", function () {{ highlightStationRoutes(marker._stationKey); }});
+      stationMarkers.push(marker);
+      (p["тип"] === "мойка" ? washGroup : azsGroup).addLayer(marker);
+    }});
+    azsGroup.addTo(map);
+    washGroup.addTo(map);
+
+    /* —— via-треки A→АЗС→B —— */
+    const viaGroup = L.layerGroup();
+
+    function viaColor(props) {{
+      if (props["крюк_по_пути"] === true) return "#27ae60";
+      if (props["крюк_по_пути"] === false) return "#c0392b";
+      return "#7f8c8d";
+    }}
+
+    function viaPopup(props) {{
+      const p = props || {{}};
+      const detour = (typeof p["крюк_км"] === "number") ? p["крюк_км"] : null;
+      let html =
+        "<b>" + escapeHtml(p["машина"] || "—") + "</b> · через АЗС<br/>" +
+        "АЗС: " + escapeHtml(p["станция"] || "—") + "<br/>" +
+        "заправок: " + escapeHtml(p["заправок"] ?? "—") + "<br/>";
+      if (typeof p["км_напрямую"] === "number") {{
+        html += "напрямую: " + escapeHtml(p["км_напрямую"]) + " км";
+      }}
+      if (typeof p["км_с_заездом"] === "number") {{
+        html += " · с заездом: " + escapeHtml(p["км_с_заездом"]) + " км";
+      }}
+      if (detour !== null) {{
+        const verdict = p["крюк_по_пути"] === true
+          ? "по пути"
+          : (p["крюк_по_пути"] === false ? "КРЮК" : "");
+        html += "<br/>крюк: <b>" + escapeHtml(detour) + " км</b>";
+        if (verdict) {{
+          html += " <span style='color:" +
+            (p["крюк_по_пути"] === false ? "#c0392b" : "#27ae60") +
+            "'>" + verdict + "</span>";
+        }}
+      }}
+      return html;
+    }}
+
+    (VIA.features || []).forEach(function (feat) {{
+      const geom = feat && feat.geometry;
+      if (!geom || geom.type !== "LineString") return;
+      const p = feat.properties || {{}};
+      const latlngs = (geom.coordinates || []).map(function (c) {{
+        return [c[1], c[0]];
+      }});
+      if (latlngs.length < 2) return;
+      const line = L.polyline(latlngs, {{
+        color: viaColor(p),
+        weight: 3,
+        opacity: 0.75,
+        dashArray: "7 6"
+      }});
+      line.bindPopup(viaPopup(p));
+      line._stationKey = p["station_ll"] || null;
+      line._viaBaseStyle = {{ color: viaColor(p), weight: 3, opacity: 0.75 }};
+      viaLayers.push(line);
+      viaGroup.addLayer(line);
+    }});
+    viaGroup.addTo(map);
+
+    function highlightStationRoutes(key) {{
+      if (!key || activeStationKey === key) {{
+        activeStationKey = null;
+        viaLayers.forEach(function (l) {{ l.setStyle(l._viaBaseStyle); }});
+        return;
+      }}
+      activeStationKey = key;
+      viaLayers.forEach(function (l) {{
+        if (l._stationKey === key) {{
+          l.setStyle({{ weight: 6, opacity: 1 }});
+          if (l.bringToFront) l.bringToFront();
+        }} else {{
+          l.setStyle({{ weight: 2, opacity: 0.15 }});
+        }}
+      }});
+    }}
+    map.on("click", function () {{
+      if (activeStationKey) highlightStationRoutes(null);
+    }});
+
+    function bindStationToggle(id, group) {{
+      const chk = document.getElementById(id);
+      if (!chk) return;
+      chk.addEventListener("change", function () {{
+        if (chk.checked) {{
+          if (!map.hasLayer(group)) map.addLayer(group);
+        }} else if (map.hasLayer(group)) {{
+          map.removeLayer(group);
+        }}
+      }});
+    }}
+    bindStationToggle("chk-azs", azsGroup);
+    bindStationToggle("chk-wash", washGroup);
+    bindStationToggle("chk-via", viaGroup);
 
     /* —— поиск адреса → топ-3 ближайших маршрута —— */
     const datalist = document.getElementById("known-addresses");
@@ -1696,6 +2267,10 @@ def run(
     force_geocode: bool = False,
     geo_cache_path: Path | None = None,
     routes_cache_path: Path | None = None,
+    stations_path: Path | None = None,
+    route_stations_path: Path | None = None,
+    via_cache_path: Path | None = None,
+    via_threshold_km: float | None = None,
     sleep_sec: float = NOMINATIM_RATE_LIMIT_SEC,
     osrm_sleep_sec: float = OSRM_RATE_LIMIT_SEC,
     sleep_fn: Callable[[float], None] = time.sleep,
@@ -1704,12 +2279,22 @@ def run(
         Callable[[float, float, float, float], tuple[list[list[float]], float] | None]
         | None
     ) = None,
+    osrm_multi_fn: (
+        Callable[[list[tuple[float, float]]], tuple[list[list[float]], float] | None]
+        | None
+    ) = None,
 ) -> dict[str, Any]:
     """Загрузить маршруты, геокодировать, OSRM → routes.geojson → Leaflet HTML."""
     cache_path = Path(geo_cache_path) if geo_cache_path else DEFAULT_GEO_CACHE
     routes_path = (
         Path(routes_cache_path) if routes_cache_path else DEFAULT_ROUTES_CACHE
     )
+    links_path = (
+        Path(route_stations_path)
+        if route_stations_path
+        else DEFAULT_ROUTE_STATIONS
+    )
+    via_path = Path(via_cache_path) if via_cache_path else DEFAULT_VIA_CACHE
     routes = load_routes_ab(xlsx_path)
     addresses = collect_unique_addresses(routes)
     display_map = address_display_map(routes)
@@ -1751,11 +2336,55 @@ def run(
 
     routes_collection = load_routes_geojson(routes_path)
     known = known_addresses_from_cache(address_cache)
+    stations = load_stations(stations_path or DEFAULT_STATIONS)
+
+    via_stats: ViaStats | None = None
+    via_collection: dict[str, Any] | None = None
+    via_threshold = via_threshold_km
+    via_histogram: list[tuple[str, int]] = []
+    via_anomalies: list[Any] = []
+    links = load_route_station_links(links_path)
+    if links:
+        with requests.Session() as session:
+            via_stats = build_via_geojson(
+                links,
+                address_cache,
+                routes_collection,
+                via_path,
+                offline=offline,
+                sleep_sec=osrm_sleep_sec,
+                sleep_fn=sleep_fn,
+                osrm_multi_fn=osrm_multi_fn,
+                session=session,
+            )
+        via_collection = load_routes_geojson(via_path)
+        via_features = via_collection["features"]
+        detours = [
+            (f.get("properties") or {}).get("крюк_км")
+            for f in via_features
+        ]
+        detours = [d for d in detours if isinstance(d, (int, float))]
+        if via_threshold is None:
+            via_threshold = recommend_via_threshold_km(detours)
+        apply_via_threshold(via_features, via_threshold)
+        via_histogram = via_detour_histogram(via_features)
+        via_anomalies = sorted(
+            (
+                f
+                for f in via_features
+                if isinstance((f.get("properties") or {}).get("крюк_км"), (int, float))
+            ),
+            key=lambda f: -(f["properties"]["крюк_км"]),
+        )[:10]
+
     write_map_html(
         out_path,
         routes_collection,
         VEHICLE_COLORS,
         known_addresses=known,
+        stations=stations,
+        via=via_collection,
+        via_threshold_km=via_threshold,
     )
     html_features = len(routes_collection.get("features") or [])
 
@@ -1782,6 +2411,33 @@ def run(
         "osrm_features": osrm_stats.features,
         "osrm_skips": list(osrm_stats.skips),
         "html_features": html_features,
+        "stations": len(stations["features"]) if stations else 0,
+        "stations_path": str(stations_path or DEFAULT_STATIONS),
+        "via_links": via_stats.links if via_stats else 0,
+        "via_features": via_stats.features if via_stats else 0,
+        "via_routed": via_stats.routed if via_stats else 0,
+        "via_from_cache": via_stats.from_cache if via_stats else 0,
+        "via_skipped_missing_coords": (
+            via_stats.skipped_missing_coords if via_stats else 0
+        ),
+        "via_skipped_osrm_error": via_stats.skipped_osrm_error if via_stats else 0,
+        "via_skipped_offline": via_stats.skipped_offline if via_stats else 0,
+        "via_skips": list(via_stats.skips) if via_stats else [],
+        "via_threshold_km": via_threshold,
+        "via_histogram": via_histogram,
+        "via_anomalies": [
+            {
+                "машина": (f.get("properties") or {}).get("машина"),
+                "маршрут": (
+                    f"{(f.get('properties') or {}).get('адрес_A', '')} → "
+                    f"{(f.get('properties') or {}).get('адрес_B', '')}"
+                ),
+                "станция": (f.get("properties") or {}).get("станция"),
+                "крюк_км": (f.get("properties") or {}).get("крюк_км"),
+            }
+            for f in via_anomalies
+        ],
+        "via_cache": str(via_path),
     }
 
 
@@ -1823,6 +2479,32 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Перезапросить Nominatim даже для записей уже в кэше (в т.ч. not_found)",
     )
+    parser.add_argument(
+        "--stations",
+        type=Path,
+        default=DEFAULT_STATIONS,
+        help=f"GeoJSON точек АЗС/моек (по умолчанию: {DEFAULT_STATIONS}); "
+        "если файла нет — карта строится без слоёв станций",
+    )
+    parser.add_argument(
+        "--route-stations",
+        type=Path,
+        default=DEFAULT_ROUTE_STATIONS,
+        help="Связи маршрут↔АЗС route_stations.json "
+        f"(по умолчанию: {DEFAULT_ROUTE_STATIONS})",
+    )
+    parser.add_argument(
+        "--via-cache",
+        type=Path,
+        default=DEFAULT_VIA_CACHE,
+        help=f"Кэш via-треков routes_via.geojson (по умолчанию: {DEFAULT_VIA_CACHE})",
+    )
+    parser.add_argument(
+        "--via-threshold-km",
+        type=float,
+        default=None,
+        help="Порог «заправка по пути», км (по умолчанию: авто по распределению)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -1833,6 +2515,10 @@ def main(argv: list[str] | None = None) -> int:
             force_geocode=args.force_geocode,
             geo_cache_path=args.geo_cache,
             routes_cache_path=args.routes_cache,
+            stations_path=args.stations,
+            route_stations_path=args.route_stations,
+            via_cache_path=args.via_cache,
+            via_threshold_km=args.via_threshold_km,
         )
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
         print(f"Ошибка: {exc}", file=sys.stderr)
@@ -1874,6 +2560,34 @@ def main(argv: list[str] | None = None) -> int:
         if len(report["osrm_skips"]) > 40:
             print(f"  … ещё {len(report['osrm_skips']) - 40}")
     print(f"кэш треков → {report['routes_cache']}")
+    print(
+        f"станций (АЗС+мойки): {report['stations']} ← {report['stations_path']}"
+    )
+    if report["via_links"]:
+        print(
+            f"via-треки: связей={report['via_links']}, "
+            f"features={report['via_features']}, "
+            f"routed={report['via_routed']}, "
+            f"from_cache={report['via_from_cache']}, "
+            f"skip_coords={report['via_skipped_missing_coords']}, "
+            f"skip_error={report['via_skipped_osrm_error']}, "
+            f"skip_offline={report['via_skipped_offline']}"
+        )
+        print(f"крюк_км распределение (порог {report['via_threshold_km']:g} км):")
+        for label, count in report["via_histogram"]:
+            if count:
+                print(f"  {label:>8} км: {count}")
+        if report["via_anomalies"]:
+            print("топ аномалий (проверить координаты станции / атрибуцию дня):")
+            for a in report["via_anomalies"]:
+                print(
+                    f"  {a['крюк_км']:>7.1f} км | {a['машина']} | "
+                    f"{a['маршрут'][:50]} | {str(a['станция'])[:50]}"
+                )
+        for line in report["via_skips"][:20]:
+            print(f"  - {line}")
+        if len(report["via_skips"]) > 20:
+            print(f"  … ещё {len(report['via_skips']) - 20}")
     print(
         f"HTML → {report['out']} "
         f"(features={report['html_features']}, offline={report['offline']})"

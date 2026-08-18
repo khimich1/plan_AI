@@ -432,9 +432,167 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
 
         _init_delivery_schedule_schema(cur)
 
+        _init_day_capacity_override_schema(cur)
+
+        _init_gsm_schema(cur)
+
         conn.commit()
     finally:
         conn.close()
+
+
+def _init_gsm_schema(cur: sqlite3.Cursor) -> None:
+    """GSM module tables (fuel cards, transactions, waybills).
+
+    FK order: ``gsm_driver`` before ``gsm_vehicle`` (``primary_driver_id``).
+    Physical DELETE of cards is forbidden — archive via ``archived_at``.
+    Drivers/vehicles are deactivated via ``is_active`` (not ``archived_at``).
+    """
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_driver (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            license_number TEXT NOT NULL,
+            license_issued_at TEXT,
+            personnel_number TEXT,
+            snils TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_vehicle (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            plate_number TEXT NOT NULL,
+            tank_volume_liters REAL NOT NULL,
+            norm_summer REAL NOT NULL,
+            norm_winter REAL NOT NULL,
+            primary_driver_id INTEGER REFERENCES gsm_driver(id),
+            is_active INTEGER NOT NULL DEFAULT 1
+        )
+    ''')
+
+    # vehicle_id NULL: unmatched cards from transaction import (link later).
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_fuel_card (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_number TEXT NOT NULL UNIQUE,
+            vehicle_id INTEGER REFERENCES gsm_vehicle(id),
+            assigned_at TEXT NOT NULL,
+            archived_at TEXT
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_station (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            address TEXT NOT NULL UNIQUE,
+            brand TEXT,
+            lat REAL,
+            lon REAL,
+            geocode_source TEXT
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_import_batch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            period_from TEXT,
+            period_to TEXT,
+            rows_total INTEGER,
+            sum_liters REAL,
+            sum_amount REAL,
+            uploaded_by TEXT,
+            uploaded_at TEXT NOT NULL
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_transaction (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_id INTEGER NOT NULL REFERENCES gsm_fuel_card(id),
+            ts TEXT NOT NULL,
+            service_type TEXT NOT NULL,
+            fuel_grade TEXT,
+            qty_liters REAL,
+            amount REAL NOT NULL,
+            station_id INTEGER REFERENCES gsm_station(id),
+            raw_address TEXT NOT NULL,
+            batch_id INTEGER NOT NULL REFERENCES gsm_import_batch(id)
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_route (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_id INTEGER NOT NULL REFERENCES gsm_vehicle(id),
+            addr_a TEXT NOT NULL,
+            addr_b TEXT NOT NULL,
+            km INTEGER NOT NULL,
+            frequency INTEGER NOT NULL DEFAULT 1,
+            typical_station_ids TEXT
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_waybill (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_id INTEGER NOT NULL REFERENCES gsm_vehicle(id),
+            date TEXT NOT NULL,
+            driver_id INTEGER NOT NULL REFERENCES gsm_driver(id),
+            status TEXT NOT NULL DEFAULT 'draft',
+            source TEXT NOT NULL DEFAULT 'auto',
+            odometer_start INTEGER,
+            odometer_end INTEGER,
+            fuel_start REAL,
+            fuel_issued REAL,
+            fuel_end REAL,
+            route_json TEXT NOT NULL,
+            warnings_json TEXT,
+            UNIQUE(vehicle_id, date)
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_setting (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
+
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_gsm_transaction_card_ts '
+        'ON gsm_transaction(card_id, ts)'
+    )
+    # Spec D14: UNIQUE(card_id, ts, qty_liters, amount). SQLite treats NULLs as
+    # distinct in UNIQUE, so washes (qty_liters NULL) need COALESCE in the index.
+    cur.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_gsm_transaction_dedup '
+        'ON gsm_transaction(card_id, ts, COALESCE(qty_liters, 0), amount)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_gsm_waybill_vehicle_date '
+        'ON gsm_waybill(vehicle_id, date)'
+    )
+
+
+def _init_day_capacity_override_schema(cur: sqlite3.Cursor) -> None:
+    """Per-day production capacity overrides (tracks/day).
+
+    Fallback when no row exists: ``TRACKS_PER_DAY_DEFAULT`` from
+    ``core.production_capacity`` (read by ``DayCapacityRepository``).
+    """
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS day_capacity_override (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            max_tracks INTEGER NOT NULL CHECK (max_tracks >= 0),
+            updated_at TEXT NOT NULL,
+            updated_by TEXT
+        )
+    ''')
 
 
 def _init_delivery_schedule_schema(cur: sqlite3.Cursor) -> None:
