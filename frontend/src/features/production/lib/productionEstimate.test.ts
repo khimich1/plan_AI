@@ -22,14 +22,14 @@ const makeKp = (plates: KpCandidateItem["plates"]): KpCandidateItem => ({
 });
 
 describe("estimateFromLengthM", () => {
-  it("38.3 m and 1 track/day → ~1 track", () => {
+  it("38.3 m and 1 track/day → 1 track, 1 day (ceil, no false extra day)", () => {
     const r = estimateFromLengthM(38.3, 1);
     expect(r.estimated_tracks).toBe(1);
-    expect(r.estimated_days).toBe(2);
+    expect(r.estimated_days).toBe(1);
     expect(r.total_length_m).toBe(38.3);
   });
 
-  it("200 m and 5 tracks/day → ~2 tracks, ~1 day", () => {
+  it("200 m and 5 tracks/day → 2 tracks, 1 day (no false extra day)", () => {
     const r = estimateFromLengthM(200, 5);
     expect(r.estimated_tracks).toBe(2);
     expect(r.estimated_days).toBe(1);
@@ -37,8 +37,8 @@ describe("estimateFromLengthM", () => {
 
   it("clamps invalid tracksPerDay to 1", () => {
     expect(estimateFromLengthM(200, 0).estimated_tracks).toBe(2);
-    expect(estimateFromLengthM(200, 0).estimated_days).toBe(3);
-    expect(estimateFromLengthM(200, -3).estimated_days).toBe(3);
+    expect(estimateFromLengthM(200, 0).estimated_days).toBe(2);
+    expect(estimateFromLengthM(200, -3).estimated_days).toBe(2);
   });
 });
 

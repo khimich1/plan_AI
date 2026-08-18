@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from app.core.settings import get_settings
 from app.domain.enums import KpStatus
-from app.planning.plan_calendar import get_global_calendar_info
+from app.repositories.plan_repository import PlanRepository
 from app.schemas.delivery_schedule import (
     BatchDraftItemOut,
     BatchDraftOut,
@@ -24,6 +24,7 @@ from app.schemas.delivery_schedule import (
 )
 from app.security.offer_access import assert_offer_read_access, assert_offer_write_access
 from app.services.kp_readiness_service import KpReadinessService
+from app.services.plan_distribution_service import PlanDistributionService
 from core.delivery_schedule_check import BatchInput, BatchItemInput, check_batches
 from core.delivery_schedule_pdf import build_document as build_pdf_document
 from core.delivery_schedule_xlsx import (
@@ -487,8 +488,11 @@ class DeliveryScheduleService:
 
     @staticmethod
     def _load_occupancy() -> dict[str, dict]:
+        """days_info из production-календаря (max с day_capacity overrides)."""
         try:
-            calendar = get_global_calendar_info()
+            calendar = PlanDistributionService().get_global_calendar_info(
+                PlanRepository()
+            )
         except _TRAFFIC_LIGHT_SOURCE_ERRORS:
             raise
         except Exception as exc:

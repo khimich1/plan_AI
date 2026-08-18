@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import date as date_cls, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from app.services.delivery_schedule_service import (
     DeliveryScheduleValidationError,
 )
 from core import kp_db_schema
+from core.delivery_schedule_check import _day_free_capacity
 from core.kp_db_common import _connect
 
 ADMIN = {"id": 1, "role": "admin"}
@@ -105,8 +107,18 @@ def _seed_completed_plates(
 def _patch_empty_occupancy(monkeypatch: pytest.MonkeyPatch) -> None:
     """days_info={} → все даты свободны (R2-дефолт в check_batches)."""
     monkeypatch.setattr(
-        "app.services.delivery_schedule_service.get_global_calendar_info",
-        lambda: {"days_info": {}},
+        "app.services.delivery_schedule_service.PlanDistributionService.get_global_calendar_info",
+        lambda self, repo: {"days_info": {}},
+    )
+
+
+def _patch_occupancy(
+    monkeypatch: pytest.MonkeyPatch,
+    days_info: dict[str, dict[str, Any]],
+) -> None:
+    monkeypatch.setattr(
+        "app.services.delivery_schedule_service.PlanDistributionService.get_global_calendar_info",
+        lambda self, repo: {"days_info": days_info},
     )
 
 
@@ -540,8 +552,8 @@ def test_traffic_light_degraded_when_calendar_raises(
     service.replace(1, _payload(plate_id, qty=2), ADMIN)
 
     monkeypatch.setattr(
-        "app.services.delivery_schedule_service.get_global_calendar_info",
-        lambda: (_ for _ in ()).throw(RuntimeError("calendar down")),
+        "app.services.delivery_schedule_service.PlanDistributionService.get_global_calendar_info",
+        lambda self, repo: (_ for _ in ()).throw(RuntimeError("calendar down")),
     )
     view = service.get(1, user=ADMIN)
     assert view.traffic_light_degraded is True
@@ -549,13 +561,87 @@ def test_traffic_light_degraded_when_calendar_raises(
     assert view.batches[0].ready_date is None
     assert view.batches[0].hint is None
 
-    monkeypatch.setattr(
-        "app.services.delivery_schedule_service.get_global_calendar_info",
-        lambda: {"days_info": {}},
-    )
+    _patch_empty_occupancy(monkeypatch)
     monkeypatch.setattr(
         "app.services.delivery_schedule_service.check_batches",
         lambda **_kwargs: (_ for _ in ()).throw(TypeError("bug in check")),
     )
     with pytest.raises(TypeError, match="bug in check"):
         service.get(1, user=ADMIN)
+
+
+def test_load_occupancy_uses_capacity_override_max_not_hardcoded_five(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T14/D7: max из PlanDistributionService (override 3/0), не hard-coded 5."""
+    day = "2026-08-12"
+    _patch_occupancy(
+        monkeypatch,
+        {
+            day: {
+                "occupied": 1,
+                "max": 3,
+                "completed": False,
+                "day_number": 1,
+            },
+            "2026-08-13": {
+                "occupied": 0,
+                "max": 0,
+                "completed": False,
+                "day_number": 2,
+            },
+        },
+    )
+    occupancy = DeliveryScheduleService._load_occupancy()
+    assert occupancy[day]["max"] == 3
+    assert occupancy[day]["occupied"] == 1
+    assert occupancy["2026-08-13"]["max"] == 0
+
+    # Светофор: free = max − occupied, не дефолт 5.
+    assert _day_free_capacity(day, occupancy) == 2.0
+    assert _day_free_capacity("2026-08-13", occupancy) == 0.0
+
+
+def test_traffic_light_sees_override_max_zero_as_no_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """max=0 на горизонте → нет свободных дорожек → red (не green как при max=5)."""
+    start = date_cls.fromisoformat(_TODAY)
+    days_info = {
+        (start + timedelta(days=n)).isoformat(): {
+            "occupied": 0,
+            "max": 0,
+            "completed": False,
+            "day_number": n + 1,
+        }
+        for n in range(60)
+    }
+    _patch_occupancy(monkeypatch, days_info)
+
+    db_path = _fresh_db(tmp_path)
+    plate_id = _seed_kp(
+        db_path,
+        kp_id=1,
+        plate_qty=10,
+        length_m=6.0,
+        width_m=1.2,
+        load_class=800,
+    )
+    service = DeliveryScheduleService(db_path=db_path)
+    service._today_override = _TODAY
+
+    payload = DeliverySchedulePut(
+        invoice_number="СЧ-MAX0",
+        batches=[
+            _batch(
+                plate_id=plate_id,
+                qty=2,
+                produce_by="2026-08-25",
+                deliver_from="2026-09-01",
+                deliver_to="2026-09-10",
+            )
+        ],
+    )
+    view = service.replace(1, payload, ADMIN)
+    assert view.batches[0].status == "red"
+    assert view.traffic_light_degraded is False

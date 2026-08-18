@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { isPlanVersionConflict } from "@/shared/lib/planConflict";
 import {
+  useAnalyzeSubstratesMutation,
   useBuildPlanMutation,
   useGlobalCalendarQuery,
   useKpCandidatesQuery,
@@ -25,11 +26,15 @@ import {
   type ProductionEstimate,
 } from "@/features/production/lib/productionEstimate";
 import type {
+  AnalyzeSubstratesResponse,
+  CapacityOption,
   FillTargetItem,
   FilterMethod,
   KpCandidateItem,
   KpCandidatePlateItem,
   SgpReservationItem,
+  SubstrateRecommendation,
+  UrgentPosition,
 } from "@/features/production/types/production";
 import { formatRu } from "@/features/production/components/create-plan-wizard/utils";
 
@@ -39,6 +44,12 @@ export type UseCreatePlanWizardStateOptions = {
   onFillRequestConsumed?: () => void;
   onCancelFill?: () => void;
 };
+
+const fillTargetsKey = (targets: FillTargetItem[] | null): string =>
+  targets?.map((t) => `${t.date}:${t.tracks}`).join("|") ?? "";
+
+const maxFillDate = (targets: FillTargetItem[]): string =>
+  targets.reduce((max, t) => (t.date > max ? t.date : max), targets[0].date);
 
 export const useCreatePlanWizardState = ({
   onCreated,
@@ -64,14 +75,18 @@ export const useCreatePlanWizardState = ({
     freeQty: number;
     closeQty: number;
   } | null>(null);
+  const [analyzeResult, setAnalyzeResult] =
+    useState<AnalyzeSubstratesResponse | null>(null);
 
   const calendarQuery = useGlobalCalendarQuery();
   const plansQuery = usePlansListQuery();
   const candidatesQuery = useKpCandidatesQuery(true);
   const freePlatesQuery = useSgpFreePlatesQuery(true);
   const buildMutation = useBuildPlanMutation();
+  const analyzeMutation = useAnalyzeSubstratesMutation();
 
   const daysInfo = calendarQuery.data?.days_info ?? {};
+  const targetsKey = fillTargetsKey(fillTargets);
 
   useEffect(() => {
     if (fillRequest && fillRequest.length > 0) {
@@ -86,6 +101,179 @@ export const useCreatePlanWizardState = ({
       setBasketKind(getBasketKind(fillTargets, daysInfo));
     }
   }, [fillTargets, daysInfo]);
+
+  /** Выбор плиты по id+kp+qty без полного KpCandidateItem (срочные / подложки). */
+  const setPlateSelectionById = (
+    kpId: number,
+    plateId: number,
+    qty: number,
+    selected: boolean,
+  ) => {
+    setSelectedPlatesByKp((prev) => {
+      const next = { ...prev };
+      const current = next[kpId] ?? [];
+      if (selected) {
+        if (!current.includes(plateId)) {
+          next[kpId] = [...current, plateId];
+        }
+      } else {
+        const filtered = current.filter((id) => id !== plateId);
+        if (filtered.length === 0) {
+          delete next[kpId];
+        } else {
+          next[kpId] = filtered;
+        }
+      }
+      return next;
+    });
+    setSelectedPlateQtyByKp((prev) => {
+      const next = { ...prev };
+      if (selected) {
+        next[kpId] = { ...(next[kpId] ?? {}), [plateId]: qty };
+      } else {
+        const per = { ...(next[kpId] ?? {}) };
+        delete per[plateId];
+        if (Object.keys(per).length === 0) {
+          delete next[kpId];
+        } else {
+          next[kpId] = per;
+        }
+      }
+      return next;
+    });
+  };
+
+  const applyUrgentDefaults = (positions: UrgentPosition[]) => {
+    if (positions.length === 0) return;
+    setFilterMethod("kp");
+    setSelectedPlatesByKp((prev) => {
+      const next = { ...prev };
+      for (const pos of positions) {
+        const current = next[pos.kp_id] ?? [];
+        if (!current.includes(pos.plate_id)) {
+          next[pos.kp_id] = [...current, pos.plate_id];
+        }
+      }
+      return next;
+    });
+    setSelectedPlateQtyByKp((prev) => {
+      const next = { ...prev };
+      for (const pos of positions) {
+        next[pos.kp_id] = {
+          ...(next[pos.kp_id] ?? {}),
+          [pos.plate_id]: pos.qty_remaining,
+        };
+      }
+      return next;
+    });
+  };
+
+  const applySubstrateDefaults = (recommendations: SubstrateRecommendation[]) => {
+    if (recommendations.length === 0) return;
+    setFilterMethod("kp");
+    setSelectedPlatesByKp((prev) => {
+      const next = { ...prev };
+      for (const rec of recommendations) {
+        const current = next[rec.kp_id] ?? [];
+        if (!current.includes(rec.plate_id)) {
+          next[rec.kp_id] = [...current, rec.plate_id];
+        }
+      }
+      return next;
+    });
+    setSelectedPlateQtyByKp((prev) => {
+      const next = { ...prev };
+      for (const rec of recommendations) {
+        next[rec.kp_id] = {
+          ...(next[rec.kp_id] ?? {}),
+          [rec.plate_id]: rec.qty_recommended,
+        };
+      }
+      return next;
+    });
+  };
+
+  const {
+    mutate: analyzeSubstrates,
+    reset: resetAnalyze,
+    isPending: analyzePending,
+    isError: analyzeIsError,
+    error: analyzeError,
+  } = analyzeMutation;
+
+  /** Общий analyze: авто при fillTargets и кнопка «Найти подложки». */
+  const runAnalyzeSubstrates = (opts?: { isCancelled?: () => boolean }) => {
+    if (!fillTargets || fillTargets.length === 0) return;
+    const deadline_until = maxFillDate(fillTargets);
+    analyzeSubstrates(
+      { fill_targets: fillTargets, deadline_until },
+      {
+        onSuccess: (data) => {
+          if (opts?.isCancelled?.()) return;
+          setAnalyzeResult(data);
+          applyUrgentDefaults(data.urgent_positions);
+          applySubstrateDefaults(data.substrate_recommendations);
+        },
+      },
+    );
+  };
+
+  /** Автопредложение срочных/подложек: один analyze на набор fillTargets. */
+  useEffect(() => {
+    if (!fillTargets || fillTargets.length === 0) {
+      setAnalyzeResult(null);
+      return;
+    }
+
+    let cancelled = false;
+    setAnalyzeResult(null);
+    runAnalyzeSubstrates({ isCancelled: () => cancelled });
+
+    return () => {
+      cancelled = true;
+    };
+    // runAnalyzeSubstrates / fillTargets captured for current targetsKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetsKey, analyzeSubstrates]);
+
+  const toggleUrgentPosition = (pos: UrgentPosition) => {
+    const selected = (selectedPlatesByKp[pos.kp_id] ?? []).includes(pos.plate_id);
+    setFilterMethod("kp");
+    setPlateSelectionById(pos.kp_id, pos.plate_id, pos.qty_remaining, !selected);
+  };
+
+  /**
+   * Применяет выбранный option из capacity_deficit к fill_targets.
+   * Не вызывает PUT /day-capacity — только bump fill или добавление дня.
+   */
+  const applyCapacityOption = (option: CapacityOption) => {
+    if (!fillTargets || option.add_tracks <= 0) return;
+    const { date, add_tracks: addTracks } = option;
+
+    setFillTargets((prev) => {
+      if (!prev) return prev;
+      const hasDate = prev.some((t) => t.date === date);
+      if (!hasDate) {
+        return [...prev, { date, tracks: addTracks }].sort((a, b) =>
+          a.date.localeCompare(b.date),
+        );
+      }
+      return prev.map((t) =>
+        t.date === date ? { ...t, tracks: t.tracks + addTracks } : t,
+      );
+    });
+  };
+
+  const toggleSubstrateRecommendation = (rec: SubstrateRecommendation) => {
+    const selected = (selectedPlatesByKp[rec.kp_id] ?? []).includes(rec.plate_id);
+    setFilterMethod("kp");
+    setPlateSelectionById(
+      rec.kp_id,
+      rec.plate_id,
+      rec.qty_recommended,
+      !selected,
+    );
+  };
 
   const defaultQtyMap = (kp: KpCandidateItem, plateIds: number[]) => {
     const map: Record<number, number> = {};
@@ -302,6 +490,9 @@ export const useCreatePlanWizardState = ({
     setBasketKind(null);
     setSgpReservations([]);
     setPendingClose(null);
+    setAnalyzeResult(null);
+    setFilterMethod("all");
+    resetAnalyze();
   };
 
   const proposeCloseFromSgp = (kp: KpCandidateItem, plate: KpCandidatePlateItem) => {
@@ -476,6 +667,18 @@ export const useCreatePlanWizardState = ({
       ? getErrorMessage(buildMutation.error)
       : null;
 
+  const analyzeErrorMessage = analyzeIsError
+    ? getErrorMessage(analyzeError)
+    : null;
+
+  /** HTTP-ошибка analyze или error_message из analysis_meta (status=error). */
+  const substrateErrorMessage =
+    analyzeErrorMessage ??
+    (analyzeResult?.analysis_meta.optimization_status === "error"
+      ? analyzeResult.analysis_meta.error_message ||
+        "Ошибка анализа подложек"
+      : null);
+
   return {
     filterMethod,
     setFilterMethod,
@@ -507,5 +710,15 @@ export const useCreatePlanWizardState = ({
     toggleExpand,
     handleSubmit,
     handleCancelFill,
+    fillTargets,
+    analyzeResult,
+    analyzePending,
+    analyzeErrorMessage,
+    substrateErrorMessage,
+    runAnalyzeSubstrates,
+    toggleUrgentPosition,
+    toggleSubstrateRecommendation,
+    setPlateSelectionById,
+    applyCapacityOption,
   };
 };

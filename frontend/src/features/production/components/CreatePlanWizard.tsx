@@ -48,6 +48,14 @@ export const CreatePlanWizard = ({
         buildSuccess={wizard.buildMutation.isSuccess}
         buildErrorMessage={wizard.buildErrorMessage}
         canSubmit={wizard.canSubmit}
+        urgentPositions={wizard.analyzeResult?.urgent_positions ?? []}
+        substrateRecommendations={
+          wizard.analyzeResult?.substrate_recommendations ?? []
+        }
+        capacityDeficit={wizard.analyzeResult?.capacity_deficit ?? null}
+        analyzePending={wizard.analyzePending}
+        analyzeErrorMessage={wizard.analyzeErrorMessage}
+        substrateErrorMessage={wizard.substrateErrorMessage}
         onFilterMethodChange={wizard.setFilterMethod}
         onToggleKp={wizard.toggleKp}
         onToggleExpand={wizard.toggleExpand}
@@ -59,6 +67,10 @@ export const CreatePlanWizard = ({
         }}
         onConfirmCloseFromSgp={wizard.confirmCloseFromSgp}
         onCancelCloseFromSgp={wizard.cancelCloseFromSgp}
+        onToggleUrgentPosition={wizard.toggleUrgentPosition}
+        onAnalyzeSubstrates={() => wizard.runAnalyzeSubstrates()}
+        onToggleSubstrateRecommendation={wizard.toggleSubstrateRecommendation}
+        onApplyCapacityOption={wizard.applyCapacityOption}
         onCancelFill={wizard.handleCancelFill}
         onSubmit={wizard.handleSubmit}
       />

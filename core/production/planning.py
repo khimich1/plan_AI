@@ -20,6 +20,7 @@ from core.plate_attribution import (
     backfill_track_items_identity,
 )
 from core.plate_order_context import PlateOrderContext
+from core.production.capacity import validate_fill_targets
 from core.production.dto import (
     FilterMethod,
     LoadConfig,
@@ -262,10 +263,17 @@ def persist(
     fill_targets = list(config.fill_targets or ())
 
     if fill_targets:
+        if config.day_capacity is not None:
+            day_capacity_map = dict(config.day_capacity)
+        else:
+            # Preserve prior fallback: days without override used max_tracks_per_day.
+            day_capacity_map = {
+                str(t["date"]): int(config.max_tracks_per_day) for t in fill_targets
+            }
         validate_fill_targets(
             fill_targets,
-            global_occupancy,
-            max_tracks_per_day=config.max_tracks_per_day,
+            day_capacity_map,
+            occupancy=global_occupancy,
         )
 
         cap = sum(int(t["tracks"]) for t in fill_targets)
@@ -378,36 +386,6 @@ def persist(
     )
 
     return PersistResult(plan=safe_plan, stats=stats, summary=summary)
-
-
-def validate_fill_targets(
-    fill_targets: list[dict[str, Any]],
-    global_occupancy: dict[str, int],
-    *,
-    max_tracks_per_day: int,
-) -> None:
-    """Проверяет, что каждая дата существует и имеет достаточно свободных слотов."""
-    if not fill_targets:
-        raise PlanBuildError("fill_targets пуст.")
-    for t in fill_targets:
-        date = t.get("date") or ""
-        try:
-            datetime.strptime(date, "%Y-%m-%d")
-        except ValueError as exc:
-            raise PlanBuildError(
-                f"Неверный формат даты в fill_targets: {date}"
-            ) from exc
-        occupied = int(global_occupancy.get(date, 0) or 0)
-        free = max(0, max_tracks_per_day - occupied)
-        requested = int(t.get("tracks", 0) or 0)
-        if requested <= 0:
-            raise PlanBuildError(
-                f"На {date} запрошено {requested} дорожек — должно быть >= 1."
-            )
-        if requested > free:
-            raise PlanBuildError(
-                f"На {date} свободно {free} дорожек, запрошено {requested}."
-            )
 
 
 def build_tracks_by_day_from_targets(

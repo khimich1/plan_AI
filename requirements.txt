@@ -20,6 +20,8 @@ python-docx>=0.8.11
 
 # ГСМ: геокод Nominatim / OSRM (scripts/build_gsm_routes_map.py)
 requests>=2.28.0
+# ГСМ: декод plus-кодов в адресах АЗС (scripts/build_gsm_trip_feed.py)
+openlocationcode>=1.0.1
 
 # PDF и схемы раскладки
 reportlab>=4.0.0

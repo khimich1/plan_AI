@@ -210,3 +210,67 @@ class KpRepository:
                 }
             )
         return result
+
+    def get_plate_qty_remaining(self, plate_id: int) -> int:
+        """Unplanned remaining qty for a single ``kp_plates`` row.
+
+        Formula (per-row)::
+
+            qty − Σ(qty WHERE id=plate_id AND status='в плане' AND plan_id IS NOT NULL)
+
+        After the split model this is the row ``qty`` when the plate is still in
+        production or stuck ``в плане`` without ``plan_id``; actively planned
+        rows (``в плане`` + ``plan_id``) yield ``0``. Missing ``plate_id``
+        returns ``0``.
+        """
+        query = """
+        SELECT
+            p.qty - COALESCE((
+                SELECT SUM(q.qty)
+                FROM kp_plates q
+                WHERE q.id = p.id
+                  AND q.status = ?
+                  AND q.plan_id IS NOT NULL
+            ), 0) AS qty_remaining
+        FROM kp_plates p
+        WHERE p.id = ?
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (PlateStatus.IN_PLAN.value, plate_id))
+            row = cursor.fetchone()
+            if row is None:
+                return 0
+            return int(row[0] or 0)
+
+    def list_delivery_batch_items_for_in_production_plates(self) -> list[dict]:
+        """Cross-KP delivery batch lines for plates still ``в производстве``.
+
+        Returns dicts with keys ``plate_id``, ``produce_by``, ``qty``,
+        ``batch_name``. SQL stays in the repository so services stay I/O-thin.
+        """
+        query = """
+        SELECT
+            i.plate_id AS plate_id,
+            b.produce_by AS produce_by,
+            i.qty AS qty,
+            b.name AS batch_name
+        FROM delivery_batch_item i
+        JOIN delivery_batch b ON b.id = i.batch_id
+        JOIN kp_plates p ON p.id = i.plate_id
+        WHERE p.status = ?
+        ORDER BY i.plate_id ASC, b.produce_by ASC, i.id ASC
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(query, (PlateStatus.IN_PRODUCTION.value,))
+            return [
+                {
+                    "plate_id": int(row["plate_id"]),
+                    "produce_by": row["produce_by"],
+                    "qty": int(row["qty"]),
+                    "batch_name": row["batch_name"],
+                }
+                for row in cursor.fetchall()
+            ]

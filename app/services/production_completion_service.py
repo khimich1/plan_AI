@@ -16,6 +16,10 @@ _log = logging.getLogger(__name__)
 class ProductionCompletionError(ValueError):
     """Ошибка валидации данных при завершении производственного дня."""
 
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
 
 class ProductionRestValidationError(ProductionCompletionError):
     """Ошибка валидации при сохранении остатка (невалидный kp_id и т.п.)."""
@@ -66,11 +70,19 @@ class ProductionCompletionService:
         target_date: str,
         rejected_plates: list[dict[str, Any]] | None = None,
         actor: str | None = None,
+        expected_version: int | None = None,
     ) -> dict[str, Any]:
         """Отправить день производства на склад готовой продукции (СГП)."""
         plan = self.plan_repository.load_plan(plan_id)
         if not plan:
             raise ProductionCompletionError("Plan not found")
+
+        day = (plan.get("days") or {}).get(target_date) or {}
+        if day.get("completed"):
+            raise ProductionCompletionError(
+                f"День {target_date} уже завершён — повторная отправка на СГП невозможна",
+                code="day_already_completed",
+            )
 
         day_number = self._get_day_number(plan, target_date)
         day_view = build_day_view_detail(
@@ -108,9 +120,8 @@ class ProductionCompletionService:
             for item in items
         ]
 
-        # P0: вся цепочка списания (move → return_rejected → check_completion)
-        # выполняется в ОДНОЙ транзакции. Любая ошибка → conn.rollback() и
-        # БД остаётся в состоянии «до send_to_sgp».
+        # D4/P0: списание КП + mark_day_completed — одна sqlite-транзакция.
+        # Любая ошибка (в т.ч. PlanVersionConflict) → rollback; КП не списаны.
         conn = sqlite3.connect(self.db_path)
         try:
             conn.execute('PRAGMA journal_mode=WAL')
@@ -216,6 +227,21 @@ class ProductionCompletionService:
                 ):
                     completed_kps.append(kp_id)
 
+            # Флаг дня — в той же транзакции, до commit (D4).
+            # mark_day_completed returns False (missing plan / missing day) without
+            # raising — must not commit KP write-off without the completed flag.
+            day_completed = self.plan_repository.mark_day_completed(
+                plan_id,
+                target_date,
+                expected_version=expected_version,
+                _external_conn=conn,
+            )
+            if not day_completed:
+                raise ProductionCompletionError(
+                    f"Не удалось пометить день {target_date} завершённым "
+                    f"(план {plan_id}) — списание отменено."
+                )
+
             conn.commit()
         except ProductionCompletionError:
             try:
@@ -249,6 +275,7 @@ class ProductionCompletionService:
                 f"брак возвращён: {rejected_returned}."
             ),
             **completion_stats,
+            "completed": day_completed,
         }
 
     def complete_day(
@@ -258,6 +285,7 @@ class ProductionCompletionService:
         target_date: str,
         rejected_plates: list[dict[str, Any]] | None = None,
         actor: str | None = None,
+        expected_version: int | None = None,
     ) -> dict[str, Any]:
         """Alias для :meth:`send_to_sgp` (обратная совместимость на 1 релиз)."""
         return self.send_to_sgp(
@@ -265,6 +293,7 @@ class ProductionCompletionService:
             target_date=target_date,
             rejected_plates=rejected_plates,
             actor=actor,
+            expected_version=expected_version,
         )
 
     @staticmethod
@@ -545,6 +574,10 @@ class ProductionCompletionService:
             for track in block.get("tracks") or []:
                 track_number = int(track.get("track_number") or 0)
                 for plate_index, plate in enumerate(track.get("plates_info") or []):
+                    # Snapshot after prior write-off: do not re-sum or re-move.
+                    if plate.get("write_off_completed"):
+                        continue
+
                     position = (track_number, plate_index)
                     seen_positions.add(position)
 

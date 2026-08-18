@@ -21,11 +21,8 @@ export function estimateFromLengthM(
 ): ProductionEstimate {
   const length = Math.max(0, totalLengthM);
   const perDay = clampTracksPerDay(tracksPerDay);
-  const estimated_tracks = Math.max(1, Math.round(length / TRACK_LENGTH_M + 0.5));
-  const estimated_days = Math.max(
-    1,
-    Math.round(estimated_tracks / perDay + 0.5),
-  );
+  const estimated_tracks = Math.max(1, Math.ceil(length / TRACK_LENGTH_M));
+  const estimated_days = Math.max(1, Math.ceil(estimated_tracks / perDay));
   return {
     total_length_m: length,
     estimated_tracks,

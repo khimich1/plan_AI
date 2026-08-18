@@ -1,8 +1,41 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from core.production.capacity import TRACKS_PER_DAY_HARD_CAP
+
+# D5: inclusive span ≤ 366 calendar days ⇒ (max − min).days ≤ 365.
+# Forward horizon: min_fill ≤ today+366. No floor into the past.
+_FILL_SPAN_MAX_DELTA_DAYS = 365
+_FILL_FORWARD_HORIZON_DAYS = 366
+_MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+
+
+def _validate_fill_targets_horizon(
+    items: list[FillTargetItem],
+) -> list[FillTargetItem]:
+    """Reject fill lists whose date span or forward horizon exceeds D5 limits."""
+    if not items:
+        return items
+    days = [item.date for item in items]
+    min_d = min(days)
+    max_d = max(days)
+    if (max_d - min_d).days > _FILL_SPAN_MAX_DELTA_DAYS:
+        raise ValueError(
+            "Диапазон дат fill_targets не может превышать 366 дней "
+            f"(сейчас {(max_d - min_d).days + 1})."
+        )
+    today = datetime.now(_MOSCOW_TZ).date()
+    if min_d > today + timedelta(days=_FILL_FORWARD_HORIZON_DAYS):
+        raise ValueError(
+            "Минимальная дата fill_targets не может быть дальше "
+            f"сегодня+{_FILL_FORWARD_HORIZON_DAYS} дней."
+        )
+    return items
 
 
 class CreatePlanRequest(BaseModel):
@@ -28,6 +61,7 @@ class RejectedPlateItem(BaseModel):
 class CompleteProductionDayRequest(BaseModel):
     plan_id: str
     rejected_plates: list[RejectedPlateItem] = Field(default_factory=list)
+    expected_version: int | None = None
 
 
 class SaveWorkCalendarRequest(BaseModel):
@@ -70,6 +104,7 @@ class KpCandidatesResponse(BaseModel):
 class DayOccupancyResponse(BaseModel):
     occupancy: dict[str, int]
     max_per_day: int
+    max_by_day: dict[str, int] = Field(default_factory=dict)
 
 
 class DeletePlanResponse(BaseModel):
@@ -113,8 +148,8 @@ class RemoveTrackResponse(BaseModel):
 class FillTargetItem(BaseModel):
     """Один пункт корзины дозаполнения: дата + сколько дорожек туда положить."""
 
-    date: str
-    tracks: int = Field(ge=1, le=50)
+    date: date
+    tracks: int = Field(ge=1, le=TRACKS_PER_DAY_HARD_CAP)
 
 
 LayoutReinforcementOrder = Literal["asc", "desc"]
@@ -168,12 +203,18 @@ class BuildPlanRequest(BaseModel):
         # (одна и та же дата перезаписалась бы), поэтому отсекаем заранее.
         if value is None:
             return value
-        seen: set[str] = set()
+        seen: set[date] = set()
         for item in value:
             if item.date in seen:
-                raise ValueError(f"Дата {item.date} указана в fill_targets дважды")
+                raise ValueError(f"Дата {item.date.isoformat()} указана в fill_targets дважды")
             seen.add(item.date)
         return value
+
+    @model_validator(mode="after")
+    def _fill_targets_horizon(self) -> BuildPlanRequest:
+        if self.fill_targets is not None:
+            _validate_fill_targets_horizon(self.fill_targets)
+        return self
 
 
 class BuildPlanSummary(BaseModel):
@@ -249,3 +290,123 @@ class DayViewDetailResponse(BaseModel):
     plans: list[DayPlanBlock] = Field(default_factory=list)
     plans_count: int = 0
     total_tracks: int = 0
+
+
+# ---------- Анализ срочных / подложек ----------
+
+
+class AnalyzeSubstratesRequest(BaseModel):
+    """Запрос аналитического прогона: срочные позиции + подложки + дефицит ёмкости."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fill_targets: list[FillTargetItem]
+    deadline_until: date
+
+    @field_validator("fill_targets")
+    @classmethod
+    def _unique_fill_target_dates(
+        cls, value: list[FillTargetItem]
+    ) -> list[FillTargetItem]:
+        seen: set[date] = set()
+        for item in value:
+            if item.date in seen:
+                raise ValueError(f"Дата {item.date.isoformat()} указана в fill_targets дважды")
+            seen.add(item.date)
+        return value
+
+    @model_validator(mode="after")
+    def _fill_targets_horizon(self) -> AnalyzeSubstratesRequest:
+        _validate_fill_targets_horizon(self.fill_targets)
+        return self
+
+
+class UrgentPositionItem(BaseModel):
+    plate_id: int
+    kp_id: int
+    plate_name: str
+    qty_remaining: int
+    deadline: date
+    deadline_source: str
+    deadline_details: list[dict[str, Any]] = Field(default_factory=list)
+    conflict: str | None = None
+
+
+class SubstrateRecommendationItem(BaseModel):
+    plate_id: int
+    kp_id: int
+    plate_name: str
+    qty_recommended: int
+    under_plate_id: int
+    under_kp_id: int
+    under_plate_name: str
+    needed_by: date
+    storage_days: int
+    saving_mm: int
+    saving_m: float
+
+
+class CapacityOptionItem(BaseModel):
+    action: Literal["bump_fill", "propose_day"]
+    date: str
+    add_tracks: int
+    free: int
+
+
+class CapacityDeficitItem(BaseModel):
+    tracks_needed: int
+    tracks_available: int
+    tracks_missing: int
+    deficit_until: str
+    options: list[CapacityOptionItem] = Field(default_factory=list)
+
+
+class AnalysisMetaItem(BaseModel):
+    orders_count: int
+    analysis_duration_ms: int
+    optimization_status: Literal["ok", "partial", "error"]
+    error_message: str | None = None
+
+
+class AnalyzeSubstratesResponse(BaseModel):
+    urgent_positions: list[UrgentPositionItem] = Field(default_factory=list)
+    substrate_recommendations: list[SubstrateRecommendationItem] = Field(
+        default_factory=list
+    )
+    capacity_deficit: CapacityDeficitItem | None = None
+    analysis_meta: AnalysisMetaItem
+
+
+# ---------- Per-day capacity overrides ----------
+
+
+class DayCapacityMapResponse(BaseModel):
+    """Ёмкость (max_tracks) по каждой дате диапазона: override или default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    capacity: dict[str, int]
+
+
+class SaveDayCapacityRequest(BaseModel):
+    """Сохранение переопределения ёмкости на день."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: str
+    max_tracks: int = Field(ge=0, le=TRACKS_PER_DAY_HARD_CAP)
+
+    @field_validator("date")
+    @classmethod
+    def _valid_iso_date(cls, value: str) -> str:
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError as exc:
+            raise ValueError("date must be YYYY-MM-DD") from exc
+
+
+class SaveDayCapacityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date: str
+    max_tracks: int
