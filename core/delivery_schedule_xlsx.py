@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""XLSX-шаблон графика поставки: пустой шаблон и парсер черновика партий.
+"""XLSX-шаблон графика поставки: шаблон с плитами КП и парсер черновика партий.
 
 Колонки: Партия | Поставка с | Поставка по | Произвести до | Марка | Кол-во.
 Даты в файле — ДД.ММ.ГГГГ; в ``BatchDraft`` — ISO (YYYY-MM-DD).
 Матчинг марки → позиция КП: точное совпадение ``plate_name``.
+``build_template(..., plates=, batches=)`` пишет две полосы:
+сверху уже в поставках, ниже остаток. Партии и даты в верхней полосе —
+из ``batches``; в остатке они пустые.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from typing import Any
 
 try:
     from openpyxl import Workbook, load_workbook
-    from openpyxl.styles import Alignment, Font
+    from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     HAS_OPENPYXL = True
@@ -38,6 +41,10 @@ HEADERS = (
     "Кол-во",
 )
 
+SECTION_IN_SCHEDULE = "Уже в поставках"
+SECTION_REMAINDER = "Остаток"
+SECTION_TITLES = frozenset({SECTION_IN_SCHEDULE, SECTION_REMAINDER})
+
 # Колонки документа (MVP: строки партий/позиций, без этажей-колонок).
 DOC_HEADERS = (
     "№",
@@ -53,6 +60,7 @@ _DATE_FMT = "%d.%m.%Y"
 _HEADER_FONT = Font(bold=True)
 _WRAP = Alignment(wrap_text=True, vertical="top")
 _CENTER = Alignment(horizontal="center", vertical="top", wrap_text=True)
+_SECTION_FILL = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
 
 REASON_UNKNOWN_MARK = "unknown mark"
 REASON_BAD_DATE = "bad date"
@@ -89,8 +97,17 @@ class UnmatchedRow:
     raw: dict | None = None
 
 
-def build_template(path: str | Path) -> Path:
-    """Создаёт пустой XLSX-шаблон с заголовками колонок графика поставки.
+def build_template(
+    path: str | Path,
+    plates: list[dict] | None = None,
+    batches: list[Any] | None = None,
+) -> Path:
+    """Создаёт XLSX-шаблон графика: две полосы при наличии данных.
+
+    Верх — строки ``batches`` (уже в поставках). Низ — остаток КП
+    (qty позиции минус сумма qty черновика). Полосу и заголовок пишем
+    только если в ней есть строки. Без ``plates`` и ``batches`` — только
+    заголовки колонок.
 
     Returns:
         Path к записанному файлу.
@@ -109,6 +126,19 @@ def build_template(path: str | Path) -> Path:
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = _HEADER_FONT
         cell.alignment = _WRAP
+
+    row_idx = 2
+    for row in _iter_template_rows(plates or [], batches or []):
+        if row["kind"] == "section":
+            _write_section_row(ws, row_idx, row["title"])
+        else:
+            ws.cell(row=row_idx, column=1, value=row["batch_name"] or None)
+            ws.cell(row=row_idx, column=2, value=row["deliver_from"] or None)
+            ws.cell(row=row_idx, column=3, value=row["deliver_to"] or None)
+            ws.cell(row=row_idx, column=4, value=row["produce_by"] or None)
+            ws.cell(row=row_idx, column=5, value=row["plate_name"] or None)
+            ws.cell(row=row_idx, column=6, value=row["qty"])
+        row_idx += 1
 
     widths = (28, 14, 14, 14, 28, 10)
     for col, width in enumerate(widths, start=1):
@@ -241,6 +271,130 @@ def _iso_to_display(value: Any) -> str:
         return text
 
 
+def _iter_template_rows(
+    plates: list[dict],
+    batches: list[Any],
+) -> list[dict[str, Any]]:
+    """Ряды двухполосного шаблона: секции + позиции (даты ДД.ММ.ГГГГ)."""
+    plates_by_id: dict[int, dict] = {}
+    for plate in plates:
+        plate_id = _plate_id(plate)
+        if plate_id is not None:
+            plates_by_id[plate_id] = plate
+
+    allocated: dict[int, int] = {}
+    scheduled: list[dict[str, Any]] = []
+    for batch in batches:
+        batch_map = _as_mapping(batch)
+        items = batch_map.get("items") or []
+        for item in items:
+            item_map = _as_mapping(item)
+            qty = _parse_qty(item_map.get("qty"))
+            if qty is None:
+                continue
+            plate_id = _plate_id(item_map)
+            if plate_id is None:
+                continue
+            plate = plates_by_id.get(plate_id)
+            mark = str(item_map.get("plate_name") or "").strip()
+            if not mark and plate is not None:
+                mark = str(plate.get("plate_name") or "").strip()
+            if not mark:
+                continue
+            allocated[plate_id] = allocated.get(plate_id, 0) + qty
+            scheduled.append(
+                {
+                    "kind": "item",
+                    "batch_name": str(batch_map.get("name") or ""),
+                    "deliver_from": _iso_to_display(batch_map.get("deliver_from")),
+                    "deliver_to": _iso_to_display(batch_map.get("deliver_to")),
+                    "produce_by": _iso_to_display(batch_map.get("produce_by")),
+                    "plate_name": mark,
+                    "qty": qty,
+                }
+            )
+
+    remainder: list[dict[str, Any]] = []
+    for plate in plates:
+        mark = str(plate.get("plate_name") or "").strip()
+        if not mark:
+            continue
+        leftover = _kp_qty(plate) - allocated.get(_plate_id(plate), 0)
+        if leftover <= 0:
+            continue
+        remainder.append(
+            {
+                "kind": "item",
+                "batch_name": "",
+                "deliver_from": "",
+                "deliver_to": "",
+                "produce_by": "",
+                "plate_name": mark,
+                "qty": leftover,
+            }
+        )
+
+    rows: list[dict[str, Any]] = []
+    if scheduled:
+        rows.append({"kind": "section", "title": SECTION_IN_SCHEDULE})
+        rows.extend(scheduled)
+    if remainder:
+        rows.append({"kind": "section", "title": SECTION_REMAINDER})
+        rows.extend(remainder)
+    return rows
+
+
+def _write_section_row(ws: Any, row_idx: int, title: str) -> None:
+    for col in range(1, 7):
+        cell = ws.cell(row=row_idx, column=col, value=title if col == 1 else None)
+        cell.fill = _SECTION_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = _WRAP
+    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=6)
+
+
+def _as_mapping(obj: Any) -> dict[str, Any]:
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "__dict__"):
+        return dict(obj.__dict__)
+    return {}
+
+
+def _plate_id(obj: dict[str, Any] | None) -> int | None:
+    if not obj:
+        return None
+    raw = obj.get("id") if obj.get("id") is not None else obj.get("plate_id")
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _kp_qty(plate: dict[str, Any]) -> int:
+    raw = plate.get("qty")
+    if raw is None or raw == "":
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        parsed = _parse_qty(raw)
+        return parsed if parsed is not None else 0
+
+
+def _row_is_section_title(*values: Any) -> bool:
+    for value in values:
+        if value is None:
+            continue
+        if str(value).strip() in SECTION_TITLES:
+            return True
+    return False
+
+
 def parse_template(
     data: bytes,
     kp_plates: list[dict],
@@ -273,6 +427,12 @@ def parse_template(
             batch_name_raw, d_from_raw, d_to_raw, produce_raw, mark_raw, qty_raw = cells[:6]
 
             if _row_is_blank(batch_name_raw, d_from_raw, d_to_raw, produce_raw, mark_raw, qty_raw):
+                continue
+            if _row_is_section_title(
+                batch_name_raw, d_from_raw, d_to_raw, produce_raw, mark_raw, qty_raw
+            ):
+                continue
+            if _row_is_unfilled_template(batch_name_raw, d_from_raw, d_to_raw, produce_raw):
                 continue
 
             raw = {
@@ -352,6 +512,16 @@ def _row_is_blank(*values: Any) -> bool:
             continue
         return False
     return True
+
+
+def _row_is_unfilled_template(
+    batch_name: Any,
+    d_from: Any,
+    d_to: Any,
+    produce: Any,
+) -> bool:
+    """Строка шаблона: марка/кол-во есть, партия и даты ещё не заполнены."""
+    return _row_is_blank(batch_name, d_from, d_to, produce)
 
 
 def _cell_as_str(value: Any) -> str:

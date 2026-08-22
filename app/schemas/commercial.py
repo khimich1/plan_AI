@@ -225,6 +225,8 @@ class CommercialDraftMetadata(BaseModel):
     ocr_verify_failed: bool = False
     ocr_verify_skipped_reason: str | None = None
     ocr_verify_applied_reason: str | None = None
+    ocr_verify_select_reason: str | None = None
+    ocr_preprocess: str | None = None
     ocr_corrections: list[dict[str, Any]] = Field(default_factory=list)
     ocr_row_count_on_image: int | None = None
     append_batches: list[CommercialAppendBatch] = Field(default_factory=list)

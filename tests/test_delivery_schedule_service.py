@@ -645,3 +645,84 @@ def test_traffic_light_sees_override_max_zero_as_no_capacity(
     view = service.replace(1, payload, ADMIN)
     assert view.batches[0].status == "red"
     assert view.traffic_light_degraded is False
+
+
+def test_build_template_bytes_prefills_plates_from_kp(tmp_path: Path) -> None:
+    pytest.importorskip("openpyxl")
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    db_path = _fresh_db(tmp_path)
+    _seed_kp(db_path, kp_id=1, plate_name="ПБ 60-12-8п", plate_qty=40)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO kp_plates (kp_id, position_number, plate_name, qty)
+            VALUES (1, 2, 'ПБ 45-10,8-8п', 4)
+            """
+        )
+        conn.commit()
+
+    service = DeliveryScheduleService(db_path=db_path)
+    data = service.build_template_bytes(1, user=ADMIN)
+
+    wb = load_workbook(BytesIO(data))
+    ws = wb.active
+    assert ws.cell(row=1, column=5).value == "Марка"
+    assert ws.cell(row=2, column=1).value == "Остаток"
+    assert ws.cell(row=3, column=5).value == "ПБ 60-12-8п"
+    assert ws.cell(row=3, column=6).value == 40
+    assert ws.cell(row=4, column=5).value == "ПБ 45-10,8-8п"
+    assert ws.cell(row=4, column=6).value == 4
+    assert ws.cell(row=3, column=1).value is None
+    assert ws.cell(row=3, column=2).value is None
+
+
+def test_build_template_bytes_two_band_from_saved_schedule(tmp_path: Path) -> None:
+    pytest.importorskip("openpyxl")
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    db_path = _fresh_db(tmp_path)
+    plate_id = _seed_kp(db_path, kp_id=1, plate_name="ПБ 60-12-8п", plate_qty=40)
+    service = DeliveryScheduleService(db_path=db_path)
+    service.replace(
+        1,
+        _payload(
+            plate_id,
+            qty=12,
+            batches=[
+                _batch(
+                    plate_id=plate_id,
+                    qty=12,
+                    name="Партия 1",
+                    deliver_from="2026-04-01",
+                    deliver_to="2026-04-10",
+                    produce_by="2026-03-25",
+                )
+            ],
+        ),
+        ADMIN,
+    )
+
+    data = service.build_template_bytes(1, user=ADMIN)
+
+    wb = load_workbook(BytesIO(data))
+    ws = wb.active
+    assert ws.cell(row=2, column=1).value == "Уже в поставках"
+    assert ws.cell(row=3, column=1).value == "Партия 1"
+    assert ws.cell(row=3, column=2).value == "01.04.2026"
+    assert ws.cell(row=3, column=5).value == "ПБ 60-12-8п"
+    assert ws.cell(row=3, column=6).value == 12
+    assert ws.cell(row=4, column=1).value == "Остаток"
+    assert ws.cell(row=5, column=5).value == "ПБ 60-12-8п"
+    assert ws.cell(row=5, column=6).value == 28
+
+
+def test_build_template_bytes_raises_when_kp_missing(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    service = DeliveryScheduleService(db_path=db_path)
+    with pytest.raises(DeliveryScheduleNotFoundError, match="не найдено"):
+        service.build_template_bytes(999, user=ADMIN)

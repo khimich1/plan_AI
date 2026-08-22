@@ -97,6 +97,8 @@ export const DeliveryScheduleEditor = ({
               kpId={kpId}
               documentsDisabled={!hasSavedSchedule}
               compact
+              plates={plates}
+              batches={batches}
             />
           )}
           {!readOnly && onImportClick && (
@@ -121,6 +123,13 @@ export const DeliveryScheduleEditor = ({
           )}
         </div>
       </div>
+
+      {!readOnly && (
+        <p style={{ margin: 0, color: "#667085", fontSize: "0.85rem" }}>
+          В шаблоне уже марки и количества из этого КП. Проставьте партии и даты
+          отгрузки, затем загрузите файл через «Импорт XLSX» и проверьте таблицу.
+        </p>
+      )}
 
       {unmatchedRows.length > 0 && (
         <Alert tone="warning">
@@ -266,7 +275,8 @@ export const DeliveryScheduleEditor = ({
                 textAlign: "center",
               }}
             >
-              Партий пока нет. Добавьте первую или сохраните пустой график.
+              Партий пока нет. Скачайте шаблон с плитами КП, заполните партии и
+              даты, загрузите через «Импорт XLSX» — или добавьте партию вручную.
             </div>
           ) : (
             batches.map((batch) => (

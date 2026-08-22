@@ -99,6 +99,11 @@ class Settings(BaseSettings):
         alias="OCR_VERIFY_AUTO_MAX_BYTES",
         ge=1024,
     )
+    ocr_verify_auto_min_short_side: int = Field(
+        default=1000,
+        alias="OCR_VERIFY_AUTO_MIN_SHORT_SIDE",
+        ge=0,
+    )
     gigachat_credentials: str | None = Field(default=None, alias="GIGACHAT_CREDENTIALS")
     gigachat_model: str = Field(default="GigaChat-2-Max", alias="GIGACHAT_MODEL")
     gigachat_scope: str = Field(default="GIGACHAT_API_PERS", alias="GIGACHAT_SCOPE")

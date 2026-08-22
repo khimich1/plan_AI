@@ -75,8 +75,9 @@ export const ImportScheduleDialog = ({ open, onClose, kpId, onImported }: Props)
     <Modal open={open} onClose={handleClose} title="Импорт графика из XLSX" maxWidth={520}>
       <div style={{ display: "grid", gap: "1rem" }}>
         <p style={{ margin: 0, color: "#475467", fontSize: "0.95rem" }}>
-          Загрузите заполненный шаблон — партии подставятся в редактор без сохранения. Несматченные
-          строки покажем сверху.
+          Загрузите шаблон, в котором вы проставили партии и даты. Позиции КП
+          уже были в файле — они попадут в таблицу справа без сохранения. Строки
+          без дат пропускаем; несматченные покажем сверху.
         </p>
 
         <div

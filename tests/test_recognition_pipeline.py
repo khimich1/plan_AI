@@ -3,8 +3,10 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from PIL import Image
 
 import core.config_and_data as cfg
+from core.config.settings import get_settings
 from core.ocr_gpt import (
     _validate_plate_item,
     format_corrections_for_user,
@@ -182,9 +184,11 @@ def test_set_plate_lists_diagnostics_for_unparsed():
 
 async def _run_recognize_text_smart_single_call(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OCR_PROVIDER", "openai")
+    get_settings.cache_clear()
 
     image_path = tmp_path / "table.png"
-    image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    Image.new("RGB", (1600, 1200), color=(255, 255, 255)).save(image_path)
 
     draft_response = MagicMock()
     draft_response.choices = [MagicMock(message=MagicMock(content=json.dumps([
@@ -221,12 +225,67 @@ def test_recognize_text_smart_single_call(tmp_path, monkeypatch):
     asyncio.run(_run_recognize_text_smart_single_call(tmp_path, monkeypatch))
 
 
-async def _run_recognize_text_smart_verify_disabled(tmp_path, monkeypatch):
+async def _run_recognize_text_smart_small_image_runs_verify(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setenv("OCR_VERIFY_ENABLED", "false")
+    monkeypatch.setenv("OCR_PROVIDER", "openai")
+    get_settings.cache_clear()
 
     image_path = tmp_path / "table.png"
-    image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    Image.new("RGB", (400, 300), color=(255, 255, 255)).save(image_path)
+
+    plate = {
+        "raw_name": "ПБ 90,9-12-6п",
+        "normalized_candidate": "ПБ 90,9-12-6п",
+        "qty": 3,
+        "confidence": 0.95,
+        "issues": [],
+    }
+    extract_response = MagicMock()
+    extract_response.choices = [MagicMock(message=MagicMock(content=json.dumps([plate])))]
+    extract_response.usage = MagicMock(total_tokens=1000)
+
+    verify_response = MagicMock()
+    verify_response.choices = [
+        MagicMock(
+            message=MagicMock(
+                content=json.dumps(
+                    {
+                        "row_count_on_image": 1,
+                        "plates": [plate],
+                        "corrections": [],
+                    }
+                )
+            )
+        )
+    ]
+    verify_response.usage = MagicMock(total_tokens=800)
+
+    mock_create = AsyncMock(side_effect=[extract_response, verify_response])
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = mock_create
+
+    with patch("core.ocr_gpt.AsyncOpenAI", return_value=mock_client):
+        result = await recognize_text_smart(str(image_path), show_cost=False)
+
+    assert result is not None
+    assert result["verify_applied"] is True
+    assert result["ocr_verify_applied_reason"] == "auto_small_image"
+    assert mock_create.await_count == 2
+
+
+def test_recognize_text_smart_small_image_runs_verify(tmp_path, monkeypatch):
+    asyncio.run(_run_recognize_text_smart_small_image_runs_verify(tmp_path, monkeypatch))
+
+
+async def _run_recognize_text_smart_verify_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OCR_PROVIDER", "openai")
+    monkeypatch.setenv("OCR_VERIFY_MODE", "never")
+    monkeypatch.setenv("OCR_VERIFY_ENABLED", "false")
+    get_settings.cache_clear()
+
+    image_path = tmp_path / "table.png"
+    Image.new("RGB", (1600, 1200), color=(255, 255, 255)).save(image_path)
 
     draft_response = MagicMock()
     draft_response.choices = [MagicMock(message=MagicMock(content=json.dumps([

@@ -87,6 +87,8 @@ class CommercialDraftService:
             "ocr_row_count_on_image": result.get("row_count_on_image"),
             "ocr_verify_skipped_reason": result.get("ocr_verify_skipped_reason"),
             "ocr_verify_applied_reason": result.get("ocr_verify_applied_reason"),
+            "ocr_verify_select_reason": result.get("ocr_verify_select_reason"),
+            "ocr_preprocess": result.get("ocr_preprocess"),
             "ocr_warnings": self._ocr_quality_warnings(result),
         }
 

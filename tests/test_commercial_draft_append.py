@@ -190,6 +190,20 @@ def test_commercial_order_line_preserves_extra_product_fields() -> None:
 # --- CommercialDraftMetadata.append_batches / resume ---
 
 
+def test_commercial_draft_metadata_accepts_ocr_select_and_preprocess() -> None:
+    assert "ocr_verify_select_reason" in CommercialDraftMetadata.model_fields
+    assert "ocr_preprocess" in CommercialDraftMetadata.model_fields
+    meta = CommercialDraftMetadata.model_validate(
+        {
+            "product_type": "plates",
+            "ocr_verify_select_reason": "kept_extract_empty_corrections",
+            "ocr_preprocess": "2x_lanczos",
+        }
+    )
+    assert meta.ocr_verify_select_reason == "kept_extract_empty_corrections"
+    assert meta.ocr_preprocess == "2x_lanczos"
+
+
 def test_commercial_draft_metadata_accepts_append_batches() -> None:
     assert "append_batches" in CommercialDraftMetadata.model_fields, (
         "CommercialDraftMetadata.append_batches missing (MNA-101)"

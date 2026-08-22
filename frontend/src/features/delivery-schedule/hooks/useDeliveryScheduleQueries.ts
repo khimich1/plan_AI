@@ -49,6 +49,7 @@ export const useImportDeliveryScheduleMutation = () =>
       deliveryScheduleApi.importFile(kpId, file),
   });
 
+/** GET /template — только вне открытого редактора. Кнопка в модалке собирает файл на клиенте. */
 export const useDownloadDeliveryScheduleTemplateMutation = () =>
   useMutation({
     mutationKey: ["delivery-schedule", "template"],

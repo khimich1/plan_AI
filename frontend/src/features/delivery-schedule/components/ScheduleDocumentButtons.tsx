@@ -5,13 +5,22 @@ import {
   useDownloadDeliveryScheduleDocumentMutation,
   useDownloadDeliveryScheduleTemplateMutation,
 } from "@/features/delivery-schedule/hooks/useDeliveryScheduleQueries";
+import {
+  TEMPLATE_FILENAME,
+  buildScheduleTemplateXlsx,
+} from "@/features/delivery-schedule/lib/buildScheduleTemplateXlsx";
+import type { BatchDraft, OfferPlateForSchedule } from "@/features/delivery-schedule/lib/scheduleDraft";
 import { getErrorMessage } from "@/shared/lib/apiError";
+import { saveBlobAs } from "@/shared/lib/downloadFile";
 
 type Props = {
   kpId: number;
   /** XLSX/PDF доступны только после сохранения графика. */
   documentsDisabled?: boolean;
   compact?: boolean;
+  /** Черновик открытого редактора: шаблон собирается на клиенте, без GET /template. */
+  plates?: OfferPlateForSchedule[];
+  batches?: BatchDraft[];
 };
 
 const compactStyle = {
@@ -24,13 +33,20 @@ export const ScheduleDocumentButtons = ({
   kpId,
   documentsDisabled = false,
   compact = false,
+  plates,
+  batches,
 }: Props) => {
   const templateMutation = useDownloadDeliveryScheduleTemplateMutation();
   const documentMutation = useDownloadDeliveryScheduleDocumentMutation();
   const [error, setError] = useState<string | null>(null);
+  const [clientTemplatePending, setClientTemplatePending] = useState(false);
 
+  const useClientTemplate = plates != null && batches != null;
+  const templatePending = useClientTemplate
+    ? clientTemplatePending
+    : templateMutation.isPending;
   const busy =
-    templateMutation.isPending ||
+    templatePending ||
     (documentMutation.isPending && documentMutation.variables?.kpId === kpId);
 
   const btnStyle = compact ? compactStyle : undefined;
@@ -44,6 +60,20 @@ export const ScheduleDocumentButtons = ({
     }
   };
 
+  const downloadTemplate = async () => {
+    if (useClientTemplate) {
+      setClientTemplatePending(true);
+      try {
+        const blob = await buildScheduleTemplateXlsx(plates, batches);
+        saveBlobAs(blob, TEMPLATE_FILENAME);
+      } finally {
+        setClientTemplatePending(false);
+      }
+      return;
+    }
+    await templateMutation.mutateAsync(kpId);
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", alignItems: "flex-start" }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
@@ -52,9 +82,9 @@ export const ScheduleDocumentButtons = ({
           variant="secondary"
           style={btnStyle}
           disabled={busy}
-          onClick={() => void run(() => templateMutation.mutateAsync(kpId))}
+          onClick={() => void run(downloadTemplate)}
         >
-          {templateMutation.isPending ? "Шаблон…" : "Скачать шаблон"}
+          {templatePending ? "Шаблон…" : "Скачать шаблон"}
         </Button>
         <Button
           type="button"

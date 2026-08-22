@@ -20,6 +20,23 @@ class OcrVerifySettings:
     max_rows: int = 10
     min_confidence: float = 0.92
     max_bytes: int = 819_200
+    min_short_side: int = 1000  # 0 = эвристика выключена
+
+
+def _auto_image_decision(
+    *,
+    image_size_bytes: int,
+    short_side_px: int | None,
+    settings: OcrVerifySettings,
+) -> Tuple[bool, str] | None:
+    """None — продолжить проверки строк. Иначе (run_verify, reason)."""
+    if image_size_bytes > settings.max_bytes:
+        return True, "auto_file_too_large"
+    if short_side_px is None:
+        return True, "auto_image_size_unknown"
+    if settings.min_short_side > 0 and short_side_px < settings.min_short_side:
+        return True, "auto_small_image"
+    return None
 
 
 def _plate_parse_line(plate: Dict[str, Any]) -> str:
@@ -40,6 +57,7 @@ def should_run_verify(
     mode: str,
     max_api_calls: int,
     image_size_bytes: int,
+    short_side_px: int | None,
     plates: List[Dict[str, Any]],
     settings: OcrVerifySettings,
 ) -> Tuple[bool, str]:
@@ -60,8 +78,13 @@ def should_run_verify(
     if not plates:
         return True, "auto_empty_plates"
 
-    if image_size_bytes > settings.max_bytes:
-        return True, "auto_file_too_large"
+    image_decision = _auto_image_decision(
+        image_size_bytes=image_size_bytes,
+        short_side_px=short_side_px,
+        settings=settings,
+    )
+    if image_decision is not None:
+        return image_decision
 
     if len(plates) > settings.max_rows:
         return True, "auto_too_many_rows"
@@ -98,6 +121,7 @@ def should_run_pile_verify(
     mode: str,
     max_api_calls: int,
     image_size_bytes: int,
+    short_side_px: int | None,
     piles: List[Dict[str, Any]],
     settings: OcrVerifySettings,
 ) -> Tuple[bool, str]:
@@ -118,8 +142,13 @@ def should_run_pile_verify(
     if not piles:
         return True, "auto_empty_piles"
 
-    if image_size_bytes > settings.max_bytes:
-        return True, "auto_file_too_large"
+    image_decision = _auto_image_decision(
+        image_size_bytes=image_size_bytes,
+        short_side_px=short_side_px,
+        settings=settings,
+    )
+    if image_decision is not None:
+        return image_decision
 
     if len(piles) > settings.max_rows:
         return True, "auto_too_many_rows"
@@ -156,6 +185,7 @@ def should_run_step_verify(
     mode: str,
     max_api_calls: int,
     image_size_bytes: int,
+    short_side_px: int | None,
     steps: List[Dict[str, Any]],
     settings: OcrVerifySettings,
 ) -> Tuple[bool, str]:
@@ -172,8 +202,13 @@ def should_run_step_verify(
     if not steps:
         return True, "auto_empty_steps"
 
-    if image_size_bytes > settings.max_bytes:
-        return True, "auto_file_too_large"
+    image_decision = _auto_image_decision(
+        image_size_bytes=image_size_bytes,
+        short_side_px=short_side_px,
+        settings=settings,
+    )
+    if image_decision is not None:
+        return image_decision
 
     if len(steps) > settings.max_rows:
         return True, "auto_too_many_rows"
@@ -210,6 +245,7 @@ def should_run_march_verify(
     mode: str,
     max_api_calls: int,
     image_size_bytes: int,
+    short_side_px: int | None,
     marches: List[Dict[str, Any]],
     settings: OcrVerifySettings,
 ) -> Tuple[bool, str]:
@@ -226,8 +262,13 @@ def should_run_march_verify(
     if not marches:
         return True, "auto_empty_marches"
 
-    if image_size_bytes > settings.max_bytes:
-        return True, "auto_file_too_large"
+    image_decision = _auto_image_decision(
+        image_size_bytes=image_size_bytes,
+        short_side_px=short_side_px,
+        settings=settings,
+    )
+    if image_decision is not None:
+        return image_decision
 
     if len(marches) > settings.max_rows:
         return True, "auto_too_many_rows"
@@ -264,6 +305,7 @@ def should_run_bridge_pile_verify(
     mode: str,
     max_api_calls: int,
     image_size_bytes: int,
+    short_side_px: int | None,
     bridge_piles: List[Dict[str, Any]],
     settings: OcrVerifySettings,
 ) -> Tuple[bool, str]:
@@ -282,8 +324,13 @@ def should_run_bridge_pile_verify(
     if not bridge_piles:
         return True, "auto_empty_bridge_piles"
 
-    if image_size_bytes > settings.max_bytes:
-        return True, "auto_file_too_large"
+    image_decision = _auto_image_decision(
+        image_size_bytes=image_size_bytes,
+        short_side_px=short_side_px,
+        settings=settings,
+    )
+    if image_decision is not None:
+        return image_decision
 
     if len(bridge_piles) > settings.max_rows:
         return True, "auto_too_many_rows"
@@ -320,6 +367,7 @@ def should_run_fbs_verify(
     mode: str,
     max_api_calls: int,
     image_size_bytes: int,
+    short_side_px: int | None,
     fbs: List[Dict[str, Any]],
     settings: OcrVerifySettings,
 ) -> Tuple[bool, str]:
@@ -338,8 +386,13 @@ def should_run_fbs_verify(
     if not fbs:
         return True, "auto_empty_fbs"
 
-    if image_size_bytes > settings.max_bytes:
-        return True, "auto_file_too_large"
+    image_decision = _auto_image_decision(
+        image_size_bytes=image_size_bytes,
+        short_side_px=short_side_px,
+        settings=settings,
+    )
+    if image_decision is not None:
+        return image_decision
 
     if len(fbs) > settings.max_rows:
         return True, "auto_too_many_rows"

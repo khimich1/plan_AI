@@ -3,13 +3,24 @@
 
 import pytest
 
-from core.ocr.verify_policy import OcrVerifySettings, should_run_pile_verify, should_run_verify
+from core.ocr.verify_policy import (
+    OcrVerifySettings,
+    should_run_bridge_pile_verify,
+    should_run_fbs_verify,
+    should_run_march_verify,
+    should_run_pile_verify,
+    should_run_step_verify,
+    should_run_verify,
+)
 
 DEFAULT_SETTINGS = OcrVerifySettings(
     max_rows=10,
     min_confidence=0.92,
     max_bytes=819_200,
+    min_short_side=1000,
 )
+
+LARGE_SHORT_SIDE = 2000
 
 
 def _plate(**kwargs):
@@ -37,6 +48,7 @@ def test_never_mode_or_max_one_call_always_skips(mode):
         mode=mode,
         max_api_calls=1,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=_good_plates(),
         settings=DEFAULT_SETTINGS,
     )
@@ -49,6 +61,7 @@ def test_never_mode_skips_even_with_suspicious_plates():
         mode="never",
         max_api_calls=2,
         image_size_bytes=10_000_000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=[_plate(normalized_candidate="???", confidence=0.1, issues=["x"])],
         settings=DEFAULT_SETTINGS,
     )
@@ -64,6 +77,7 @@ def test_always_mode_runs_when_max_api_calls_allows():
         mode="always",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=_good_plates(),
         settings=DEFAULT_SETTINGS,
     )
@@ -79,6 +93,7 @@ def test_auto_all_checks_passed_skips_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=DEFAULT_SETTINGS.max_bytes,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=_good_plates(10),
         settings=DEFAULT_SETTINGS,
     )
@@ -91,6 +106,7 @@ def test_auto_at_exact_thresholds_skips():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=DEFAULT_SETTINGS.max_bytes,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=_good_plates(DEFAULT_SETTINGS.max_rows),
         settings=DEFAULT_SETTINGS,
     )
@@ -106,6 +122,7 @@ def test_auto_empty_plates_runs_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=[],
         settings=DEFAULT_SETTINGS,
     )
@@ -118,6 +135,7 @@ def test_auto_file_too_large_runs_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=DEFAULT_SETTINGS.max_bytes + 1,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=_good_plates(),
         settings=DEFAULT_SETTINGS,
     )
@@ -130,6 +148,7 @@ def test_auto_too_many_rows_runs_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=_good_plates(DEFAULT_SETTINGS.max_rows + 1),
         settings=DEFAULT_SETTINGS,
     )
@@ -142,6 +161,7 @@ def test_auto_low_confidence_runs_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=[_plate(confidence=DEFAULT_SETTINGS.min_confidence - 0.01)],
         settings=DEFAULT_SETTINGS,
     )
@@ -154,6 +174,7 @@ def test_auto_min_confidence_exact_passes():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=[_plate(confidence=DEFAULT_SETTINGS.min_confidence)],
         settings=DEFAULT_SETTINGS,
     )
@@ -166,6 +187,7 @@ def test_auto_unparsed_plate_runs_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=[_plate(normalized_candidate="Непонятный текст")],
         settings=DEFAULT_SETTINGS,
     )
@@ -178,6 +200,7 @@ def test_auto_has_issues_runs_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=[_plate(issues=["prefix_separator_dot"])],
         settings=DEFAULT_SETTINGS,
     )
@@ -192,6 +215,7 @@ def test_auto_custom_settings_thresholds():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=4000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=_good_plates(3),
         settings=tight,
     )
@@ -204,6 +228,7 @@ def test_unknown_mode_runs_verify():
         mode="bogus",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         plates=_good_plates(),
         settings=DEFAULT_SETTINGS,
     )
@@ -237,6 +262,7 @@ def test_pile_auto_all_checks_passed_skips_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         piles=_good_piles(3),
         settings=DEFAULT_SETTINGS,
     )
@@ -249,6 +275,7 @@ def test_pile_auto_unparsed_runs_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         piles=[_pile(normalized_candidate="???")],
         settings=DEFAULT_SETTINGS,
     )
@@ -261,8 +288,145 @@ def test_pile_auto_low_confidence_runs_verify():
         mode="auto",
         max_api_calls=2,
         image_size_bytes=1000,
+        short_side_px=LARGE_SHORT_SIDE,
         piles=[_pile(confidence=DEFAULT_SETTINGS.min_confidence - 0.01)],
         settings=DEFAULT_SETTINGS,
     )
     assert run is True
     assert reason == "auto_low_confidence"
+
+
+# --- auto: short side (small screenshot) ---
+
+SMALL_SHORT_SIDE = 400
+
+
+def _item(name: str, qty: int = 1) -> dict:
+    return {
+        "raw_name": name,
+        "normalized_candidate": name,
+        "qty": qty,
+        "confidence": 0.95,
+        "issues": [],
+    }
+
+
+def test_auto_small_image_runs_verify():
+    run, reason = should_run_verify(
+        mode="auto",
+        max_api_calls=2,
+        image_size_bytes=1000,
+        short_side_px=SMALL_SHORT_SIDE,
+        plates=_good_plates(),
+        settings=DEFAULT_SETTINGS,
+    )
+    assert run is True
+    assert reason == "auto_small_image"
+
+
+def test_auto_short_side_at_threshold_skips():
+    run, reason = should_run_verify(
+        mode="auto",
+        max_api_calls=2,
+        image_size_bytes=DEFAULT_SETTINGS.max_bytes,
+        short_side_px=1000,
+        plates=_good_plates(),
+        settings=DEFAULT_SETTINGS,
+    )
+    assert run is False
+    assert reason == "auto_all_checks_passed"
+
+
+def test_auto_unknown_image_size_runs_verify():
+    run, reason = should_run_verify(
+        mode="auto",
+        max_api_calls=2,
+        image_size_bytes=1000,
+        short_side_px=None,
+        plates=_good_plates(),
+        settings=DEFAULT_SETTINGS,
+    )
+    assert run is True
+    assert reason == "auto_image_size_unknown"
+
+
+def test_auto_min_short_side_zero_does_not_force_verify():
+    settings = OcrVerifySettings(
+        max_rows=10,
+        min_confidence=0.92,
+        max_bytes=819_200,
+        min_short_side=0,
+    )
+    run, reason = should_run_verify(
+        mode="auto",
+        max_api_calls=2,
+        image_size_bytes=1000,
+        short_side_px=SMALL_SHORT_SIDE,
+        plates=_good_plates(),
+        settings=settings,
+    )
+    assert run is False
+    assert reason == "auto_all_checks_passed"
+
+
+def test_never_mode_skips_even_for_small_image():
+    run, reason = should_run_verify(
+        mode="never",
+        max_api_calls=2,
+        image_size_bytes=1000,
+        short_side_px=SMALL_SHORT_SIDE,
+        plates=_good_plates(),
+        settings=DEFAULT_SETTINGS,
+    )
+    assert run is False
+    assert reason == "max_api_calls_or_never"
+
+
+def test_max_one_call_skips_even_for_small_image():
+    run, reason = should_run_verify(
+        mode="auto",
+        max_api_calls=1,
+        image_size_bytes=1000,
+        short_side_px=SMALL_SHORT_SIDE,
+        plates=_good_plates(),
+        settings=DEFAULT_SETTINGS,
+    )
+    assert run is False
+    assert reason == "max_api_calls_or_never"
+
+
+def test_auto_file_too_large_reason_wins_over_small_image():
+    run, reason = should_run_verify(
+        mode="auto",
+        max_api_calls=2,
+        image_size_bytes=DEFAULT_SETTINGS.max_bytes + 1,
+        short_side_px=SMALL_SHORT_SIDE,
+        plates=_good_plates(),
+        settings=DEFAULT_SETTINGS,
+    )
+    assert run is True
+    assert reason == "auto_file_too_large"
+
+
+@pytest.mark.parametrize(
+    ("fn", "rows_kw", "rows"),
+    [
+        (should_run_verify, "plates", _good_plates()),
+        (should_run_pile_verify, "piles", _good_piles()),
+        (should_run_step_verify, "steps", [_item("ЛС11", 10)]),
+        (should_run_march_verify, "marches", [_item("1ЛМ 27-11-14-4", 2)]),
+        (should_run_bridge_pile_verify, "bridge_piles", [_item("C8-35T1", 2)]),
+        (should_run_fbs_verify, "fbs", [_item("ФБС 9.3.6-Т", 2)]),
+    ],
+)
+def test_all_product_policies_run_verify_on_small_image(fn, rows_kw, rows):
+    run, reason = fn(
+        mode="auto",
+        max_api_calls=2,
+        image_size_bytes=1000,
+        short_side_px=SMALL_SHORT_SIDE,
+        settings=DEFAULT_SETTINGS,
+        **{rows_kw: rows},
+    )
+    assert run is True
+    assert reason == "auto_small_image"

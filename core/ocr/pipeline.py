@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import base64
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from core.config.settings import Settings, get_settings
@@ -18,7 +20,10 @@ from core.ocr.prompts import OCR_USER_PROMPT
 from core.ocr.providers.base import OcrProvider
 from core.ocr.providers.gigachat import GigaChatProvider
 from core.ocr.providers.openai import OpenAIProvider, load_image_payload
+from core.ocr.image_meta import image_short_side_px
+from core.ocr.image_preprocess import preprocess_image_for_ocr
 from core.ocr.result import build_result_payload
+from core.ocr.verify_apply import select_ocr_items
 from core.ocr.verify_policy import (
     OcrVerifySettings,
     should_run_bridge_pile_verify,
@@ -58,6 +63,45 @@ def resolve_verify_mode(
     return settings.ocr_verify_mode
 
 
+def _ocr_verify_settings(cfg: Settings) -> OcrVerifySettings:
+    return OcrVerifySettings(
+        max_rows=cfg.ocr_verify_auto_max_rows,
+        min_confidence=cfg.ocr_verify_auto_min_confidence,
+        max_bytes=cfg.ocr_verify_auto_max_bytes,
+        min_short_side=cfg.ocr_verify_auto_min_short_side,
+    )
+
+
+@dataclass(frozen=True)
+class _OcrImagePayload:
+    original_data: bytes
+    image_base64: str
+    mime_type: str
+    short_side_px: Optional[int]
+    preprocess: Optional[str]
+
+
+def _ocr_image_payload(image_path: str, *, min_short_side: int) -> _OcrImagePayload:
+    original_data, original_b64, original_mime = load_image_payload(image_path)
+    short_side_px = image_short_side_px(image_path)
+    processed = preprocess_image_for_ocr(image_path, min_short_side=min_short_side)
+    if processed is not None and processed.applied:
+        return _OcrImagePayload(
+            original_data=original_data,
+            image_base64=base64.b64encode(processed.image_data).decode(),
+            mime_type=processed.mime_type,
+            short_side_px=short_side_px,
+            preprocess="2x_lanczos",
+        )
+    return _OcrImagePayload(
+        original_data=original_data,
+        image_base64=original_b64,
+        mime_type=original_mime,
+        short_side_px=short_side_px,
+        preprocess=None,
+    )
+
+
 async def run_ocr_pipeline(
     *,
     image_path: str,
@@ -75,15 +119,22 @@ async def run_ocr_pipeline(
         model_label = cfg.gigachat_model if provider_name == "gigachat" else "GPT-4o"
 
     verify_mode = resolve_verify_mode(cfg, verify_enabled=verify_enabled)
-    verify_settings = OcrVerifySettings(
-        max_rows=cfg.ocr_verify_auto_max_rows,
-        min_confidence=cfg.ocr_verify_auto_min_confidence,
-        max_bytes=cfg.ocr_verify_auto_max_bytes,
-    )
+    verify_settings = _ocr_verify_settings(cfg)
 
-    image_data, image_base64, mime_type = load_image_payload(image_path)
-    image_size_kb = len(image_data) / 1024
-    _logger.info("[OCR] image_size_kb=%.1f provider=%s verify_mode=%s", image_size_kb, provider_name, verify_mode)
+    image = _ocr_image_payload(image_path, min_short_side=verify_settings.min_short_side)
+    image_base64 = image.image_base64
+    mime_type = image.mime_type
+    short_side_px = image.short_side_px
+    ocr_preprocess = image.preprocess
+    image_size_kb = len(image.original_data) / 1024
+    _logger.info(
+        "[OCR] image_size_kb=%.1f short_side_px=%s preprocess=%s provider=%s verify_mode=%s",
+        image_size_kb,
+        short_side_px,
+        ocr_preprocess,
+        provider_name,
+        verify_mode,
+    )
 
     api_calls = 0
     cost_usd = 0.0
@@ -109,7 +160,8 @@ async def run_ocr_pipeline(
     run_verify, verify_reason = should_run_verify(
         mode=verify_mode,
         max_api_calls=cfg.ocr_max_api_calls,
-        image_size_bytes=len(image_data),
+        image_size_bytes=len(image.original_data),
+        short_side_px=short_side_px,
         plates=plates,
         settings=verify_settings,
     )
@@ -120,6 +172,7 @@ async def run_ocr_pipeline(
     row_count_on_image: Optional[int] = len(plates)
     verify_skipped_reason: Optional[str] = None
     verify_applied_reason: Optional[str] = None
+    verify_select_reason: Optional[str] = None
     method = model_label
 
     if run_verify:
@@ -143,10 +196,10 @@ async def run_ocr_pipeline(
             if row_count_on_image is None:
                 row_count_on_image = len(verified_plates)
 
-            if not verified_plates:
-                verify_failed = True
-            else:
-                plates = apply_parser_gate(verified_plates)
+            decision = select_ocr_items(draft_plates, verify_result, apply_parser_gate)
+            plates = decision.items
+            verify_failed = decision.verify_failed
+            verify_select_reason = decision.select_reason
         except Exception as exc:
             verify_failed = True
             _logger.exception("[OCR] Verify failed: %s", exc)
@@ -160,10 +213,11 @@ async def run_ocr_pipeline(
 
     verify_decision = verify_applied_reason or verify_skipped_reason or "unknown"
     _logger.info(
-        "[OCR] api_calls=%s cost_rub=%.4f verify_decision=%s rows=%s",
+        "[OCR] api_calls=%s cost_rub=%.4f verify_decision=%s select=%s rows=%s",
         api_calls,
         cost_rub,
         verify_decision,
+        verify_select_reason,
         len(plates),
     )
 
@@ -186,6 +240,8 @@ async def run_ocr_pipeline(
         api_calls=api_calls,
         verify_skipped_reason=verify_skipped_reason,
         verify_applied_reason=verify_applied_reason,
+        verify_select_reason=verify_select_reason,
+        ocr_preprocess=ocr_preprocess,
     )
 
 
@@ -210,17 +266,19 @@ async def run_pile_ocr_pipeline(
         raise RuntimeError(f"Провайдер {provider_name} не поддерживает OCR свай.")
 
     verify_mode = resolve_verify_mode(cfg, verify_enabled=verify_enabled)
-    verify_settings = OcrVerifySettings(
-        max_rows=cfg.ocr_verify_auto_max_rows,
-        min_confidence=cfg.ocr_verify_auto_min_confidence,
-        max_bytes=cfg.ocr_verify_auto_max_bytes,
-    )
+    verify_settings = _ocr_verify_settings(cfg)
 
-    image_data, image_base64, mime_type = load_image_payload(image_path)
-    image_size_kb = len(image_data) / 1024
+    image = _ocr_image_payload(image_path, min_short_side=verify_settings.min_short_side)
+    image_base64 = image.image_base64
+    mime_type = image.mime_type
+    short_side_px = image.short_side_px
+    ocr_preprocess = image.preprocess
+    image_size_kb = len(image.original_data) / 1024
     _logger.info(
-        "[OCR] pile image_size_kb=%.1f provider=%s verify_mode=%s",
+        "[OCR] pile image_size_kb=%.1f short_side_px=%s preprocess=%s provider=%s verify_mode=%s",
         image_size_kb,
+        short_side_px,
+        ocr_preprocess,
         provider_name,
         verify_mode,
     )
@@ -249,7 +307,8 @@ async def run_pile_ocr_pipeline(
     run_verify, verify_reason = should_run_pile_verify(
         mode=verify_mode,
         max_api_calls=cfg.ocr_max_api_calls,
-        image_size_bytes=len(image_data),
+        image_size_bytes=len(image.original_data),
+        short_side_px=short_side_px,
         piles=piles,
         settings=verify_settings,
     )
@@ -260,6 +319,7 @@ async def run_pile_ocr_pipeline(
     row_count_on_image: Optional[int] = len(piles)
     verify_skipped_reason: Optional[str] = None
     verify_applied_reason: Optional[str] = None
+    verify_select_reason: Optional[str] = None
     method = model_label
 
     if run_verify:
@@ -283,10 +343,10 @@ async def run_pile_ocr_pipeline(
             if row_count_on_image is None:
                 row_count_on_image = len(verified_piles)
 
-            if not verified_piles:
-                verify_failed = True
-            else:
-                piles = apply_pile_parser_gate(verified_piles)
+            decision = select_ocr_items(draft_piles, verify_result, apply_pile_parser_gate)
+            piles = decision.items
+            verify_failed = decision.verify_failed
+            verify_select_reason = decision.select_reason
         except Exception as exc:
             verify_failed = True
             _logger.exception("[OCR] Pile verify failed: %s", exc)
@@ -300,10 +360,11 @@ async def run_pile_ocr_pipeline(
 
     verify_decision = verify_applied_reason or verify_skipped_reason or "unknown"
     _logger.info(
-        "[OCR] pile api_calls=%s cost_rub=%.4f verify_decision=%s rows=%s",
+        "[OCR] pile api_calls=%s cost_rub=%.4f verify_decision=%s select=%s rows=%s",
         api_calls,
         cost_rub,
         verify_decision,
+        verify_select_reason,
         len(piles),
     )
 
@@ -326,6 +387,8 @@ async def run_pile_ocr_pipeline(
         api_calls=api_calls,
         verify_skipped_reason=verify_skipped_reason,
         verify_applied_reason=verify_applied_reason,
+        verify_select_reason=verify_select_reason,
+        ocr_preprocess=ocr_preprocess,
     )
     normalized = normalize_pile_order_text(payload.get("text", ""))
     payload["text"] = normalized.normalized_text
@@ -353,17 +416,19 @@ async def run_step_ocr_pipeline(
         raise RuntimeError(f"Провайдер {provider_name} не поддерживает OCR ступеней.")
 
     verify_mode = resolve_verify_mode(cfg, verify_enabled=verify_enabled)
-    verify_settings = OcrVerifySettings(
-        max_rows=cfg.ocr_verify_auto_max_rows,
-        min_confidence=cfg.ocr_verify_auto_min_confidence,
-        max_bytes=cfg.ocr_verify_auto_max_bytes,
-    )
+    verify_settings = _ocr_verify_settings(cfg)
 
-    image_data, image_base64, mime_type = load_image_payload(image_path)
-    image_size_kb = len(image_data) / 1024
+    image = _ocr_image_payload(image_path, min_short_side=verify_settings.min_short_side)
+    image_base64 = image.image_base64
+    mime_type = image.mime_type
+    short_side_px = image.short_side_px
+    ocr_preprocess = image.preprocess
+    image_size_kb = len(image.original_data) / 1024
     _logger.info(
-        "[OCR] step image_size_kb=%.1f provider=%s verify_mode=%s",
+        "[OCR] step image_size_kb=%.1f short_side_px=%s preprocess=%s provider=%s verify_mode=%s",
         image_size_kb,
+        short_side_px,
+        ocr_preprocess,
         provider_name,
         verify_mode,
     )
@@ -392,7 +457,8 @@ async def run_step_ocr_pipeline(
     run_verify, verify_reason = should_run_step_verify(
         mode=verify_mode,
         max_api_calls=cfg.ocr_max_api_calls,
-        image_size_bytes=len(image_data),
+        image_size_bytes=len(image.original_data),
+        short_side_px=short_side_px,
         steps=steps,
         settings=verify_settings,
     )
@@ -403,6 +469,7 @@ async def run_step_ocr_pipeline(
     row_count_on_image: Optional[int] = len(steps)
     verify_skipped_reason: Optional[str] = None
     verify_applied_reason: Optional[str] = None
+    verify_select_reason: Optional[str] = None
     method = model_label
 
     if run_verify:
@@ -426,10 +493,10 @@ async def run_step_ocr_pipeline(
             if row_count_on_image is None:
                 row_count_on_image = len(verified_steps)
 
-            if not verified_steps:
-                verify_failed = True
-            else:
-                steps = apply_step_parser_gate(verified_steps)
+            decision = select_ocr_items(draft_steps, verify_result, apply_step_parser_gate)
+            steps = decision.items
+            verify_failed = decision.verify_failed
+            verify_select_reason = decision.select_reason
         except Exception as exc:
             verify_failed = True
             _logger.exception("[OCR] Step verify failed: %s", exc)
@@ -443,10 +510,11 @@ async def run_step_ocr_pipeline(
 
     verify_decision = verify_applied_reason or verify_skipped_reason or "unknown"
     _logger.info(
-        "[OCR] step api_calls=%s cost_rub=%.4f verify_decision=%s rows=%s",
+        "[OCR] step api_calls=%s cost_rub=%.4f verify_decision=%s select=%s rows=%s",
         api_calls,
         cost_rub,
         verify_decision,
+        verify_select_reason,
         len(steps),
     )
 
@@ -469,6 +537,8 @@ async def run_step_ocr_pipeline(
         api_calls=api_calls,
         verify_skipped_reason=verify_skipped_reason,
         verify_applied_reason=verify_applied_reason,
+        verify_select_reason=verify_select_reason,
+        ocr_preprocess=ocr_preprocess,
     )
     normalized = normalize_step_order_text(payload.get("text", ""))
     payload["text"] = normalized.normalized_text
@@ -496,17 +566,19 @@ async def run_march_ocr_pipeline(
         raise RuntimeError(f"Провайдер {provider_name} не поддерживает OCR маршей.")
 
     verify_mode = resolve_verify_mode(cfg, verify_enabled=verify_enabled)
-    verify_settings = OcrVerifySettings(
-        max_rows=cfg.ocr_verify_auto_max_rows,
-        min_confidence=cfg.ocr_verify_auto_min_confidence,
-        max_bytes=cfg.ocr_verify_auto_max_bytes,
-    )
+    verify_settings = _ocr_verify_settings(cfg)
 
-    image_data, image_base64, mime_type = load_image_payload(image_path)
-    image_size_kb = len(image_data) / 1024
+    image = _ocr_image_payload(image_path, min_short_side=verify_settings.min_short_side)
+    image_base64 = image.image_base64
+    mime_type = image.mime_type
+    short_side_px = image.short_side_px
+    ocr_preprocess = image.preprocess
+    image_size_kb = len(image.original_data) / 1024
     _logger.info(
-        "[OCR] march image_size_kb=%.1f provider=%s verify_mode=%s",
+        "[OCR] march image_size_kb=%.1f short_side_px=%s preprocess=%s provider=%s verify_mode=%s",
         image_size_kb,
+        short_side_px,
+        ocr_preprocess,
         provider_name,
         verify_mode,
     )
@@ -535,7 +607,8 @@ async def run_march_ocr_pipeline(
     run_verify, verify_reason = should_run_march_verify(
         mode=verify_mode,
         max_api_calls=cfg.ocr_max_api_calls,
-        image_size_bytes=len(image_data),
+        image_size_bytes=len(image.original_data),
+        short_side_px=short_side_px,
         marches=marches,
         settings=verify_settings,
     )
@@ -546,6 +619,7 @@ async def run_march_ocr_pipeline(
     row_count_on_image: Optional[int] = len(marches)
     verify_skipped_reason: Optional[str] = None
     verify_applied_reason: Optional[str] = None
+    verify_select_reason: Optional[str] = None
     method = model_label
 
     if run_verify:
@@ -569,10 +643,10 @@ async def run_march_ocr_pipeline(
             if row_count_on_image is None:
                 row_count_on_image = len(verified_marches)
 
-            if not verified_marches:
-                verify_failed = True
-            else:
-                marches = apply_march_parser_gate(verified_marches)
+            decision = select_ocr_items(draft_marches, verify_result, apply_march_parser_gate)
+            marches = decision.items
+            verify_failed = decision.verify_failed
+            verify_select_reason = decision.select_reason
         except Exception as exc:
             verify_failed = True
             _logger.exception("[OCR] March verify failed: %s", exc)
@@ -586,10 +660,11 @@ async def run_march_ocr_pipeline(
 
     verify_decision = verify_applied_reason or verify_skipped_reason or "unknown"
     _logger.info(
-        "[OCR] march api_calls=%s cost_rub=%.4f verify_decision=%s rows=%s",
+        "[OCR] march api_calls=%s cost_rub=%.4f verify_decision=%s select=%s rows=%s",
         api_calls,
         cost_rub,
         verify_decision,
+        verify_select_reason,
         len(marches),
     )
 
@@ -612,6 +687,8 @@ async def run_march_ocr_pipeline(
         api_calls=api_calls,
         verify_skipped_reason=verify_skipped_reason,
         verify_applied_reason=verify_applied_reason,
+        verify_select_reason=verify_select_reason,
+        ocr_preprocess=ocr_preprocess,
     )
     normalized = normalize_march_order_text(payload.get("text", ""))
     payload["text"] = normalized.normalized_text
@@ -639,17 +716,19 @@ async def run_bridge_pile_ocr_pipeline(
         raise RuntimeError(f"Провайдер {provider_name} не поддерживает OCR мостовых свай.")
 
     verify_mode = resolve_verify_mode(cfg, verify_enabled=verify_enabled)
-    verify_settings = OcrVerifySettings(
-        max_rows=cfg.ocr_verify_auto_max_rows,
-        min_confidence=cfg.ocr_verify_auto_min_confidence,
-        max_bytes=cfg.ocr_verify_auto_max_bytes,
-    )
+    verify_settings = _ocr_verify_settings(cfg)
 
-    image_data, image_base64, mime_type = load_image_payload(image_path)
-    image_size_kb = len(image_data) / 1024
+    image = _ocr_image_payload(image_path, min_short_side=verify_settings.min_short_side)
+    image_base64 = image.image_base64
+    mime_type = image.mime_type
+    short_side_px = image.short_side_px
+    ocr_preprocess = image.preprocess
+    image_size_kb = len(image.original_data) / 1024
     _logger.info(
-        "[OCR] bridge_pile image_size_kb=%.1f provider=%s verify_mode=%s",
+        "[OCR] bridge_pile image_size_kb=%.1f short_side_px=%s preprocess=%s provider=%s verify_mode=%s",
         image_size_kb,
+        short_side_px,
+        ocr_preprocess,
         provider_name,
         verify_mode,
     )
@@ -678,7 +757,8 @@ async def run_bridge_pile_ocr_pipeline(
     run_verify, verify_reason = should_run_bridge_pile_verify(
         mode=verify_mode,
         max_api_calls=cfg.ocr_max_api_calls,
-        image_size_bytes=len(image_data),
+        image_size_bytes=len(image.original_data),
+        short_side_px=short_side_px,
         bridge_piles=bridge_piles,
         settings=verify_settings,
     )
@@ -689,6 +769,7 @@ async def run_bridge_pile_ocr_pipeline(
     row_count_on_image: Optional[int] = len(bridge_piles)
     verify_skipped_reason: Optional[str] = None
     verify_applied_reason: Optional[str] = None
+    verify_select_reason: Optional[str] = None
     method = model_label
 
     if run_verify:
@@ -712,10 +793,10 @@ async def run_bridge_pile_ocr_pipeline(
             if row_count_on_image is None:
                 row_count_on_image = len(verified_bridge_piles)
 
-            if not verified_bridge_piles:
-                verify_failed = True
-            else:
-                bridge_piles = apply_bridge_pile_parser_gate(verified_bridge_piles)
+            decision = select_ocr_items(draft_bridge_piles, verify_result, apply_bridge_pile_parser_gate)
+            bridge_piles = decision.items
+            verify_failed = decision.verify_failed
+            verify_select_reason = decision.select_reason
         except Exception as exc:
             verify_failed = True
             _logger.exception("[OCR] Bridge pile verify failed: %s", exc)
@@ -729,10 +810,11 @@ async def run_bridge_pile_ocr_pipeline(
 
     verify_decision = verify_applied_reason or verify_skipped_reason or "unknown"
     _logger.info(
-        "[OCR] bridge_pile api_calls=%s cost_rub=%.4f verify_decision=%s rows=%s",
+        "[OCR] bridge_pile api_calls=%s cost_rub=%.4f verify_decision=%s select=%s rows=%s",
         api_calls,
         cost_rub,
         verify_decision,
+        verify_select_reason,
         len(bridge_piles),
     )
 
@@ -755,6 +837,8 @@ async def run_bridge_pile_ocr_pipeline(
         api_calls=api_calls,
         verify_skipped_reason=verify_skipped_reason,
         verify_applied_reason=verify_applied_reason,
+        verify_select_reason=verify_select_reason,
+        ocr_preprocess=ocr_preprocess,
     )
     normalized = normalize_bridge_pile_order_text(payload.get("text", ""))
     payload["text"] = normalized.normalized_text
@@ -782,17 +866,19 @@ async def run_fbs_ocr_pipeline(
         raise RuntimeError(f"Провайдер {provider_name} не поддерживает OCR ФБС.")
 
     verify_mode = resolve_verify_mode(cfg, verify_enabled=verify_enabled)
-    verify_settings = OcrVerifySettings(
-        max_rows=cfg.ocr_verify_auto_max_rows,
-        min_confidence=cfg.ocr_verify_auto_min_confidence,
-        max_bytes=cfg.ocr_verify_auto_max_bytes,
-    )
+    verify_settings = _ocr_verify_settings(cfg)
 
-    image_data, image_base64, mime_type = load_image_payload(image_path)
-    image_size_kb = len(image_data) / 1024
+    image = _ocr_image_payload(image_path, min_short_side=verify_settings.min_short_side)
+    image_base64 = image.image_base64
+    mime_type = image.mime_type
+    short_side_px = image.short_side_px
+    ocr_preprocess = image.preprocess
+    image_size_kb = len(image.original_data) / 1024
     _logger.info(
-        "[OCR] fbs image_size_kb=%.1f provider=%s verify_mode=%s",
+        "[OCR] fbs image_size_kb=%.1f short_side_px=%s preprocess=%s provider=%s verify_mode=%s",
         image_size_kb,
+        short_side_px,
+        ocr_preprocess,
         provider_name,
         verify_mode,
     )
@@ -821,7 +907,8 @@ async def run_fbs_ocr_pipeline(
     run_verify, verify_reason = should_run_fbs_verify(
         mode=verify_mode,
         max_api_calls=cfg.ocr_max_api_calls,
-        image_size_bytes=len(image_data),
+        image_size_bytes=len(image.original_data),
+        short_side_px=short_side_px,
         fbs=fbs,
         settings=verify_settings,
     )
@@ -832,6 +919,7 @@ async def run_fbs_ocr_pipeline(
     row_count_on_image: Optional[int] = len(fbs)
     verify_skipped_reason: Optional[str] = None
     verify_applied_reason: Optional[str] = None
+    verify_select_reason: Optional[str] = None
     method = model_label
 
     if run_verify:
@@ -855,10 +943,10 @@ async def run_fbs_ocr_pipeline(
             if row_count_on_image is None:
                 row_count_on_image = len(verified_fbs)
 
-            if not verified_fbs:
-                verify_failed = True
-            else:
-                fbs = apply_fbs_parser_gate(verified_fbs)
+            decision = select_ocr_items(draft_fbs, verify_result, apply_fbs_parser_gate)
+            fbs = decision.items
+            verify_failed = decision.verify_failed
+            verify_select_reason = decision.select_reason
         except Exception as exc:
             verify_failed = True
             _logger.exception("[OCR] FBS verify failed: %s", exc)
@@ -872,10 +960,11 @@ async def run_fbs_ocr_pipeline(
 
     verify_decision = verify_applied_reason or verify_skipped_reason or "unknown"
     _logger.info(
-        "[OCR] fbs api_calls=%s cost_rub=%.4f verify_decision=%s rows=%s",
+        "[OCR] fbs api_calls=%s cost_rub=%.4f verify_decision=%s select=%s rows=%s",
         api_calls,
         cost_rub,
         verify_decision,
+        verify_select_reason,
         len(fbs),
     )
 
@@ -898,6 +987,8 @@ async def run_fbs_ocr_pipeline(
         api_calls=api_calls,
         verify_skipped_reason=verify_skipped_reason,
         verify_applied_reason=verify_applied_reason,
+        verify_select_reason=verify_select_reason,
+        ocr_preprocess=ocr_preprocess,
     )
     normalized = normalize_fbs_order_text(payload.get("text", ""))
     payload["text"] = normalized.normalized_text

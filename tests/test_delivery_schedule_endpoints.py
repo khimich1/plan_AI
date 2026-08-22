@@ -420,7 +420,10 @@ def test_get_template_as_admin(
     assert XLSX_MEDIA in response.headers["content-type"]
     assert len(response.content) > 0
     assert response.content == template_bytes
-    fake_service.build_template_bytes.assert_called_once_with()
+    fake_service.build_template_bytes.assert_called_once()
+    call = fake_service.build_template_bytes.call_args
+    assert call.args[0] == 42
+    assert call.kwargs["user"]["id"] == 1
 
 
 def test_post_import_valid_xlsx_returns_draft_without_db_schedule(
@@ -495,6 +498,24 @@ def test_template_import_customer_forbidden(
     assert response.json()["detail"] == "Forbidden"
     fake_service.build_template_bytes.assert_not_called()
     fake_service.import_draft.assert_not_called()
+
+
+def test_get_template_kp_not_found(
+    client: TestClient,
+    fake_service: MagicMock,
+) -> None:
+    fake_service.build_template_bytes.side_effect = DeliveryScheduleNotFoundError(
+        "КП №999 не найдено"
+    )
+
+    response = client.get(
+        TEMPLATE_API.format(kp_id=999),
+        cookies=_admin_cookie(),
+    )
+
+    assert response.status_code == 404
+    fake_service.build_template_bytes.assert_called_once()
+    assert fake_service.build_template_bytes.call_args.args[0] == 999
 
 
 def test_get_document_xlsx_returns_200(

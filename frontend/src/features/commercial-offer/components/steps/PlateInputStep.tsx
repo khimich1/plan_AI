@@ -720,6 +720,7 @@ export const PlateInputStep = ({
                   value={batchReviewText}
                   onChange={onBatchReviewTextChange}
                   minHeight={recognizedImageUrl ? 440 : undefined}
+                  showLineNumbers
                 />
               )}
             </Card>

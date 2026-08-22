@@ -79,12 +79,18 @@ def put_delivery_schedule(
 
 @router.get("/template")
 def download_delivery_schedule_template(
-    kp_id: int,  # noqa: ARG001 — вложенный путь архива КП; шаблон пустой
-    _user: dict = Depends(require_roles("admin", "manager")),
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
     service: DeliveryScheduleService = Depends(get_delivery_schedule_service),
 ) -> Response:
     try:
-        data = service.build_template_bytes()
+        data = service.build_template_bytes(kp_id, user=user)
+    except DeliveryScheduleNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="delivery_schedule.download_delivery_schedule_template",
+            detail=str(exc) or MSG_NOT_FOUND,
+        )
     except RuntimeError as exc:
         raise_unexpected_server_error(
             exc,

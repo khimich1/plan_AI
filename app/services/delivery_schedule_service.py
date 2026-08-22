@@ -144,10 +144,48 @@ class DeliveryScheduleService:
 
         return self.get(kp_id, user=user, today=today)
 
-    def build_template_bytes(self) -> bytes:
-        """Пустой XLSX-шаблон графика (через ``build_template``)."""
+    def build_template_bytes(self, kp_id: int, *, user: dict) -> bytes:
+        """XLSX-шаблон: сохранённые партии сверху, остаток КП снизу."""
+        ensure_schema(self.db_path)
+        conn = _connect(self.db_path)
+        try:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            offer = self._fetch_offer(cur, kp_id)
+            if offer is None:
+                raise DeliveryScheduleNotFoundError(f"КП №{kp_id} не найдено")
+            assert_offer_read_access(user, offer)
+            kp_plates = self._load_kp_plates_for_import(cur, kp_id)
+            schedule = self._fetch_schedule(cur, kp_id)
+            batches: list[dict] = []
+            if schedule is not None:
+                view = self._build_view(cur, schedule)
+                batches = [
+                    {
+                        "name": batch.name,
+                        "deliver_from": batch.deliver_from,
+                        "deliver_to": batch.deliver_to,
+                        "produce_by": batch.produce_by,
+                        "items": [
+                            {
+                                "plate_id": item.plate_id,
+                                "plate_name": item.plate_name,
+                                "qty": item.qty,
+                            }
+                            for item in batch.items
+                        ],
+                    }
+                    for batch in view.batches
+                ]
+        finally:
+            conn.close()
+
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = build_template(Path(tmpdir) / "delivery_schedule_template.xlsx")
+            path = build_template(
+                Path(tmpdir) / "delivery_schedule_template.xlsx",
+                plates=kp_plates,
+                batches=batches,
+            )
             return path.read_bytes()
 
     def import_draft(
