@@ -18,6 +18,7 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
   const unparsedLines = draft.metadata.unparsed_lines ?? [];
   const warnings = draft.metadata.warnings ?? [];
   const showWideAlert = wideLines.length > 0 && !draft.metadata.wide_plates_resolved;
+  const hasUnpricedRows = rows.some((row) => row.unitPrice === null);
   const normalizedTextChanged =
     normalizedText.trim() !== (draft.metadata.normalized_text ?? "").trim() && normalizedText.trim().length > 0;
 
@@ -100,57 +101,67 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, index) => (
-                  <tr key={`${row.name}-${index}`}>
-                    <td
-                      style={{
-                        padding: "0.55rem 0.65rem",
-                        borderBottom: "1px solid #f2f4f7",
-                        fontVariantNumeric: "tabular-nums",
-                        whiteSpace: "nowrap",
-                        width: "1%",
-                        verticalAlign: "top",
-                      }}
-                    >
-                      {index + 1}
-                    </td>
-                    <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7", verticalAlign: "top" }}>
-                      <div style={{ whiteSpace: "nowrap" }}>{row.name}</div>
-                      {row.flag && (
-                        <div style={{ marginTop: "0.25rem", color: "#b54708", fontSize: "0.82rem" }}>
-                          ⚠ {flagLabel(row.flag)}
-                          {row.sourceLine ? ` · из «${row.sourceLine}»` : ""}
-                        </div>
-                      )}
-                    </td>
-                    <td
-                      style={{
-                        padding: "0.55rem 0.65rem",
-                        borderBottom: "1px solid #f2f4f7",
-                        fontVariantNumeric: "tabular-nums",
-                        whiteSpace: "nowrap",
-                        width: "1%",
-                      }}
-                    >
-                      {row.qty}
-                    </td>
-                    <td
-                      style={{
-                        padding: "0.55rem 0.65rem",
-                        paddingRight: "0.75rem",
-                        borderBottom: "1px solid #f2f4f7",
-                        fontVariantNumeric: "tabular-nums",
-                        whiteSpace: "nowrap",
-                        textAlign: "right",
-                      }}
-                    >
-                      {formatOfferNumber(row.unitPrice)}
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((row, index) => {
+                  const isUnpriced = row.unitPrice === null;
+                  return (
+                    <tr key={`${row.name}-${index}`}>
+                      <td
+                        style={{
+                          padding: "0.55rem 0.65rem",
+                          borderBottom: "1px solid #f2f4f7",
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
+                          width: "1%",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        {index + 1}
+                      </td>
+                      <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7", verticalAlign: "top" }}>
+                        <div style={{ whiteSpace: "nowrap" }}>{row.name}</div>
+                        {row.flag && (
+                          <div style={{ marginTop: "0.25rem", color: "#b54708", fontSize: "0.82rem" }}>
+                            ⚠ {flagLabel(row.flag)}
+                            {row.sourceLine ? ` · из «${row.sourceLine}»` : ""}
+                          </div>
+                        )}
+                      </td>
+                      <td
+                        style={{
+                          padding: "0.55rem 0.65rem",
+                          borderBottom: "1px solid #f2f4f7",
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
+                          width: "1%",
+                        }}
+                      >
+                        {row.qty}
+                      </td>
+                      <td
+                        style={{
+                          padding: "0.55rem 0.65rem",
+                          paddingRight: "0.75rem",
+                          borderBottom: "1px solid #f2f4f7",
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
+                          textAlign: "right",
+                          color: isUnpriced ? "#b42318" : "inherit",
+                        }}
+                      >
+                        {isUnpriced ? "нет в прайсе" : formatOfferNumber(row.unitPrice)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+        )}
+
+        {hasUnpricedRows && (
+          <Alert tone="error">
+            Не все плиты найдены в прайсе — исправьте список перед переходом к клиенту.
+          </Alert>
         )}
 
         {unparsedLines.length > 0 && (

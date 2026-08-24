@@ -74,10 +74,17 @@ type WizardDraftAction =
       action: WizardStoreState["widePlateActions"][string]["action"];
       replacementText: string;
     }
+  | {
+      type: "set-unpriced-action";
+      lineId: string;
+      action: WizardStoreState["unpricedPlateActions"][string]["action"];
+      loadCode: number | null;
+    }
   | { type: "set-execution-terms"; value: string }
   | { type: "set-draft-id"; draftId: string }
   | { type: "hydrate-draft"; payload: CommercialDraftDetails; refreshBatchText?: boolean }
   | { type: "sync-after-wide-plates"; payload: CommercialDraftDetails }
+  | { type: "sync-after-unpriced-plates"; payload: CommercialDraftDetails }
   | { type: "set-save-result"; payload: CommercialSaveResult | null }
   | { type: "start-append-cycle" }
   | { type: "reset" };
@@ -101,6 +108,7 @@ const initialState: WizardStoreState = {
   paymentConditions: "",
   executionTermsInput: "",
   widePlateActions: {},
+  unpricedPlateActions: {},
   lastDraft: null,
   lastSaveResult: null,
   isPickingProductType: false,
@@ -145,6 +153,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         pendingBatchReview: false,
         confirmedBatchCount: 0,
         widePlateActions: {},
+        unpricedPlateActions: {},
         isPickingProductType: true,
       };
     case "set-step":
@@ -204,6 +213,17 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
           },
         },
       };
+    case "set-unpriced-action":
+      return {
+        ...state,
+        unpricedPlateActions: {
+          ...state.unpricedPlateActions,
+          [action.lineId]: {
+            action: action.action,
+            loadCode: action.loadCode,
+          },
+        },
+      };
     case "set-execution-terms":
       return { ...state, executionTermsInput: action.value };
     case "set-draft-id":
@@ -237,6 +257,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         batchReviewText: shouldRefreshBatchText ? getCurrentBatchReviewText(action.payload) : state.batchReviewText,
         confirmedBatchCount: Math.min(state.confirmedBatchCount, batchCount),
         widePlateActions: action.payload.metadata.wide_plates_resolved ? {} : state.widePlateActions,
+        unpricedPlateActions: action.payload.metadata.unpriced_plates_resolved ? {} : state.unpricedPlateActions,
         lastDraft: action.payload,
       };
     }
@@ -258,6 +279,27 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         batchReviewText: getCurrentBatchReviewText(action.payload),
         confirmedBatchCount: Math.min(state.confirmedBatchCount, batchCount),
         widePlateActions: {},
+        lastDraft: action.payload,
+      };
+    }
+    case "sync-after-unpriced-plates": {
+      const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
+      const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
+      const batchCount = getBatchCount(action.payload);
+      return {
+        ...state,
+        productType,
+        draftId: action.payload.draft_id,
+        currentStep: mergeWizardStepWithServer(
+          state.currentStep,
+          action.payload.wizard_state?.current_step,
+          productType,
+        ),
+        normalizedText: action.payload.metadata.normalized_text ?? "",
+        pendingBatchReview: batchReviewPending,
+        batchReviewText: getCurrentBatchReviewText(action.payload),
+        confirmedBatchCount: Math.min(state.confirmedBatchCount, batchCount),
+        unpricedPlateActions: {},
         lastDraft: action.payload,
       };
     }
@@ -291,6 +333,7 @@ export const WizardDraftProvider = ({ children }: PropsWithChildren) => {
       currentStep: mapLegacyWizardStep(loaded.currentStep),
       normalizedText: loaded.normalizedText ?? "",
       isPickingProductType: loaded.isPickingProductType ?? false,
+      unpricedPlateActions: loaded.unpricedPlateActions ?? {},
     };
   });
 

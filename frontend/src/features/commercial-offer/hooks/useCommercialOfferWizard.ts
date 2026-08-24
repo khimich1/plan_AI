@@ -289,6 +289,26 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
+  const resolveUnpricedPlatesMutation = useMutation({
+    mutationFn: ({
+      draftId,
+      decisions,
+    }: {
+      draftId: string;
+      decisions: Array<{
+        lineId?: string;
+        sourceLine: string;
+        action: "replace_load" | "exclude";
+        loadCode?: number | null;
+      }>;
+    }) => commercialOfferApi.resolveUnpricedPlates(draftId, decisions),
+    onSuccess: (draft, variables) => {
+      dispatch({ type: "sync-after-unpriced-plates", payload: draft });
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
   const updateMetaMutation = useMutation({
     mutationFn: ({
       draftId,
@@ -413,6 +433,7 @@ export const useCommercialOfferWizard = () => {
     updateBridgePileGradesMutation,
     updateFbsGradesMutation,
     resolveWidePlatesMutation,
+    resolveUnpricedPlatesMutation,
     updateMetaMutation,
     calculateMutation,
     generateFilesMutation,

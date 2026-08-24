@@ -9,6 +9,7 @@ import type {
   PlateInputMode,
   ProductType,
   SaveMode,
+  UnpricedPlateAction,
   WidePlateAction,
 } from "@/features/commercial-offer/types/commercialOffer";
 
@@ -43,6 +44,13 @@ type WidePlateDecisionPayload = {
   sourceLine: string;
   action: WidePlateAction;
   replacementText?: string;
+};
+
+type UnpricedPlateDecisionPayload = {
+  lineId?: string;
+  sourceLine: string;
+  action: UnpricedPlateAction;
+  loadCode?: number | null;
 };
 
 type SaveDraftPayload = {
@@ -201,6 +209,20 @@ export const commercialOfferApi = {
           source_line: item.sourceLine,
           action: item.action,
           replacement_text: item.replacementText ?? "",
+        })),
+      }),
+      { "Content-Type": "application/json" },
+    ),
+
+  resolveUnpricedPlates: (draftId: string, decisions: UnpricedPlateDecisionPayload[]) =>
+    httpClient.post<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/unpriced-plates/resolve`,
+      JSON.stringify({
+        decisions: decisions.map((item) => ({
+          line_id: item.lineId ?? null,
+          source_line: item.sourceLine,
+          action: item.action,
+          load_code: item.loadCode ?? null,
         })),
       }),
       { "Content-Type": "application/json" },

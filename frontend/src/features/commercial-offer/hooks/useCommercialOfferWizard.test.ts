@@ -32,6 +32,7 @@ vi.mock("@/features/commercial-offer/api/commercialOfferApi", () => ({
     updatePileGrades: vi.fn(),
     updateMarchGrades: vi.fn(),
     resolveWidePlates: vi.fn(),
+    resolveUnpricedPlates: vi.fn(),
     updateDraftMeta: vi.fn(),
     calculateDraft: vi.fn(),
     generateFiles: vi.fn(),

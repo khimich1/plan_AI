@@ -15,6 +15,7 @@ export type WizardNextRequiredAction =
   | "ingest_bridge_piles"
   | "ingest_fbs"
   | "resolve_wide_plates"
+  | "resolve_unpriced_plates"
   | "select_manager"
   | "complete_client_terms"
   | "post_calculate";
@@ -34,6 +35,7 @@ export type ConditionsMode = "standard" | "custom";
 export type SaveMode = "database" | "archive" | "skip";
 export type FileKind = "pdf" | "xlsx" | "breakdown" | "schema";
 export type WidePlateAction = "confirm" | "exclude" | "replace";
+export type UnpricedPlateAction = "replace_load" | "exclude";
 
 export type Manager = {
   id: number;
@@ -51,6 +53,22 @@ export type WidePlateLine = {
   id: string;
   line: string;
   qty: number;
+};
+
+export type UnpricedPlateReplacement = {
+  load_code: number;
+  price: number;
+};
+
+export type UnpricedPlateLine = {
+  id: string;
+  name: string;
+  line: string;
+  qty: number;
+  length_m: number;
+  width_m: number;
+  load_class: number;
+  replacements: UnpricedPlateReplacement[];
 };
 
 export type DoborPair = {
@@ -161,6 +179,7 @@ export type CommercialDraftMetadata = {
   normalized_text: string;
   normalized_lines: string[];
   wide_plate_lines: WidePlateLine[];
+  unpriced_plate_lines?: UnpricedPlateLine[];
   dobor_pairs: DoborPair[];
   diagnostics: Array<Record<string, unknown>>;
   price_rows_count: number;
@@ -172,6 +191,7 @@ export type CommercialDraftMetadata = {
   march_batches?: MarchBatch[];
   default_concrete_grade?: string;
   wide_plates_resolved: boolean;
+  unpriced_plates_resolved?: boolean;
   last_source_filename: string;
   ai_applied?: boolean;
   last_ai_instruction?: string;
@@ -258,6 +278,7 @@ export type WizardStoreState = {
   paymentConditions: string;
   executionTermsInput: string;
   widePlateActions: Record<string, { action: WidePlateAction; replacementText: string }>;
+  unpricedPlateActions: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
   lastDraft: CommercialDraftDetails | null;
   lastSaveResult: CommercialSaveResult | null;
   /** True while re-picking product type for an append cycle (sticky header retained). */

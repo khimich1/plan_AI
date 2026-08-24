@@ -13,6 +13,7 @@ CommercialPileUpdateMode = Literal["append", "replace"]
 CommercialStepUpdateMode = Literal["append", "replace"]
 CommercialMarchUpdateMode = Literal["append", "replace"]
 CommercialWidePlateAction = Literal["confirm", "exclude", "replace"]
+CommercialUnpricedPlateAction = Literal["replace_load", "exclude"]
 CommercialSaveMode = Literal["database", "archive", "skip"]
 ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs"]
 
@@ -41,6 +42,7 @@ class WizardNextRequiredAction(str, Enum):
     ingest_bridge_piles = "ingest_bridge_piles"
     ingest_fbs = "ingest_fbs"
     resolve_wide_plates = "resolve_wide_plates"
+    resolve_unpriced_plates = "resolve_unpriced_plates"
     select_manager = "select_manager"
     complete_client_terms = "complete_client_terms"
     post_calculate = "post_calculate"
@@ -101,6 +103,22 @@ class CommercialWidePlateLine(BaseModel):
     id: str = Field(min_length=1)
     line: str
     qty: int = 1
+
+
+class CommercialUnpricedPlateReplacement(BaseModel):
+    load_code: int
+    price: float
+
+
+class CommercialUnpricedPlateLine(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = ""
+    line: str = ""
+    qty: int = 1
+    length_m: float = 0.0
+    width_m: float = 0.0
+    load_class: int = 0
+    replacements: list[CommercialUnpricedPlateReplacement] = Field(default_factory=list)
 
 
 class CommercialDoborPair(BaseModel):
@@ -198,6 +216,7 @@ class CommercialDraftMetadata(BaseModel):
     normalized_text: str = ""
     normalized_lines: list[str] = Field(default_factory=list)
     wide_plate_lines: list[CommercialWidePlateLine] = Field(default_factory=list)
+    unpriced_plate_lines: list[CommercialUnpricedPlateLine] = Field(default_factory=list)
     dobor_pairs: list[CommercialDoborPair] = Field(default_factory=list)
     diagnostics: list[dict[str, Any]] = Field(default_factory=list)
     price_rows_count: int = 0
@@ -209,6 +228,7 @@ class CommercialDraftMetadata(BaseModel):
     march_batches: list[CommercialMarchBatch] = Field(default_factory=list)
     default_concrete_grade: str = "B25"
     wide_plates_resolved: bool = False
+    unpriced_plates_resolved: bool = True
     last_source_filename: str = ""
     ai_applied: bool = False
     last_ai_instruction: str = ""
@@ -285,6 +305,17 @@ class CommercialWidePlateDecision(BaseModel):
 
 class CommercialWidePlatesResolveRequest(BaseModel):
     decisions: list[CommercialWidePlateDecision] = Field(min_length=1)
+
+
+class CommercialUnpricedPlateDecision(BaseModel):
+    line_id: str | None = None
+    source_line: str | None = None
+    action: CommercialUnpricedPlateAction
+    load_code: int | None = None
+
+
+class CommercialUnpricedPlatesResolveRequest(BaseModel):
+    decisions: list[CommercialUnpricedPlateDecision] = Field(min_length=1)
 
 
 class CommercialPileGradesUpdateRequest(BaseModel):

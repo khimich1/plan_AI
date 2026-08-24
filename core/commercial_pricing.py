@@ -111,11 +111,11 @@ def lookup_plate_price(
             ).fetchone()
         finally:
             con.close()
-        if row:
-            return float(row[0])
-        raise PriceNotFoundError(
-            f"Цена не найдена: length_dm={length_dm}, load_code={load_code}"
-        )
+        if row is None or float(row[0]) <= 0:
+            raise PriceNotFoundError(
+                f"Цена не найдена: length_dm={length_dm}, load_code={load_code}"
+            )
+        return float(row[0])
     except PriceNotFoundError:
         raise
     except Exception as exc:

@@ -9,6 +9,8 @@ import type {
 
   PlateInputMode,
 
+  UnpricedPlateAction,
+
   WidePlateAction,
 
 } from "@/features/commercial-offer/types/commercialOffer";
@@ -16,6 +18,8 @@ import type {
 import { KpPlatePreviewPanel } from "@/features/commercial-offer/components/KpPlatePreviewPanel";
 
 import { PlateListEditor } from "@/features/commercial-offer/components/PlateListEditor";
+
+import { UnpricedPlatesInlineSection } from "@/features/commercial-offer/components/UnpricedPlatesInlineSection";
 
 import { WidePlatesInlineSection } from "@/features/commercial-offer/components/WidePlatesInlineSection";
 
@@ -42,12 +46,15 @@ type PlateInputStepProps = {
   recognizedImageName: string | null;
   errorMessage: string | null;
   widePlateErrorMessage?: string | null;
+  unpricedPlateErrorMessage?: string | null;
   isRecognizing: boolean;
   isAiProcessing?: boolean;
   isResolvingWidePlates?: boolean;
+  isResolvingUnpricedPlates?: boolean;
   isConfirmingBatch?: boolean;
   isProceeding?: boolean;
   widePlateDecisions?: Record<string, { action: WidePlateAction; replacementText: string }>;
+  unpricedPlateDecisions?: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
   aiInstruction?: string;
   onAiInstructionChange?: (value: string) => void;
   onApplyAi?: () => void;
@@ -60,6 +67,12 @@ type PlateInputStepProps = {
   onFinishPlates: () => void;
   onWidePlateDecisionChange?: (lineId: string, action: WidePlateAction, replacementText: string) => void;
   onApplyWidePlates?: () => void;
+  onUnpricedPlateDecisionChange?: (
+    lineId: string,
+    action: UnpricedPlateAction,
+    loadCode: number | null,
+  ) => void;
+  onApplyUnpricedPlates?: () => void;
   onReset: () => void;
 };
 
@@ -156,12 +169,15 @@ export const PlateInputStep = ({
   recognizedImageName,
   errorMessage,
   widePlateErrorMessage,
+  unpricedPlateErrorMessage,
   isRecognizing,
   isAiProcessing = false,
   isResolvingWidePlates = false,
+  isResolvingUnpricedPlates = false,
   isConfirmingBatch = false,
   isProceeding = false,
   widePlateDecisions = {},
+  unpricedPlateDecisions = {},
   aiInstruction = "",
   onAiInstructionChange,
   onApplyAi,
@@ -174,6 +190,8 @@ export const PlateInputStep = ({
   onFinishPlates,
   onWidePlateDecisionChange,
   onApplyWidePlates,
+  onUnpricedPlateDecisionChange,
+  onApplyUnpricedPlates,
   onReset,
 }: PlateInputStepProps) => {
   const [showAdditionalActions, setShowAdditionalActions] = useState(false);
@@ -746,6 +764,17 @@ export const PlateInputStep = ({
 
             />
 
+          )}
+
+          {onUnpricedPlateDecisionChange && onApplyUnpricedPlates && (
+            <UnpricedPlatesInlineSection
+              draft={draft}
+              decisions={unpricedPlateDecisions}
+              isPending={isResolvingUnpricedPlates}
+              errorMessage={unpricedPlateErrorMessage}
+              onDecisionChange={onUnpricedPlateDecisionChange}
+              onApply={onApplyUnpricedPlates}
+            />
           )}
 
           {!isBatchReviewMode && draft && (

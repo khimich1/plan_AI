@@ -2252,6 +2252,189 @@ class CommercialWorkflowService:
         self._persist_wizard_step(draft_id, WizardStepId.plates)
         return self.get_draft_details(draft_id)
 
+    def resolve_unpriced_plates(
+        self,
+        draft_id: str,
+        decisions: Iterable[dict[str, Any]],
+        *,
+        plate_order_ctx: PlateOrderContext,
+    ) -> dict[str, Any]:
+        from core.unpriced_plate_replacements import rewrite_plate_line_load
+
+        payload = self._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata", {}))
+        current_text = str(metadata.get("input_text", "") or "")
+        if not current_text:
+            raise ValueError("Список плит отсутствует.")
+
+        unpriced_items = self.draft_service.serialize_unpriced_plate_lines(
+            metadata.get("unpriced_plate_lines", [])
+        )
+        if not unpriced_items:
+            return self.get_draft_details(draft_id)
+
+        decisions_by_id: dict[str, dict[str, Any]] = {}
+        decisions_by_line: dict[str, dict[str, Any]] = {}
+        for item in decisions:
+            line_id = str(item.get("line_id", "") or "").strip()
+            source_line = str(item.get("source_line", "") or "").strip()
+            if line_id:
+                decisions_by_id[line_id] = item
+            if source_line:
+                decisions_by_line[source_line] = item
+
+        resolved_by_line: dict[str, dict[str, Any]] = {}
+        resolved_decisions: dict[str, dict[str, Any]] = {}
+        unresolved: list[str] = []
+        for unpriced_item in unpriced_items:
+            line_id = str(unpriced_item.get("id", "")).strip()
+            line = str(unpriced_item.get("line", "")).strip()
+            decision = decisions_by_id.get(line_id) if line_id else None
+            if decision is None:
+                decision = decisions_by_line.get(line)
+            if decision is None:
+                unresolved.append(line or line_id)
+                continue
+
+            action = str(decision.get("action", "")).strip().lower()
+            allowed_load_codes = {
+                int(repl["load_code"])
+                for repl in (unpriced_item.get("replacements") or [])
+                if isinstance(repl, dict) and repl.get("load_code") is not None
+            }
+            if action == "replace_load":
+                if not allowed_load_codes:
+                    raise ValueError(
+                        "Для позиции без производимых замен доступно только исключение."
+                    )
+                raw_load = decision.get("load_code")
+                if raw_load is None:
+                    raise ValueError("Для замены нагрузки нужно указать load_code.")
+                try:
+                    chosen_load = int(raw_load)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("Некорректный load_code для замены нагрузки.") from exc
+                if chosen_load not in allowed_load_codes:
+                    raise ValueError(
+                        f"load_code={chosen_load} не входит в предложенные замены."
+                    )
+            elif action == "exclude":
+                pass
+            else:
+                raise ValueError("Некорректное действие для позиции без цены.")
+
+            resolved_decisions[line_id or line] = {
+                "line_id": line_id or None,
+                "source_line": line or None,
+                "action": action,
+                "load_code": decision.get("load_code"),
+            }
+            if line:
+                resolved_by_line[line] = resolved_decisions[line_id or line]
+
+        if unresolved:
+            raise ValueError("Нужно выбрать действие для всех позиций без цены.")
+
+        original_lines = [
+            line.strip() for line in list(metadata.get("normalized_lines") or []) if line.strip()
+        ]
+        if not original_lines:
+            original_lines = [
+                line.strip() for line in re.split(r"[\n;]+", current_text) if line.strip()
+            ]
+
+        unpriced_set = {
+            str(item.get("line", "")).strip()
+            for item in unpriced_items
+            if str(item.get("line", "")).strip()
+        }
+
+        merged_lines: list[str] = []
+        for line in original_lines:
+            matched_item = next(
+                (
+                    item
+                    for item in unpriced_items
+                    if str(item.get("line", "")).strip() == line
+                    or (
+                        str(item.get("name", "")).strip()
+                        and str(item.get("name", "")).strip() in line
+                    )
+                ),
+                None,
+            )
+            if matched_item is None:
+                merged_lines.append(line)
+                continue
+
+            item_line = str(matched_item.get("line", "")).strip()
+            item_id = str(matched_item.get("id", "")).strip()
+            decision = (
+                resolved_by_line.get(item_line)
+                or resolved_decisions.get(item_id)
+                or resolved_decisions.get(item_line)
+            )
+            if decision is None:
+                merged_lines.append(line)
+                continue
+
+            action = str(decision.get("action", "")).strip().lower()
+            if action == "exclude":
+                continue
+            if action == "replace_load":
+                new_load = int(decision["load_code"])
+                try:
+                    merged_lines.append(rewrite_plate_line_load(line, new_load))
+                except ValueError:
+                    fallback = str(matched_item.get("name") or line)
+                    qty_match = re.search(r"(\d+)\s*$", line.strip())
+                    rewritten = rewrite_plate_line_load(fallback, new_load)
+                    if qty_match and not re.search(r"\d+\s*$", rewritten.strip()):
+                        rewritten = f"{rewritten} {qty_match.group(1)}"
+                    merged_lines.append(rewritten)
+                continue
+            raise ValueError("Некорректное действие для позиции без цены.")
+
+        if not merged_lines:
+            raise ValueError("После обработки позиций без цены список стал пустым.")
+
+        next_text = "\n".join(merged_lines)
+        plate_batches = list(metadata.get("plate_batches") or [])
+        updated_batches = self._apply_unpriced_plate_decisions_to_batches(
+            plate_batches,
+            unpriced_items,
+            resolved_by_line,
+            resolved_decisions,
+        )
+        preview = self.commercial_service.generate_preview(
+            text=next_text,
+            plate_order_ctx=plate_order_ctx,
+        )
+        next_metadata = self.draft_service.build_preview_metadata(
+            preview=preview,
+            base_metadata=metadata,
+            source_type=str(metadata.get("source_type") or "text"),
+            original_text=str(metadata.get("original_text", "") or ""),
+            ocr_text=str(metadata.get("ocr_text", "") or ""),
+            input_text=next_text,
+            last_source_filename=str(metadata.get("last_source_filename", "") or ""),
+            plate_batches=updated_batches,
+            wide_plates_resolved=bool(metadata.get("wide_plates_resolved", True)),
+            source_metadata={},
+        )
+        # Force resolved after explicit user action (mirror wide-plates).
+        next_metadata["unpriced_plates_resolved"] = True
+        next_metadata["unpriced_plate_decisions"] = list(resolved_decisions.values())
+        self.draft_store.replace_preview(
+            draft_id,
+            order=preview.parse_result.order,
+            optimization_context=preview.optimization_context,
+            order_data=preview.order_data,
+            metadata=next_metadata,
+        )
+        self._persist_wizard_step(draft_id, WizardStepId.plates)
+        return self.get_draft_details(draft_id)
+
     def update_draft_meta(
         self,
         draft_id: str,
@@ -2771,6 +2954,66 @@ class CommercialWorkflowService:
                     next_lines.extend(replacement_lines)
                 else:
                     next_lines.append(line)
+            next_batch = dict(batch)
+            next_batch["normalized_text"] = "\n".join(next_lines)
+            updated.append(next_batch)
+        return updated
+
+    def _apply_unpriced_plate_decisions_to_batches(
+        self,
+        plate_batches: list[dict[str, Any]],
+        unpriced_items: list[dict[str, Any]],
+        resolved_by_line: dict[str, dict[str, Any]],
+        resolved_decisions: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        from core.unpriced_plate_replacements import rewrite_plate_line_load
+
+        if not plate_batches:
+            return plate_batches
+
+        updated: list[dict[str, Any]] = []
+        for batch in plate_batches:
+            batch_text = str(batch.get("normalized_text", "") or "")
+            batch_lines = [line.strip() for line in batch_text.split("\n") if line.strip()]
+            next_lines: list[str] = []
+            for line in batch_lines:
+                matched_item = next(
+                    (
+                        item
+                        for item in unpriced_items
+                        if str(item.get("line", "")).strip() == line
+                        or (
+                            str(item.get("name", "")).strip()
+                            and str(item.get("name", "")).strip() in line
+                        )
+                    ),
+                    None,
+                )
+                if matched_item is None:
+                    next_lines.append(line)
+                    continue
+                item_line = str(matched_item.get("line", "")).strip()
+                item_id = str(matched_item.get("id", "")).strip()
+                decision = (
+                    resolved_by_line.get(item_line)
+                    or resolved_decisions.get(item_id)
+                    or resolved_decisions.get(item_line)
+                )
+                if decision is None:
+                    next_lines.append(line)
+                    continue
+                action = str(decision.get("action", "")).strip().lower()
+                if action == "exclude":
+                    continue
+                if action == "replace_load":
+                    new_load = int(decision["load_code"])
+                    try:
+                        next_lines.append(rewrite_plate_line_load(line, new_load))
+                    except ValueError:
+                        fallback = str(matched_item.get("name") or line)
+                        next_lines.append(rewrite_plate_line_load(fallback, new_load))
+                    continue
+                next_lines.append(line)
             next_batch = dict(batch)
             next_batch["normalized_text"] = "\n".join(next_lines)
             updated.append(next_batch)

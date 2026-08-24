@@ -71,6 +71,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     updateBridgePileGradesMutation,
     updateFbsGradesMutation,
     resolveWidePlatesMutation,
+    resolveUnpricedPlatesMutation,
     updateMetaMutation,
     calculateMutation,
     generateFilesMutation,
@@ -91,6 +92,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const [aiInstruction, setAiInstruction] = useState("");
   const [stepError, setStepError] = useState<string | null>(null);
   const [widePlateError, setWidePlateError] = useState<string | null>(null);
+  const [unpricedPlateError, setUnpricedPlateError] = useState<string | null>(null);
   const {
     preview: recognizedImagePreview,
     setPreviewFromFile,
@@ -365,6 +367,8 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
       } else if (draft.wizard_state.next_required_action === "resolve_wide_plates") {
         setStepError("Сначала примите решение по позициям шире стандартной.");
+      } else if (draft.wizard_state.next_required_action === "resolve_unpriced_plates") {
+        setStepError("Сначала примите решение по позициям без цены в прайсе.");
       } else {
         setStepError("Нельзя перейти дальше — проверьте список плит и повторите.");
       }
@@ -618,6 +622,30 @@ const handleFinishBridgePiles = async () => {
     }
   };
 
+  const handleApplyUnpricedPlates = async () => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setUnpricedPlateError(null);
+    try {
+      await resolveUnpricedPlatesMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        decisions: (currentDraft.metadata.unpriced_plate_lines ?? []).map((item) => {
+          const decision = state.unpricedPlateActions[item.id];
+          const fallbackLoad = item.replacements[0]?.load_code ?? null;
+          return {
+            lineId: item.id,
+            sourceLine: item.line,
+            action: decision?.action ?? (fallbackLoad != null ? "replace_load" : "exclude"),
+            loadCode: decision?.loadCode ?? fallbackLoad,
+          };
+        }),
+      });
+    } catch (error) {
+      setUnpricedPlateError(getErrorMessage(error));
+    }
+  };
+
   const handleClientSubmit = async (payload: {
     managerId: number;
     clientName: string;
@@ -817,6 +845,9 @@ const handleFinishBridgePiles = async () => {
 
   const hasUnresolvedWidePlates =
     Boolean(currentDraft?.metadata.wide_plate_lines?.length) && !currentDraft?.metadata.wide_plates_resolved;
+  const hasUnresolvedUnpricedPlates =
+    Boolean(currentDraft?.metadata.unpriced_plate_lines?.length) &&
+    !currentDraft?.metadata.unpriced_plates_resolved;
 
   const canNavigateToStep = (step: WizardStepId): boolean => {
     if (step === inputStep) {
@@ -849,11 +880,17 @@ const handleFinishBridgePiles = async () => {
         );
         return;
       }
-      if (step === "client" && !isSimpleProductFlow && (hasUnresolvedWidePlates || state.pendingBatchReview)) {
+      if (
+        step === "client" &&
+        !isSimpleProductFlow &&
+        (hasUnresolvedWidePlates || hasUnresolvedUnpricedPlates || state.pendingBatchReview)
+      ) {
         setStepError(
           state.pendingBatchReview
             ? "Сначала подтвердите список текущего источника — «Список верен»."
-            : "Сначала примите решение по позициям шире стандартной.",
+            : hasUnresolvedWidePlates
+              ? "Сначала примите решение по позициям шире стандартной."
+              : "Сначала примите решение по позициям без цены в прайсе.",
         );
         return;
       }
@@ -1027,12 +1064,15 @@ const handleFinishBridgePiles = async () => {
         recognizedImageName={recognizedImagePreview?.name ?? null}
         errorMessage={stepError}
         widePlateErrorMessage={widePlateError}
+        unpricedPlateErrorMessage={unpricedPlateError}
         isRecognizing={createDraftMutation.isPending || updatePlatesMutation.isPending}
         isAiProcessing={applyAiPlatesMutation.isPending}
         isResolvingWidePlates={resolveWidePlatesMutation.isPending}
+        isResolvingUnpricedPlates={resolveUnpricedPlatesMutation.isPending}
         isConfirmingBatch={updatePlatesMutation.isPending}
         isProceeding={false}
         widePlateDecisions={state.widePlateActions}
+        unpricedPlateDecisions={state.unpricedPlateActions}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
@@ -1047,6 +1087,10 @@ const handleFinishBridgePiles = async () => {
           dispatch({ type: "set-wide-action", lineId, action, replacementText })
         }
         onApplyWidePlates={() => void handleApplyWidePlates()}
+        onUnpricedPlateDecisionChange={(lineId, action, loadCode) =>
+          dispatch({ type: "set-unpriced-action", lineId, action, loadCode })
+        }
+        onApplyUnpricedPlates={() => void handleApplyUnpricedPlates()}
         onReset={handleCreateNewOffer}
       />
     ) : state.currentStep === "client" ? (

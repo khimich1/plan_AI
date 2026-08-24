@@ -573,8 +573,17 @@ def _apply_transverse_on_primary_strip(
     trans_cuts: float,
     transverse_remainder_cost: float,
     transverse_remainder_terms: list[tuple[float, int]],
-) -> tuple[float, float, list[tuple[float, int]]]:
-    """Поперечный рез на основной полосе primary (не из rest по ширине)."""
+    total_cuts_for_this_size: int,
+    total_plates_from_cuts: int,
+    long_cut_meterage: float,
+    long_cut_length_display: float,
+) -> tuple[int, int, float, float, float, float, list[tuple[float, int]]]:
+    """Поперечный рез / secondary с чужого rest той же нагрузки (не own-rest).
+
+    Также начисляет продольный рез на rest-полосе чужой primary той же нагрузки
+    (кейс ПБ 43-7,25 из ленты 8,6 м). Кросс-нагрузочные secondary уже обработаны
+    в ``_apply_crossload_rest_secondaries`` (кроме pure ``transverse``).
+    """
     load_key = int(math.floor(float(load_code)))
 
     for sec_cut in current_plan.get('secondary_cuts') or []:
@@ -596,6 +605,16 @@ def _apply_transverse_on_primary_strip(
         if sec_qty <= 0:
             continue
 
+        # Secondary с rest чужой нагрузки уже полностью обработан в
+        # _apply_crossload_rest_secondaries, кроме type=='transverse'
+        # (тот проход его намеренно пропускает).
+        handled_by_crossload = (
+            _is_crossload_rest_secondary(sec_cut, rest_groups, load_key, current_plan)
+            and sec_cut.get('type') != 'transverse'
+        )
+        if handled_by_crossload:
+            continue
+
         transverse_remainder_cost, transverse_remainder_terms, trans_cuts = (
             _apply_transverse_remainder_from_cut(
                 src_len=src_len,
@@ -611,7 +630,30 @@ def _apply_transverse_on_primary_strip(
             )
         )
 
-    return trans_cuts, transverse_remainder_cost, transverse_remainder_terms
+        # Продольный рез на rest-полосе чужой primary той же нагрузки.
+        # Чистый transverse (waste=0, pieces=1) даёт 0 резов автоматически.
+        if int(sec_cut.get('source', 0) or 0) > MIN_BILLABLE_TRIM_MM:
+            cut_count = _longitudinal_cuts_for_rest_secondary(
+                sec_cut,
+                min_one_cut_per_op=False,
+            )
+            if cut_count > 0:
+                sec_pieces = int(sec_cut.get('pieces', 1) or 1)
+                kept_pieces = sec_pieces + max(0, len(sec_cuts) - 1)
+                total_cuts_for_this_size += cut_count
+                total_plates_from_cuts += sec_qty * kept_pieces
+                long_cut_meterage += cut_count * src_len
+                long_cut_length_display = src_len
+
+    return (
+        total_cuts_for_this_size,
+        total_plates_from_cuts,
+        long_cut_meterage,
+        long_cut_length_display,
+        trans_cuts,
+        transverse_remainder_cost,
+        transverse_remainder_terms,
+    )
 
 
 def _calc_trim_components(
@@ -852,19 +894,29 @@ def _calc_trim_components(
                 transverse_remainder_terms=transverse_remainder_terms,
             )
 
-            trans_cuts, transverse_remainder_cost, transverse_remainder_terms = (
-                _apply_transverse_on_primary_strip(
-                    current_plan=current_plan,
-                    rest_groups=rest_groups,
-                    length=length,
-                    width_mm=width_mm,
-                    qty=qty,
-                    base_price_1_2m=base_price_1_2m,
-                    load_code=load_code,
-                    trans_cuts=trans_cuts,
-                    transverse_remainder_cost=transverse_remainder_cost,
-                    transverse_remainder_terms=transverse_remainder_terms,
-                )
+            (
+                total_cuts_for_this_size,
+                total_plates_from_cuts,
+                long_cut_meterage,
+                long_cut_length_display,
+                trans_cuts,
+                transverse_remainder_cost,
+                transverse_remainder_terms,
+            ) = _apply_transverse_on_primary_strip(
+                current_plan=current_plan,
+                rest_groups=rest_groups,
+                length=length,
+                width_mm=width_mm,
+                qty=qty,
+                base_price_1_2m=base_price_1_2m,
+                load_code=load_code,
+                trans_cuts=trans_cuts,
+                transverse_remainder_cost=transverse_remainder_cost,
+                transverse_remainder_terms=transverse_remainder_terms,
+                total_cuts_for_this_size=total_cuts_for_this_size,
+                total_plates_from_cuts=total_plates_from_cuts,
+                long_cut_meterage=long_cut_meterage,
+                long_cut_length_display=long_cut_length_display,
             )
 
     if not primary_matched and current_plan and current_plan.get('secondary_cuts'):

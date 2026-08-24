@@ -230,6 +230,12 @@ class CommercialDraftService:
                 "total_sum": preview.total_sum,
                 "plate_batches": plate_batches,
                 "wide_plates_resolved": wide_plates_resolved,
+                "unpriced_plate_lines": self.serialize_unpriced_plate_lines(
+                    getattr(preview, "unpriced_plate_lines", []) or []
+                ),
+                "unpriced_plates_resolved": not bool(
+                    getattr(preview, "unpriced_plate_lines", None) or []
+                ),
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.plates.value,
                 # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
@@ -676,6 +682,43 @@ class CommercialDraftService:
                         "qty": int(item.get("qty", 1) or 1),
                     }
                 )
+        return serialized
+
+    @staticmethod
+    def serialize_unpriced_plate_lines(items: Iterable[Any]) -> list[dict[str, Any]]:
+        serialized: list[dict[str, Any]] = []
+        for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("line") or "").strip()
+            line = str(item.get("line") or name).strip()
+            if not line and not name:
+                continue
+            replacements_raw = item.get("replacements") or []
+            replacements: list[dict[str, Any]] = []
+            for repl in replacements_raw:
+                if not isinstance(repl, dict):
+                    continue
+                try:
+                    load_code = int(repl.get("load_code"))
+                    price = float(repl.get("price"))
+                except (TypeError, ValueError):
+                    continue
+                if price <= 0:
+                    continue
+                replacements.append({"load_code": load_code, "price": price})
+            serialized.append(
+                {
+                    "id": str(item.get("id") or f"unpriced-{idx}"),
+                    "name": name or line,
+                    "line": line or name,
+                    "qty": int(item.get("qty", 1) or 1),
+                    "length_m": float(item.get("length_m") or 0),
+                    "width_m": float(item.get("width_m") or 0),
+                    "load_class": int(item.get("load_class") or 0),
+                    "replacements": replacements,
+                }
+            )
         return serialized
 
     @staticmethod

@@ -101,6 +101,7 @@ def test_wizard_state_piles_no_wide_plates_gate(wizard_service: CommercialWizard
         },
         "order_data": [
             {
+                "product_type": "piles",
                 "product_kind": "pile",
                 "mark": "С120.35-12",
                 "qty": 1,

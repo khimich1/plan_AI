@@ -26,6 +26,7 @@ from app.schemas.commercial import (
     CommercialPreviewRequest,
     CommercialSaveDraftRequest,
     CommercialSaveOfferResponse,
+    CommercialUnpricedPlatesResolveRequest,
     CommercialWidePlatesResolveRequest,
 )
 from app.concurrency.cpu_bound import run_cpu_bound
@@ -579,6 +580,30 @@ def resolve_draft_wide_plates(
         raise_validation_client_error(exc, where="resolve_draft_wide_plates", detail=str(exc))
     except Exception as exc:
         raise_unexpected_server_error(exc, where="resolve_draft_wide_plates")
+    return CommercialDraftDetailsResponse.model_validate(result)
+
+
+@router.post("/drafts/{draft_id}/unpriced-plates/resolve", response_model=CommercialDraftDetailsResponse)
+def resolve_draft_unpriced_plates(
+    payload: CommercialUnpricedPlatesResolveRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = workflow.resolve_unpriced_plates(
+            draft_id,
+            decisions=[item.model_dump() for item in payload.decisions],
+            plate_order_ctx=plate_order_ctx,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Черновик не найден.") from exc
+    except PlateParseError as exc:
+        raise_parse_client_error(exc, where="resolve_draft_unpriced_plates")
+    except ValueError as exc:
+        raise_validation_client_error(exc, where="resolve_draft_unpriced_plates", detail=str(exc))
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="resolve_draft_unpriced_plates")
     return CommercialDraftDetailsResponse.model_validate(result)
 
 

@@ -14,6 +14,7 @@ from app.services.commercial_calculation_service import (
     ERR_NO_DELIVERY,
     ERR_NO_MANAGER,
     ERR_NO_PAYMENT,
+    ERR_UNPRICED_PLATES,
     ERR_WIDE_PLATES,
     CommercialCalculationService,
 )
@@ -34,6 +35,9 @@ class CommercialWizardStepService:
 
     def wide_lines_blocking(self, metadata: dict[str, Any]) -> bool:
         return self.calculation_service.wide_lines_blocking(metadata)
+
+    def unpriced_lines_blocking(self, metadata: dict[str, Any]) -> bool:
+        return self.calculation_service.unpriced_lines_blocking(metadata)
 
     def meta_ready_for_calculate(self, metadata: dict[str, Any]) -> bool:
         return self.calculation_service.meta_ready_for_calculate(metadata)
@@ -103,12 +107,15 @@ class CommercialWizardStepService:
             if (
                 order_data
                 and not self.wide_lines_blocking(metadata)
+                and not self.unpriced_lines_blocking(metadata)
                 and self.meta_ready_for_calculate(metadata)
             ):
                 return WizardStepId.result
             return WizardStepId.client
 
-        if order_data and self.wide_lines_blocking(metadata):
+        if order_data and (
+            self.wide_lines_blocking(metadata) or self.unpriced_lines_blocking(metadata)
+        ):
             product_step = self.product_step(metadata)
             if stored in (WizardStepId.client, WizardStepId.result):
                 return product_step
@@ -142,6 +149,8 @@ class CommercialWizardStepService:
                 return WizardNextRequiredAction.ingest_bridge_piles
             if first == ERR_WIDE_PLATES:
                 return WizardNextRequiredAction.resolve_wide_plates
+            if first == ERR_UNPRICED_PLATES:
+                return WizardNextRequiredAction.resolve_unpriced_plates
             if first == ERR_NO_MANAGER:
                 return WizardNextRequiredAction.select_manager
             return WizardNextRequiredAction.complete_client_terms
@@ -171,6 +180,8 @@ class CommercialWizardStepService:
             if not order_data:
                 return []
             if self.wide_lines_blocking(metadata):
+                return []
+            if self.unpriced_lines_blocking(metadata):
                 return []
             if self.calculation_service.unpriced_position_labels(order_data):
                 return []
@@ -219,6 +230,7 @@ class CommercialWizardStepService:
                 WizardNextRequiredAction.ingest_bridge_piles: ERR_EMPTY_BRIDGE_PILES,
                 WizardNextRequiredAction.ingest_fbs: ERR_EMPTY_FBS,
                 WizardNextRequiredAction.resolve_wide_plates: ERR_WIDE_PLATES,
+                WizardNextRequiredAction.resolve_unpriced_plates: ERR_UNPRICED_PLATES,
                 WizardNextRequiredAction.select_manager: ERR_NO_MANAGER,
             }.get(next_action)
             if action_message is not None:
