@@ -208,6 +208,30 @@ class MoveToProductionRequest(BaseModel):
     execution_terms: str = Field(min_length=1, max_length=128)
 
 
+class CapacityDayInfo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    occupied: float = 0
+    max: float = 5  # noqa: A003 — API field matches days_info.max
+
+
+class CapacitySnapshotResponse(BaseModel):
+    """Снимок ёмкости завода для виджета (move / график поставок)."""
+
+    start_date: str
+    target_date: str
+    tracks_needed: int
+    tracks_free_in_window: int
+    delta: int
+    status: Literal["green", "yellow", "red"]
+    hint: str | None = None
+    days_info: dict[str, CapacityDayInfo] = Field(default_factory=dict)
+    holidays: list[str] = Field(default_factory=list)
+    extra_workdays: list[str] = Field(default_factory=list)
+    calendar_from_month: str
+    calendar_to_month: str
+
+
 class ArchiveSearchResponse(BaseModel):
     mode: Literal["number", "customer"]
     items: list[ArchiveOfferListItem] = Field(default_factory=list)

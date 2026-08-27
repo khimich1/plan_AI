@@ -23,6 +23,12 @@ from app.schemas.delivery_schedule import (
     UnmatchedRowOut,
 )
 from app.security.offer_access import assert_offer_read_access, assert_offer_write_access
+from app.services.capacity_gate_service import (
+    CapacityGateBlockedError,
+    assert_capacity_allows_save,
+    build_multi_batch_gate,
+    tomorrow_iso,
+)
 from app.services.kp_readiness_service import KpReadinessService
 from app.services.plan_distribution_service import PlanDistributionService
 from core.delivery_schedule_check import BatchInput, BatchItemInput, check_batches
@@ -131,6 +137,12 @@ class DeliveryScheduleService:
 
             plate_qty = self._load_plate_qty_map(cur, kp_id)
             self._validate_batches_against_plates(payload, plate_qty)
+            self._enforce_capacity_gate(
+                kp_id=kp_id,
+                payload=payload,
+                plate_qty=plate_qty,
+                today=today,
+            )
 
             now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
             schedule_id = self._upsert_schedule_header(cur, kp_id, payload, now)
@@ -143,6 +155,65 @@ class DeliveryScheduleService:
             conn.close()
 
         return self.get(kp_id, user=user, today=today)
+
+    def _enforce_capacity_gate(
+        self,
+        *,
+        kp_id: int,
+        payload: DeliverySchedulePut,
+        plate_qty: dict[int, dict[str, Any]],
+        today: str | None,
+    ) -> None:
+        """Любая партия red → reject до записи в БД."""
+        if not payload.batches:
+            return
+        today_iso = self._resolve_today(today)
+        start = tomorrow_iso(today_iso)
+        plates_meta = self._load_plates_meta(kp_id)
+        produced = self._load_produced_by_plate_id(kp_id, plates_meta)
+        occupancy = self._load_occupancy()
+        workdays = self._collect_workdays(
+            today_iso=today_iso,
+            produce_by_dates=[b.produce_by for b in payload.batches],
+        )
+
+        batch_inputs: list[BatchInput] = []
+        for idx, batch in enumerate(payload.batches):
+            items_in: list[BatchItemInput] = []
+            for item in batch.items:
+                meta = plates_meta.get(int(item.plate_id))
+                length_m = float(meta["length_m"] or 0.0) if meta is not None else 0.0
+                pq = plate_qty.get(int(item.plate_id), {})
+                max_qty = int(pq.get("qty") or 0)
+                check_qty = min(int(item.qty), max_qty) if max_qty >= 0 else 0
+                items_in.append(
+                    BatchItemInput(
+                        plate_id=int(item.plate_id),
+                        qty=max(0, check_qty),
+                        length_m=length_m,
+                    )
+                )
+            batch_inputs.append(
+                BatchInput(
+                    id=idx,
+                    name=batch.name,
+                    produce_by=batch.produce_by,
+                    items=items_in,
+                )
+            )
+
+        gate = build_multi_batch_gate(
+            batches=batch_inputs,
+            occupancy=occupancy,
+            workdays=workdays,
+            produced=produced,
+            today=today_iso,
+            start_date=start,
+        )
+        try:
+            assert_capacity_allows_save(gate)
+        except CapacityGateBlockedError as exc:
+            raise DeliveryScheduleValidationError(str(exc)) from exc
 
     def build_template_bytes(self, kp_id: int, *, user: dict) -> bytes:
         """XLSX-шаблон: сохранённые партии сверху, остаток КП снизу."""
@@ -375,6 +446,7 @@ class DeliveryScheduleService:
                 workdays=workdays,
                 produced=produced,
                 today=today_iso,
+                start_date=tomorrow_iso(today_iso),
             )
         except _TRAFFIC_LIGHT_SOURCE_ERRORS:
             logger.exception(

@@ -36,6 +36,8 @@ import {
 } from "@/features/commercial-offer/lib/discountFromTargetSum";
 
 const DELIVERY_SCHEDULE_EDITABLE_STATUSES = new Set(["в работе", "На СГП"]);
+/** График поставки недоступен в секции «В архиве» — только после перевода в производство. */
+const DELIVERY_SCHEDULE_HIDDEN_STATUSES = new Set(["в архиве"]);
 
 type Props = {
   open: boolean;
@@ -131,10 +133,18 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const isSimpleProductOffer = isPileOffer || isStepOffer || isMarchOffer || isBridgePileOffer || isFbsOffer;
   const showReadiness =
     !isSimpleProductOffer && (offer?.status === "в работе" || offer?.status === "На СГП");
+  const canShowDeliverySchedule =
+    !isSimpleProductOffer &&
+    offer?.status != null &&
+    !DELIVERY_SCHEDULE_HIDDEN_STATUSES.has(offer.status);
   const canEditDeliverySchedule =
-    !isSimpleProductOffer && Boolean(offer?.status && DELIVERY_SCHEDULE_EDITABLE_STATUSES.has(offer.status));
+    Boolean(
+      canShowDeliverySchedule &&
+        offer?.status &&
+        DELIVERY_SCHEDULE_EDITABLE_STATUSES.has(offer.status),
+    );
   const scheduleQuery = useDeliveryScheduleQuery(
-    open && offer && !isSimpleProductOffer ? offer.kp_id : null,
+    open && offer && canShowDeliverySchedule ? offer.kp_id : null,
   );
   const hasDeliverySchedule = scheduleQuery.data != null;
   const schedulePlates: OfferPlateForSchedule[] = useMemo(() => {
@@ -360,7 +370,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
         offer ? (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
             <span>КП №{offer.kp_id}</span>
-            {!isSimpleProductOffer && hasDeliverySchedule && (
+            {canShowDeliverySchedule && hasDeliverySchedule && (
               <span
                 style={{
                   fontSize: "0.75rem",
@@ -771,7 +781,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 {resumePending ? "Открываем…" : "Добавить другое наименование"}
               </Button>
             )}
-            {!isSimpleProductOffer && (
+            {canShowDeliverySchedule && (
               <Button
                 variant="secondary"
                 title={
@@ -832,7 +842,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               restoreDiscountDrafts();
             }}
           />
-          {!isSimpleProductOffer && (
+          {canShowDeliverySchedule && (
             <DeliveryScheduleDialog
               open={scheduleOpen}
               onClose={() => setScheduleOpen(false)}

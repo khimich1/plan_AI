@@ -334,3 +334,60 @@ def test_batch_check_fields_populated() -> None:
     assert r.remaining_qty == 2
     assert r.tracks_needed == 2
     assert r.ready_date == _TODAY
+
+
+def test_start_date_defaults_to_today() -> None:
+    """Без start_date симуляция начинается с today (обратная совместимость)."""
+    batches = [_batch(1, "2026-03-20", qty=1)]
+    with_default = check_batches(
+        batches=batches,
+        occupancy=_full_capacity_days(_TODAY),
+        workdays=_mon_fri_workdays(_TODAY),
+        produced={},
+        today=_TODAY,
+    )
+    with_explicit = check_batches(
+        batches=batches,
+        occupancy=_full_capacity_days(_TODAY),
+        workdays=_mon_fri_workdays(_TODAY),
+        produced={},
+        today=_TODAY,
+        start_date=_TODAY,
+    )
+    assert with_default[0].ready_date == with_explicit[0].ready_date == _TODAY
+    assert with_default[0].status == with_explicit[0].status
+
+
+def test_start_date_tomorrow_skips_today_capacity() -> None:
+    """start_date=tomorrow: ёмкость «сегодня» не участвует в симуляции."""
+    today = _TODAY  # Mon 2026-03-02
+    tomorrow = "2026-03-03"
+    # Сегодня полностью свободно (5), завтра занято полностью — без start_date
+    # 1 дорожка готова сегодня; со start=tomorrow готова только во вторник…
+    # но вторник занят → дальше в среду.
+    occupancy = {
+        today: {"occupied": 0, "max": 5},
+        tomorrow: {"occupied": 5, "max": 5},
+        "2026-03-04": {"occupied": 0, "max": 5},
+    }
+    batches = [_batch(1, "2026-03-20", qty=1)]
+
+    from_today = check_batches(
+        batches=batches,
+        occupancy=occupancy,
+        workdays=_mon_fri_workdays(today),
+        produced={},
+        today=today,
+    )
+    assert from_today[0].ready_date == today
+
+    from_tomorrow = check_batches(
+        batches=batches,
+        occupancy=occupancy,
+        workdays=_mon_fri_workdays(today),
+        produced={},
+        today=today,
+        start_date=tomorrow,
+    )
+    # Завтра занято → готовность в среду 2026-03-04.
+    assert from_tomorrow[0].ready_date == "2026-03-04"

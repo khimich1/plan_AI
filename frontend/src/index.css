@@ -638,8 +638,12 @@ a {
   background: rgba(15, 23, 42, 0.45);
   display: flex;
   justify-content: flex-end;
-  z-index: 1000;
+  z-index: 1100;
   animation: app-drawer-fade 0.15s ease-out;
+}
+
+.app-drawer--left {
+  justify-content: flex-start;
 }
 
 @keyframes app-drawer-fade {
@@ -656,8 +660,18 @@ a {
   animation: app-drawer-slide 0.2s ease-out;
 }
 
+.app-drawer--left .app-drawer__panel {
+  box-shadow: 20px 0 60px rgba(15, 23, 42, 0.2);
+  animation: app-drawer-slide-left 0.2s ease-out;
+}
+
 @keyframes app-drawer-slide {
   from { transform: translateX(24px); opacity: 0.6; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes app-drawer-slide-left {
+  from { transform: translateX(-24px); opacity: 0.6; }
   to { transform: translateX(0); opacity: 1; }
 }
 

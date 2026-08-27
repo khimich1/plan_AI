@@ -3,9 +3,16 @@
 Алгоритм (docs/specs/delivery-schedule.md):
 1. Остаток партии = Σ max(0, qty − produced) по позициям.
 2. Потребность в дорожках = ceil( Σ(остаток × length_m) / 101 × 1.15 ).
-3. Симуляция от ``today`` по рабочим дням: свободно = max − occupied;
-   партии в порядке ``produce_by`` съедают ёмкость.
+3. Симуляция от ``start_date`` (по умолчанию = ``today``) по рабочим дням:
+   свободно = max − occupied; партии в порядке ``produce_by`` съедают ёмкость.
 4. Статус: green / yellow / red (+ подсказка дефицита для red).
+
+Параметр ``start_date``
+-----------------------
+ISO-дата начала окна симуляции и подсчёта свободной ёмкости.
+Если не передан — равен ``today`` (обратная совместимость).
+Новые callers (ёмкость завода / гейт) передают **завтра**, чтобы
+«сегодня» не учитывалось в обещании менеджеру.
 
 Контракт ``workdays``
 ---------------------
@@ -18,7 +25,7 @@
 
 Дата внутри диапазона, но отсутствующая в set — нерабочий день
 (выходной/праздник, который вызывающий код намеренно не передал).
-Пустой set → все пн–пт от ``today``.
+Пустой set → все пн–пт от ``start_date``.
 
 Риск R2 (occupancy)
 -------------------
@@ -73,6 +80,7 @@ def check_batches(
     workdays: set[str] | Iterable[str],
     produced: dict[int, int],
     today: str,
+    start_date: str | None = None,
     capacity_buffer: float = 1.15,
     green_slack_workdays: int = 5,
 ) -> list[BatchCheck]:
@@ -87,11 +95,13 @@ def check_batches(
     produced:
         ``plate_id → qty`` уже произведённое и привязанное к КП.
     today:
-        ISO «сегодня» (для детерминизма тестов).
+        ISO «сегодня» (для детерминизма тестов / метаданных).
+    start_date:
+        ISO начала симуляции и окна «свободно». ``None`` → равен ``today``.
     """
     workday_set = set(workdays)
     is_workday = _make_workday_predicate(workday_set)
-    today_d = date.fromisoformat(today)
+    start_d = date.fromisoformat(start_date if start_date is not None else today)
 
     # Симуляция мутирует свободную ёмкость; ключ — ISO даты.
     free_by_day: dict[str, float] = {}
@@ -134,17 +144,17 @@ def check_batches(
             )
             continue
 
-        # Дефицит для red-hint: ёмкость в окне today→produce_by до съедания
+        # Дефицит для red-hint: ёмкость в окне start→produce_by до съедания
         # этой партией (ранее обработанные партии уже уменьшили free_by_day).
         available_before = _sum_free_in_window(
-            start=today_d,
+            start=start_d,
             end=produce_by_d,
             is_workday=is_workday,
             free_on=free_on,
         )
         ready_d = _simulate_ready_date(
             tracks_needed=tracks_needed,
-            start=today_d,
+            start=start_d,
             is_workday=is_workday,
             free_on=free_on,
             set_free=set_free,

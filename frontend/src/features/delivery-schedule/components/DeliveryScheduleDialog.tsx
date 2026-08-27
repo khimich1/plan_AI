@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/shared/ui/Modal";
+import { Drawer } from "@/shared/ui/Drawer";
 import { Button } from "@/shared/ui/Button";
 import { Spinner } from "@/shared/ui/Spinner";
 import { Alert } from "@/shared/ui/Alert";
@@ -23,6 +24,12 @@ import type {
   ImportDraftResponse,
   UnmatchedRowOut,
 } from "@/features/delivery-schedule/types/deliverySchedule";
+import {
+  FactoryCapacityPanel,
+  isCapacityRed,
+} from "@/features/factory-capacity/components/FactoryCapacityPanel";
+import { useCapacitySnapshotQuery } from "@/features/factory-capacity/hooks/useCapacitySnapshotQuery";
+import { maxIsoDate } from "@/features/factory-capacity/lib/dates";
 import { getErrorMessage } from "@/shared/lib/apiError";
 
 type Props = {
@@ -49,6 +56,7 @@ export const DeliveryScheduleDialog = ({
   const [localError, setLocalError] = useState<string | null>(null);
   const [hydratedFor, setHydratedFor] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [capacityOpen, setCapacityOpen] = useState(false);
   const [unmatchedRows, setUnmatchedRows] = useState<UnmatchedRowOut[]>([]);
 
   const hydrateKey = useMemo(() => {
@@ -67,6 +75,7 @@ export const DeliveryScheduleDialog = ({
       setHydratedFor(null);
       setLocalError(null);
       setImportOpen(false);
+      setCapacityOpen(false);
       setUnmatchedRows([]);
       putMutation.reset();
       return;
@@ -82,6 +91,14 @@ export const DeliveryScheduleDialog = ({
     setHydratedFor(hydrateKey);
   }, [open, hydrateKey, hydratedFor, query.data]); // eslint-disable-line react-hooks/exhaustive-deps -- putMutation.reset only on close
 
+  const targetIso = useMemo(
+    () => maxIsoDate(batches.map((b) => b.produce_by)),
+    [batches],
+  );
+  const capacity = useCapacitySnapshotQuery(open ? kpId : null, targetIso);
+  const anyBatchRed = batches.some((b) => b.status === "red");
+  const capacityBlocked = isCapacityRed(capacity.data) || anyBatchRed;
+
   const handleImported = (result: ImportDraftResponse) => {
     setBatches(importBatchesToDrafts(result.batches));
     setUnmatchedRows(result.unmatched_rows ?? []);
@@ -92,6 +109,13 @@ export const DeliveryScheduleDialog = ({
     const error = validateScheduleEditor(plates, batches);
     if (error) {
       setLocalError(error);
+      return;
+    }
+    if (capacityBlocked) {
+      setLocalError(
+        capacity.data?.hint ??
+          "Завод перегружен до выбранного срока. Сдвиньте produce_by партий.",
+      );
       return;
     }
     setLocalError(null);
@@ -117,8 +141,18 @@ export const DeliveryScheduleDialog = ({
     if (importOpen) {
       return;
     }
+    if (capacityOpen) {
+      setCapacityOpen(false);
+      return;
+    }
     onClose();
   };
+
+  const capacityHint =
+    capacity.data?.hint ??
+    (anyBatchRed
+      ? "Есть партия с красным сроком. Сдвиньте produce_by и повторите."
+      : null);
 
   return (
     <>
@@ -155,16 +189,32 @@ export const DeliveryScheduleDialog = ({
               trafficLightDegraded={Boolean(query.data?.traffic_light_degraded)}
             />
 
+            {capacityBlocked && capacityHint ? (
+              <Alert tone="error">{capacityHint}</Alert>
+            ) : null}
+
             {putMutation.isError && (
               <Alert tone="error">{getErrorMessage(putMutation.error)}</Alert>
             )}
 
             <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setCapacityOpen(true)}
+                disabled={!targetIso && !capacity.data}
+              >
+                Ёмкость
+              </Button>
               <Button type="button" variant="ghost" onClick={handleMainClose}>
                 Закрыть
               </Button>
               {!readOnly && (
-                <Button type="button" onClick={() => void handleSave()} disabled={putMutation.isPending}>
+                <Button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={putMutation.isPending || capacityBlocked}
+                >
                   {putMutation.isPending ? "Сохраняю…" : "Сохранить"}
                 </Button>
               )}
@@ -172,6 +222,20 @@ export const DeliveryScheduleDialog = ({
           </div>
         )}
       </Modal>
+
+      <Drawer
+        open={open && capacityOpen}
+        onClose={() => setCapacityOpen(false)}
+        title="Ёмкость завода"
+        side="left"
+        width={380}
+      >
+        <FactoryCapacityPanel
+          snapshot={capacity.data}
+          isLoading={Boolean(targetIso) && capacity.isFetching && !capacity.data}
+          errorMessage={capacity.isError ? getErrorMessage(capacity.error) : null}
+        />
+      </Drawer>
 
       {!readOnly && (
         <ImportScheduleDialog

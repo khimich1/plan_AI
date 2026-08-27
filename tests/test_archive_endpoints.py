@@ -366,6 +366,95 @@ def test_move_to_production_archive_error_returns_500(
     assert response.status_code == 500
 
 
+def test_capacity_snapshot_ok(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.schemas.archive import CapacitySnapshotResponse
+
+    fake_service.get_capacity_snapshot.return_value = CapacitySnapshotResponse(
+        start_date="2026-03-03",
+        target_date="2026-03-20",
+        tracks_needed=2,
+        tracks_free_in_window=40,
+        delta=38,
+        status="green",
+        hint=None,
+        days_info={},
+        holidays=[],
+        extra_workdays=[],
+        calendar_from_month="2026-03",
+        calendar_to_month="2026-03",
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/capacity-snapshot?target=2026-03-20",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "green"
+    assert body["tracks_needed"] == 2
+    assert body["calendar_from_month"] == "2026-03"
+    fake_service.get_capacity_snapshot.assert_called_once()
+
+
+def test_capacity_snapshot_not_found(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveNotFoundError
+
+    fake_service.get_capacity_snapshot.side_effect = ArchiveNotFoundError("нет")
+
+    response = client.get(
+        "/api/v1/commercial/archive/999/capacity-snapshot?target=2026-03-20",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 404
+
+
+def test_capacity_snapshot_forbidden_for_accountant(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: MagicMock,
+) -> None:
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
+    get_settings.cache_clear()
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": 2,
+                "username": "acc",
+                "role": "accountant",
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+                "session_version": 0,
+            }
+        ],
+    )
+    app = create_app()
+    app.dependency_overrides[get_archive_service] = lambda: fake_service
+    client = CsrfAwareTestClient(app)
+    cookie = {
+        "app_session": create_session_token(
+            {"id": 2, "username": "acc", "role": "accountant"},
+            ttl_seconds=300,
+        ),
+    }
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/capacity-snapshot?target=2026-03-20",
+        cookies=cookie,
+    )
+    assert response.status_code == 403
+
+
 def _fake_list_item(kp_id: int = 42, customer_name: str = "ООО Тест") -> ArchiveOfferListItem:
     return ArchiveOfferListItem(
         kp_id=kp_id,

@@ -297,13 +297,58 @@ def test_move_to_production_happy_path(
     monkeypatch.setattr(
         "core.kp.offers_write.commit_move_to_production", commit
     )
+    monkeypatch.setattr(
+        "app.services.archive_service.ArchiveService._load_occupancy",
+        staticmethod(lambda: {}),
+    )
     service = _make_service(repository, tmp_path)
+    service._today_override = "2026-03-01"
 
     details = service.move_to_production(42, "01.04.2026", user=ADMIN)
 
     assert details.status == "в работе"
     assert details.execution_terms == "01.04.2026"
     commit.assert_called_once_with(42, "01.04.2026", repository.db_path)
+
+
+def test_move_to_production_blocks_on_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = MagicMock()
+    repository.db_path = str(tmp_path / "plita.db")
+    # Много плит → дефицит при коротком сроке.
+    raw = _make_raw(
+        status="в архиве",
+        plates=[
+            {
+                "id": 1,
+                "position_number": 1,
+                "plate_name": "ПБ",
+                "length_m": 7.8,
+                "width_m": 1.2,
+                "qty": 100,
+                "load_class": 800,
+                "unit_price": 500.0,
+                "discounted_price": 475.0,
+            }
+        ],
+    )
+    repository.get_by_id.return_value = raw
+    commit = MagicMock(return_value=2)
+    monkeypatch.setattr(
+        "core.kp.offers_write.commit_move_to_production", commit
+    )
+    monkeypatch.setattr(
+        "app.services.archive_service.ArchiveService._load_occupancy",
+        staticmethod(lambda: {}),
+    )
+    service = _make_service(repository, tmp_path)
+    service._today_override = "2026-03-02"
+
+    with pytest.raises(ArchiveValidationError, match="нужно"):
+        service.move_to_production(42, "2026-03-03", user=ADMIN)
+
+    commit.assert_not_called()
 
 
 def test_move_to_production_normalizes_iso_date(
@@ -319,7 +364,12 @@ def test_move_to_production_normalizes_iso_date(
     monkeypatch.setattr(
         "core.kp.offers_write.commit_move_to_production", commit
     )
+    monkeypatch.setattr(
+        "app.services.archive_service.ArchiveService._load_occupancy",
+        staticmethod(lambda: {}),
+    )
     service = _make_service(repository, tmp_path)
+    service._today_override = "2026-03-01"
 
     service.move_to_production(42, "2026-06-05", user=ADMIN)
 
@@ -339,7 +389,12 @@ def test_move_to_production_normalizes_ddmmyyyy(
     monkeypatch.setattr(
         "core.kp.offers_write.commit_move_to_production", commit
     )
+    monkeypatch.setattr(
+        "app.services.archive_service.ArchiveService._load_occupancy",
+        staticmethod(lambda: {}),
+    )
     service = _make_service(repository, tmp_path)
+    service._today_override = "2026-03-01"
 
     service.move_to_production(42, "05.06.2026", user=ADMIN)
 
@@ -370,7 +425,12 @@ def test_move_to_production_normalizes_five_days(
     monkeypatch.setattr(
         "core.kp.offers_write.commit_move_to_production", commit
     )
+    monkeypatch.setattr(
+        "app.services.archive_service.ArchiveService._load_occupancy",
+        staticmethod(lambda: {}),
+    )
     service = _make_service(repository, tmp_path)
+    service._today_override = "2026-05-31"
 
     service.move_to_production(42, "5 дней", user=ADMIN)
 
@@ -389,7 +449,12 @@ def test_move_to_production_raises_archive_error_on_commit_failure(
         "core.kp.offers_write.commit_move_to_production",
         MagicMock(side_effect=RuntimeError("boom")),
     )
+    monkeypatch.setattr(
+        "app.services.archive_service.ArchiveService._load_occupancy",
+        staticmethod(lambda: {}),
+    )
     service = _make_service(repository, tmp_path)
+    service._today_override = "2026-03-01"
 
     with pytest.raises(ArchiveError, match="Не удалось перевести"):
         service.move_to_production(42, "01.04.2026", user=ADMIN)

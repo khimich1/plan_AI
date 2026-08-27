@@ -202,9 +202,24 @@ describe("OfferDetailsDrawer readiness visibility", () => {
     expect(screen.getByTestId("kp-readiness-block")).toBeInTheDocument();
   });
 
-  it("enables delivery schedule button for в работе and архиве (read-only for archive)", () => {
+  it("shows editable delivery schedule button for в работе", () => {
     mockUseArchiveOfferQuery.mockReturnValue({
       data: makeOffer("в работе", makeReadiness()),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "График поставки" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "График поставки" })).toHaveAttribute(
+      "title",
+      "Редактирование графика поставки",
+    );
+  });
+
+  it("shows read-only delivery schedule button for На СГП and выполнено", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("На СГП", makeReadiness()),
       isPending: false,
       isError: false,
       error: null,
@@ -217,7 +232,7 @@ describe("OfferDetailsDrawer readiness visibility", () => {
     );
 
     mockUseArchiveOfferQuery.mockReturnValue({
-      data: makeOffer("в архиве", makeReadiness()),
+      data: makeOffer("выполнено", makeReadiness()),
       isPending: false,
       isError: false,
       error: null,
@@ -228,6 +243,17 @@ describe("OfferDetailsDrawer readiness visibility", () => {
       "title",
       "Просмотр графика поставки",
     );
+  });
+
+  it("hides delivery schedule button when status is в архиве", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", makeReadiness()),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "График поставки" })).not.toBeInTheDocument();
   });
 });
 

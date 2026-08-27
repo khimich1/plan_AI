@@ -7,6 +7,8 @@ type DrawerProps = PropsWithChildren<{
   title?: ReactNode;
   width?: number;
   footer?: ReactNode;
+  /** Viewport edge the panel attaches to. Default right (existing drawers). */
+  side?: "left" | "right";
 }>;
 
 export const Drawer = ({
@@ -15,6 +17,7 @@ export const Drawer = ({
   title,
   width = 820,
   footer,
+  side = "right",
   children,
 }: DrawerProps) => {
   useEffect(() => {
@@ -23,14 +26,16 @@ export const Drawer = ({
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.stopImmediatePropagation();
         onClose();
       }
     };
-    window.addEventListener("keydown", onKey);
+    // Capture: close this drawer before any underlying Modal Esc handler.
+    window.addEventListener("keydown", onKey, true);
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
       document.body.style.overflow = originalOverflow;
     };
   }, [open, onClose]);
@@ -39,9 +44,11 @@ export const Drawer = ({
     return null;
   }
 
+  const sideClass = side === "left" ? "app-drawer app-drawer--left" : "app-drawer";
+
   return (
     <div
-      className="app-drawer"
+      className={sideClass}
       role="dialog"
       aria-modal="true"
       onClick={onClose}

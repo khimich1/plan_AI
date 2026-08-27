@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import shutil
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -24,9 +24,17 @@ from app.schemas.archive import (
     ArchiveStepItem,
     ArchiveProductTypeFilter,
     ArchiveSearchResponse,
+    CapacityDayInfo,
+    CapacitySnapshotResponse,
     KpReadinessPositionsResponse,
 )
 from app.repositories.plan_repository import PlanRepository
+from app.services.capacity_gate_service import (
+    CapacityGateBlockedError,
+    CapacitySnapshot,
+    assert_capacity_allows_save,
+    build_capacity_snapshot,
+)
 from app.services.plan_distribution_service import PlanDistributionService
 from app.security.offer_access import (
     assert_offer_read_access,
@@ -35,6 +43,7 @@ from app.security.offer_access import (
 )
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
+from core.delivery_schedule_check import BatchItemInput
 from core.plate_order_context import PlateOrderContext, run_in_order_context
 from core.ports.visualization import get_visualize_plan
 from core.execution_terms import parse_execution_terms
@@ -44,6 +53,7 @@ from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order
 from core.kp_order_data import order_data_from_kp_info
 from core.gantt_excel import create_gantt_excel
 from core.production_capacity import MAX_TRACK_LENGTH_M, TRACKS_PER_DAY_DEFAULT
+from core.work_calendar import is_working_day, load_extra_workdays, load_holidays
 
 
 logger = logging.getLogger(__name__)
@@ -77,6 +87,8 @@ class ArchiveService:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self.optimization_service = optimization_service or OptimizationService()
         self.file_generation_service = file_generation_service or FileGenerationService()
+        # ISO YYYY-MM-DD для детерминированных тестов гейта ёмкости.
+        self._today_override: str | None = None
 
     # ---------- Списки и карточка ----------
 
@@ -210,6 +222,7 @@ class ArchiveService:
             )
 
         execution_terms = self._parse_execution_terms(terms_input)
+        self._enforce_capacity_gate_for_terms(raw, execution_terms)
         try:
             from core.kp.offers_write import commit_move_to_production
 
@@ -221,6 +234,23 @@ class ArchiveService:
             ) from exc
 
         return self.get_details(kp_id, user=user)
+
+    def get_capacity_snapshot(
+        self,
+        kp_id: int,
+        *,
+        user: dict,
+        target: str | None = None,
+    ) -> CapacitySnapshotResponse:
+        """Снимок ёмкости для виджета «В производство» (старт = завтра)."""
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_read_access(user, raw)
+
+        target_iso = self._resolve_target_iso(raw, target)
+        snap = self._build_capacity_snapshot(raw, target_iso=target_iso)
+        return self._snapshot_to_response(snap)
 
     def estimate_production(self, kp_id: int, *, user: dict) -> dict:
         raw = self.repository.get_by_id(kp_id)
@@ -632,6 +662,123 @@ class ArchiveService:
                 }
             )
         return result
+
+    def _enforce_capacity_gate_for_terms(self, raw: dict, execution_terms_ddmmyyyy: str) -> None:
+        target_iso = datetime.strptime(execution_terms_ddmmyyyy, "%d.%m.%Y").date().isoformat()
+        snap = self._build_capacity_snapshot(raw, target_iso=target_iso)
+        try:
+            assert_capacity_allows_save(snap)
+        except CapacityGateBlockedError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+
+    def _resolve_target_iso(self, raw: dict, target: str | None) -> str:
+        if target:
+            try:
+                return date.fromisoformat(target).isoformat()
+            except ValueError as exc:
+                raise ArchiveValidationError(
+                    "Параметр target должен быть ISO-датой YYYY-MM-DD"
+                ) from exc
+        terms = (raw.get("execution_terms") or "").strip()
+        if not terms:
+            raise ArchiveValidationError(
+                "Укажите target или сохраните срок изготовления в КП"
+            )
+        formatted = self._parse_execution_terms(terms)
+        return datetime.strptime(formatted, "%d.%m.%Y").date().isoformat()
+
+    def _build_capacity_snapshot(self, raw: dict, *, target_iso: str) -> CapacitySnapshot:
+        today = self._resolve_today()
+        items = self._plates_to_batch_items(raw)
+        occupancy = self._load_occupancy()
+        workdays = self._collect_workdays(today_iso=today, target_iso=target_iso)
+        holidays = sorted(d.isoformat() for d in load_holidays())
+        extra = sorted(d.isoformat() for d in load_extra_workdays())
+        return build_capacity_snapshot(
+            items=items,
+            target_date=target_iso,
+            occupancy=occupancy,
+            workdays=workdays,
+            produced={},
+            today=today,
+            holidays=holidays,
+            extra_workdays=extra,
+        )
+
+    def _resolve_today(self) -> str:
+        if self._today_override is not None:
+            return date.fromisoformat(self._today_override).isoformat()
+        return date.today().isoformat()
+
+    @staticmethod
+    def _plates_to_batch_items(raw: dict) -> list[BatchItemInput]:
+        items: list[BatchItemInput] = []
+        for idx, plate in enumerate(raw.get("plates") or []):
+            plate_id = int(plate.get("id") or plate.get("plate_id") or idx + 1)
+            qty = int(plate.get("qty") or 0)
+            length_m = float(plate.get("length_m") or 0)
+            if qty <= 0 or length_m <= 0:
+                continue
+            items.append(
+                BatchItemInput(plate_id=plate_id, qty=qty, length_m=length_m)
+            )
+        return items
+
+    @staticmethod
+    def _load_occupancy() -> dict[str, dict]:
+        try:
+            calendar = PlanDistributionService().get_global_calendar_info(
+                PlanRepository()
+            )
+        except Exception:
+            logger.exception("capacity gate: occupancy unavailable")
+            return {}
+        if not calendar:
+            return {}
+        days_info = calendar.get("days_info") or {}
+        return days_info if isinstance(days_info, dict) else {}
+
+    @staticmethod
+    def _collect_workdays(*, today_iso: str, target_iso: str) -> set[str]:
+        today_d = date.fromisoformat(today_iso)
+        end = max(
+            today_d + timedelta(days=400),
+            date.fromisoformat(target_iso) + timedelta(days=60),
+        )
+        holidays = load_holidays()
+        extra_workdays = load_extra_workdays()
+        workdays: set[str] = set()
+        current = today_d
+        while current <= end:
+            if is_working_day(current, holidays, extra_workdays):
+                workdays.add(current.isoformat())
+            current += timedelta(days=1)
+        return workdays
+
+    @staticmethod
+    def _snapshot_to_response(snap: CapacitySnapshot) -> CapacitySnapshotResponse:
+        days: dict[str, CapacityDayInfo] = {}
+        for key, info in (snap.days_info or {}).items():
+            if not isinstance(info, dict):
+                continue
+            days[key] = CapacityDayInfo(
+                occupied=float(info.get("occupied", 0) or 0),
+                max=float(info.get("max", TRACKS_PER_DAY_DEFAULT) or TRACKS_PER_DAY_DEFAULT),
+            )
+        return CapacitySnapshotResponse(
+            start_date=snap.start_date,
+            target_date=snap.target_date,
+            tracks_needed=snap.tracks_needed,
+            tracks_free_in_window=snap.tracks_free_in_window,
+            delta=snap.delta,
+            status=snap.status,
+            hint=snap.hint,
+            days_info=days,
+            holidays=list(snap.holidays),
+            extra_workdays=list(snap.extra_workdays),
+            calendar_from_month=snap.calendar_from_month,
+            calendar_to_month=snap.calendar_to_month,
+        )
 
     @staticmethod
     def _parse_execution_terms(raw: str) -> str:

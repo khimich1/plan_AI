@@ -25,14 +25,27 @@ export const BatchCard = ({ batch, plates, readOnly = false, onChange, onRemove 
   const plateById = new Map(plates.map((p) => [p.id, p]));
 
   const setField = <K extends keyof BatchDraft>(key: K, value: BatchDraft[K]) => {
-    onChange({ ...batch, [key]: value });
+    const capacityKeys = key === "produce_by" || key === "items" || key === "name";
+    onChange({
+      ...batch,
+      [key]: value,
+      ...(capacityKeys
+        ? { status: null, ready_date: null, hint: null }
+        : {}),
+    });
   };
 
   const updateItemQty = (plateId: number, qtyRaw: string) => {
     const qty = Math.max(0, Math.trunc(Number(qtyRaw) || 0));
     const others = batch.items.filter((item) => item.plate_id !== plateId);
     const nextItems = qty > 0 ? [...others, { plate_id: plateId, qty }] : others;
-    onChange({ ...batch, items: nextItems });
+    onChange({
+      ...batch,
+      items: nextItems,
+      status: null,
+      ready_date: null,
+      hint: null,
+    });
   };
 
   const qtyFor = (plateId: number): number =>

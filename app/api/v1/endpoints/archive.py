@@ -22,6 +22,7 @@ from app.schemas.archive import (
     ArchiveProductTypeFilter,
     ArchiveSearchResponse,
     ArchiveSection,
+    CapacitySnapshotResponse,
     KpReadinessPositionsResponse,
     MoveToProductionRequest,
     UpdateDiscountRequest,
@@ -285,11 +286,37 @@ def move_archive_offer_to_production(
     except ArchiveValidationError as exc:
         raise_bad_request_client_error(
             exc,
-            where="archive.download_archive_document",
-            detail=MSG_VALIDATION,
+            where="archive.move_to_production",
+            detail=str(exc) or MSG_VALIDATION,
         )
     except ArchiveError as exc:
         raise_unexpected_server_error(exc, where="archive.move_to_production")
+
+
+@router.get("/{kp_id}/capacity-snapshot", response_model=CapacitySnapshotResponse)
+def get_capacity_snapshot(
+    kp_id: int,
+    target: str | None = Query(
+        default=None,
+        description="ISO YYYY-MM-DD дедлайн производства; иначе из срока КП",
+    ),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> CapacitySnapshotResponse:
+    try:
+        return service.get_capacity_snapshot(kp_id, user=user, target=target)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_capacity_snapshot",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.get_capacity_snapshot",
+            detail=str(exc) or MSG_VALIDATION,
+        )
 
 
 @router.get("/{kp_id}/production-estimate")

@@ -24,6 +24,8 @@ from app.services.delivery_schedule_service import (
 from core import kp_db_schema
 from core.delivery_schedule_check import _day_free_capacity
 from core.kp_db_common import _connect
+from core.production_capacity import MAX_TRACK_LENGTH_M
+from core.production_capacity import MAX_TRACK_LENGTH_M
 
 ADMIN = {"id": 1, "role": "admin"}
 MANAGER = {"id": 10, "role": "manager"}
@@ -605,7 +607,7 @@ def test_load_occupancy_uses_capacity_override_max_not_hardcoded_five(
 def test_traffic_light_sees_override_max_zero_as_no_capacity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """max=0 на горизонте → нет свободных дорожек → red (не green как при max=5)."""
+    """max=0 на горизонте → нет свободных дорожек → PUT rejected (red gate)."""
     start = date_cls.fromisoformat(_TODAY)
     days_info = {
         (start + timedelta(days=n)).isoformat(): {
@@ -642,9 +644,48 @@ def test_traffic_light_sees_override_max_zero_as_no_capacity(
             )
         ],
     )
+    with pytest.raises(DeliveryScheduleValidationError, match="нужно"):
+        service.replace(1, payload, ADMIN)
+
+    # График не сохранён.
+    with pytest.raises(DeliveryScheduleNotFoundError):
+        service.get(1, user=ADMIN)
+
+
+def test_put_allows_yellow_near_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Yellow (готово к дедлайну без slack) — сохранить можно."""
+    _patch_empty_occupancy(monkeypatch)
+    db_path = _fresh_db(tmp_path)
+    # Четверг → завтра пятница (раб.день); 1 дорожка к пятнице → yellow.
+    today = "2026-08-06"
+    tomorrow = "2026-08-07"
+    plate_id = _seed_kp(
+        db_path,
+        kp_id=1,
+        plate_qty=10,
+        length_m=MAX_TRACK_LENGTH_M / 1.15,
+        width_m=1.2,
+        load_class=800,
+    )
+    service = DeliveryScheduleService(db_path=db_path)
+    service._today_override = today
+
+    payload = DeliverySchedulePut(
+        invoice_number="СЧ-YEL",
+        batches=[
+            _batch(
+                plate_id=plate_id,
+                qty=1,
+                produce_by=tomorrow,
+                deliver_from="2026-09-01",
+                deliver_to="2026-09-10",
+            )
+        ],
+    )
     view = service.replace(1, payload, ADMIN)
-    assert view.batches[0].status == "red"
-    assert view.traffic_light_degraded is False
+    assert view.batches[0].status == "yellow"
 
 
 def test_build_template_bytes_prefills_plates_from_kp(tmp_path: Path) -> None:
