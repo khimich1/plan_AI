@@ -107,11 +107,24 @@ class CommercialWorkflowService:
             previous_order_data=list(previous_order_data or []) if previous_order_data else None,
         )
 
+    _PRODUCT_KIND_TO_TYPE: dict[str, str] = {
+        "march": "marches",
+        "step": "steps",
+        "pile": "piles",
+        "bridge_pile": "bridge_piles",
+        "fbs": "fbs",
+        "plate": "plates",
+    }
+
     @staticmethod
     def _line_product_type(line: dict[str, Any] | None) -> str:
         if not isinstance(line, dict):
             return ""
-        return str(line.get("product_type") or "").strip().lower()
+        explicit = str(line.get("product_type") or "").strip().lower()
+        if explicit:
+            return explicit
+        kind = str(line.get("product_kind") or "").strip().lower()
+        return CommercialWorkflowService._PRODUCT_KIND_TO_TYPE.get(kind, "")
 
     @staticmethod
     def _line_is_sealed(line: dict[str, Any] | None) -> bool:
@@ -126,15 +139,22 @@ class CommercialWorkflowService:
         *,
         product_type: str,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Split order into (other types kept, same product_type lines)."""
+        """Split order into (other types kept, same product_type lines).
+
+        Untyped legacy mono lines (no product_type / resolvable product_kind) stay in
+        ``same`` when the order has no conflicting typed product — so replace/bulk
+        grade does not duplicate create-time rows that predate stamp_order_line_identity.
+        """
         normalized = (product_type or "").strip().lower()
+        rows = [dict(raw) for raw in list(order_data or []) if isinstance(raw, dict)]
+        typed_conflict = any(
+            (t := self._line_product_type(line)) and t != normalized for line in rows
+        )
         others: list[dict[str, Any]] = []
         same: list[dict[str, Any]] = []
-        for raw in list(order_data or []):
-            if not isinstance(raw, dict):
-                continue
-            line = dict(raw)
-            if self._line_product_type(line) == normalized:
+        for line in rows:
+            line_type = self._line_product_type(line)
+            if line_type == normalized or (not line_type and not typed_conflict):
                 same.append(line)
             else:
                 others.append(line)
@@ -607,10 +627,11 @@ class CommercialWorkflowService:
             source_metadata=source_metadata,
             owner_user_id=owner_user_id,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="marches")
         draft_id = self.draft_store.save_preview(
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.marches)
@@ -664,10 +685,11 @@ class CommercialWorkflowService:
             source_metadata=source_metadata,
             owner_user_id=owner_user_id,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="bridge_piles")
         draft_id = self.draft_store.save_preview(
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.bridge_piles)
@@ -720,10 +742,11 @@ class CommercialWorkflowService:
             source_metadata=source_metadata,
             owner_user_id=owner_user_id,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="steps")
         draft_id = self.draft_store.save_preview(
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.steps)
@@ -885,11 +908,12 @@ class CommercialWorkflowService:
             pile_batches=[ai_batch],
             source_metadata=source_metadata,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="piles")
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.piles)
@@ -1122,11 +1146,12 @@ class CommercialWorkflowService:
             march_batches=[ai_batch],
             source_metadata=source_metadata,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="marches")
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.marches)
@@ -1347,11 +1372,12 @@ class CommercialWorkflowService:
             bridge_pile_batches=[ai_batch],
             source_metadata=source_metadata,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="bridge_piles")
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.bridge_piles)
@@ -1500,10 +1526,11 @@ class CommercialWorkflowService:
             source_metadata=source_metadata,
             owner_user_id=owner_user_id,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="fbs")
         draft_id = self.draft_store.save_preview(
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.fbs)
@@ -1653,11 +1680,12 @@ class CommercialWorkflowService:
             fbs_batches=[ai_batch],
             source_metadata=source_metadata,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="fbs")
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.fbs)
@@ -1914,11 +1942,12 @@ class CommercialWorkflowService:
             step_batches=[ai_batch],
             source_metadata=source_metadata,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="steps")
         self.draft_store.replace_preview(
             draft_id,
             order=PlateOrder(),
             optimization_context=OptimizationContext(order=PlateOrder()),
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.steps)
@@ -2124,11 +2153,12 @@ class CommercialWorkflowService:
             wide_plates_resolved=not bool(preview.parse_result.wide_plate_lines),
             source_metadata=source_metadata,
         )
+        order_data = self._stamp_order_data(preview.order_data, product_type="plates")
         self.draft_store.replace_preview(
             draft_id,
             order=preview.parse_result.order,
             optimization_context=preview.optimization_context,
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         payload_snap = self._load_draft_or_raise(draft_id)
@@ -2242,11 +2272,12 @@ class CommercialWorkflowService:
             source_metadata={},
         )
         next_metadata["wide_plate_decisions"] = list(resolved_decisions.values())
+        order_data = self._stamp_order_data(preview.order_data, product_type="plates")
         self.draft_store.replace_preview(
             draft_id,
             order=preview.parse_result.order,
             optimization_context=preview.optimization_context,
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.plates)
@@ -2425,11 +2456,12 @@ class CommercialWorkflowService:
         # Force resolved after explicit user action (mirror wide-plates).
         next_metadata["unpriced_plates_resolved"] = True
         next_metadata["unpriced_plate_decisions"] = list(resolved_decisions.values())
+        order_data = self._stamp_order_data(preview.order_data, product_type="plates")
         self.draft_store.replace_preview(
             draft_id,
             order=preview.parse_result.order,
             optimization_context=preview.optimization_context,
-            order_data=preview.order_data,
+            order_data=order_data,
             metadata=next_metadata,
         )
         self._persist_wizard_step(draft_id, WizardStepId.plates)

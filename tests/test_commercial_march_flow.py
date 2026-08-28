@@ -98,6 +98,9 @@ def test_create_march_draft_with_text(client: TestClient, auth_cookie: dict[str,
     assert body["order_data"][0]["product_kind"] == "march"
     assert body["order_data"][0]["unit_price"] is not None
     assert body["wizard_state"]["current_step"] == "marches"
+    for row in body["order_data"]:
+        assert str(row.get("line_id") or "").strip()
+        assert row.get("product_type") == "marches"
 
 
 def test_update_march_draft_replace(client: TestClient, auth_cookie: dict[str, str]) -> None:
@@ -116,6 +119,69 @@ def test_update_march_draft_replace(client: TestClient, auth_cookie: dict[str, s
     assert len(body["order_data"]) == 1
     assert body["order_data"][0]["mark"] == "ЛМ 2,8"
     assert body["order_data"][0]["qty"] == 3
+
+
+def test_bulk_grade_single_line_no_duplicate(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    """UI regression: apply class to all must not duplicate the create row."""
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "marches", "text": "1ЛМ 27-11-14-4 B25 1"},
+    )
+    assert create.status_code == 200, create.text
+    draft_id = create.json()["draft_id"]
+    assert len(create.json()["order_data"]) == 1
+
+    response = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/marches/grades",
+        json={"concrete_grade": "B20"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["order_data"]) == 1
+    assert body["order_data"][0]["concrete_grade"] == "B20"
+    assert body["order_data"][0]["mark"] == "1ЛМ 27-11-14-4"
+
+
+def test_partition_treats_untyped_legacy_mono_as_same_type() -> None:
+    """Old drafts without product_type still replace instead of duplicating."""
+    from app.services.commercial_workflow_service import CommercialWorkflowService
+
+    workflow = CommercialWorkflowService()
+    previous = [
+        {
+            "product_kind": "march",
+            "mark": "1ЛМ 27-11-14-4",
+            "concrete_grade": "B25",
+            "qty": 1,
+        }
+    ]
+    others, same = workflow._partition_order_by_product_type(
+        previous,
+        product_type="marches",
+    )
+    assert others == []
+    assert len(same) == 1
+    composed = workflow._compose_order_data_for_product_update(
+        previous_order_data=previous,
+        new_type_lines=[
+            {
+                "line_id": "new-1",
+                "product_type": "marches",
+                "product_kind": "march",
+                "mark": "1ЛМ 27-11-14-4",
+                "concrete_grade": "B20",
+                "qty": 1,
+            }
+        ],
+        product_type="marches",
+        mode="replace",
+        merged_cycle_text=False,
+    )
+    assert len(composed) == 1
+    assert composed[0]["concrete_grade"] == "B20"
 
 
 def test_apply_ai_marches_endpoint(

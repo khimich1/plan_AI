@@ -102,6 +102,9 @@ def test_create_step_draft_with_text(client: TestClient, auth_cookie: dict[str, 
     assert body["order_data"][0]["product_kind"] == "step"
     assert body["order_data"][0]["unit_price"] is not None
     assert body["wizard_state"]["current_step"] == "steps"
+    for row in body["order_data"]:
+        assert str(row.get("line_id") or "").strip()
+        assert row.get("product_type") == "steps"
 
 
 def test_update_step_draft_replace(client: TestClient, auth_cookie: dict[str, str]) -> None:

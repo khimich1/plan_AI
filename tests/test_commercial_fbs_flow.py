@@ -118,6 +118,9 @@ def test_create_fbs_draft_with_text(client: TestClient, auth_cookie: dict[str, s
     marks = {row["mark"] for row in body["order_data"]}
     assert "ФБС 9.3.6-Т" in marks
     assert body["wizard_state"]["current_step"] == "fbs"
+    for row in body["order_data"]:
+        assert str(row.get("line_id") or "").strip()
+        assert row.get("product_type") == "fbs"
 
 
 def test_bulk_grade_applies_to_all(client: TestClient, auth_cookie: dict[str, str]) -> None:

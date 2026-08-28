@@ -1,7 +1,7 @@
 /** Address / home-base heuristics mirrored from core.gsm.generator. */
 
 export const normGsmAddr = (s: string): string => {
-  const t = s.toLowerCase().replaceAll("ё", "е").replaceAll("улица", "ул").replaceAll("ул.", "ул");
+  const t = s.toLowerCase().replace(/ё/g, "е").replace(/улица/g, "ул").replace(/ул\./g, "ул");
   return t.split(/\s+/).filter(Boolean).join(" ");
 };
 

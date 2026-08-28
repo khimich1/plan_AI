@@ -119,6 +119,9 @@ def test_create_bridge_pile_draft_with_text(client: TestClient, auth_cookie: dic
     marks = {row["mark"] for row in body["order_data"]}
     assert "C8-35В4" in marks
     assert body["wizard_state"]["current_step"] == "bridge_piles"
+    for row in body["order_data"]:
+        assert str(row.get("line_id") or "").strip()
+        assert row.get("product_type") == "bridge_piles"
 
 
 def test_bulk_grade_skips_unavailable_with_warning(

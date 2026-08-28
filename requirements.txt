@@ -2,10 +2,10 @@
 # SPA во frontend/: зависимости в frontend/package.json — ставятся в Dockerfile через npm ci, не через pip.
 # Telegram-бот DEPRECATED (P5 WP1): опционально pip install -r requirements-bot.txt — только bot_archived/
 
-fastapi==0.111.0
+fastapi==0.141.1
 uvicorn>=0.30.0
 
-pydantic==2.7.4
+pydantic==2.13.4
 pydantic-settings==2.2.1
 python-dotenv>=0.19.0
 python-multipart>=0.0.9
