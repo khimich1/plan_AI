@@ -42,7 +42,7 @@ export const PlateListEditor = ({
 }: PlateListEditorProps) => {
   const lines = value.split("\n");
   const lineNumbers = showLineNumbers ? assignNonEmptyLineNumbers(lines) : [];
-  const maxLineNumber = lineNumbers.reduce(
+  const maxLineNumber = lineNumbers.reduce<number>(
     (max, number) => (number != null && number > max ? number : max),
     0,
   );

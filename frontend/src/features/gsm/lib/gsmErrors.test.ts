@@ -24,6 +24,30 @@ describe("formatGsmError", () => {
     ).toBe("Машина №9 не найдена.");
   });
 
+  it("translates locked waybill conflict", () => {
+    expect(
+      formatGsmError(new ApiError("locked", 409, "waybill is locked (confirmed/exported)")),
+    ).toBe("Путевой лист подтверждён или выгружен — редактирование запрещено.");
+  });
+
+  it("translates later confirmed/exported waybill conflict with extra detail", () => {
+    expect(
+      formatGsmError(
+        new ApiError(
+          "locked",
+          409,
+          "cannot edit waybill: later confirmed/exported waybill exists (2026-08-20)",
+        ),
+      ),
+    ).toBe("Нельзя править: после этого дня есть подтверждённые или выгруженные путевые.");
+  });
+
+  it("translates season switch validation error", () => {
+    expect(
+      formatGsmError(new ApiError("season", 422, "season date must not be before last switch")),
+    ).toBe("Дата перевода сезона не может быть раньше предыдущего перевода.");
+  });
+
   it("translates LibreOffice export failures with an admin hint", () => {
     expect(
       formatGsmError(

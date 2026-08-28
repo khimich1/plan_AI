@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   burnForKm,
   libraryRouteToLegs,
+  normForDate,
   previousWaybillChainStart,
   previewDownstream,
 } from "@/features/gsm/lib/downstreamPreview";
-import type { GsmVehicle, GsmWaybill } from "@/features/gsm/types/gsm";
+import { isGsmHomeBase } from "@/features/gsm/lib/gsmHome";
+import type { GsmRoute, GsmVehicle, GsmWaybill } from "@/features/gsm/types/gsm";
 
 const VEHICLE: Pick<GsmVehicle, "norm_summer" | "norm_winter" | "tank_volume_liters"> = {
   norm_summer: 10,
@@ -53,13 +55,30 @@ describe("downstreamPreview", () => {
     expect(burnForKm(190, 9.4)).toBe(17.86);
   });
 
+  it("normForDate is always summer when no season switch is recorded", () => {
+    expect(normForDate("2026-08-25", VEHICLE, "summer", null)).toBe(10);
+    expect(normForDate("2026-01-15", VEHICLE, "winter", null)).toBe(10);
+  });
+
+  it("normForDate applies winter norm from the switch date onwards", () => {
+    expect(normForDate("2026-10-31", VEHICLE, "winter", "2026-11-01")).toBe(10);
+    expect(normForDate("2026-11-01", VEHICLE, "winter", "2026-11-01")).toBe(12);
+    expect(normForDate("2026-12-20", VEHICLE, "winter", "2026-11-01")).toBe(12);
+  });
+
+  it("normForDate treats days before a summer switch as winter", () => {
+    expect(normForDate("2027-03-31", VEHICLE, "summer", "2027-04-01")).toBe(12);
+    expect(normForDate("2027-04-01", VEHICLE, "summer", "2027-04-01")).toBe(10);
+  });
+
   it("previews edited day and rechains following drafts", () => {
     const result = previewDownstream({
       edited: WAYBILLS[0],
       editedKm: 100,
       periodWaybills: WAYBILLS,
       vehicle: VEHICLE,
-      winterStartMMDD: "11-01",
+      seasonMode: "summer",
+      seasonSwitchedAt: null,
     });
 
     expect(result.error).toBeNull();
@@ -91,7 +110,8 @@ describe("downstreamPreview", () => {
       editedKm: 100,
       periodWaybills: [WAYBILLS[0], confirmed],
       vehicle: VEHICLE,
-      winterStartMMDD: "11-01",
+      seasonMode: "summer",
+      seasonSwitchedAt: null,
     });
     const day2 = result.days.find((d) => d.id === 2)!;
     expect(day2.changed).toBe(false);
@@ -125,6 +145,84 @@ describe("downstreamPreview", () => {
         km: 42,
         route_id: 9,
         station_id: 3,
+      },
+    ]);
+  });
+
+  it("isGsmHomeBase matches Kuznetskaya 18B and street-only Kuznetskaya", () => {
+    expect(isGsmHomeBase("ул. Кузнецкая, д.18Б")).toBe(true);
+    expect(isGsmHomeBase("ул.Кузнецкая, д.18Б")).toBe(true);
+    expect(isGsmHomeBase("улица Кузнецкая, дом 18Б")).toBe(true);
+    expect(isGsmHomeBase("ул.Кузнецкая")).toBe(true);
+    expect(isGsmHomeBase("г.Вологда, ул.Мира, д.10")).toBe(false);
+  });
+
+  it("libraryRouteToLegs orients object-first row and uses twin route_id", () => {
+    const remoteFirst: GsmRoute = {
+      id: 59,
+      vehicle_id: 4,
+      addr_a: "г.Владимир, ул.Добросельская",
+      addr_b: "Кострома, ул. Кузнецкая, д.18Б",
+      km: 225,
+      frequency: 8,
+      typical_station_ids: [3],
+    };
+    const twin: GsmRoute = {
+      id: 64,
+      vehicle_id: 4,
+      addr_a: "Кострома, ул. Кузнецкая, д.18Б",
+      addr_b: "г.Владимир, ул.Добросельская",
+      km: 225,
+      frequency: 2,
+      typical_station_ids: [],
+    };
+    expect(libraryRouteToLegs(remoteFirst, [remoteFirst, twin])).toEqual([
+      {
+        from: "Кострома, ул. Кузнецкая, д.18Б",
+        to: "г.Владимир, ул.Добросельская",
+        km: 225,
+        route_id: 64,
+        station_id: 3,
+      },
+    ]);
+  });
+
+  it("libraryRouteToLegs orients object-first row without twin using original id", () => {
+    const remoteFirst: GsmRoute = {
+      id: 59,
+      vehicle_id: 4,
+      addr_a: "г.Владимир, ул.Добросельская",
+      addr_b: "Кострома, ул. Кузнецкая, д.18Б",
+      km: 225,
+      frequency: 8,
+      typical_station_ids: [],
+    };
+    expect(libraryRouteToLegs(remoteFirst, [remoteFirst])).toEqual([
+      {
+        from: "Кострома, ул. Кузнецкая, д.18Б",
+        to: "г.Владимир, ул.Добросельская",
+        km: 225,
+        route_id: 59,
+        station_id: null,
+      },
+    ]);
+  });
+
+  it("libraryRouteToLegs does not flip rows without a home endpoint", () => {
+    expect(
+      libraryRouteToLegs({
+        id: 9,
+        addr_a: "Завод",
+        addr_b: "Объект",
+        km: 42,
+      }),
+    ).toEqual([
+      {
+        from: "Завод",
+        to: "Объект",
+        km: 42,
+        route_id: 9,
+        station_id: null,
       },
     ]);
   });

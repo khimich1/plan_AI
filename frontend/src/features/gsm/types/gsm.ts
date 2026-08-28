@@ -1,6 +1,6 @@
 /** Types aligned with app/schemas/gsm.py (Task 5 registry API). */
 
-export type GsmTab = "period" | "transactions" | "registries";
+export type GsmTab = "overview" | "transactions" | "registries";
 
 export type GsmVehicle = {
   id: number;
@@ -40,9 +40,13 @@ export type GsmStation = {
   geocode_source: string | null;
 };
 
+export type GsmSeasonMode = "summer" | "winter";
+
 export type GsmSettings = {
   winter_start: string;
   hook_threshold_km: number;
+  season_mode: GsmSeasonMode;
+  season_switched_at: string | null;
 };
 
 export type VehicleCreatePayload = {
@@ -115,6 +119,7 @@ export type WaybillWarningCode =
   | "unsolvable"
   | "manual_intervention"
   | "balance_route"
+  | "borrowed_route"
   | string;
 
 export type ProblematicDay = {
@@ -138,6 +143,11 @@ export type WaybillRouteLeg = {
   arr_time?: string | null;
 };
 
+export type WaybillWarningDetail = {
+  code: string;
+  detail: string;
+};
+
 export type GsmWaybill = {
   id: number;
   vehicle_id: number;
@@ -153,6 +163,9 @@ export type GsmWaybill = {
   km: number;
   route: WaybillRouteLeg[];
   warnings: WaybillWarningCode[];
+  warning_details?: WaybillWarningDetail[];
+  /** Set on PATCH response: how many following draft days were recalculated. */
+  rechained_draft_days?: number;
 };
 
 export type WaybillGeneratePayload = {
@@ -173,9 +186,99 @@ export type WaybillGenerateResult = {
 };
 
 export type WaybillListParams = {
-  vehicleId: number;
+  vehicleId?: number;
   periodFrom: string;
   periodTo: string;
+};
+
+export type GsmTransaction = {
+  ts: string;
+  card_number: string;
+  vehicle_id: number | null;
+  service_type: string;
+  fuel_grade: string | null;
+  qty_liters: number | null;
+  amount: number;
+  station_id: number | null;
+  address: string | null;
+};
+
+export type TransactionListResponse = {
+  rows: GsmTransaction[];
+  total_count: number;
+  sum_liters: number;
+  sum_amount: number;
+};
+
+export type TransactionListParams = {
+  periodFrom: string;
+  periodTo: string;
+  vehicleId?: number;
+  serviceType?: string;
+};
+
+export type VehiclePeriodStatus =
+  | "no_data"
+  | "needs_generation"
+  | "has_red_days"
+  | "drafts_pending"
+  | "pending_export"
+  | "ready";
+
+export type FleetOverviewVehicle = {
+  id: number;
+  name: string;
+  plate_number: string;
+};
+
+export type FleetOverviewRow = {
+  vehicle: FleetOverviewVehicle;
+  tx_count: number;
+  tx_liters: number;
+  tx_amount: number;
+  tx_last_date: string | null;
+  wb_count: number;
+  wb_km: number;
+  wb_fuel_issued: number;
+  wb_last_date: string | null;
+  red_days: number;
+  draft_count: number;
+  confirmed_count: number;
+  exported_count: number;
+  fuel_end_last: number | null;
+  liters_diff: number;
+  open_before: number;
+  open_before_month: string | null;
+  chain_broken: boolean;
+  status: VehiclePeriodStatus;
+};
+
+export type OverviewParams = {
+  periodFrom: string;
+  periodTo: string;
+};
+
+export type WaybillBulkGeneratePayload = {
+  vehicle_ids: number[];
+  period_from: string;
+  period_to: string;
+  force?: boolean;
+};
+
+export type BulkGenerateVehicleError = {
+  code: string;
+  message: string;
+};
+
+export type BulkGenerateVehicleResult = {
+  vehicle_id: number;
+  ok: boolean;
+  result?: WaybillGenerateResult | null;
+  error?: BulkGenerateVehicleError | null;
+};
+
+export type BulkGenerateResult = {
+  results: BulkGenerateVehicleResult[];
 };
 
 /** POST /gsm/waybills/export — aliases `from`/`to` match backend schema. */
@@ -183,6 +286,13 @@ export type WaybillExportPayload = {
   vehicle_ids: number[];
   from: string;
   to: string;
+};
+
+/** POST /gsm/report/usage — null vehicle_ids = all active vehicles. */
+export type UsageReportPayload = {
+  period_from: string;
+  period_to: string;
+  vehicle_ids: number[] | null;
 };
 
 export type GsmRoute = {

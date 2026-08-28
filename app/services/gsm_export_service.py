@@ -31,13 +31,13 @@ from core.gsm.blank import (
     vehicle_mark_label,
     waybill_export_filename,
 )
+from core.gsm.season import norm_for, parse_season_switches
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEMPLATE = PROJECT_ROOT / "core" / "gsm" / "templates" / "waybill_blank.xlsx"
 DEFAULT_SOFFICE_TIMEOUT_SEC = 120
-DEFAULT_WINTER_START = "11-01"
 
 
 class GsmExportError(Exception):
@@ -180,7 +180,14 @@ class GsmExportService:
             int(s["id"]): str(s["address"])
             for s in self._repo.list_stations()
         }
-        winter_mmdd = self._repo.get_setting("winter_start") or DEFAULT_WINTER_START
+        switches_raw = self._repo.get_setting("season_switches")
+        try:
+            season_switches = parse_season_switches(switches_raw)
+        except ValueError as exc:
+            raise GsmExportError(
+                f"invalid season_switches setting: {switches_raw!r}",
+                code="gsm_settings_invalid",
+            ) from exc
 
         buf = io.BytesIO()
         with tempfile.TemporaryDirectory(prefix="gsm_export_") as tmp:
@@ -203,11 +210,11 @@ class GsmExportService:
                             code="gsm_driver_not_found",
                         )
 
-                    winter_start = _winter_start_for_year(winter_mmdd, day.year)
-                    norm = (
-                        float(vehicle["norm_winter"])
-                        if day >= winter_start
-                        else float(vehicle["norm_summer"])
+                    norm = norm_for(
+                        day,
+                        norm_summer=float(vehicle["norm_summer"]),
+                        norm_winter=float(vehicle["norm_winter"]),
+                        switches=season_switches,
                     )
                     route_items = _parse_route_list(row.get("route_json"))
                     legs = legs_from_route_items(route_items, stations_by_id=stations)
@@ -287,11 +294,6 @@ def _as_date(value: Any) -> date:
     if isinstance(value, date):
         return value
     return date.fromisoformat(str(value)[:10])
-
-
-def _winter_start_for_year(mm_dd: str, year: int) -> date:
-    month_s, day_s = mm_dd.split("-", 1)
-    return date(year, int(month_s), int(day_s))
 
 
 def _parse_route_list(raw: Any) -> list[dict[str, Any]]:

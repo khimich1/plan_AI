@@ -1,4 +1,9 @@
-import type { ButtonHTMLAttributes, CSSProperties, PropsWithChildren } from "react";
+import {
+  forwardRef,
+  type ButtonHTMLAttributes,
+  type CSSProperties,
+  type PropsWithChildren,
+} from "react";
 
 type ButtonProps = PropsWithChildren<
   ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -30,28 +35,36 @@ const variantStyles: Record<NonNullable<ButtonProps["variant"]>, CSSProperties> 
   },
 };
 
-export const Button = ({
-  children,
-  variant = "primary",
-  fullWidth = false,
-  style,
-  disabled,
-  ...props
-}: ButtonProps) => (
-  <button
-    {...props}
-    disabled={disabled}
-    style={{
-      borderRadius: 12,
-      padding: "0.75rem 1rem",
-      cursor: disabled ? "not-allowed" : "pointer",
-      fontWeight: 600,
-      opacity: disabled ? 0.6 : 1,
-      width: fullWidth ? "100%" : undefined,
-      ...variantStyles[variant],
-      ...style,
-    }}
-  >
-    {children}
-  </button>
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  (
+    {
+      children,
+      variant = "primary",
+      fullWidth = false,
+      style,
+      disabled,
+      ...props
+    },
+    ref,
+  ) => (
+    <button
+      ref={ref}
+      {...props}
+      disabled={disabled}
+      style={{
+        borderRadius: 12,
+        padding: "0.75rem 1rem",
+        cursor: disabled ? "not-allowed" : "pointer",
+        fontWeight: 600,
+        opacity: disabled ? 0.6 : 1,
+        width: fullWidth ? "100%" : undefined,
+        ...variantStyles[variant],
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  ),
 );
+
+Button.displayName = "Button";

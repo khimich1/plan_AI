@@ -10,19 +10,23 @@ from typing import Any
 from app.repositories.gsm_repository import GsmRepository
 from app.schemas.gsm import (
     ProblematicDayOut,
+    WaybillBulkGenerateResult,
+    WaybillBulkVehicleError,
+    WaybillBulkVehicleResult,
     WaybillGenerateResult,
     WaybillOut,
     WaybillRouteLeg,
+    WaybillWarningDetail,
 )
 from app.services.gsm_registry_service import (
     DEFAULT_HOOK_THRESHOLD_KM,
     DEFAULT_MAX_DAILY_KM,
-    DEFAULT_WINTER_START,
 )
 from core.gsm.balance import BalanceViolation, apply_day
 from core.gsm.generator import LibraryRoute, generate
 from core.gsm.geo import GeoPoint
 from core.gsm.models import Transaction, WaybillDay
+from core.gsm.season import SeasonSwitch, norm_for, parse_season_switches
 from core.work_calendar import load_extra_workdays, load_holidays
 
 _LIBRARY_ROUTE_FIELDS = frozenset(f.name for f in fields(LibraryRoute))
@@ -119,14 +123,14 @@ class GsmGenerationService:
             period_to=period_to,
         )
         transactions = tuple(self._to_transaction(row) for row in tx_rows)
-        routes = self._load_routes(vehicle_id)
+        routes = self._load_routes()
         if not routes and transactions:
             raise GsmGenerationError(
                 "vehicle has no routes in library",
                 code="gsm_routes_required",
             )
 
-        winter_start = self._resolve_winter_start(period_from)
+        season_switches = self._resolve_season_switches()
         hook_threshold = self._resolve_hook_threshold()
         max_daily_km = self._resolve_max_daily_km()
         station_coords = self._load_station_coords()
@@ -149,7 +153,7 @@ class GsmGenerationService:
             tank_volume_liters=float(vehicle["tank_volume_liters"]),
             norm_summer=float(vehicle["norm_summer"]),
             norm_winter=float(vehicle["norm_winter"]),
-            winter_start=winter_start,
+            season_switches=season_switches,
             fuel_start=start_fuel,
             odometer_start=start_odo,
             hook_threshold_km=hook_threshold,
@@ -157,6 +161,7 @@ class GsmGenerationService:
             extra_workdays=extra_workdays,
             max_daily_km=max_daily_km,
             station_coords=station_coords,
+            own_vehicle_id=vehicle_id,
         )
 
         if force:
@@ -174,13 +179,10 @@ class GsmGenerationService:
             )
 
         waybills: list[WaybillOut] = []
+        problems_by_date = {problem.date: problem for problem in result.problematic_days}
         for day in result.days:
             route_json = _serialize_waybill_route(day)
-            warnings_json = (
-                json.dumps(list(day.warnings), ensure_ascii=False)
-                if day.warnings
-                else None
-            )
+            warnings_json = _serialize_warnings_json(day, problems_by_date.get(day.date))
             waybill_id = self._repo.upsert_waybill(
                 vehicle_id=vehicle_id,
                 date=day.date,
@@ -234,19 +236,61 @@ class GsmGenerationService:
             manual_days=len(problematic_days),
         )
 
+    def generate_bulk(
+        self,
+        *,
+        vehicle_ids: list[int],
+        period_from: date,
+        period_to: date,
+        force: bool = False,
+    ) -> WaybillBulkGenerateResult:
+        if period_to < period_from:
+            raise GsmGenerationError(
+                "period_to must be >= period_from",
+                code="gsm_invalid_period",
+            )
+        results: list[WaybillBulkVehicleResult] = []
+        for vehicle_id in vehicle_ids:
+            try:
+                generated = self.generate(
+                    vehicle_id=vehicle_id,
+                    period_from=period_from,
+                    period_to=period_to,
+                    force=force,
+                )
+                results.append(
+                    WaybillBulkVehicleResult(
+                        vehicle_id=vehicle_id,
+                        ok=True,
+                        result=generated,
+                    )
+                )
+            except GsmGenerationError as exc:
+                results.append(
+                    WaybillBulkVehicleResult(
+                        vehicle_id=vehicle_id,
+                        ok=False,
+                        error=WaybillBulkVehicleError(
+                            code=exc.code,
+                            message=str(exc),
+                        ),
+                    )
+                )
+        return WaybillBulkGenerateResult(results=results)
+
     def list_waybills(
         self,
         *,
-        vehicle_id: int,
         period_from: date,
         period_to: date,
+        vehicle_id: int | None = None,
     ) -> list[WaybillOut]:
         if period_to < period_from:
             raise GsmGenerationError(
                 "period_to must be >= period_from",
                 code="gsm_invalid_period",
             )
-        if self._repo.get_vehicle(vehicle_id) is None:
+        if vehicle_id is not None and self._repo.get_vehicle(vehicle_id) is None:
             raise GsmGenerationError(
                 f"vehicle #{vehicle_id} not found",
                 code="gsm_vehicle_not_found",
@@ -271,6 +315,12 @@ class GsmGenerationService:
             raise GsmGenerationError(
                 f"waybill #{waybill_id} not found",
                 code="gsm_waybill_not_found",
+            )
+        status = str(row.get("status") or "draft")
+        if status in _PROTECTED_STATUSES:
+            raise GsmGenerationError(
+                "waybill is locked (confirmed/exported)",
+                code="gsm_waybill_locked",
             )
         vehicle_id = int(row["vehicle_id"])
         vehicle = self._repo.get_vehicle(vehicle_id)
@@ -308,8 +358,21 @@ class GsmGenerationService:
             km=total_km,
             odometer_start=odometer_start,
         )
+
+        downstream = self._repo.list_waybills_after(
+            vehicle_id=vehicle_id,
+            after_date=day,
+        )
+        if any(
+            str(later.get("status") or "draft") in _PROTECTED_STATUSES
+            for later in downstream
+        ):
+            raise GsmGenerationError(
+                "cannot edit waybill: later confirmed/exported waybill exists",
+                code="gsm_chain_locked",
+            )
+
         route_json = _route_legs_to_json(legs)
-        status = str(row.get("status") or "draft")
         warnings_json = row.get("warnings_json")
 
         self._repo.upsert_waybill(
@@ -326,7 +389,7 @@ class GsmGenerationService:
             route_json=route_json,
             warnings_json=warnings_json,
         )
-        self._rechain_downstream(
+        rechained = self._rechain_downstream(
             vehicle_id=vehicle_id,
             after_date=day,
             fuel=tank.fuel_end,
@@ -335,7 +398,7 @@ class GsmGenerationService:
         )
         updated = self._repo.get_waybill_by_id(waybill_id)
         assert updated is not None
-        return self._waybill_out(updated)
+        return self._waybill_out(updated, rechained_draft_days=rechained)
 
     def create_waybill(
         self,
@@ -476,11 +539,12 @@ class GsmGenerationService:
         km: int,
         odometer_start: int,
     ):
-        winter_start = self._resolve_winter_start(day)
-        norm = (
-            float(vehicle["norm_winter"])
-            if day >= winter_start
-            else float(vehicle["norm_summer"])
+        season_switches = self._resolve_season_switches()
+        norm = norm_for(
+            day,
+            norm_summer=float(vehicle["norm_summer"]),
+            norm_winter=float(vehicle["norm_winter"]),
+            switches=season_switches,
         )
         try:
             return apply_day(
@@ -507,14 +571,16 @@ class GsmGenerationService:
         fuel: float,
         odometer: int,
         vehicle: dict[str, Any],
-    ) -> None:
+    ) -> int:
         """Recompute fuel/odo chain for DRAFT days after ``after_date``.
 
         Confirmed/exported days are left untouched; the chain continues from
-        their stored fuel_end/odometer_end.
+        their stored fuel_end/odometer_end. Returns the number of recomputed
+        draft days.
         """
         fuel_cur = float(fuel)
         odo_cur = int(odometer)
+        rechained = 0
         downstream = self._repo.list_waybills_after(
             vehicle_id=vehicle_id,
             after_date=after_date,
@@ -561,6 +627,8 @@ class GsmGenerationService:
             )
             fuel_cur = tank.fuel_end
             odo_cur = tank.odometer_end
+            rechained += 1
+        return rechained
 
     @staticmethod
     def _normalize_route_input(
@@ -618,14 +686,13 @@ class GsmGenerationService:
             )
         return float(fuel_start), int(odometer_start)
 
-    def _resolve_winter_start(self, period_from: date) -> date:
-        raw = self._repo.get_setting("winter_start") or DEFAULT_WINTER_START
+    def _resolve_season_switches(self) -> tuple[SeasonSwitch, ...]:
+        raw = self._repo.get_setting("season_switches")
         try:
-            month_s, day_s = raw.split("-", 1)
-            return date(period_from.year, int(month_s), int(day_s))
-        except (TypeError, ValueError) as exc:
+            return parse_season_switches(raw)
+        except ValueError as exc:
             raise GsmGenerationError(
-                f"invalid winter_start setting: {raw!r}",
+                f"invalid season_switches setting: {raw!r}",
                 code="gsm_settings_invalid",
             ) from exc
 
@@ -675,8 +742,8 @@ class GsmGenerationService:
             coords[int(row["id"])] = GeoPoint(lat=float(lat), lon=float(lon))
         return coords
 
-    def _load_routes(self, vehicle_id: int) -> tuple[LibraryRoute, ...]:
-        rows = self._repo.list_routes(vehicle_id=vehicle_id)
+    def _load_routes(self) -> tuple[LibraryRoute, ...]:
+        rows = self._repo.list_routes()
         routes: list[LibraryRoute] = []
         for row in rows:
             typical = self._parse_typical_station_ids(row.get("typical_station_ids"))
@@ -688,6 +755,9 @@ class GsmGenerationService:
                 "frequency": int(row.get("frequency") or 1),
                 "typical_station_ids": typical,
             }
+            if "vehicle_id" in _LIBRARY_ROUTE_FIELDS:
+                raw_vid = row.get("vehicle_id")
+                payload["vehicle_id"] = int(raw_vid) if raw_vid is not None else 0
             if "point_a" in _LIBRARY_ROUTE_FIELDS:
                 payload["point_a"] = None
             if "point_b" in _LIBRARY_ROUTE_FIELDS:
@@ -729,9 +799,9 @@ class GsmGenerationService:
         )
 
     @staticmethod
-    def _waybill_out(row: dict[str, Any]) -> WaybillOut:
+    def _waybill_out(row: dict[str, Any], *, rechained_draft_days: int = 0) -> WaybillOut:
         route_legs = _parse_route_json(row.get("route_json"))
-        warnings = _parse_warnings_json(row.get("warnings_json"))
+        warnings, warning_details = _parse_warnings_json(row.get("warnings_json"))
         km = sum(leg.km for leg in route_legs)
         day = row["date"]
         day_str = day.isoformat() if isinstance(day, date) else str(day)
@@ -750,6 +820,8 @@ class GsmGenerationService:
             km=km,
             route=route_legs,
             warnings=warnings,
+            warning_details=warning_details,
+            rechained_draft_days=rechained_draft_days,
         )
 
 
@@ -809,16 +881,42 @@ def _parse_route_json(raw: Any) -> list[WaybillRouteLeg]:
     return legs
 
 
-def _parse_warnings_json(raw: Any) -> list[str]:
+def _serialize_warnings_json(day: WaybillDay, problem: Any | None) -> str | None:
+    if not day.warnings:
+        return None
+    if problem is None:
+        payload: list[Any] = list(day.warnings)
+    else:
+        payload = [
+            {"code": code, "detail": problem.detail} for code in day.warnings
+        ]
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _parse_warnings_json(raw: Any) -> tuple[list[str], list[WaybillWarningDetail]]:
     if raw is None or raw == "":
-        return []
+        return [], []
     try:
         parsed = json.loads(raw) if isinstance(raw, str) else raw
     except (TypeError, ValueError, json.JSONDecodeError):
-        return []
-    if isinstance(parsed, list):
-        return [str(x) for x in parsed]
-    return []
+        return [], []
+    if not isinstance(parsed, list):
+        return [], []
+    codes: list[str] = []
+    details: list[WaybillWarningDetail] = []
+    for item in parsed:
+        if isinstance(item, str):
+            codes.append(item)
+            continue
+        if isinstance(item, dict) and item.get("code"):
+            code = str(item["code"])
+            codes.append(code)
+            detail = item.get("detail")
+            if detail:
+                details.append(WaybillWarningDetail(code=code, detail=str(detail)))
+            continue
+        codes.append(str(item))
+    return codes, details
 
 
 def _as_optional_float(value: Any) -> float | None:

@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, datetime
-from typing import Sequence
+from typing import Any, Sequence
 
 from app.repositories.gsm_repository import GsmRepository
-from app.schemas.gsm import FileImportReport, TransactionImportReport
+from app.schemas.gsm import FileImportReport, TransactionImportReport, TransactionListResponse, TransactionOut
 from core.gsm.transactions import ParsedTxFile, parse_transactions_content
+
+
+class GsmTransactionError(Exception):
+    """Domain error for transaction listing (invalid period)."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details: dict[str, object] = {}
 
 
 class GsmTransactionService:
@@ -87,6 +96,7 @@ class GsmTransactionService:
                 )
 
             ts_iso = row.ts.isoformat(sep=" ", timespec="seconds")
+            qty_liters = None if row.service_type == "wash" else row.qty_liters
             try:
                 self._repo.insert_transaction(
                     card_id=card_id,
@@ -95,7 +105,7 @@ class GsmTransactionService:
                     amount=row.amount,
                     raw_address=row.raw_address,
                     batch_id=batch_id,
-                    qty_liters=row.qty_liters,
+                    qty_liters=qty_liters,
                     fuel_grade=row.fuel_grade,
                     station_id=station_id,
                 )
@@ -128,3 +138,47 @@ class GsmTransactionService:
             assigned_at=assigned_at,
         )
         return card_id, True
+
+    def list_transactions(
+        self,
+        *,
+        period_from: date,
+        period_to: date,
+        vehicle_id: int | None = None,
+        service_type: str | None = None,
+    ) -> TransactionListResponse:
+        if period_to < period_from:
+            raise GsmTransactionError(
+                "period_to must be >= period_from",
+                code="gsm_invalid_period",
+            )
+        rows = self._repo.list_transactions(
+            vehicle_id=vehicle_id,
+            period_from=period_from,
+            period_to=period_to,
+            service_type=service_type,
+        )
+        items = [_transaction_out(row) for row in rows]
+        sum_liters = round(sum((item.qty_liters or 0.0) for item in items), 2)
+        sum_amount = round(sum(item.amount for item in items), 2)
+        return TransactionListResponse(
+            rows=items,
+            total_count=len(items),
+            sum_liters=sum_liters,
+            sum_amount=sum_amount,
+        )
+
+
+def _transaction_out(row: dict[str, Any]) -> TransactionOut:
+    qty = row.get("qty_liters")
+    return TransactionOut(
+        ts=str(row["ts"]),
+        card_number=str(row["card_number"]),
+        vehicle_id=row.get("vehicle_id"),
+        service_type=str(row["service_type"]),
+        fuel_grade=row.get("fuel_grade"),
+        qty_liters=None if qty is None else round(float(qty), 2),
+        amount=round(float(row["amount"]), 2),
+        station_id=row.get("station_id"),
+        address=row.get("raw_address"),
+    )

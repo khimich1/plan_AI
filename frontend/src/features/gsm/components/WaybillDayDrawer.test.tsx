@@ -54,6 +54,24 @@ const ROUTES: GsmRoute[] = [
     frequency: 1,
     typical_station_ids: [],
   },
+  {
+    id: 59,
+    vehicle_id: 1,
+    addr_a: "г.Владимир, ул.Добросельская",
+    addr_b: "Кострома, ул. Кузнецкая, д.18Б",
+    km: 225,
+    frequency: 8,
+    typical_station_ids: [],
+  },
+  {
+    id: 64,
+    vehicle_id: 1,
+    addr_a: "Кострома, ул. Кузнецкая, д.18Б",
+    addr_b: "г.Владимир, ул.Добросельская",
+    km: 225,
+    frequency: 2,
+    typical_station_ids: [],
+  },
 ];
 
 const WAYBILLS: GsmWaybill[] = [
@@ -98,7 +116,12 @@ vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
   useGsmSettingsQuery: () => ({
     isLoading: false,
     error: null,
-    data: { winter_start: "11-01", hook_threshold_km: 13 },
+    data: {
+      winter_start: "11-01",
+      hook_threshold_km: 13,
+      season_mode: "summer",
+      season_switched_at: null,
+    },
   }),
   usePatchGsmWaybillMutation: () => ({
     mutateAsync: mockPatch,
@@ -157,6 +180,47 @@ describe("WaybillDayDrawer", () => {
               km: 150,
               route_id: 5,
               station_id: 12,
+            },
+          ],
+        },
+      });
+    });
+    expect(onSaved).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("orients remote-first library row so PATCH starts at home with twin route_id", async () => {
+    const onSaved = vi.fn();
+    const onClose = vi.fn();
+    mockPatch.mockResolvedValue({ ...WAYBILLS[0], km: 225 });
+
+    render(
+      <WaybillDayDrawer
+        open
+        waybill={WAYBILLS[0]}
+        vehicle={VEHICLE}
+        periodWaybills={WAYBILLS}
+        onClose={onClose}
+        onSaved={onSaved}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Маршрут из библиотеки"), { target: { value: "59" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith({
+        id: 11,
+        payload: {
+          driver_id: 7,
+          km: 225,
+          route: [
+            {
+              from: "Кострома, ул. Кузнецкая, д.18Б",
+              to: "г.Владимир, ул.Добросельская",
+              km: 225,
+              route_id: 64,
+              station_id: null,
             },
           ],
         },

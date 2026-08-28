@@ -27,6 +27,10 @@ const KNOWN: Record<string, WarningMeta> = {
     short: "Маршрут для баланса",
     reason: "Выбран удлинённый маршрут для освобождения места в баке.",
   },
+  borrowed_route: {
+    short: "Чужой пул",
+    reason: "Маршрут взят из пула другой машины парка.",
+  },
 };
 
 export const warningMeta = (code: WaybillWarningCode): WarningMeta =>
@@ -64,6 +68,14 @@ export const isAnchorDay = (waybill: GsmWaybill): boolean => {
 /** Day saved as draft because the generator could not keep the tank in corridor. */
 export const isProblematicDay = (waybill: GsmWaybill): boolean =>
   waybill.warnings.includes("manual_intervention");
+
+export const warningDetailText = (waybill: GsmWaybill, code: WaybillWarningCode): string => {
+  const fromDetails = waybill.warning_details?.find((item) => item.code === code)?.detail;
+  if (fromDetails) {
+    return fromDetails;
+  }
+  return warningMeta(code).reason;
+};
 
 export const formatLiters = (value: number | null | undefined): string => {
   if (value == null || !Number.isFinite(value)) {

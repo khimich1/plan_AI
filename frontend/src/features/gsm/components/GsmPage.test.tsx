@@ -1,17 +1,21 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GsmPage } from "@/pages/gsm/GsmPage";
 
-const { noopMutation } = vi.hoisted(() => ({
-  noopMutation: () => ({
-    mutateAsync: vi.fn(),
-    isPending: false,
-    isError: false,
-    error: null,
-    reset: vi.fn(),
-  }),
-}));
+const { noopMutation, importMutateAsync } = vi.hoisted(() => {
+  const importMutateAsync = vi.fn();
+  return {
+    importMutateAsync,
+    noopMutation: () => ({
+      mutateAsync: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
+      reset: vi.fn(),
+    }),
+  };
+});
 
 vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
   useGsmVehiclesQuery: () => ({
@@ -66,7 +70,12 @@ vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
   useGsmSettingsQuery: () => ({
     isLoading: false,
     error: null,
-    data: { winter_start: "11-01", hook_threshold_km: 13 },
+    data: {
+      winter_start: "11-01",
+      hook_threshold_km: 13,
+      season_mode: "summer",
+      season_switched_at: null,
+    },
   }),
   useGsmWaybillsQuery: () => ({
     isLoading: false,
@@ -74,6 +83,12 @@ vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
     data: [],
     refetch: vi.fn(),
   }),
+  useGsmTransactionsQuery: () => ({
+    isLoading: false,
+    error: null,
+    data: { rows: [], total_count: 0, sum_liters: 0, sum_amount: 0 },
+  }),
+  useGsmOverviewQuery: () => ({ isLoading: false, error: null, data: [] }),
   useCreateVehicleMutation: noopMutation,
   usePatchVehicleMutation: noopMutation,
   useCreateDriverMutation: noopMutation,
@@ -83,9 +98,23 @@ vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
   useCreateStationMutation: noopMutation,
   usePatchStationMutation: noopMutation,
   usePutGsmSettingsMutation: noopMutation,
-  useImportGsmTransactionsMutation: noopMutation,
+  useUpdateGsmSeasonMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useImportGsmTransactionsMutation: () => ({
+    mutateAsync: importMutateAsync,
+    isPending: false,
+    isError: false,
+    error: null,
+    reset: vi.fn(),
+  }),
   useGenerateGsmWaybillsMutation: noopMutation,
+  useBulkGenerateMutation: noopMutation,
   useExportGsmWaybillsMutation: noopMutation,
+  useDownloadGsmUsageReportMutation: noopMutation,
   useGsmRoutesQuery: () => ({ isLoading: false, error: null, data: [] }),
   usePatchGsmWaybillMutation: noopMutation,
   useCreateGsmWaybillMutation: noopMutation,
@@ -105,22 +134,23 @@ function renderGsmPage() {
 describe("GsmPage", () => {
   afterEach(() => {
     cleanup();
+    importMutateAsync.mockReset();
   });
 
   it("renders title and three tabs", () => {
     renderGsmPage();
     expect(screen.getByRole("heading", { name: "ГСМ" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Период" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Обзор" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Транзакции" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Справочники" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Период" })).not.toBeInTheDocument();
   });
 
-  it("shows period review screen by default and switches to registries with loaded data", () => {
+  it("shows fleet overview by default and switches to registries with loaded data", () => {
     renderGsmPage();
 
-    expect(screen.getByRole("heading", { name: "Период × машина" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Сгенерировать" })).toBeInTheDocument();
-    expect(screen.getByText(/Выберите машину и период/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Обзор флота" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Сгенерировать выбранные" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Справочники" }));
 
@@ -138,5 +168,43 @@ describe("GsmPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Импорт транзакций" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText(/Перетащите \.xls сюда/i)).toBeInTheDocument();
+  });
+
+  it("shows human-readable last-import banner after successful import", async () => {
+    importMutateAsync.mockResolvedValue({
+      rows_inserted: 0,
+      rows_duplicate: 3,
+      files: [
+        {
+          filename: "a.xls",
+          rows_total: 3,
+          rows_inserted: 0,
+          rows_duplicate: 3,
+          sum_liters: 10,
+          sum_amount: 100,
+          footer_liters: 10,
+          footer_amount: 100,
+          warnings: [],
+          unmatched_cards: [],
+        },
+      ],
+    });
+
+    renderGsmPage();
+    fireEvent.click(screen.getByRole("tab", { name: "Транзакции" }));
+    fireEvent.click(screen.getByRole("button", { name: "Импорт транзакций" }));
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "a.xls", { type: "application/vnd.ms-excel" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Импортировать \(1\)/ }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Последний импорт: Новых операций нет: все 3 уже есть в журнале/),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/дубл|вставлен/i)).not.toBeInTheDocument();
   });
 });

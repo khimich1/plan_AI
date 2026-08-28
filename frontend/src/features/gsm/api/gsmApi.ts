@@ -7,21 +7,29 @@ import type {
   GsmCard,
   GsmDriver,
   GsmRoute,
+  GsmSeasonMode,
   GsmSettings,
   GsmStation,
   GsmVehicle,
   GsmWaybill,
+  OverviewParams,
   StationCreatePayload,
   StationPatchPayload,
   TransactionImportReport,
+  TransactionListParams,
+  TransactionListResponse,
   VehicleCreatePayload,
   VehiclePatchPayload,
+  WaybillBulkGeneratePayload,
   WaybillCreatePayload,
   WaybillExportPayload,
   WaybillGeneratePayload,
   WaybillGenerateResult,
   WaybillListParams,
   WaybillPatchPayload,
+  UsageReportPayload,
+  BulkGenerateResult,
+  FleetOverviewRow,
 } from "@/features/gsm/types/gsm";
 
 const BASE = "/api/v1/gsm";
@@ -93,6 +101,13 @@ export const gsmApi = {
   putSettings: (payload: GsmSettings) =>
     httpClient.put<GsmSettings>(`${BASE}/settings`, JSON.stringify(payload), JSON_HEADERS),
 
+  updateSeason: (mode: GsmSeasonMode, date: string) =>
+    httpClient.post<GsmSettings>(
+      `${BASE}/settings/season`,
+      JSON.stringify({ mode, date }),
+      JSON_HEADERS,
+    ),
+
   importTransactions: (files: File[]) => {
     const form = new FormData();
     for (const file of files) {
@@ -101,18 +116,44 @@ export const gsmApi = {
     return httpClient.post<TransactionImportReport>(`${BASE}/transactions/import`, form);
   },
 
-  listWaybills: (params: WaybillListParams) => {
+  listTransactions: (params: TransactionListParams) => {
     const search = new URLSearchParams({
-      vehicle_id: String(params.vehicleId),
       from: params.periodFrom,
       to: params.periodTo,
     });
+    if (params.vehicleId != null) search.set("vehicle_id", String(params.vehicleId));
+    if (params.serviceType) search.set("service_type", params.serviceType);
+    return httpClient.get<TransactionListResponse>(`${BASE}/transactions?${search.toString()}`);
+  },
+
+  getOverview: (params: OverviewParams) => {
+    const search = new URLSearchParams({
+      from: params.periodFrom,
+      to: params.periodTo,
+    });
+    return httpClient.get<FleetOverviewRow[]>(
+      `${BASE}/overview?${search.toString()}`,
+    );
+  },
+
+  listWaybills: (params: WaybillListParams) => {
+    const search = new URLSearchParams();
+    if (params.vehicleId != null) search.set("vehicle_id", String(params.vehicleId));
+    search.set("from", params.periodFrom);
+    search.set("to", params.periodTo);
     return httpClient.get<GsmWaybill[]>(`${BASE}/waybills?${search.toString()}`);
   },
 
   generateWaybills: (payload: WaybillGeneratePayload) =>
     httpClient.post<WaybillGenerateResult>(
       `${BASE}/waybills/generate`,
+      JSON.stringify(payload),
+      JSON_HEADERS,
+    ),
+
+  generateWaybillsBulk: (payload: WaybillBulkGeneratePayload) =>
+    httpClient.post<BulkGenerateResult>(
+      `${BASE}/waybills/generate-bulk`,
       JSON.stringify(payload),
       JSON_HEADERS,
     ),
@@ -136,6 +177,17 @@ export const gsmApi = {
     httpClient.download(
       `${BASE}/waybills/export`,
       `gsm_waybills_${payload.from}_${payload.to}.zip`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: JSON_HEADERS,
+      },
+    ),
+
+  downloadUsageReport: (payload: UsageReportPayload) =>
+    httpClient.download(
+      `${BASE}/report/usage`,
+      `gsm_usage_report_${payload.period_from}_${payload.period_to}.zip`,
       {
         method: "POST",
         body: JSON.stringify(payload),

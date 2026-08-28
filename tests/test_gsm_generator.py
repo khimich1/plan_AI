@@ -20,8 +20,9 @@ D5  Corridor ``[0…tank]`` every day; before issue ``Q`` require
     ``fuel_start ≤ tank − Q`` (retro burn-in); if impossible → draft day
     with ``manual_intervention`` in ``problematic_days`` (period continues;
     ``unsolvable`` stays None for balance/headroom/corridor).
-D6  Season from ``winter_start`` (not calendar auto): date ≥ winter_start
-    → ``norm_winter``, else ``norm_summer``.
+D6  Season from manual ``season_switches`` journal (not calendar auto):
+    mode(day) = mode of the latest switch ≤ day (default summer) →
+    ``norm_winter`` iff mode is winter, else ``norm_summer``.
 D12 New station → min ``крюк_км``; hook > ``hook_threshold_km`` (default 13)
     → warning ``hook_above_threshold``.
 
@@ -30,7 +31,8 @@ Public surface pinned by this file
 ``core.gsm.generator``
     ``LibraryRoute`` — frozen library entry:
         ``route_id, addr_a, addr_b, km, frequency, typical_station_ids``,
-        optional ``point_a`` / ``point_b`` (``GeoPoint``) for direction sort.
+        ``vehicle_id`` (default 0), optional ``point_a`` / ``point_b``
+        (``GeoPoint``) for direction sort.
     ``UnsolvableInfo`` — kept for compatibility (no longer filled for
         balance/headroom/corridor).
     ``ProblematicDay`` — local unsolvable anchor: ``date``, ``reason``,
@@ -41,10 +43,11 @@ Public surface pinned by this file
         ``warnings: tuple[str, ...]``  (period-level, deduped codes)
         ``problematic_days: tuple[ProblematicDay, ...]``
     ``generate(*, transactions, routes, hooks, driver_id,
-               tank_volume_liters, norm_summer, norm_winter, winter_start,
+               tank_volume_liters, norm_summer, norm_winter, season_switches,
                fuel_start, odometer_start, hook_threshold_km=13.0,
                holidays=..., extra_workdays=..., seed=0,
-               max_daily_km=700, station_coords=None) -> GenerateResult``
+               max_daily_km=700, station_coords=None,
+               own_vehicle_id=0) -> GenerateResult``
         ``hooks`` maps ``(route_id, station_id) -> крюк_км`` (precomputed;
         no OSRM/I/O in core). Burn-in candidates are routes already within
         ``max_daily_km`` (``2×km ≤ cap``), ordered by frequency desc (ties:
@@ -57,6 +60,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import inspect
 from datetime import date, datetime
 from pathlib import Path
 
@@ -68,6 +72,10 @@ from core.gsm.generator import (
     LibraryRoute,
     ProblematicDay,
     UnsolvableInfo,
+    _city_key,
+    _find_home_twin,
+    _is_home_base,
+    _orient_home_round_trip,
     generate,
 )
 from core.gsm.geo import GeoPoint
@@ -116,6 +124,7 @@ def _route(
     addr_b: str = "B",
     point_a: GeoPoint | None = None,
     point_b: GeoPoint | None = None,
+    vehicle_id: int = 0,
 ) -> LibraryRoute:
     return LibraryRoute(
         route_id=route_id,
@@ -124,6 +133,7 @@ def _route(
         km=km,
         frequency=frequency,
         typical_station_ids=typical_station_ids,
+        vehicle_id=vehicle_id,
         point_a=point_a,
         point_b=point_b,
     )
@@ -146,14 +156,19 @@ def _day_by_date(result: GenerateResult, day: date) -> WaybillDay:
     return matches[0]
 
 
-def _norm_for(day: date, winter_start: date) -> float:
-    return NORM_WINTER if day >= winter_start else NORM_SUMMER
+def _norm_for(day: date, switches: tuple[tuple[date, str], ...]) -> float:
+    mode = "summer"
+    for switch_date, switch_mode in switches:
+        if switch_date > day:
+            break
+        mode = switch_mode
+    return NORM_WINTER if mode == "winter" else NORM_SUMMER
 
 
-def _period_burn(result: GenerateResult, winter_start: date) -> float:
+def _period_burn(result: GenerateResult, switches: tuple[tuple[date, str], ...]) -> float:
     total = 0.0
     for day in result.days:
-        total += burn_for_km(day.tank.km, _norm_for(day.date, winter_start))
+        total += burn_for_km(day.tank.km, _norm_for(day.date, switches))
     return total
 
 
@@ -191,7 +206,7 @@ def test_generate_anchors_fuel_and_wash_with_station_route() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=36.0,
         odometer_start=100_000,
         holidays=frozenset(),
@@ -232,7 +247,7 @@ def test_generate_multiple_txs_same_day_single_waybill() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=10.0,
         odometer_start=50_000,
         holidays=frozenset(),
@@ -271,7 +286,7 @@ def test_burn_in_skips_weekends_and_injected_holidays() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=22.0,
         odometer_start=80_000,
         holidays=frozenset({holiday}),
@@ -307,7 +322,7 @@ def test_weekend_transaction_is_anchor_with_weekend_anchor_warning() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=10_000,
         holidays=frozenset(),
@@ -334,7 +349,7 @@ def test_holiday_transaction_gets_weekend_anchor_warning() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=18.0,
         odometer_start=20_000,
         holidays=frozenset({wed}),
@@ -354,7 +369,7 @@ def test_period_fuel_identity_and_daily_corridor() -> None:
     """Σ issued − Σ burn = fuel_end_last − fuel_start_first; corridor every day."""
     fuel_day = date(2025, 4, 7)
     wash_day = date(2025, 4, 11)
-    winter_start = date(2025, 11, 1)
+    switches = ((date(2025, 11, 1), "winter"),)
     fuel_start = 32.0
 
     routes = (
@@ -374,7 +389,7 @@ def test_period_fuel_identity_and_daily_corridor() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=winter_start,
+        season_switches=switches,
         fuel_start=fuel_start,
         odometer_start=70_000,
         holidays=frozenset(),
@@ -398,7 +413,7 @@ def test_period_fuel_identity_and_daily_corridor() -> None:
         assert cur.tank.odometer_start == prev.tank.odometer_end
 
     issued = _period_issued(result)
-    burned = _period_burn(result, winter_start)
+    burned = _period_burn(result, switches)
     delta = ordered[-1].tank.fuel_end - fuel_start
     assert issued - burned == pytest.approx(delta, abs=0.01)
 
@@ -429,7 +444,7 @@ def test_retro_burn_creates_headroom_before_large_fuel() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=90_000,
         holidays=frozenset(),
@@ -470,7 +485,7 @@ def test_unsolvable_when_no_weekdays_for_headroom() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -491,15 +506,15 @@ def test_unsolvable_when_no_weekdays_for_headroom() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. Season via winter_start (D6)
+# 5. Season via manual season_switches (D6)
 # ---------------------------------------------------------------------------
 
 
-def test_season_switches_at_winter_start() -> None:
-    """Same km: date < winter_start uses summer norm; ≥ uses winter (D6)."""
+def test_season_switches_at_switch_date() -> None:
+    """Same km: date before winter switch uses summer norm; on/after → winter."""
     summer_day = date(2025, 10, 31)  # Friday
     winter_day = date(2025, 11, 3)  # Monday
-    winter_start = date(2025, 11, 1)
+    switches = ((date(2025, 11, 1), "winter"),)
     km = 120
     routes = (
         _route(1, km=km, frequency=100, typical_station_ids=(10,)),
@@ -519,7 +534,7 @@ def test_season_switches_at_winter_start() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=winter_start,
+        season_switches=switches,
         fuel_start=50.0,
         odometer_start=30_000,
         holidays=frozenset(),
@@ -569,7 +584,7 @@ def test_hook_above_threshold_warning_for_new_station() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=15.0,
         odometer_start=40_000,
         hook_threshold_km=13.0,
@@ -603,7 +618,7 @@ def test_hook_within_threshold_no_warning() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=15.0,
         odometer_start=40_000,
         hook_threshold_km=13.0,
@@ -639,7 +654,7 @@ def test_generate_is_deterministic() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=25.0,
         odometer_start=55_000,
         holidays=frozenset({date(2025, 4, 10)}),
@@ -684,6 +699,11 @@ def test_generate_result_api_fields() -> None:
 
     fields = {f.name for f in dataclasses.fields(GenerateResult)}
     assert fields == {"days", "unsolvable", "warnings", "problematic_days"}
+
+    route_fields = {f.name for f in dataclasses.fields(LibraryRoute)}
+    assert "vehicle_id" in route_fields
+    vehicle_id_field = next(f for f in dataclasses.fields(LibraryRoute) if f.name == "vehicle_id")
+    assert vehicle_id_field.default == 0
 
     problem_fields = {f.name for f in dataclasses.fields(ProblematicDay)}
     for required in (
@@ -754,7 +774,7 @@ def test_anchor_day_is_round_trip_two_legs() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=10_000,
         holidays=frozenset(),
@@ -784,7 +804,7 @@ def test_burn_in_day_is_round_trip_two_legs() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=90_000,
         holidays=frozenset(),
@@ -836,7 +856,7 @@ def test_lookahead_dense_anchors_picks_longer_route() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -875,7 +895,7 @@ def test_lookahead_skips_when_burn_needed_non_positive() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=30.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -903,7 +923,7 @@ def test_lookahead_rejects_route_over_max_daily_km() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -942,7 +962,7 @@ def test_lookahead_falls_back_to_full_library_when_group_too_short() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -979,7 +999,7 @@ def test_lookahead_keeps_group_when_typical_already_sufficient() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -1011,7 +1031,7 @@ def test_lookahead_manual_when_library_cannot_solve() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -1068,7 +1088,7 @@ def _direction_generate(
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2026, 11, 1),
+        season_switches=((date(2026, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -1210,7 +1230,7 @@ def test_manual_intervention_keeps_later_anchors() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -1246,7 +1266,7 @@ def test_manual_problematic_days_payload() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=60_000,
         holidays=frozenset(),
@@ -1283,7 +1303,7 @@ def test_manual_day_carries_actual_fuel_to_next() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=50.0,
         odometer_start=10_000,
         holidays=frozenset(),
@@ -1314,7 +1334,7 @@ def test_manual_clean_period_has_empty_problematic_days() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2025, 11, 1),
+        season_switches=((date(2025, 11, 1), "winter"),),
         fuel_start=20.0,
         odometer_start=10_000,
         holidays=frozenset(),
@@ -1365,7 +1385,7 @@ def test_short_burn_weekday_keeps_typical_anchor() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2026, 11, 1),
+        season_switches=((date(2026, 11, 1), "winter"),),
         fuel_start=8.0,
         odometer_start=128_000,
         holidays=frozenset(),
@@ -1406,7 +1426,7 @@ def test_burn_that_would_go_negative_is_never_chosen() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2026, 11, 1),
+        season_switches=((date(2026, 11, 1), "winter"),),
         fuel_start=8.0,
         odometer_start=128_000,
         holidays=frozenset(),
@@ -1437,7 +1457,7 @@ def test_burn_in_headroom_picks_min_sufficient_km_not_frequency() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2026, 11, 1),
+        season_switches=((date(2026, 11, 1), "winter"),),
         fuel_start=8.0,
         odometer_start=128_000,
         holidays=frozenset(),
@@ -1472,7 +1492,7 @@ def test_burn_max_safe_until_headroom_then_min_sufficient() -> None:
         tank_volume_liters=TANK,
         norm_summer=NORM_SUMMER,
         norm_winter=NORM_WINTER,
-        winter_start=date(2026, 11, 1),
+        season_switches=((date(2026, 11, 1), "winter"),),
         fuel_start=10.0,
         odometer_start=90_000,
         holidays=frozenset(),
@@ -1488,3 +1508,744 @@ def test_burn_max_safe_until_headroom_then_min_sufficient() -> None:
     assert wed_wb.route.km == 45
     assert wed_wb.tank.fuel_end <= (TANK - 40.0) + 1e-9
     assert wed_wb.tank.fuel_end >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# 14. Tank corridor filter + wash prefers short (anchor-corridor spec)
+# ---------------------------------------------------------------------------
+
+_PALISADE_TANK = 70.0
+_PALISADE_NORM = 14.5
+_PALISADE_FUEL_START = 41.13
+
+
+def test_two_washes_second_day_picks_short_route_in_corridor() -> None:
+    """Palisade 03.08+04.08: second wash takes 6 km (12 km daily), tank ~11.84.
+
+    03.08 follows the frequent 95 km typical route (tank → 13.58). On 04.08 the
+    95 km round goes negative; corridor keeps 6 km, fuel_end ≈ 11.84, no
+    ``manual_intervention``.
+    """
+    wash_1 = date(2026, 8, 3)  # Monday
+    wash_2 = date(2026, 8, 4)  # Tuesday
+    station_long = 10
+    station_wash = 20
+    routes = (
+        _route(1, km=6, frequency=5, typical_station_ids=(station_wash,)),
+        _route(2, km=95, frequency=39, typical_station_ids=(station_long, station_wash)),
+    )
+    result = generate(
+        transactions=(
+            _tx(wash_1, service_type="wash", qty_liters=None, station_id=station_long),
+            _tx(wash_2, service_type="wash", qty_liters=None, station_id=station_wash),
+        ),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=_PALISADE_TANK,
+        norm_summer=_PALISADE_NORM,
+        norm_winter=_PALISADE_NORM,
+        season_switches=((date(2026, 11, 1), "winter"),),
+        fuel_start=_PALISADE_FUEL_START,
+        odometer_start=80_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+    )
+    assert result.unsolvable is None
+    day2 = _day_by_date(result, wash_2)
+    assert day2.route.km == 6
+    assert day2.tank.km == 12
+    assert day2.tank.fuel_end == pytest.approx(11.84, abs=0.01)
+    assert day2.tank.fuel_end >= 0.0
+    assert "manual_intervention" not in day2.warnings
+    assert all(p.date != wash_2 for p in result.problematic_days)
+
+
+def test_wash_lookahead_replaces_short_route_when_next_refill_overflows() -> None:
+    """Wash prefers min-km, but lookahead lengthens when Q_next would overflow.
+
+    Wash 04.08 at 60 L, next fill 05.08 +50 L, tank 70 L, norm 14.5:
+    short 6 km would leave ~58.26; 58.26+50 exceeds 70, so the day is replaced
+    by a route long enough for the existing lookahead burn-off.
+    """
+    wash_day = date(2026, 8, 4)  # Tuesday
+    fuel_day = date(2026, 8, 5)  # Wednesday — no free weekday between
+    station = 10
+    # Lookahead km_needed uses fuel_before+Q (40 L / 14.5 × 100 ≈ 275.86 daily),
+    # so the long typical must be ≥ 138 km shoulder. 140 km daily 280.
+    routes = (
+        _route(1, km=6, frequency=5, typical_station_ids=(station,)),
+        _route(2, km=140, frequency=39, typical_station_ids=(station,)),
+    )
+    result = generate(
+        transactions=(
+            _tx(wash_day, service_type="wash", qty_liters=None, station_id=station),
+            _tx(fuel_day, qty_liters=50.0, station_id=station),
+        ),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=_PALISADE_TANK,
+        norm_summer=_PALISADE_NORM,
+        norm_winter=_PALISADE_NORM,
+        season_switches=((date(2026, 11, 1), "winter"),),
+        fuel_start=60.0,
+        odometer_start=80_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+    )
+    assert result.unsolvable is None
+    wash_wb = _day_by_date(result, wash_day)
+    assert wash_wb.route.km == 140
+    assert wash_wb.route.route_id == 2
+    assert wash_wb.tank.km == 280
+    assert "balance_route" in wash_wb.warnings
+    assert "manual_intervention" not in wash_wb.warnings
+    fuel_wb = _day_by_date(result, fuel_day)
+    assert fuel_wb.tank.fuel_start + 50.0 <= _PALISADE_TANK + 1e-9
+    assert "manual_intervention" not in fuel_wb.warnings
+
+
+# ---------------------------------------------------------------------------
+# T1: fleet pool helpers — city key, home base, vehicle_id / own_vehicle_id
+# ---------------------------------------------------------------------------
+
+
+def test_city_key_sergiev_posad_matches_compound_name() -> None:
+    from_addr = _city_key("г.Сергиев Посад, ул.Маслиева, д.1")
+    from_city = _city_key("Сергиев Посад")
+    assert from_addr == from_city
+    assert from_addr == "сергиев посад"
+
+
+def test_city_key_compound_and_g_prefix_cities() -> None:
+    assert _city_key("г.Переславль-Залесский, ул.Ленина") == "переславль залесский"
+    assert _city_key("Переславль Залесский") == "переславль залесский"
+    assert _city_key("г.Вологда, ул.Мира") == "вологда"
+    assert _city_key("г. Мантурово, ул.Красная") == "мантурово"
+    assert _city_key("г.Нижний Новгород, ул.Горького") == "нижний новгород"
+
+
+def test_is_home_base_kuznetskaya() -> None:
+    assert _is_home_base("ул. Кузнецкая, д.18Б") is True
+    assert _is_home_base("ул.Кузнецкая, д.18Б") is True
+    assert _is_home_base("улица Кузнецкая, дом 18Б") is True
+    assert _is_home_base("ул.Кузнецкая") is True
+    assert _is_home_base("г.Вологда, ул.Мира, д.10") is False
+
+
+def test_library_route_vehicle_id_defaults_to_zero() -> None:
+    route = LibraryRoute(
+        route_id=1,
+        addr_a="A",
+        addr_b="B",
+        km=10,
+        frequency=1,
+        typical_station_ids=(),
+    )
+    assert route.vehicle_id == 0
+
+
+def test_generate_own_vehicle_id_defaults_to_zero() -> None:
+    param = inspect.signature(generate).parameters["own_vehicle_id"]
+    assert param.default == 0
+
+
+def test_generate_without_own_vehicle_id_treats_routes_as_own() -> None:
+    """Legacy fixtures omit vehicle_id; default 0 keeps every route 'own'."""
+    fuel_day = date(2025, 4, 7)
+    result = generate(
+        transactions=(_tx(fuel_day),),
+        routes=(_route(1, km=100, typical_station_ids=(10,)),),
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=TANK,
+        norm_summer=NORM_SUMMER,
+        norm_winter=NORM_WINTER,
+        season_switches=(),
+        fuel_start=40.0,
+        odometer_start=10_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+    )
+    assert result.unsolvable is None
+    assert len(result.days) == 1
+    assert result.days[0].route.route_id == 1
+
+
+# ---------------------------------------------------------------------------
+# T2: fleet-pool corridor cascade, own-vs-foreign rank, persist without donor id
+# ---------------------------------------------------------------------------
+
+_HOME = "Кострома, ул. Кузнецкая, д.18Б"
+_SERGIEV = "г.Сергиев Посад, ул.Маслиева, д.1"
+_VOLOGDA = "г.Вологда, ул.Мира"
+_MANTUROVO = "г. Мантурово, ул.Красная"
+
+
+def test_wash_typical_too_long_picks_own_short_from_fleet() -> None:
+    """Wash: typical group only 95 km (does not fit), own 6 km in fleet → 12 km.
+
+    Monjaro-shaped tank: 95 km round-trip would go negative; fleet short route
+    keeps the day in corridor without ``manual_intervention``.
+    """
+    wash_day = date(2026, 7, 1)  # Wednesday
+    station = 10
+    own_id = 2
+    routes = (
+        _route(
+            1,
+            km=95,
+            frequency=40,
+            typical_station_ids=(station,),
+            addr_a=_HOME,
+            addr_b=_MANTUROVO,
+            vehicle_id=own_id,
+        ),
+        _route(
+            2,
+            km=6,
+            frequency=5,
+            typical_station_ids=(),
+            addr_a=_HOME,
+            addr_b=_HOME,
+            vehicle_id=own_id,
+        ),
+    )
+    result = generate(
+        transactions=(_tx(wash_day, service_type="wash", qty_liters=None, station_id=station),),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=60.0,
+        norm_summer=9.5,
+        norm_winter=9.5,
+        season_switches=(),
+        fuel_start=7.21,
+        odometer_start=50_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        own_vehicle_id=own_id,
+    )
+    assert result.unsolvable is None
+    day = _day_by_date(result, wash_day)
+    assert day.route.km == 6
+    assert day.tank.km == 12
+    assert day.tank.fuel_end >= 0.0
+    assert "manual_intervention" not in day.warnings
+    assert all(p.date != wash_day for p in result.problematic_days)
+
+
+def test_own_long_outside_corridor_borrows_foreign_kuznetskaya() -> None:
+    """Own 280 is outside corridor; foreign 265 Kuznetskaya fits → 530 km, borrowed."""
+    fuel_day = date(2026, 7, 27)  # Monday
+    station = 10
+    own_id = 4
+    donor_id = 3
+    routes = (
+        _route(
+            40,
+            km=280,
+            frequency=80,
+            typical_station_ids=(station,),
+            addr_a=_HOME,
+            addr_b=_VOLOGDA,
+            vehicle_id=own_id,
+        ),
+        _route(
+            30,
+            km=265,
+            frequency=20,
+            typical_station_ids=(),
+            addr_a=_HOME,
+            addr_b=_SERGIEV,
+            vehicle_id=donor_id,
+        ),
+    )
+    result = generate(
+        transactions=(_tx(fuel_day, qty_liters=50.0, station_id=station),),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=9.4,
+        season_switches=(),
+        fuel_start=1.43,
+        odometer_start=90_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        own_vehicle_id=own_id,
+    )
+    assert result.unsolvable is None
+    day = _day_by_date(result, fuel_day)
+    assert day.route.km == 265
+    assert day.tank.km == 530
+    assert day.tank.fuel_end >= 0.0
+    assert "borrowed_route" in day.warnings
+    assert "manual_intervention" not in day.warnings
+    assert day.route.route_id is None
+    assert all(leg.route_id is None for leg in day.legs)
+    assert day.legs[0].km == 265
+    assert day.legs[0].addr_a == _HOME
+    assert day.legs[0].addr_b == _SERGIEV
+
+
+def test_own_and_foreign_same_km_picks_own_route_id() -> None:
+    """Own 6 km and foreign 6 km both in corridor → own wins, route_id persisted."""
+    wash_day = date(2026, 7, 2)  # Thursday
+    station = 10
+    own_id = 2
+    own_route_id = 20
+    foreign_route_id = 1  # lower id so min(route_id) would wrongly pick donor
+    routes = (
+        _route(
+            foreign_route_id,
+            km=6,
+            frequency=90,
+            typical_station_ids=(station,),
+            addr_a=_HOME,
+            addr_b=_HOME,
+            vehicle_id=1,
+        ),
+        _route(
+            own_route_id,
+            km=6,
+            frequency=5,
+            typical_station_ids=(station,),
+            addr_a=_HOME,
+            addr_b=_HOME,
+            vehicle_id=own_id,
+        ),
+    )
+    result = generate(
+        transactions=(_tx(wash_day, service_type="wash", qty_liters=None, station_id=station),),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=60.0,
+        norm_summer=9.5,
+        norm_winter=9.5,
+        season_switches=(),
+        fuel_start=20.0,
+        odometer_start=50_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        own_vehicle_id=own_id,
+    )
+    assert result.unsolvable is None
+    day = _day_by_date(result, wash_day)
+    assert day.route.km == 6
+    assert day.route.route_id == own_route_id
+    assert day.route.route_id is not None
+    assert all(leg.route_id == own_route_id for leg in day.legs)
+    assert "borrowed_route" not in day.warnings
+
+
+def test_lookahead_does_not_pick_280_when_265_in_corridor() -> None:
+    """Lookahead window ~494–547: 265 (530) is in S; must not pick 280 (560)."""
+    friday = date(2026, 7, 24)
+    monday = date(2026, 7, 27)
+    station = 10
+    own_id = 4
+    routes = (
+        _route(
+            40,
+            km=280,
+            frequency=80,
+            typical_station_ids=(station,),
+            addr_a=_HOME,
+            addr_b=_VOLOGDA,
+            vehicle_id=own_id,
+        ),
+        _route(
+            30,
+            km=265,
+            frequency=20,
+            typical_station_ids=(),
+            addr_a=_HOME,
+            addr_b=_SERGIEV,
+            vehicle_id=3,
+        ),
+    )
+    result = generate(
+        transactions=(
+            _tx(friday, qty_liters=50.0, station_id=station),
+            _tx(monday, qty_liters=50.0, station_id=station),
+        ),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=9.4,
+        season_switches=(),
+        fuel_start=1.43,
+        odometer_start=90_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        own_vehicle_id=own_id,
+    )
+    assert result.unsolvable is None
+    friday_wb = _day_by_date(result, friday)
+    assert friday_wb.route.km == 265
+    assert friday_wb.tank.km == 530
+    assert friday_wb.tank.km != 560
+    assert friday_wb.tank.fuel_end >= 0.0
+    assert "borrowed_route" in friday_wb.warnings
+    assert "manual_intervention" not in friday_wb.warnings
+
+
+def test_burn_in_borrows_foreign_short_when_own_outside_corridor() -> None:
+    """Burn-in: own 95 km goes negative; foreign 6 km in corridor → 12 km, borrowed."""
+    wednesday = date(2026, 5, 6)
+    thursday = date(2026, 5, 7)
+    friday = date(2026, 5, 8)
+    station = 10
+    own_id = 2
+    donor_route_id = 6
+    routes = (
+        _route(
+            1,
+            km=95,
+            frequency=100,
+            typical_station_ids=(station,),
+            addr_a=_HOME,
+            addr_b=_MANTUROVO,
+            vehicle_id=own_id,
+        ),
+        _route(
+            donor_route_id,
+            km=6,
+            frequency=90,
+            typical_station_ids=(),
+            addr_a=_HOME,
+            addr_b=_HOME,
+            vehicle_id=3,
+        ),
+    )
+    result = generate(
+        transactions=(
+            _tx(wednesday, qty_liters=30.0, station_id=station),
+            _tx(friday, qty_liters=40.0, station_id=station),
+        ),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=TANK,
+        norm_summer=NORM_SUMMER,
+        norm_winter=NORM_WINTER,
+        season_switches=((date(2026, 11, 1), "winter"),),
+        fuel_start=3.0,
+        odometer_start=128_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        own_vehicle_id=own_id,
+    )
+    assert result.unsolvable is None
+    thu_wb = _day_by_date(result, thursday)
+    assert thu_wb.tank.fuel_issued == pytest.approx(0.0)
+    assert thu_wb.route.km == 6
+    assert thu_wb.tank.km == 12
+    assert thu_wb.tank.fuel_end >= 0.0
+    assert "borrowed_route" in thu_wb.warnings
+    assert thu_wb.route.route_id is None
+    assert all(leg.route_id is None for leg in thu_wb.legs)
+
+
+# ---------------------------------------------------------------------------
+# Home-oriented round-trip: twin lookup + emit orientation
+# ---------------------------------------------------------------------------
+
+_VLADIMIR = "г.Владимир, ул.Добросельская"
+
+
+def test_find_home_twin_swapped_endpoints_same_vehicle_km() -> None:
+    chosen = _route(59, km=225, addr_a=_VLADIMIR, addr_b=_HOME, vehicle_id=4)
+    twin = _route(64, km=225, addr_a=_HOME, addr_b=_VLADIMIR, vehicle_id=4)
+    catalog = (
+        chosen,
+        twin,
+        _route(70, km=225, addr_a=_HOME, addr_b=_VLADIMIR, vehicle_id=3),
+        _route(80, km=280, addr_a=_HOME, addr_b=_VLADIMIR, vehicle_id=4),
+    )
+    found = _find_home_twin(chosen, catalog)
+    assert found is twin
+
+
+def test_find_home_twin_picks_min_route_id() -> None:
+    chosen = _route(59, km=225, addr_a=_VLADIMIR, addr_b=_HOME, vehicle_id=4)
+    catalog = (
+        chosen,
+        _route(80, km=225, addr_a=_HOME, addr_b=_VLADIMIR, vehicle_id=4),
+        _route(64, km=225, addr_a=_HOME, addr_b=_VLADIMIR, vehicle_id=4),
+    )
+    found = _find_home_twin(chosen, catalog)
+    assert found is not None
+    assert found.route_id == 64
+
+
+def test_find_home_twin_does_not_return_chosen() -> None:
+    chosen = _route(59, km=225, addr_a=_VLADIMIR, addr_b=_HOME, vehicle_id=4)
+    assert _find_home_twin(chosen, (chosen,)) is None
+
+
+def test_orient_home_round_trip_object_first_with_twin() -> None:
+    chosen = _route(59, km=225, addr_a=_VLADIMIR, addr_b=_HOME, vehicle_id=4)
+    twin = _route(
+        64,
+        km=225,
+        addr_a=_HOME,
+        addr_b="г.владимир, ул.Добросельская",
+        vehicle_id=4,
+    )
+    oriented = _orient_home_round_trip(chosen, catalog=(chosen, twin), own_vehicle_id=4)
+    assert _is_home_base(oriented.addr_a)
+    assert oriented.addr_b == _VLADIMIR
+    assert oriented.route_id == 64
+    assert oriented.km == 225
+    assert oriented.vehicle_id == 4
+
+
+def test_orient_home_round_trip_object_first_without_twin() -> None:
+    chosen = _route(59, km=225, addr_a=_VLADIMIR, addr_b=_HOME, vehicle_id=4)
+    oriented = _orient_home_round_trip(chosen, catalog=(chosen,), own_vehicle_id=4)
+    assert _is_home_base(oriented.addr_a)
+    assert oriented.addr_b == _VLADIMIR
+    assert oriented.route_id == 59
+
+
+def test_orient_home_round_trip_borrowed_keeps_library_route_id() -> None:
+    chosen = _route(30, km=265, addr_a=_SERGIEV, addr_b=_HOME, vehicle_id=3)
+    twin = _route(31, km=265, addr_a=_HOME, addr_b=_SERGIEV, vehicle_id=3)
+    oriented = _orient_home_round_trip(
+        chosen, catalog=(chosen, twin), own_vehicle_id=4
+    )
+    assert _is_home_base(oriented.addr_a)
+    assert oriented.addr_b == _SERGIEV
+    assert oriented.route_id == 30
+    assert oriented.vehicle_id == 3
+
+
+def test_orient_home_round_trip_home_first_is_identity() -> None:
+    chosen = _route(64, km=225, addr_a=_HOME, addr_b=_VLADIMIR, vehicle_id=4)
+    twin = _route(59, km=225, addr_a=_VLADIMIR, addr_b=_HOME, vehicle_id=4)
+    oriented = _orient_home_round_trip(chosen, catalog=(chosen, twin), own_vehicle_id=4)
+    assert oriented is chosen
+
+
+def test_orient_home_round_trip_both_home_is_identity() -> None:
+    chosen = _route(2, km=6, addr_a=_HOME, addr_b=_HOME, vehicle_id=2)
+    assert _orient_home_round_trip(chosen, catalog=(chosen,), own_vehicle_id=2) is chosen
+
+
+def test_orient_home_round_trip_neither_home_is_identity() -> None:
+    chosen = _route(1, km=190, addr_a="A", addr_b="B")
+    assert _orient_home_round_trip(chosen, catalog=(chosen,), own_vehicle_id=0) is chosen
+
+
+def test_generate_orients_own_object_first_to_twin_route_id() -> None:
+    fuel_day = date(2026, 7, 13)  # Monday
+    station = 10
+    own_id = 4
+    routes = (
+        _route(
+            59,
+            km=225,
+            frequency=80,
+            typical_station_ids=(station,),
+            addr_a=_VLADIMIR,
+            addr_b=_HOME,
+            vehicle_id=own_id,
+        ),
+        _route(
+            64,
+            km=225,
+            frequency=20,
+            typical_station_ids=(),
+            addr_a=_HOME,
+            addr_b=_VLADIMIR,
+            vehicle_id=own_id,
+        ),
+    )
+    result = generate(
+        transactions=(_tx(fuel_day, qty_liters=40.0, station_id=station),),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=TANK,
+        norm_summer=NORM_SUMMER,
+        norm_winter=NORM_WINTER,
+        season_switches=(),
+        fuel_start=20.0,
+        odometer_start=10_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        own_vehicle_id=own_id,
+    )
+    assert result.unsolvable is None
+    day = _day_by_date(result, fuel_day)
+    assert day.route.km == 225
+    assert day.tank.km == 450
+    assert _is_home_base(day.legs[0].addr_a)
+    assert day.legs[0].addr_b == _VLADIMIR
+    assert day.legs[0].addr_a == _HOME
+    assert day.route.route_id == 64
+    assert all(leg.route_id == 64 for leg in day.legs)
+    assert "borrowed_route" not in day.warnings
+    assert day.tank.fuel_end == pytest.approx(
+        20.0 + 40.0 - burn_for_km(450, NORM_SUMMER), abs=0.01
+    )
+
+
+def test_generate_orients_object_first_without_twin_keeps_route_id() -> None:
+    fuel_day = date(2026, 7, 13)
+    own_id = 4
+    routes = (
+        _route(
+            59,
+            km=225,
+            frequency=80,
+            typical_station_ids=(10,),
+            addr_a=_VLADIMIR,
+            addr_b=_HOME,
+            vehicle_id=own_id,
+        ),
+    )
+    result = generate(
+        transactions=(_tx(fuel_day, qty_liters=40.0, station_id=10),),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=TANK,
+        norm_summer=NORM_SUMMER,
+        norm_winter=NORM_WINTER,
+        season_switches=(),
+        fuel_start=20.0,
+        odometer_start=10_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        own_vehicle_id=own_id,
+    )
+    day = _day_by_date(result, fuel_day)
+    assert _is_home_base(day.legs[0].addr_a)
+    assert day.legs[0].addr_b == _VLADIMIR
+    assert day.route.route_id == 59
+    assert all(leg.route_id == 59 for leg in day.legs)
+
+
+def test_generate_orients_borrowed_object_first_route_id_none() -> None:
+    fuel_day = date(2026, 7, 27)  # Monday
+    station = 10
+    own_id = 4
+    donor_id = 3
+    routes = (
+        _route(
+            40,
+            km=280,
+            frequency=80,
+            typical_station_ids=(station,),
+            addr_a=_HOME,
+            addr_b=_VOLOGDA,
+            vehicle_id=own_id,
+        ),
+        _route(
+            30,
+            km=265,
+            frequency=20,
+            typical_station_ids=(),
+            addr_a=_SERGIEV,
+            addr_b=_HOME,
+            vehicle_id=donor_id,
+        ),
+        _route(
+            31,
+            km=265,
+            frequency=10,
+            typical_station_ids=(),
+            addr_a=_HOME,
+            addr_b=_SERGIEV,
+            vehicle_id=donor_id,
+        ),
+    )
+    result = generate(
+        transactions=(_tx(fuel_day, qty_liters=50.0, station_id=station),),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=9.4,
+        season_switches=(),
+        fuel_start=1.43,
+        odometer_start=90_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        own_vehicle_id=own_id,
+    )
+    assert result.unsolvable is None
+    day = _day_by_date(result, fuel_day)
+    assert day.route.km == 265
+    assert day.tank.km == 530
+    assert "borrowed_route" in day.warnings
+    assert day.route.route_id is None
+    assert all(leg.route_id is None for leg in day.legs)
+    assert _is_home_base(day.legs[0].addr_a)
+    assert day.legs[0].addr_a == _HOME
+    assert day.legs[0].addr_b == _SERGIEV
+
+
+def test_generate_burn_in_orients_object_first_from_home() -> None:
+    wednesday = date(2026, 5, 6)
+    thursday = date(2026, 5, 7)
+    friday = date(2026, 5, 8)
+    station = 10
+    own_id = 2
+    routes = (
+        _route(
+            1,
+            km=95,
+            frequency=100,
+            typical_station_ids=(station,),
+            addr_a=_HOME,
+            addr_b=_MANTUROVO,
+            vehicle_id=own_id,
+        ),
+        _route(
+            7,
+            km=6,
+            frequency=90,
+            typical_station_ids=(),
+            addr_a=_VOLOGDA,
+            addr_b=_HOME,
+            vehicle_id=own_id,
+        ),
+    )
+    result = generate(
+        transactions=(
+            _tx(wednesday, qty_liters=30.0, station_id=station),
+            _tx(friday, qty_liters=40.0, station_id=station),
+        ),
+        routes=routes,
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=TANK,
+        norm_summer=NORM_SUMMER,
+        norm_winter=NORM_WINTER,
+        season_switches=((date(2026, 11, 1), "winter"),),
+        fuel_start=3.0,
+        odometer_start=128_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        own_vehicle_id=own_id,
+    )
+    assert result.unsolvable is None
+    thu_wb = _day_by_date(result, thursday)
+    assert thu_wb.tank.fuel_issued == pytest.approx(0.0)
+    assert thu_wb.route.km == 6
+    assert thu_wb.tank.km == 12
+    assert _is_home_base(thu_wb.legs[0].addr_a)
+    assert thu_wb.legs[0].addr_a == _HOME
+    assert thu_wb.legs[0].addr_b == _VOLOGDA
+    assert thu_wb.route.route_id == 7
+

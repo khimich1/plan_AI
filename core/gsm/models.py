@@ -32,7 +32,7 @@ class Anchor:
 class RouteRef:
     """Library route reference used on a waybill day."""
 
-    route_id: int
+    route_id: int | None
     addr_a: str
     addr_b: str
     km: int
@@ -42,7 +42,7 @@ class RouteRef:
 class LegPlan:
     """One waybill leg; ``km`` is library (per-leg) distance."""
 
-    route_id: int
+    route_id: int | None
     addr_a: str
     addr_b: str
     km: int

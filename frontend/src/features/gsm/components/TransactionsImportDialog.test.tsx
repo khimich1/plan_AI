@@ -47,6 +47,25 @@ const REPORT: TransactionImportReport = {
   ],
 };
 
+const ALL_DUPLICATE: TransactionImportReport = {
+  rows_inserted: 0,
+  rows_duplicate: 3,
+  files: [
+    {
+      filename: "transactions_excel.xls",
+      rows_total: 3,
+      rows_inserted: 0,
+      rows_duplicate: 3,
+      sum_liters: 115,
+      sum_amount: 9199.98,
+      footer_liters: 115,
+      footer_amount: 9199.98,
+      warnings: [],
+      unmatched_cards: [],
+    },
+  ],
+};
+
 describe("TransactionsImportDialog", () => {
   afterEach(() => {
     cleanup();
@@ -71,14 +90,56 @@ describe("TransactionsImportDialog", () => {
     });
     expect(onImported).toHaveBeenCalledWith(REPORT);
 
-    expect(await screen.findByText(/расхождений по файлам: 1/)).toBeInTheDocument();
+    expect(await screen.findByText(/Расхождение итогов по 1 файлам/)).toBeInTheDocument();
+    expect(screen.getByText(/Добавлено 12 операций/)).toBeInTheDocument();
+    expect(screen.queryByText(/дубл|вставлен/i)).not.toBeInTheDocument();
+
+    expect(screen.getByRole("columnheader", { name: "Прочитано" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Добавлено" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Уже были" })).toBeInTheDocument();
+
     const badRow = screen.getByText("bad.xls").closest("tr") as HTMLElement;
     expect(badRow).toHaveAttribute("data-mismatch", "true");
     expect(within(badRow).getByText(/Расхождение итогов/)).toBeInTheDocument();
     expect(within(badRow).getByText(/Неизвестные карты: 9999/)).toBeInTheDocument();
+    expect(within(badRow).getByText("5")).toBeInTheDocument();
+    expect(within(badRow).getByText("2")).toBeInTheDocument();
+    expect(within(badRow).getByText("1")).toBeInTheDocument();
 
     const okRow = screen.getByText("ok.xls").closest("tr") as HTMLElement;
     expect(okRow).toHaveAttribute("data-mismatch", "false");
+  });
+
+  it("explains all-duplicate import without jargon", async () => {
+    mockImport.mockResolvedValue(ALL_DUPLICATE);
+    render(<TransactionsImportDialog open onClose={() => undefined} />);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["x"], "transactions_excel.xls", { type: "application/vnd.ms-excel" })],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Импортировать \(1\)/ }));
+
+    expect(
+      await screen.findByText(
+        /Новых операций нет: все 3 уже есть в журнале\. Повторная загрузка того же файла ничего не меняет\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/дубл|вставлен/i)).not.toBeInTheDocument();
+
+    const row = screen.getByText("transactions_excel.xls").closest("tr") as HTMLElement;
+    const cells = within(row).getAllByRole("cell");
+    // Файл, Прочитано=3, Добавлено=0, Уже были=3, …
+    expect(cells[1]).toHaveTextContent("3");
+    expect(cells[2]).toHaveTextContent("0");
+    expect(cells[3]).toHaveTextContent("3");
+  });
+
+  it("shows safe-reload hint before import", () => {
+    render(<TransactionsImportDialog open onClose={() => undefined} />);
+    expect(screen.getByText(/Повторная загрузка безопасна/i)).toBeInTheDocument();
   });
 
   it("shows human-readable API error on failed import", async () => {

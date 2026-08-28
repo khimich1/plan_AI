@@ -13,7 +13,9 @@ from app.dependencies.auth import REQUIRE_ACCOUNTING
 from app.dependencies.services import (
     get_gsm_export_service,
     get_gsm_generation_service,
+    get_gsm_overview_service,
     get_gsm_registry_service,
+    get_gsm_report_service,
     get_gsm_transaction_service,
 )
 from app.schemas.gsm import (
@@ -23,17 +25,23 @@ from app.schemas.gsm import (
     DriverCreateRequest,
     DriverOut,
     DriverPatchRequest,
+    FleetOverviewRow,
     GsmSettings,
+    SeasonSwitchRequest,
     StationCreateRequest,
     StationOut,
     StationPatchRequest,
     TransactionImportReport,
+    TransactionListResponse,
     RouteOut,
+    UsageReportRequest,
     VehicleCreateRequest,
     VehicleOut,
     VehiclePatchRequest,
     WaybillCreateRequest,
     WaybillExportRequest,
+    WaybillBulkGenerateRequest,
+    WaybillBulkGenerateResult,
     WaybillGenerateRequest,
     WaybillGenerateResult,
     WaybillOut,
@@ -42,8 +50,10 @@ from app.schemas.gsm import (
 from app.services.commercial_upload_validation import read_upload_file_capped
 from app.services.gsm_export_service import GsmExportError, GsmExportService
 from app.services.gsm_generation_service import GsmGenerationError, GsmGenerationService
+from app.services.gsm_overview_service import GsmOverviewError, GsmOverviewService
 from app.services.gsm_registry_service import GsmRegistryError, GsmRegistryService
-from app.services.gsm_transaction_service import GsmTransactionService
+from app.services.gsm_report_service import GsmReportError, GsmReportService
+from app.services.gsm_transaction_service import GsmTransactionError, GsmTransactionService
 
 router = APIRouter(prefix="/gsm", tags=["gsm"])
 
@@ -73,7 +83,12 @@ def _raise_registry_error(exc: GsmRegistryError, *, where: str) -> NoReturn:
 def _raise_generation_error(exc: GsmGenerationError, *, where: str) -> NoReturn:
     if exc.code.endswith("_not_found"):
         http_status = status.HTTP_404_NOT_FOUND
-    elif exc.code in {"gsm_confirmed_conflict", "gsm_waybill_conflict"}:
+    elif exc.code in {
+        "gsm_confirmed_conflict",
+        "gsm_waybill_conflict",
+        "gsm_waybill_locked",
+        "gsm_chain_locked",
+    }:
         http_status = status.HTTP_409_CONFLICT
     elif exc.code == "gsm_invalid_period":
         http_status = status.HTTP_400_BAD_REQUEST
@@ -93,6 +108,24 @@ def _raise_export_error(exc: GsmExportError, *, where: str) -> NoReturn:
         http_status = status.HTTP_404_NOT_FOUND
     elif exc.code in {"gsm_invalid_period"}:
         http_status = status.HTTP_400_BAD_REQUEST
+    elif exc.code.startswith("gsm_export_soffice") or exc.code == "gsm_export_template_missing":
+        http_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+    else:
+        http_status = status.HTTP_422_UNPROCESSABLE_ENTITY
+    raise_structured_error(
+        status_code=http_status,
+        code=exc.code,
+        message=str(exc),
+        details=exc.details,
+        where=where,
+    )
+
+
+def _raise_report_error(exc: GsmReportError, *, where: str) -> NoReturn:
+    if exc.code == "gsm_report_invalid_period":
+        http_status = status.HTTP_400_BAD_REQUEST
+    elif exc.code.endswith("_not_found") or exc.code == "gsm_report_no_data":
+        http_status = status.HTTP_404_NOT_FOUND
     elif exc.code.startswith("gsm_export_soffice") or exc.code == "gsm_export_template_missing":
         http_status = status.HTTP_500_INTERNAL_SERVER_ERROR
     else:
@@ -131,6 +164,61 @@ async def import_transactions(
     if uploaded_by is not None:
         uploaded_by = str(uploaded_by)
     return service.import_files(payload, uploaded_by=uploaded_by)
+
+
+@router.get("/transactions", response_model=TransactionListResponse, responses=_ERROR_4XX)
+def list_transactions(
+    period_from: date = Query(..., alias="from"),
+    period_to: date = Query(..., alias="to"),
+    vehicle_id: int | None = Query(None),
+    service_type: str | None = Query(None),
+    _user: dict = Depends(REQUIRE_ACCOUNTING),
+    service: GsmTransactionService = Depends(get_gsm_transaction_service),
+) -> TransactionListResponse:
+    try:
+        return service.list_transactions(
+            vehicle_id=vehicle_id,
+            period_from=period_from,
+            period_to=period_to,
+            service_type=service_type,
+        )
+    except GsmTransactionError as exc:
+        http_status = (
+            status.HTTP_400_BAD_REQUEST
+            if exc.code == "gsm_invalid_period"
+            else status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+        raise_structured_error(
+            status_code=http_status,
+            code=exc.code,
+            message=str(exc),
+            details=exc.details,
+            where="gsm.list_transactions",
+        )
+
+
+@router.get("/overview", response_model=list[FleetOverviewRow], responses=_ERROR_4XX)
+def fleet_overview(
+    period_from: date = Query(..., alias="from"),
+    period_to: date = Query(..., alias="to"),
+    _user: dict = Depends(REQUIRE_ACCOUNTING),
+    service: GsmOverviewService = Depends(get_gsm_overview_service),
+) -> list[FleetOverviewRow]:
+    try:
+        return service.overview(period_from=period_from, period_to=period_to)
+    except GsmOverviewError as exc:
+        http_status = (
+            status.HTTP_400_BAD_REQUEST
+            if exc.code == "gsm_invalid_period"
+            else status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+        raise_structured_error(
+            status_code=http_status,
+            code=exc.code,
+            message=str(exc),
+            details=exc.details,
+            where="gsm.fleet_overview",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +464,18 @@ def put_settings(
         _raise_registry_error(exc, where="gsm.put_settings")
 
 
+@router.post("/settings/season", response_model=GsmSettings, responses=_ERROR_4XX)
+def switch_season(
+    payload: SeasonSwitchRequest,
+    _user: dict = Depends(REQUIRE_ACCOUNTING),
+    service: GsmRegistryService = Depends(get_gsm_registry_service),
+) -> GsmSettings:
+    try:
+        return service.switch_season(mode=payload.mode, day=payload.date)
+    except GsmRegistryError as exc:
+        _raise_registry_error(exc, where="gsm.switch_season")
+
+
 # ---------------------------------------------------------------------------
 # Waybills / generation
 # ---------------------------------------------------------------------------
@@ -404,13 +504,34 @@ def generate_waybills(
         _raise_generation_error(exc, where="gsm.generate_waybills")
 
 
+@router.post(
+    "/waybills/generate-bulk",
+    response_model=WaybillBulkGenerateResult,
+    responses=_ERROR_4XX,
+)
+def generate_waybills_bulk(
+    payload: WaybillBulkGenerateRequest,
+    _user: dict = Depends(REQUIRE_ACCOUNTING),
+    service: GsmGenerationService = Depends(get_gsm_generation_service),
+) -> WaybillBulkGenerateResult:
+    try:
+        return service.generate_bulk(
+            vehicle_ids=payload.vehicle_ids,
+            period_from=payload.period_from,
+            period_to=payload.period_to,
+            force=payload.force,
+        )
+    except GsmGenerationError as exc:
+        _raise_generation_error(exc, where="gsm.generate_waybills_bulk")
+
+
 @router.get(
     "/waybills",
     response_model=list[WaybillOut],
     responses=_ERROR_4XX,
 )
 def list_waybills(
-    vehicle_id: int = Query(...),
+    vehicle_id: int | None = Query(None),
     period_from: date = Query(..., alias="from"),
     period_to: date = Query(..., alias="to"),
     _user: dict = Depends(REQUIRE_ACCOUNTING),
@@ -509,6 +630,32 @@ def export_waybills(
         )
     except GsmExportError as exc:
         _raise_export_error(exc, where="gsm.export_waybills")
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    }
+    return Response(content=data, media_type="application/zip", headers=headers)
+
+
+@router.post(
+    "/report/usage",
+    responses={
+        **_ERROR_4XX,
+        500: {"description": "Ошибка LibreOffice / отчёта ГСМ"},
+    },
+)
+def export_usage_report(
+    payload: UsageReportRequest,
+    _user: dict = Depends(REQUIRE_ACCOUNTING),
+    service: GsmReportService = Depends(get_gsm_report_service),
+) -> Response:
+    try:
+        data, filename = service.build_usage_zip(
+            period_from=payload.period_from,
+            period_to=payload.period_to,
+            vehicle_ids=payload.vehicle_ids,
+        )
+    except GsmReportError as exc:
+        _raise_report_error(exc, where="gsm.export_usage_report")
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}"',
     }

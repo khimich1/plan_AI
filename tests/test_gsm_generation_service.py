@@ -186,3 +186,126 @@ def test_generate_maps_problematic_days(
     assert out.fuel_before == pytest.approx(40.1)
     assert out.fuel_to_issue == pytest.approx(54.57)
     assert out.tank_volume == pytest.approx(70.0)
+
+
+def _problem_day(*, driver_id: int, warnings: tuple[str, ...] = ("manual_intervention",)):
+    from core.gsm.models import RouteRef, TankState, WaybillDay
+
+    return WaybillDay(
+        date=date(2025, 4, 7),
+        driver_id=driver_id,
+        route=RouteRef(route_id=1, addr_a="Завод", addr_b="Объект", km=190),
+        tank=TankState(
+            date=date(2025, 4, 7),
+            fuel_start=20.0,
+            fuel_issued=40.0,
+            fuel_end=24.0,
+            km=380,
+            odometer_start=10_000,
+            odometer_end=10_380,
+        ),
+        source="auto",
+        warnings=warnings,
+    )
+
+
+def test_generate_persists_warning_details_for_problematic_day(
+    service: GsmGenerationService,
+    repo: GsmRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vehicle_id = _seed_vehicle(repo)
+    driver_id = int(repo.get_vehicle(vehicle_id)["primary_driver_id"])
+    detail = "не удалось сжечь 51.2 л: требуется ручная доработка"
+    problem = ProblematicDay(
+        date=date(2025, 4, 7),
+        reason="manual_intervention",
+        detail=detail,
+        fuel_before=40.1,
+        fuel_to_issue=54.57,
+        tank_volume=70.0,
+    )
+
+    def fake_generate(**kwargs: Any) -> GenerateResult:
+        return GenerateResult(
+            days=(_problem_day(driver_id=driver_id),),
+            unsolvable=None,
+            warnings=(),
+            problematic_days=(problem,),
+        )
+
+    monkeypatch.setattr("app.services.gsm_generation_service.generate", fake_generate)
+    service.generate(
+        vehicle_id=vehicle_id,
+        period_from=date(2025, 4, 1),
+        period_to=date(2025, 4, 30),
+        fuel_start=20.0,
+        odometer_start=10_000,
+    )
+
+    listed = service.list_waybills(
+        vehicle_id=vehicle_id,
+        period_from=date(2025, 4, 1),
+        period_to=date(2025, 4, 30),
+    )
+    monday = next(wb for wb in listed if wb.date == "2025-04-07")
+    assert "manual_intervention" in monday.warnings
+    assert monday.warning_details
+    assert monday.warning_details[0].code == "manual_intervention"
+    assert monday.warning_details[0].detail == detail
+
+    listed_again = service.list_waybills(
+        vehicle_id=vehicle_id,
+        period_from=date(2025, 4, 1),
+        period_to=date(2025, 4, 30),
+    )
+    monday_again = next(wb for wb in listed_again if wb.date == "2025-04-07")
+    assert monday_again.warning_details[0].detail == detail
+
+
+def test_string_warnings_json_parses_without_details(
+    service: GsmGenerationService, repo: GsmRepository
+) -> None:
+    vehicle_id = _seed_vehicle(repo)
+    driver_id = int(repo.get_vehicle(vehicle_id)["primary_driver_id"])
+    repo.upsert_waybill(
+        vehicle_id=vehicle_id,
+        date=date(2025, 4, 8),
+        driver_id=driver_id,
+        warnings_json='["hook_above_threshold"]',
+        route_json="[]",
+    )
+    listed = service.list_waybills(
+        vehicle_id=vehicle_id,
+        period_from=date(2025, 4, 1),
+        period_to=date(2025, 4, 30),
+    )
+    assert listed[0].warnings == ["hook_above_threshold"]
+    assert listed[0].warning_details == []
+
+
+def test_clean_day_has_empty_warning_details(
+    service: GsmGenerationService,
+    repo: GsmRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vehicle_id = _seed_vehicle(repo)
+    driver_id = int(repo.get_vehicle(vehicle_id)["primary_driver_id"])
+
+    def fake_generate(**kwargs: Any) -> GenerateResult:
+        return GenerateResult(
+            days=(_problem_day(driver_id=driver_id, warnings=()),),
+            unsolvable=None,
+            warnings=(),
+        )
+
+    monkeypatch.setattr("app.services.gsm_generation_service.generate", fake_generate)
+    result = service.generate(
+        vehicle_id=vehicle_id,
+        period_from=date(2025, 4, 1),
+        period_to=date(2025, 4, 30),
+        fuel_start=20.0,
+        odometer_start=10_000,
+    )
+    assert result.waybills[0].warnings == []
+    assert not result.waybills[0].warning_details

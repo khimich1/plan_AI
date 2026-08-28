@@ -209,7 +209,7 @@ export const ManualWaybillDialog = ({
       vehicle_id: Number(vehicleId),
       date,
       driver_id: Number(driverId),
-      route: libraryRouteToLegs(route),
+      route: libraryRouteToLegs(route, routes),
       fuel_issued: issued,
       fuel_start: fuel,
       odometer_start: odo == null ? null : Math.trunc(odo),

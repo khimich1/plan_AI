@@ -273,6 +273,7 @@ def test_service_patch_km_recalculates_downstream_drafts(
     )
     assert patched.source == "manual"
     assert patched.km == 220
+    assert patched.rechained_draft_days == 2
     assert patched.odometer_end == patched.odometer_start + 220
     burn = burn_for_km(220, NORM_SUMMER)
     assert patched.fuel_end == pytest.approx(
@@ -292,9 +293,10 @@ def test_service_patch_km_recalculates_downstream_drafts(
     assert after[2].fuel_start == pytest.approx(after[1].fuel_end)
 
 
-def test_service_patch_skips_confirmed_downstream(
+def test_service_patch_rejected_when_confirmed_downstream(
     service: GsmGenerationService, repo: GsmRepository
 ) -> None:
+    """A later confirmed/exported day locks the whole chain above it (D11b)."""
     ids = _seed_vehicle(repo)
     days = [
         (date(2025, 4, 7), 190, 40.0, "draft"),
@@ -308,31 +310,25 @@ def test_service_patch_skips_confirmed_downstream(
         period_from=date(2025, 4, 7),
         period_to=date(2025, 4, 9),
     )
-    confirmed_snapshot = {
-        "fuel_start": before[1].fuel_start,
-        "fuel_end": before[1].fuel_end,
-        "odometer_start": before[1].odometer_start,
-        "odometer_end": before[1].odometer_end,
-        "km": before[1].km,
-        "status": before[1].status,
-    }
 
-    service.patch_waybill(wids[0], km=220)
+    with pytest.raises(GsmGenerationError) as exc_info:
+        service.patch_waybill(wids[0], km=220)
+    assert exc_info.value.code == "gsm_chain_locked"
+    assert "later confirmed/exported waybill exists" in str(exc_info.value)
 
+    # Whole edit rejected: nothing persisted.
     after = service.list_waybills(
         vehicle_id=ids["vehicle_id"],
         period_from=date(2025, 4, 7),
         period_to=date(2025, 4, 9),
     )
-    assert after[1].status == "confirmed"
-    assert after[1].fuel_start == pytest.approx(confirmed_snapshot["fuel_start"])
-    assert after[1].fuel_end == pytest.approx(confirmed_snapshot["fuel_end"])
-    assert after[1].odometer_start == confirmed_snapshot["odometer_start"]
-    assert after[1].odometer_end == confirmed_snapshot["odometer_end"]
-    assert after[1].km == confirmed_snapshot["km"]
-    # Day after confirmed stays anchored to confirmed (not to edited N)
-    assert after[2].fuel_start == pytest.approx(after[1].fuel_end)
-    assert after[2].odometer_start == after[1].odometer_end
+    for prev, cur in zip(before, after, strict=True):
+        assert cur.km == prev.km
+        assert cur.fuel_start == pytest.approx(prev.fuel_start)
+        assert cur.fuel_end == pytest.approx(prev.fuel_end)
+        assert cur.odometer_start == prev.odometer_start
+        assert cur.odometer_end == prev.odometer_end
+        assert cur.status == prev.status
 
 
 def test_service_patch_driver_and_route(

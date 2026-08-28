@@ -9,6 +9,7 @@ import {
   formatLiters,
   hasFileReconcileMismatch,
   litersMismatch,
+  summarizeImportReport,
 } from "@/features/gsm/lib/importReport";
 import { useImportGsmTransactionsMutation } from "@/features/gsm/hooks/useGsmQueries";
 import type { FileImportReport, TransactionImportReport } from "@/features/gsm/types/gsm";
@@ -23,6 +24,8 @@ const ACCEPT = ".xls,application/vnd.ms-excel";
 
 const thStyle: CSSProperties = { padding: "0.45rem", textAlign: "left", borderBottom: "1px solid #eaecf0" };
 const tdStyle: CSSProperties = { padding: "0.45rem", borderBottom: "1px solid #f2f4f7", verticalAlign: "top" };
+const tdNumStyle: CSSProperties = { ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+const thNumStyle: CSSProperties = { ...thStyle, textAlign: "right" };
 
 const mismatchCell: CSSProperties = {
   ...tdStyle,
@@ -63,9 +66,9 @@ const FileReportRow = ({ file }: { file: FileImportReport }) => {
           </ul>
         )}
       </td>
-      <td style={tdStyle}>
-        {file.rows_total} / +{file.rows_inserted} / dup {file.rows_duplicate}
-      </td>
+      <td style={tdNumStyle}>{file.rows_total}</td>
+      <td style={tdNumStyle}>{file.rows_inserted}</td>
+      <td style={tdNumStyle}>{file.rows_duplicate}</td>
       <td style={litBad ? mismatchCell : tdStyle}>
         {formatLiters(file.sum_liters)}
         {file.footer_liters != null && (
@@ -155,14 +158,15 @@ export const TransactionsImportDialog = ({ open, onClose, onImported }: Props) =
     }
   };
 
-  const mismatchCount = report?.files.filter(hasFileReconcileMismatch).length ?? 0;
+  const summary = report ? summarizeImportReport(report) : null;
 
   return (
     <Modal open={open} onClose={handleClose} title="Импорт транзакций" maxWidth={720}>
       <div style={{ display: "grid", gap: "1rem" }}>
         <p style={{ margin: 0, color: "#475467", fontSize: "0.95rem" }}>
           Загрузите один или несколько .xls (файл = выгрузка по одной карте). После импорта покажем
-          сверку сумм с строкой «Итоги:» по каждому файлу.
+          сверку сумм с строкой «Итоги:» по каждому файлу. Повторная загрузка безопасна: уже
+          существующие операции не задвоятся.
         </p>
 
         <div
@@ -230,18 +234,17 @@ export const TransactionsImportDialog = ({ open, onClose, onImported }: Props) =
           <Alert tone="error">{localError ?? formatGsmError(importMutation.error)}</Alert>
         )}
 
-        {report && (
+        {report && summary && (
           <div style={{ display: "grid", gap: "0.65rem" }}>
-            <Alert tone={mismatchCount > 0 ? "warning" : "success"}>
-              Импорт завершён: вставлено {report.rows_inserted}, дублей {report.rows_duplicate}
-              {mismatchCount > 0 ? `, расхождений по файлам: ${mismatchCount}` : ""}.
-            </Alert>
+            <Alert tone={summary.tone}>{summary.text}</Alert>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
                 <thead>
                   <tr>
                     <th style={thStyle}>Файл</th>
-                    <th style={thStyle}>Строки</th>
+                    <th style={thNumStyle}>Прочитано</th>
+                    <th style={thNumStyle}>Добавлено</th>
+                    <th style={thNumStyle}>Уже были</th>
                     <th style={thStyle}>Литры / итог</th>
                     <th style={thStyle}>Сумма / итог</th>
                   </tr>

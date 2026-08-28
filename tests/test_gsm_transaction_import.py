@@ -26,6 +26,8 @@ from tests.helpers.production_api_fixtures import VALID_APP_SECRET_KEY, session_
 # Expected public API (worker) — ImportError until GREEN
 # ---------------------------------------------------------------------------
 from core.gsm.transactions import (  # noqa: E402
+    ParsedTxFile,
+    ParsedTxRow,
     classify_service,
     parse_transactions_xls,
 )
@@ -296,6 +298,63 @@ def test_unknown_card_accepted_with_unmatched_flag_and_null_vehicle(
     assert row[1] is None  # not archived
 
     assert _count(db_path, "gsm_transaction") == 1
+
+
+# =============================================================================
+# 3b. Wash qty safety net — numeric payload still persists as NULL
+# =============================================================================
+
+
+def test_import_wash_with_numeric_qty_persists_null_liters(
+    service: GsmTransactionService,
+    repo: GsmRepository,
+    db_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Safety net: wash with qty=1.0 from parser still stores qty_liters NULL."""
+    card_number = "3005454268"
+    _seed_known_card(repo, card_number=card_number)
+
+    wash_row = ParsedTxRow(
+        ts=datetime(2026, 8, 4, 10, 0, 0),
+        card_number=card_number,
+        service="Мойка",
+        service_type="wash",
+        fuel_grade=None,
+        qty_liters=1.0,
+        amount=400.0,
+        unit="шт",
+        brand="Роснефть",
+        city="Ярославль",
+        raw_address="ул. Тестовая, 1",
+    )
+    parsed = ParsedTxFile(
+        filename="wash_with_qty.xls",
+        rows=(wash_row,),
+        sum_liters=1.0,
+        sum_amount=400.0,
+        footer_liters=1.0,
+        footer_amount=400.0,
+        warnings=(),
+    )
+    monkeypatch.setattr(
+        "app.services.gsm_transaction_service.parse_transactions_content",
+        lambda _content, filename: parsed,
+    )
+
+    report = service.import_files(
+        [("wash_with_qty.xls", b"dummy-xls")],
+        uploaded_by="accountant_user",
+    )
+
+    assert report.rows_inserted == 1
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT service_type, qty_liters FROM gsm_transaction"
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "wash"
+    assert row[1] is None
 
 
 # =============================================================================

@@ -10,11 +10,11 @@ describe("GsmTabs", () => {
 
   it("marks the active tab and calls onChange", () => {
     const onChange = vi.fn();
-    let value: GsmTab = "period";
+    let value: GsmTab = "overview";
 
     const { rerender } = render(<GsmTabs value={value} onChange={onChange} />);
 
-    expect(screen.getByRole("tab", { name: "Период" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Обзор" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Транзакции" })).toHaveAttribute("aria-selected", "false");
 
     fireEvent.click(screen.getByRole("tab", { name: "Справочники" }));

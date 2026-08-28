@@ -5,6 +5,7 @@ import type {
   CardPatchPayload,
   DriverCreatePayload,
   DriverPatchPayload,
+  GsmSeasonMode,
   GsmSettings,
   StationCreatePayload,
   StationPatchPayload,
@@ -15,6 +16,10 @@ import type {
   WaybillGeneratePayload,
   WaybillListParams,
   WaybillPatchPayload,
+  OverviewParams,
+  TransactionListParams,
+  UsageReportPayload,
+  WaybillBulkGeneratePayload,
 } from "@/features/gsm/types/gsm";
 import { saveBlobAs } from "@/shared/lib/downloadFile";
 
@@ -27,10 +32,25 @@ export const gsmKeys = {
   settings: ["gsm", "settings"] as const,
   waybills: (params: WaybillListParams | null) =>
     params
-      ? (["gsm", "waybills", params.vehicleId, params.periodFrom, params.periodTo] as const)
+      ? (["gsm", "waybills", params.vehicleId ?? "all", params.periodFrom, params.periodTo] as const)
       : (["gsm", "waybills"] as const),
   routes: (vehicleId: number | null) =>
     vehicleId != null ? (["gsm", "routes", vehicleId] as const) : (["gsm", "routes"] as const),
+  overview: (params: OverviewParams | null) =>
+    params
+      ? (["gsm", "overview", params.periodFrom, params.periodTo] as const)
+      : (["gsm", "overview"] as const),
+  transactions: (params: TransactionListParams | null) =>
+    params
+      ? ([
+          "gsm",
+          "transactions",
+          params.periodFrom,
+          params.periodTo,
+          params.vehicleId ?? "all",
+          params.serviceType ?? "all",
+        ] as const)
+      : (["gsm", "transactions"] as const),
 };
 
 const invalidateGsm = (qc: ReturnType<typeof useQueryClient>) => {
@@ -150,6 +170,17 @@ export const usePutGsmSettingsMutation = () => {
   });
 };
 
+export const useUpdateGsmSeasonMutation = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ mode, date }: { mode: GsmSeasonMode; date: string }) =>
+      gsmApi.updateSeason(mode, date),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: gsmKeys.settings });
+    },
+  });
+};
+
 export const useImportGsmTransactionsMutation = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -167,15 +198,55 @@ export const useGsmWaybillsQuery = (params: WaybillListParams | null) =>
       }
       return gsmApi.listWaybills(params);
     },
-    enabled: Boolean(params?.vehicleId && params.periodFrom && params.periodTo),
+    enabled: Boolean(params?.periodFrom && params.periodTo),
     staleTime: 5_000,
   });
+
+export const useGsmOverviewQuery = (params: OverviewParams | null) =>
+  useQuery({
+    queryKey: gsmKeys.overview(params),
+    queryFn: () => {
+      if (!params) {
+        throw new Error("overview params required");
+      }
+      return gsmApi.getOverview(params);
+    },
+    enabled: Boolean(params?.periodFrom && params.periodTo),
+    staleTime: 5_000,
+  });
+
+export const useGsmTransactionsQuery = (params: TransactionListParams | null) =>
+  useQuery({
+    queryKey: gsmKeys.transactions(params),
+    queryFn: () => {
+      if (!params) {
+        throw new Error("transaction list params required");
+      }
+      return gsmApi.listTransactions(params);
+    },
+    enabled: Boolean(params?.periodFrom && params.periodTo),
+    staleTime: 5_000,
+  });
+
+export const useBulkGenerateMutation = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: WaybillBulkGeneratePayload) => gsmApi.generateWaybillsBulk(payload),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: gsmKeys.overview(null) });
+      void qc.invalidateQueries({ queryKey: gsmKeys.waybills(null) });
+      void qc.invalidateQueries({ queryKey: gsmKeys.transactions(null) });
+    },
+  });
+};
 
 export const useGenerateGsmWaybillsMutation = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (payload: WaybillGeneratePayload) => gsmApi.generateWaybills(payload),
     onSuccess: (_data, variables) => {
+      // Recalc/generate updates chain_broken and tail badges on the fleet overview.
+      void qc.invalidateQueries({ queryKey: gsmKeys.overview(null) });
       void qc.invalidateQueries({
         queryKey: gsmKeys.waybills({
           vehicleId: variables.vehicle_id,
@@ -242,6 +313,22 @@ export const useExportGsmWaybillsMutation = () => {
           periodTo: variables.to,
         }),
       });
+    },
+  });
+};
+
+export const useDownloadGsmUsageReportMutation = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: UsageReportPayload) => {
+      const result = await gsmApi.downloadUsageReport(payload);
+      saveBlobAs(result.blob, result.filename);
+      return result;
+    },
+    onSuccess: () => {
+      // Kit export can close the tail; refresh overview badges and waybill lists.
+      void qc.invalidateQueries({ queryKey: gsmKeys.overview(null) });
+      void qc.invalidateQueries({ queryKey: gsmKeys.waybills(null) });
     },
   });
 };

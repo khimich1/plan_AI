@@ -1,4 +1,5 @@
-import type { GsmVehicle, GsmWaybill } from "@/features/gsm/types/gsm";
+import { findGsmHomeTwin, isGsmHomeBase } from "@/features/gsm/lib/gsmHome";
+import type { GsmRoute, GsmSeasonMode, GsmVehicle, GsmWaybill } from "@/features/gsm/types/gsm";
 
 const PROTECTED = new Set(["confirmed", "exported"]);
 
@@ -24,21 +25,23 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 export const burnForKm = (km: number, normPer100km: number): number =>
   round2((km * normPer100km) / 100);
 
-/** Parse settings winter_start (MM-DD) into a Date for the waybill year. */
-export const winterStartForYear = (winterStartMMDD: string, year: number): Date => {
-  const [mm, dd] = winterStartMMDD.split("-").map(Number);
-  return new Date(year, (mm || 1) - 1, dd || 1);
-};
-
+/**
+ * Mirror of the backend season rule: settings hold the latest dated switch, seasons
+ * alternate starting from summer. Days on/after the switch take `seasonMode`, earlier
+ * days take the opposite season; without a recorded switch every day is summer.
+ */
 export const normForDate = (
   dayIso: string,
   vehicle: Pick<GsmVehicle, "norm_summer" | "norm_winter">,
-  winterStartMMDD: string,
+  seasonMode: GsmSeasonMode,
+  seasonSwitchedAt: string | null,
 ): number => {
-  const year = Number(dayIso.slice(0, 4));
-  const winter = winterStartForYear(winterStartMMDD, year);
-  const day = new Date(`${dayIso}T00:00:00`);
-  return day >= winter ? vehicle.norm_winter : vehicle.norm_summer;
+  if (!seasonSwitchedAt) {
+    return vehicle.norm_summer;
+  }
+  const isWinter =
+    dayIso >= seasonSwitchedAt ? seasonMode === "winter" : seasonMode === "summer";
+  return isWinter ? vehicle.norm_winter : vehicle.norm_summer;
 };
 
 /**
@@ -50,9 +53,10 @@ export const previewDownstream = (params: {
   editedKm: number;
   periodWaybills: GsmWaybill[];
   vehicle: Pick<GsmVehicle, "norm_summer" | "norm_winter" | "tank_volume_liters">;
-  winterStartMMDD: string;
+  seasonMode: GsmSeasonMode;
+  seasonSwitchedAt: string | null;
 }): DownstreamPreviewResult => {
-  const { edited, editedKm, periodWaybills, vehicle, winterStartMMDD } = params;
+  const { edited, editedKm, periodWaybills, vehicle, seasonMode, seasonSwitchedAt } = params;
   const sorted = [...periodWaybills].sort((a, b) => a.date.localeCompare(b.date));
   const tank = vehicle.tank_volume_liters;
 
@@ -63,7 +67,7 @@ export const previewDownstream = (params: {
     km: number,
     odoStart: number,
   ): { fuel_end: number; odometer_end: number } | { error: string } => {
-    const norm = normForDate(dayIso, vehicle, winterStartMMDD);
+    const norm = normForDate(dayIso, vehicle, seasonMode, seasonSwitchedAt);
     const burn = burnForKm(km, norm);
     const fuelEnd = round2(fuelStart + fuelIssued - burn);
     if (fuelEnd < 0 || fuelEnd > tank) {
@@ -250,18 +254,29 @@ export const previousWaybillChainStart = (
   };
 };
 
-export const libraryRouteToLegs = (route: {
-  id: number;
-  addr_a: string;
-  addr_b: string;
-  km: number;
-  typical_station_ids?: number[];
-}) => [
-  {
-    from: route.addr_a,
-    to: route.addr_b,
-    km: route.km,
-    route_id: route.id,
-    station_id: route.typical_station_ids?.[0] ?? null,
+export const libraryRouteToLegs = (
+  route: {
+    id: number;
+    addr_a: string;
+    addr_b: string;
+    km: number;
+    typical_station_ids?: number[];
   },
-];
+  catalog?: GsmRoute[],
+) => {
+  const aHome = isGsmHomeBase(route.addr_a);
+  const bHome = isGsmHomeBase(route.addr_b);
+  const flip = !aHome && bHome;
+  const from = flip ? route.addr_b : route.addr_a;
+  const to = flip ? route.addr_a : route.addr_b;
+  const twin = flip && catalog ? findGsmHomeTwin(route, catalog) : null;
+  return [
+    {
+      from,
+      to,
+      km: route.km,
+      route_id: twin?.id ?? route.id,
+      station_id: route.typical_station_ids?.[0] ?? null,
+    },
+  ];
+};

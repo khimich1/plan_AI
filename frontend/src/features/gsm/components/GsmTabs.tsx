@@ -6,7 +6,7 @@ type Props = {
 };
 
 const OPTIONS: { value: GsmTab; label: string }[] = [
-  { value: "period", label: "Период" },
+  { value: "overview", label: "Обзор" },
   { value: "transactions", label: "Транзакции" },
   { value: "registries", label: "Справочники" },
 ];

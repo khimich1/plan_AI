@@ -640,3 +640,260 @@ def test_get_set_setting(tmp_path: Path) -> None:
     # upsert
     repo.set_setting("hook_threshold_km", "15")
     assert repo.get_setting("hook_threshold_km") == "15"
+
+
+# ---------------------------------------------------------------------------
+# Fleet overview aggregates + list_transactions / list_waybills (all vehicles)
+# ---------------------------------------------------------------------------
+
+
+def _seed_tx(
+    repo: GsmRepository,
+    *,
+    card_id: int,
+    ts: str,
+    qty_liters: float | None,
+    amount: float,
+    service_type: str = "fuel",
+    batch_id: int,
+) -> int:
+    return repo.insert_transaction(
+        card_id=card_id,
+        ts=ts,
+        service_type=service_type,
+        fuel_grade="АИ-95" if qty_liters is not None else None,
+        qty_liters=qty_liters,
+        amount=amount,
+        raw_address="АЗС 1",
+        batch_id=batch_id,
+    )
+
+
+def test_fleet_overview_aggregates_two_vehicles(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    driver_id = _seed_driver(repo)
+    v1 = _seed_vehicle(repo, name="Car 1", plate_number="A111AA44", primary_driver_id=driver_id)
+    v2 = _seed_vehicle(repo, name="Car 2", plate_number="B222BB44", primary_driver_id=driver_id)
+    c1 = _seed_card(repo, vehicle_id=v1, card_number="111")
+    c2 = _seed_card(repo, vehicle_id=v2, card_number="222")
+    batch_id = repo.create_import_batch(
+        filename="fleet.xls",
+        uploaded_at="2026-08-14T12:00:00",
+    )
+
+    _seed_tx(repo, card_id=c1, ts="2026-08-03T10:00:00", qty_liters=40.0, amount=2500.0, batch_id=batch_id)
+    _seed_tx(repo, card_id=c1, ts="2026-08-20T11:00:00", qty_liters=25.5, amount=1600.25, batch_id=batch_id)
+    _seed_tx(repo, card_id=c2, ts="2026-08-05T09:00:00", qty_liters=10.0, amount=700.0, batch_id=batch_id)
+    # outside period — ignored
+    _seed_tx(repo, card_id=c1, ts="2026-07-31T10:00:00", qty_liters=99.0, amount=1.0, batch_id=batch_id)
+
+    repo.upsert_waybill(
+        vehicle_id=v1,
+        date="2026-08-03",
+        driver_id=driver_id,
+        odometer_start=10000,
+        odometer_end=10200,
+        fuel_issued=40.0,
+        fuel_end=30.0,
+        status="draft",
+        warnings_json='[{"code":"manual_intervention","detail":"бак не сходится"}]',
+    )
+    repo.upsert_waybill(
+        vehicle_id=v1,
+        date="2026-08-04",
+        driver_id=driver_id,
+        odometer_start=10200,
+        odometer_end=10280,
+        fuel_issued=20.0,
+        fuel_end=25.0,
+        status="exported",
+        warnings_json='["hook_above_threshold"]',
+    )
+    # open_before: draft before period counts; exported before period does not
+    repo.upsert_waybill(
+        vehicle_id=v1,
+        date="2026-07-28",
+        driver_id=driver_id,
+        odometer_start=9800,
+        odometer_end=10000,
+        fuel_issued=15.0,
+        status="draft",
+    )
+    repo.upsert_waybill(
+        vehicle_id=v1,
+        date="2026-07-29",
+        driver_id=driver_id,
+        odometer_start=9600,
+        odometer_end=9800,
+        fuel_issued=10.0,
+        status="confirmed",
+    )
+    repo.upsert_waybill(
+        vehicle_id=v1,
+        date="2026-07-15",
+        driver_id=driver_id,
+        odometer_start=9000,
+        odometer_end=9200,
+        fuel_issued=8.0,
+        status="exported",
+    )
+    repo.upsert_waybill(
+        vehicle_id=v2,
+        date="2026-08-05",
+        driver_id=driver_id,
+        odometer_start=5000,
+        odometer_end=5120,
+        fuel_issued=10.0,
+        fuel_end=18.0,
+        status="confirmed",
+    )
+
+    rows = repo.fleet_overview(period_from="2026-08-01", period_to="2026-08-31")
+    by_id = {row["vehicle_id"]: row for row in rows}
+    assert set(by_id) == {v1, v2}
+
+    r1 = by_id[v1]
+    assert r1["tx_count"] == 2
+    assert r1["tx_liters"] == pytest.approx(65.5)
+    assert r1["tx_amount"] == pytest.approx(4100.25)
+    assert r1["tx_last_date"] == "2026-08-20"
+    assert r1["wb_count"] == 2
+    assert r1["wb_km"] == 200 + 80
+    assert r1["wb_fuel_issued"] == pytest.approx(60.0)
+    assert r1["wb_last_date"] == "2026-08-04"
+    assert r1["fuel_end_last"] == pytest.approx(25.0)
+    assert r1["red_days"] == 1
+    assert r1["draft_count"] == 1
+    assert r1["confirmed_count"] == 0
+    assert r1["exported_count"] == 1
+    assert r1["open_before"] == 2  # draft + confirmed in July; exported ignored
+    assert r1["open_before_month"] == "2026-07"
+
+    r2 = by_id[v2]
+    assert r2["tx_count"] == 1
+    assert r2["wb_count"] == 1
+    assert r2["wb_km"] == 120
+    assert r2["red_days"] == 0
+    assert r2["open_before"] == 0
+    assert r2["open_before_month"] is None
+    assert r2["confirmed_count"] == 1
+
+
+def test_fleet_overview_includes_empty_active_vehicle_with_zeros(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    driver_id = _seed_driver(repo)
+    empty_id = _seed_vehicle(
+        repo, name="Idle", plate_number="C333CC44", primary_driver_id=driver_id
+    )
+    rows = repo.fleet_overview(period_from="2026-08-01", period_to="2026-08-31")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["vehicle_id"] == empty_id
+    assert row["name"] == "Idle"
+    assert row["plate_number"] == "C333CC44"
+    assert row["tx_count"] == 0
+    assert row["tx_liters"] == pytest.approx(0.0)
+    assert row["tx_amount"] == pytest.approx(0.0)
+    assert row["tx_last_date"] is None
+    assert row["wb_count"] == 0
+    assert row["wb_km"] == 0
+    assert row["wb_fuel_issued"] == pytest.approx(0.0)
+    assert row["wb_last_date"] is None
+    assert row["fuel_end_last"] is None
+    assert row["red_days"] == 0
+    assert row["draft_count"] == 0
+    assert row["confirmed_count"] == 0
+    assert row["exported_count"] == 0
+    assert row["open_before"] == 0
+    assert row["open_before_month"] is None
+
+
+def test_fleet_overview_open_before_month_is_nearest_open_tail(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    driver_id = _seed_driver(repo)
+    v1 = _seed_vehicle(
+        repo, name="Car Tail", plate_number="A111AA44", primary_driver_id=driver_id
+    )
+    repo.upsert_waybill(
+        vehicle_id=v1,
+        date="2026-06-20",
+        driver_id=driver_id,
+        odometer_start=9000,
+        odometer_end=9100,
+        fuel_issued=8.0,
+        status="draft",
+    )
+    repo.upsert_waybill(
+        vehicle_id=v1,
+        date="2026-07-05",
+        driver_id=driver_id,
+        odometer_start=9100,
+        odometer_end=9200,
+        fuel_issued=10.0,
+        status="confirmed",
+    )
+    rows = repo.fleet_overview(period_from="2026-08-01", period_to="2026-08-31")
+    assert len(rows) == 1
+    assert rows[0]["open_before"] == 2
+    assert rows[0]["open_before_month"] == "2026-07"
+
+
+def test_unbound_card_in_all_transactions_does_not_break_overview(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    driver_id = _seed_driver(repo)
+    v1 = _seed_vehicle(repo, name="Car 1", plate_number="A111AA44", primary_driver_id=driver_id)
+    bound = _seed_card(repo, vehicle_id=v1, card_number="bound")
+    unbound = repo.create_card(
+        card_number="orphan",
+        vehicle_id=None,
+        assigned_at="2026-01-01",
+    )
+    batch_id = repo.create_import_batch(
+        filename="mix.xls",
+        uploaded_at="2026-08-14T12:00:00",
+    )
+    _seed_tx(repo, card_id=bound, ts="2026-08-10T10:00:00", qty_liters=12.0, amount=800.0, batch_id=batch_id)
+    _seed_tx(repo, card_id=unbound, ts="2026-08-11T10:00:00", qty_liters=50.0, amount=3000.0, batch_id=batch_id)
+
+    overview = repo.fleet_overview(period_from="2026-08-01", period_to="2026-08-31")
+    assert len(overview) == 1
+    assert overview[0]["vehicle_id"] == v1
+    assert overview[0]["tx_count"] == 1
+    assert overview[0]["tx_liters"] == pytest.approx(12.0)
+
+    rows = repo.list_transactions(
+        period_from="2026-08-01",
+        period_to="2026-08-31",
+    )
+    assert len(rows) == 2
+    by_card = {row["card_number"]: row for row in rows}
+    assert by_card["orphan"]["vehicle_id"] is None
+    assert by_card["bound"]["vehicle_id"] == v1
+    assert by_card["bound"]["qty_liters"] == pytest.approx(12.0)
+
+
+def test_list_waybills_all_vehicles_sorted_by_vehicle_then_date(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    driver_id = _seed_driver(repo)
+    v1 = _seed_vehicle(repo, name="Car 1", plate_number="A111AA44", primary_driver_id=driver_id)
+    v2 = _seed_vehicle(repo, name="Car 2", plate_number="B222BB44", primary_driver_id=driver_id)
+    repo.upsert_waybill(
+        vehicle_id=v2, date="2026-08-01", driver_id=driver_id, odometer_start=1, odometer_end=2
+    )
+    repo.upsert_waybill(
+        vehicle_id=v1, date="2026-08-10", driver_id=driver_id, odometer_start=1, odometer_end=2
+    )
+    repo.upsert_waybill(
+        vehicle_id=v1, date="2026-08-02", driver_id=driver_id, odometer_start=1, odometer_end=2
+    )
+    all_rows = repo.list_waybills(period_from="2026-08-01", period_to="2026-08-31")
+    assert [(row["vehicle_id"], row["date"]) for row in all_rows] == [
+        (v1, "2026-08-02"),
+        (v1, "2026-08-10"),
+        (v2, "2026-08-01"),
+    ]
+    only_v2 = repo.list_waybills(
+        vehicle_id=v2, period_from="2026-08-01", period_to="2026-08-31"
+    )
+    assert len(only_v2) == 1
+    assert only_v2[0]["vehicle_id"] == v2

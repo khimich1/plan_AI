@@ -3,6 +3,7 @@ import {
   formatRouteSummary,
   isAnchorDay,
   isProblematicDay,
+  warningDetailText,
   warningMeta,
 } from "@/features/gsm/lib/waybillWarnings";
 import type { GsmWaybill } from "@/features/gsm/types/gsm";
@@ -39,6 +40,11 @@ describe("waybillWarnings helpers", () => {
     expect(warningMeta("balance_route").reason).toMatch(/удлин|маршрут/i);
   });
 
+  it("maps borrowed_route to a short yellow label about another vehicle", () => {
+    expect(warningMeta("borrowed_route").short).toBe("Чужой пул");
+    expect(warningMeta("borrowed_route").reason).toMatch(/друг|машин/i);
+  });
+
   it("detects anchor days by fuel issued, warnings or station", () => {
     expect(isAnchorDay(base({ fuel_issued: 30 }))).toBe(true);
     expect(isAnchorDay(base({ warnings: ["weekend_anchor"] }))).toBe(true);
@@ -46,9 +52,21 @@ describe("waybillWarnings helpers", () => {
     expect(isAnchorDay(base({}))).toBe(false);
   });
 
+  it("prefers warning_details.detail over generic reason", () => {
+    const wb = base({
+      warnings: ["manual_intervention"],
+      warning_details: [{ code: "manual_intervention", detail: "бак не сходится" }],
+    });
+    expect(warningDetailText(wb, "manual_intervention")).toBe("бак не сходится");
+    expect(warningDetailText(base({ warnings: ["manual_intervention"] }), "manual_intervention")).toMatch(
+      /ручн/i,
+    );
+  });
+
   it("detects problematic days by manual_intervention warning", () => {
     expect(isProblematicDay(base({ warnings: ["manual_intervention"] }))).toBe(true);
     expect(isProblematicDay(base({ warnings: ["balance_route"] }))).toBe(false);
+    expect(isProblematicDay(base({ warnings: ["borrowed_route"] }))).toBe(false);
     expect(isProblematicDay(base({}))).toBe(false);
   });
 

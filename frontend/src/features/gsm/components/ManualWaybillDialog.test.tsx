@@ -45,6 +45,24 @@ const ROUTES: GsmRoute[] = [
     frequency: 3,
     typical_station_ids: [12],
   },
+  {
+    id: 59,
+    vehicle_id: 1,
+    addr_a: "г.Владимир, ул.Добросельская",
+    addr_b: "Кострома, ул. Кузнецкая, д.18Б",
+    km: 225,
+    frequency: 8,
+    typical_station_ids: [],
+  },
+  {
+    id: 64,
+    vehicle_id: 1,
+    addr_a: "Кострома, ул. Кузнецкая, д.18Б",
+    addr_b: "г.Владимир, ул.Добросельская",
+    km: 225,
+    frequency: 2,
+    typical_station_ids: [],
+  },
 ];
 
 const PREV: GsmWaybill = {
@@ -118,6 +136,49 @@ describe("ManualWaybillDialog", () => {
             km: 150,
             route_id: 5,
             station_id: 12,
+          },
+        ],
+        fuel_issued: 30,
+        fuel_start: 25.5,
+        odometer_start: 10000,
+      });
+    });
+    expect(onCreated).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("orients remote-first library row so create payload starts at home with twin route_id", async () => {
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+    mockCreate.mockResolvedValue({ id: 99, ...PREV, date: "2025-04-03" });
+
+    render(
+      <ManualWaybillDialog
+        open
+        onClose={onClose}
+        defaultVehicleId={1}
+        defaultDate="2025-04-03"
+        periodWaybills={[PREV]}
+        onCreated={onCreated}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Маршрут"), { target: { value: "59" } });
+    fireEvent.change(screen.getByLabelText("Выдано"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Создать ПЛ" }));
+
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith({
+        vehicle_id: 1,
+        date: "2025-04-03",
+        driver_id: 7,
+        route: [
+          {
+            from: "Кострома, ул. Кузнецкая, д.18Б",
+            to: "г.Владимир, ул.Добросельская",
+            km: 225,
+            route_id: 64,
+            station_id: null,
           },
         ],
         fuel_issued: 30,

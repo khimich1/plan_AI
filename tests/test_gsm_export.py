@@ -275,7 +275,10 @@ def _seed_export_bundle(
         fuel_end=fuel_end,
         route_json=route_json,
     )
-    repo.set_setting("winter_start", "11-01")
+    repo.set_setting(
+        "season_switches",
+        json.dumps([{"date": "2025-11-01", "mode": "winter"}]),
+    )
     return {
         "vehicle_id": vehicle_id,
         "driver_id": driver_id,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal, cast
 
 from app.repositories.gsm_repository import GsmRepository
 from app.schemas.gsm import (
@@ -15,6 +15,12 @@ from app.schemas.gsm import (
     RouteOut,
     StationOut,
     VehicleOut,
+)
+from core.gsm.season import (
+    SEASON_MODES,
+    SeasonSwitch,
+    parse_season_switches,
+    serialize_season_switches,
 )
 
 DEFAULT_WINTER_START = "11-01"
@@ -284,10 +290,17 @@ class GsmRegistryService:
         hook = float(hook_raw) if hook_raw is not None else DEFAULT_HOOK_THRESHOLD_KM
         max_raw = self._repo.get_setting("max_daily_km")
         max_daily = int(max_raw) if max_raw is not None else DEFAULT_MAX_DAILY_KM
+        switches = self._read_season_switches()
+        season_mode = (
+            cast(Literal["summer", "winter"], switches[-1][1]) if switches else "summer"
+        )
+        season_switched_at = switches[-1][0] if switches else None
         return GsmSettings(
             winter_start=winter,
             hook_threshold_km=hook,
             max_daily_km=max_daily,
+            season_mode=season_mode,
+            season_switched_at=season_switched_at,
         )
 
     def put_settings(
@@ -315,7 +328,37 @@ class GsmRegistryService:
         self._repo.set_setting("winter_start", settings.winter_start)
         self._repo.set_setting("hook_threshold_km", str(settings.hook_threshold_km))
         self._repo.set_setting("max_daily_km", str(settings.max_daily_km))
-        return settings
+        return self.get_settings()
+
+    def switch_season(self, *, mode: str, day: date) -> GsmSettings:
+        """Append a manual season switch; same-mode call is a no-op.
+
+        Switches are append-only and must not move backwards in time.
+        """
+        if mode not in SEASON_MODES:
+            raise GsmRegistryError(
+                f"invalid season mode: {mode!r}",
+                code="gsm_validation",
+            )
+        switches = self._read_season_switches()
+        current_mode = switches[-1][1] if switches else "summer"
+        if mode == current_mode:
+            return self.get_settings()
+        if switches and day < switches[-1][0]:
+            raise GsmRegistryError(
+                "season date must not be before last switch",
+                code="gsm_validation",
+            )
+        switches.append((day, mode))
+        self._repo.set_setting("season_switches", serialize_season_switches(switches))
+        return self.get_settings()
+
+    def _read_season_switches(self) -> list[SeasonSwitch]:
+        """Tolerant read of the switch journal; corrupt data → no switches."""
+        try:
+            return list(parse_season_switches(self._repo.get_setting("season_switches")))
+        except ValueError:
+            return []
 
     # ------------------------------------------------------------------
     # Helpers

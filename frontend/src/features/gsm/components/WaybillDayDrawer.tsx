@@ -155,9 +155,17 @@ export const WaybillDayDrawer = ({
       editedKm: Math.trunc(editedKm),
       periodWaybills,
       vehicle,
-      winterStartMMDD: settingsQuery.data?.winter_start ?? "11-01",
+      seasonMode: settingsQuery.data?.season_mode ?? "summer",
+      seasonSwitchedAt: settingsQuery.data?.season_switched_at ?? null,
     });
-  }, [waybill, vehicle, editedKm, periodWaybills, settingsQuery.data?.winter_start]);
+  }, [
+    waybill,
+    vehicle,
+    editedKm,
+    periodWaybills,
+    settingsQuery.data?.season_mode,
+    settingsQuery.data?.season_switched_at,
+  ]);
 
   const previewChanged = preview?.days.filter((d) => d.changed) ?? [];
 
@@ -168,7 +176,7 @@ export const WaybillDayDrawer = ({
     }
     setRouteId(id);
     setKm(String(route.km));
-    setSelectedRoute(libraryRouteToLegs(route));
+    setSelectedRoute(libraryRouteToLegs(route, routes));
   };
 
   const handleClose = () => {

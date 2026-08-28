@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -40,6 +41,77 @@ class TransactionImportReport(BaseModel):
     files: list[FileImportReport]
     rows_inserted: int
     rows_duplicate: int
+
+
+class TransactionOut(BaseModel):
+    """Single fuel-card transaction in the fleet journal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ts: str
+    card_number: str
+    vehicle_id: int | None = None
+    service_type: str
+    fuel_grade: str | None = None
+    qty_liters: float | None = None
+    amount: float
+    station_id: int | None = None
+    address: str | None = None
+
+
+class TransactionListResponse(BaseModel):
+    """Filtered transaction journal with backend totals."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rows: list[TransactionOut]
+    total_count: int
+    sum_liters: float
+    sum_amount: float
+
+
+VehiclePeriodStatus = Literal[
+    "no_data",
+    "needs_generation",
+    "has_red_days",
+    "drafts_pending",
+    "pending_export",
+    "ready",
+]
+
+
+class FleetOverviewVehicle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    name: str
+    plate_number: str
+
+
+class FleetOverviewRow(BaseModel):
+    """One active vehicle in the period overview."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vehicle: FleetOverviewVehicle
+    tx_count: int
+    tx_liters: float
+    tx_amount: float
+    tx_last_date: str | None = None
+    wb_count: int
+    wb_km: int
+    wb_fuel_issued: float
+    wb_last_date: str | None = None
+    red_days: int
+    draft_count: int
+    confirmed_count: int
+    exported_count: int
+    fuel_end_last: float | None = None
+    liters_diff: float
+    open_before: int
+    open_before_month: str | None = None
+    chain_broken: bool = False
+    status: VehiclePeriodStatus
 
 
 # ---------------------------------------------------------------------------
@@ -199,9 +271,11 @@ class StationOut(BaseModel):
 class GsmSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    winter_start: str = "11-01"
+    winter_start: str = "11-01"  # deprecated: season is switched via /settings/season
     hook_threshold_km: float = Field(default=13.0, gt=0)
     max_daily_km: int = Field(default=700, gt=0)
+    season_mode: Literal["summer", "winter"] = "summer"
+    season_switched_at: date | None = None
 
     @field_validator("winter_start")
     @classmethod
@@ -209,6 +283,15 @@ class GsmSettings(BaseModel):
         if not _WINTER_START_RE.match(value):
             raise ValueError("winter_start must be MM-DD")
         return value
+
+
+class SeasonSwitchRequest(BaseModel):
+    """POST /gsm/settings/season — manual season switch appended to the journal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["summer", "winter"]
+    date: date
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +341,13 @@ class WaybillRouteLeg(BaseModel):
     arr_time: str | None = None
 
 
+class WaybillWarningDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    detail: str
+
+
 class WaybillOut(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -275,6 +365,8 @@ class WaybillOut(BaseModel):
     km: int = 0
     route: list[WaybillRouteLeg] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    warning_details: list[WaybillWarningDetail] = Field(default_factory=list)
+    rechained_draft_days: int = 0
 
 
 class ProblematicDayOut(BaseModel):
@@ -298,6 +390,37 @@ class WaybillGenerateResult(BaseModel):
     days_created: int = 0
     problematic_days: list[ProblematicDayOut] = Field(default_factory=list)
     manual_days: int = 0
+
+
+class WaybillBulkGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vehicle_ids: list[int]
+    period_from: date
+    period_to: date
+    force: bool = False
+
+
+class WaybillBulkVehicleError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str
+
+
+class WaybillBulkVehicleResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vehicle_id: int
+    ok: bool
+    result: WaybillGenerateResult | None = None
+    error: WaybillBulkVehicleError | None = None
+
+
+class WaybillBulkGenerateResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[WaybillBulkVehicleResult]
 
 
 class WaybillPatchRequest(BaseModel):
@@ -332,3 +455,13 @@ class WaybillExportRequest(BaseModel):
     vehicle_ids: list[int] = Field(min_length=1)
     period_from: date = Field(alias="from")
     period_to: date = Field(alias="to")
+
+
+class UsageReportRequest(BaseModel):
+    """POST /gsm/report/usage — zip of usage reports + waybills for period."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period_from: date
+    period_to: date
+    vehicle_ids: list[int] | None = None

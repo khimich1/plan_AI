@@ -33,12 +33,26 @@ const CODE_MESSAGES: Record<string, string> = {
   gsm_unsolvable: "Генерация неразрешима: не хватает будних дней для баланса бака.",
   gsm_driver_required: "У машины не указан основной водитель.",
   gsm_routes_required: "У машины нет маршрутов в библиотеке.",
+  gsm_start_required: "Укажите стартовый остаток бака и одометр — подтверждённого ПЛ ещё нет.",
   gsm_export_empty: "Нет путевых листов за выбранный период.",
   gsm_export_soffice_missing:
     "Не удалось экспортировать бланки: на сервере нет LibreOffice (soffice).",
   gsm_export_soffice_timeout: "Экспорт бланков превысил время ожидания LibreOffice.",
   gsm_export_soffice_failed: "LibreOffice не смог сформировать бланки путевых листов.",
   gsm_export_template_missing: "Не найден шаблон бланка путевого листа.",
+  gsm_report_invalid_period: "Некорректный период отчёта.",
+  gsm_report_no_data: "Нет подтверждённых путевых листов за выбранный период.",
+};
+
+export const formatGsmCodeMessage = (code: string | undefined, fallback: string): string => {
+  if (code && CODE_MESSAGES[code]) {
+    return CODE_MESSAGES[code];
+  }
+  const exact = EXACT_MESSAGES[fallback];
+  if (exact) {
+    return exact;
+  }
+  return fallback;
 };
 
 const translateDynamic = (message: string): string | null => {
@@ -61,6 +75,15 @@ const translateDynamic = (message: string): string | null => {
   const cardMissing = message.match(/^card #(\d+) not found$/);
   if (cardMissing) {
     return `Карта №${cardMissing[1]} не найдена.`;
+  }
+  if (message.includes("waybill is locked (confirmed/exported)")) {
+    return "Путевой лист подтверждён или выгружен — редактирование запрещено.";
+  }
+  if (message.includes("cannot edit waybill: later confirmed/exported waybill exists")) {
+    return "Нельзя править: после этого дня есть подтверждённые или выгруженные путевые.";
+  }
+  if (message.includes("season date must not be before last switch")) {
+    return "Дата перевода сезона не может быть раньше предыдущего перевода.";
   }
   if (/insufficient_headroom|corridor_violation|cannot reach headroom|left corridor/.test(message)) {
     return "Генерация неразрешима: не хватает будних дней, чтобы удержать остаток бака.";

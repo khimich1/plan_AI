@@ -62,7 +62,12 @@ describe("gsmApi registry list contracts", () => {
   });
 
   it("getSettings hits /gsm/settings", async () => {
-    const settings = { winter_start: "11-01", hook_threshold_km: 13 };
+    const settings = {
+      winter_start: "11-01",
+      hook_threshold_km: 13,
+      season_mode: "summer",
+      season_switched_at: null,
+    };
     mockGet.mockResolvedValue(settings);
     await expect(gsmApi.getSettings()).resolves.toEqual(settings);
     expect(mockGet).toHaveBeenCalledWith("/api/v1/gsm/settings");
@@ -100,12 +105,34 @@ describe("gsmApi mutations", () => {
   });
 
   it("putSettings PUTs settings body", async () => {
-    const payload = { winter_start: "11-15", hook_threshold_km: 10 };
+    const payload = {
+      winter_start: "11-15",
+      hook_threshold_km: 10,
+      season_mode: "summer" as const,
+      season_switched_at: null,
+    };
     mockPut.mockResolvedValue(payload);
     await gsmApi.putSettings(payload);
     expect(mockPut).toHaveBeenCalledWith(
       "/api/v1/gsm/settings",
       JSON.stringify(payload),
+      JSON_HEADERS,
+    );
+  });
+
+  it("updateSeason POSTs mode and date to /settings/season", async () => {
+    const updated = {
+      winter_start: "11-01",
+      hook_threshold_km: 13,
+      season_mode: "winter",
+      season_switched_at: "2026-11-01",
+    };
+    mockPost.mockResolvedValue(updated);
+
+    await expect(gsmApi.updateSeason("winter", "2026-11-01")).resolves.toEqual(updated);
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/v1/gsm/settings/season",
+      JSON.stringify({ mode: "winter", date: "2026-11-01" }),
       JSON_HEADERS,
     );
   });
@@ -128,6 +155,52 @@ describe("gsmApi mutations", () => {
     await gsmApi.listWaybills({ vehicleId: 4, periodFrom: "2025-04-01", periodTo: "2025-04-30" });
     expect(mockGet).toHaveBeenCalledWith(
       "/api/v1/gsm/waybills?vehicle_id=4&from=2025-04-01&to=2025-04-30",
+    );
+  });
+
+  it("listWaybills omits vehicle_id when not provided", async () => {
+    mockGet.mockResolvedValue([]);
+    await gsmApi.listWaybills({ periodFrom: "2026-08-01", periodTo: "2026-08-31" });
+    expect(mockGet).toHaveBeenCalledWith(
+      "/api/v1/gsm/waybills?from=2026-08-01&to=2026-08-31",
+    );
+  });
+
+  it("listTransactions GETs filters as query string", async () => {
+    mockGet.mockResolvedValue({ rows: [], total_count: 0, sum_liters: 0, sum_amount: 0 });
+    await gsmApi.listTransactions({
+      periodFrom: "2026-08-01",
+      periodTo: "2026-08-31",
+      vehicleId: 2,
+      serviceType: "fuel",
+    });
+    expect(mockGet).toHaveBeenCalledWith(
+      "/api/v1/gsm/transactions?from=2026-08-01&to=2026-08-31&vehicle_id=2&service_type=fuel",
+    );
+  });
+
+  it("getOverview GETs period query", async () => {
+    mockGet.mockResolvedValue([]);
+    await gsmApi.getOverview({ periodFrom: "2026-08-01", periodTo: "2026-08-31" });
+    expect(mockGet).toHaveBeenCalledWith(
+      "/api/v1/gsm/overview?from=2026-08-01&to=2026-08-31",
+    );
+  });
+
+  it("generateWaybillsBulk POSTs JSON to /waybills/generate-bulk", async () => {
+    const payload = {
+      vehicle_ids: [1, 2],
+      period_from: "2026-08-01",
+      period_to: "2026-08-31",
+      force: false,
+    };
+    const result = { results: [] };
+    mockPost.mockResolvedValue(result);
+    await expect(gsmApi.generateWaybillsBulk(payload)).resolves.toEqual(result);
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/v1/gsm/waybills/generate-bulk",
+      JSON.stringify(payload),
+      JSON_HEADERS,
     );
   });
 
@@ -206,6 +279,31 @@ describe("gsmApi mutations", () => {
     expect(mockDownload).toHaveBeenCalledWith(
       "/api/v1/gsm/waybills/export",
       "gsm_waybills_2025-04-01_2025-04-30.zip",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: JSON_HEADERS,
+      },
+    );
+  });
+
+  it("downloadUsageReport POSTs JSON via download to /report/usage", async () => {
+    const payload = {
+      period_from: "2026-05-01",
+      period_to: "2026-05-31",
+      vehicle_ids: null as number[] | null,
+    };
+    const downloaded = {
+      blob: new Blob(["zip"], { type: "application/zip" }),
+      filename: "gsm_usage_report_2026-05-01_2026-05-31.zip",
+      contentType: "application/zip",
+    };
+    mockDownload.mockResolvedValue(downloaded);
+
+    await expect(gsmApi.downloadUsageReport(payload)).resolves.toEqual(downloaded);
+    expect(mockDownload).toHaveBeenCalledWith(
+      "/api/v1/gsm/report/usage",
+      "gsm_usage_report_2026-05-01_2026-05-31.zip",
       {
         method: "POST",
         body: JSON.stringify(payload),

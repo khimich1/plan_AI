@@ -486,7 +486,7 @@ def test_service_unsolvable_returns_problematic_days(
 
 
 def test_service_no_routes_raises(service: GsmGenerationService, repo: GsmRepository) -> None:
-    """Transactions without a route library remain a configuration error."""
+    """Transactions with an empty fleet route library remain gsm_routes_required."""
     ids = _seed_vehicle_bundle(repo, with_routes=False, with_tx=True)
     with pytest.raises(GsmGenerationError) as exc_info:
         service.generate(
@@ -675,7 +675,7 @@ def test_http_unsolvable_200_with_problematic_days(api_client: CsrfAwareTestClie
 
 
 def test_http_no_routes_422(api_client: CsrfAwareTestClient) -> None:
-    """Transactions without a route library stay 422 gsm_routes_required."""
+    """Transactions with an empty fleet route library stay 422 gsm_routes_required."""
     ids = _seed_into_api_db(api_client, with_routes=False)
     cookies = _auth()
 

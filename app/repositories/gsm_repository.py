@@ -427,24 +427,159 @@ class GsmRepository:
     def list_transactions(
         self,
         *,
-        vehicle_id: int,
         period_from: DateLike,
         period_to: DateLike,
+        vehicle_id: int | None = None,
+        service_type: str | None = None,
     ) -> list[dict[str, Any]]:
         from_iso = self._to_iso_date(period_from)
         to_iso = self._to_iso_date(period_to)
+        clauses = [
+            "substr(t.ts, 1, 10) >= ?",
+            "substr(t.ts, 1, 10) <= ?",
+        ]
+        params: list[Any] = [from_iso, to_iso]
+        if vehicle_id is not None:
+            clauses.append("c.vehicle_id = ?")
+            params.append(vehicle_id)
+        if service_type is not None:
+            clauses.append("t.service_type = ?")
+            params.append(service_type)
+        where = " AND ".join(clauses)
         with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT t.*
+                f"""
+                SELECT t.*, c.card_number, c.vehicle_id
                 FROM gsm_transaction t
                 JOIN gsm_fuel_card c ON c.id = t.card_id
-                WHERE c.vehicle_id = ?
-                  AND substr(t.ts, 1, 10) >= ?
-                  AND substr(t.ts, 1, 10) <= ?
+                WHERE {where}
                 ORDER BY t.ts, t.id
                 """,
-                (vehicle_id, from_iso, to_iso),
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def fleet_overview(
+        self,
+        *,
+        period_from: DateLike,
+        period_to: DateLike,
+    ) -> list[dict[str, Any]]:
+        """Per-active-vehicle aggregates for the period (no status computation)."""
+        from_iso = self._to_iso_date(period_from)
+        to_iso = self._to_iso_date(period_to)
+        sql = """
+            SELECT
+                v.id AS vehicle_id,
+                v.name,
+                v.plate_number,
+                COALESCE(tx.tx_count, 0) AS tx_count,
+                ROUND(COALESCE(tx.tx_liters, 0), 2) AS tx_liters,
+                ROUND(COALESCE(tx.tx_amount, 0), 2) AS tx_amount,
+                tx.tx_last_date,
+                COALESCE(wb.wb_count, 0) AS wb_count,
+                COALESCE(wb.wb_km, 0) AS wb_km,
+                ROUND(COALESCE(wb.wb_fuel_issued, 0), 2) AS wb_fuel_issued,
+                wb.wb_last_date,
+                last_wb.fuel_end AS fuel_end_last,
+                COALESCE(wb.draft_count, 0) AS draft_count,
+                COALESCE(wb.confirmed_count, 0) AS confirmed_count,
+                COALESCE(wb.exported_count, 0) AS exported_count,
+                COALESCE(wb.red_days, 0) AS red_days,
+                COALESCE(ob.open_before, 0) AS open_before,
+                ob.open_before_month AS open_before_month,
+                chain_prev.fuel_end AS chain_prev_fuel_end,
+                chain_prev.odometer_end AS chain_prev_odometer_end,
+                chain_first.fuel_start AS chain_first_fuel_start,
+                chain_first.odometer_start AS chain_first_odometer_start
+            FROM gsm_vehicle v
+            LEFT JOIN (
+                SELECT
+                    c.vehicle_id,
+                    COUNT(*) AS tx_count,
+                    SUM(
+                        CASE WHEN t.service_type = 'fuel' THEN t.qty_liters ELSE 0 END
+                    ) AS tx_liters,
+                    SUM(t.amount) AS tx_amount,
+                    MAX(substr(t.ts, 1, 10)) AS tx_last_date
+                FROM gsm_transaction t
+                JOIN gsm_fuel_card c ON c.id = t.card_id
+                WHERE c.vehicle_id IS NOT NULL
+                  AND substr(t.ts, 1, 10) >= ?
+                  AND substr(t.ts, 1, 10) <= ?
+                GROUP BY c.vehicle_id
+            ) tx ON tx.vehicle_id = v.id
+            LEFT JOIN (
+                SELECT
+                    vehicle_id,
+                    COUNT(*) AS wb_count,
+                    SUM(
+                        CASE
+                            WHEN odometer_end IS NOT NULL AND odometer_start IS NOT NULL
+                            THEN odometer_end - odometer_start
+                            ELSE 0
+                        END
+                    ) AS wb_km,
+                    SUM(fuel_issued) AS wb_fuel_issued,
+                    MAX(date) AS wb_last_date,
+                    SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draft_count,
+                    SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END)
+                        AS confirmed_count,
+                    SUM(CASE WHEN status = 'exported' THEN 1 ELSE 0 END)
+                        AS exported_count,
+                    SUM(
+                        CASE
+                            WHEN warnings_json LIKE '%manual_intervention%' THEN 1
+                            ELSE 0
+                        END
+                    ) AS red_days
+                FROM gsm_waybill
+                WHERE date >= ? AND date <= ?
+                GROUP BY vehicle_id
+            ) wb ON wb.vehicle_id = v.id
+            LEFT JOIN gsm_waybill last_wb
+                ON last_wb.vehicle_id = v.id
+               AND last_wb.date = wb.wb_last_date
+            LEFT JOIN (
+                SELECT
+                    vehicle_id,
+                    COUNT(*) AS open_before,
+                    strftime('%Y-%m', MAX(date)) AS open_before_month
+                FROM gsm_waybill
+                WHERE status IN ('draft', 'confirmed')
+                  AND date < ?
+                GROUP BY vehicle_id
+            ) ob ON ob.vehicle_id = v.id
+            LEFT JOIN gsm_waybill chain_prev
+                ON chain_prev.id = (
+                    SELECT w.id FROM gsm_waybill w
+                    WHERE w.vehicle_id = v.id AND w.date < ?
+                    ORDER BY w.date DESC, w.id DESC
+                    LIMIT 1
+                )
+            LEFT JOIN gsm_waybill chain_first
+                ON chain_first.id = (
+                    SELECT w.id FROM gsm_waybill w
+                    WHERE w.vehicle_id = v.id AND w.date >= ? AND w.date <= ?
+                    ORDER BY w.date ASC, w.id ASC
+                    LIMIT 1
+                )
+            WHERE v.is_active = 1
+            ORDER BY v.id
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                sql,
+                (
+                    from_iso,
+                    to_iso,
+                    from_iso,
+                    to_iso,
+                    from_iso,
+                    from_iso,
+                    from_iso,
+                    to_iso,
+                ),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -588,23 +723,30 @@ class GsmRepository:
     def list_waybills(
         self,
         *,
-        vehicle_id: int,
         period_from: DateLike,
         period_to: DateLike,
+        vehicle_id: int | None = None,
     ) -> list[dict[str, Any]]:
         from_iso = self._to_iso_date(period_from)
         to_iso = self._to_iso_date(period_to)
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
+        if vehicle_id is None:
+            sql = """
+                SELECT * FROM gsm_waybill
+                WHERE date >= ? AND date <= ?
+                ORDER BY vehicle_id, date, id
+            """
+            params: tuple[Any, ...] = (from_iso, to_iso)
+        else:
+            sql = """
                 SELECT * FROM gsm_waybill
                 WHERE vehicle_id = ?
                   AND date >= ?
                   AND date <= ?
                 ORDER BY date, id
-                """,
-                (vehicle_id, from_iso, to_iso),
-            ).fetchall()
+            """
+            params = (vehicle_id, from_iso, to_iso)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
 
     def list_waybills_after(
