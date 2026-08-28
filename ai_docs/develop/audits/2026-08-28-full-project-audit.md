@@ -68,6 +68,7 @@
 | **Где** | `app/services/commercial_workflow_service.py` (~3027 строк, CommercialWorkflowService) |
 | **Влияние** | OCR/AI для 6 типов, drafts, wizard, расчёт, экспорт в одном модуле. Нарушает SRP; любое изменение коммерческого контура рискует широкими регрессиями; сложно тестировать изолированно |
 | **Исправление** | Use-case сервисы по вертикалям + тонкий facade |
+| **Статус** | **resolved** — 2026-08-28. Спека [stabilizaciya-p1-commercial-2026-08-28.md](../../specs/stabilizaciya-p1-commercial-2026-08-28.md). Facade `commercial_workflow_service.py` ≤800; identity / plate-resolve / lifecycle / ProductDraftHandler вынесены. |
 
 #### [A4] Толстый API-слой КП
 
@@ -77,6 +78,7 @@
 | **Где** | `app/api/v1/endpoints/commercial.py` (~897 строк, 30+ handlers); соседний `production.py` ~639 строк |
 | **Влияние** | Presentation дублирует orchestration; endpoints содержат бизнес-логику вместо thin controllers |
 | **Исправление** | Thin controllers; делегирование в сервисы |
+| **Статус** | **resolved** (commercial.py) — 2026-08-28. Спека P1: shared runners, 32 пути на месте, `commercial.py` ≤500. `production.py` — follow-up (A4 remainder). |
 
 #### [A5] Сервисы обходят repository, raw SQL
 
@@ -156,6 +158,7 @@
 | **Где** | `commercial_workflow_service.py` |
 | **Влияние** | Шесть почти идентичных веток обработки типов продуктов; правка в одной не попадает в остальные |
 | **Исправление** | `ProductDraftHandler` + config |
+| **Статус** | **resolved** — 2026-08-28. Спека P1 / Q1: `product_draft_config.py` + `product_draft_handler.py`. |
 
 #### [Q2] Copy-paste HTTP-обработчиков
 
@@ -165,6 +168,7 @@
 | **Где** | `commercial.py` |
 | **Влияние** | Дублированные паттерны обработки запросов; рост объёма и риск расхождения поведения |
 | **Исправление** | Decorator + factory |
+| **Статус** | **resolved** — 2026-08-28. Поглощён A4: `_run_product_update` / `_run_product_ai` / `_run_product_grades`; пути не схлопнуты. |
 
 #### [Q3] ~720 строк мёртвого кода в build_layout_sequence
 
@@ -302,6 +306,7 @@
 | **Где** | `commercial_workflow_service.py` |
 | **Влияние** | Почти идентичные функции; риск расхождения |
 | **Исправление** | Единая функция с параметрами |
+| **Статус** | **resolved** — 2026-08-28. Спека P1 / Q5: `commercial_plate_resolve.py`; публичные методы — тонкие обёртки. |
 
 #### [Q6] Две реализации get_global_calendar_info
 
@@ -506,11 +511,11 @@
 | S2 | Уязвимости Starlette/FastAPI | High | Medium | P0 | **resolved** (fastapi 0.141.1 / starlette 1.6.0) |
 | S3 | Rate limiting in-process | High | Medium | P1 |
 | S4 | npm-зависимости frontend high | High | Low | P1 | **resolved** (high→0; uuid/exceljs moderate отложен) |
-| A3 | God-module CommercialWorkflowService | High | High | P1 |
-| A4 | Толстый API-слой КП | High | Medium | P1 |
+| A3 | God-module CommercialWorkflowService | High | High | P1 | **resolved** (спека P1) |
+| A4 | Толстый API-слой КП | High | Medium | P1 | **resolved** (commercial.py; production.py follow-up) |
 | A5 | Сервисы обходят repository | High | High | P1 |
-| Q1 | Шесть копий product-type pipeline | High | Medium | P1 |
-| Q2 | Copy-paste HTTP-обработчиков | High | Low | P1 |
+| Q1 | Шесть копий product-type pipeline | High | Medium | P1 | **resolved** (спека P1) |
+| Q2 | Copy-paste HTTP-обработчиков | High | Low | P1 | **resolved** (A4 runners) |
 | Q3 | ~720 строк мёртвого кода build_layout_sequence | High | Low | P1 | **resolved** |
 | A6 | Planning зависит от visualization | High | Medium | P2 |
 | A7 | Неполный DI в FastAPI | High | Medium | P2 |
@@ -527,7 +532,7 @@
 | S6 | SQLite без шифрования at rest | Medium | High | P3 |
 | S7 | CSP Report-Only + unsafe-inline | Medium | Medium | P3 |
 | S10 | Длинная сессия 12ч | Medium | Low | P3 |
-| Q4–Q7 | Дублирование preview/plates/calendar/product-type | Medium | Medium | P3 |
+| Q4–Q7 | Дублирование preview/plates/calendar/product-type | Medium | Medium | P3 | Q5 **resolved** (спека P1) |
 | Q10–Q13 | Слабая типизация, скрытые сбои, нет тестов | Medium | Low–Med | P3 |
 | A14–A15 | Viz monolith, owner_user_id policy | Low | Low–Med | P4 | A15 **documented** |
 | S11–S15 | CSRF cookie, i18n, health, bot, sessionStorage | Low | Low | P4 |
@@ -547,8 +552,8 @@
 ### Этот спринт
 
 - **[S3]** — rate limits (S4 закрыт: npm audit high→0)
-- **[A3]**, **[A4]**, **[Q1]**, **[Q2]** — декомпозиция коммерческого контура (`/refactor commercial_workflow_service.py`, `/refactor commercial.py`)
-- **[A5]**, **[A7]** — repository layer + DI
+- ~~**[A3]**, **[A4]**, **[Q1]**, **[Q2]**, **[Q5]**~~ resolved — спека [stabilizaciya-p1-commercial-2026-08-28.md](../../specs/stabilizaciya-p1-commercial-2026-08-28.md) (волны Q5→Q1→A3→A4)
+- **[A5]**, **[A7]** — repository layer + DI (`A5` follow-up спека, не P1)
 - ~~**[Q3]**~~ resolved — мёртвый код `builder.py` удалён
 
 ### Следующий спринт
@@ -575,4 +580,6 @@
 - ADR по деплою: [deployment-single-instance.md](../architecture/deployment-single-instance.md)
 - ADR политики доступа к КП: [offer-access-policy.md](../architecture/offer-access-policy.md)
 - Спека P0: [stabilizaciya-p0-audit-2026-08-28.md](../../specs/stabilizaciya-p0-audit-2026-08-28.md)
+- Спека P1: [stabilizaciya-p1-commercial-2026-08-28.md](../../specs/stabilizaciya-p1-commercial-2026-08-28.md)
 - План P0: [2026-08-28-stabilizaciya-p0-audit.md](../plans/2026-08-28-stabilizaciya-p0-audit.md)
+- План P1: [2026-08-28-stabilizaciya-p1-commercial.md](../plans/2026-08-28-stabilizaciya-p1-commercial.md)
