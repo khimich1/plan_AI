@@ -84,8 +84,21 @@ class CommercialWizardState(BaseModel):
 CommercialWizardStateResponse = CommercialWizardState
 
 
+class CommercialParseLine(BaseModel):
+    index: int = Field(ge=0)
+    text: str
+    empty: bool = False
+    ok: bool
+    reason_text: str | None = None
+
+
+COMMERCIAL_PARSE_TEXT_MAX_LENGTH = 50_000
+
+
 class CommercialParseRequest(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=COMMERCIAL_PARSE_TEXT_MAX_LENGTH)
+    product_type: ProductType = "plates"
+    lint_only: bool = False
 
 
 class CommercialPreviewRequest(BaseModel):

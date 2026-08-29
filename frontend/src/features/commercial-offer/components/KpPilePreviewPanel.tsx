@@ -10,6 +10,7 @@ import {
   isPileGradeCode,
   PILE_GRADE_CODES,
 } from "@/features/commercial-offer/lib/pileGrades";
+import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -30,8 +31,7 @@ export const KpPilePreviewPanel = ({
   onLineGradeChange,
 }: KpPilePreviewPanelProps) => {
   const rows = useMemo(() => buildPilePreviewRows(draft), [draft]);
-  const unparsedLines = draft.metadata.unparsed_lines ?? [];
-  const warnings = draft.metadata.warnings ?? [];
+  const warnings = filterCompositionWarnings(draft.metadata.warnings ?? []);
   const validationErrors = draft.wizard_state.validation_errors ?? [];
   const defaultGrade = draft.metadata.default_concrete_grade ?? "B25";
   const [bulkGrade, setBulkGrade] = useState(defaultGrade);
@@ -192,16 +192,6 @@ export const KpPilePreviewPanel = ({
           </Alert>
         )}
 
-        {unparsedLines.length > 0 && (
-          <div style={{ borderTop: "1px solid #e4e7ec", paddingTop: "0.75rem" }}>
-            <div style={{ fontWeight: 600, marginBottom: "0.35rem" }}>Не попали в состав</div>
-            <ul style={{ margin: 0, paddingLeft: "1.25rem", color: "#667085", fontSize: "0.9rem" }}>
-              {unparsedLines.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
     </Card>
   );

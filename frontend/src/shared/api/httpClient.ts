@@ -28,6 +28,7 @@ type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: BodyInit | null;
   headers?: HeadersInit;
+  signal?: AbortSignal;
 };
 
 const buildUrl = (path: string): string => {
@@ -139,8 +140,16 @@ const request = async <TResponse>(path: string, options: RequestOptions = {}): P
       body: options.body ?? null,
       headers,
       credentials: "include",
+      signal: options.signal,
     });
-  } catch {
+  } catch (err) {
+    if (
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (err instanceof Error && err.name === "AbortError") ||
+      options.signal?.aborted
+    ) {
+      throw err;
+    }
     throw new ApiError(
       "Сервер недоступен. Подождите пару секунд после запуска и обновите страницу.",
       0,
@@ -236,8 +245,12 @@ const downloadRequest = async (
 
 export const httpClient = {
   get: <TResponse>(path: string) => request<TResponse>(path),
-  post: <TResponse>(path: string, body?: BodyInit | null, headers?: HeadersInit) =>
-    request<TResponse>(path, { method: "POST", body, headers }),
+  post: <TResponse>(
+    path: string,
+    body?: BodyInit | null,
+    headers?: HeadersInit,
+    extra?: { signal?: AbortSignal },
+  ) => request<TResponse>(path, { method: "POST", body, headers, signal: extra?.signal }),
   put: <TResponse>(path: string, body?: BodyInit | null, headers?: HeadersInit) =>
     request<TResponse>(path, { method: "PUT", body, headers }),
   patch: <TResponse>(path: string, body?: BodyInit | null, headers?: HeadersInit) =>

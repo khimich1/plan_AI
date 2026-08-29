@@ -462,3 +462,24 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
     expect(tripInput).not.toBeDisabled();
   });
 });
+
+describe("CalculationResultStep unparsed UX", () => {
+  it("does not add a dead unparsed-lines warning and still shows other warnings", () => {
+    renderResultStep(
+      makeDraft({
+        metadata: {
+          ...baseMetadata(),
+          unparsed_lines: ["xyz-not-a-plate (пропущено: не совпал формат строки)"],
+          warnings: [
+            "Не удалось распознать строк: 1",
+            "Строки формата «длина×ширина×толщина» (мм), например «3880x1200x220»: нагрузка принята 8п по умолчанию. Проверьте нагрузку перед отправкой КП.",
+          ],
+        },
+      }),
+    );
+
+    expect(screen.queryByText(/Строки, не попавшие в расчёт/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Не удалось распознать строк: 1/)).not.toBeInTheDocument();
+    expect(screen.getByText(/нагрузка принята 8п по умолчанию/)).toBeInTheDocument();
+  });
+});

@@ -1,39 +1,26 @@
-import { useEffect, useState, type ChangeEvent, type ClipboardEvent, type WheelEvent } from "react";
+import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
 import type {
-
   CommercialDraftDetails,
-
   OcrCorrection,
-
   PlateInputMode,
-
   UnpricedPlateAction,
-
   WidePlateAction,
-
 } from "@/features/commercial-offer/types/commercialOffer";
-
 import { KpPlatePreviewPanel } from "@/features/commercial-offer/components/KpPlatePreviewPanel";
-
 import { PlateListEditor } from "@/features/commercial-offer/components/PlateListEditor";
-
+import {
+  resolveSourceSubmitDisabled,
+  SourceInputCard,
+  type SourceSubmitGate,
+} from "@/features/commercial-offer/components/SourceInputCard";
 import { UnpricedPlatesInlineSection } from "@/features/commercial-offer/components/UnpricedPlatesInlineSection";
-
 import { WidePlatesInlineSection } from "@/features/commercial-offer/components/WidePlatesInlineSection";
-
 import { Alert } from "@/shared/ui/Alert";
-
 import { Button } from "@/shared/ui/Button";
-
 import { Card } from "@/shared/ui/Card";
-
-import { FieldWrapper, Textarea } from "@/shared/ui/Field";
-
 import { StepLayout } from "@/shared/ui/StepLayout";
-
-
 
 type PlateInputStepProps = {
   draft: CommercialDraftDetails | null;
@@ -76,32 +63,6 @@ type PlateInputStepProps = {
   onReset: () => void;
 };
 
-
-
-const buildClipboardImageName = (type: string) => {
-
-  const extension = type.split("/")[1]?.split("+")[0] || "png";
-
-  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
-
-  return `clipboard-image-${timestamp}.${extension}`;
-
-};
-
-
-
-const createClipboardImageFile = (file: File) =>
-
-  new File([file], buildClipboardImageName(file.type), {
-
-    type: file.type || "image/png",
-
-    lastModified: Date.now(),
-
-  });
-
-
-
 const IMAGE_ZOOM_MIN = 0.5;
 const IMAGE_ZOOM_MAX = 3;
 const IMAGE_ZOOM_STEP = 0.25;
@@ -111,52 +72,27 @@ const clampImageZoom = (value: number) => Math.min(IMAGE_ZOOM_MAX, Math.max(IMAG
 const formatImageZoom = (zoom: number) => `${Math.round(zoom * 100)}%`;
 
 const formatOcrCorrections = (corrections: OcrCorrection[], maxItems = 5): string[] => {
-
   const actionable = corrections.filter((item) => item.action !== "verify_failed");
-
   return actionable.slice(0, maxItems).map((item, index) => {
-
     const rowLabel = item.row_index != null ? `стр. ${item.row_index}` : `#${index + 1}`;
-
     const beforeMark = item.before?.normalized_candidate ?? "—";
-
     const afterMark = item.after?.normalized_candidate ?? "—";
-
-
-
     if (item.action === "added") {
-
       const qty = item.after?.qty ?? "?";
-
       return `${rowLabel}: добавлено «${afterMark} ${qty}»`;
-
     }
-
     if (item.action === "removed") {
-
       return `${rowLabel}: удалено «${beforeMark}»`;
-
     }
-
     if (item.action === "changed_qty") {
-
       return `${rowLabel}: «${afterMark}» кол-во ${item.before?.qty ?? "?"} → ${item.after?.qty ?? "?"}`;
-
     }
-
     if (item.action === "changed_mark") {
-
       return `${rowLabel}: «${beforeMark}» → «${afterMark}»`;
-
     }
-
     return `${rowLabel}: ${item.reason ?? item.action}`;
-
   });
-
 };
-
-
 
 export const PlateInputStep = ({
   draft,
@@ -194,9 +130,13 @@ export const PlateInputStep = ({
   onApplyUnpricedPlates,
   onReset,
 }: PlateInputStepProps) => {
-  const [showAdditionalActions, setShowAdditionalActions] = useState(false);
   const [showSourceInput, setShowSourceInput] = useState(false);
   const [imageZoom, setImageZoom] = useState(1);
+  const [sourceGate, setSourceGate] = useState<SourceSubmitGate>({
+    sourceText: "",
+    canSubmit: true,
+    blockReason: undefined,
+  });
   const hasDraft = Boolean(draft);
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
@@ -206,22 +146,13 @@ export const PlateInputStep = ({
   }, [recognizedImageUrl]);
 
   const hasSourceInput = Boolean(sourceText.trim() || selectedImageName);
-
-  const primaryRecognizeLabel = selectedImageName
-
-    ? isRecognizing
-
-      ? "Распознавание..."
-
-      : "Распознать фото"
-
-    : isRecognizing
-
-      ? "Обработка..."
-
-      : "Обработать текст";
-
-
+  const sourceSubmit = resolveSourceSubmitDisabled(
+    sourceText,
+    selectedImageName,
+    isRecognizing || isAiProcessing,
+    hasSourceInput,
+    sourceGate,
+  );
 
   const ocrCorrections = draft?.metadata.ocr_corrections ?? [];
 
@@ -234,8 +165,6 @@ export const PlateInputStep = ({
     0,
 
   );
-
-
 
   const hasUnresolvedWidePlates =
 
@@ -251,16 +180,6 @@ export const PlateInputStep = ({
     !isAiProcessing &&
     !isProceeding;
 
-
-
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-
-    onFileChange(event.target.files?.[0] ?? null);
-
-  };
-
-
-
   const handleImageWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (!event.ctrlKey) {
       return;
@@ -270,244 +189,29 @@ export const PlateInputStep = ({
     setImageZoom((current) => clampImageZoom(Number((current + direction * IMAGE_ZOOM_STEP).toFixed(2))));
   };
 
-  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
-
-    const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith("image/"));
-
-    if (!imageItem) {
-
-      return;
-
-    }
-
-
-
-    const imageFile = imageItem.getAsFile();
-
-    if (!imageFile) {
-
-      return;
-
-    }
-
-
-
-    event.preventDefault();
-
-    onImagePaste(createClipboardImageFile(imageFile));
-
-  };
-
-
-
   const sourceInputCard = (
-
-    <Card
-      title={hasDraft ? "Добавить к списку" : "Источник данных"}
-      subtitle={
-        hasDraft
-          ? "Загрузите ещё фото или вставьте текст — позиции добавятся к текущему списку."
-          : "Вставьте текст списка плит или загрузите фото таблицы."
-      }
-    >
-
-      <div style={{ display: "grid", gap: "1rem" }} onPaste={handlePaste}>
-
-        <FieldWrapper label="Список плит">
-
-          <Textarea
-
-            value={sourceText}
-
-            onChange={(event) => onTextChange(event.target.value)}
-
-            placeholder={"ПБ 78-12-8п 2\n71-12-8 3\nПБ 66-12-8п 4"}
-
-          />
-
-        </FieldWrapper>
-
-
-
-        <FieldWrapper
-
-          label="Фото / изображение таблицы"
-
-          hint="Поддерживаются только изображения. Можно вставить изображение из буфера обмена: Ctrl+V."
-
-        >
-
-          <input type="file" accept="image/*" onChange={handleFileChange} />
-
-        </FieldWrapper>
-
-
-
-        {selectedImageName && <Alert tone="info">Выбран файл: {selectedImageName}</Alert>}
-
-
-
-        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
-
-          {!hasDraft && (
-
-            <Button
-
-              type="button"
-
-              variant="primary"
-
-              onClick={() => onRecognize("replace")}
-
-              disabled={isRecognizing || isAiProcessing || !hasSourceInput}
-
-            >
-
-              {primaryRecognizeLabel}
-
-            </Button>
-
-          )}
-
-
-
-          {hasDraft && (
-
-            <button
-
-              type="button"
-
-              onClick={() => setShowAdditionalActions((open) => !open)}
-
-              disabled={isRecognizing || isAiProcessing}
-
-              style={{
-
-                border: "none",
-
-                background: "none",
-
-                color: "#175cd3",
-
-                cursor: "pointer",
-
-                padding: "0.5rem 0",
-
-                font: "inherit",
-
-              }}
-
-            >
-
-              {showAdditionalActions ? "▾ Дополнительно" : "▸ Дополнительно"}
-
-            </button>
-
-          )}
-
-        </div>
-
-
-
-        {hasDraft && showAdditionalActions && (
-
-          <div
-
-            style={{
-
-              display: "grid",
-
-              gap: "1rem",
-
-              border: "1px solid #e4e7ec",
-
-              borderRadius: 12,
-
-              padding: "1rem",
-
-              background: "#fafafa",
-
-            }}
-
-          >
-
-            <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-
-              <Button
-
-                type="button"
-
-                variant="ghost"
-
-                onClick={() => onRecognize("replace")}
-
-                disabled={isRecognizing || isAiProcessing || !hasSourceInput}
-
-              >
-
-                {isRecognizing ? "Замена..." : "Заменить список"}
-
-              </Button>
-
-            </div>
-
-
-
-            {onAiInstructionChange && onApplyAi && (
-
-              <FieldWrapper
-
-                label="Инструкция для помощника"
-
-                hint="Редкий сценарий: опишите, что сделать со списком плит."
-
-              >
-
-                <Textarea
-
-                  value={aiInstruction}
-
-                  onChange={(event) => onAiInstructionChange(event.target.value)}
-
-                  placeholder="Например: убери строки с 6п"
-
-                />
-
-                <div style={{ marginTop: "0.75rem" }}>
-
-                  <Button
-
-                    type="button"
-
-                    variant="ghost"
-
-                    onClick={onApplyAi}
-
-                    disabled={isRecognizing || isAiProcessing || !aiInstruction.trim()}
-
-                  >
-
-                    {isAiProcessing ? "Обработка..." : "Применить инструкцию"}
-
-                  </Button>
-
-                </div>
-
-              </FieldWrapper>
-
-            )}
-
-          </div>
-
-        )}
-
-      </div>
-
-    </Card>
-
+    <SourceInputCard
+      productType="plates"
+      hasDraft={hasDraft}
+      sourceText={sourceText}
+      selectedImageName={selectedImageName}
+      isRecognizing={isRecognizing}
+      isAiProcessing={isAiProcessing}
+      listLabel="Список плит"
+      placeholder={"ПБ 78-12-8п 2\n71-12-8 3\nПБ 66-12-8п 4"}
+      emptySubtitle="Вставьте текст списка плит или загрузите фото таблицы."
+      aiHint="Редкий сценарий: опишите, что сделать со списком плит."
+      aiPlaceholder="Например: убери строки с 6п"
+      aiInstruction={aiInstruction}
+      onAiInstructionChange={onAiInstructionChange}
+      onApplyAi={onApplyAi}
+      onTextChange={onTextChange}
+      onFileChange={onFileChange}
+      onImagePaste={onImagePaste}
+      onRecognize={onRecognize}
+      onSubmitGateChange={setSourceGate}
+    />
   );
-
-
 
   return (
 
@@ -579,7 +283,8 @@ export const PlateInputStep = ({
                     type="button"
                     variant="primary"
                     onClick={() => onRecognize("append")}
-                    disabled={isRecognizing || isAiProcessing || !hasSourceInput}
+                    disabled={sourceSubmit.disabled}
+                    title={sourceSubmit.title}
                   >
                     {isRecognizing ? "Добавление..." : "Добавить к списку"}
                   </Button>
@@ -726,8 +431,6 @@ export const PlateInputStep = ({
 
             )}
 
-
-
             <Card
               title="Список плит для расчёта"
               subtitle="Сверьте позиции текущего источника с фото или текстом."
@@ -811,5 +514,4 @@ export const PlateInputStep = ({
   );
 
 };
-
 

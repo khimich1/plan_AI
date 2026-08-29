@@ -37,6 +37,27 @@ export type FileKind = "pdf" | "xlsx" | "breakdown" | "schema";
 export type WidePlateAction = "confirm" | "exclude" | "replace";
 export type UnpricedPlateAction = "replace_load" | "exclude";
 
+export type CommercialParseLine = {
+  index: number;
+  text: string;
+  empty: boolean;
+  ok: boolean;
+  reason_text: string | null;
+};
+
+export type CommercialParseResponse = {
+  product_type: ProductType;
+  lines: CommercialParseLine[];
+  unparsed_lines: string[];
+  order?: Record<string, unknown>;
+  normalized_text?: string;
+  normalized_lines?: string[];
+  warnings?: string[];
+  wide_plate_lines?: WidePlateLine[];
+  dobor_pairs?: DoborPair[];
+  diagnostics?: Array<Record<string, unknown>>;
+};
+
 export type Manager = {
   id: number;
   fio: string;

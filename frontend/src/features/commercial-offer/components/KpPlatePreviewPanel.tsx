@@ -1,5 +1,6 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import { buildKpPreviewRows } from "@/features/commercial-offer/lib/buildKpPreviewRows";
+import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
 import { formatOfferNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 import { Alert } from "@/shared/ui/Alert";
 import { Card } from "@/shared/ui/Card";
@@ -15,8 +16,7 @@ const flagLabel = (flag: "wide_direct" | "wide_split"): string =>
 export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPanelProps) => {
   const rows = buildKpPreviewRows(draft);
   const wideLines = draft.metadata.wide_plate_lines ?? [];
-  const unparsedLines = draft.metadata.unparsed_lines ?? [];
-  const warnings = draft.metadata.warnings ?? [];
+  const warnings = filterCompositionWarnings(draft.metadata.warnings ?? []);
   const showWideAlert = wideLines.length > 0 && !draft.metadata.wide_plates_resolved;
   const hasUnpricedRows = rows.some((row) => row.unitPrice === null);
   const normalizedTextChanged =
@@ -162,17 +162,6 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
           <Alert tone="error">
             Не все плиты найдены в прайсе — исправьте список перед переходом к клиенту.
           </Alert>
-        )}
-
-        {unparsedLines.length > 0 && (
-          <div style={{ borderTop: "1px solid #e4e7ec", paddingTop: "0.75rem" }}>
-            <div style={{ fontWeight: 600, marginBottom: "0.35rem" }}>Не попали в состав</div>
-            <ul style={{ margin: 0, paddingLeft: "1.25rem", color: "#667085", fontSize: "0.9rem" }}>
-              {unparsedLines.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </div>
         )}
       </div>
     </Card>

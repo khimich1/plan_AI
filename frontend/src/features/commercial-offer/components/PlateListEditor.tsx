@@ -5,6 +5,7 @@ import {
   DOBOR_MARKER_HIGHLIGHT_STYLE,
   PLATE_LINE_HIGHLIGHT_STYLES,
   splitLineByDoborMarker,
+  type PlateLineHighlight,
   type PlateLineHighlightKind,
 } from "@/features/commercial-offer/lib/plateLineHighlights";
 import {
@@ -15,11 +16,13 @@ import {
 import { AutoResizeTextarea } from "@/shared/ui/Field";
 
 type PlateListEditorProps = {
-  draft: CommercialDraftDetails;
+  draft?: CommercialDraftDetails | null;
   value: string;
   onChange: (value: string) => void;
   minHeight?: number;
   showLineNumbers?: boolean;
+  highlights?: Map<number, PlateLineHighlight>;
+  placeholder?: string;
 };
 
 const EDITOR_PADDING_Y = "0.8rem";
@@ -39,6 +42,8 @@ export const PlateListEditor = ({
   onChange,
   minHeight = 440,
   showLineNumbers = false,
+  highlights,
+  placeholder = "Пока нет списка плит.",
 }: PlateListEditorProps) => {
   const lines = value.split("\n");
   const lineNumbers = showLineNumbers ? assignNonEmptyLineNumbers(lines) : [];
@@ -50,7 +55,15 @@ export const PlateListEditor = ({
   const textareaPaddingLeft = showLineNumbers
     ? `calc(${EDITOR_PADDING_X} + ${gutterCh}ch)`
     : EDITOR_PADDING_X;
-  const highlightMap = useMemo(() => buildPlateLineHighlightMap(draft, lines), [draft, lines]);
+  const highlightMap = useMemo(() => {
+    if (highlights) {
+      return highlights;
+    }
+    if (draft) {
+      return buildPlateLineHighlightMap(draft, lines);
+    }
+    return new Map<number, PlateLineHighlight>();
+  }, [highlights, draft, lines]);
   const activeKinds = useMemo(() => {
     const kinds = new Set<PlateLineHighlightKind>();
     lines.forEach((line, index) => {
@@ -181,7 +194,7 @@ export const PlateListEditor = ({
         <AutoResizeTextarea
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="Пока нет списка плит."
+          placeholder={placeholder}
           style={{
             minHeight,
             position: "relative",

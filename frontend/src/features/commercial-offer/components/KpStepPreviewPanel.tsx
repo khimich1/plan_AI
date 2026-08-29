@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import { buildStepPreviewRows } from "@/features/commercial-offer/lib/buildStepPreviewRows";
 import { formatOfferNumber, formatOfferSum } from "@/features/commercial-offer/lib/formatOfferNumbers";
+import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
 import { Alert } from "@/shared/ui/Alert";
 import { Card } from "@/shared/ui/Card";
 
@@ -12,8 +13,7 @@ type KpStepPreviewPanelProps = {
 
 export const KpStepPreviewPanel = ({ draft, normalizedText }: KpStepPreviewPanelProps) => {
   const rows = useMemo(() => buildStepPreviewRows(draft), [draft]);
-  const unparsedLines = draft.metadata.unparsed_lines ?? [];
-  const warnings = draft.metadata.warnings ?? [];
+  const warnings = filterCompositionWarnings(draft.metadata.warnings ?? []);
   const validationErrors = draft.wizard_state.validation_errors ?? [];
 
   const normalizedTextChanged =
@@ -107,16 +107,6 @@ export const KpStepPreviewPanel = ({ draft, normalizedText }: KpStepPreviewPanel
           </Alert>
         )}
 
-        {unparsedLines.length > 0 && (
-          <div style={{ borderTop: "1px solid #e4e7ec", paddingTop: "0.75rem" }}>
-            <div style={{ fontWeight: 600, marginBottom: "0.35rem" }}>Не попали в состав</div>
-            <ul style={{ margin: 0, paddingLeft: "1.25rem", color: "#667085", fontSize: "0.9rem" }}>
-              {unparsedLines.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
     </Card>
   );

@@ -10,6 +10,7 @@ import { DownloadFilesSection } from "@/features/commercial-offer/components/Dow
 import { SaveOfferSection } from "@/features/commercial-offer/components/SaveOfferSection";
 import { PlatePriceBreakdownModal } from "@/features/commercial-offer/components/PlatePriceBreakdownModal";
 import { findBreakdownTable } from "@/features/commercial-offer/lib/findBreakdownTable";
+import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
 import {
   baseProductsTotal,
   discountPercentFromTargetSum,
@@ -269,12 +270,7 @@ export const CalculationResultStep = ({
   };
 
   const totalWithVat = formatTotalsMoney(serverTotalWithVat);
-  const readinessWarnings = [
-    ...draft.metadata.warnings,
-    ...(draft.metadata.unparsed_lines.length > 0
-      ? [`Строки, не попавшие в расчёт: ${draft.metadata.unparsed_lines.length}`]
-      : []),
-  ];
+  const readinessWarnings = filterCompositionWarnings(draft.metadata.warnings);
 
   return (
     <StepLayout

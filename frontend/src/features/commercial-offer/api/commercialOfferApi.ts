@@ -3,6 +3,7 @@ import type {
   BreakdownResponse,
   CommercialDraftDetails,
   CommercialGeneratedFile,
+  CommercialParseResponse,
   CommercialSaveResult,
   ConditionsMode,
   ManagersResponse,
@@ -96,6 +97,21 @@ const createAiMultipartPayload = ({ instruction, image }: ApplyAiPlatesPayload) 
 
 export const commercialOfferApi = {
   getManagers: () => httpClient.get<ManagersResponse>("/api/v1/managers"),
+
+  parseSource: (
+    payload: { text: string; productType: ProductType },
+    extra?: { signal?: AbortSignal },
+  ) =>
+    httpClient.post<CommercialParseResponse>(
+      "/api/v1/commercial/parse",
+      JSON.stringify({
+        text: payload.text,
+        product_type: payload.productType,
+        lint_only: true,
+      }),
+      { "Content-Type": "application/json" },
+      extra,
+    ),
 
   createDraft: (payload: DraftCreatePayload) =>
     httpClient.post<CommercialDraftDetails>("/api/v1/commercial/drafts", createMultipartPayload(payload)),

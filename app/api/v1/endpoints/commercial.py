@@ -21,11 +21,12 @@ from app.schemas.commercial import (
     CommercialDraftDetailsResponse, CommercialDraftMetaUpdateRequest,
     CommercialFbsGradesUpdateRequest, CommercialGenerateFilesRequest,
     CommercialGenerateFilesResponse, CommercialMarchGradesUpdateRequest,
-    CommercialParseRequest, CommercialPileGradesUpdateRequest,
+    CommercialParseLine, CommercialParseRequest, CommercialPileGradesUpdateRequest,
     CommercialPreviewRequest, CommercialSaveDraftRequest, CommercialSaveOfferResponse,
     CommercialUnpricedPlatesResolveRequest, CommercialWidePlatesResolveRequest,
 )
 from app.services.commercial_draft_service import CommercialDraftService
+from app.services.commercial_line_lint import LineLint, lint_source_lines, unparsed_line_texts
 from app.services.commercial_service import CommercialService
 from app.services.commercial_upload_validation import (
     ensure_external_ocr_enabled, prepare_commercial_ocr_upload,
@@ -133,12 +134,35 @@ def _run_product_grades(
     return _details(result)
 
 
+def _serialize_line_lint(line: LineLint) -> dict:
+    return CommercialParseLine(
+        index=line.index,
+        text=line.text,
+        empty=line.empty,
+        ok=line.ok,
+        reason_text=line.reason_text,
+    ).model_dump()
+
+
 @router.post("/parse")
 def parse_commercial_text(
     payload: CommercialParseRequest,
     _user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
     service: CommercialService = Depends(get_commercial_service),
 ) -> dict:
+    try:
+        lint_lines = lint_source_lines(payload.text, payload.product_type)
+    except Exception as exc:
+        _raise_draft_http(
+            exc, where="parse_commercial_text", plate_parse=True, validation=False, not_found=False
+        )
+    line_payloads = [_serialize_line_lint(line) for line in lint_lines]
+    if payload.lint_only or payload.product_type != "plates":
+        return {
+            "product_type": payload.product_type,
+            "lines": line_payloads,
+            "unparsed_lines": unparsed_line_texts(lint_lines),
+        }
     try:
         result = service.parse(payload.text)
     except Exception as exc:
@@ -151,6 +175,8 @@ def parse_commercial_text(
         "warnings": result.warnings, "wide_plate_lines": result.wide_plate_lines,
         "dobor_pairs": CommercialDraftService.serialize_dobor_pairs(result.dobor_pairs),
         "diagnostics": result.diagnostics,
+        "product_type": payload.product_type,
+        "lines": line_payloads,
     }
 
 

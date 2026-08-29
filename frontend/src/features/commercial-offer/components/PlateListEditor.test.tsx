@@ -81,3 +81,22 @@ describe("PlateListEditor line numbers", () => {
     );
   });
 });
+
+describe("PlateListEditor external highlights", () => {
+  it("paints a line from an external map without a draft", () => {
+    const highlights = new Map([
+      [0, { kind: "unparsed" as const, title: "не совпал формат строки" }],
+    ]);
+
+    render(
+      <PlateListEditor
+        value={"плохо\nПБ 78-12-8п 2"}
+        onChange={vi.fn()}
+        highlights={highlights}
+      />,
+    );
+
+    expect(screen.getByTitle("не совпал формат строки")).toBeInTheDocument();
+    expect(screen.getByTitle("не совпал формат строки")).toHaveTextContent("плохо");
+  });
+});

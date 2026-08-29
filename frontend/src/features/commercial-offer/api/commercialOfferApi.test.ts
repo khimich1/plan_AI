@@ -25,6 +25,39 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("commercialOfferApi.parseSource", () => {
+  it("POSTs JSON with product_type and returns lines", async () => {
+    const response = {
+      product_type: "piles",
+      lines: [
+        { index: 0, text: "С120.35-12 B25 5", empty: false, ok: true, reason_text: null },
+        { index: 1, text: "плохо", empty: false, ok: false, reason_text: "не совпал формат строки" },
+      ],
+      unparsed_lines: ["плохо"],
+    };
+    mockPost.mockResolvedValue(response);
+
+    const result = await commercialOfferApi.parseSource({
+      text: "С120.35-12 B25 5\nплохо",
+      productType: "piles",
+    });
+
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/v1/commercial/parse",
+      JSON.stringify({
+        text: "С120.35-12 B25 5\nплохо",
+        product_type: "piles",
+        lint_only: true,
+      }),
+      JSON_HEADERS,
+      undefined,
+    );
+    expect(result.lines).toHaveLength(2);
+    expect(result.lines[1]?.ok).toBe(false);
+    expect(result.product_type).toBe("piles");
+  });
+});
+
 /**
  * MNA-501 / MNA-103 client contract — RED until commercialOfferApi grows append helpers.
  */
