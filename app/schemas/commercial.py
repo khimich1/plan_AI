@@ -303,6 +303,21 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
     logistics_cost: float | None = None
 
 
+class CommercialDraftLinePatchRequest(BaseModel):
+    """Partial update of one draft order line: qty and/or source_text (mark-as-in-list)."""
+
+    qty: int | None = None
+    source_text: str | None = None
+
+
+class CommercialRestoreLinesRequest(BaseModel):
+    """Undo a row delete/replace by splicing snapshot lines at index."""
+
+    index: int = Field(ge=0)
+    lines: list[dict[str, Any]] = Field(min_length=1)
+    replace_line_ids: list[str] = Field(default_factory=list)
+
+
 class CommercialAppendStartRequest(BaseModel):
     """Start a new append cycle: switch product_type, clear cycle input, keep header."""
 

@@ -11,6 +11,9 @@ import {
   MARCH_GRADE_CODES,
 } from "@/features/commercial-offer/lib/marchGrades";
 import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
+import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
+import { LineActionsCell, LineActionsHeader } from "@/features/commercial-offer/components/LineRowActions";
+import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -21,6 +24,7 @@ type KpMarchPreviewPanelProps = {
   isUpdatingGrades?: boolean;
   onApplyGradeToAll?: (grade: string) => void;
   onLineGradeChange?: (lineIndex: number, grade: string) => void;
+  lineRowHandlers?: LineRowHandlers;
 };
 
 export const KpMarchPreviewPanel = ({
@@ -29,6 +33,7 @@ export const KpMarchPreviewPanel = ({
   isUpdatingGrades = false,
   onApplyGradeToAll,
   onLineGradeChange,
+  lineRowHandlers,
 }: KpMarchPreviewPanelProps) => {
   const rows = useMemo(() => buildMarchPreviewRows(draft), [draft]);
   const warnings = filterCompositionWarnings(draft.metadata.warnings ?? []);
@@ -47,6 +52,12 @@ export const KpMarchPreviewPanel = ({
       subtitle="Марка, класс бетона, количество и цена — как в документе."
     >
       <div style={{ display: "grid", gap: "0.75rem" }}>
+        {lineRowHandlers?.undoToast ? (
+          <LineUndoToast
+            message={lineRowHandlers.undoToast.message}
+            onUndo={lineRowHandlers.undoToast.onUndo}
+          />
+        ) : null}
         {warnings.length > 0 && (
           <Alert tone="warning">
             <div style={{ display: "grid", gap: "0.35rem" }}>
@@ -133,6 +144,7 @@ export const KpMarchPreviewPanel = ({
                       {column}
                     </th>
                   ))}
+                  <LineActionsHeader enabled={Boolean(lineRowHandlers)} />
                 </tr>
               </thead>
               <tbody>
@@ -178,6 +190,12 @@ export const KpMarchPreviewPanel = ({
                       <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7" }}>
                         {isUnpriced ? "—" : formatOfferSum(row.qty, row.unit_price)}
                       </td>
+                      <LineActionsCell
+                        handlers={lineRowHandlers}
+                        lineId={row.lineId}
+                        qty={row.qty}
+                        sourceText={row.sourceText ?? ""}
+                      />
                     </tr>
                   );
                 })}

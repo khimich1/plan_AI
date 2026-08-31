@@ -8,6 +8,7 @@ import {
   type PropsWithChildren,
 } from "react";
 import { getCurrentBatchReviewText, needsBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
 import { draftStorage } from "@/features/commercial-offer/store/draftStorage";
 import {
   getProductInputStep,
@@ -114,26 +115,6 @@ const initialState: WizardStoreState = {
   isPickingProductType: false,
 };
 
-const getBatchCount = (draft: CommercialDraftDetails): number => {
-  const productType = resolveDraftProductType(draft.metadata.product_type);
-  if (productType === "piles") {
-    return draft.metadata.pile_batches?.length ?? 0;
-  }
-  if (productType === "steps") {
-    return draft.metadata.step_batches?.length ?? 0;
-  }
-  if (productType === "marches") {
-    return draft.metadata.march_batches?.length ?? 0;
-  }
-  if (productType === "bridge_piles") {
-    return (draft.metadata as { bridge_pile_batches?: unknown[] }).bridge_pile_batches?.length ?? 0;
-  }
-  if (productType === "fbs") {
-    return (draft.metadata as { fbs_batches?: unknown[] }).fbs_batches?.length ?? 0;
-  }
-  return draft.metadata.plate_batches?.length ?? 0;
-};
-
 const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStoreState => {
   switch (action.type) {
     case "set-product-type":
@@ -166,7 +147,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
       return { ...state, batchReviewText: action.text };
     case "start-batch-review": {
       const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
-      const batchCount = getBatchCount(action.payload);
+      const batchCount = getDraftBatchCount(action.payload);
       return {
         ...state,
         productType,
@@ -231,7 +212,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
     case "hydrate-draft": {
       const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
       const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
-      const batchCount = getBatchCount(action.payload);
+      const batchCount = getDraftBatchCount(action.payload);
       const shouldRefreshBatchText =
         action.refreshBatchText || batchReviewPending || (state.pendingBatchReview && batchCount > 0);
       return {
@@ -264,7 +245,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
     case "sync-after-wide-plates": {
       const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
       const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
-      const batchCount = getBatchCount(action.payload);
+      const batchCount = getDraftBatchCount(action.payload);
       return {
         ...state,
         productType,
@@ -285,7 +266,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
     case "sync-after-unpriced-plates": {
       const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
       const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
-      const batchCount = getBatchCount(action.payload);
+      const batchCount = getDraftBatchCount(action.payload);
       return {
         ...state,
         productType,

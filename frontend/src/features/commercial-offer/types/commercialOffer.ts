@@ -113,7 +113,13 @@ export type StepBatch = PlateBatch;
 
 export type MarchBatch = PlateBatch;
 
+export type BridgePileBatch = PlateBatch;
+
+export type FbsBatch = PlateBatch;
+
 export type PileOrderLine = {
+  lineId?: string | null;
+  sourceText?: string;
   mark: string;
   name: string;
   concrete_grade: string;
@@ -125,6 +131,8 @@ export type PileOrderLine = {
 };
 
 export type StepOrderLine = {
+  lineId?: string | null;
+  sourceText?: string;
   mark: string;
   name: string;
   qty: number;
@@ -134,6 +142,8 @@ export type StepOrderLine = {
 };
 
 export type MarchOrderLine = {
+  lineId?: string | null;
+  sourceText?: string;
   mark: string;
   name: string;
   concrete_grade: string;
@@ -210,6 +220,8 @@ export type CommercialDraftMetadata = {
   pile_batches?: PileBatch[];
   step_batches?: StepBatch[];
   march_batches?: MarchBatch[];
+  bridge_pile_batches?: BridgePileBatch[];
+  fbs_batches?: FbsBatch[];
   default_concrete_grade?: string;
   wide_plates_resolved: boolean;
   unpriced_plates_resolved?: boolean;

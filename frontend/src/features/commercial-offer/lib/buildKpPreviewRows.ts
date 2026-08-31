@@ -1,15 +1,18 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import { getCurrentCycleOrderData } from "@/features/commercial-offer/lib/currentCycleOrderData";
+import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export type KpPreviewFlag = "wide_direct" | "wide_split";
 
 export type KpPreviewRow = {
+  lineId: string | null;
   name: string;
   qty: number;
   unitPrice: number | null;
   flag: KpPreviewFlag | null;
   sourceLine?: string;
+  sourceText: string;
 };
 
 const WIDE_WIDTH_M = 1.2;
@@ -130,11 +133,13 @@ export const buildKpPreviewRows = (draft: CommercialDraftDetails): KpPreviewRow[
     }
 
     return {
+      lineId: typeof item.line_id === "string" && item.line_id.trim() ? item.line_id : null,
       name: String(item.name ?? ""),
       qty: toNumber(item.qty) ?? 0,
       unitPrice: toNumber(item.unit_price),
       flag,
       sourceLine,
+      sourceText: formatLineSourceText(item),
     };
   });
 };

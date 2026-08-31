@@ -70,7 +70,7 @@ describe("buildMarchPreviewRows", () => {
       },
     ]);
 
-    expect(buildMarchPreviewRows(draft)).toEqual([
+    expect(buildMarchPreviewRows(draft)).toMatchObject([
       {
         mark: "ЛМ-1",
         name: "ЛМ-1",

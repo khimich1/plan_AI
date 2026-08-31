@@ -20,6 +20,105 @@ from core.plate_order_context import PlateOrderContext
 _PRODUCT_TYPE_TO_WIZARD_STEP = {key: spec.wizard_step for key, spec in SPECS.items()}
 
 
+def _preview_unparsed_lines(preview: Any) -> list[str]:
+    if hasattr(preview, "unparsed_lines"):
+        return [str(item) for item in list(preview.unparsed_lines or []) if str(item).strip()]
+    parse_result = getattr(preview, "parse_result", None)
+    if parse_result is None:
+        return []
+    return [
+        str(item)
+        for item in list(getattr(parse_result, "unparsed_lines", None) or [])
+        if str(item).strip()
+    ]
+
+
+def _scrub_ids_from_batches(
+    batches: list[Any],
+    remove_ids: set[str],
+) -> list[dict[str, Any]]:
+    next_batches: list[dict[str, Any]] = []
+    for batch in batches:
+        if not isinstance(batch, dict):
+            continue
+        next_batch = dict(batch)
+        next_batch["line_ids"] = [
+            str(lid)
+            for lid in list(batch.get("line_ids") or [])
+            if str(lid).strip() and str(lid).strip() not in remove_ids
+        ]
+        if next_batch["line_ids"]:
+            next_batches.append(next_batch)
+    return next_batches
+
+
+def _replace_id_in_batches(
+    batches: list[Any],
+    old_id: str,
+    new_ids: list[str],
+) -> list[dict[str, Any]]:
+    next_batches: list[dict[str, Any]] = []
+    for batch in batches:
+        if not isinstance(batch, dict):
+            continue
+        next_batch = dict(batch)
+        ids = [str(lid) for lid in list(batch.get("line_ids") or [])]
+        if old_id not in ids:
+            next_batches.append(next_batch)
+            continue
+        idx = ids.index(old_id)
+        next_batch["line_ids"] = ids[:idx] + new_ids + ids[idx + 1 :]
+        if next_batch["line_ids"]:
+            next_batches.append(next_batch)
+    return next_batches
+
+
+def _rebuild_append_batches(
+    batches: list[Any],
+    order_data: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep batch_id / product_type; set line_ids from current order_data order."""
+    rebuilt: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for batch in batches:
+        if not isinstance(batch, dict):
+            continue
+        batch_id = str(batch.get("batch_id") or "").strip()
+        if not batch_id or batch_id in seen:
+            continue
+        seen.add(batch_id)
+        line_ids = [
+            str(line.get("line_id") or "").strip()
+            for line in order_data
+            if str(line.get("append_batch_id") or "").strip() == batch_id
+            and str(line.get("line_id") or "").strip()
+        ]
+        if not line_ids:
+            continue
+        next_batch = dict(batch)
+        next_batch["line_ids"] = line_ids
+        rebuilt.append(next_batch)
+    for line in order_data:
+        batch_id = str(line.get("append_batch_id") or "").strip()
+        if not batch_id or batch_id in seen:
+            continue
+        seen.add(batch_id)
+        line_ids = [
+            str(item.get("line_id") or "").strip()
+            for item in order_data
+            if str(item.get("append_batch_id") or "").strip() == batch_id
+            and str(item.get("line_id") or "").strip()
+        ]
+        rebuilt.append(
+            {
+                "batch_id": batch_id,
+                "product_type": str(line.get("product_type") or "plates").strip() or "plates",
+                "line_ids": line_ids,
+            }
+        )
+    return rebuilt
+
+
 class CommercialDraftLifecycle:
     def __init__(self, workflow: Any) -> None:
         self._wf = workflow
@@ -153,6 +252,181 @@ class CommercialDraftLifecycle:
             metadata=metadata,
         )
         return self.get_draft_details(draft_id)
+
+    def patch_order_line(
+        self,
+        draft_id: str,
+        line_id: str,
+        *,
+        qty: int | None = None,
+        source_text: str | None = None,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> dict[str, Any]:
+        """Update qty in place, or replace the line with fragment preview of source_text."""
+        target_id = (line_id or "").strip()
+        if not target_id:
+            raise ValueError("Не указан идентификатор строки.")
+        text = (source_text or "").strip() if source_text is not None else None
+        if qty is None and not text:
+            raise ValueError("Укажите количество или текст строки.")
+        if qty is not None and int(qty) < 1:
+            raise ValueError("Количество должно быть больше нуля.")
+
+        payload = self._wf._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata") or {})
+        order_data = [
+            dict(line)
+            for line in list(payload.get("order_data") or [])
+            if isinstance(line, dict)
+        ]
+        index = next(
+            (
+                i
+                for i, line in enumerate(order_data)
+                if str(line.get("line_id") or "").strip() == target_id
+            ),
+            None,
+        )
+        if index is None:
+            raise FileNotFoundError("Строка не найдена.")
+
+        if text:
+            order_data, metadata = self._replace_line_from_source_text(
+                order_data,
+                metadata,
+                index=index,
+                source_text=text,
+                plate_order_ctx=plate_order_ctx,
+            )
+        else:
+            self._apply_qty_to_line(order_data[index], int(qty))
+
+        self.persist_order_and_metadata(
+            draft_id,
+            payload=payload,
+            order_data=order_data,
+            metadata=metadata,
+        )
+        return self.get_draft_details(draft_id)
+
+    def restore_order_lines(
+        self,
+        draft_id: str,
+        *,
+        index: int,
+        lines: list[dict[str, Any]],
+        replace_line_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Remove replace_line_ids, then splice snapshot lines at index."""
+        snapshots = [dict(line) for line in list(lines or []) if isinstance(line, dict)]
+        if not snapshots:
+            raise ValueError("Нет строк для восстановления.")
+        insert_at = max(0, int(index))
+
+        payload = self._wf._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata") or {})
+        order_data = [
+            dict(line)
+            for line in list(payload.get("order_data") or [])
+            if isinstance(line, dict)
+        ]
+        remove_ids = {
+            str(lid).strip()
+            for lid in list(replace_line_ids or [])
+            if str(lid).strip()
+        }
+        if remove_ids:
+            order_data = [
+                line
+                for line in order_data
+                if str(line.get("line_id") or "").strip() not in remove_ids
+            ]
+            metadata["append_batches"] = _scrub_ids_from_batches(
+                list(metadata.get("append_batches") or []),
+                remove_ids,
+            )
+
+        insert_at = min(insert_at, len(order_data))
+        order_data = order_data[:insert_at] + snapshots + order_data[insert_at:]
+        metadata["append_batches"] = _rebuild_append_batches(
+            list(metadata.get("append_batches") or []),
+            order_data,
+        )
+        self.persist_order_and_metadata(
+            draft_id,
+            payload=payload,
+            order_data=order_data,
+            metadata=metadata,
+        )
+        return self.get_draft_details(draft_id)
+
+    def _replace_line_from_source_text(
+        self,
+        order_data: list[dict[str, Any]],
+        metadata: dict[str, Any],
+        *,
+        index: int,
+        source_text: str,
+        plate_order_ctx: PlateOrderContext | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        from app.services.product_draft_config import get_spec
+
+        old_line = order_data[index]
+        old_id = str(old_line.get("line_id") or "").strip()
+        product_type = (
+            str(old_line.get("product_type") or metadata.get("product_type") or "plates")
+            .strip()
+            .lower()
+            or "plates"
+        )
+        spec = get_spec(product_type)
+        preview = spec.generate_preview(
+            self._wf,
+            source_text,
+            plate_order_ctx=plate_order_ctx,
+        )
+        if _preview_unparsed_lines(preview):
+            raise ValueError("Не удалось распознать строку.")
+        preview_rows = [
+            dict(row)
+            for row in list(getattr(preview, "order_data", None) or [])
+            if isinstance(row, dict)
+        ]
+        stamped = self._wf.order_identity.stamp_order_data(
+            preview_rows,
+            product_type=product_type,
+        )
+        batch_id = str(old_line.get("append_batch_id") or "").strip()
+        if batch_id:
+            for row in stamped:
+                row["append_batch_id"] = batch_id
+        next_order = order_data[:index] + stamped + order_data[index + 1 :]
+        new_ids = [
+            str(row.get("line_id") or "").strip()
+            for row in stamped
+            if str(row.get("line_id") or "").strip()
+        ]
+        metadata["append_batches"] = _replace_id_in_batches(
+            list(metadata.get("append_batches") or []),
+            old_id,
+            new_ids,
+        )
+        return next_order, metadata
+
+    @staticmethod
+    def _apply_qty_to_line(line: dict[str, Any], qty: int) -> None:
+        old_qty = float(line.get("qty") or 0)
+        line["qty"] = qty
+        unit = line.get("unit_price")
+        if unit is not None:
+            line["line_total"] = float(unit) * qty
+        if line.get("length_m") is not None or line.get("width_m") is not None:
+            from core.kp_plate_weight import resolve_kp_line_weight_kg
+
+            _, total_kg = resolve_kp_line_weight_kg(line)
+            line["weight"] = total_kg
+        elif old_qty > 0 and line.get("weight") is not None:
+            line["weight"] = float(line["weight"]) / old_qty * qty
 
     def update_draft_meta(
         self,

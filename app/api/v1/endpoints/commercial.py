@@ -22,7 +22,8 @@ from app.schemas.commercial import (
     CommercialFbsGradesUpdateRequest, CommercialGenerateFilesRequest,
     CommercialGenerateFilesResponse, CommercialMarchGradesUpdateRequest,
     CommercialParseLine, CommercialParseRequest, CommercialPileGradesUpdateRequest,
-    CommercialPreviewRequest, CommercialSaveDraftRequest, CommercialSaveOfferResponse,
+    CommercialPreviewRequest, CommercialRestoreLinesRequest, CommercialSaveDraftRequest,
+    CommercialDraftLinePatchRequest, CommercialSaveOfferResponse,
     CommercialUnpricedPlatesResolveRequest, CommercialWidePlatesResolveRequest,
 )
 from app.services.commercial_draft_service import CommercialDraftService
@@ -401,6 +402,46 @@ def undo_last_append_batch(
     workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftDetailsResponse:
     return _details(_sync_draft("undo_last_append_batch", lambda: workflow.undo_last_append_batch(draft_id)))
+
+@router.post("/drafts/{draft_id}/lines/restore", response_model=CommercialDraftDetailsResponse)
+def restore_draft_lines(
+    payload: CommercialRestoreLinesRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    return _details(_sync_draft(
+        "restore_draft_lines",
+        lambda: workflow.restore_order_lines(
+            draft_id,
+            index=payload.index,
+            lines=payload.lines,
+            replace_line_ids=payload.replace_line_ids,
+        ),
+        not_found_detail="Строка не найдена.",
+    ))
+
+
+@router.patch("/drafts/{draft_id}/lines/{line_id}", response_model=CommercialDraftDetailsResponse)
+def patch_draft_line(
+    line_id: str,
+    payload: CommercialDraftLinePatchRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    return _details(_sync_draft(
+        "patch_draft_line",
+        lambda: workflow.patch_order_line(
+            draft_id,
+            line_id,
+            qty=payload.qty,
+            source_text=payload.source_text,
+            plate_order_ctx=plate_order_ctx,
+        ),
+        plate_parse=True,
+        not_found_detail="Строка не найдена.",
+    ))
+
 
 @router.delete("/drafts/{draft_id}/lines/{line_id}", response_model=CommercialDraftDetailsResponse)
 def delete_draft_line(

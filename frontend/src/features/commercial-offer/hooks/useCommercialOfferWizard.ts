@@ -409,6 +409,36 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
+  const patchDraftLineMutation = useMutation({
+    mutationFn: ({
+      draftId,
+      lineId,
+      payload,
+    }: {
+      draftId: string;
+      lineId: string;
+      payload: { qty?: number; source_text?: string };
+    }) => commercialOfferApi.patchDraftLine(draftId, lineId, payload),
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
+  const restoreDraftLinesMutation = useMutation({
+    mutationFn: ({
+      draftId,
+      payload,
+    }: {
+      draftId: string;
+      payload: { index: number; lines: Record<string, unknown>[]; replace_line_ids?: string[] };
+    }) => commercialOfferApi.restoreDraftLines(draftId, payload),
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
   return {
     state,
     dispatch,
@@ -442,6 +472,8 @@ export const useCommercialOfferWizard = () => {
     startAppendCycleMutation,
     undoLastAppendBatchMutation,
     deleteDraftLineMutation,
+    patchDraftLineMutation,
+    restoreDraftLinesMutation,
     currentDraft,
     isPileDraft,
     isStepDraft,

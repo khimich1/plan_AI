@@ -1,5 +1,6 @@
 import type { CommercialDraftDetails, PileOrderLine } from "@/features/commercial-offer/types/commercialOffer";
 import { getCurrentCycleOrderData } from "@/features/commercial-offer/lib/currentCycleOrderData";
+import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export const buildPilePreviewRows = (draft: CommercialDraftDetails): PileOrderLine[] =>
@@ -10,6 +11,8 @@ export const buildPilePreviewRows = (draft: CommercialDraftDetails): PileOrderLi
     const lineTotal =
       unitPrice !== null && qty > 0 ? Number((unitPrice * qty).toFixed(2)) : toNumber(item.line_total);
     return {
+      lineId: typeof item.line_id === "string" && item.line_id.trim() ? item.line_id : null,
+      sourceText: formatLineSourceText(item),
       mark,
       name: String(item.name ?? mark),
       concrete_grade: String(item.concrete_grade ?? draft.metadata.default_concrete_grade ?? "B25"),

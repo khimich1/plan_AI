@@ -65,7 +65,7 @@ describe("buildStepPreviewRows", () => {
       },
     ]);
 
-    expect(buildStepPreviewRows(draft)).toEqual([
+    expect(buildStepPreviewRows(draft)).toMatchObject([
       {
         mark: "ЛС11",
         name: "ЛС11",

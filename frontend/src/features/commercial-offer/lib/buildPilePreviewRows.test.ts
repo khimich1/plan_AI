@@ -68,7 +68,7 @@ describe("buildPilePreviewRows", () => {
       },
     ]);
 
-    expect(buildPilePreviewRows(draft)).toEqual([
+    expect(buildPilePreviewRows(draft)).toMatchObject([
       {
         mark: "С120.35-12",
         name: "С120.35-12",
@@ -102,7 +102,7 @@ describe("buildPilePreviewRows", () => {
     ]);
     draft.metadata.append_batches = [{ batch_id: "b1", product_type: "plates", line_ids: ["ln-plate"] }];
 
-    expect(buildPilePreviewRows(draft)).toEqual([
+    expect(buildPilePreviewRows(draft)).toMatchObject([
       {
         mark: "С120.35-12",
         name: "С120.35-12",
@@ -111,6 +111,7 @@ describe("buildPilePreviewRows", () => {
         unit_price: 44634.03,
         line_total: 223170.15,
         product_kind: "pile",
+        lineId: "ln-pile",
       },
     ]);
   });

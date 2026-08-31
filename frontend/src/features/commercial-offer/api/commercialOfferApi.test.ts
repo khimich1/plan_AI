@@ -15,6 +15,7 @@ vi.mock("@/shared/api/httpClient", () => ({
 }));
 
 const mockPost = httpClient.post as unknown as Mock;
+const mockPatch = httpClient.patch as unknown as Mock;
 const mockDelete = httpClient.delete as unknown as Mock;
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -93,6 +94,33 @@ describe("commercialOfferApi append / undo / delete (MNA-501)", () => {
 
     expect(mockDelete).toHaveBeenCalledWith(
       "/api/v1/commercial/drafts/draft-append-1/lines/ln_plates_2",
+    );
+    expect(result).toEqual(draftStub);
+  });
+
+  it("patchDraftLine PATCHes /lines/{line_id} with qty JSON", async () => {
+    mockPatch.mockResolvedValue(draftStub);
+    const result = await commercialOfferApi.patchDraftLine("draft-append-1", "ln_1", { qty: 90 });
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/api/v1/commercial/drafts/draft-append-1/lines/ln_1",
+      JSON.stringify({ qty: 90 }),
+      JSON_HEADERS,
+    );
+    expect(result).toEqual(draftStub);
+  });
+
+  it("restoreDraftLines POSTs /lines/restore", async () => {
+    mockPost.mockResolvedValue(draftStub);
+    const line = { line_id: "ln_1", qty: 2 };
+    const result = await commercialOfferApi.restoreDraftLines("draft-append-1", {
+      index: 0,
+      lines: [line],
+      replace_line_ids: ["ln_new"],
+    });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/v1/commercial/drafts/draft-append-1/lines/restore",
+      JSON.stringify({ index: 0, lines: [line], replace_line_ids: ["ln_new"] }),
+      JSON_HEADERS,
     );
     expect(result).toEqual(draftStub);
   });

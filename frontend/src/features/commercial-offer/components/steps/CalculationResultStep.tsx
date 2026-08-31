@@ -29,6 +29,10 @@ import {
   formatTotalsMoney,
   toNumber,
 } from "@/features/commercial-offer/lib/formatOfferNumbers";
+import { LineRowActions } from "@/features/commercial-offer/components/LineRowActions";
+import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
+import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
+import type { LineSavePayload, LineUndoToastState, LineRowErrorState } from "@/features/commercial-offer/lib/lineRowHandlers";
 import { StepLayout } from "@/shared/ui/StepLayout";
 
 const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
@@ -78,6 +82,9 @@ type CalculationResultStepProps = {
   onAddOtherNomenclature?: () => void;
   onUndoLastBatch?: () => Promise<void> | void;
   onDeleteLine?: (lineId: string) => Promise<void> | void;
+  onSaveLine?: (lineId: string, payload: LineSavePayload) => Promise<void> | void;
+  lineUndoToast?: LineUndoToastState | null;
+  lineRowError?: LineRowErrorState | null;
 };
 
 export const CalculationResultStep = ({
@@ -108,6 +115,9 @@ export const CalculationResultStep = ({
   onAddOtherNomenclature,
   onUndoLastBatch,
   onDeleteLine,
+  onSaveLine,
+  lineUndoToast = null,
+  lineRowError = null,
 }: CalculationResultStepProps) => {
   const [discountDraft, setDiscountDraft] = useState(String(draft.metadata.discount_percent ?? 0));
   const [targetSumDraft, setTargetSumDraft] = useState("");
@@ -328,6 +338,10 @@ export const CalculationResultStep = ({
     </Card>
 
     <Card title="Позиции">
+      <div style={{ display: "grid", gap: "0.75rem" }}>
+        {lineUndoToast ? (
+          <LineUndoToast message={lineUndoToast.message} onUndo={lineUndoToast.onUndo} />
+        ) : null}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -357,17 +371,17 @@ export const CalculationResultStep = ({
               const typeCell = showTypeColumn ? (
                 <td style={tdStyle}>{formatProductTypeLabel(item.product_type)}</td>
               ) : null;
-              const deleteCell = (
+              const actionCell = (
                 <td style={tdStyle}>
                   {lineId ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      aria-label={`Удалить строку ${lineId}`}
-                      onClick={() => void onDeleteLine?.(lineId)}
-                    >
-                      Удалить
-                    </Button>
+                    <LineRowActions
+                      lineId={lineId}
+                      defaultQty={toNumber(item.qty) ?? 0}
+                      defaultSourceText={formatLineSourceText(item)}
+                      saveError={lineRowError?.lineId === lineId ? lineRowError.message : null}
+                      onSave={(payload) => void onSaveLine?.(lineId, payload)}
+                      onDelete={() => void onDeleteLine?.(lineId)}
+                    />
                   ) : null}
                 </td>
               );
@@ -381,7 +395,7 @@ export const CalculationResultStep = ({
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
                     <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
                     <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
-                    {deleteCell}
+                    {actionCell}
                   </tr>
                 );
               }
@@ -396,7 +410,7 @@ export const CalculationResultStep = ({
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
                     <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
                     <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
-                    {deleteCell}
+                    {actionCell}
                   </tr>
                 );
               }
@@ -434,12 +448,13 @@ export const CalculationResultStep = ({
                   <td style={tdStyle}>{formatOfferNumber(item.weight)}</td>
                   <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
                   <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
-                  {deleteCell}
+                  {actionCell}
                 </tr>
               );
             })}
           </tbody>
         </table>
+      </div>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "1rem" }}>
         <Button type="button" variant="secondary" onClick={() => onAddOtherNomenclature?.()}>

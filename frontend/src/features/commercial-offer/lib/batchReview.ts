@@ -1,5 +1,7 @@
 import type {
+  BridgePileBatch,
   CommercialDraftDetails,
+  FbsBatch,
   MarchBatch,
   PileBatch,
   PlateBatch,
@@ -21,10 +23,13 @@ const batchLineKeys = (batchText: string): Set<string> => {
   return keys;
 };
 
+export type DraftBatch = PlateBatch | PileBatch | StepBatch | MarchBatch | BridgePileBatch | FbsBatch;
+
 export const getDraftProductType = (draft: CommercialDraftDetails | null): ProductType =>
   resolveDraftProductType(draft?.metadata.product_type);
 
-const getBatches = (draft: CommercialDraftDetails | null): Array<PlateBatch | PileBatch | StepBatch | MarchBatch> => {
+/** Source batches for the draft's active product type (all six types). */
+export const getBatches = (draft: CommercialDraftDetails | null): DraftBatch[] => {
   if (!draft) {
     return [];
   }
@@ -38,6 +43,12 @@ const getBatches = (draft: CommercialDraftDetails | null): Array<PlateBatch | Pi
   if (productType === "marches") {
     return draft.metadata.march_batches ?? [];
   }
+  if (productType === "bridge_piles") {
+    return draft.metadata.bridge_pile_batches ?? [];
+  }
+  if (productType === "fbs") {
+    return draft.metadata.fbs_batches ?? [];
+  }
   return draft.metadata.plate_batches ?? [];
 };
 
@@ -46,9 +57,7 @@ export const getCurrentPlateBatch = (draft: CommercialDraftDetails | null): Plat
   return batches.length > 0 ? batches[batches.length - 1]! : null;
 };
 
-export const getCurrentBatch = (
-  draft: CommercialDraftDetails | null,
-): PlateBatch | PileBatch | StepBatch | MarchBatch | null => {
+export const getCurrentBatch = (draft: CommercialDraftDetails | null): DraftBatch | null => {
   const batches = getBatches(draft);
   return batches.length > 0 ? batches[batches.length - 1]! : null;
 };
@@ -69,7 +78,7 @@ export const needsBatchReview = (draft: CommercialDraftDetails | null, confirmed
 
 /** Rebuild full input text when the user edits the last batch before confirming. */
 export const mergeEditedBatchIntoFullText = (
-  batches: Array<PlateBatch | PileBatch | StepBatch | MarchBatch>,
+  batches: DraftBatch[],
   editedLastBatchText: string,
 ): string => {
   const trimmedEdit = editedLastBatchText.trim();

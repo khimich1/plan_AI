@@ -2,6 +2,7 @@ import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
 import type { CommercialDraftDetails, OcrCorrection, PlateInputMode } from "@/features/commercial-offer/types/commercialOffer";
+import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
 import { KpMarchPreviewPanel } from "@/features/commercial-offer/components/KpMarchPreviewPanel";
 import { PlateListEditor } from "@/features/commercial-offer/components/PlateListEditor";
 import {
@@ -9,6 +10,14 @@ import {
   SourceInputCard,
   type SourceSubmitGate,
 } from "@/features/commercial-offer/components/SourceInputCard";
+import { PageReviewNav } from "@/features/commercial-offer/components/PageReviewNav";
+import { useBatchReviewHighlights } from "@/features/commercial-offer/hooks/useBatchReviewHighlights";
+import type { MultiPageSourceStepProps } from "@/features/commercial-offer/lib/multiPageStepProps";
+import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
+import {
+  OCR_VERIFY_FAILED_REVIEW_MESSAGE,
+  resolveActivePageOcrVerifyFailed,
+} from "@/features/commercial-offer/lib/ocrVerifyFailed";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -20,7 +29,13 @@ type MarchInputStepProps = {
   sourceText: string;
   batchReviewText: string;
   normalizedText: string;
-  selectedImageName: string | null;
+  pages: MultiPageSourceStepProps["pages"];
+  activePageId: MultiPageSourceStepProps["activePageId"];
+  softCapMessage?: MultiPageSourceStepProps["softCapMessage"];
+  pageProgressLabel?: MultiPageSourceStepProps["pageProgressLabel"];
+  singleFileOnly?: boolean;
+  recognitionStarted?: boolean;
+  canConfirmActivePage?: boolean;
   recognizedImageUrl: string | null;
   recognizedImageName: string | null;
   errorMessage: string | null;
@@ -34,14 +49,18 @@ type MarchInputStepProps = {
   onApplyAi?: () => void;
   onTextChange: (value: string) => void;
   onBatchReviewTextChange: (value: string) => void;
-  onFileChange: (file: File | null) => void;
-  onImagePaste: (file: File) => void;
+  onAddFiles: MultiPageSourceStepProps["onAddFiles"];
+  onRemovePage: MultiPageSourceStepProps["onRemovePage"];
+  onSelectPage: MultiPageSourceStepProps["onSelectPage"];
+  onPrevPage?: () => void;
+  onNextPage?: () => void;
   onRecognize: (mode: PlateInputMode) => void;
   onConfirmBatch: () => void;
   onFinishMarches: () => void;
   onApplyGradeToAll?: (grade: string) => void;
   onLineGradeChange?: (lineIndex: number, grade: string) => void;
   onReset: () => void;
+  lineRowHandlers?: LineRowHandlers;
 };
 
 
@@ -49,6 +68,9 @@ type MarchInputStepProps = {
 const IMAGE_ZOOM_MIN = 0.5;
 const IMAGE_ZOOM_MAX = 3;
 const IMAGE_ZOOM_STEP = 0.25;
+
+/** Real marks from `march_prices` (pb.db): 1ЛМ series and short ЛМ. */
+export const MARCH_LIST_PLACEHOLDER = "1ЛМ 27-11-14-4 B25 5\nЛМ 2,8 3";
 
 const clampImageZoom = (value: number) => Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, value));
 const formatImageZoom = (zoom: number) => `${Math.round(zoom * 100)}%`;
@@ -83,7 +105,13 @@ export const MarchInputStep = ({
   sourceText,
   batchReviewText,
   normalizedText,
-  selectedImageName,
+  pages,
+  activePageId,
+  softCapMessage = null,
+  pageProgressLabel = null,
+  singleFileOnly = false,
+  recognitionStarted = false,
+  canConfirmActivePage = true,
   recognizedImageUrl,
   recognizedImageName,
   errorMessage,
@@ -97,14 +125,18 @@ export const MarchInputStep = ({
   onApplyAi,
   onTextChange,
   onBatchReviewTextChange,
-  onFileChange,
-  onImagePaste,
+  onAddFiles,
+  onRemovePage,
+  onSelectPage,
+  onPrevPage,
+  onNextPage,
   onRecognize,
   onConfirmBatch,
   onFinishMarches,
   onApplyGradeToAll,
   onLineGradeChange,
   onReset,
+  lineRowHandlers,
 }: MarchInputStepProps) => {
   const [showSourceInput, setShowSourceInput] = useState(false);
   const [imageZoom, setImageZoom] = useState(1);
@@ -116,15 +148,22 @@ export const MarchInputStep = ({
   const hasDraft = Boolean(draft);
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
+  const reviewHighlights = useBatchReviewHighlights({
+    text: batchReviewText,
+    productType: "marches",
+    draft: batchReviewDraft,
+    enabled: isBatchReviewMode,
+  });
 
   useEffect(() => {
     setImageZoom(1);
   }, [recognizedImageUrl]);
 
-  const hasSourceInput = Boolean(sourceText.trim() || selectedImageName);
+  const hasImage = pages.length > 0;
+  const hasSourceInput = Boolean(sourceText.trim() || hasImage);
   const sourceSubmit = resolveSourceSubmitDisabled(
     sourceText,
-    selectedImageName,
+    hasImage,
     isRecognizing || isAiProcessing,
     hasSourceInput,
     sourceGate,
@@ -138,7 +177,7 @@ export const MarchInputStep = ({
     0,
   );
 
-  const canConfirmBatch = isBatchReviewMode && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
+  const canConfirmBatch = isBatchReviewMode && canConfirmActivePage && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
   const canFinishMarches = hasDraft && !pendingBatchReview && !isRecognizing && !isAiProcessing && !isProceeding;
 
 
@@ -157,11 +196,15 @@ export const MarchInputStep = ({
       productType="marches"
       hasDraft={hasDraft}
       sourceText={sourceText}
-      selectedImageName={selectedImageName}
+      pages={pages}
+      activePageId={activePageId}
+      softCapMessage={softCapMessage}
+      singleFileOnly={singleFileOnly || hasDraft}
+      recognitionStarted={recognitionStarted}
       isRecognizing={isRecognizing}
       isAiProcessing={isAiProcessing}
       listLabel="Список маршей"
-      placeholder={"ЛМ-1 B25 5\nЛМ-2 B25 3"}
+      placeholder={MARCH_LIST_PLACEHOLDER}
       emptySubtitle="Вставьте текст списка маршей или загрузите фото таблицы."
       aiHint="Редкий сценарий: опишите, что сделать со списком маршей."
       aiPlaceholder="Например: убери строки с B15"
@@ -169,8 +212,9 @@ export const MarchInputStep = ({
       onAiInstructionChange={onAiInstructionChange}
       onApplyAi={onApplyAi}
       onTextChange={onTextChange}
-      onFileChange={onFileChange}
-      onImagePaste={onImagePaste}
+      onAddFiles={onAddFiles}
+      onRemovePage={onRemovePage}
+      onSelectPage={onSelectPage}
       onRecognize={onRecognize}
       onSubmitGateChange={setSourceGate}
     />
@@ -242,6 +286,15 @@ export const MarchInputStep = ({
         <div style={{ display: "grid", gap: "1rem" }}>
           {isBatchReviewMode && (
             <>
+              <PageReviewNav
+                pages={pages}
+                activeId={activePageId}
+                progressLabel={pageProgressLabel}
+                onSelect={onSelectPage}
+                onRemove={onRemovePage}
+                onPrev={() => onPrevPage?.()}
+                onNext={() => onNextPage?.()}
+              />
               {ocrCorrectionLines.length > 0 && (
                 <Alert tone="warning">
                   <div>
@@ -258,10 +311,8 @@ export const MarchInputStep = ({
                 </Alert>
               )}
 
-              {draft.metadata.ocr_verify_failed && (
-                <Alert tone="warning">
-                  Повторная проверка распознавания не удалась — сверьте список маршей с исходным фото вручную.
-                </Alert>
+              {resolveActivePageOcrVerifyFailed(pages, activePageId, draft.metadata.ocr_verify_failed) && (
+                <Alert tone="warning">{OCR_VERIFY_FAILED_REVIEW_MESSAGE}</Alert>
               )}
 
               <div
@@ -357,11 +408,22 @@ export const MarchInputStep = ({
                       draft={batchReviewDraft}
                       value={batchReviewText}
                       onChange={onBatchReviewTextChange}
+                      highlights={reviewHighlights}
                       minHeight={recognizedImageUrl ? 440 : undefined}
                     />
                   )}
                 </Card>
               </div>
+              {onAiInstructionChange && onApplyAi && (
+                <AiInstructionBlock
+                  hint="Опишите, что исправить в списке (например, суффикс нагрузки н→п)."
+                  placeholder="Например: замени н на п в суффиксе нагрузки"
+                  instruction={aiInstruction}
+                  onInstructionChange={onAiInstructionChange}
+                  onApply={onApplyAi}
+                  isProcessing={isAiProcessing}
+                />
+              )}
             </>
           )}
 
@@ -372,6 +434,7 @@ export const MarchInputStep = ({
               isUpdatingGrades={isUpdatingGrades}
               onApplyGradeToAll={onApplyGradeToAll}
               onLineGradeChange={onLineGradeChange}
+              lineRowHandlers={lineRowHandlers}
             />
           )}
 

@@ -1,5 +1,6 @@
 import type { CommercialDraftDetails, StepOrderLine } from "@/features/commercial-offer/types/commercialOffer";
 import { getCurrentCycleOrderData } from "@/features/commercial-offer/lib/currentCycleOrderData";
+import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export const buildStepPreviewRows = (draft: CommercialDraftDetails): StepOrderLine[] =>
@@ -10,6 +11,8 @@ export const buildStepPreviewRows = (draft: CommercialDraftDetails): StepOrderLi
     const lineTotal =
       unitPrice !== null && qty > 0 ? Number((unitPrice * qty).toFixed(2)) : toNumber(item.line_total);
     return {
+      lineId: typeof item.line_id === "string" && item.line_id.trim() ? item.line_id : null,
+      sourceText: formatLineSourceText(item),
       mark,
       name: String(item.name ?? mark),
       qty,

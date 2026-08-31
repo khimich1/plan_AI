@@ -2,18 +2,22 @@ import type { CommercialDraftDetails } from "@/features/commercial-offer/types/c
 import { buildKpPreviewRows } from "@/features/commercial-offer/lib/buildKpPreviewRows";
 import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
 import { formatOfferNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
+import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
+import { LineActionsCell, LineActionsHeader } from "@/features/commercial-offer/components/LineRowActions";
+import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
 import { Alert } from "@/shared/ui/Alert";
 import { Card } from "@/shared/ui/Card";
 
 type KpPlatePreviewPanelProps = {
   draft: CommercialDraftDetails;
   normalizedText: string;
+  lineRowHandlers?: LineRowHandlers;
 };
 
 const flagLabel = (flag: "wide_direct" | "wide_split"): string =>
   flag === "wide_direct" ? "Шире стандартной" : "Разделена на стандартные позиции";
 
-export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPanelProps) => {
+export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: KpPlatePreviewPanelProps) => {
   const rows = buildKpPreviewRows(draft);
   const wideLines = draft.metadata.wide_plate_lines ?? [];
   const warnings = filterCompositionWarnings(draft.metadata.warnings ?? []);
@@ -28,6 +32,12 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
       subtitle="Наименование, количество и цена — как в документе. Скидка и доставка учитываются позже."
     >
       <div style={{ display: "grid", gap: "0.75rem" }}>
+        {lineRowHandlers?.undoToast ? (
+          <LineUndoToast
+            message={lineRowHandlers.undoToast.message}
+            onUndo={lineRowHandlers.undoToast.onUndo}
+          />
+        ) : null}
         {showWideAlert && (
           <Alert tone="warning">
             {wideLines.length}{" "}
@@ -98,6 +108,7 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
                   >
                     Цена
                   </th>
+                  {lineRowHandlers ? <LineActionsHeader enabled /> : null}
                 </tr>
               </thead>
               <tbody>
@@ -150,6 +161,12 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
                       >
                         {isUnpriced ? "нет в прайсе" : formatOfferNumber(row.unitPrice)}
                       </td>
+                      <LineActionsCell
+                        handlers={lineRowHandlers}
+                        lineId={row.lineId}
+                        qty={row.qty}
+                        sourceText={row.sourceText}
+                      />
                     </tr>
                   );
                 })}

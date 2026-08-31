@@ -303,4 +303,29 @@ export const commercialOfferApi = {
 
   deleteDraftLine: (draftId: string, lineId: string) =>
     httpClient.delete<CommercialDraftDetails>(`/api/v1/commercial/drafts/${draftId}/lines/${lineId}`),
+
+  patchDraftLine: (
+    draftId: string,
+    lineId: string,
+    payload: { qty?: number; source_text?: string },
+  ) =>
+    httpClient.patch<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/lines/${lineId}`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
+
+  restoreDraftLines: (
+    draftId: string,
+    payload: { index: number; lines: Record<string, unknown>[]; replace_line_ids?: string[] },
+  ) =>
+    httpClient.post<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/lines/restore`,
+      JSON.stringify({
+        index: payload.index,
+        lines: payload.lines,
+        replace_line_ids: payload.replace_line_ids ?? [],
+      }),
+      { "Content-Type": "application/json" },
+    ),
 };

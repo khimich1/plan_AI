@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type ClipboardEvent } from "react";
 
+import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
+import { OcrWaitBanner } from "@/features/commercial-offer/components/OcrWaitBanner";
 import { PlateListEditor } from "@/features/commercial-offer/components/PlateListEditor";
+import { SourceImageGallery } from "@/features/commercial-offer/components/SourceImageGallery";
 import { useSourceTextLint } from "@/features/commercial-offer/hooks/useSourceTextLint";
-import type { PlateLineHighlight } from "@/features/commercial-offer/lib/plateLineHighlights";
+import { lintLinesToUnparsedHighlights } from "@/features/commercial-offer/lib/plateLineHighlights";
+import {
+  isWaitingForFirstOcrReady,
+  type PageSource,
+} from "@/features/commercial-offer/lib/multiPageSource";
 import type { PlateInputMode, ProductType } from "@/features/commercial-offer/types/commercialOffer";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
-import { FieldWrapper, Textarea } from "@/shared/ui/Field";
+import { FieldWrapper } from "@/shared/ui/Field";
 
 export const SOURCE_LINT_PENDING_TITLE = "Проверка списка…";
 export const SOURCE_LINT_ERROR_TITLE = "Не удалось проверить список";
@@ -23,7 +30,13 @@ type SourceInputCardProps = {
   productType: ProductType;
   hasDraft: boolean;
   sourceText: string;
-  selectedImageName: string | null;
+  pages: PageSource[];
+  activePageId: string | null;
+  softCapMessage?: string | null;
+  /** Append path keeps single-file input (MVP: no multi in «Дополнительно»). */
+  singleFileOnly?: boolean;
+  /** When false (default), thumbnail click opens lightbox before OCR. */
+  recognitionStarted?: boolean;
   isRecognizing: boolean;
   isAiProcessing?: boolean;
   listLabel: string;
@@ -35,8 +48,9 @@ type SourceInputCardProps = {
   onAiInstructionChange?: (value: string) => void;
   onApplyAi?: () => void;
   onTextChange: (value: string) => void;
-  onFileChange: (file: File | null) => void;
-  onImagePaste: (file: File) => void;
+  onAddFiles: (files: File[]) => void;
+  onRemovePage: (id: string) => void;
+  onSelectPage: (id: string) => void;
   onRecognize: (mode: PlateInputMode) => void;
   onSubmitGateChange?: (gate: SourceSubmitGate) => void;
 };
@@ -53,24 +67,9 @@ const createClipboardImageFile = (file: File) =>
     lastModified: Date.now(),
   });
 
-const buildLintHighlights = (
-  lines: Array<{ index: number; empty: boolean; ok: boolean; reason_text: string | null }>,
-): Map<number, PlateLineHighlight> => {
-  const map = new Map<number, PlateLineHighlight>();
-  for (const line of lines) {
-    if (!line.empty && !line.ok) {
-      map.set(line.index, {
-        kind: "unparsed",
-        title: line.reason_text || "Строка не попала в расчёт — проверьте вручную",
-      });
-    }
-  }
-  return map;
-};
-
 export function resolveSourceSubmitDisabled(
   sourceText: string,
-  selectedImageName: string | null,
+  hasImage: boolean,
   isBusy: boolean,
   hasSourceInput: boolean,
   gate: SourceSubmitGate,
@@ -78,7 +77,7 @@ export function resolveSourceSubmitDisabled(
   if (isBusy || !hasSourceInput) {
     return { disabled: true };
   }
-  const lintExpected = Boolean(sourceText.trim()) && !selectedImageName;
+  const lintExpected = Boolean(sourceText.trim()) && !hasImage;
   if (!lintExpected) {
     return { disabled: false };
   }
@@ -92,7 +91,11 @@ export const SourceInputCard = ({
   productType,
   hasDraft,
   sourceText,
-  selectedImageName,
+  pages,
+  activePageId,
+  softCapMessage = null,
+  singleFileOnly = false,
+  recognitionStarted = false,
   isRecognizing,
   isAiProcessing = false,
   listLabel,
@@ -104,14 +107,17 @@ export const SourceInputCard = ({
   onAiInstructionChange,
   onApplyAi,
   onTextChange,
-  onFileChange,
-  onImagePaste,
+  onAddFiles,
+  onRemovePage,
+  onSelectPage,
   onRecognize,
   onSubmitGateChange,
 }: SourceInputCardProps) => {
   const [showAdditionalActions, setShowAdditionalActions] = useState(false);
-  const hasSourceInput = Boolean(sourceText.trim() || selectedImageName);
-  const lintEnabled = Boolean(sourceText.trim()) && !selectedImageName;
+  const hasImage = pages.length > 0;
+  const showOcrWaitBanner = isWaitingForFirstOcrReady(recognitionStarted, pages);
+  const hasSourceInput = Boolean(sourceText.trim() || hasImage);
+  const lintEnabled = Boolean(sourceText.trim()) && !hasImage;
   const lint = useSourceTextLint({ text: sourceText, productType, enabled: lintEnabled });
   const hasRedLine = lint.lines.some((line) => !line.empty && !line.ok);
   const lintBlocks = lintEnabled && (lint.isPending || hasRedLine || lint.isError);
@@ -123,7 +129,7 @@ export const SourceInputCard = ({
       : lint.isError
         ? SOURCE_LINT_ERROR_TITLE
         : SOURCE_LINT_RED_TITLE;
-  const highlights = useMemo(() => buildLintHighlights(lint.lines), [lint.lines]);
+  const highlights = useMemo(() => lintLinesToUnparsedHighlights(lint.lines), [lint.lines]);
 
   useEffect(() => {
     onSubmitGateChange?.({
@@ -133,7 +139,7 @@ export const SourceInputCard = ({
     });
   }, [onSubmitGateChange, sourceText, canSubmitSource, sourceSubmitBlockReason]);
 
-  const primaryRecognizeLabel = selectedImageName
+  const primaryRecognizeLabel = hasImage
     ? isRecognizing
       ? "Распознавание..."
       : "Распознать фото"
@@ -142,7 +148,16 @@ export const SourceInputCard = ({
       : "Обработать текст";
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    onFileChange(event.target.files?.[0] ?? null);
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0) {
+      return;
+    }
+    if (singleFileOnly) {
+      onAddFiles(files.slice(0, 1));
+      return;
+    }
+    onAddFiles(files);
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
@@ -155,7 +170,7 @@ export const SourceInputCard = ({
       return;
     }
     event.preventDefault();
-    onImagePaste(createClipboardImageFile(imageFile));
+    onAddFiles([createClipboardImageFile(imageFile)]);
   };
 
   return (
@@ -181,12 +196,32 @@ export const SourceInputCard = ({
 
         <FieldWrapper
           label="Фото / изображение таблицы"
-          hint="Поддерживаются только изображения. Можно вставить изображение из буфера обмена: Ctrl+V."
+          hint={
+            singleFileOnly
+              ? "Поддерживаются только изображения. Можно вставить изображение из буфера обмена: Ctrl+V."
+              : "Можно выбрать несколько страниц. Вставка из буфера (Ctrl+V) добавляет в конец. Распознавание — по кнопке."
+          }
         >
-          <input type="file" accept="image/*" onChange={handleFileChange} />
+          <input
+            type="file"
+            accept="image/*"
+            multiple={!singleFileOnly}
+            onChange={handleFileChange}
+          />
         </FieldWrapper>
 
-        {selectedImageName && <Alert tone="info">Выбран файл: {selectedImageName}</Alert>}
+        <SourceImageGallery
+          pages={pages}
+          activeId={activePageId}
+          onSelect={onSelectPage}
+          onRemove={onRemovePage}
+          showErrorHint
+          enableLightbox={!recognitionStarted}
+        />
+
+        {softCapMessage && <Alert tone="warning">{softCapMessage}</Alert>}
+
+        {showOcrWaitBanner && <OcrWaitBanner />}
 
         <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
           {!hasDraft && (
@@ -244,23 +279,15 @@ export const SourceInputCard = ({
             </div>
 
             {onAiInstructionChange && onApplyAi && (
-              <FieldWrapper label="Инструкция для помощника" hint={aiHint}>
-                <Textarea
-                  value={aiInstruction}
-                  onChange={(event) => onAiInstructionChange(event.target.value)}
-                  placeholder={aiPlaceholder}
-                />
-                <div style={{ marginTop: "0.75rem" }}>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={onApplyAi}
-                    disabled={isRecognizing || isAiProcessing || !aiInstruction.trim()}
-                  >
-                    {isAiProcessing ? "Обработка..." : "Применить инструкцию"}
-                  </Button>
-                </div>
-              </FieldWrapper>
+              <AiInstructionBlock
+                hint={aiHint}
+                placeholder={aiPlaceholder}
+                instruction={aiInstruction}
+                onInstructionChange={onAiInstructionChange}
+                onApply={onApplyAi}
+                disabled={isRecognizing}
+                isProcessing={isAiProcessing}
+              />
             )}
           </div>
         )}

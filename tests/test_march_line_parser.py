@@ -89,3 +89,15 @@ def test_merge_march_lines_skips_unparsed() -> None:
     )
     assert len(merged) == 1
     assert merged[0].qty == 2
+
+
+def test_invented_lm_dash_placeholder_does_not_parse() -> None:
+    """Wizard used to hint «ЛМ-1 B25 5» — that is not a price-list mark."""
+    fake = parse_march_line("ЛМ-1 B25 5")
+    assert fake.parsed is False
+
+
+def test_wizard_placeholder_lines_parse() -> None:
+    for line in ("1ЛМ 27-11-14-4 B25 5", "ЛМ 2,8 3"):
+        result = parse_march_line(line)
+        assert result.parsed is True, line

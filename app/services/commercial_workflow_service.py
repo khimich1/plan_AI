@@ -185,6 +185,38 @@ class CommercialWorkflowService:
         """Remove one order line and scrub its id from append_batches.line_ids."""
         return self.draft_lifecycle.delete_order_line(draft_id, line_id)
 
+    def patch_order_line(
+        self,
+        draft_id: str,
+        line_id: str,
+        *,
+        qty: int | None = None,
+        source_text: str | None = None,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> dict[str, Any]:
+        return self.draft_lifecycle.patch_order_line(
+            draft_id,
+            line_id,
+            qty=qty,
+            source_text=source_text,
+            plate_order_ctx=plate_order_ctx,
+        )
+
+    def restore_order_lines(
+        self,
+        draft_id: str,
+        *,
+        index: int,
+        lines: list[dict[str, Any]],
+        replace_line_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return self.draft_lifecycle.restore_order_lines(
+            draft_id,
+            index=index,
+            lines=lines,
+            replace_line_ids=replace_line_ids,
+        )
+
     def infer_wizard_current_step(self, payload: dict[str, Any]) -> WizardStepId:
         return self.step_service.infer_wizard_current_step(payload)
 

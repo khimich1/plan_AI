@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { mergeEditedBatchIntoFullText } from "@/features/commercial-offer/lib/batchReview";
+import { planApplyAiSessionSync } from "@/features/commercial-offer/lib/applyAiSession";
+import { getBatches, getCurrentBatchReviewText, mergeEditedBatchIntoFullText } from "@/features/commercial-offer/lib/batchReview";
+import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
 import {
   buildPileLinesFromOrderData,
   buildPilePreviewRows,
@@ -25,6 +27,10 @@ import {
 } from "@/features/commercial-offer/lib/wizardStepOrder";
 
 import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
+import {
+  useMultiPageRecognize,
+  type RecognizePageArgs,
+} from "@/features/commercial-offer/hooks/useMultiPageRecognize";
 import { useRecognizedImagePreview } from "@/features/commercial-offer/hooks/useRecognizedImagePreview";
 
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
@@ -39,6 +45,8 @@ import { ClientConditionsStep } from "@/features/commercial-offer/components/ste
 import { CalculationResultStep } from "@/features/commercial-offer/components/steps/CalculationResultStep";
 
 import type { ProductType, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
+import type { LineRowHandlers, LineSavePayload } from "@/features/commercial-offer/lib/lineRowHandlers";
+import { LINE_UNDO_TOAST_MS } from "@/features/commercial-offer/lib/lineRowHandlers";
 
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { Alert } from "@/shared/ui/Alert";
@@ -80,6 +88,8 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     startAppendCycleMutation,
     undoLastAppendBatchMutation,
     deleteDraftLineMutation,
+    patchDraftLineMutation,
+    restoreDraftLinesMutation,
     isPileDraft,
     isStepDraft,
     isMarchDraft,
@@ -88,9 +98,16 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     isSimpleKpDraft,
   } = useCommercialOfferWizard();
 
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [aiInstruction, setAiInstruction] = useState("");
   const [stepError, setStepError] = useState<string | null>(null);
+  const [lineUndoToastMessage, setLineUndoToastMessage] = useState<string | null>(null);
+  const [lineRowError, setLineRowError] = useState<{ lineId: string; message: string } | null>(null);
+  const lineUndoRef = useRef<
+    | { kind: "qty"; lineId: string; qty: number }
+    | { kind: "restore"; index: number; lines: Record<string, unknown>[]; replaceLineIds: string[] }
+    | null
+  >(null);
+  const lineUndoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [widePlateError, setWidePlateError] = useState<string | null>(null);
   const [unpricedPlateError, setUnpricedPlateError] = useState<string | null>(null);
   const {
@@ -139,6 +156,36 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
 
   const managers = managersQuery.data?.items ?? [];
 
+  const recognizePage = useCallback(
+    async ({ image, productType: pageProductType, draftId, isFirst }: RecognizePageArgs) => {
+      let draft;
+      if (!draftId) {
+        draft = await createDraftMutation.mutateAsync({
+          text: "",
+          image,
+          productType: pageProductType,
+        });
+      } else {
+        draft = await updateInputMutation.mutateAsync({
+          draftId,
+          text: "",
+          image,
+          mode: isFirst ? "replace" : "append",
+        });
+      }
+      const batchReviewText = getCurrentBatchReviewText(draft);
+      if (isFirst) {
+        dispatch({ type: "start-batch-review", payload: draft });
+      } else {
+        dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: false });
+      }
+      return { draft, batchReviewText };
+    },
+    [createDraftMutation, updateInputMutation, dispatch],
+  );
+
+  const multiPage = useMultiPageRecognize({ recognizePage });
+
   useEffect(() => {
     if (state.isPickingProductType) {
       return;
@@ -168,25 +215,86 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   }, [state.currentStep, state.draftId, dispatch, stepOrder, inputStep, skipClient]);
 
   const resetSource = () => {
-    setSelectedImage(null);
+    multiPage.reset();
     dispatch({ type: "set-source", text: "", imageName: null });
   };
 
   const handleSourceTextChange = (value: string) => {
-    if (selectedImage) {
-      setSelectedImage(null);
+    if (multiPage.pages.length > 0) {
+      multiPage.reset();
     }
     dispatch({ type: "set-source", text: value, imageName: null });
   };
 
-  const handleImageSelect = (file: File | null) => {
-    setSelectedImage(file);
-    dispatch({ type: "set-source", text: file ? "" : state.sourceText, imageName: file?.name ?? null });
+  const handleAddFiles = (files: File[]) => {
+    if (files.length === 0) {
+      return;
+    }
+    const nextPages = multiPage.addFiles(files);
+    dispatch({
+      type: "set-source",
+      text: "",
+      imageName: nextPages[0]?.name ?? (nextPages.length > 0 ? `${nextPages.length} фото` : null),
+    });
+  };
+
+  const handleRemovePage = (id: string) => {
+    const remaining = multiPage.remove(id);
+    dispatch({
+      type: "set-source",
+      text: state.sourceText,
+      imageName: remaining[0]?.name ?? null,
+    });
+  };
+
+  const handleSelectPage = (id: string) => {
+    multiPage.setActive(id);
+    const page = multiPage.pages.find((item) => item.id === id);
+    if (page && (page.status === "ready" || page.status === "confirmed")) {
+      dispatch({ type: "set-batch-review-text", text: page.batchReviewText });
+    }
+  };
+
+  // Keep store batch text aligned when OCR marks a page ready / auto-focuses it.
+  useEffect(() => {
+    if (!multiPage.hasStarted || !multiPage.activePage) {
+      return;
+    }
+    if (multiPage.activePage.status === "ready" || multiPage.activePage.status === "confirmed") {
+      dispatch({ type: "set-batch-review-text", text: multiPage.activePage.batchReviewText });
+    }
+  }, [
+    multiPage.hasStarted,
+    multiPage.activeId,
+    multiPage.activePage?.status,
+    multiPage.activePage?.batchReviewText,
+    dispatch,
+  ]);
+
+  const handlePrevPage = () => {
+    const navigable = multiPage.pages.filter(
+      (page) => page.status === "ready" || page.status === "confirmed",
+    );
+    const index = navigable.findIndex((page) => page.id === multiPage.activeId);
+    if (index > 0) {
+      handleSelectPage(navigable[index - 1]!.id);
+    }
+  };
+
+  const handleNextPage = () => {
+    const navigable = multiPage.pages.filter(
+      (page) => page.status === "ready" || page.status === "confirmed",
+    );
+    const index = navigable.findIndex((page) => page.id === multiPage.activeId);
+    if (index >= 0 && index < navigable.length - 1) {
+      handleSelectPage(navigable[index + 1]!.id);
+    }
   };
 
   const handleRecognize = async (mode: "append" | "replace") => {
     setStepError(null);
-    if (!state.sourceText.trim() && !selectedImage) {
+    const hasPages = multiPage.pages.length > 0;
+    if (!state.sourceText.trim() && !hasPages) {
       setStepError(
         isFbsFlow
           ? "Введите текст списка ФБС или загрузите изображение."
@@ -203,8 +311,18 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       return;
     }
 
-    const sourceText = selectedImage ? "" : state.sourceText;
-    const imageForRecognition = selectedImage;
+    // Multi-page first replace pass: sequential OCR pipeline.
+    if (hasPages && mode === "replace" && !currentDraft?.draft_id) {
+      try {
+        void multiPage.start({ productType });
+      } catch (error) {
+        setStepError(getErrorMessage(error));
+      }
+      return;
+    }
+
+    const sourceText = hasPages ? "" : state.sourceText;
+    const imageForRecognition = hasPages ? multiPage.pages[0]?.file ?? null : null;
 
     try {
       if (imageForRecognition) {
@@ -253,15 +371,29 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
 
     try {
-      if (selectedImage) {
-        setPreviewFromFile(selectedImage);
+      const image = multiPage.pages[0]?.file ?? null;
+      if (image) {
+        setPreviewFromFile(image);
       }
-      await applyAiMutation.mutateAsync({
+      const draft = await applyAiMutation.mutateAsync({
         draftId: currentDraft.draft_id,
         instruction,
-        image: selectedImage,
+        image,
       });
-      resetSource();
+      const sessionPlan = planApplyAiSessionSync({
+        multiHasStarted: multiPage.hasStarted,
+        activePageId: multiPage.activeId,
+        draft,
+      });
+      if (sessionPlan.nextActivePageText !== null) {
+        dispatch({ type: "set-batch-review-text", text: sessionPlan.nextActivePageText });
+        if (sessionPlan.preserveMultiSession && multiPage.activeId) {
+          multiPage.updatePageText(multiPage.activeId, sessionPlan.nextActivePageText);
+        }
+      }
+      if (!sessionPlan.preserveMultiSession) {
+        resetSource();
+      }
       setAiInstruction("");
     } catch (error) {
       setStepError(getErrorMessage(error));
@@ -275,14 +407,46 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       return;
     }
 
+    // Multi-page: confirm active ready page; finalize when all confirmed.
+    if (multiPage.hasStarted && multiPage.pages.length > 0) {
+      const active = multiPage.activePage;
+      if (!active || active.status !== "ready") {
+        return;
+      }
+      const editedActiveText = state.batchReviewText;
+      multiPage.updatePageText(active.id, editedActiveText);
+      const textsSnapshot = multiPage.pages.map((page) =>
+        page.id === active.id ? editedActiveText.trim() : page.batchReviewText.trim(),
+      );
+      const { allConfirmed, nextBatchReviewText } = multiPage.confirmActive();
+      if (!allConfirmed) {
+        dispatch({ type: "set-batch-review-text", text: nextBatchReviewText });
+        return;
+      }
+
+      const mergedText = textsSnapshot.filter(Boolean).join("\n");
+      try {
+        let draft = currentDraft;
+        if (mergedText && mergedText !== (draft.metadata.normalized_text ?? "").trim()) {
+          draft = await updateInputMutation.mutateAsync({
+            draftId: draft.draft_id,
+            text: mergedText,
+            image: null,
+            mode: "replace",
+          });
+          dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
+        }
+        dispatch({ type: "confirm-batch-review", batchCount: getDraftBatchCount(draft) });
+        multiPage.reset();
+        clearRecognizedImagePreview();
+      } catch (error) {
+        setStepError(getErrorMessage(error));
+      }
+      return;
+    }
+
     let draft = currentDraft;
-    const batches = isMarchFlow
-      ? (draft.metadata.march_batches ?? [])
-      : isStepFlow
-      ? (draft.metadata.step_batches ?? [])
-      : isPileFlow
-        ? (draft.metadata.pile_batches ?? [])
-        : (draft.metadata.plate_batches ?? []);
+    const batches = getBatches(draft);
     const lastBatch = batches.length > 0 ? batches[batches.length - 1] : undefined;
     const editedText = state.batchReviewText.trim();
     const originalBatchText = (lastBatch?.normalized_text ?? "").trim();
@@ -299,20 +463,14 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
         dispatch({
           type: "confirm-batch-review",
-          batchCount: isMarchFlow
-            ? (draft.metadata.march_batches?.length ?? 0)
-            : isStepFlow
-            ? (draft.metadata.step_batches?.length ?? 0)
-            : isPileFlow
-              ? (draft.metadata.pile_batches?.length ?? 0)
-              : (draft.metadata.plate_batches?.length ?? 0),
+          batchCount: getDraftBatchCount(draft),
         });
       } catch (error) {
         setStepError(getErrorMessage(error));
         return;
       }
     } else {
-      dispatch({ type: "confirm-batch-review", batchCount: batches.length });
+      dispatch({ type: "confirm-batch-review", batchCount: getDraftBatchCount(draft) });
     }
 
     clearRecognizedImagePreview();
@@ -785,14 +943,14 @@ const handleFinishBridgePiles = async () => {
   const handleCreateNewOffer = () => {
     setStepError(null);
     setWidePlateError(null);
-    setSelectedImage(null);
+    multiPage.reset();
     clearRecognizedImagePreview();
     dispatch({ type: "reset" });
   };
 
   const handleAddOtherNomenclature = () => {
     setStepError(null);
-    setSelectedImage(null);
+    multiPage.reset();
     clearRecognizedImagePreview();
     dispatch({ type: "start-append-cycle" });
   };
@@ -829,15 +987,127 @@ const handleFinishBridgePiles = async () => {
     }
   };
 
-  const handleDeleteLine = async (lineId: string) => {
-    if (!state.draftId) {
+  const clearLineUndo = useCallback(() => {
+    if (lineUndoTimerRef.current) {
+      clearTimeout(lineUndoTimerRef.current);
+      lineUndoTimerRef.current = null;
+    }
+    lineUndoRef.current = null;
+    setLineUndoToastMessage(null);
+  }, []);
+
+  const armLineUndo = useCallback(
+    (
+      op:
+        | { kind: "qty"; lineId: string; qty: number }
+        | { kind: "restore"; index: number; lines: Record<string, unknown>[]; replaceLineIds: string[] },
+      message: string,
+    ) => {
+      clearLineUndo();
+      lineUndoRef.current = op;
+      setLineUndoToastMessage(message);
+      lineUndoTimerRef.current = setTimeout(() => {
+        lineUndoRef.current = null;
+        setLineUndoToastMessage(null);
+        lineUndoTimerRef.current = null;
+      }, LINE_UNDO_TOAST_MS);
+    },
+    [clearLineUndo],
+  );
+
+  useEffect(() => {
+    clearLineUndo();
+    setLineRowError(null);
+  }, [state.currentStep, clearLineUndo]);
+
+  const handleUndoLineOp = async () => {
+    const op = lineUndoRef.current;
+    if (!state.draftId || !op) {
       return;
     }
+    setLineRowError(null);
+    try {
+      const draft =
+        op.kind === "qty"
+          ? await patchDraftLineMutation.mutateAsync({
+              draftId: state.draftId,
+              lineId: op.lineId,
+              payload: { qty: op.qty },
+            })
+          : await restoreDraftLinesMutation.mutateAsync({
+              draftId: state.draftId,
+              payload: {
+                index: op.index,
+                lines: op.lines,
+                replace_line_ids: op.replaceLineIds,
+              },
+            });
+      dispatch({ type: "hydrate-draft", payload: draft });
+      clearLineUndo();
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleSaveLine = async (lineId: string, payload: LineSavePayload) => {
+    if (!state.draftId || !currentDraft) {
+      return;
+    }
+    const order = currentDraft.order_data ?? [];
+    const index = order.findIndex((item) => String(item.line_id ?? "") === lineId);
+    if (index < 0) {
+      return;
+    }
+    const snapshot = { ...order[index] };
+    const oldQty = Number(snapshot.qty) || 0;
+    setLineRowError(null);
     setStepError(null);
+    try {
+      const body =
+        payload.sourceText !== undefined
+          ? { source_text: payload.sourceText }
+          : { qty: payload.qty };
+      const draft = await patchDraftLineMutation.mutateAsync({
+        draftId: state.draftId,
+        lineId,
+        payload: body,
+      });
+      dispatch({ type: "hydrate-draft", payload: draft });
+      if (payload.sourceText !== undefined) {
+        const kept = new Set(
+          order.map((item) => String(item.line_id ?? "")).filter((id) => id && id !== lineId),
+        );
+        const replaceLineIds = (draft.order_data ?? [])
+          .map((item) => String(item.line_id ?? ""))
+          .filter((id) => id && !kept.has(id));
+        armLineUndo(
+          { kind: "restore", index, lines: [snapshot], replaceLineIds },
+          "Строка изменена",
+        );
+      } else if (payload.qty !== undefined) {
+        armLineUndo({ kind: "qty", lineId, qty: oldQty }, "Количество изменено");
+      }
+    } catch (error) {
+      setLineRowError({ lineId, message: getErrorMessage(error) });
+    }
+  };
+
+  const handleDeleteLine = async (lineId: string) => {
+    if (!state.draftId || !currentDraft) {
+      return;
+    }
+    const order = currentDraft.order_data ?? [];
+    const index = order.findIndex((item) => String(item.line_id ?? "") === lineId);
+    if (index < 0) {
+      return;
+    }
+    const snapshot = { ...order[index] };
+    setStepError(null);
+    setLineRowError(null);
     try {
       const draft = await deleteDraftLineMutation.mutateAsync({ draftId: state.draftId, lineId });
       dispatch({ type: "hydrate-draft", payload: draft });
-      dispatch({ type: "set-step", step: "result" });
+      armLineUndo({ kind: "restore", index, lines: [snapshot], replaceLineIds: [] }, "Строка удалена");
     } catch (error) {
       setStepError(getErrorMessage(error));
     }
@@ -904,19 +1174,64 @@ const handleFinishBridgePiles = async () => {
     dispatch({ type: "set-step", step });
   };
 
+  const pageProgressLabel =
+    multiPage.hasStarted && multiPage.pages.length > 0
+      ? `Распознано ${multiPage.progress.recognized}/${multiPage.progress.total}`
+      : null;
+  const activeReviewPage = multiPage.activePage;
+  const multiPendingReview = multiPage.hasStarted && !multiPage.allConfirmed;
+  const pendingBatchReview = multiPendingReview || state.pendingBatchReview;
+  const reviewImageUrl =
+    activeReviewPage?.recognizedImageUrl ??
+    activeReviewPage?.previewUrl ??
+    recognizedImagePreview?.url ??
+    null;
+  const reviewImageName = activeReviewPage?.name ?? recognizedImagePreview?.name ?? null;
+  const reviewBatchText =
+    multiPage.hasStarted && activeReviewPage
+      ? activeReviewPage.batchReviewText
+      : state.batchReviewText;
+  const canConfirmActivePage = multiPage.hasStarted
+    ? activeReviewPage?.status === "ready"
+    : true;
+  const isRecognizingMulti = multiPage.isRecognizing;
+
+  const multiPageStepProps = {
+    pages: multiPage.pages,
+    activePageId: multiPage.activeId,
+    softCapMessage: multiPage.softCapMessage,
+    pageProgressLabel,
+    recognitionStarted: multiPage.hasStarted,
+    onAddFiles: handleAddFiles,
+    onRemovePage: handleRemovePage,
+    onSelectPage: handleSelectPage,
+    onPrevPage: handlePrevPage,
+    onNextPage: handleNextPage,
+    canConfirmActivePage,
+  };
+
+  const lineRowHandlers: LineRowHandlers = {
+    onSaveLine: (lineId, payload) => void handleSaveLine(lineId, payload),
+    onDeleteLine: (lineId) => void handleDeleteLine(lineId),
+    undoToast: lineUndoToastMessage
+      ? { message: lineUndoToastMessage, onUndo: () => void handleUndoLineOp() }
+      : null,
+    rowError: lineRowError,
+  };
+
   const currentStepContent =
     state.currentStep === "fbs" ? (
       <FbsInputStep
         draft={currentDraft}
-        pendingBatchReview={state.pendingBatchReview}
+        pendingBatchReview={pendingBatchReview}
         sourceText={state.sourceText}
-        batchReviewText={state.batchReviewText}
+        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
         normalizedText={state.normalizedText}
-        selectedImageName={state.selectedImageName}
-        recognizedImageUrl={recognizedImagePreview?.url ?? null}
-        recognizedImageName={recognizedImagePreview?.name ?? null}
+        {...multiPageStepProps}
+        recognizedImageUrl={reviewImageUrl}
+        recognizedImageName={reviewImageName}
         errorMessage={stepError}
-        isRecognizing={createDraftMutation.isPending || updateFbsMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateFbsMutation.isPending}
         isAiProcessing={applyAiFbsMutation.isPending}
         isUpdatingGrades={updateFbsGradesMutation.isPending}
         isConfirmingBatch={updateFbsMutation.isPending}
@@ -925,28 +1240,33 @@ const handleFinishBridgePiles = async () => {
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
         onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
-        onFileChange={handleImageSelect}
-        onImagePaste={handleImageSelect}
+        onBatchReviewTextChange={(value) => {
+          dispatch({ type: "set-batch-review-text", text: value });
+          if (multiPage.activeId) {
+            multiPage.updatePageText(multiPage.activeId, value);
+          }
+        }}
+        
         onRecognize={handleRecognize}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishFbs={() => void handleFinishFbs()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
         onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
         onReset={handleCreateNewOffer}
+        lineRowHandlers={lineRowHandlers}
       />
     ) :     state.currentStep === "bridge_piles" ? (
       <BridgePileInputStep
         draft={currentDraft}
-        pendingBatchReview={state.pendingBatchReview}
+        pendingBatchReview={pendingBatchReview}
         sourceText={state.sourceText}
-        batchReviewText={state.batchReviewText}
+        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
         normalizedText={state.normalizedText}
-        selectedImageName={state.selectedImageName}
-        recognizedImageUrl={recognizedImagePreview?.url ?? null}
-        recognizedImageName={recognizedImagePreview?.name ?? null}
+        {...multiPageStepProps}
+        recognizedImageUrl={reviewImageUrl}
+        recognizedImageName={reviewImageName}
         errorMessage={stepError}
-        isRecognizing={createDraftMutation.isPending || updateBridgePilesMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateBridgePilesMutation.isPending}
         isAiProcessing={applyAiBridgePilesMutation.isPending}
         isUpdatingGrades={updateBridgePileGradesMutation.isPending}
         isConfirmingBatch={updateBridgePilesMutation.isPending}
@@ -955,28 +1275,33 @@ const handleFinishBridgePiles = async () => {
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
         onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
-        onFileChange={handleImageSelect}
-        onImagePaste={handleImageSelect}
+        onBatchReviewTextChange={(value) => {
+          dispatch({ type: "set-batch-review-text", text: value });
+          if (multiPage.activeId) {
+            multiPage.updatePageText(multiPage.activeId, value);
+          }
+        }}
+        
         onRecognize={handleRecognize}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishBridgePiles={() => void handleFinishBridgePiles()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
         onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
         onReset={handleCreateNewOffer}
+        lineRowHandlers={lineRowHandlers}
       />
     ) : state.currentStep === "marches" ? (
       <MarchInputStep
         draft={currentDraft}
-        pendingBatchReview={state.pendingBatchReview}
+        pendingBatchReview={pendingBatchReview}
         sourceText={state.sourceText}
-        batchReviewText={state.batchReviewText}
+        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
         normalizedText={state.normalizedText}
-        selectedImageName={state.selectedImageName}
-        recognizedImageUrl={recognizedImagePreview?.url ?? null}
-        recognizedImageName={recognizedImagePreview?.name ?? null}
+        {...multiPageStepProps}
+        recognizedImageUrl={reviewImageUrl}
+        recognizedImageName={reviewImageName}
         errorMessage={stepError}
-        isRecognizing={createDraftMutation.isPending || updateMarchesMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateMarchesMutation.isPending}
         isAiProcessing={applyAiMarchesMutation.isPending}
         isUpdatingGrades={updateMarchGradesMutation.isPending}
         isConfirmingBatch={updateMarchesMutation.isPending}
@@ -985,28 +1310,33 @@ const handleFinishBridgePiles = async () => {
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
         onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
-        onFileChange={handleImageSelect}
-        onImagePaste={handleImageSelect}
+        onBatchReviewTextChange={(value) => {
+          dispatch({ type: "set-batch-review-text", text: value });
+          if (multiPage.activeId) {
+            multiPage.updatePageText(multiPage.activeId, value);
+          }
+        }}
+        
         onRecognize={handleRecognize}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishMarches={() => void handleFinishMarches()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
         onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
         onReset={handleCreateNewOffer}
+        lineRowHandlers={lineRowHandlers}
       />
     ) : state.currentStep === "steps" ? (
       <StepInputStep
         draft={currentDraft}
-        pendingBatchReview={state.pendingBatchReview}
+        pendingBatchReview={pendingBatchReview}
         sourceText={state.sourceText}
-        batchReviewText={state.batchReviewText}
+        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
         normalizedText={state.normalizedText}
-        selectedImageName={state.selectedImageName}
-        recognizedImageUrl={recognizedImagePreview?.url ?? null}
-        recognizedImageName={recognizedImagePreview?.name ?? null}
+        {...multiPageStepProps}
+        recognizedImageUrl={reviewImageUrl}
+        recognizedImageName={reviewImageName}
         errorMessage={stepError}
-        isRecognizing={createDraftMutation.isPending || updateStepsMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateStepsMutation.isPending}
         isAiProcessing={applyAiStepsMutation.isPending}
         isConfirmingBatch={updateStepsMutation.isPending}
         isProceeding={false}
@@ -1014,26 +1344,31 @@ const handleFinishBridgePiles = async () => {
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
         onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
-        onFileChange={handleImageSelect}
-        onImagePaste={handleImageSelect}
+        onBatchReviewTextChange={(value) => {
+          dispatch({ type: "set-batch-review-text", text: value });
+          if (multiPage.activeId) {
+            multiPage.updatePageText(multiPage.activeId, value);
+          }
+        }}
+        
         onRecognize={handleRecognize}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishSteps={() => void handleFinishSteps()}
         onReset={handleCreateNewOffer}
+        lineRowHandlers={lineRowHandlers}
       />
     ) : state.currentStep === "piles" ? (
       <PileInputStep
         draft={currentDraft}
-        pendingBatchReview={state.pendingBatchReview}
+        pendingBatchReview={pendingBatchReview}
         sourceText={state.sourceText}
-        batchReviewText={state.batchReviewText}
+        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
         normalizedText={state.normalizedText}
-        selectedImageName={state.selectedImageName}
-        recognizedImageUrl={recognizedImagePreview?.url ?? null}
-        recognizedImageName={recognizedImagePreview?.name ?? null}
+        {...multiPageStepProps}
+        recognizedImageUrl={reviewImageUrl}
+        recognizedImageName={reviewImageName}
         errorMessage={stepError}
-        isRecognizing={createDraftMutation.isPending || updatePilesMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updatePilesMutation.isPending}
         isAiProcessing={applyAiPilesMutation.isPending}
         isUpdatingGrades={updatePileGradesMutation.isPending}
         isConfirmingBatch={updatePilesMutation.isPending}
@@ -1042,30 +1377,35 @@ const handleFinishBridgePiles = async () => {
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
         onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
-        onFileChange={handleImageSelect}
-        onImagePaste={handleImageSelect}
+        onBatchReviewTextChange={(value) => {
+          dispatch({ type: "set-batch-review-text", text: value });
+          if (multiPage.activeId) {
+            multiPage.updatePageText(multiPage.activeId, value);
+          }
+        }}
+        
         onRecognize={handleRecognize}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishPiles={() => void handleFinishPiles()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
         onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
         onReset={handleCreateNewOffer}
+        lineRowHandlers={lineRowHandlers}
       />
     ) : state.currentStep === "plates" ? (
       <PlateInputStep
         draft={currentDraft}
-        pendingBatchReview={state.pendingBatchReview}
+        pendingBatchReview={pendingBatchReview}
         sourceText={state.sourceText}
-        batchReviewText={state.batchReviewText}
+        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
         normalizedText={state.normalizedText}
-        selectedImageName={state.selectedImageName}
-        recognizedImageUrl={recognizedImagePreview?.url ?? null}
-        recognizedImageName={recognizedImagePreview?.name ?? null}
+        {...multiPageStepProps}
+        recognizedImageUrl={reviewImageUrl}
+        recognizedImageName={reviewImageName}
         errorMessage={stepError}
         widePlateErrorMessage={widePlateError}
         unpricedPlateErrorMessage={unpricedPlateError}
-        isRecognizing={createDraftMutation.isPending || updatePlatesMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updatePlatesMutation.isPending}
         isAiProcessing={applyAiPlatesMutation.isPending}
         isResolvingWidePlates={resolveWidePlatesMutation.isPending}
         isResolvingUnpricedPlates={resolveUnpricedPlatesMutation.isPending}
@@ -1077,9 +1417,13 @@ const handleFinishBridgePiles = async () => {
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
         onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => dispatch({ type: "set-batch-review-text", text: value })}
-        onFileChange={handleImageSelect}
-        onImagePaste={handleImageSelect}
+        onBatchReviewTextChange={(value) => {
+          dispatch({ type: "set-batch-review-text", text: value });
+          if (multiPage.activeId) {
+            multiPage.updatePageText(multiPage.activeId, value);
+          }
+        }}
+        
         onRecognize={handleRecognize}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishPlates={() => void handleFinishPlates()}
@@ -1092,6 +1436,7 @@ const handleFinishBridgePiles = async () => {
         }
         onApplyUnpricedPlates={() => void handleApplyUnpricedPlates()}
         onReset={handleCreateNewOffer}
+        lineRowHandlers={lineRowHandlers}
       />
     ) : state.currentStep === "client" ? (
       <ClientConditionsStep
@@ -1138,6 +1483,9 @@ const handleFinishBridgePiles = async () => {
         onAddOtherNomenclature={handleAddOtherNomenclature}
         onUndoLastBatch={() => void handleUndoLastBatch()}
         onDeleteLine={(lineId) => void handleDeleteLine(lineId)}
+        onSaveLine={(lineId, payload) => void handleSaveLine(lineId, payload)}
+        lineUndoToast={lineRowHandlers.undoToast}
+        lineRowError={lineRowError}
       />
     ) : null;
 

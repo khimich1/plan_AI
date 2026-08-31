@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { KpPlatePreviewPanel } from "@/features/commercial-offer/components/KpPlatePreviewPanel";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 
@@ -66,5 +66,46 @@ describe("KpPlatePreviewPanel unparsed UX", () => {
     expect(screen.queryByText("Не попали в состав")).not.toBeInTheDocument();
     expect(screen.queryByText(/Не удалось распознать строк: 1/)).not.toBeInTheDocument();
     expect(screen.getByText(/нагрузка принята 8п по умолчанию/)).toBeInTheDocument();
+  });
+});
+
+describe("KpPlatePreviewPanel row icons", () => {
+  it("shows edit and delete icons when line_id is present and handlers are passed", () => {
+    const handlers = {
+      onSaveLine: vi.fn(),
+      onDeleteLine: vi.fn(),
+      undoToast: null,
+    };
+    const draft = makeDraft();
+    draft.order_data = [{ line_id: "ln_p1", name: "ПБ 78-12-8п", qty: 2, unit_price: 1000 }];
+    render(<KpPlatePreviewPanel draft={draft} normalizedText="ПБ 78-12-8п 2" lineRowHandlers={handlers} />);
+    expect(screen.getByRole("button", { name: "Изменить строку ln_p1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Удалить строку ln_p1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Изменить строку ln_p1" })).not.toBeDisabled();
+  });
+
+  it("keeps wide-plate alert and does not disable the pencil", () => {
+    const handlers = {
+      onSaveLine: vi.fn(),
+      onDeleteLine: vi.fn(),
+      undoToast: null,
+    };
+    const draft = makeDraft({
+      wide_plate_lines: [{ id: "wide-1", line: "ПБ 59-15-8п 2", qty: 2 }],
+      wide_plates_resolved: false,
+    });
+    draft.order_data = [
+      {
+        line_id: "ln_wide",
+        name: "ПБ 59-15-8п",
+        qty: 2,
+        unit_price: 15000,
+        length_m: 5.9,
+        width_m: 1.5,
+      },
+    ];
+    render(<KpPlatePreviewPanel draft={draft} normalizedText="ПБ 59-15-8п 2" lineRowHandlers={handlers} />);
+    expect(screen.getByText(/позиция шире стандартной/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Изменить строку ln_wide" })).not.toBeDisabled();
   });
 });

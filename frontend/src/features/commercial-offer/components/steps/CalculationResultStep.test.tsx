@@ -395,6 +395,28 @@ describe("CalculationResultStep MNA-501 — undo last batch / delete line", () =
 
     expect(onDeleteLine).toHaveBeenCalledExactlyOnceWith("ln_del");
   });
+
+  it("does not show a button labelled Удалить and shows an edit icon", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_icons",
+            product_type: "plates",
+            name: "ПБ 60-12-8п",
+            qty: 1,
+            unit_price: 10000,
+            weight: 800,
+          },
+        ],
+      }),
+    );
+
+    expect(screen.queryByRole("button", { name: "Удалить" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Удалить")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Изменить строку ln_icons" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Удалить строку ln_icons" })).toBeInTheDocument();
+  });
 });
 
 describe("CalculationResultStep MNA-501 — trip cost gate", () => {
