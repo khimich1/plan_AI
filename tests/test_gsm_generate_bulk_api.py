@@ -116,7 +116,7 @@ def _seed_vehicle(
             vehicle_id=vehicle_id,
             date=date(2025, 3, 31),
             driver_id=driver_id,
-            status="confirmed",
+            status="exported",
             source="imported",
             odometer_start=9_800,
             odometer_end=10_000,

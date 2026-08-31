@@ -157,7 +157,7 @@ Good for:
 - Quick sanity check on a specific file
 
 NOT good for:
-- Full project health check (use `/audit`)
+- Full project or module health check (use `/audit gsm` / `kp` / `layout` / `--full`)
 - Planned architectural improvements (use `/refactor`)
 - Implementing new features (use `/implement` or `/orchestrate`)
 
@@ -169,5 +169,5 @@ Good for `/review`:
 - A PR branch vs main
 
 Not good for `/review` (use `/audit`):
-- Entire codebase
+- Entire codebase or module architecture (use `/audit`, not default full-repo)
 - Full module architecture evaluation

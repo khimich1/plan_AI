@@ -190,7 +190,8 @@ export const FleetOverviewView = ({ onGenerateVehicle }: Props) => {
   const handleExportKit = (row: FleetOverviewRow) => {
     setUsageReportInfo(null);
     setBulkError(null);
-    if (row.open_before > 0 && row.open_before_month) {
+    const currentYm = periodFrom.slice(0, 7);
+    if (row.open_before > 0 && row.open_before_month && currentYm !== row.open_before_month) {
       const bounds = monthBounds(row.open_before_month);
       setKitExclusions([]);
       void runKit([row.vehicle.id], bounds.from, bounds.to);

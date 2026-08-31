@@ -1,470 +1,279 @@
 ---
 name: audit-workflow
-description: Full project audit orchestration - Architecture + Security + Code Quality → consolidated report → optional remediation. Use when user invokes /audit command, for pre-release health checks, when onboarding to an unfamiliar codebase, for periodic project quality reviews, or before/after a major architectural change. Covers scope detection, severity aggregation, report format, health scoring, and remediation routing.
+description: Module-scoped audit for Шишов — registry + delta report in Russian (architecture, security, quality). No Health Score, no auto-remediation. Use with /audit gsm|kp|layout|auth|--since|--full.
 ---
 
-# Audit Workflow Skill
+# Audit Workflow (Шишов)
 
-**Purpose**: Orchestrate a project health audit using senior-reviewer + security-auditor + reviewer, aggregate into a report, then optionally route critical findings into the appropriate fix workflow — all in the same chat.
+**Purpose**: After work on a module, produce a **Russian delta** — what closed, what is new, which P0/P1 are still open — by updating a stable findings registry. Not a new 500-line novel. Not a 0–10 score. Not auto-fix.
+
+**Idea / spec**: `ai_docs/ideas/audit-shishov.md`
 
 ---
 
 ## Model: Composer 2 for every `Task` (`/audit`)
 
-When the user runs **`/audit`** (see `.cursor/commands/audit.md`), the coordinator **must** pass Composer 2 on **every** subagent call:
+When the user runs **`/audit`**, every subagent call **must** use:
 
 `model="composer-2-fast"`
 
-Rules:
+Do not omit `model`. Subagents must not spawn `Task` with another model slug.
 
-- Applies to **all** phases: architecture, security, code quality, consolidated report (`documenter`), and **every** remediation follow-up (`refactor`, `planner`, `worker`, `test-writer`, `test-runner`, `debugger`, `security-auditor`, second `documenter` pass).
-- **Do not omit** `model` on chained tasks in the same audit thread.
-- Subagents **must not** spawn `Task` with another model slug while executing this workflow.
-
-### Sequential `Task` shape (coordinator)
-
-Use this order; fill prompts from Steps 2–6 (scope, checklists, output formats):
+Sequential shape:
 
 1. `Task(subagent_type="senior-reviewer", model="composer-2-fast", prompt="…")`
 2. `Task(subagent_type="security-auditor", model="composer-2-fast", prompt="…")`
 3. `Task(subagent_type="reviewer", model="composer-2-fast", prompt="…")`
-4. Coordinator aggregates severity (Step 5) from subagent outputs only — under `/audit`, the coordinator does not review code directly.
-5. `Task(subagent_type="documenter", model="composer-2-fast", prompt="…")`
+4. Coordinator builds a delta table from subagent outputs **plus** the registry (Step 6). Do not review application source yourself.
+5. `Task(subagent_type="documenter", model="composer-2-fast", prompt="…")` — writes the report **and** updates `FINDINGS.md`
+
+There is **no Phase 5**. Do not spawn `refactor`, `planner`, `worker`, or `debugger` from `/audit`. Fixes: user runs `/orchestrate`, `/implement`, or `/refactor` explicitly.
 
 ---
 
-## Workflow Architecture
+## Coordinator: allowed vs forbidden
 
-```mermaid
-flowchart TD
-    Scope[Define audit scope] --> Arch[senior-reviewer: architecture]
-    Arch --> Sec[security-auditor: security]
-    Sec --> Quality[reviewer: code quality]
-    Quality --> Aggregate[documenter: consolidated report]
-    Aggregate --> Ask{Critical issues?}
-    Ask -->|No| End[Audit complete]
-    Ask -->|Yes - user confirms| Route[Categorize by fix type]
-    Route --> Structural["Structural/Quality → refactor agent"]
-    Route --> SecFix["Security/Features → planner + worker"]
-    Structural --> Verify[test-runner: verify]
-    SecFix --> Verify
-    Verify --> UpdateDoc[documenter: update report]
-    UpdateDoc --> End
-```
+**Allowed (Step 0 — you must do this before any Task):**
 
-**Phases 1–4 are always read-only. Phase 5 runs only with explicit user confirmation.**
+- Read this skill, `.cursor/skills/project-shishov/SKILL.md`, `ai_docs/develop/audits/FINDINGS.md`, the last report for this scope
+- `git diff --name-only` only when the user passed `--since`
+- Ask the user (AskQuestion) if scope is missing — **do not default to full repo**
 
-All analysis phases are **sequential** — each agent receives context from the previous one to avoid duplicate findings and add depth.
+**Forbidden:**
+
+- Read or analyze application source (`app/`, `core/`, `frontend/src/`, `tests/`, `viz_modules/`)
+- Write the report or `FINDINGS.md` yourself (documenter does)
+- Auto-remediation, Health Score, auditing `bot/`, `bot_archived/`, `tests/archived/` as live systems
 
 ---
 
-## Step 1: Define Scope
+## Step 0: Scope
 
-Parse the user's input to determine what to audit:
+| Input | Scope |
+|-------|--------|
+| `/audit gsm` | `app/services/gsm_*`, `app/api/v1/endpoints/gsm.py`, `app/repositories/gsm_repository.py`, `app/schemas/gsm.py`, `core/gsm/`, `frontend/src/features/gsm/` |
+| `/audit kp` | commercial / offers / archive: `app/api/v1/endpoints/commercial.py`, `offers*`, `archive*`, `app/services/commercial*`, `app/security/offer_access.py`, `core/kp/`, related frontend commercial/archive |
+| `/audit layout` | layout / ILP / plate runtime: `core/optimization/`, `core/plate_runtime_state.py`, `core/config_and_data.py`, `core/domain/plate_order.py`, `core/production/planning.py`, `core/ports/visualization.py`, `viz_modules/` |
+| `/audit auth` | `app/security/`, session/CSRF/roles, login rate limit (not bot) |
+| `/audit --since <ref>` | files from `git diff --name-only <ref>` (then map to the nearest module checklist) |
+| `/audit --full` | registry sweep: critical 20–30% of live code (not bot, not archived tests). **Only if the user typed `--full` or explicitly «весь проект / --full».** |
+| `/audit <path>` | that file or directory |
+| `/audit` with no args | **Ask** — options: gsm, kp, layout, auth, `--since HEAD~20`, `--full`. Wait. Do not invent a default. |
 
-```
-/audit                        → full project (src/ or project root)
-/audit src/services/          → specific directory
-/audit viz_modules/           → visualization / layout pipeline package (example directory)
-/audit src/auth.ts            → single file (thorough review)
-/audit --since main           → only files changed vs main branch
-/audit --since HEAD~10        → last 10 commits
-```
-
-For `--since` variants, run `git diff --name-only [ref]` to get the file list, then pass those files as scope to each agent.
-
-If no scope given, default to the project's main source directory (check `package.json`, `src/`, `app/`, or ask the user if ambiguous).
+Last report: newest `ai_docs/develop/audits/20*-{gsm|kp|layout|auth|full}*-audit.md` matching the scope. If none, say so in the prompt.
 
 ---
 
-## Step 2: Architecture Review (senior-reviewer)
+## Mandatory prompt preamble (every Task, including documenter)
 
-**Goal**: Identify structural, design, and architectural issues.
+Copy this block and fill the braces. Domain checklist: paste the matching section from this skill (gsm / kp / layout; auth uses the short auth list + generic second pass).
 
-**Checklist for senior-reviewer:**
-- SOLID principles adherence
-- Layered architecture (separation of concerns, dependency direction)
-- Design pattern usage (correct, missing, misapplied)
-- Module boundaries and coupling
-- Circular dependencies
-- God classes / God modules
-- Scalability concerns (stateful components, caching, bottlenecks)
-- Over-engineering or premature abstraction
+```
+## Mandatory context (read FIRST)
+1. Read `.cursor/skills/project-shishov/SKILL.md`
+2. Read `ai_docs/develop/audits/FINDINGS.md`
+   - REUSE existing IDs. One ID = one problem forever.
+   - New ID only if nothing in the registry matches. Next free A/S/Q number (never recycle).
+   - Do not drop an open finding because you did not look at it. If you cannot reproduce: status unreproduced, not resolved, not omitted.
+3. Last report for this scope: {path or "none"}
+4. Scope: {module} files: {paths}
+5. Domain checklist (first pass): {paste}
+6. Language: findings and the final report in Russian.
+7. Evidence: Critical/High MUST cite file:line and/or test name and/or a grep that you actually ran. No evidence = do not emit Critical/High.
+8. Skip bot/, bot_archived/, tests/archived/ as live systems.
+9. Report only. Do not patch code. Do not propose launching remediation in this chat.
+10. [S1] offer access is by-design shared archive (ADR offer-access-policy.md) — do not re-open as IDOR.
+```
 
-**Expected output format:**
+Then the role-specific checklist (architecture / security / quality) as a **second** pass.
+
+---
+
+## Step 2: Architecture (senior-reviewer)
+
+First pass: domain checklist for the scope.  
+Second pass (only inside scope): module boundaries, god modules, coupling, circular deps, over-engineering.
+
+Output:
+
 ```markdown
 ## Architecture Findings
 
 ### Critical
-- [A1] Circular dependency: services/user.ts ↔ services/auth.ts
+- [A1] … (reuse ID) — evidence: `path:line` — status suggestion: open|resolved|unreproduced
 
 ### High
-- [A2] God module: utils/helpers.ts (850 lines, mixed concerns)
+…
 
 ### Medium
-- [A3] Missing repository pattern in services/ — direct DB calls
+… (only if there is a concrete action this week; else omit)
 
-### Low
-- [A4] Strategy pattern opportunity in pricing logic
+Delta vs registry: closed / still open / new / unreproduced
 ```
 
 ---
 
-## Step 3: Security Audit (security-auditor)
+## Step 3: Security (security-auditor)
 
-**Goal**: Identify security vulnerabilities and risks.
+Pass architecture summary. First pass: domain + auth notes. Second: validation, secrets, cookies/CSRF, rate limit, PII, dependency vulns, error leakage — **inside scope**.
 
-**Context to pass**: architecture findings summary (helps auditor focus on high-risk areas like auth services, API layers).
+Do not flag shared-archive KP access as IDOR ([S1] by-design).
 
-**Checklist for security-auditor:**
-- Authentication & authorization flows
-- Input validation and sanitization (injection, XSS)
-- Hardcoded secrets, tokens, credentials
-- OWASP Top 10 coverage
-- API endpoint security (rate limiting, CORS, method restrictions)
-- Sensitive data handling and storage (PII, passwords, tokens)
-- Dependency vulnerabilities (if `npm audit` or similar available)
-- Error messages leaking internal details
-
-**Expected output format:**
-```markdown
-## Security Findings
-
-### Critical
-- [S1] Hardcoded JWT secret in src/config/auth.ts:12
-
-### High
-- [S2] Missing input sanitization on /api/search endpoint
-
-### Medium
-- [S3] No rate limiting on /api/auth/login
-
-### Low
-- [S4] Missing security headers (CSP, HSTS)
-```
+Same evidence and ID rules. Prefix `S`.
 
 ---
 
-## Step 4: Code Quality Review (reviewer)
+## Step 4: Code quality (reviewer)
 
-**Goal**: Identify code quality, maintainability, and technical debt.
-
-**Context to pass**: architecture + security summaries (avoids re-flagging already identified issues).
-
-**Checklist for reviewer:**
-- DRY violations (duplicated logic, copy-paste code)
-- Complexity (long functions >30 lines, deep nesting >3 levels)
-- Naming clarity (ambiguous vars, misleading names)
-- Error handling gaps (swallowed errors, missing null checks)
-- Dead code and unused imports
-- Test coverage gaps (critical paths without tests)
-- TypeScript: `any` types, missing types, incorrect types
-- Comments: missing where needed, misleading, or outdated
-
-**Expected output format:**
-```markdown
-## Code Quality Findings
-
-### High
-- [Q1] Duplicate email validation in login.ts:23 and register.ts:31
-
-### Medium
-- [Q2] processPayment() is 95 lines with 5 responsibilities
-- [Q3] Error swallowed silently in src/utils/api.ts:67
-
-### Low
-- [Q4] 12 uses of `any` type in src/types/
-```
+Pass architecture + security summaries so you do not duplicate them. First pass: domain. Second: DRY, complexity, naming, error handling, dead code, tests, types — **inside scope**. Prefix `Q`.
 
 ---
 
-## Step 5: Severity Aggregation
+## Domain checklists (≤15 each; invariants, not SOLID)
 
-Before passing to documenter, aggregate all findings:
+### gsm
 
-```javascript
-allFindings = [
-  ...architectureFindings,   // A1, A2, ...
-  ...securityFindings,        // S1, S2, ...
-  ...qualityFindings          // Q1, Q2, ...
-]
+1. Month-close: cannot generate the next month while the previous is open or the tank/odometer chain is broken.
+2. Liter and odometer continuity across the month boundary (no silent `_rechain` of old km).
+3. Same liter rounding rule on frontend and backend (no `Math.round` vs banker's round drift).
+4. Report zip days == waybill days for the same period (including former drafts).
+5. Generation starts from last `confirmed`/`exported`, not from a stale draft chain.
+6. LibreOffice/`soffice` must not block the HTTP worker.
+7. Import: file/row limits + unit of work (no partial commit without rollback).
+8. Seasonal logic: single source of truth; frontend must not drift from the API contract.
+9. Waybill CRUD vs generation: not one god service.
+10. `manual_intervention` vehicles excluded from zip with a visible reason.
+11. Re-export of an already exported month requires confirm.
+12. `GsmGenerationError` (and user-facing GSM errors) in Russian.
+13. Tests for chain break, rounding, and month-close gate.
 
-severity_counts = {
-  critical: allFindings.filter(f => f.severity === "Critical").length,
-  high:     allFindings.filter(f => f.severity === "High").length,
-  medium:   allFindings.filter(f => f.severity === "Medium").length,
-  low:      allFindings.filter(f => f.severity === "Low").length
-}
-```
+### kp
 
-**Health Score Formula** (0–10):
-```
-Start at 10
-- Critical finding: -2 each (max -6)
-- High finding: -0.5 each (max -3)
-- Medium finding: -0.1 each (max -1)
-Score floored at 0, rounded to 1 decimal
-```
+1. Offer access is **shared archive by design** — do not report IDOR; `owner_user_id` is reserved, unused in policy.
+2. Logistics must not receive KP financial fields if that restriction still exists in code/tests.
+3. Thin HTTP handlers; orchestration in services, not in `commercial.py` / `production.py`.
+4. Persistence through repositories — no raw SQL in services that already have a repo layer.
+5. OCR/LLM: documents leave the factory — treat as a policy item, not a surprise.
+6. Drafts: path traversal and ownership guards stay intact.
+7. Destructive DB ops go through `destructive_db_guard` / admin guards.
+8. Product-type pipeline: no sixth copy of the same draft/OCR flow.
+9. Archive/move-to-production: errors visible, not `except → None`.
+10. CSRF validated before parsing multipart bodies.
+11. HTTP errors must not leak internals.
+12. Wizard/archive god-hooks: note only if still huge **and** you have a split proposal with evidence.
+
+### layout
+
+1. `PlateOrderContext` passed explicitly — no business logic via `config_and_data` / mutable globals.
+2. Isolation for HTTP **and** BackgroundTasks, CPU pool, CLI (no ContextVar leak).
+3. Planning must not import matplotlib / `core.visualization` at module load.
+4. Viz goes through `core/ports/visualization.py` (ports already exist — do not regress).
+5. ILP/sequence objective matches the spec (waste, tracks, due dates) — evidence from tests or solver inputs, not vibes.
+6. Sequence builder: no large dead branches; golden/hash tests still mean something.
+7. Wide / unpriced plate resolve: one implementation.
+8. Layout jobs must not depend on GSM.
+9. In-process caches/rate limits: single-worker is a documented constraint, not silent multi-worker.
+
+### auth (short; use with `/audit auth` or as add-on to kp)
+
+- HttpOnly session cookie; CSRF double-submit (non-HttpOnly CSRF cookie is expected).
+- Roles vs shared-archive policy (see kp item 1).
+- Login/OCR rate limit: in-memory means single worker only ([A2]/[S3]).
+- Do not treat `bot_archived/` as a live auth surface.
+- Session TTL / refresh as written in `app/security/`.
 
 ---
 
-## Step 6: Consolidated Report (documenter)
+## Evidence rule
 
-**Determine report path before calling documenter:**
+| Severity | Required |
+|----------|----------|
+| Critical / High | File:line **or** failing/passing test name **or** grep you ran. Else drop or demote to Medium without the label Critical/High. |
+| Medium | Only if there is an action this week. Otherwise omit from the report (registry row can stay). |
+| Low | Do not add new Lows in module audits. `--full` may list Lows in an appendix only. |
 
-```javascript
-config = readJSON(".cursor/config.json")
+`unreproduced` ≠ `resolved`. Omitting an open ID ≠ closed.
 
-auditsEnabled = config.documentation.enabled.audits  // true/false
-auditsPath    = config.documentation.paths.audits     // e.g. "ai_docs/develop/audits"
+---
 
-if (auditsEnabled && auditsPath) {
-  // Save to configured docs path
-  reportFile = `${auditsPath}/YYYY-MM-DD-{scope-slug}-audit.md`
-} else {
-  // Fall back to workspace — audit still saved, just not in project docs
-  workspacePath = config.workspace.path  // e.g. ".cursor/workspace"
-  reportFile = `${workspacePath}/audits/YYYY-MM-DD-{scope-slug}-audit.md`
-}
+## Step 6: Delta (coordinator) — no Health Score
+
+Do **not** compute a 0–10 score.
+
+From registry ∩ this scope, plus new IDs from subagents:
+
+```
+closed:        was open, subagent proved resolved (evidence)
+still_open:    registry open, still valid
+new:           new ID assigned
+unreproduced:  registry open, not verified this run
+by-design / wontfix: do not "fix" and do not re-litigate
 ```
 
-Pass `reportFile` to the documenter so it saves the report to the correct location.
+**Metric:** count of **open P0** and **open P1** in this scope.
 
-**Report format:**
+- P0 = open + Critical
+- P1 = open + High
+
+---
+
+## Step 7: Report + registry (documenter)
+
+**Report path:** `{auditsPath}/YYYY-MM-DD-{scope-slug}-audit.md`  
+`auditsPath` from `.cursor/config.json` → `documentation.paths.audits` (default `ai_docs/develop/audits`).
+
+Also update `ai_docs/develop/audits/FINDINGS.md`: status, last_seen, evidence, notes. Add new rows for new IDs. Never delete rows. Never reuse an ID.
+
+### Report format (Russian)
 
 ```markdown
-# Project Audit Report
+# Аудит: {scope}
 
-**Date**: 2026-02-25
-**Scope**: src/services/
-**Audited by**: senior-reviewer + security-auditor + reviewer
+**Дата**: YYYY-MM-DD
+**Скоуп**: …
+**Реестр**: FINDINGS.md
+**Прогон 0**: {previous report or —}
+
+## Дельта
+
+| ID | Было | Стало | Суть |
+|----|------|-------|------|
+| A3 | open | resolved | … |
+
+- Закрыто: N
+- Открыто (подтверждено): N
+- Новое: N
+- Не воспроизвелось: N
+
+**Открытые P0 / P1 в скоупе**: {n} / {m}
+
+## Действия (максимум 8)
+
+1. …
+
+## Открытые P0 / P1
+
+### [A1] …
+**Статус**: open
+**Улика**: `file:line` / тест
+**Зачем**: …
+
+## Приложение
+
+Подробности Medium и контекст. Без Health Score. Без «Start remediation?».
+```
+
+After the report: tell the user the path, the P0/P1 counts, and that fixes are a separate command. **Do not ask to auto-fix.**
 
 ---
 
-## Executive Summary
+## What /audit does not do
 
-**Overall Health Score**: 7.2/10
+- Auto-fix Critical/High/anything (no Phase 5)
+- Health Score 0–10
+- Default to full-repo
+- Invent new IDs for old problems
+- Audit the Telegram bot as a live product
+- Treat `[S1]` shared archive as a vulnerability
 
-| Severity | Architecture | Security | Code Quality | Total |
-|----------|-------------|----------|--------------|-------|
-| Critical | 1           | 1        | 0            | **2** |
-| High     | 2           | 1        | 2            | **5** |
-| Medium   | 1           | 1        | 3            | **5** |
-| Low      | 1           | 1        | 1            | **3** |
-
-**Recommendation**: Address 2 critical issues before next release.
-
----
-
-## Critical Issues (fix immediately)
-
-### [A1] Circular Dependency
-**Category**: Architecture
-**Location**: services/user.ts ↔ services/auth.ts
-**Impact**: Build issues, testing difficulties, runtime errors possible
-**Fix**: Extract shared identity logic to services/identity.ts
-
-### [S1] Hardcoded JWT Secret
-**Category**: Security
-**Location**: src/config/auth.ts:12
-**Impact**: Secret exposed in version control — full auth compromise possible
-**Fix**: Move to environment variable, rotate immediately
-
----
-
-## High Priority Issues (fix soon)
-
-[List all High severity findings with locations and suggested fixes]
-
----
-
-## Medium Priority Issues (plan for next sprint)
-
-[List all Medium severity findings]
-
----
-
-## Low Priority / Suggestions
-
-[List all Low severity findings]
-
----
-
-## Priority Matrix
-
-| ID | Issue | Severity | Effort | Priority |
-|----|-------|----------|--------|----------|
-| S1 | Hardcoded JWT secret | Critical | Low | P0 — now |
-| A1 | Circular dependency | Critical | Medium | P0 — now |
-| A2 | God module helpers.ts | High | High | P1 — sprint |
-| S2 | Missing input sanitization | High | Medium | P1 — sprint |
-
----
-
-## Next Steps
-
-1. **Immediate** (before next commit): [list critical fixes]
-2. **This sprint**: [list high fixes]
-3. **Next sprint**: [list medium fixes]
-4. **Backlog**: [list low/suggestions]
-
-Use `/refactor [file]` for structural issues.
-Use `/implement [fix]` for feature-level security fixes.
-```
-
----
-
-## Audit Scope Guide
-
-| Scope | Depth | Typical duration |
-|-------|-------|-----------------|
-| Single file | Very thorough | Fast |
-| Single module (5-10 files) | Thorough | Normal |
-| Large directory (20-50 files) | Balanced | Longer |
-| Full project | High-level + deep on critical areas | Long |
-
-For full-project audits on large codebases: have each agent focus on the **most critical** 20-30% of files (core business logic, auth, API layer) rather than config files, generated code, or test files.
-
----
-
----
-
-## Phase 5: Remediation Routing
-
-This phase runs **only if**:
-1. Critical issues were found in phases 1–3
-2. User explicitly confirms when asked ("Start remediation? y/n")
-
-### How to Ask the User
-
-After showing the report, present a clear summary:
-
-```
-Audit complete. Health Score: X/10
-
-Critical issues requiring immediate attention:
-- [A1] Circular dependency: services/user.ts ↔ services/auth.ts  (structural)
-- [S1] Hardcoded JWT secret in src/config/auth.ts:12             (security)
-
-Start remediation for these critical issues? (y/n)
-If yes, fixes will be applied in this chat automatically.
-```
-
-**Wait for the user's response before doing anything.**
-
-### Categorizing Findings for Routing
-
-After user confirms, split critical findings into two buckets:
-
-**Bucket A — Structural / Code Quality** (fix via refactor agent):
-- Circular dependencies
-- God classes / modules
-- Deep nesting / long functions
-- DRY violations
-- SOLID violations
-- Complexity / code smells
-
-**Bucket B — Security / Behavioral** (fix via planner + worker):
-- Hardcoded secrets / credentials
-- Missing input validation / sanitization
-- Authentication / authorization gaps
-- Missing rate limiting
-- Any fix that requires adding new logic, not just restructuring existing code
-
-### Executing Bucket A (Structural → refactor agent)
-
-```
-Task(
-  subagent_type="refactor",
-  model="composer-2-fast",
-  prompt="Fix the following structural issues found during audit:
-  [list each finding with file path and description]
-  
-  Context: these were identified by senior-reviewer during a full audit.
-  Rules: no behavior changes, all existing tests must pass after refactoring."
-)
-```
-
-Then verify:
-```
-Task(
-  subagent_type="test-runner",
-  model="composer-2-fast",
-  prompt="Verify refactoring did not break anything.
-  Files changed: [from refactor agent]"
-)
-```
-- If tests fail → `Task(subagent_type="debugger", model="composer-2-fast", …)` → retry test-runner (max 3)
-
-### Executing Bucket B (Security / Behavioral → planner + worker)
-
-```
-Task(
-  subagent_type="planner",
-  model="composer-2-fast",
-  prompt="Create a remediation plan for these security/behavioral issues:
-  [list each finding with file path, description, and suggested fix]
-  
-  Each issue should be one task. Keep tasks small and independent."
-)
-```
-
-Then for each task from the planner, execute the standard cycle:
-```
-Task(subagent_type="worker", model="composer-2-fast", ...)
-Task(subagent_type="test-writer", model="composer-2-fast", ...)     ← write tests for the fix
-Task(subagent_type="test-runner", model="composer-2-fast", ...)
-  → If fail: Task(subagent_type="debugger", model="composer-2-fast") → retry (max 3)
-Task(subagent_type="security-auditor", model="composer-2-fast", ...)  ← verify the specific fix
-  → If issues: Task(subagent_type="debugger", model="composer-2-fast") → retry (max 3)
-```
-
-### After All Fixes Applied
-
-Update the audit report to reflect what was done:
-
-```
-Task(
-  subagent_type="documenter",
-  model="composer-2-fast",
-  prompt="Update the audit report to add a Remediation section:
-  Report: [original report path or content]
-  
-  Add:
-  ## Remediation Applied
-  Date: [today]
-  
-  ### Fixed
-  - [A1] Circular dependency → resolved by extracting services/identity.ts
-  - [S1] Hardcoded JWT secret → moved to environment variable
-  
-  ### Remaining (High/Medium/Low — not auto-fixed)
-  [list remaining non-critical findings from original report]"
-)
-```
-
-### Remediation Decision Matrix
-
-| Finding Type | Bucket | Agent |
-|-------------|--------|-------|
-| Circular dependency | A | refactor |
-| God class / long function | A | refactor |
-| Code duplication | A | refactor |
-| Deep nesting | A | refactor |
-| Hardcoded secret | B | planner + worker |
-| Missing validation | B | planner + worker |
-| Auth/authz gap | B | planner + worker |
-| Missing rate limiting | B | planner + worker |
-| Missing security headers | B | planner + worker |
-
----
-
-## What Audit Does NOT Auto-Fix
-
-- High / Medium / Low issues (reported, not auto-fixed)
-- Issues requiring large architectural redesign (discuss with user first)
-- Issues in third-party/vendor code
-
-For remaining issues after audit, user can:
-- Run `/refactor [file]` on specific structural issues
-- Run `/orchestrate` to tackle a larger remediation plan
+For remaining work the user can run `/refactor`, `/implement`, or `/orchestrate`.

@@ -312,7 +312,7 @@ def test_service_start_from_last_confirmed_else_request(
         vehicle_id=ids["vehicle_id"],
         date=date(2025, 3, 31),
         driver_id=ids["driver_id"],
-        status="confirmed",
+        status="exported",
         source="imported",
         odometer_start=9_800,
         odometer_end=10_000,
@@ -735,3 +735,262 @@ def test_http_accountant_and_admin_allowed(api_client: CsrfAwareTestClient) -> N
             cookies=_auth(user),
         )
         assert resp.status_code == 200, f"{user}: {resp.text}"
+
+
+def _seed_second_vehicle(
+    repo: GsmRepository,
+    *,
+    name: str,
+    plate: str,
+    license_number: str,
+    with_routes: bool = True,
+    with_tx: bool = True,
+    fuel_qty: float = 40.0,
+    tx_day: date = date(2026, 8, 10),
+) -> dict[str, int]:
+    driver_id = repo.create_driver(
+        full_name=f"Водитель {plate}",
+        license_number=license_number,
+    )
+    vehicle_id = repo.create_vehicle(
+        name=name,
+        plate_number=plate,
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=driver_id,
+    )
+    card_id = repo.create_card(
+        card_number=f"3005{vehicle_id:06d}",
+        vehicle_id=vehicle_id,
+        assigned_at="2025-01-01",
+    )
+    station_id = repo.create_station(address=f"АЗС {plate}", brand="TATNEFT")
+    if with_routes:
+        repo.create_route(
+            vehicle_id=vehicle_id,
+            addr_a="Завод",
+            addr_b="Объект А",
+            km=190,
+            frequency=100,
+            typical_station_ids=json.dumps([station_id]),
+        )
+        for i, km in enumerate((160, 180, 200, 220), start=2):
+            repo.create_route(
+                vehicle_id=vehicle_id,
+                addr_a="Завод",
+                addr_b=f"Burn {i}",
+                km=km,
+                frequency=50 - i,
+                typical_station_ids="[]",
+            )
+    if with_tx:
+        batch_id = repo.create_import_batch(
+            filename="seed.xls",
+            uploaded_at="2026-08-30T12:00:00",
+            uploaded_by="accountant",
+            period_from="2026-08-01",
+            period_to="2026-08-31",
+        )
+        repo.insert_transaction(
+            card_id=card_id,
+            ts=datetime(tx_day.year, tx_day.month, tx_day.day, 10, 0, 0).isoformat(
+                timespec="seconds"
+            ),
+            service_type="fuel",
+            fuel_grade="АИ-95",
+            qty_liters=fuel_qty,
+            amount=2500.0,
+            station_id=station_id,
+            raw_address=f"АЗС {plate}",
+            batch_id=batch_id,
+        )
+    return {
+        "driver_id": driver_id,
+        "vehicle_id": vehicle_id,
+        "card_id": card_id,
+        "station_id": station_id,
+    }
+
+
+def test_generate_august_blocked_when_july_tail_open(
+    service: GsmGenerationService, repo: GsmRepository
+) -> None:
+    ids = _seed_vehicle_bundle(
+        repo, tx_day=date(2026, 8, 10), fuel_qty=40.0
+    )
+    repo.upsert_waybill(
+        vehicle_id=ids["vehicle_id"],
+        date=date(2026, 7, 20),
+        driver_id=ids["driver_id"],
+        status="draft",
+        source="manual",
+        odometer_start=9_000,
+        odometer_end=9_100,
+        fuel_start=20.0,
+        fuel_issued=10.0,
+        fuel_end=18.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 100}]),
+    )
+    with pytest.raises(GsmGenerationError) as exc_info:
+        service.generate(
+            vehicle_id=ids["vehicle_id"],
+            period_from=date(2026, 8, 1),
+            period_to=date(2026, 8, 31),
+            fuel_start=20.0,
+            odometer_start=10_000,
+        )
+    assert exc_info.value.code == "gsm_kit_tail"
+    august = repo.list_waybills(
+        vehicle_id=ids["vehicle_id"],
+        period_from=date(2026, 8, 1),
+        period_to=date(2026, 8, 31),
+    )
+    assert august == []
+
+
+def test_http_generate_august_july_tail_is_4xx(api_client: CsrfAwareTestClient) -> None:
+    ids = _seed_into_api_db(api_client, tx_day=date(2026, 8, 10))
+    from app.core.settings import get_settings as _gs
+
+    repo = GsmRepository(db_path=str(_gs().plita_db_path))
+    repo.upsert_waybill(
+        vehicle_id=ids["vehicle_id"],
+        date=date(2026, 7, 20),
+        driver_id=ids["driver_id"],
+        status="draft",
+        source="manual",
+        odometer_start=9_000,
+        odometer_end=9_100,
+        fuel_start=20.0,
+        fuel_issued=10.0,
+        fuel_end=18.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 100}]),
+    )
+    resp = api_client.post(
+        GENERATE,
+        json={
+            "vehicle_id": ids["vehicle_id"],
+            "period_from": "2026-08-01",
+            "period_to": "2026-08-31",
+            "fuel_start": 20.0,
+            "odometer_start": 10000,
+        },
+        cookies=_auth(),
+    )
+    assert resp.status_code in (400, 404, 422), resp.text
+    detail = resp.json().get("detail") or resp.json()
+    code = detail.get("code") if isinstance(detail, dict) else None
+    assert code == "gsm_kit_tail"
+    august = repo.list_waybills(
+        vehicle_id=ids["vehicle_id"],
+        period_from=date(2026, 8, 1),
+        period_to=date(2026, 8, 31),
+    )
+    assert august == []
+
+
+def test_generate_august_allowed_when_only_chain_broken(
+    service: GsmGenerationService, repo: GsmRepository
+) -> None:
+    ids = _seed_vehicle_bundle(repo, tx_day=date(2026, 8, 10), fuel_qty=40.0)
+    repo.upsert_waybill(
+        vehicle_id=ids["vehicle_id"],
+        date=date(2026, 7, 31),
+        driver_id=ids["driver_id"],
+        status="exported",
+        source="manual",
+        odometer_start=9_800,
+        odometer_end=10_000,
+        fuel_start=25.0,
+        fuel_issued=10.0,
+        fuel_end=20.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 200}]),
+    )
+    repo.upsert_waybill(
+        vehicle_id=ids["vehicle_id"],
+        date=date(2026, 8, 1),
+        driver_id=ids["driver_id"],
+        status="draft",
+        source="manual",
+        odometer_start=10_100,
+        odometer_end=10_200,
+        fuel_start=5.0,
+        fuel_issued=10.0,
+        fuel_end=8.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 100}]),
+    )
+    result = service.generate(
+        vehicle_id=ids["vehicle_id"],
+        period_from=date(2026, 8, 1),
+        period_to=date(2026, 8, 31),
+    )
+    assert result.days_created >= 1
+    august = repo.list_waybills(
+        vehicle_id=ids["vehicle_id"],
+        period_from=date(2026, 8, 1),
+        period_to=date(2026, 8, 31),
+    )
+    assert august
+    assert all(str(row["status"]) == "draft" for row in august)
+
+
+def test_generate_bulk_skips_july_tail_keeps_clean_neighbor(
+    service: GsmGenerationService, repo: GsmRepository
+) -> None:
+    palisade = _seed_vehicle_bundle(repo, tx_day=date(2026, 8, 10), fuel_qty=40.0)
+    repo.upsert_waybill(
+        vehicle_id=palisade["vehicle_id"],
+        date=date(2026, 7, 31),
+        driver_id=palisade["driver_id"],
+        status="exported",
+        source="manual",
+        odometer_start=9_800,
+        odometer_end=10_000,
+        fuel_start=25.0,
+        fuel_issued=10.0,
+        fuel_end=20.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 200}]),
+    )
+    monjaro = _seed_second_vehicle(
+        repo,
+        name="Monjaro Tail",
+        plate="О 401 МН 44",
+        license_number="44 40 140111",
+        tx_day=date(2026, 8, 10),
+    )
+    repo.upsert_waybill(
+        vehicle_id=monjaro["vehicle_id"],
+        date=date(2026, 7, 20),
+        driver_id=monjaro["driver_id"],
+        status="draft",
+        source="manual",
+        odometer_start=9_000,
+        odometer_end=9_100,
+        fuel_start=20.0,
+        fuel_issued=10.0,
+        fuel_end=18.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 100}]),
+    )
+    result = service.generate_bulk(
+        vehicle_ids=[palisade["vehicle_id"], monjaro["vehicle_id"]],
+        period_from=date(2026, 8, 1),
+        period_to=date(2026, 8, 31),
+    )
+    by_id = {item.vehicle_id: item for item in result.results}
+    assert by_id[palisade["vehicle_id"]].ok is True
+    assert by_id[monjaro["vehicle_id"]].ok is False
+    assert by_id[monjaro["vehicle_id"]].error is not None
+    assert by_id[monjaro["vehicle_id"]].error.code == "gsm_kit_tail"
+    palisade_august = repo.list_waybills(
+        vehicle_id=palisade["vehicle_id"],
+        period_from=date(2026, 8, 1),
+        period_to=date(2026, 8, 31),
+    )
+    monjaro_august = repo.list_waybills(
+        vehicle_id=monjaro["vehicle_id"],
+        period_from=date(2026, 8, 1),
+        period_to=date(2026, 8, 31),
+    )
+    assert palisade_august
+    assert monjaro_august == []

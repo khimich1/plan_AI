@@ -5,6 +5,7 @@ import { currentMonthBounds } from "@/features/gsm/lib/fleetStatus";
 import { monthBounds, shiftMonth } from "@/features/gsm/lib/vehicleDayFeed";
 import type { FleetOverviewRow } from "@/features/gsm/types/gsm";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ApiError } from "@/shared/lib/apiError";
 
 const row = (
   overrides: Partial<FleetOverviewRow> & { id: number; status: FleetOverviewRow["status"] },
@@ -474,6 +475,75 @@ describe("FleetOverviewView row actions", () => {
       period_to: "2026-07-31",
       vehicle_ids: [1],
     });
+  });
+
+  it("does not POST a red vehicle from the period report", async () => {
+    overviewState.rows = [
+      row({
+        id: 1,
+        status: "has_red_days",
+        red_days: 2,
+        wb_count: 3,
+        exported_count: 0,
+      }),
+      row({ id: 2, status: "drafts_pending", exported_count: 0, wb_count: 4 }),
+    ];
+    usageReportAsync.mockResolvedValue({
+      blob: new Blob(),
+      filename: "gsm_usage_report.zip",
+    });
+    renderOverview();
+    setAugustPeriod();
+    fireEvent.click(screen.getByRole("button", { name: "Отчёт за период" }));
+    expect(await screen.findByTestId("kit-exclusions")).toHaveTextContent(/ручной доработки/);
+    expect(usageReportAsync).toHaveBeenCalledTimes(1);
+    expect(usageReportAsync).toHaveBeenCalledWith({
+      period_from: "2026-08-01",
+      period_to: "2026-08-31",
+      vehicle_ids: [2],
+    });
+  });
+
+  it("does not bypass planKit when the current period is the tail month", () => {
+    overviewState.rows = [
+      row({
+        id: 1,
+        status: "has_red_days",
+        red_days: 2,
+        open_before: 6,
+        open_before_month: "2026-07",
+        wb_count: 3,
+        exported_count: 0,
+      }),
+    ];
+    renderOverview();
+    fireEvent.change(screen.getByLabelText("Период с"), { target: { value: "2026-07-01" } });
+    fireEvent.change(screen.getByLabelText("Период по"), { target: { value: "2026-07-31" } });
+    fireEvent.click(screen.getByRole("button", { name: "Экспорт" }));
+    expect(usageReportAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId("kit-exclusions")).toHaveTextContent(/ручной доработки/);
+  });
+
+  it("shows an error on tail-export 4xx instead of success zip copy", async () => {
+    overviewState.rows = [
+      row({
+        id: 1,
+        status: "needs_generation",
+        open_before: 6,
+        open_before_month: "2026-07",
+        wb_count: 0,
+      }),
+    ];
+    usageReportAsync.mockRejectedValue(
+      new ApiError("Сначала выгрузите Июль", 422, "Сначала выгрузите Июль", "gsm_kit_tail"),
+    );
+    renderOverview();
+    setAugustPeriod();
+    fireEvent.click(screen.getByRole("button", { name: "Экспорт" }));
+    expect(await screen.findByText("Сначала выгрузите Июль")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Скачан zip с отчётом об использовании ГСМ."),
+    ).not.toBeInTheDocument();
   });
 });
 

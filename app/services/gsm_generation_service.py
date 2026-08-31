@@ -18,6 +18,7 @@ from app.schemas.gsm import (
     WaybillRouteLeg,
     WaybillWarningDetail,
 )
+from app.services.gsm_kit_gate import evaluate_vehicle
 from app.services.gsm_registry_service import (
     DEFAULT_HOOK_THRESHOLD_KM,
     DEFAULT_MAX_DAILY_KM,
@@ -93,6 +94,19 @@ class GsmGenerationService:
                 code="gsm_driver_required",
             )
         driver_id = int(driver_id)
+
+        kit = evaluate_vehicle(
+            self._repo,
+            vehicle_id,
+            period_from=period_from,
+            period_to=period_to,
+            purpose="generate",
+        )
+        if not kit.allowed:
+            raise GsmGenerationError(
+                kit.message or "генерация запрещена",
+                code=kit.code or "gsm_kit_tail",
+            )
 
         existing = self._repo.list_waybills(
             vehicle_id=vehicle_id,

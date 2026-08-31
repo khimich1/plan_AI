@@ -78,11 +78,26 @@ def test_status_needs_generation_when_tx_after_last_waybill() -> None:
                 tx_last_date="2026-08-21",
                 wb_count=2,
                 wb_last_date="2026-08-20",
-                red_days=1,
                 draft_count=1,
             )
         )
         == "needs_generation"
+    )
+
+
+def test_status_has_red_days_before_needs_generation() -> None:
+    assert (
+        _status_of(
+            _agg(
+                tx_count=2,
+                tx_last_date="2026-08-21",
+                wb_count=2,
+                wb_last_date="2026-08-20",
+                red_days=1,
+                draft_count=1,
+            )
+        )
+        == "has_red_days"
     )
 
 
@@ -610,3 +625,60 @@ def test_overview_tx_liters_excludes_wash_qty(
     assert row["liters_diff"] == pytest.approx(0.0)
     assert row["red_days"] == 0
     assert row["status"] == "ready"
+
+
+def test_overview_red_days_beats_newer_transaction(
+    api_client: CsrfAwareTestClient,
+) -> None:
+    from app.core.settings import get_settings as _gs
+
+    repo = GsmRepository(db_path=str(_gs().plita_db_path))
+    driver_id = repo.create_driver(full_name="Driver", license_number="44 21 666666")
+    vehicle_id = repo.create_vehicle(
+        name="Car Red",
+        plate_number="A666AA44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=driver_id,
+    )
+    card_id = repo.create_card(
+        card_number="666", vehicle_id=vehicle_id, assigned_at="2026-01-01"
+    )
+    batch_id = repo.create_import_batch(
+        filename="tx.xls", uploaded_at="2026-08-22T12:00:00"
+    )
+    repo.upsert_waybill(
+        vehicle_id=vehicle_id,
+        date="2026-08-10",
+        driver_id=driver_id,
+        odometer_start=10000,
+        odometer_end=10100,
+        fuel_start=20.0,
+        fuel_issued=10.0,
+        fuel_end=15.0,
+        status="draft",
+        warnings_json='["manual_intervention"]',
+    )
+    repo.insert_transaction(
+        card_id=card_id,
+        ts="2026-08-21T10:00:00",
+        service_type="fuel",
+        qty_liters=30.0,
+        amount=2000.0,
+        raw_address="АЗС 1",
+        batch_id=batch_id,
+    )
+
+    resp = api_client.get(
+        OVERVIEW,
+        params={"from": "2026-08-01", "to": "2026-08-31"},
+        cookies=_auth(),
+    )
+    assert resp.status_code == 200, resp.text
+    row = resp.json()[0]
+    assert row["vehicle"]["id"] == vehicle_id
+    assert row["red_days"] == 1
+    assert row["tx_last_date"] == "2026-08-21"
+    assert row["wb_last_date"] == "2026-08-10"
+    assert row["status"] == "has_red_days"
