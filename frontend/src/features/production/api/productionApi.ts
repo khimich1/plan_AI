@@ -1,8 +1,11 @@
 import { httpClient } from "@/shared/api/httpClient";
 import type {
+  AnalyzeSubstratesRequest,
+  AnalyzeSubstratesResponse,
   BuildPlanRequest,
   BuildPlanResponse,
   CompleteDayResponse,
+  DayCapacityMapResponse,
   DayOccupancyResponse,
   DayViewResponse,
   DeletePlanResponse,
@@ -12,6 +15,8 @@ import type {
   PlansMetadataResponse,
   PlanDetailResponse,
   RejectedPlateItem,
+  SaveDayCapacityRequest,
+  SaveDayCapacityResponse,
   WorkCalendarPayload,
 } from "@/features/production/types/production";
 
@@ -64,6 +69,13 @@ export const productionApi = {
 
   listKpCandidates: () => httpClient.get<KpCandidatesResponse>(`${BASE}/kp-candidates`),
 
+  analyzeSubstrates: (payload: AnalyzeSubstratesRequest) =>
+    httpClient.post<AnalyzeSubstratesResponse>(
+      `${BASE}/analyze-substrates`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
+
   getDayView: (date: string) =>
     httpClient.get<DayViewResponse>(`${BASE}/days/${encodeURIComponent(date)}`),
 
@@ -103,11 +115,29 @@ export const productionApi = {
       `Формовка_${date}.zip`,
     ),
 
+  downloadPlanSgpExport: (planId: string) =>
+    httpClient.download(
+      `${BASE}/plans/${encodeURIComponent(planId)}/sgp-export`,
+      `SGP_${planId}.xlsx`,
+    ),
+
   getWorkCalendar: () => httpClient.get<WorkCalendarPayload>(`${BASE}/work-calendar`),
 
   saveWorkCalendar: (payload: WorkCalendarPayload) =>
     httpClient.put<WorkCalendarPayload>(
       `${BASE}/work-calendar`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
+
+  getDayCapacity: (from: string, to: string) =>
+    httpClient.get<DayCapacityMapResponse>(
+      `${BASE}/day-capacity?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    ),
+
+  saveDayCapacity: (payload: SaveDayCapacityRequest) =>
+    httpClient.put<SaveDayCapacityResponse>(
+      `${BASE}/day-capacity`,
       JSON.stringify(payload),
       { "Content-Type": "application/json" },
     ),

@@ -13,18 +13,24 @@ from app.core.http_errors import (
     MSG_VALIDATION,
     raise_bad_request_client_error,
     raise_not_found_client_error,
+    raise_unexpected_server_error,
 )
 from app.schemas.archive import (
     ArchiveFileKind,
     ArchiveOfferDetails,
     ArchiveOfferListItem,
+    ArchiveProductTypeFilter,
     ArchiveSearchResponse,
     ArchiveSection,
+    CapacitySnapshotResponse,
+    KpReadinessPositionsResponse,
     MoveToProductionRequest,
     UpdateDiscountRequest,
     UpdateLogisticsCostRequest,
 )
+from app.schemas.commercial import CommercialDraftDetailsResponse
 from app.services.archive_service import (
+    ArchiveError,
     ArchiveNotFoundError,
     ArchiveService,
     ArchiveValidationError,
@@ -40,13 +46,17 @@ router = APIRouter(prefix="/commercial/archive", tags=["commercial-archive"])
 @router.get("", response_model=list[ArchiveOfferListItem])
 def list_archive_offers(
     section: ArchiveSection = Query(default="archived"),
+    product_type: ArchiveProductTypeFilter = Query(default="all"),
     user: dict = Depends(require_roles("admin", "manager")),
     service: ArchiveService = Depends(get_archive_service),
 ) -> list[ArchiveOfferListItem]:
-    return service.list_offers(section, user=user)
+    return service.list_offers(section, product_type=product_type, user=user)
 
 
-@router.get("/search", response_model=ArchiveSearchResponse)
+@router.get(
+    "/search",
+    response_model=ArchiveSearchResponse,
+)
 def search_archive_offers(
     kp_id: int | None = Query(default=None, ge=1, description="Номер КП"),
     customer: str | None = Query(default=None, max_length=128, description="Имя заказчика"),
@@ -98,6 +108,22 @@ async def download_current_plan_gantt(
     )
 
 
+@router.get("/{kp_id}/readiness/positions", response_model=KpReadinessPositionsResponse)
+def get_kp_readiness_positions(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> KpReadinessPositionsResponse:
+    try:
+        return service.get_readiness_positions(kp_id, user=user)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_kp_readiness_positions",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+
+
 @router.get("/{kp_id}", response_model=ArchiveOfferDetails)
 def get_archive_offer(
     kp_id: int,
@@ -112,6 +138,29 @@ def get_archive_offer(
             where="archive.get_archive_offer",
             detail=MSG_ARCHIVE_NOT_FOUND,
         )
+
+
+@router.post("/{kp_id}/resume", response_model=CommercialDraftDetailsResponse)
+def resume_archive_offer_as_draft(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = service.resume_as_draft(kp_id, user=user)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.resume_archive_offer_as_draft",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.resume_archive_offer_as_draft",
+            detail=MSG_VALIDATION,
+        )
+    return CommercialDraftDetailsResponse.model_validate(result)
 
 
 @router.get("/{kp_id}/files/{kind}")
@@ -237,8 +286,36 @@ def move_archive_offer_to_production(
     except ArchiveValidationError as exc:
         raise_bad_request_client_error(
             exc,
-            where="archive.download_archive_document",
-            detail=MSG_VALIDATION,
+            where="archive.move_to_production",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except ArchiveError as exc:
+        raise_unexpected_server_error(exc, where="archive.move_to_production")
+
+
+@router.get("/{kp_id}/capacity-snapshot", response_model=CapacitySnapshotResponse)
+def get_capacity_snapshot(
+    kp_id: int,
+    target: str | None = Query(
+        default=None,
+        description="ISO YYYY-MM-DD дедлайн производства; иначе из срока КП",
+    ),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> CapacitySnapshotResponse:
+    try:
+        return service.get_capacity_snapshot(kp_id, user=user, target=target)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_capacity_snapshot",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.get_capacity_snapshot",
+            detail=str(exc) or MSG_VALIDATION,
         )
 
 

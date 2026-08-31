@@ -14,6 +14,7 @@ from app.api.v1.router import router as api_v1_router
 from app.core.settings import get_settings
 from app.repositories.auth_repository import AuthRepository
 from app.security.login_rate_limit import (
+    enforce_single_instance_workers,
     validate_rate_limit_shared_store_config,
     warn_if_multi_worker_without_shared_store,
 )
@@ -42,6 +43,10 @@ async def lifespan(app: FastAPI):
     kp_db.ensure_schema(str(settings.plita_db_path))
     AuthRepository(str(settings.plita_db_path)).init_schema()
     validate_rate_limit_shared_store_config()
+    enforce_single_instance_workers(
+        app_env=settings.app_env,
+        storage_layout=settings.app_storage_layout,
+    )
     warn_if_multi_worker_without_shared_store()
     app.state.settings = settings
     yield

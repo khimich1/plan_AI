@@ -185,8 +185,28 @@ if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
     exit 1
 fi
 
-echo -e "${YELLOW}Запускаю frontend: http://127.0.0.1:5173${NC}"
-(cd frontend && npm run dev -- --host 127.0.0.1 --port 5173) >"$FRONTEND_LOG" 2>&1 &
+echo -e "${YELLOW}Жду готовности backend (health)...${NC}"
+BACKEND_READY=0
+for _ in $(seq 1 60); do
+    if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+        echo -e "${RED}❌ Backend остановился при старте. Смотри лог: $BACKEND_LOG${NC}"
+        exit 1
+    fi
+    if curl -sf "http://127.0.0.1:8000/api/v1/health" >/dev/null 2>&1 \
+        || curl -sf "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
+        BACKEND_READY=1
+        break
+    fi
+    sleep 0.5
+done
+if [ "$BACKEND_READY" -ne 1 ]; then
+    echo -e "${RED}❌ Backend не ответил на /health за 30с. Смотри лог: $BACKEND_LOG${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✅ Backend готов${NC}"
+
+echo -e "${YELLOW}Запускаю frontend: http://localhost:5173${NC}"
+(cd frontend && npm run dev -- --host localhost --port 5173) >"$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 sleep 1
 if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
@@ -196,12 +216,9 @@ fi
 
 echo ""
 echo -e "${GREEN}✅ Оба процесса запущены${NC}"
-echo -e "${YELLOW}Открывай в браузере: http://127.0.0.1:5173${NC}"
-echo -e "${YELLOW}Открывай в браузере (localhost): http://localhost:5173${NC}"
+echo -e "${YELLOW}UI (React): http://localhost:5173/commercial-offer/new${NC}"
 echo -e "${YELLOW}API backend: http://127.0.0.1:8000${NC}"
-echo -e "${YELLOW}API backend (localhost): http://localhost:8000${NC}"
-echo -e "${YELLOW}Вход в систему: http://127.0.0.1:8000/web/login${NC}"
-echo -e "${YELLOW}Вход в систему (localhost): http://localhost:8000/web/login${NC}"
+echo -e "${YELLOW}Swagger: http://127.0.0.1:8000/docs${NC}"
 echo -e "${YELLOW}Остановка: Ctrl+C${NC}"
 echo ""
 

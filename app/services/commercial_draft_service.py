@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Iterable
+from uuid import uuid4
 
 from app.core.settings import get_settings
 from app.schemas.commercial import WizardStepId
@@ -86,6 +87,8 @@ class CommercialDraftService:
             "ocr_row_count_on_image": result.get("row_count_on_image"),
             "ocr_verify_skipped_reason": result.get("ocr_verify_skipped_reason"),
             "ocr_verify_applied_reason": result.get("ocr_verify_applied_reason"),
+            "ocr_verify_select_reason": result.get("ocr_verify_select_reason"),
+            "ocr_preprocess": result.get("ocr_preprocess"),
             "ocr_warnings": self._ocr_quality_warnings(result),
         }
 
@@ -94,6 +97,7 @@ class CommercialDraftService:
         *,
         image_bytes: bytes,
         image_filename: str | None,
+        product_type: str = "plates",
     ) -> tuple[str, dict[str, Any]]:
         suffix = safe_ocr_temp_suffix(image_filename)
         with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
@@ -104,12 +108,17 @@ class CommercialDraftService:
         if recognition_mode not in {"full_gpt", "hybrid"}:
             recognition_mode = "full_gpt"
 
+        normalized_product_type = (product_type or "plates").strip().lower()
+        if normalized_product_type not in {"plates", "piles", "steps", "marches", "bridge_piles", "fbs"}:
+            normalized_product_type = "plates"
+
         try:
             result = await recognize_text_smart(
                 str(tmp_path),
                 force_gpt=(recognition_mode == "full_gpt"),
                 show_cost=True,
                 mode=recognition_mode,
+                product_type=normalized_product_type,  # type: ignore[arg-type]
             )
         finally:
             tmp_path.unlink(missing_ok=True)
@@ -131,6 +140,7 @@ class CommercialDraftService:
         text: str | None,
         image_bytes: bytes | None,
         image_filename: str | None,
+        product_type: str = "plates",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         text_value = (text or "").strip()
         if not text_value and not image_bytes:
@@ -139,6 +149,7 @@ class CommercialDraftService:
             recognized_text, source_metadata = await self.extract_text_from_image(
                 image_bytes=image_bytes,
                 image_filename=image_filename,
+                product_type=product_type,
             )
             return (
                 {
@@ -200,6 +211,7 @@ class CommercialDraftService:
         metadata = dict(base_metadata)
         metadata.update(
             {
+                "product_type": metadata.get("product_type") or "plates",
                 "source_type": source_type,
                 "original_text": original_text,
                 "ocr_text": ocr_text,
@@ -218,9 +230,344 @@ class CommercialDraftService:
                 "total_sum": preview.total_sum,
                 "plate_batches": plate_batches,
                 "wide_plates_resolved": wide_plates_resolved,
+                "unpriced_plate_lines": self.serialize_unpriced_plate_lines(
+                    getattr(preview, "unpriced_plate_lines", []) or []
+                ),
+                "unpriced_plates_resolved": not bool(
+                    getattr(preview, "unpriced_plate_lines", None) or []
+                ),
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.plates.value,
-                "saved_offer": None,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
+                "generated_files": [],
+                "current_save_mode": None,
+                "execution_terms": "",
+                **source_metadata_payload,
+            }
+        )
+        metadata.setdefault("manager_id", None)
+        metadata.setdefault("manager_name", "")
+        metadata.setdefault("manager_phone", "")
+        metadata.setdefault("manager_email", "")
+        metadata.setdefault("client_name", "")
+        metadata.setdefault("discount_percent", 0.0)
+        metadata.setdefault("conditions_mode", "standard")
+        metadata.setdefault("delivery_conditions", "")
+        metadata.setdefault("payment_conditions", "")
+        metadata.setdefault("logistics_cost", 0.0)
+        if owner_user_id is not None:
+            metadata["owner_user_id"] = int(owner_user_id)
+        return metadata
+
+    def build_pile_preview_metadata(
+        self,
+        *,
+        preview: Any,
+        base_metadata: dict[str, Any],
+        source_type: str,
+        original_text: str,
+        ocr_text: str,
+        input_text: str,
+        last_source_filename: str,
+        pile_batches: list[dict[str, Any]],
+        source_metadata: dict[str, Any],
+        owner_user_id: int | None = None,
+    ) -> dict[str, Any]:
+        source_metadata_payload = dict(source_metadata)
+        ocr_warnings = list(source_metadata_payload.pop("ocr_warnings", []) or [])
+        warnings = list(preview.warnings)
+        for warning in ocr_warnings:
+            if warning not in warnings:
+                warnings.append(warning)
+
+        metadata = dict(base_metadata)
+        metadata.update(
+            {
+                "product_type": "piles",
+                "source_type": source_type,
+                "original_text": original_text,
+                "ocr_text": ocr_text,
+                "input_text": input_text,
+                "accumulated_text": input_text,
+                "warnings": warnings,
+                "unparsed_lines": list(preview.unparsed_lines),
+                "normalized_text": preview.normalized_text,
+                "normalized_lines": list(preview.normalized_lines),
+                "wide_plate_lines": [],
+                "diagnostics": [],
+                "breakdown_tables": [],
+                "price_rows_count": len(preview.order_data),
+                "breakdown_tables_count": 0,
+                "total_sum": preview.total_sum,
+                "pile_batches": pile_batches,
+                "wide_plates_resolved": True,
+                "last_source_filename": last_source_filename,
+                "current_step": WizardStepId.piles.value,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
+                "generated_files": [],
+                "current_save_mode": None,
+                "execution_terms": "",
+                **source_metadata_payload,
+            }
+        )
+        metadata.setdefault("manager_id", None)
+        metadata.setdefault("manager_name", "")
+        metadata.setdefault("manager_phone", "")
+        metadata.setdefault("manager_email", "")
+        metadata.setdefault("client_name", "")
+        metadata.setdefault("discount_percent", 0.0)
+        metadata.setdefault("conditions_mode", "standard")
+        metadata.setdefault("delivery_conditions", "")
+        metadata.setdefault("payment_conditions", "")
+        metadata.setdefault("logistics_cost", 0.0)
+        metadata.setdefault("default_concrete_grade", "B25")
+        if owner_user_id is not None:
+            metadata["owner_user_id"] = int(owner_user_id)
+        return metadata
+
+    def build_march_preview_metadata(
+        self,
+        *,
+        preview: Any,
+        base_metadata: dict[str, Any],
+        source_type: str,
+        original_text: str,
+        ocr_text: str,
+        input_text: str,
+        last_source_filename: str,
+        march_batches: list[dict[str, Any]],
+        source_metadata: dict[str, Any],
+        owner_user_id: int | None = None,
+    ) -> dict[str, Any]:
+        source_metadata_payload = dict(source_metadata)
+        ocr_warnings = list(source_metadata_payload.pop("ocr_warnings", []) or [])
+        warnings = list(preview.warnings)
+        for warning in ocr_warnings:
+            if warning not in warnings:
+                warnings.append(warning)
+
+        metadata = dict(base_metadata)
+        metadata.update(
+            {
+                "product_type": "marches",
+                "source_type": source_type,
+                "original_text": original_text,
+                "ocr_text": ocr_text,
+                "input_text": input_text,
+                "accumulated_text": input_text,
+                "warnings": warnings,
+                "unparsed_lines": list(preview.unparsed_lines),
+                "normalized_text": preview.normalized_text,
+                "normalized_lines": list(preview.normalized_lines),
+                "wide_plate_lines": [],
+                "diagnostics": [],
+                "breakdown_tables": [],
+                "price_rows_count": len(preview.order_data),
+                "breakdown_tables_count": 0,
+                "total_sum": preview.total_sum,
+                "march_batches": march_batches,
+                "wide_plates_resolved": True,
+                "last_source_filename": last_source_filename,
+                "current_step": WizardStepId.marches.value,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
+                "generated_files": [],
+                "current_save_mode": None,
+                "execution_terms": "",
+                **source_metadata_payload,
+            }
+        )
+        metadata.setdefault("manager_id", None)
+        metadata.setdefault("manager_name", "")
+        metadata.setdefault("manager_phone", "")
+        metadata.setdefault("manager_email", "")
+        metadata.setdefault("client_name", "")
+        metadata.setdefault("discount_percent", 0.0)
+        metadata.setdefault("conditions_mode", "standard")
+        metadata.setdefault("delivery_conditions", "")
+        metadata.setdefault("payment_conditions", "")
+        metadata.setdefault("logistics_cost", 0.0)
+        metadata.setdefault("default_concrete_grade", "B25")
+        if owner_user_id is not None:
+            metadata["owner_user_id"] = int(owner_user_id)
+        return metadata
+
+    def build_bridge_pile_preview_metadata(
+        self,
+        *,
+        preview: Any,
+        base_metadata: dict[str, Any],
+        source_type: str,
+        original_text: str,
+        ocr_text: str,
+        input_text: str,
+        last_source_filename: str,
+        bridge_pile_batches: list[dict[str, Any]],
+        source_metadata: dict[str, Any],
+        owner_user_id: int | None = None,
+    ) -> dict[str, Any]:
+        source_metadata_payload = dict(source_metadata)
+        ocr_warnings = list(source_metadata_payload.pop("ocr_warnings", []) or [])
+        warnings = list(preview.warnings)
+        for warning in ocr_warnings:
+            if warning not in warnings:
+                warnings.append(warning)
+
+        metadata = dict(base_metadata)
+        metadata.update(
+            {
+                "product_type": "bridge_piles",
+                "source_type": source_type,
+                "original_text": original_text,
+                "ocr_text": ocr_text,
+                "input_text": input_text,
+                "accumulated_text": input_text,
+                "warnings": warnings,
+                "unparsed_lines": list(preview.unparsed_lines),
+                "normalized_text": preview.normalized_text,
+                "normalized_lines": list(preview.normalized_lines),
+                "wide_plate_lines": [],
+                "diagnostics": [],
+                "breakdown_tables": [],
+                "price_rows_count": len(preview.order_data),
+                "breakdown_tables_count": 0,
+                "total_sum": preview.total_sum,
+                "bridge_pile_batches": bridge_pile_batches,
+                "wide_plates_resolved": True,
+                "last_source_filename": last_source_filename,
+                "current_step": WizardStepId.bridge_piles.value,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
+                "generated_files": [],
+                "current_save_mode": None,
+                "execution_terms": "",
+                **source_metadata_payload,
+            }
+        )
+        metadata.setdefault("manager_id", None)
+        metadata.setdefault("manager_name", "")
+        metadata.setdefault("manager_phone", "")
+        metadata.setdefault("manager_email", "")
+        metadata.setdefault("client_name", "")
+        metadata.setdefault("discount_percent", 0.0)
+        metadata.setdefault("conditions_mode", "standard")
+        metadata.setdefault("delivery_conditions", "")
+        metadata.setdefault("payment_conditions", "")
+        metadata.setdefault("logistics_cost", 0.0)
+        metadata.setdefault("default_concrete_grade", "B25")
+        if owner_user_id is not None:
+            metadata["owner_user_id"] = int(owner_user_id)
+        return metadata
+
+    def build_fbs_preview_metadata(
+        self,
+        *,
+        preview: Any,
+        base_metadata: dict[str, Any],
+        source_type: str,
+        original_text: str,
+        ocr_text: str,
+        input_text: str,
+        last_source_filename: str,
+        fbs_batches: list[dict[str, Any]],
+        source_metadata: dict[str, Any],
+        owner_user_id: int | None = None,
+    ) -> dict[str, Any]:
+        source_metadata_payload = dict(source_metadata)
+        ocr_warnings = list(source_metadata_payload.pop("ocr_warnings", []) or [])
+        warnings = list(preview.warnings)
+        for warning in ocr_warnings:
+            if warning not in warnings:
+                warnings.append(warning)
+
+        metadata = dict(base_metadata)
+        metadata.update(
+            {
+                "product_type": "fbs",
+                "source_type": source_type,
+                "original_text": original_text,
+                "ocr_text": ocr_text,
+                "input_text": input_text,
+                "accumulated_text": input_text,
+                "warnings": warnings,
+                "unparsed_lines": list(preview.unparsed_lines),
+                "normalized_text": preview.normalized_text,
+                "normalized_lines": list(preview.normalized_lines),
+                "wide_plate_lines": [],
+                "diagnostics": [],
+                "breakdown_tables": [],
+                "price_rows_count": len(preview.order_data),
+                "breakdown_tables_count": 0,
+                "total_sum": preview.total_sum,
+                "fbs_batches": fbs_batches,
+                "wide_plates_resolved": True,
+                "last_source_filename": last_source_filename,
+                "current_step": WizardStepId.fbs.value,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
+                "generated_files": [],
+                "current_save_mode": None,
+                "execution_terms": "",
+                **source_metadata_payload,
+            }
+        )
+        metadata.setdefault("manager_id", None)
+        metadata.setdefault("manager_name", "")
+        metadata.setdefault("manager_phone", "")
+        metadata.setdefault("manager_email", "")
+        metadata.setdefault("client_name", "")
+        metadata.setdefault("discount_percent", 0.0)
+        metadata.setdefault("conditions_mode", "standard")
+        metadata.setdefault("delivery_conditions", "")
+        metadata.setdefault("payment_conditions", "")
+        metadata.setdefault("logistics_cost", 0.0)
+        metadata.setdefault("default_concrete_grade", "B25")
+        if owner_user_id is not None:
+            metadata["owner_user_id"] = int(owner_user_id)
+        return metadata
+
+    def build_step_preview_metadata(
+        self,
+        *,
+        preview: Any,
+        base_metadata: dict[str, Any],
+        source_type: str,
+        original_text: str,
+        ocr_text: str,
+        input_text: str,
+        last_source_filename: str,
+        step_batches: list[dict[str, Any]],
+        source_metadata: dict[str, Any],
+        owner_user_id: int | None = None,
+    ) -> dict[str, Any]:
+        source_metadata_payload = dict(source_metadata)
+        ocr_warnings = list(source_metadata_payload.pop("ocr_warnings", []) or [])
+        warnings = list(preview.warnings)
+        for warning in ocr_warnings:
+            if warning not in warnings:
+                warnings.append(warning)
+
+        metadata = dict(base_metadata)
+        metadata.update(
+            {
+                "product_type": "steps",
+                "source_type": source_type,
+                "original_text": original_text,
+                "ocr_text": ocr_text,
+                "input_text": input_text,
+                "accumulated_text": input_text,
+                "warnings": warnings,
+                "unparsed_lines": list(preview.unparsed_lines),
+                "normalized_text": preview.normalized_text,
+                "normalized_lines": list(preview.normalized_lines),
+                "wide_plate_lines": [],
+                "diagnostics": [],
+                "breakdown_tables": [],
+                "price_rows_count": len(preview.order_data),
+                "breakdown_tables_count": 0,
+                "total_sum": preview.total_sum,
+                "step_batches": step_batches,
+                "wide_plates_resolved": True,
+                "last_source_filename": last_source_filename,
+                "current_step": WizardStepId.steps.value,
+                # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
                 "generated_files": [],
                 "current_save_mode": None,
                 "execution_terms": "",
@@ -242,6 +589,80 @@ class CommercialDraftService:
         return metadata
 
     @staticmethod
+    def _order_line_identity_key(line: dict[str, Any]) -> tuple[Any, ...]:
+        """Fingerprint used to reuse line_id across recalculate / identical replace."""
+        mark = str(line.get("mark") or line.get("name") or "").strip().casefold()
+        try:
+            qty = int(line.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        grade = str(line.get("concrete_grade") or "").strip().casefold()
+
+        def _num(value: Any) -> float | None:
+            if value is None or value == "":
+                return None
+            try:
+                return round(float(value), 6)
+            except (TypeError, ValueError):
+                return None
+
+        load = line.get("load_class")
+        return (
+            mark,
+            qty,
+            grade,
+            _num(line.get("length_m")),
+            _num(line.get("width_m")),
+            _num(load) if load is not None and load != "" else None,
+        )
+
+    @staticmethod
+    def stamp_order_line_identity(
+        order_data: list[dict[str, Any]] | None,
+        *,
+        product_type: str,
+        previous_order_data: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Ensure every order line has non-empty line_id and product_type.
+
+        Prefer reusing previous line_id when identity (mark/name/qty/…) matches.
+        """
+        normalized_product_type = (product_type or "plates").strip().lower() or "plates"
+        pools: dict[tuple[Any, ...], list[str]] = {}
+        for prev in list(previous_order_data or []):
+            if not isinstance(prev, dict):
+                continue
+            prev_id = str(prev.get("line_id") or "").strip()
+            if not prev_id:
+                continue
+            key = CommercialDraftService._order_line_identity_key(prev)
+            pools.setdefault(key, []).append(prev_id)
+
+        stamped: list[dict[str, Any]] = []
+        used_ids: set[str] = set()
+        for raw in list(order_data or []):
+            line = dict(raw) if isinstance(raw, dict) else {}
+            line["product_type"] = normalized_product_type
+            existing = str(line.get("line_id") or "").strip()
+            if existing and existing not in used_ids:
+                line_id = existing
+            else:
+                key = CommercialDraftService._order_line_identity_key(line)
+                pool = pools.get(key) or []
+                line_id = ""
+                while pool:
+                    candidate = pool.pop(0)
+                    if candidate not in used_ids:
+                        line_id = candidate
+                        break
+                if not line_id:
+                    line_id = str(uuid4())
+            used_ids.add(line_id)
+            line["line_id"] = line_id
+            stamped.append(line)
+        return stamped
+
+    @staticmethod
     def serialize_wide_plate_lines(items: Iterable[Any]) -> list[dict[str, Any]]:
         serialized: list[dict[str, Any]] = []
         for idx, item in enumerate(items, start=1):
@@ -261,6 +682,43 @@ class CommercialDraftService:
                         "qty": int(item.get("qty", 1) or 1),
                     }
                 )
+        return serialized
+
+    @staticmethod
+    def serialize_unpriced_plate_lines(items: Iterable[Any]) -> list[dict[str, Any]]:
+        serialized: list[dict[str, Any]] = []
+        for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("line") or "").strip()
+            line = str(item.get("line") or name).strip()
+            if not line and not name:
+                continue
+            replacements_raw = item.get("replacements") or []
+            replacements: list[dict[str, Any]] = []
+            for repl in replacements_raw:
+                if not isinstance(repl, dict):
+                    continue
+                try:
+                    load_code = int(repl.get("load_code"))
+                    price = float(repl.get("price"))
+                except (TypeError, ValueError):
+                    continue
+                if price <= 0:
+                    continue
+                replacements.append({"load_code": load_code, "price": price})
+            serialized.append(
+                {
+                    "id": str(item.get("id") or f"unpriced-{idx}"),
+                    "name": name or line,
+                    "line": line or name,
+                    "qty": int(item.get("qty", 1) or 1),
+                    "length_m": float(item.get("length_m") or 0),
+                    "width_m": float(item.get("width_m") or 0),
+                    "load_class": int(item.get("load_class") or 0),
+                    "replacements": replacements,
+                }
+            )
         return serialized
 
     @staticmethod

@@ -1,35 +1,35 @@
-import { useEffect, useState, type ChangeEvent, type ClipboardEvent, type WheelEvent } from "react";
+import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
 import type {
-
   CommercialDraftDetails,
-
   OcrCorrection,
-
   PlateInputMode,
-
+  UnpricedPlateAction,
   WidePlateAction,
-
 } from "@/features/commercial-offer/types/commercialOffer";
-
+import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
 import { KpPlatePreviewPanel } from "@/features/commercial-offer/components/KpPlatePreviewPanel";
-
 import { PlateListEditor } from "@/features/commercial-offer/components/PlateListEditor";
-
+import {
+  resolveSourceSubmitDisabled,
+  SourceInputCard,
+  type SourceSubmitGate,
+} from "@/features/commercial-offer/components/SourceInputCard";
+import { PageReviewNav } from "@/features/commercial-offer/components/PageReviewNav";
+import { useBatchReviewHighlights } from "@/features/commercial-offer/hooks/useBatchReviewHighlights";
+import type { MultiPageSourceStepProps } from "@/features/commercial-offer/lib/multiPageStepProps";
+import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
+import {
+  OCR_VERIFY_FAILED_REVIEW_MESSAGE,
+  resolveActivePageOcrVerifyFailed,
+} from "@/features/commercial-offer/lib/ocrVerifyFailed";
+import { UnpricedPlatesInlineSection } from "@/features/commercial-offer/components/UnpricedPlatesInlineSection";
 import { WidePlatesInlineSection } from "@/features/commercial-offer/components/WidePlatesInlineSection";
-
 import { Alert } from "@/shared/ui/Alert";
-
 import { Button } from "@/shared/ui/Button";
-
 import { Card } from "@/shared/ui/Card";
-
-import { FieldWrapper, Textarea } from "@/shared/ui/Field";
-
 import { StepLayout } from "@/shared/ui/StepLayout";
-
-
 
 type PlateInputStepProps = {
   draft: CommercialDraftDetails | null;
@@ -37,57 +37,50 @@ type PlateInputStepProps = {
   sourceText: string;
   batchReviewText: string;
   normalizedText: string;
-  selectedImageName: string | null;
+  pages: MultiPageSourceStepProps["pages"];
+  activePageId: MultiPageSourceStepProps["activePageId"];
+  softCapMessage?: MultiPageSourceStepProps["softCapMessage"];
+  pageProgressLabel?: MultiPageSourceStepProps["pageProgressLabel"];
+  singleFileOnly?: boolean;
+  recognitionStarted?: boolean;
+  canConfirmActivePage?: boolean;
   recognizedImageUrl: string | null;
   recognizedImageName: string | null;
   errorMessage: string | null;
   widePlateErrorMessage?: string | null;
+  unpricedPlateErrorMessage?: string | null;
   isRecognizing: boolean;
   isAiProcessing?: boolean;
   isResolvingWidePlates?: boolean;
+  isResolvingUnpricedPlates?: boolean;
   isConfirmingBatch?: boolean;
   isProceeding?: boolean;
   widePlateDecisions?: Record<string, { action: WidePlateAction; replacementText: string }>;
+  unpricedPlateDecisions?: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
   aiInstruction?: string;
   onAiInstructionChange?: (value: string) => void;
   onApplyAi?: () => void;
   onTextChange: (value: string) => void;
   onBatchReviewTextChange: (value: string) => void;
-  onFileChange: (file: File | null) => void;
-  onImagePaste: (file: File) => void;
+  onAddFiles: MultiPageSourceStepProps["onAddFiles"];
+  onRemovePage: MultiPageSourceStepProps["onRemovePage"];
+  onSelectPage: MultiPageSourceStepProps["onSelectPage"];
+  onPrevPage?: () => void;
+  onNextPage?: () => void;
   onRecognize: (mode: PlateInputMode) => void;
   onConfirmBatch: () => void;
   onFinishPlates: () => void;
   onWidePlateDecisionChange?: (lineId: string, action: WidePlateAction, replacementText: string) => void;
   onApplyWidePlates?: () => void;
+  onUnpricedPlateDecisionChange?: (
+    lineId: string,
+    action: UnpricedPlateAction,
+    loadCode: number | null,
+  ) => void;
+  onApplyUnpricedPlates?: () => void;
   onReset: () => void;
+  lineRowHandlers?: LineRowHandlers;
 };
-
-
-
-const buildClipboardImageName = (type: string) => {
-
-  const extension = type.split("/")[1]?.split("+")[0] || "png";
-
-  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
-
-  return `clipboard-image-${timestamp}.${extension}`;
-
-};
-
-
-
-const createClipboardImageFile = (file: File) =>
-
-  new File([file], buildClipboardImageName(file.type), {
-
-    type: file.type || "image/png",
-
-    lastModified: Date.now(),
-
-  });
-
-
 
 const IMAGE_ZOOM_MIN = 0.5;
 const IMAGE_ZOOM_MAX = 3;
@@ -98,52 +91,27 @@ const clampImageZoom = (value: number) => Math.min(IMAGE_ZOOM_MAX, Math.max(IMAG
 const formatImageZoom = (zoom: number) => `${Math.round(zoom * 100)}%`;
 
 const formatOcrCorrections = (corrections: OcrCorrection[], maxItems = 5): string[] => {
-
   const actionable = corrections.filter((item) => item.action !== "verify_failed");
-
   return actionable.slice(0, maxItems).map((item, index) => {
-
     const rowLabel = item.row_index != null ? `стр. ${item.row_index}` : `#${index + 1}`;
-
     const beforeMark = item.before?.normalized_candidate ?? "—";
-
     const afterMark = item.after?.normalized_candidate ?? "—";
-
-
-
     if (item.action === "added") {
-
       const qty = item.after?.qty ?? "?";
-
       return `${rowLabel}: добавлено «${afterMark} ${qty}»`;
-
     }
-
     if (item.action === "removed") {
-
       return `${rowLabel}: удалено «${beforeMark}»`;
-
     }
-
     if (item.action === "changed_qty") {
-
       return `${rowLabel}: «${afterMark}» кол-во ${item.before?.qty ?? "?"} → ${item.after?.qty ?? "?"}`;
-
     }
-
     if (item.action === "changed_mark") {
-
       return `${rowLabel}: «${beforeMark}» → «${afterMark}»`;
-
     }
-
     return `${rowLabel}: ${item.reason ?? item.action}`;
-
   });
-
 };
-
-
 
 export const PlateInputStep = ({
   draft,
@@ -151,59 +119,76 @@ export const PlateInputStep = ({
   sourceText,
   batchReviewText,
   normalizedText,
-  selectedImageName,
+  pages,
+  activePageId,
+  softCapMessage = null,
+  pageProgressLabel = null,
+  singleFileOnly = false,
+  recognitionStarted = false,
+  canConfirmActivePage = true,
   recognizedImageUrl,
   recognizedImageName,
   errorMessage,
   widePlateErrorMessage,
+  unpricedPlateErrorMessage,
   isRecognizing,
   isAiProcessing = false,
   isResolvingWidePlates = false,
+  isResolvingUnpricedPlates = false,
   isConfirmingBatch = false,
   isProceeding = false,
   widePlateDecisions = {},
+  unpricedPlateDecisions = {},
   aiInstruction = "",
   onAiInstructionChange,
   onApplyAi,
   onTextChange,
   onBatchReviewTextChange,
-  onFileChange,
-  onImagePaste,
+  onAddFiles,
+  onRemovePage,
+  onSelectPage,
+  onPrevPage,
+  onNextPage,
   onRecognize,
   onConfirmBatch,
   onFinishPlates,
   onWidePlateDecisionChange,
   onApplyWidePlates,
+  onUnpricedPlateDecisionChange,
+  onApplyUnpricedPlates,
   onReset,
+  lineRowHandlers,
 }: PlateInputStepProps) => {
-  const [showAdditionalActions, setShowAdditionalActions] = useState(false);
   const [showSourceInput, setShowSourceInput] = useState(false);
   const [imageZoom, setImageZoom] = useState(1);
+  const [sourceGate, setSourceGate] = useState<SourceSubmitGate>({
+    sourceText: "",
+    canSubmit: true,
+    blockReason: undefined,
+  });
   const hasDraft = Boolean(draft);
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
+  const reviewHighlights = useBatchReviewHighlights({
+    text: batchReviewText,
+    productType: "plates",
+    draft: batchReviewDraft,
+    enabled: isBatchReviewMode,
+  });
 
   useEffect(() => {
     setImageZoom(1);
   }, [recognizedImageUrl]);
 
-  const hasSourceInput = Boolean(sourceText.trim() || selectedImageName);
-
-  const primaryRecognizeLabel = selectedImageName
-
-    ? isRecognizing
-
-      ? "Распознавание..."
-
-      : "Распознать фото"
-
-    : isRecognizing
-
-      ? "Обработка..."
-
-      : "Обработать текст";
-
-
+  const hasImage = pages.length > 0;
+  const hasSourceInput = Boolean(sourceText.trim() || hasImage);
+  const sourceSubmit = resolveSourceSubmitDisabled(
+    sourceText,
+    hasImage,
+    isRecognizing || isAiProcessing,
+    hasSourceInput,
+    sourceGate,
+  );
 
   const ocrCorrections = draft?.metadata.ocr_corrections ?? [];
 
@@ -217,14 +202,12 @@ export const PlateInputStep = ({
 
   );
 
-
-
   const hasUnresolvedWidePlates =
 
     Boolean(draft?.metadata.wide_plate_lines?.length) && !draft?.metadata.wide_plates_resolved;
 
   const canConfirmBatch =
-    isBatchReviewMode && !hasUnresolvedWidePlates && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
+    isBatchReviewMode && canConfirmActivePage && !hasUnresolvedWidePlates && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
   const canFinishPlates =
     hasDraft &&
     !pendingBatchReview &&
@@ -232,16 +215,6 @@ export const PlateInputStep = ({
     !isRecognizing &&
     !isAiProcessing &&
     !isProceeding;
-
-
-
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-
-    onFileChange(event.target.files?.[0] ?? null);
-
-  };
-
-
 
   const handleImageWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (!event.ctrlKey) {
@@ -252,264 +225,34 @@ export const PlateInputStep = ({
     setImageZoom((current) => clampImageZoom(Number((current + direction * IMAGE_ZOOM_STEP).toFixed(2))));
   };
 
-  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
-
-    const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith("image/"));
-
-    if (!imageItem) {
-
-      return;
-
-    }
-
-
-
-    const imageFile = imageItem.getAsFile();
-
-    if (!imageFile) {
-
-      return;
-
-    }
-
-
-
-    event.preventDefault();
-
-    onImagePaste(createClipboardImageFile(imageFile));
-
-  };
-
-
-
   const sourceInputCard = (
-
-    <Card
-      title={hasDraft ? "Добавить к списку" : "Источник данных"}
-      subtitle={
-        hasDraft
-          ? "Загрузите ещё фото или вставьте текст — позиции добавятся к текущему списку."
-          : "Вставьте текст списка плит или загрузите фото таблицы."
-      }
-    >
-
-      <div style={{ display: "grid", gap: "1rem" }} onPaste={handlePaste}>
-
-        <FieldWrapper label="Список плит">
-
-          <Textarea
-
-            value={sourceText}
-
-            onChange={(event) => onTextChange(event.target.value)}
-
-            placeholder={"ПБ 78-12-8п 2\n71-12-8 3\nПБ 66-12-8п 4"}
-
-          />
-
-        </FieldWrapper>
-
-
-
-        <FieldWrapper
-
-          label="Фото / изображение таблицы"
-
-          hint="Поддерживаются только изображения. Можно вставить изображение из буфера обмена: Ctrl+V."
-
-        >
-
-          <input type="file" accept="image/*" onChange={handleFileChange} />
-
-        </FieldWrapper>
-
-
-
-        {selectedImageName && <Alert tone="info">Выбран файл: {selectedImageName}</Alert>}
-
-
-
-        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
-
-          {!hasDraft && (
-
-            <Button
-
-              type="button"
-
-              variant="primary"
-
-              onClick={() => onRecognize("replace")}
-
-              disabled={isRecognizing || isAiProcessing || !hasSourceInput}
-
-            >
-
-              {primaryRecognizeLabel}
-
-            </Button>
-
-          )}
-
-
-
-          {hasDraft && (
-
-            <>
-
-              <Button
-
-                type="button"
-
-                variant="secondary"
-
-                onClick={() => onRecognize("append")}
-
-                disabled={isRecognizing || isAiProcessing || !hasSourceInput}
-
-              >
-
-                {isRecognizing ? "Добавление..." : "Добавить к списку"}
-
-              </Button>
-
-              <button
-
-                type="button"
-
-                onClick={() => setShowAdditionalActions((open) => !open)}
-
-                disabled={isRecognizing || isAiProcessing}
-
-                style={{
-
-                  border: "none",
-
-                  background: "none",
-
-                  color: "#175cd3",
-
-                  cursor: "pointer",
-
-                  padding: "0.5rem 0",
-
-                  font: "inherit",
-
-                }}
-
-              >
-
-                {showAdditionalActions ? "▾ Дополнительно" : "▸ Дополнительно"}
-
-              </button>
-
-            </>
-
-          )}
-
-        </div>
-
-
-
-        {hasDraft && showAdditionalActions && (
-
-          <div
-
-            style={{
-
-              display: "grid",
-
-              gap: "1rem",
-
-              border: "1px solid #e4e7ec",
-
-              borderRadius: 12,
-
-              padding: "1rem",
-
-              background: "#fafafa",
-
-            }}
-
-          >
-
-            <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-
-              <Button
-
-                type="button"
-
-                variant="ghost"
-
-                onClick={() => onRecognize("replace")}
-
-                disabled={isRecognizing || isAiProcessing || !hasSourceInput}
-
-              >
-
-                {isRecognizing ? "Замена..." : "Заменить список"}
-
-              </Button>
-
-            </div>
-
-
-
-            {onAiInstructionChange && onApplyAi && (
-
-              <FieldWrapper
-
-                label="Инструкция для помощника"
-
-                hint="Редкий сценарий: опишите, что сделать со списком плит."
-
-              >
-
-                <Textarea
-
-                  value={aiInstruction}
-
-                  onChange={(event) => onAiInstructionChange(event.target.value)}
-
-                  placeholder="Например: убери строки с 6п"
-
-                />
-
-                <div style={{ marginTop: "0.75rem" }}>
-
-                  <Button
-
-                    type="button"
-
-                    variant="ghost"
-
-                    onClick={onApplyAi}
-
-                    disabled={isRecognizing || isAiProcessing || !aiInstruction.trim()}
-
-                  >
-
-                    {isAiProcessing ? "Обработка..." : "Применить инструкцию"}
-
-                  </Button>
-
-                </div>
-
-              </FieldWrapper>
-
-            )}
-
-          </div>
-
-        )}
-
-      </div>
-
-    </Card>
-
+    <SourceInputCard
+      productType="plates"
+      hasDraft={hasDraft}
+      sourceText={sourceText}
+      pages={pages}
+      activePageId={activePageId}
+      softCapMessage={softCapMessage}
+      singleFileOnly={singleFileOnly || hasDraft}
+      recognitionStarted={recognitionStarted}
+      isRecognizing={isRecognizing}
+      isAiProcessing={isAiProcessing}
+      listLabel="Список плит"
+      placeholder={"ПБ 78-12-8п 2\n71-12-8 3\nПБ 66-12-8п 4"}
+      emptySubtitle="Вставьте текст списка плит или загрузите фото таблицы."
+      aiHint="Редкий сценарий: опишите, что сделать со списком плит."
+      aiPlaceholder="Например: убери строки с 6п"
+      aiInstruction={aiInstruction}
+      onAiInstructionChange={onAiInstructionChange}
+      onApplyAi={onApplyAi}
+      onTextChange={onTextChange}
+      onAddFiles={onAddFiles}
+      onRemovePage={onRemovePage}
+      onSelectPage={onSelectPage}
+      onRecognize={onRecognize}
+      onSubmitGateChange={setSourceGate}
+    />
   );
-
-
 
   return (
 
@@ -546,21 +289,48 @@ export const PlateInputStep = ({
                   {isConfirmingBatch ? "Сохранение..." : "Список верен"}
                 </Button>
               )}
-              <Button
-                type="button"
-                variant={isBatchReviewMode ? "secondary" : "primary"}
-                onClick={onFinishPlates}
-                disabled={!canFinishPlates}
-                title={
-                  pendingBatchReview
-                    ? "Сначала подтвердите текущий источник — «Список верен»"
-                    : hasUnresolvedWidePlates
-                      ? "Сначала примите решение по позициям шире стандартной"
-                      : undefined
-                }
-              >
-                {isProceeding ? "Переход..." : "Готово, далее"}
-              </Button>
+              {isBatchReviewMode ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={onFinishPlates}
+                  disabled={!canFinishPlates}
+                  title={
+                    pendingBatchReview
+                      ? "Сначала подтвердите текущий источник — «Список верен»"
+                      : hasUnresolvedWidePlates
+                        ? "Сначала примите решение по позициям шире стандартной"
+                        : undefined
+                  }
+                >
+                  {isProceeding ? "Переход..." : "Готово, далее"}
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={onFinishPlates}
+                    disabled={!canFinishPlates}
+                    title={
+                      hasUnresolvedWidePlates
+                        ? "Сначала примите решение по позициям шире стандартной"
+                        : undefined
+                    }
+                  >
+                    {isProceeding ? "Переход..." : "Готово, далее"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => onRecognize("append")}
+                    disabled={sourceSubmit.disabled}
+                    title={sourceSubmit.title}
+                  >
+                    {isRecognizing ? "Добавление..." : "Добавить к списку"}
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         ) : undefined
@@ -574,6 +344,15 @@ export const PlateInputStep = ({
         <div style={{ display: "grid", gap: "1rem" }}>
           {isBatchReviewMode && (
             <>
+              <PageReviewNav
+                pages={pages}
+                activeId={activePageId}
+                progressLabel={pageProgressLabel}
+                onSelect={onSelectPage}
+                onRemove={onRemovePage}
+                onPrev={() => onPrevPage?.()}
+                onNext={() => onNextPage?.()}
+              />
               {ocrCorrectionLines.length > 0 && (
                 <Alert tone="warning">
                   <div>
@@ -590,10 +369,8 @@ export const PlateInputStep = ({
                 </Alert>
               )}
 
-              {draft.metadata.ocr_verify_failed && (
-                <Alert tone="warning">
-                  Повторная проверка распознавания не удалась — сверьте список плит с исходным фото вручную.
-                </Alert>
+              {resolveActivePageOcrVerifyFailed(pages, activePageId, draft.metadata.ocr_verify_failed) && (
+                <Alert tone="warning">{OCR_VERIFY_FAILED_REVIEW_MESSAGE}</Alert>
               )}
 
               <div
@@ -702,8 +479,6 @@ export const PlateInputStep = ({
 
             )}
 
-
-
             <Card
               title="Список плит для расчёта"
               subtitle="Сверьте позиции текущего источника с фото или текстом."
@@ -713,11 +488,23 @@ export const PlateInputStep = ({
                   draft={batchReviewDraft}
                   value={batchReviewText}
                   onChange={onBatchReviewTextChange}
+                  highlights={reviewHighlights}
                   minHeight={recognizedImageUrl ? 440 : undefined}
+                  showLineNumbers
                 />
               )}
             </Card>
           </div>
+              {onAiInstructionChange && onApplyAi && (
+                <AiInstructionBlock
+                  hint="Опишите, что исправить в списке (например, суффикс нагрузки н→п)."
+                  placeholder="Например: замени н на п в суффиксе нагрузки"
+                  instruction={aiInstruction}
+                  onInstructionChange={onAiInstructionChange}
+                  onApply={onApplyAi}
+                  isProcessing={isAiProcessing}
+                />
+              )}
             </>
           )}
 
@@ -741,9 +528,24 @@ export const PlateInputStep = ({
 
           )}
 
+          {onUnpricedPlateDecisionChange && onApplyUnpricedPlates && (
+            <UnpricedPlatesInlineSection
+              draft={draft}
+              decisions={unpricedPlateDecisions}
+              isPending={isResolvingUnpricedPlates}
+              errorMessage={unpricedPlateErrorMessage}
+              onDecisionChange={onUnpricedPlateDecisionChange}
+              onApply={onApplyUnpricedPlates}
+            />
+          )}
 
-
-          <KpPlatePreviewPanel draft={draft} normalizedText={normalizedText} />
+          {!isBatchReviewMode && draft && (
+            <KpPlatePreviewPanel
+              draft={draft}
+              normalizedText={normalizedText}
+              lineRowHandlers={lineRowHandlers}
+            />
+          )}
 
           {!isBatchReviewMode ? (
             sourceInputCard
@@ -775,5 +577,4 @@ export const PlateInputStep = ({
   );
 
 };
-
 

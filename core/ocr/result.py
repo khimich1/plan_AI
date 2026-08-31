@@ -31,6 +31,8 @@ def build_result_payload(
     api_calls: int = 1,
     verify_skipped_reason: Optional[str] = None,
     verify_applied_reason: Optional[str] = None,
+    verify_select_reason: Optional[str] = None,
+    ocr_preprocess: Optional[str] = None,
 ) -> Dict[str, Any]:
     confidences = [float(p.get("confidence", 0.95)) for p in plates]
     avg_confidence = sum(confidences) / len(confidences) if confidences else 0.95
@@ -51,6 +53,8 @@ def build_result_payload(
         "ocr_method": method,
         "ocr_verify_skipped_reason": verify_skipped_reason,
         "ocr_verify_applied_reason": verify_applied_reason,
+        "ocr_verify_select_reason": verify_select_reason,
+        "ocr_preprocess": ocr_preprocess,
     }
 
 

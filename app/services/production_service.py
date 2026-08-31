@@ -1,18 +1,37 @@
 from __future__ import annotations
 
-from datetime import date, datetime
-from typing import Any
+import logging
+import time
+from dataclasses import asdict
+from datetime import date, datetime, timedelta
+from typing import Any, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 from app.repositories.kp_repository import KpRepository
 from app.repositories.plan_repository import PlanRepository
 from app.repositories.work_calendar_repository import WorkCalendarRepository
 from app.services.day_view_service import build_day_view_detail
 from app.services.optimization_service import OptimizationService
+from app.services.production_capacity_service import (
+    ProductionCapacityError,
+    ProductionCapacityService,
+)
 from app.services.production_completion_service import ProductionCompletionService
 from app.planning.plan_storage import MAX_TRACKS_PER_DAY
 from app.services.production_planning_service import ProductionPlanningService
+from app.services.production_substrate_service import (
+    ProductionSubstrateError,
+    ProductionSubstrateService,
+)
+from app.services.production_urgent_service import ProductionUrgentService
 from core.plate_order_context import PlateOrderContext
 from core.plan_track_removal import TrackRemovalError
+from core.production.capacity import FUTURE_HORIZON_DAYS, calculate_capacity_deficit
+from core.work_calendar import is_working_day, load_extra_workdays, load_holidays
+
+logger = logging.getLogger(__name__)
+
+_MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
 _TRACK_REMOVAL_HTTP_STATUS: dict[str, int] = {
     "plan_not_found": 404,
@@ -33,6 +52,20 @@ class ProductionTrackRemovalError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
+
+
+class ProductionAnalyzeBadRequest(ValueError):
+    """Невалидные даты / параметры анализа подложек (HTTP 400)."""
+
+
+class ProductionAnalyzeEmptyBacklog(RuntimeError):
+    """Нет плит «в производстве» для анализа (HTTP 422)."""
+
+
+def _to_date(value: date | str) -> date:
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
 
 
 class ProductionService:
@@ -71,14 +104,42 @@ class ProductionService:
         return {"plan_id": plan_id, "active": True}
 
     def delete_plan(self, plan_id: str) -> dict:
+        from app.services.sgp_service import SgpService
+
+        SgpService(db_path=self.kp_repository.db_path).clear_plan_links(plan_id)
         deleted = self.plan_repository.delete(plan_id)
         return {"plan_id": plan_id, "deleted": deleted}
 
     def get_day_occupancy(self, exclude_plan_id: str | None = None) -> dict:
         occupancy = self.plan_repository.get_global_occupancy(exclude_plan_id=exclude_plan_id)
+        occupancy_map = {str(k): int(v) for k, v in occupancy.items()}
+
+        capacity_dates: list[date] = []
+        for key in occupancy_map:
+            try:
+                capacity_dates.append(date.fromisoformat(str(key)))
+            except ValueError:
+                continue
+
+        # Empty occupancy: short horizon so FE still gets per-day max without a huge map.
+        if not capacity_dates:
+            today = datetime.now(_MOSCOW_TZ).date()
+            capacity_dates = [
+                today + timedelta(days=offset)
+                for offset in range(FUTURE_HORIZON_DAYS + 1)
+            ]
+
+        capacity_service = ProductionCapacityService(db_path=self.kp_repository.db_path)
+        capacity_map = capacity_service.get_capacity_map(capacity_dates)
+        max_by_day = {
+            day.isoformat(): int(max_tracks)
+            for day, max_tracks in capacity_map.items()
+        }
+
         return {
-            "occupancy": {str(k): int(v) for k, v in occupancy.items()},
+            "occupancy": occupancy_map,
             "max_per_day": int(MAX_TRACKS_PER_DAY),
+            "max_by_day": max_by_day,
         }
 
     def list_kp_candidates(self) -> dict:
@@ -89,6 +150,146 @@ class ProductionService:
             if item.get("in_plan_pct", 0) < 100 and item.get("plates")
         ]
         return {"items": visible, "count": len(visible)}
+
+    def analyze_substrates(
+        self,
+        *,
+        fill_targets: Sequence[Mapping[str, Any]],
+        deadline_until: date | str,
+        user: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Urgent positions + substrate recommendations + capacity deficit."""
+        _ = user  # reserved for audit / capacity overrides attribution
+        deadline = _to_date(deadline_until)
+        targets = [dict(item) for item in fill_targets]
+
+        if not targets:
+            raise ProductionAnalyzeBadRequest("fill_targets пуст.")
+
+        fill_dates: list[date] = []
+        for item in targets:
+            day_raw = item.get("date")
+            try:
+                fill_dates.append(_to_date(str(day_raw)))
+            except ValueError as exc:
+                raise ProductionAnalyzeBadRequest(
+                    f"Неверный формат даты в fill_targets: {day_raw}"
+                ) from exc
+
+        first_fill = min(fill_dates)
+        if deadline < first_fill:
+            raise ProductionAnalyzeBadRequest(
+                "deadline_until раньше первой даты fill_targets."
+            )
+
+        occupancy = {
+            str(k): int(v)
+            for k, v in self.plan_repository.get_global_occupancy().items()
+        }
+        capacity_service = ProductionCapacityService(db_path=self.kp_repository.db_path)
+        try:
+            capacity_service.validate_fill_targets(targets, occupancy=occupancy)
+        except ProductionCapacityError as exc:
+            raise ProductionAnalyzeBadRequest(str(exc)) from exc
+
+        kps = self.kp_repository.list_kps_in_production()
+        length_by_plate_id: dict[int, float] = {}
+        orders_count = 0
+        for kp in kps:
+            for plate in kp.get("plates") or []:
+                plate_id = int(plate["id"])
+                length_by_plate_id[plate_id] = float(plate.get("length_m") or 0.0)
+                orders_count += 1
+
+        if orders_count == 0:
+            raise ProductionAnalyzeEmptyBacklog(
+                "Нет плит «в производстве» для анализа."
+            )
+
+        urgent_service = ProductionUrgentService(kp_repository=self.kp_repository)
+        urgent = urgent_service.list_urgent_positions(deadline_until=deadline)
+
+        substrate_service = ProductionSubstrateService(
+            kp_repository=self.kp_repository
+        )
+        started = time.perf_counter()
+        optimization_status = "ok"
+        error_message: str | None = None
+        try:
+            substrates = substrate_service.find_substrate_recommendations(
+                urgent_plate_ids=[int(p.plate_id) for p in urgent],
+                deadline_until=deadline,
+                first_fill_target_date=first_fill,
+            )
+        except ProductionSubstrateError as exc:
+            logger.exception(
+                "[analyze_substrates] Ошибка анализа подложек: %s", exc
+            )
+            substrates = []
+            optimization_status = "error"
+            error_message = str(exc) or "Ошибка анализа подложек"
+        analysis_duration_ms = int((time.perf_counter() - started) * 1000)
+
+        urgent_length_m = 0.0
+        for position in urgent:
+            length_m = length_by_plate_id.get(int(position.plate_id), 0.0)
+            urgent_length_m += length_m * int(position.qty_remaining)
+
+        today = datetime.now(_MOSCOW_TZ).date()
+        min_fill = min(fill_dates)
+        max_fill = max(fill_dates)
+        capacity_dates: list[date] = []
+        cursor = today
+        while cursor < min_fill:
+            capacity_dates.append(cursor)
+            cursor += timedelta(days=1)
+        capacity_dates.extend(fill_dates)
+        cursor = max_fill + timedelta(days=1)
+        horizon_end = max_fill + timedelta(days=FUTURE_HORIZON_DAYS)
+        while cursor <= horizon_end:
+            capacity_dates.append(cursor)
+            cursor += timedelta(days=1)
+
+        capacity_map = capacity_service.get_capacity_map(capacity_dates)
+        day_capacity = {
+            day.isoformat(): int(max_tracks)
+            for day, max_tracks in capacity_map.items()
+        }
+        completed_dates = self._completed_plan_dates()
+        holidays = load_holidays()
+        extra_workdays = load_extra_workdays()
+
+        deficit = calculate_capacity_deficit(
+            urgent_length_m,
+            targets,
+            day_capacity,
+            occupancy=occupancy,
+            completed_dates=completed_dates,
+            today=today,
+            is_workday=lambda d: is_working_day(
+                d, holidays=holidays, extra_workdays=extra_workdays
+            ),
+        )
+
+        return {
+            "urgent_positions": [asdict(p) for p in urgent],
+            "substrate_recommendations": [asdict(s) for s in substrates],
+            "capacity_deficit": asdict(deficit) if deficit is not None else None,
+            "analysis_meta": {
+                "orders_count": orders_count,
+                "analysis_duration_ms": analysis_duration_ms,
+                "optimization_status": optimization_status,
+                "error_message": error_message,
+            },
+        }
+
+    def _completed_plan_dates(self) -> set[str]:
+        completed: set[str] = set()
+        for plan in self.plan_repository.list_all_plans():
+            for date_key, day_data in (plan.get("days") or {}).items():
+                if day_data.get("completed"):
+                    completed.add(str(date_key))
+        return completed
 
     def build_plan_from_filters(
         self,
@@ -104,20 +305,78 @@ class ProductionService:
         fill_targets: list[dict[str, Any]] | None = None,
         layout_reinforcement_order: str = "asc",
         plate_order_ctx: PlateOrderContext | None = None,
+        sgp_reservations: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        return self.planning_service.build_plan(
+        from app.services.sgp_service import SgpService
+        from core import kp_db_plates
+        import sqlite3
+
+        qty_for_optimize = selected_plate_qty
+        from_sgp_rows: list[dict[str, Any]] = []
+        if sgp_reservations:
+            sgp = SgpService(db_path=self.kp_repository.db_path)
+            qty_for_optimize = sgp.reduce_selected_qty_for_reservations(
+                selected_plate_qty=selected_plate_qty,
+                sgp_reservations=sgp_reservations,
+            )
+            from_sgp_rows = sgp.build_from_sgp_rows(sgp_reservations)
+
+        result = self.planning_service.build_plan(
             start_date=start_date,
             tracks_count=tracks_count,
             filter_method=filter_method,  # type: ignore[arg-type]
             selected_kp_ids=selected_kp_ids,
             selected_plate_ids=selected_plate_ids,
-            selected_plate_qty=selected_plate_qty,
+            selected_plate_qty=qty_for_optimize,
             active_plan_id=active_plan_id,
             plan_name=plan_name,
             fill_targets=fill_targets,
             layout_reinforcement_order=layout_reinforcement_order,
             plate_order_ctx=plate_order_ctx,
         )
+        if sgp_reservations:
+            plan = result.get("plan") or {}
+            plan_id = plan.get("id")
+            sgp = SgpService(db_path=self.kp_repository.db_path)
+            conn = sqlite3.connect(self.kp_repository.db_path)
+            try:
+                conn.execute("PRAGMA foreign_keys = ON")
+                cur = conn.cursor()
+                reserved_total = 0
+                for item in sgp_reservations:
+                    reserved_total += sgp.reserve_on_conn(
+                        cur,
+                        conn,
+                        sgp_id=int(item["sgp_id"]),
+                        target_kp_id=int(item["target_kp_id"]),
+                        qty=int(item["qty"]),
+                        plan_id=plan_id,
+                    )
+                plan["sgp_reservations"] = list(sgp_reservations)
+                plan["from_sgp_qty"] = reserved_total
+                plan["from_sgp"] = from_sgp_rows
+                if plan_id:
+                    self.plan_repository.save_plan(plan)
+                conn.commit()
+                result["sgp_reserved_qty"] = reserved_total
+            except Exception:
+                # D4: plan already persisted by build_plan — compensate, do not
+                # leave a plan with sgp_reservations without an actual reserve.
+                conn.rollback()
+                if plan_id:
+                    try:
+                        kp_db_plates.return_plan_plates_to_production(
+                            str(plan_id), self.kp_repository.db_path
+                        )
+                        self.plan_repository.delete(str(plan_id))
+                    except Exception:
+                        logger.exception(
+                            "SGP build compensate failed for plan %s", plan_id
+                        )
+                raise
+            finally:
+                conn.close()
+        return result
 
     def get_calendar(self) -> dict | None:
         return self.planning_service.plan_distribution.get_global_calendar_info(
@@ -144,18 +403,19 @@ class ProductionService:
         target_date: str,
         rejected_plates: list[dict[str, Any]] | None = None,
         actor: str | None = None,
+        expected_version: int | None = None,
     ) -> dict:
+        # D4: KP write-off + mark_day_completed — одна tx внутри completion_service.
         completion_result = self.completion_service.complete_day(
             plan_id=plan_id,
             target_date=target_date,
             rejected_plates=rejected_plates,
             actor=actor,
+            expected_version=expected_version,
         )
-        completed = self.plan_repository.mark_day_completed(plan_id, target_date)
         return {
             "plan_id": plan_id,
             "date": target_date,
-            "completed": completed,
             **completion_result,
         }
 
@@ -222,6 +482,7 @@ class ProductionService:
         track_index: int,
         *,
         actor: str | None = None,
+        expected_version: int | None = None,
     ) -> dict[str, Any]:
         try:
             return self.planning_service.plan_distribution.remove_track_from_plan(
@@ -231,6 +492,7 @@ class ProductionService:
                 track_index,
                 db_path=self.kp_repository.db_path,
                 actor=actor,
+                expected_version=expected_version,
             )
         except TrackRemovalError as exc:
             status_code = _TRACK_REMOVAL_HTTP_STATUS.get(exc.code or "", 500)

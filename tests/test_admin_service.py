@@ -25,6 +25,8 @@ def admin_settings(tmp_path: Path) -> Settings:
     """Изолированный Settings, указывающий на директории внутри tmp_path."""
     plans_dir = tmp_path / "plans"
     plans_dir.mkdir()
+    archived_data_dir = tmp_path / "archived_data"
+    archived_data_dir.mkdir()
     settings = Settings(
         app_secret_key="test-secret-key-for-pytest-must-be-32-chars-min",
         plita_db_path=tmp_path / "plita.db",
@@ -32,6 +34,7 @@ def admin_settings(tmp_path: Path) -> Settings:
         plans_metadata_path=tmp_path / "plans_metadata.json",
         current_plan_path=tmp_path / "current_plan.json",
         work_calendar_path=tmp_path / "work_calendar.json",
+        archived_data_dir=archived_data_dir,
     )
     return settings
 
@@ -157,12 +160,31 @@ def _seed_sqlite_plans(db_path: str, *plan_ids: str) -> PlanRepository:
     return repo
 
 
+def _seed_archived_legacy(admin_settings: Settings) -> None:
+    archived_plans_dir = admin_settings.archived_data_dir / "plans"
+    archived_plans_dir.mkdir(parents=True, exist_ok=True)
+    (archived_plans_dir / "plan_archived_1.json").write_text(
+        json.dumps({"id": "plan_archived_1"}), encoding="utf-8"
+    )
+    (archived_plans_dir / "plan_archived_2.json").write_text(
+        json.dumps({"id": "plan_archived_2"}), encoding="utf-8"
+    )
+    (admin_settings.archived_data_dir / "plans_metadata.json").write_text(
+        json.dumps({"plans": [{"plan_id": "archived"}]}), encoding="utf-8"
+    )
+    (admin_settings.archived_data_dir / "work_calendar.json").write_text(
+        json.dumps({"extra_holidays": ["2026-01-01"], "extra_workdays": []}),
+        encoding="utf-8",
+    )
+
+
 def test_reset_full_clears_all_plate_tables_and_plans(
     admin_settings: Settings,
     populated_db: Path,
     populated_plans: None,
 ) -> None:
     plan_repo = _seed_sqlite_plans(str(populated_db), "sqlite_plan_1", "sqlite_plan_2")
+    _seed_archived_legacy(admin_settings)
     service = AdminService(settings=admin_settings, plan_repository=plan_repo)
 
     report = service.reset_full()
@@ -185,10 +207,82 @@ def test_reset_full_clears_all_plate_tables_and_plans(
     assert report.plans["plan_files"] == 2
     assert report.plans["current_plan"] == 1
     assert report.plans["metadata"] == 1
+    assert report.plans["archived_plan_files"] == 2
+    assert report.plans["archived_metadata"] == 1
+    assert report.plans["archived_calendar"] == 1
     assert report.calendar_reset is True
+
+    archived_plans_dir = admin_settings.archived_data_dir / "plans"
+    assert archived_plans_dir.exists()
+    assert list(archived_plans_dir.glob("*.json")) == []
+    assert not (admin_settings.archived_data_dir / "plans_metadata.json").exists()
+    assert not (admin_settings.archived_data_dir / "work_calendar.json").exists()
 
     calendar_data = json.loads(admin_settings.work_calendar_path.read_text(encoding="utf-8"))
     assert calendar_data == {"extra_holidays": [], "extra_workdays": []}
+
+
+def _seed_shipment_with_completed_plate(
+    db_path: Path,
+    *,
+    kp_id: int,
+    completed_plate_id: int,
+) -> None:
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO shipments (shipment_date, delivery_type, status)
+            VALUES (?, ?, ?)
+            """,
+            ("2026-07-31", "delivery", "in_work"),
+        )
+        shipment_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO shipment_orders (shipment_id, kp_id) VALUES (?, ?)",
+            (shipment_id, kp_id),
+        )
+        cur.execute(
+            """
+            INSERT INTO shipment_items (
+                shipment_id, item_type, completed_plate_id, kp_id, mark, qty
+            ) VALUES (?, 'plate', ?, ?, 'ПБ 78-12-8п', 1)
+            """,
+            (shipment_id, completed_plate_id, kp_id),
+        )
+        conn.commit()
+
+
+def test_reset_full_clears_shipments_referencing_completed_plates(
+    admin_settings: Settings,
+    populated_db: Path,
+    populated_plans: None,
+) -> None:
+    with sqlite3.connect(str(populated_db)) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT kp_id FROM KP_offers LIMIT 1")
+        kp_id = int(cur.fetchone()[0])
+        cur.execute("SELECT id FROM completed_plates LIMIT 1")
+        completed_plate_id = int(cur.fetchone()[0])
+
+    _seed_shipment_with_completed_plate(
+        populated_db,
+        kp_id=kp_id,
+        completed_plate_id=completed_plate_id,
+    )
+    assert _table_count(populated_db, "shipments") == 1
+    assert _table_count(populated_db, "shipment_items") == 1
+
+    service = _make_service(admin_settings)
+    report = service.reset_full()
+
+    assert _table_count(populated_db, "shipments") == 0
+    assert _table_count(populated_db, "shipment_items") == 0
+    assert _table_count(populated_db, "shipment_orders") == 0
+    assert _table_count(populated_db, "completed_plates") == 0
+    assert report.sqlite["shipments"] == 1
+    assert report.sqlite["shipment_items"] == 1
 
 
 def test_reset_full_preserves_app_users(
@@ -278,6 +372,43 @@ def test_reset_calendar_only_writes_empty_calendar(admin_settings: Settings) -> 
     assert data == {"extra_holidays": [], "extra_workdays": []}
 
 
+def test_reset_plans_only_does_not_clear_archived_legacy(
+    admin_settings: Settings,
+    populated_db: Path,
+    populated_plans: None,
+) -> None:
+    _seed_archived_legacy(admin_settings)
+    plan_repo = _seed_sqlite_plans(str(populated_db), "sqlite_plan_1")
+    service = AdminService(settings=admin_settings, plan_repository=plan_repo)
+
+    report = service.reset_plans_only()
+
+    assert report.plans["sqlite_plans"] == 1
+    assert "archived_plan_files" not in report.plans
+    archived_plans_dir = admin_settings.archived_data_dir / "plans"
+    assert len(list(archived_plans_dir.glob("*.json"))) == 2
+    assert (admin_settings.archived_data_dir / "plans_metadata.json").exists()
+
+
+def test_get_stats_counts_legacy_json_files(
+    admin_settings: Settings,
+    populated_db: Path,
+) -> None:
+    (admin_settings.plans_dir / "legacy_1.json").write_text("{}", encoding="utf-8")
+    archived_plans_dir = admin_settings.archived_data_dir / "plans"
+    archived_plans_dir.mkdir(parents=True, exist_ok=True)
+    (archived_plans_dir / "legacy_2.json").write_text("{}", encoding="utf-8")
+    (archived_plans_dir / "legacy_3.json").write_text("{}", encoding="utf-8")
+
+    plan_repo = MagicMock()
+    plan_repo.list_metadata.return_value = {"plans": []}
+    service = _make_service(admin_settings, plan_repository=plan_repo)
+
+    stats = service.get_stats()
+
+    assert stats.legacy_json_files_count == 3
+
+
 def test_get_stats_aggregates_db_and_plans(
     admin_settings: Settings,
     populated_db: Path,
@@ -298,4 +429,5 @@ def test_get_stats_aggregates_db_and_plans(
     assert stats.plates_completed == 1
     assert stats.plate_rests == 1
     assert stats.plans_count == 3
+    assert stats.legacy_json_files_count == 2
     assert stats.current_plan_present is True

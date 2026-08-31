@@ -92,7 +92,24 @@ describe("buildKpPreviewRows", () => {
       qty: 3,
       unitPrice: 12450,
       flag: null,
+      lineId: null,
     });
+  });
+
+  it("passes through line_id as lineId", () => {
+    const draft = makeDraft({
+      order_data: [
+        {
+          line_id: "ln_plate_1",
+          name: "Плиты ПБ 71-12-8п",
+          qty: 3,
+          unit_price: 12450,
+          length_m: 7.1,
+          width_m: 1.2,
+        },
+      ],
+    });
+    expect(buildKpPreviewRows(draft)[0]?.lineId).toBe("ln_plate_1");
   });
 
   it("marks direct wide plate when width_m > 1.2", () => {

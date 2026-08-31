@@ -4,6 +4,7 @@ import { queryClient } from "@/shared/lib/queryClient";
 
 const AUTH_ME_QUERY_KEY = ["auth", "me"] as const;
 const AUTH_LOGIN_PATH = "/api/v1/auth/login";
+const AUTH_ME_PATH = "/api/v1/auth/me";
 const CSRF_COOKIE_NAME = "csrf_token";
 const CSRF_HEADER_NAME = "X-CSRF-Token";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
@@ -27,6 +28,7 @@ type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: BodyInit | null;
   headers?: HeadersInit;
+  signal?: AbortSignal;
 };
 
 const buildUrl = (path: string): string => {
@@ -35,6 +37,23 @@ const buildUrl = (path: string): string => {
   }
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${env.apiBaseUrl}${normalizedPath}`;
+};
+
+/** Bootstrap CSRF cookie when missing (e.g. /auth/me failed before backend was up). */
+const ensureCsrfToken = async (): Promise<string | null> => {
+  const existing = readCsrfToken();
+  if (existing) {
+    return existing;
+  }
+  try {
+    await fetch(buildUrl("/api/v1/health"), {
+      method: "GET",
+      credentials: "include",
+    });
+  } catch {
+    return null;
+  }
+  return readCsrfToken();
 };
 
 const looksLikeJson = (contentType: string, body: string): boolean => {
@@ -95,7 +114,9 @@ const parseError = async (response: Response, path: string): Promise<never> => {
 };
 
 const handleUnauthorized = (path: string): void => {
-  if (path.startsWith(AUTH_LOGIN_PATH)) {
+  // /auth/me itself returns 401 when logged out — do not invalidate or we loop:
+  // me → 401 → invalidate → me → 401 …
+  if (path.startsWith(AUTH_LOGIN_PATH) || path.startsWith(AUTH_ME_PATH)) {
     return;
   }
   queryClient.setQueryData(AUTH_ME_QUERY_KEY, null);
@@ -106,18 +127,34 @@ const request = async <TResponse>(path: string, options: RequestOptions = {}): P
   const method = options.method ?? "GET";
   const headers = new Headers(options.headers);
   if (!SAFE_METHODS.has(method)) {
-    const csrfToken = readCsrfToken();
+    const csrfToken = await ensureCsrfToken();
     if (csrfToken) {
       headers.set(CSRF_HEADER_NAME, csrfToken);
     }
   }
 
-  const response = await fetch(buildUrl(path), {
-    method,
-    body: options.body ?? null,
-    headers,
-    credentials: "include",
-  });
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(path), {
+      method,
+      body: options.body ?? null,
+      headers,
+      credentials: "include",
+      signal: options.signal,
+    });
+  } catch (err) {
+    if (
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (err instanceof Error && err.name === "AbortError") ||
+      options.signal?.aborted
+    ) {
+      throw err;
+    }
+    throw new ApiError(
+      "Сервер недоступен. Подождите пару секунд после запуска и обновите страницу.",
+      0,
+    );
+  }
 
   if (!response.ok) {
     if (response.status === 401) {
@@ -159,14 +196,41 @@ const extractFilename = (response: Response, fallback: string): string => {
   return fallback;
 };
 
+type DownloadRequestOptions = {
+  method?: "GET" | "POST";
+  body?: BodyInit | null;
+  headers?: HeadersInit;
+};
+
 const downloadRequest = async (
   path: string,
   fallbackFilename: string,
+  options: DownloadRequestOptions = {},
 ): Promise<DownloadResult> => {
-  const response = await fetch(buildUrl(path), {
-    method: "GET",
-    credentials: "include",
-  });
+  const method = options.method ?? "GET";
+  const headers = new Headers(options.headers);
+  if (!SAFE_METHODS.has(method)) {
+    const csrfToken = await ensureCsrfToken();
+    if (csrfToken) {
+      headers.set(CSRF_HEADER_NAME, csrfToken);
+    }
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(path), {
+      method,
+      body: options.body ?? null,
+      headers,
+      credentials: "include",
+    });
+  } catch {
+    throw new ApiError(
+      "Сервер недоступен. Подождите пару секунд после запуска и обновите страницу.",
+      0,
+    );
+  }
+
   if (!response.ok) {
     if (response.status === 401) {
       handleUnauthorized(path);
@@ -181,8 +245,12 @@ const downloadRequest = async (
 
 export const httpClient = {
   get: <TResponse>(path: string) => request<TResponse>(path),
-  post: <TResponse>(path: string, body?: BodyInit | null, headers?: HeadersInit) =>
-    request<TResponse>(path, { method: "POST", body, headers }),
+  post: <TResponse>(
+    path: string,
+    body?: BodyInit | null,
+    headers?: HeadersInit,
+    extra?: { signal?: AbortSignal },
+  ) => request<TResponse>(path, { method: "POST", body, headers, signal: extra?.signal }),
   put: <TResponse>(path: string, body?: BodyInit | null, headers?: HeadersInit) =>
     request<TResponse>(path, { method: "PUT", body, headers }),
   patch: <TResponse>(path: string, body?: BodyInit | null, headers?: HeadersInit) =>
@@ -190,8 +258,11 @@ export const httpClient = {
   delete: <TResponse>(path: string) => request<TResponse>(path, { method: "DELETE" }),
   request: <TResponse>(path: string, options: RequestOptions) =>
     request<TResponse>(path, options),
-  download: (path: string, fallbackFilename = "download"): Promise<DownloadResult> =>
-    downloadRequest(path, fallbackFilename),
+  download: (
+    path: string,
+    fallbackFilename = "download",
+    options?: DownloadRequestOptions,
+  ): Promise<DownloadResult> => downloadRequest(path, fallbackFilename, options),
 };
 
 export const resolveApiUrl = (path: string): string => buildUrl(path);

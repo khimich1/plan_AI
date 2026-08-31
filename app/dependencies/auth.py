@@ -38,3 +38,9 @@ def require_roles(*allowed_roles: str):
 # Shared dependency object so FastAPI caches auth once per request across multiple Depends(...).
 REQUIRE_ADMIN_OR_MANAGER = require_roles("admin", "manager")
 
+# Раздел «Логистика»: логист + админ (SHIP-001).
+REQUIRE_LOGISTICS = require_roles("admin", "logistics")
+
+# Модуль ГСМ / учёт: бухгалтер + админ.
+REQUIRE_ACCOUNTING = require_roles("admin", "accountant")
+

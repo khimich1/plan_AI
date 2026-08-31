@@ -19,14 +19,19 @@ def audit_append(
     qty: int,
     reason: str,
     actor: Optional[str],
+    shipment_id: Optional[int] = None,
 ) -> None:
-    """Insert one row into ``plate_status_log`` (same transaction as caller)."""
+    """Insert one row into ``plate_status_log`` (same transaction as caller).
+
+    ``shipment_id`` заполняется только для отгрузок (reason ``sgp_ship``);
+    остальные вызовы оставляют NULL.
+    """
     cur.execute(
         """
         INSERT INTO plate_status_log (
             plate_id, kp_id, plate_name, plan_id, day_number,
-            from_status, to_status, qty, reason, actor
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            from_status, to_status, qty, reason, actor, shipment_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             plate_id,
@@ -39,5 +44,6 @@ def audit_append(
             int(qty),
             reason,
             actor,
+            shipment_id,
         ),
     )

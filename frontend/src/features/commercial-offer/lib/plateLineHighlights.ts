@@ -82,6 +82,57 @@ export const buildPlateLineHighlightMap = (
   return highlights;
 };
 
+const DEFAULT_UNPARSED_TITLE = "Строка не попала в расчёт — проверьте вручную";
+
+export const lintLinesToUnparsedHighlights = (
+  lines: Array<{ index: number; empty: boolean; ok: boolean; reason_text: string | null }>,
+): Map<number, PlateLineHighlight> => {
+  const map = new Map<number, PlateLineHighlight>();
+  for (const line of lines) {
+    if (!line.empty && !line.ok) {
+      map.set(line.index, {
+        kind: "unparsed",
+        title: line.reason_text || DEFAULT_UNPARSED_TITLE,
+      });
+    }
+  }
+  return map;
+};
+
+/**
+ * Batch-review highlights: draft map (yellow OCR corrections, wide, dobor, unparsed)
+ * plus live source lint. Parser-accepted lines (including 8н) drop stale unparsed.
+ * Does not add a н→п / load-suffix heuristic.
+ */
+export const mergeReviewHighlights = (
+  draft: CommercialDraftDetails | null,
+  text: string,
+  lintLines: Array<{ index: number; empty: boolean; ok: boolean; reason_text: string | null }>,
+): Map<number, PlateLineHighlight> => {
+  const lines = text.split("\n");
+  const base = draft ? buildPlateLineHighlightMap(draft, lines) : new Map<number, PlateLineHighlight>();
+  if (lintLines.length === 0) {
+    return base;
+  }
+  const next = new Map(base);
+  for (const line of lintLines) {
+    if (line.empty) {
+      continue;
+    }
+    if (!line.ok) {
+      next.set(line.index, {
+        kind: "unparsed",
+        title: line.reason_text || DEFAULT_UNPARSED_TITLE,
+      });
+      continue;
+    }
+    if (next.get(line.index)?.kind === "unparsed") {
+      next.delete(line.index);
+    }
+  }
+  return next;
+};
+
 export const PLATE_LINE_HIGHLIGHT_STYLES: Record<PlateLineHighlightKind, { background: string; border: string }> = {
   correction: { background: "#fffaeb", border: "#fec84b" },
   unparsed: { background: "#fff4ed", border: "#f9a86c" },

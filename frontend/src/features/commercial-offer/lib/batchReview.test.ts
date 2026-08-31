@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
+import type { CommercialDraftDetails, PlateBatch } from "@/features/commercial-offer/types/commercialOffer";
 import {
   filterDraftForBatchReview,
+  getBatches,
   getCurrentBatchReviewText,
   mergeEditedBatchIntoFullText,
   needsBatchReview,
 } from "@/features/commercial-offer/lib/batchReview";
+
+const emptyBatch = (normalized_text: string): PlateBatch => ({
+  source_type: "image",
+  original_text: "",
+  normalized_text,
+  ocr_text: "",
+  filename: "x.png",
+});
 
 const makeDraft = (plate_batches: CommercialDraftDetails["metadata"]["plate_batches"]): CommercialDraftDetails =>
   ({
@@ -57,6 +66,21 @@ const makeDraft = (plate_batches: CommercialDraftDetails["metadata"]["plate_batc
       current_save_mode: null,
       execution_terms: "",
       logistics_cost: 0,
+    },
+  }) as CommercialDraftDetails;
+
+const makeProductDraft = (
+  productType: string,
+  batchesKey: "fbs_batches" | "bridge_pile_batches",
+  batches: PlateBatch[],
+): CommercialDraftDetails =>
+  ({
+    draft_id: "d1",
+    metadata: {
+      product_type: productType,
+      normalized_text: batches.map((b) => b.normalized_text).join("\n"),
+      plate_batches: [emptyBatch("WRONG_PLATE_FALLBACK")],
+      [batchesKey]: batches,
     },
   }) as CommercialDraftDetails;
 
@@ -114,5 +138,43 @@ describe("batchReview", () => {
     draft.metadata.normalized_text = "ПБ 58-15-8 10";
     draft.metadata.plate_batches![0]!.normalized_text = "ПБ 58-15-8 10";
     expect(getCurrentBatchReviewText(draft)).toBe("ПБ 58-15-8 10");
+  });
+
+  // S22 — fbs/bridge per-page text = last batch only (no cumulative dupes on confirm)
+  it("S22: fbs 2-page batches give distinct last-batch review text and merge without dupes", () => {
+    const batches = [emptyBatch("ФБС 24-4-6 10"), emptyBatch("ФБС 12-3-6 5")];
+    const draft = makeProductDraft("fbs", "fbs_batches", batches);
+
+    expect(getBatches(draft)).toHaveLength(2);
+    expect(getCurrentBatchReviewText(draft)).toBe("ФБС 12-3-6 5");
+    expect(mergeEditedBatchIntoFullText(getBatches(draft), "ФБС 12-3-6 5")).toBe(
+      "ФБС 24-4-6 10\nФБС 12-3-6 5",
+    );
+  });
+
+  it("S22: bridge_piles 2-page batches give distinct last-batch review text", () => {
+    const batches = [emptyBatch("С60.30-6 4"), emptyBatch("С60.30-8 2")];
+    const draft = makeProductDraft("bridge_piles", "bridge_pile_batches", batches);
+
+    expect(getCurrentBatchReviewText(draft)).toBe("С60.30-8 2");
+    expect(getBatches(draft).map((b) => b.normalized_text)).toEqual(["С60.30-6 4", "С60.30-8 2"]);
+  });
+
+  // S23 — shared getBatches must not fall through to plate_batches for fbs/bridge
+  it("S23: getBatches for fbs ignores plate_batches fallback", () => {
+    const draft = makeProductDraft("fbs", "fbs_batches", [
+      emptyBatch("ФБС page1"),
+      emptyBatch("ФБС page2"),
+    ]);
+    expect(getBatches(draft).map((b) => b.normalized_text)).toEqual(["ФБС page1", "ФБС page2"]);
+    expect(mergeEditedBatchIntoFullText(getBatches(draft), "ФБС page2 edited")).toBe(
+      "ФБС page1\nФБС page2 edited",
+    );
+  });
+
+  it("S23: getBatches for bridge_piles ignores plate_batches fallback", () => {
+    const draft = makeProductDraft("bridge_piles", "bridge_pile_batches", [emptyBatch("bridge only")]);
+    expect(getBatches(draft)).toHaveLength(1);
+    expect(getBatches(draft)[0]?.normalized_text).toBe("bridge only");
   });
 });

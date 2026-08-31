@@ -5,8 +5,11 @@ import { saveBlobAs } from "@/shared/lib/downloadFile";
 import { ApiError } from "@/shared/lib/apiError";
 import { handlePlanVersionConflict } from "@/shared/lib/planConflict";
 import type {
+  AnalyzeSubstratesRequest,
+  AnalyzeSubstratesResponse,
   BuildPlanRequest,
   BuildPlanResponse,
+  DayCapacityMapResponse,
   DayDocumentKind,
   DayOccupancyResponse,
   DayViewResponse,
@@ -16,6 +19,8 @@ import type {
   PlansMetadataResponse,
   RejectedPlateItem,
   RemoveTrackResponse,
+  SaveDayCapacityRequest,
+  SaveDayCapacityResponse,
   WorkCalendarPayload,
 } from "@/features/production/types/production";
 
@@ -29,6 +34,9 @@ export const productionKeys = {
     ["production", "occupancy", excludePlanId ?? "all"] as const,
   kpCandidates: () => ["production", "kp-candidates"] as const,
   workCalendar: () => ["production", "work-calendar"] as const,
+  dayCapacity: (from: string, to: string) =>
+    ["production", "day-capacity", from, to] as const,
+  dayCapacityRoot: () => ["production", "day-capacity"] as const,
 };
 
 export const usePlansListQuery = () =>
@@ -131,6 +139,13 @@ export const useBuildPlanMutation = () => {
   });
 };
 
+/** Read-only analysis: urgent positions + substrates + capacity deficit. */
+export const useAnalyzeSubstratesMutation = () =>
+  useMutation<AnalyzeSubstratesResponse, ApiError, AnalyzeSubstratesRequest>({
+    mutationFn: (payload) => productionApi.analyzeSubstrates(payload),
+  });
+
+
 export const useCompleteDayMutation = () => {
   const queryClient = useQueryClient();
   return useMutation<
@@ -189,6 +204,16 @@ export const useDayDocumentMutation = (kind: DayDocumentKind) =>
     },
   });
 
+export const usePlanSgpExportMutation = () =>
+  useMutation({
+    mutationKey: ["production", "sgp-export"],
+    mutationFn: async (planId: string) => {
+      const result = await productionApi.downloadPlanSgpExport(planId);
+      saveBlobAs(result.blob, result.filename);
+      return result;
+    },
+  });
+
 export const useSaveWorkCalendarMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
@@ -199,6 +224,34 @@ export const useSaveWorkCalendarMutation = () => {
     },
     onError: async (error) => {
       await handlePlanVersionConflict(queryClient, error);
+    },
+  });
+};
+
+export const useDayCapacityQuery = (from: string, to: string, enabled = true) =>
+  useQuery<DayCapacityMapResponse>({
+    queryKey: productionKeys.dayCapacity(from, to),
+    queryFn: () => productionApi.getDayCapacity(from, to),
+    enabled: enabled && Boolean(from) && Boolean(to),
+    staleTime: 30_000,
+  });
+
+export const useSaveDayCapacityMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation<SaveDayCapacityResponse, ApiError, SaveDayCapacityRequest>({
+    mutationFn: (payload) => productionApi.saveDayCapacity(payload),
+    onSuccess: (data) => {
+      queryClient.setQueriesData<DayCapacityMapResponse>(
+        { queryKey: productionKeys.dayCapacityRoot() },
+        (prev) => {
+          if (!prev) return prev;
+          return {
+            capacity: { ...prev.capacity, [data.date]: data.max_tracks },
+          };
+        },
+      );
+      queryClient.invalidateQueries({ queryKey: productionKeys.dayCapacityRoot() });
+      queryClient.invalidateQueries({ queryKey: productionKeys.calendar() });
     },
   });
 };

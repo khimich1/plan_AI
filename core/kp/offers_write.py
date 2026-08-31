@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import traceback
 from typing import Dict, List, Optional
 
@@ -22,6 +23,7 @@ def save_kp_to_db(
     status: str = "в работе",
     logistics_cost: float = 0.0,
     owner_user_id: int | None = None,
+    product_type: str = "plates",
     db_path: str = DEFAULT_DB,
 ) -> int:
     """Сохраняет КП в базу.
@@ -43,7 +45,44 @@ def save_kp_to_db(
         status,
         logistics_cost,
         owner_user_id,
+        product_type,
         db_path,
+    )
+
+
+def update_kp_from_order_data(
+    kp_id: int,
+    order_data: List[Dict],
+    xlsx_file_path: Optional[str] = None,
+    customer_name: Optional[str] = None,
+    manager_name: Optional[str] = None,
+    discount_percent: float | None = None,
+    delivery_conditions: Optional[str] = None,
+    payment_conditions: Optional[str] = None,
+    execution_terms: Optional[str] = None,
+    logistics_cost: float | None = None,
+    product_type: str = "plates",
+    db_path: str = DEFAULT_DB,
+) -> int:
+    """Обновляет существующее КП (sync по line_id). Тот же ``kp_id``.
+
+    Оркестрация — :class:`core.kp_persistence_service.KpPersistenceService`.
+    """
+    from core.kp_persistence_service import KpPersistenceService
+
+    return KpPersistenceService.update_kp_from_order_data(
+        kp_id,
+        order_data,
+        xlsx_file_path=xlsx_file_path,
+        customer_name=customer_name,
+        manager_name=manager_name,
+        discount_percent=discount_percent,
+        delivery_conditions=delivery_conditions,
+        payment_conditions=payment_conditions,
+        execution_terms=execution_terms,
+        logistics_cost=logistics_cost,
+        product_type=product_type,
+        db_path=db_path,
     )
 
 
@@ -250,7 +289,13 @@ def update_kp_logistics_cost(kp_id: int, logistics_cost: float, db_path: str = D
         conn.close()
 
 
-def update_kp_status(kp_id: int, new_status: str, db_path: str = DEFAULT_DB) -> bool:
+def update_kp_status(
+    kp_id: int,
+    new_status: str,
+    db_path: str = DEFAULT_DB,
+    *,
+    _external_conn: Optional[sqlite3.Connection] = None,
+) -> bool:
     """
     Обновляет статус КП.
 
@@ -260,13 +305,20 @@ def update_kp_status(kp_id: int, new_status: str, db_path: str = DEFAULT_DB) -> 
     Аргументы:
         kp_id: порядковый номер КП
         new_status: новый статус ("выполнено", "отклонено", "в работе", "в ожидании")
+        _external_conn: если задано — работает в транзакции переданного соединения
+            (без commit/rollback/close)
 
     Возвращает:
         True если успешно, False если КП не найдено
     """
-    conn = _connect(db_path)
+    own_conn = _external_conn is None
+    if own_conn:
+        conn = _connect(db_path)
+    else:
+        conn = _external_conn
     try:
-        conn.execute("PRAGMA foreign_keys = ON")
+        if own_conn:
+            conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.cursor()
         cur.execute(
             """
@@ -277,11 +329,13 @@ def update_kp_status(kp_id: int, new_status: str, db_path: str = DEFAULT_DB) -> 
             (new_status, kp_id),
         )
 
-        conn.commit()
+        if own_conn:
+            conn.commit()
         return cur.rowcount > 0
 
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def save_xlsx_file(kp_id: int, xlsx_file_path: str, db_path: str = DEFAULT_DB) -> bool:
@@ -415,7 +469,18 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         cur.execute("SELECT COUNT(*) FROM plate_status_log")
         status_log_count = cur.fetchone()[0]
 
+        cur.execute("SELECT COUNT(*) FROM shipments")
+        shipments_count = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM shipment_items")
+        shipment_items_count = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM shipment_orders")
+        shipment_orders_count = cur.fetchone()[0]
+
         cur.execute("DELETE FROM plate_status_log")
+        # shipment_items.completed_plate_id → completed_plates без ON DELETE CASCADE
+        cur.execute("DELETE FROM shipments")
         cur.execute("DELETE FROM kp_plates")
         cur.execute("DELETE FROM completed_plates")
         cur.execute("DELETE FROM plate_rests")
@@ -428,7 +493,8 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
             DELETE FROM sqlite_sequence
             WHERE name IN ('KP_offers', 'kp_plates', 'completed_plates',
                           'plate_rests', 'kp_files', 'kp_meta',
-                          'plate_status_log')
+                          'plate_status_log', 'shipments', 'shipment_items',
+                          'shipment_orders')
         """
         )
 
@@ -442,6 +508,9 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
             "kp_files": files_count,
             "kp_meta": meta_count,
             "plate_status_log": status_log_count,
+            "shipments": shipments_count,
+            "shipment_items": shipment_items_count,
+            "shipment_orders": shipment_orders_count,
             "total": (
                 kp_count
                 + plates_count
@@ -450,6 +519,9 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
                 + files_count
                 + meta_count
                 + status_log_count
+                + shipments_count
+                + shipment_items_count
+                + shipment_orders_count
             ),
         }
 
@@ -461,6 +533,9 @@ def clear_all_plates_data(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         print(f"  - Удалено файлов: {files_count}")
         print(f"  - Удалено метаданных: {meta_count}")
         print(f"  - Удалено записей журнала статусов: {status_log_count}")
+        print(f"  - Удалено рейсов: {shipments_count}")
+        print(f"  - Удалено позиций рейсов: {shipment_items_count}")
+        print(f"  - Удалено заказов рейсов: {shipment_orders_count}")
         print(f"  - ВСЕГО ЗАПИСЕЙ: {result['total']}")
 
         return result
@@ -537,7 +612,45 @@ def clear_all_kp(db_path: str = DEFAULT_DB) -> Dict[str, int]:
         conn.close()
 
 
-def update_kp_execution_date(kp_id: int, new_date: str, db_path: str = DEFAULT_DB) -> bool:
+def commit_move_to_production(
+    kp_id: int,
+    execution_terms: str,
+    db_path: str = DEFAULT_DB,
+) -> int:
+    """Atomically set execution terms, status «в работе», and freeze ordered_qty (M).
+
+    Returns frozen ``ordered_qty``. Raises on any step failure after ROLLBACK.
+    """
+    from core.kp_db_plates_completion import freeze_ordered_qty_if_needed
+
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        if not update_kp_execution_date(
+            kp_id, execution_terms, db_path, _external_conn=conn
+        ):
+            raise ValueError("update_execution_date_failed")
+        if not update_kp_status(kp_id, "в работе", db_path, _external_conn=conn):
+            raise ValueError("update_status_failed")
+        ordered = freeze_ordered_qty_if_needed(conn.cursor(), kp_id)
+        if ordered is None:
+            raise ValueError("freeze_ordered_qty_failed")
+        conn.commit()
+        return int(ordered)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def update_kp_execution_date(
+    kp_id: int,
+    new_date: str,
+    db_path: str = DEFAULT_DB,
+    *,
+    _external_conn: Optional[sqlite3.Connection] = None,
+) -> bool:
     """
     Обновляет дату выполнения для КП.
 
@@ -545,11 +658,17 @@ def update_kp_execution_date(kp_id: int, new_date: str, db_path: str = DEFAULT_D
         kp_id: номер КП
         new_date: новая дата в формате "DD.MM.YYYY"
         db_path: путь к базе данных
+        _external_conn: если задано — работает в транзакции переданного соединения
+            (без commit/rollback/close)
 
     Returns:
         True при успехе, False при ошибке
     """
-    conn = _connect(db_path)
+    own_conn = _external_conn is None
+    if own_conn:
+        conn = _connect(db_path)
+    else:
+        conn = _external_conn
 
     try:
         cur = conn.cursor()
@@ -563,13 +682,16 @@ def update_kp_execution_date(kp_id: int, new_date: str, db_path: str = DEFAULT_D
             (new_date, kp_id),
         )
 
-        conn.commit()
+        if own_conn:
+            conn.commit()
 
         return cur.rowcount > 0
 
     except Exception:
-        conn.rollback()
+        if own_conn:
+            conn.rollback()
         return False
 
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()

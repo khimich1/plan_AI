@@ -6,6 +6,7 @@ import { Alert } from "@/shared/ui/Alert";
 import { Spinner } from "@/shared/ui/Spinner";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { ResetConfirmDialog } from "@/features/admin/components/ResetConfirmDialog";
+import { formatResetSuccess } from "@/features/admin/lib/formatResetSuccess";
 import {
   useCalendarResetMutation,
   useDbStatsQuery,
@@ -59,11 +60,8 @@ const StatsBlock = ({ stats }: { stats: DbStatsResponse }) => (
     <StatRow label="Плит в работе" value={stats.plates_in_work} />
     <StatRow label="Выполненных плит" value={stats.plates_completed} />
     <StatRow label="Остатков от резки" value={stats.plate_rests} />
-    <StatRow label="Файлов планов (JSON)" value={stats.plans_count} />
-    <StatRow
-      label="current_plan.json"
-      value={stats.current_plan_present ? "есть" : "нет"}
-    />
+    <StatRow label="Планов (SQLite)" value={stats.plans_count} />
+    <StatRow label="Legacy JSON-файлов" value={stats.legacy_json_files_count} />
   </div>
 );
 
@@ -95,6 +93,9 @@ export const DbManagementModal = ({ open, onClose }: Props) => {
   const recoverPlates = useRecoverPlatesMutation();
 
   const [dialog, setDialog] = useState<DialogConfig | null>(null);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(
+    null,
+  );
 
   const handleClose = () => {
     fullReset.reset();
@@ -103,11 +104,13 @@ export const DbManagementModal = ({ open, onClose }: Props) => {
     calendarReset.reset();
     recoverPlates.reset();
     setDialog(null);
+    setResetSuccessMessage(null);
     onClose();
   };
 
   const openDialog = (config: DialogConfig) => {
     config.mutation.reset();
+    setResetSuccessMessage(null);
     setDialog(config);
   };
 
@@ -123,7 +126,8 @@ export const DbManagementModal = ({ open, onClose }: Props) => {
       return;
     }
     try {
-      await dialog.mutation.mutateAsync();
+      const report = await dialog.mutation.mutateAsync();
+      setResetSuccessMessage(formatResetSuccess(report, dialog.variant));
       setDialog(null);
       statsQuery.refetch();
     } catch {
@@ -141,10 +145,13 @@ export const DbManagementModal = ({ open, onClose }: Props) => {
       >
         <div style={{ display: "grid", gap: "1.25rem" }}>
           <Alert tone="warning">
-            Действия в этом окне необратимы. Перед массовым обнулением
-            рекомендуется остановить Telegram-бот, чтобы избежать гонки за
-            файлы планов и базу данных.
+            Действия необратимы. Убедитесь, что никто другой не работает с базой
+            параллельно.
           </Alert>
+
+          {resetSuccessMessage && (
+            <Alert tone="success">{resetSuccessMessage}</Alert>
+          )}
 
           <section>
             <h3
@@ -189,9 +196,10 @@ export const DbManagementModal = ({ open, onClose }: Props) => {
                     <span>
                       Будут удалены <strong>все КП, плиты, файлы, остатки,
                       выполненные плиты и журнал статусов</strong>, а также
-                      все <strong>JSON-планы производства</strong> и{" "}
-                      <strong>производственный календарь</strong>. Учётная запись администратора
-                      сохранится. Действие необратимо.
+                      все <strong>планы производства (SQLite)</strong>,{" "}
+                      <strong>legacy JSON-файлы (если есть)</strong> и{" "}
+                      <strong>производственный календарь</strong>. Учётная запись
+                      администратора сохранится. Действие необратимо.
                     </span>
                   ),
                   confirmLabel: "Обнулить ВСЁ",
@@ -233,21 +241,22 @@ export const DbManagementModal = ({ open, onClose }: Props) => {
               onClick={() =>
                 openDialog({
                   variant: "plans-only",
-                  title: "Удалить JSON-планы производства",
+                  title: "Удалить все планы",
                   description: (
                     <span>
-                      Будут удалены файлы <code>data/plans/*.json</code>,{" "}
+                      Будут удалены все записи <code>production_plans</code> и
+                      legacy JSON в <code>data/plans/</code>, а также{" "}
                       <code>data/plans_metadata.json</code> и{" "}
-                      <code>data/current_plan.json</code>. Содержимое SQLite-базы и
-                      календарь не пострадают.
+                      <code>data/current_plan.json</code>. Содержимое таблиц КП
+                      и календарь не пострадают.
                     </span>
                   ),
-                  confirmLabel: "Удалить планы",
+                  confirmLabel: "Удалить все планы",
                   mutation: plansReset,
                 })
               }
             >
-              Только планы (JSON)
+              Удалить все планы
             </Button>
 
             <Button

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import shutil
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -12,14 +12,29 @@ from app.core.settings import get_settings
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.repositories.kp_archive_repository import ArchiveSection, KpArchiveRepository
 from app.schemas.archive import (
+    ArchiveBridgePileItem,
+    ArchiveFbsItem,
     ArchiveFileKind,
     ArchiveOfferDetails,
     ArchiveOfferFinance,
     ArchiveOfferListItem,
+    ArchiveMarchItem,
+    ArchivePileItem,
     ArchivePlateItem,
+    ArchiveStepItem,
+    ArchiveProductTypeFilter,
     ArchiveSearchResponse,
+    CapacityDayInfo,
+    CapacitySnapshotResponse,
+    KpReadinessPositionsResponse,
 )
 from app.repositories.plan_repository import PlanRepository
+from app.services.capacity_gate_service import (
+    CapacityGateBlockedError,
+    CapacitySnapshot,
+    assert_capacity_allows_save,
+    build_capacity_snapshot,
+)
 from app.services.plan_distribution_service import PlanDistributionService
 from app.security.offer_access import (
     assert_offer_read_access,
@@ -28,6 +43,7 @@ from app.security.offer_access import (
 )
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
+from core.delivery_schedule_check import BatchItemInput
 from core.plate_order_context import PlateOrderContext, run_in_order_context
 from core.ports.visualization import get_visualize_plan
 from core.execution_terms import parse_execution_terms
@@ -36,13 +52,12 @@ from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
 from core.gantt_excel import create_gantt_excel
 from core.kp_order_data import order_data_from_kp_info
-from core.kp.xlsx_order_data import enrich_order_data_prices_from_xlsx
+from core.gantt_excel import create_gantt_excel
+from core.production_capacity import MAX_TRACK_LENGTH_M, TRACKS_PER_DAY_DEFAULT
+from core.work_calendar import is_working_day, load_extra_workdays, load_holidays
 
 
 logger = logging.getLogger(__name__)
-
-_MAX_TRACK_LENGTH_M = 101.0
-_DAYS_PER_TRACK_FACTOR = 5.0
 
 
 class ArchiveError(Exception):
@@ -73,12 +88,24 @@ class ArchiveService:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self.optimization_service = optimization_service or OptimizationService()
         self.file_generation_service = file_generation_service or FileGenerationService()
+        # ISO YYYY-MM-DD для детерминированных тестов гейта ёмкости.
+        self._today_override: str | None = None
 
     # ---------- Списки и карточка ----------
 
-    def list_offers(self, section: ArchiveSection, *, user: dict) -> list[ArchiveOfferListItem]:
+    def list_offers(
+        self,
+        section: ArchiveSection,
+        *,
+        user: dict,
+        product_type: ArchiveProductTypeFilter = "all",
+    ) -> list[ArchiveOfferListItem]:
         list_filters = list_filters_for_user(user)
-        raw_items = self.repository.list_by_section(section, **list_filters)
+        raw_items = self.repository.list_by_section(
+            section,
+            product_type=product_type,
+            **list_filters,
+        )
         return [self._to_list_item(raw) for raw in raw_items]
 
     def get_details(self, kp_id: int, *, user: dict) -> ArchiveOfferDetails:
@@ -87,6 +114,36 @@ class ArchiveService:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         assert_offer_read_access(user, raw)
         return self._to_details(raw)
+
+    def resume_as_draft(self, kp_id: int, *, user: dict) -> dict:
+        """Hydrate a commercial draft from archive KP (status «в работе» only)."""
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_write_access(user, raw)
+
+        from app.services.commercial_workflow_service import CommercialWorkflowService
+
+        try:
+            return CommercialWorkflowService().hydrate_draft_from_saved_kp(
+                kp_id,
+                owner_user_id=int(user["id"]),
+            )
+        except ValueError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+
+    def get_readiness_positions(self, kp_id: int, *, user: dict) -> KpReadinessPositionsResponse:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_read_access(user, raw)
+        status = raw.get("status") or ""
+        from app.services.kp_readiness_service import KpReadinessService
+
+        items = KpReadinessService(db_path=self.repository.db_path).list_positions(
+            kp_id, status=status
+        )
+        return KpReadinessPositionsResponse(items=items, count=len(items))
 
     def search(
         self,
@@ -99,23 +156,22 @@ class ArchiveService:
         if kp_id is not None:
             raw = self.repository.get_by_id(kp_id)
             if not raw:
-                items = []
+                rows: list[dict] = []
             else:
                 assert_offer_read_access(user, raw)
-                items = [self._to_list_item(raw)]
+                rows = [raw]
             return ArchiveSearchResponse(
                 mode="number",
-                items=items,
-                total=len(items),
+                items=[self._to_list_item(r) for r in rows],
+                total=len(rows),
                 truncated=False,
             )
 
         name = (customer or "").strip()
         rows, total = self.repository.search_by_customer_name(name, limit=50, **list_filters)
-        items = [self._to_list_item(raw) for raw in rows]
         return ArchiveSearchResponse(
             mode="customer",
-            items=items,
+            items=[self._to_list_item(raw) for raw in rows],
             total=total,
             truncated=total > 50,
         )
@@ -167,12 +223,35 @@ class ArchiveService:
             )
 
         execution_terms = self._parse_execution_terms(terms_input)
-        if not self.repository.update_execution_date(kp_id, execution_terms):
-            raise ArchiveError(f"Не удалось сохранить срок для КП №{kp_id}")
-        if not self.repository.update_status(kp_id, "в работе"):
-            raise ArchiveError(f"Не удалось изменить статус для КП №{kp_id}")
+        self._enforce_capacity_gate_for_terms(raw, execution_terms)
+        try:
+            from core.kp.offers_write import commit_move_to_production
+
+            commit_move_to_production(kp_id, execution_terms, self.repository.db_path)
+        except Exception as exc:
+            logger.exception("move_to_production failed for kp_id=%s", kp_id)
+            raise ArchiveError(
+                f"Не удалось перевести КП №{kp_id} в производство"
+            ) from exc
 
         return self.get_details(kp_id, user=user)
+
+    def get_capacity_snapshot(
+        self,
+        kp_id: int,
+        *,
+        user: dict,
+        target: str | None = None,
+    ) -> CapacitySnapshotResponse:
+        """Снимок ёмкости для виджета «В производство» (старт = завтра)."""
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_read_access(user, raw)
+
+        target_iso = self._resolve_target_iso(raw, target)
+        snap = self._build_capacity_snapshot(raw, target_iso=target_iso)
+        return self._snapshot_to_response(snap)
 
     def estimate_production(self, kp_id: int, *, user: dict) -> dict:
         raw = self.repository.get_by_id(kp_id)
@@ -181,8 +260,8 @@ class ArchiveService:
         assert_offer_read_access(user, raw)
         plates = raw.get("plates") or []
         total_length = sum((p.get("length_m") or 0) * (p.get("qty") or 1) for p in plates)
-        estimated_tracks = max(1, int(round(total_length / _MAX_TRACK_LENGTH_M + 0.5)))
-        estimated_days = max(1, int(round(estimated_tracks / _DAYS_PER_TRACK_FACTOR + 0.5)))
+        estimated_tracks = max(1, int(round(total_length / MAX_TRACK_LENGTH_M + 0.5)))
+        estimated_days = max(1, int(round(estimated_tracks / TRACKS_PER_DAY_DEFAULT + 0.5)))
         return {
             "total_length_m": total_length,
             "estimated_tracks": estimated_tracks,
@@ -208,26 +287,13 @@ class ArchiveService:
         if not order_data:
             raise ArchiveValidationError("В КП нет позиций для формирования документа")
 
-        stored_xlsx = self.repository.get_xlsx_file(kp_id)
-        if isinstance(stored_xlsx, (bytes, bytearray)) and stored_xlsx:
-            order_data = enrich_order_data_prices_from_xlsx(
-                order_data,
-                bytes(stored_xlsx),
-                discount_percent=float(raw.get("discount_percent") or 0),
-            )
-
         offer_number = str(kp_id)
         offer_date = raw.get("creation_date") or datetime.now().strftime("%d.%m.%Y")
         customer_name = raw.get("customer_name")
         manager_name = raw.get("manager_name")
         discount_percent = float(raw.get("discount_percent") or 0)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
-
-        if kind == "xlsx" and isinstance(stored_xlsx, (bytes, bytearray)) and stored_xlsx:
-            filename = f"КП_{kp_id}.xlsx"
-            target_path = self.outputs_dir / filename
-            await asyncio.to_thread(_write_bytes, target_path, bytes(stored_xlsx))
-            return target_path
+        append_batches = raw.get("append_batches")
 
         if kind == "pdf":
             buffer = await asyncio.to_thread(
@@ -244,6 +310,7 @@ class ArchiveService:
                 logistics_cost=logistics_cost,
                 delivery_conditions=raw.get("delivery_conditions"),
                 payment_conditions=raw.get("payment_conditions"),
+                append_batches=append_batches,
             )
             filename = f"КП_{kp_id}.pdf"
         elif kind == "xlsx":
@@ -261,6 +328,7 @@ class ArchiveService:
                 payment_conditions=raw.get("payment_conditions"),
                 kp_db_id=kp_id,
                 logistics_cost=logistics_cost,
+                append_batches=append_batches,
             )
             filename = f"КП_{kp_id}.xlsx"
         elif kind == "schema":
@@ -344,11 +412,38 @@ class ArchiveService:
 
     # ---------- helpers ----------
 
+    @staticmethod
+    def _resolve_product_types(raw: dict) -> list[str]:
+        """Concrete types for archive list badges (Q3 / MNA-602)."""
+        explicit = raw.get("product_types")
+        if isinstance(explicit, list) and explicit:
+            return [str(t) for t in explicit if str(t).strip() and str(t) != "mixed"]
+
+        product_type = str(raw.get("product_type") or "plates").strip().lower() or "plates"
+        if product_type != "mixed":
+            return [product_type]
+
+        # Mixed mock/detail payloads may carry typed line arrays without product_types.
+        derived: list[str] = []
+        for key, _table in (
+            ("plates", "kp_plates"),
+            ("piles", "kp_piles"),
+            ("steps", "kp_steps"),
+            ("marches", "kp_marches"),
+            ("bridge_piles", "kp_bridge_piles"),
+            ("fbs", "kp_fbs"),
+        ):
+            if raw.get(key):
+                derived.append(key)
+        return derived
+
     def _to_list_item(self, raw: dict) -> ArchiveOfferListItem:
         kp_id = int(raw.get("kp_id") or 0)
         status = raw.get("status") or None
         completion = None
-        if status in ("в работе", "выполнено"):
+        sgp_progress = None
+        shipped_progress = None
+        if status in ("в работе", "выполнено", "На СГП"):
             try:
                 completion = float(
                     self.repository.get_completion_percentage(kp_id).get("percentage", 0.0)
@@ -356,6 +451,18 @@ class ArchiveService:
             except Exception:
                 logger.exception("Ошибка получения %% выполнения для КП %s", kp_id)
                 completion = None
+            try:
+                from app.services.sgp_service import SgpService
+
+                progress = SgpService(db_path=self.repository.db_path).sgp_progress(kp_id)
+                sgp_progress = {"n": progress.n, "m": progress.m}
+            except Exception:
+                logger.exception("Ошибка получения sgp_progress для КП %s", kp_id)
+            try:
+                shipped_progress = self._shipped_progress(kp_id)
+            except Exception:
+                logger.exception("Ошибка получения shipped_progress для КП %s", kp_id)
+                shipped_progress = None
         return ArchiveOfferListItem(
             kp_id=kp_id,
             creation_date=raw.get("creation_date"),
@@ -368,13 +475,43 @@ class ArchiveService:
             execution_terms=raw.get("execution_terms") or None,
             status=status,
             completion_percentage=completion,
+            sgp_progress=sgp_progress,
+            shipped_progress=shipped_progress,
+            product_type=str(raw.get("product_type") or "plates"),
+            product_types=self._resolve_product_types(raw),
         )
+
+    def _shipped_progress(self, kp_id: int) -> dict[str, int] | None:
+        """SHIP-301: x = Σ плит в done-рейсах КП, m = kp_meta.ordered_qty (read-only)."""
+        from core.kp_db_common import _connect
+        from core.kp_db_shipments import shipped_qty_for_kp
+
+        conn = _connect(self.repository.db_path)
+        try:
+            cur = conn.cursor()
+            x = shipped_qty_for_kp(cur, kp_id)
+            cur.execute(
+                "SELECT ordered_qty FROM kp_meta WHERE kp_id = ?",
+                (kp_id,),
+            )
+            row = cur.fetchone()
+            if row is None or row[0] is None:
+                return None
+            return {"x": x, "m": int(row[0])}
+        finally:
+            conn.close()
 
     def _to_details(self, raw: dict) -> ArchiveOfferDetails:
         plates = [self._plate_item(p) for p in (raw.get("plates") or [])]
+        piles = [self._pile_item(p) for p in (raw.get("piles") or [])]
+        steps = [self._step_item(s) for s in (raw.get("steps") or [])]
+        marches = [self._march_item(m) for m in (raw.get("marches") or [])]
+        bridge_piles = [self._bridge_pile_item(b) for b in (raw.get("bridge_piles") or [])]
+        fbs = [self._fbs_item(b) for b in (raw.get("fbs") or [])]
+        product_type = str(raw.get("product_type") or "plates")
         kp_id = int(raw.get("kp_id") or 0)
         completion = None
-        if raw.get("status") in ("в работе", "выполнено"):
+        if raw.get("status") in ("в работе", "выполнено", "На СГП"):
             try:
                 completion = float(
                     self.repository.get_completion_percentage(kp_id).get("percentage", 0.0)
@@ -384,8 +521,23 @@ class ArchiveService:
 
         order_data = order_data_from_kp_info(raw)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
-        total_cargo_weight_kg = float(total_order_cargo_weight_kg(order_data))
+        # Delivery / cargo for archive details: plates only (mixed KP ignores piles etc.).
+        total_cargo_weight_kg = float(
+            total_order_cargo_weight_kg(order_data, product_types={"plates"})
+        )
         delivery_total = delivery_service_charge_rub(logistics_cost, total_cargo_weight_kg)
+
+        readiness = None
+        status = raw.get("status") or ""
+        if status in ("в работе", "На СГП"):
+            try:
+                from app.services.kp_readiness_service import KpReadinessService
+
+                readiness = KpReadinessService(db_path=self.repository.db_path).build_summary(
+                    kp_id, status=status
+                )
+            except Exception:
+                logger.exception("Ошибка получения readiness для КП %s", kp_id)
 
         return ArchiveOfferDetails(
             kp_id=kp_id,
@@ -405,13 +557,75 @@ class ArchiveService:
             logistics_cost=logistics_cost,
             total_cargo_weight_kg=total_cargo_weight_kg,
             delivery_service_total_rub=delivery_total,
+            product_type=product_type,
             plates=plates,
+            piles=piles,
+            steps=steps,
+            marches=marches,
+            bridge_piles=bridge_piles,
+            fbs=fbs,
             completion_percentage=completion,
+            readiness=readiness,
+        )
+
+    @staticmethod
+    def _march_item(raw: dict) -> ArchiveMarchItem:
+        return ArchiveMarchItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
+        )
+
+    @staticmethod
+    def _bridge_pile_item(raw: dict) -> ArchiveBridgePileItem:
+        return ArchiveBridgePileItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
+        )
+
+    @staticmethod
+    def _fbs_item(raw: dict) -> ArchiveFbsItem:
+        return ArchiveFbsItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
+        )
+
+    @staticmethod
+    def _pile_item(raw: dict) -> ArchivePileItem:
+        return ArchivePileItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
+        )
+
+    @staticmethod
+    def _step_item(raw: dict) -> ArchiveStepItem:
+        return ArchiveStepItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
         )
 
     @staticmethod
     def _plate_item(raw: dict) -> ArchivePlateItem:
         return ArchivePlateItem(
+            id=_nullable_int(raw.get("id")),
             position_number=raw.get("position_number"),
             plate_name=raw.get("plate_name") or "",
             length_m=_nullable_float(raw.get("length_m")),
@@ -449,6 +663,123 @@ class ArchiveService:
                 }
             )
         return result
+
+    def _enforce_capacity_gate_for_terms(self, raw: dict, execution_terms_ddmmyyyy: str) -> None:
+        target_iso = datetime.strptime(execution_terms_ddmmyyyy, "%d.%m.%Y").date().isoformat()
+        snap = self._build_capacity_snapshot(raw, target_iso=target_iso)
+        try:
+            assert_capacity_allows_save(snap)
+        except CapacityGateBlockedError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+
+    def _resolve_target_iso(self, raw: dict, target: str | None) -> str:
+        if target:
+            try:
+                return date.fromisoformat(target).isoformat()
+            except ValueError as exc:
+                raise ArchiveValidationError(
+                    "Параметр target должен быть ISO-датой YYYY-MM-DD"
+                ) from exc
+        terms = (raw.get("execution_terms") or "").strip()
+        if not terms:
+            raise ArchiveValidationError(
+                "Укажите target или сохраните срок изготовления в КП"
+            )
+        formatted = self._parse_execution_terms(terms)
+        return datetime.strptime(formatted, "%d.%m.%Y").date().isoformat()
+
+    def _build_capacity_snapshot(self, raw: dict, *, target_iso: str) -> CapacitySnapshot:
+        today = self._resolve_today()
+        items = self._plates_to_batch_items(raw)
+        occupancy = self._load_occupancy()
+        workdays = self._collect_workdays(today_iso=today, target_iso=target_iso)
+        holidays = sorted(d.isoformat() for d in load_holidays())
+        extra = sorted(d.isoformat() for d in load_extra_workdays())
+        return build_capacity_snapshot(
+            items=items,
+            target_date=target_iso,
+            occupancy=occupancy,
+            workdays=workdays,
+            produced={},
+            today=today,
+            holidays=holidays,
+            extra_workdays=extra,
+        )
+
+    def _resolve_today(self) -> str:
+        if self._today_override is not None:
+            return date.fromisoformat(self._today_override).isoformat()
+        return date.today().isoformat()
+
+    @staticmethod
+    def _plates_to_batch_items(raw: dict) -> list[BatchItemInput]:
+        items: list[BatchItemInput] = []
+        for idx, plate in enumerate(raw.get("plates") or []):
+            plate_id = int(plate.get("id") or plate.get("plate_id") or idx + 1)
+            qty = int(plate.get("qty") or 0)
+            length_m = float(plate.get("length_m") or 0)
+            if qty <= 0 or length_m <= 0:
+                continue
+            items.append(
+                BatchItemInput(plate_id=plate_id, qty=qty, length_m=length_m)
+            )
+        return items
+
+    @staticmethod
+    def _load_occupancy() -> dict[str, dict]:
+        try:
+            calendar = PlanDistributionService().get_global_calendar_info(
+                PlanRepository()
+            )
+        except Exception:
+            logger.exception("capacity gate: occupancy unavailable")
+            return {}
+        if not calendar:
+            return {}
+        days_info = calendar.get("days_info") or {}
+        return days_info if isinstance(days_info, dict) else {}
+
+    @staticmethod
+    def _collect_workdays(*, today_iso: str, target_iso: str) -> set[str]:
+        today_d = date.fromisoformat(today_iso)
+        end = max(
+            today_d + timedelta(days=400),
+            date.fromisoformat(target_iso) + timedelta(days=60),
+        )
+        holidays = load_holidays()
+        extra_workdays = load_extra_workdays()
+        workdays: set[str] = set()
+        current = today_d
+        while current <= end:
+            if is_working_day(current, holidays, extra_workdays):
+                workdays.add(current.isoformat())
+            current += timedelta(days=1)
+        return workdays
+
+    @staticmethod
+    def _snapshot_to_response(snap: CapacitySnapshot) -> CapacitySnapshotResponse:
+        days: dict[str, CapacityDayInfo] = {}
+        for key, info in (snap.days_info or {}).items():
+            if not isinstance(info, dict):
+                continue
+            days[key] = CapacityDayInfo(
+                occupied=float(info.get("occupied", 0) or 0),
+                max=float(info.get("max", TRACKS_PER_DAY_DEFAULT) or TRACKS_PER_DAY_DEFAULT),
+            )
+        return CapacitySnapshotResponse(
+            start_date=snap.start_date,
+            target_date=snap.target_date,
+            tracks_needed=snap.tracks_needed,
+            tracks_free_in_window=snap.tracks_free_in_window,
+            delta=snap.delta,
+            status=snap.status,
+            hint=snap.hint,
+            days_info=days,
+            holidays=list(snap.holidays),
+            extra_workdays=list(snap.extra_workdays),
+            calendar_from_month=snap.calendar_from_month,
+            calendar_to_month=snap.calendar_to_month,
+        )
 
     @staticmethod
     def _parse_execution_terms(raw: str) -> str:

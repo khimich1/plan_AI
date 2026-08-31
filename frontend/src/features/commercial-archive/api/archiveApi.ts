@@ -3,18 +3,29 @@ import type {
   ArchiveFileKind,
   ArchiveOfferDetails,
   ArchiveOfferListItem,
-  ArchiveSearchResponse,
+  ArchiveProductTypeFilter,
+  ArchiveSearchApiResponse,
   ArchiveSection,
+  KpReadinessPositionsResponse,
   ProductionEstimate,
 } from "@/features/commercial-archive/types/archive";
+import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 
 const BASE = "/api/v1/commercial/archive";
 
 export const archiveApi = {
-  list: (section: ArchiveSection) =>
-    httpClient.get<ArchiveOfferListItem[]>(`${BASE}?section=${encodeURIComponent(section)}`),
+  list: (section: ArchiveSection, productType?: ArchiveProductTypeFilter) => {
+    const params = new URLSearchParams({ section });
+    if (productType && productType !== "all") {
+      params.set("product_type", productType);
+    }
+    return httpClient.get<ArchiveOfferListItem[]>(`${BASE}?${params.toString()}`);
+  },
 
   getById: (kpId: number) => httpClient.get<ArchiveOfferDetails>(`${BASE}/${kpId}`),
+
+  getReadinessPositions: (kpId: number) =>
+    httpClient.get<KpReadinessPositionsResponse>(`${BASE}/${kpId}/readiness/positions`),
 
   search: ({ kpId, customer }: { kpId?: number; customer?: string }) => {
     const params = new URLSearchParams();
@@ -23,7 +34,7 @@ export const archiveApi = {
     } else if (customer !== undefined) {
       params.set("customer", customer);
     }
-    return httpClient.get<ArchiveSearchResponse>(`${BASE}/search?${params.toString()}`);
+    return httpClient.get<ArchiveSearchApiResponse>(`${BASE}/search?${params.toString()}`);
   },
 
   updateDiscount: (kpId: number, discount: number) =>
@@ -66,4 +77,7 @@ export const archiveApi = {
   },
 
   buildCurrentPlanUrl: (): string => resolveApiUrl(`${BASE}/current-plan/gantt`),
+
+  resume: (kpId: number) =>
+    httpClient.post<CommercialDraftDetails>(`${BASE}/${kpId}/resume`),
 };

@@ -16,6 +16,10 @@ _log = logging.getLogger(__name__)
 class ProductionCompletionError(ValueError):
     """Ошибка валидации данных при завершении производственного дня."""
 
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
 
 class ProductionRestValidationError(ProductionCompletionError):
     """Ошибка валидации при сохранении остатка (невалидный kp_id и т.п.)."""
@@ -59,17 +63,26 @@ class ProductionCompletionService:
         self.db_path = db_path
         self.plan_repository = plan_repository or PlanRepository()
 
-    def complete_day(
+    def send_to_sgp(
         self,
         *,
         plan_id: str,
         target_date: str,
         rejected_plates: list[dict[str, Any]] | None = None,
         actor: str | None = None,
+        expected_version: int | None = None,
     ) -> dict[str, Any]:
+        """Отправить день производства на склад готовой продукции (СГП)."""
         plan = self.plan_repository.load_plan(plan_id)
         if not plan:
             raise ProductionCompletionError("Plan not found")
+
+        day = (plan.get("days") or {}).get(target_date) or {}
+        if day.get("completed"):
+            raise ProductionCompletionError(
+                f"День {target_date} уже завершён — повторная отправка на СГП невозможна",
+                code="day_already_completed",
+            )
 
         day_number = self._get_day_number(plan, target_date)
         day_view = build_day_view_detail(
@@ -93,11 +106,11 @@ class ProductionCompletionService:
         skipped_without_kp = completion_stats["skipped_without_kp"]
         if planned_qty_total <= 0:
             raise ProductionCompletionError(
-                "В выбранном плане на дату нет плит для завершения."
+                "В выбранном плане на дату нет плит для отправки на СГП."
             )
         if skipped_without_kp:
             raise ProductionCompletionError(
-                "Не удалось завершить день: у части плит нет привязки к КП "
+                "Не удалось отправить день на СГП: у части плит нет привязки к КП "
                 f"(позиций: {len(skipped_without_kp)})."
             )
 
@@ -107,23 +120,38 @@ class ProductionCompletionService:
             for item in items
         ]
 
-        # P0: вся цепочка списания (move → return_rejected → check_completion)
-        # выполняется в ОДНОЙ транзакции. Любая ошибка → conn.rollback() и
-        # БД остаётся в состоянии «до complete_day» (никаких полу-списанных плит).
+        # D4/P0: списание КП + mark_day_completed — одна sqlite-транзакция.
+        # Любая ошибка (в т.ч. PlanVersionConflict) → rollback; КП не списаны.
         conn = sqlite3.connect(self.db_path)
         try:
             conn.execute('PRAGMA journal_mode=WAL')
             conn.execute('PRAGMA foreign_keys = ON')
 
+            # SGP-103: orphan pre-flight — Σ kp_plates(plan/day) vs primary day_view qty
+            primary_view_qty = int(completed_requested_qty) + int(rejected_requested_qty)
+            if primary_view_qty > 0:
+                orphan_delta = self._orphan_qty_delta(
+                    conn,
+                    plan_id=plan_id,
+                    day_number=day_number,
+                    view_qty=primary_view_qty,
+                )
+                if orphan_delta > 0:
+                    conn.rollback()
+                    raise ProductionCompletionError(
+                        "Не удалось отправить день на СГП: в учёте есть плиты без "
+                        f"привязки к дорожке (orphan qty={orphan_delta}). "
+                        "Исправьте план или данные и повторите."
+                    )
+
             # P1: pre-flight reconciliation — до любого UPDATE проверяем,
             # что для каждой запрошенной плиты есть запись в kp_plates.
-            # Если нет — поднимаем 422 БЕЗ изменений в БД.
             missing_preflight = self._verify_plates_exist_in_db(plates_by_kp, conn)
             if missing_preflight:
                 conn.rollback()
                 details = self._format_unmoved_plates(missing_preflight)
                 raise ProductionCompletionError(
-                    "Не удалось завершить день: в БД нет ожидаемых плит. "
+                    "Не удалось отправить день на СГП: в БД нет ожидаемых плит. "
                     f"Не хватает: {details}."
                 )
 
@@ -144,9 +172,6 @@ class ProductionCompletionService:
                     moved, unmoved = move_result
                 else:
                     moved = int(move_result or 0)
-                    # Backward compatibility for tests/mocks that return plain int.
-                    # In this branch we don't know exact DB misses, so use requested
-                    # payload as best-effort details for user-facing error.
                     unmoved = [
                         {
                             "kp_id": int(kp_id),
@@ -167,15 +192,12 @@ class ProductionCompletionService:
                 missing_details = self._format_unmoved_plates(unmoved_plates)
                 conn.rollback()
                 raise ProductionCompletionError(
-                    "Не удалось завершить день: не списано "
+                    "Не удалось отправить день на СГП: не списано "
                     f"{missing_qty} плит из "
                     f"{completed_requested_qty}. "
                     f"Не хватает: {missing_details}."
                 )
 
-            # Бракованные плиты возвращаем в 'в производстве', чтобы они попали
-            # в следующее планирование. Иначе строки залипают со status='в плане'
-            # и мастер планирования рапортует «Не найдено плит для планирования».
             rejected_returned = self._return_rejected(
                 rejected_flat, self.db_path, actor=actor, conn=conn
             )
@@ -183,13 +205,11 @@ class ProductionCompletionService:
             if rejected_returned < rejected_requested_qty:
                 conn.rollback()
                 raise ProductionCompletionError(
-                    "Не удалось завершить день: не возвращено в производство "
+                    "Не удалось отправить день на СГП: не возвращено в производство "
                     f"{rejected_requested_qty - rejected_returned} бракованных плит "
                     f"из {rejected_requested_qty}."
                 )
 
-            # P6: secondary-cuts без kp_id сохраняем в plate_rests — внутри
-            # той же транзакции, чтобы при ошибке всё откатилось целиком.
             secondary_rests = completion_stats.get("secondary_rests") or []
             self._write_secondary_rests(
                 secondary_rests,
@@ -199,8 +219,6 @@ class ProductionCompletionService:
                 conn=conn,
             )
 
-            # Проверка автозавершения КП — ТОЛЬКО после возврата брака,
-            # иначе КП с полностью забракованным днём ошибочно станет 'выполнено'.
             completed_kps: list[int] = []
             affected_kp_ids = set(plates_by_kp.keys()) | set(rejected_by_kp.keys())
             for kp_id in affected_kp_ids:
@@ -208,6 +226,21 @@ class ProductionCompletionService:
                     kp_id, self.db_path, _external_conn=conn
                 ):
                     completed_kps.append(kp_id)
+
+            # Флаг дня — в той же транзакции, до commit (D4).
+            # mark_day_completed returns False (missing plan / missing day) without
+            # raising — must not commit KP write-off without the completed flag.
+            day_completed = self.plan_repository.mark_day_completed(
+                plan_id,
+                target_date,
+                expected_version=expected_version,
+                _external_conn=conn,
+            )
+            if not day_completed:
+                raise ProductionCompletionError(
+                    f"Не удалось пометить день {target_date} завершённым "
+                    f"(план {plan_id}) — списание отменено."
+                )
 
             conn.commit()
         except ProductionCompletionError:
@@ -237,8 +270,54 @@ class ProductionCompletionService:
             "completed_kps": sorted(set(completed_kps)),
             "affected_kps": sorted(affected_kp_ids),
             "day_number": day_number,
+            "message": (
+                f"День отправлен на СГП. Списано: {total_moved}, "
+                f"брак возвращён: {rejected_returned}."
+            ),
             **completion_stats,
+            "completed": day_completed,
         }
+
+    def complete_day(
+        self,
+        *,
+        plan_id: str,
+        target_date: str,
+        rejected_plates: list[dict[str, Any]] | None = None,
+        actor: str | None = None,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        """Alias для :meth:`send_to_sgp` (обратная совместимость на 1 релиз)."""
+        return self.send_to_sgp(
+            plan_id=plan_id,
+            target_date=target_date,
+            rejected_plates=rejected_plates,
+            actor=actor,
+            expected_version=expected_version,
+        )
+
+    @staticmethod
+    def _orphan_qty_delta(
+        conn: sqlite3.Connection,
+        *,
+        plan_id: str,
+        day_number: int,
+        view_qty: int,
+    ) -> int:
+        """Σ kp_plates(plan/day) − day_view planned qty; >0 значит orphan в учёте."""
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(qty), 0) FROM kp_plates
+            WHERE plan_id = ?
+              AND day_number = ?
+              AND status = 'в плане'
+              AND qty > 0
+            """,
+            (plan_id, int(day_number)),
+        )
+        db_qty = int(cur.fetchone()[0] or 0)
+        return max(0, db_qty - int(view_qty or 0))
 
     @staticmethod
     def _write_secondary_rests(
@@ -495,6 +574,10 @@ class ProductionCompletionService:
             for track in block.get("tracks") or []:
                 track_number = int(track.get("track_number") or 0)
                 for plate_index, plate in enumerate(track.get("plates_info") or []):
+                    # Snapshot after prior write-off: do not re-sum or re-move.
+                    if plate.get("write_off_completed"):
+                        continue
+
                     position = (track_number, plate_index)
                     seen_positions.add(position)
 

@@ -64,6 +64,19 @@ export interface DayPlanBlock {
   plan_name: string;
   completed: boolean;
   tracks: DayTrackDetail[];
+  from_sgp?: FromSgpItem[];
+  from_sgp_qty?: number;
+}
+
+export interface FromSgpItem {
+  sgp_id: number;
+  target_kp_id: number;
+  qty: number;
+  plate_name?: string;
+  length_m?: number | null;
+  width_m?: number | null;
+  load_class?: number | null;
+  source?: string;
 }
 
 export interface DayViewResponse {
@@ -101,6 +114,8 @@ export type DayDocumentKind = "schema" | "breakdown" | "formovka";
 export interface DayOccupancyResponse {
   occupancy: Record<string, number>;
   max_per_day: number;
+  /** Per-day track cap (overrides); falls back to max_per_day when missing. */
+  max_by_day: Record<string, number>;
 }
 
 export interface KpCandidatePlateItem {
@@ -154,6 +169,14 @@ export interface BuildPlanRequest {
   fill_targets?: FillTargetItem[];
   /** asc — слабые первыми (по умолчанию); desc — сильные первыми (экспериментальный режим). */
   layout_reinforcement_order?: LayoutReinforcementOrder;
+  /** Закрытие потребности со СГП (не уходит в оптимизатор). */
+  sgp_reservations?: SgpReservationItem[];
+}
+
+export interface SgpReservationItem {
+  sgp_id: number;
+  target_kp_id: number;
+  qty: number;
 }
 
 export interface BuildPlanSummary {
@@ -194,4 +217,90 @@ export interface WorkCalendarPayload {
   extra_workdays: string[];
 }
 
-export type ProductionTab = "calendar" | "create" | "plans" | "work-calendar";
+/** Режим сетки месяца: кисть fill_targets vs редактирование max_tracks. */
+export type CalendarViewMode = "planning" | "capacity";
+
+export interface DayCapacityMapResponse {
+  capacity: Record<string, number>;
+}
+
+export interface SaveDayCapacityRequest {
+  date: string;
+  max_tracks: number;
+}
+
+export interface SaveDayCapacityResponse {
+  date: string;
+  max_tracks: number;
+}
+
+export type ProductionTab = "calendar" | "create" | "plans" | "work-calendar" | "sgp";
+// `create` — скрытый programmatic route с корзины календаря (не в ProductionTabs).
+
+/** POST /production/analyze-substrates */
+export interface AnalyzeSubstratesRequest {
+  fill_targets: FillTargetItem[];
+  deadline_until: string;
+}
+
+export interface UrgentDeadlineDetail {
+  type: string;
+  deadline: string;
+  qty: number;
+  batch_name?: string;
+  [key: string]: unknown;
+}
+
+export interface UrgentPosition {
+  plate_id: number;
+  kp_id: number;
+  plate_name: string;
+  qty_remaining: number;
+  deadline: string;
+  deadline_source: string;
+  deadline_details: UrgentDeadlineDetail[];
+  conflict: string | null;
+}
+
+export interface SubstrateRecommendation {
+  plate_id: number;
+  kp_id: number;
+  plate_name: string;
+  qty_recommended: number;
+  under_plate_id: number;
+  under_kp_id: number;
+  under_plate_name: string;
+  needed_by: string;
+  storage_days: number;
+  saving_mm: number;
+  saving_m: number;
+}
+
+export interface CapacityOption {
+  action: "bump_fill" | "propose_day";
+  date: string;
+  add_tracks: number;
+  free: number;
+}
+
+export interface CapacityDeficit {
+  tracks_needed: number;
+  tracks_available: number;
+  tracks_missing: number;
+  deficit_until: string;
+  options: CapacityOption[];
+}
+
+export interface AnalysisMeta {
+  orders_count: number;
+  analysis_duration_ms: number;
+  optimization_status: "ok" | "partial" | "error";
+  error_message: string | null;
+}
+
+export interface AnalyzeSubstratesResponse {
+  urgent_positions: UrgentPosition[];
+  substrate_recommendations: SubstrateRecommendation[];
+  capacity_deficit: CapacityDeficit | null;
+  analysis_meta: AnalysisMeta;
+}

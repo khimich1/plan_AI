@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { Card } from "@/shared/ui/Card";
 import { Alert } from "@/shared/ui/Alert";
 import { Spinner } from "@/shared/ui/Spinner";
 import { ArchiveSectionTabs } from "@/features/commercial-archive/components/ArchiveSectionTabs";
+import { ArchiveProductTypeFilterTabs } from "@/features/commercial-archive/components/ArchiveProductTypeFilter";
 import { ArchiveOfferList } from "@/features/commercial-archive/components/ArchiveOfferList";
 import { ArchiveSearchBar } from "@/features/commercial-archive/components/ArchiveSearchBar";
 import { OfferDetailsDrawer } from "@/features/commercial-archive/components/OfferDetailsDrawer";
@@ -14,12 +15,43 @@ import {
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import type {
   ArchiveOfferListItem,
+  ArchiveProductTypeFilter,
   ArchiveSearchState,
   ArchiveSection,
+  ProductType,
 } from "@/features/commercial-archive/types/archive";
 import { getErrorMessage } from "@/shared/lib/apiError";
 
 const VALID_SECTIONS: readonly ArchiveSection[] = ["archived", "in_production", "completed"];
+
+/** Concrete types for contains-type filter (never the literal "mixed" token). */
+export const concreteProductTypes = (item: ArchiveOfferListItem): ProductType[] => {
+  const fromList = (item.product_types ?? []).filter(
+    (type): type is ProductType => Boolean(type) && type !== "mixed",
+  );
+  if (fromList.length > 0) {
+    return fromList;
+  }
+  if (item.product_type && item.product_type !== "mixed") {
+    return [item.product_type];
+  }
+  // Legacy mono without product_type defaults to plates; bare "mixed" has no concrete types.
+  if (!item.product_type) {
+    return ["plates"];
+  }
+  return [];
+};
+
+/** Contains-type match for client-side search results (list trusts API filter). */
+export const filterByProductType = (
+  items: ArchiveOfferListItem[],
+  productTypeFilter: ArchiveProductTypeFilter,
+): ArchiveOfferListItem[] => {
+  if (productTypeFilter === "all") {
+    return items;
+  }
+  return items.filter((item) => concreteProductTypes(item).includes(productTypeFilter));
+};
 
 const parseSection = (value: string | null): ArchiveSection => {
   if (value && (VALID_SECTIONS as readonly string[]).includes(value)) {
@@ -28,11 +60,13 @@ const parseSection = (value: string | null): ArchiveSection => {
   return "archived";
 };
 
-const sectionFromStatus = (item: ArchiveOfferListItem): ArchiveSection => {
+export const sectionFromStatus = (item: ArchiveOfferListItem): ArchiveSection => {
   switch (item.status) {
     case "в архиве":
       return "archived";
     case "в работе":
+      return "in_production";
+    case "На СГП":
       return "in_production";
     case "выполнено":
       return "completed";
@@ -57,8 +91,9 @@ export const CommercialOfferArchivePage = () => {
 
   const [selectedKpId, setSelectedKpId] = useState<number | null>(null);
   const [searchState, setSearchState] = useState<ArchiveSearchState>(null);
+  const [productTypeFilter, setProductTypeFilter] = useState<ArchiveProductTypeFilter>("all");
 
-  const listQuery = useArchiveListQuery(section);
+  const listQuery = useArchiveListQuery(section, productTypeFilter);
   const searchQuery = useArchiveSearchQuery(searchState);
 
   useEffect(() => {
@@ -72,7 +107,8 @@ export const CommercialOfferArchivePage = () => {
     setSearchState(null);
   };
 
-  const filteredItems = useMemo(() => listQuery.data ?? [], [listQuery.data]);
+  // Section list is already filtered server-side (contains-type); do not re-filter client-side.
+  const listItems = listQuery.data ?? [];
 
   return (
     <main style={{ maxWidth: 1280, margin: "0 auto", padding: "2rem 1rem 4rem" }}>
@@ -96,6 +132,7 @@ export const CommercialOfferArchivePage = () => {
           >
             <div style={{ display: "grid", gap: "0.75rem", flex: "1 0 320px" }}>
               <ArchiveSectionTabs value={section} onChange={onSectionChange} />
+              <ArchiveProductTypeFilterTabs value={productTypeFilter} onChange={setProductTypeFilter} />
               <ArchiveSearchBar
                 activeQuery={searchState}
                 onSubmit={setSearchState}
@@ -126,7 +163,11 @@ export const CommercialOfferArchivePage = () => {
                 )}
                 <ArchiveOfferList
                   section={section}
-                  items={searchQuery.data.items}
+                  items={filterByProductType(
+                    // Archive page: admin/manager only — full commercial items.
+                    searchQuery.data.items as ArchiveOfferListItem[],
+                    productTypeFilter,
+                  )}
                   onSelect={(kpId) => setSelectedKpId(kpId)}
                   sectionForItem={sectionFromStatus}
                 />
@@ -145,7 +186,7 @@ export const CommercialOfferArchivePage = () => {
           {!listQuery.isPending && !listQuery.isError && (
             <ArchiveOfferList
               section={section}
-              items={filteredItems}
+              items={listItems}
               onSelect={(kpId) => setSelectedKpId(kpId)}
             />
           )}

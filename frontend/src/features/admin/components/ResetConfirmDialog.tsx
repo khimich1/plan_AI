@@ -3,6 +3,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { Alert } from "@/shared/ui/Alert";
 import { getErrorMessage } from "@/shared/lib/apiError";
+import { getDestructiveResetErrorMessage } from "@/features/admin/lib/destructiveResetError";
 
 type Props = {
   open: boolean;
@@ -43,6 +44,7 @@ export const ResetConfirmDialog = ({
   const keywordOk =
     !confirmKeyword || typedKeyword.trim() === confirmKeyword;
   const disabled = isPending || !keywordOk;
+  const destructiveResetHint = getDestructiveResetErrorMessage(error);
 
   return (
     <Modal open={open} onClose={onClose} title={title} maxWidth={520}>
@@ -71,7 +73,14 @@ export const ResetConfirmDialog = ({
           </label>
         )}
 
-        {isError && <Alert tone="error">{getErrorMessage(error)}</Alert>}
+        {isError && (
+          <>
+            <Alert tone="error">{getErrorMessage(error)}</Alert>
+            {destructiveResetHint && (
+              <Alert tone="info">{destructiveResetHint}</Alert>
+            )}
+          </>
+        )}
 
         <div
           style={{

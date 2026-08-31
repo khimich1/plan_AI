@@ -32,6 +32,7 @@ class KpRepository:
         order_data: Sequence[dict] | None = None,
         xlsx_path: str | None = None,
         owner_user_id: int | None = None,
+        product_type: str = "plates",
     ) -> int:
         return offers_write.save_kp_to_db(
             creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
@@ -46,6 +47,38 @@ class KpRepository:
             execution_terms=execution_terms,
             status=status,
             owner_user_id=owner_user_id,
+            product_type=product_type,
+            db_path=self.db_path,
+        )
+
+    def update_offer_from_order_data(
+        self,
+        kp_id: int,
+        order_data: Sequence[dict] | None = None,
+        *,
+        customer_name: str | None = None,
+        manager_name: str | None = None,
+        discount_percent: float | None = None,
+        logistics_cost: float | None = None,
+        delivery_conditions: str | None = None,
+        payment_conditions: str | None = None,
+        execution_terms: str | None = None,
+        xlsx_path: str | None = None,
+        product_type: str = "plates",
+    ) -> int:
+        """Append/update existing KP by ``line_id`` (same ``kp_id``)."""
+        return offers_write.update_kp_from_order_data(
+            kp_id,
+            list(order_data or []),
+            xlsx_file_path=xlsx_path,
+            customer_name=customer_name,
+            manager_name=manager_name,
+            discount_percent=discount_percent,
+            logistics_cost=logistics_cost,
+            delivery_conditions=delivery_conditions,
+            payment_conditions=payment_conditions,
+            execution_terms=execution_terms,
+            product_type=product_type,
             db_path=self.db_path,
         )
 
@@ -70,9 +103,6 @@ class KpRepository:
 
     def get_offer(self, kp_id: int) -> dict | None:
         return self._offers.get_by_id(kp_id)
-
-    def get_next_kp_number(self) -> int:
-        return kp_db.get_next_kp_number(self.db_path)
 
     def update_offer_discount(self, kp_id: int, discount_percent: float) -> bool:
         return offers_write.update_kp_discount(kp_id, discount_percent, self.db_path)
@@ -109,11 +139,16 @@ class KpRepository:
 
     def list_kps_in_production(self) -> list[dict]:
         """Возвращает список КП со статусом 'в работе' с метриками выполнения."""
+        # Include mono plates and mixed-with-plates; exclude non-plate KPs
+        # (piles/FBS/etc.) via presence of kp_plates rows, not product_type alone.
         query = """
         SELECT o.kp_id, o.customer_name, o.creation_date, o.execution_terms
         FROM KP_offers o
         JOIN kp_meta m ON m.kp_id = o.kp_id
         WHERE m.status = 'в работе'
+          AND EXISTS (
+              SELECT 1 FROM kp_plates p WHERE p.kp_id = o.kp_id
+          )
         ORDER BY o.kp_id ASC
         """
         result: list[dict] = []
@@ -175,3 +210,67 @@ class KpRepository:
                 }
             )
         return result
+
+    def get_plate_qty_remaining(self, plate_id: int) -> int:
+        """Unplanned remaining qty for a single ``kp_plates`` row.
+
+        Formula (per-row)::
+
+            qty − Σ(qty WHERE id=plate_id AND status='в плане' AND plan_id IS NOT NULL)
+
+        After the split model this is the row ``qty`` when the plate is still in
+        production or stuck ``в плане`` without ``plan_id``; actively planned
+        rows (``в плане`` + ``plan_id``) yield ``0``. Missing ``plate_id``
+        returns ``0``.
+        """
+        query = """
+        SELECT
+            p.qty - COALESCE((
+                SELECT SUM(q.qty)
+                FROM kp_plates q
+                WHERE q.id = p.id
+                  AND q.status = ?
+                  AND q.plan_id IS NOT NULL
+            ), 0) AS qty_remaining
+        FROM kp_plates p
+        WHERE p.id = ?
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (PlateStatus.IN_PLAN.value, plate_id))
+            row = cursor.fetchone()
+            if row is None:
+                return 0
+            return int(row[0] or 0)
+
+    def list_delivery_batch_items_for_in_production_plates(self) -> list[dict]:
+        """Cross-KP delivery batch lines for plates still ``в производстве``.
+
+        Returns dicts with keys ``plate_id``, ``produce_by``, ``qty``,
+        ``batch_name``. SQL stays in the repository so services stay I/O-thin.
+        """
+        query = """
+        SELECT
+            i.plate_id AS plate_id,
+            b.produce_by AS produce_by,
+            i.qty AS qty,
+            b.name AS batch_name
+        FROM delivery_batch_item i
+        JOIN delivery_batch b ON b.id = i.batch_id
+        JOIN kp_plates p ON p.id = i.plate_id
+        WHERE p.status = ?
+        ORDER BY i.plate_id ASC, b.produce_by ASC, i.id ASC
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(query, (PlateStatus.IN_PRODUCTION.value,))
+            return [
+                {
+                    "plate_id": int(row["plate_id"]),
+                    "produce_by": row["produce_by"],
+                    "qty": int(row["qty"]),
+                    "batch_name": row["batch_name"],
+                }
+                for row in cursor.fetchall()
+            ]

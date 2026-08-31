@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.domain.models.optimization_context import OptimizationContext
@@ -12,6 +12,7 @@ from app.repositories.manager_repository import ManagerRepository
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
 from app.services.plate_parser_service import PlateParserService
+from core.commercial_offer_xlsx import DB_PATH
 from core.config_and_data import (
     load_code_for_price_match,
     make_plate_name,
@@ -30,6 +31,7 @@ from core.ports.visualization import (
     build_procurement_items,
     load_price_table_from_xlsx,
 )
+from core.unpriced_plate_replacements import build_unpriced_plate_lines
 
 
 @dataclass
@@ -40,6 +42,7 @@ class CommercialPreviewResult:
     price_rows: list
     breakdown_tables: list[dict[str, Any]]
     total_sum: float
+    unpriced_plate_lines: list[dict[str, Any]] = field(default_factory=list)
 
 
 class CommercialService:
@@ -97,6 +100,11 @@ class CommercialService:
             current_parse_result,
         )
         order_data = enrich_order_data_with_nomenclature(order_data)
+        unpriced_plate_lines = build_unpriced_plate_lines(
+            order_data,
+            db_path=str(DB_PATH),
+            normalized_lines=list(current_parse_result.normalized_lines),
+        )
         return CommercialPreviewResult(
             parse_result=current_parse_result,
             optimization_context=optimization_context,
@@ -104,6 +112,7 @@ class CommercialService:
             price_rows=price_rows,
             breakdown_tables=breakdown_tables,
             total_sum=float(total_sum),
+            unpriced_plate_lines=unpriced_plate_lines,
         )
 
     def _build_order_data(
@@ -148,14 +157,15 @@ class CommercialService:
 
             item_ldr = item.get("length_dm_raw") or ""
             name = make_plate_name(length_m, width_m, load_code=load_code, length_dm_raw=item_ldr or None)
-            unit_price = 0.0
+            unit_price: float | None = None
             length_dm_raw = item_ldr
             if matching_row:
                 name = matching_row[1]
                 try:
-                    unit_price = float(str(matching_row[7]).replace(" ", "").replace(",", "."))
+                    parsed_price = float(str(matching_row[7]).replace(" ", "").replace(",", "."))
+                    unit_price = parsed_price if parsed_price > 0 else None
                 except (TypeError, ValueError):
-                    unit_price = 0.0
+                    unit_price = None
                 match = re.search(r"ПБ\s+([\d,]+)-", name)
                 if match:
                     length_dm_raw = match.group(1).strip()

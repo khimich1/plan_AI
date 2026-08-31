@@ -11,9 +11,8 @@ import os
 import re
 import sqlite3
 
-from core.config_and_data import parse_name_to_sizes
 from core.project_paths import BASE_DIR, PRICE_DB_PATH, PRICE_XLSX_PATH
-from core.price_db import length_m_to_price_length_dm
+from core.price_db import length_m_to_price_length_dm, parse_plate_price_rows_from_xlsx
 
 try:
     import pandas as pd
@@ -31,7 +30,7 @@ def load_price_table_from_xlsx(path: str):
     table = {}
     if pd is None:
         return table
-    
+
     candidate_paths = []
     if os.path.exists(path):
         candidate_paths = [path]
@@ -48,115 +47,29 @@ def load_price_table_from_xlsx(path: str):
                 low = name.lower()
                 if low.endswith('.xlsx') and ('нов' in low and 'цен' in low):
                     candidate_paths.append(os.path.join(d, name))
-    
+
     if not candidate_paths:
         print('[ПРАЙС] Файл не найден. Искал около:', path)
         return table
-    
-    try:
-        chosen = None
-        for p in candidate_paths:
-            try:
-                all_sheets = pd.read_excel(p, sheet_name=None)
-                chosen = p
-                break
-            except Exception:
-                continue
-        
-        if chosen is None:
-            print('[ПРАЙС] Не удалось открыть ни один XLSX из кандидатов:', candidate_paths)
-            return {}
-        else:
-            print('[ПРАЙС] Использую прайс-файл:', chosen)
-        
-        preferred_sheet = None
-        for s in list(all_sheets.keys()):
-            if '24.06.2024' in str(s):
-                preferred_sheet = s
-                break
-        sheets_iter = [preferred_sheet] if preferred_sheet in all_sheets else list(all_sheets.keys())
-        
-        for sheet_name in sheets_iter:
-            df = all_sheets[sheet_name]
-            try:
-                print(f"[ПРАЙС] Лист: {sheet_name} | колонки: {[str(c) for c in df.columns]}")
-            except Exception:
-                pass
-            
-            name_col = next((c for c in df.columns if str(c).strip().lower() == 'наименование'), None) or \
-                       next((c for c in df.columns if 'наимен' in str(c).lower()), None)
-            if name_col is None:
-                continue
-            
-            load_cols = {}
-            header_map = {6: None, 8: None, 10: None, 12: None}
-            for c in df.columns:
-                cl = str(c).strip().lower()
-                if cl == '6 нагрузка':
-                    header_map[6] = c
-                elif cl == '8 нагрузка':
-                    header_map[8] = c
-                elif cl == '10 нагрузка':
-                    header_map[10] = c
-                elif cl == '12 нагрузка':
-                    header_map[12] = c
-            
-            for k,v in header_map.items():
-                if v is not None:
-                    load_cols[k] = v
-            
-            simple_price_col = next((c for c in df.columns if any(k in str(c).lower() for k in ['цен', 'руб', 'стоим'])), None)
-            for c in df.columns:
-                cl = str(c).lower()
-                m = re.search(r'(\d+)\s*нагруз', cl)
-                if m:
-                    load_cols[int(m.group(1))] = c
-                    continue
-                m2 = re.search(r'(?:цен|руб|стоим)[^\d]{0,10}(6|8|10|12)\b', cl)
-                if not m2:
-                    m2 = re.search(r'\b(6|8|10|12)[^\d]{0,10}(?:цен|руб|стоим)', cl)
-                if m2:
-                    try:
-                        load_cols[int(m2.group(1))] = c
-                    except Exception:
-                        pass
-            
-            found_rows = 0
-            for _, row in df.iterrows():
-                name = str(row.get(name_col, '')).strip()
-                if not name:
-                    continue
-                L, _ = parse_name_to_sizes(name)
-                if L is None:
-                    continue
-                key = int(round(L*10))
-                price_by_load = {}
-                if load_cols:
-                    for load_code, col in load_cols.items():
-                        try:
-                            val = row[col]
-                            if pd.notna(val):
-                                price_by_load[load_code] = float(str(val).replace(' ', '').replace(',', '.'))
-                        except Exception:
-                            pass
-                elif simple_price_col is not None:
-                    try:
-                        val = row[simple_price_col]
-                        if pd.notna(val):
-                            price_val = float(str(val).replace(' ', '').replace(',', '.'))
-                            for load_code in [6, 8, 10, 12]:
-                                price_by_load[load_code] = price_val
-                    except Exception:
-                        pass
-                if price_by_load:
-                    table[key] = price_by_load
-                    found_rows += 1
-            try:
-                print(f"[ПРАЙС] Считано позиций на листе: {found_rows}")
-            except Exception:
-                pass
-    except Exception:
-        return {}
+
+    chosen = None
+    for p in candidate_paths:
+        try:
+            pd.read_excel(p, sheet_name=None)
+            chosen = p
+            break
+        except Exception:
+            continue
+
+    if chosen is None:
+        print('[ПРАЙС] Не удалось открыть ни один XLSX из кандидатов:', candidate_paths)
+        return table
+
+    print('[ПРАЙС] Использую прайс-файл:', chosen)
+    rows = parse_plate_price_rows_from_xlsx(chosen)
+    for length_dm, load_code, price in rows:
+        table.setdefault(int(length_dm), {})[int(load_code)] = float(price)
+    print(f"[ПРАЙС] Считано позиций: {len({length_dm for length_dm, _, _ in rows})}")
     return table
 
 

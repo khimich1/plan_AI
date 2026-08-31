@@ -17,8 +17,8 @@ from tests.helpers.auth_fixtures import patch_auth_users
 from app.security.session import create_session_token
 from app.services.draft_store import DraftStore
 from core import commercial_offer, commercial_offer_xlsx
-from core.commercial_pricing import ensure_order_priced
-from core.exceptions import UnpricedPlatesError
+from core.commercial_pricing import ensure_order_priced, lookup_plate_price
+from core.exceptions import PriceNotFoundError, UnpricedPlatesError
 
 
 def _create_empty_price_db(path: Path) -> None:
@@ -27,6 +27,18 @@ def _create_empty_price_db(path: Path) -> None:
         cur = conn.cursor()
         cur.execute(
             "CREATE TABLE prices (length_dm INTEGER, load_code INTEGER, price REAL, PRIMARY KEY(length_dm, load_code))"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _insert_price(path: Path, *, length_dm: int, load_code: int, price: float) -> None:
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "INSERT INTO prices (length_dm, load_code, price) VALUES (?, ?, ?)",
+            (length_dm, load_code, price),
         )
         conn.commit()
     finally:
@@ -68,6 +80,31 @@ def auth_cookie(client: TestClient) -> dict[str, str]:
     token = create_session_token({"id": 1, "username": "tester", "role": "admin"}, ttl_seconds=300)
     client.cookies.set("app_session", token)
     return {"app_session": token}
+
+
+def test_lookup_plate_price_raises_when_db_price_is_zero(tmp_path: Path) -> None:
+    db_path = tmp_path / "pb.db"
+    _create_empty_price_db(db_path)
+    _insert_price(db_path, length_dm=75, load_code=12, price=0.0)
+
+    with pytest.raises(PriceNotFoundError):
+        lookup_plate_price(7.5, 1.2, 1200, db_path=str(db_path))
+
+
+def test_lookup_plate_price_returns_positive_price(tmp_path: Path) -> None:
+    db_path = tmp_path / "pb.db"
+    _create_empty_price_db(db_path)
+    _insert_price(db_path, length_dm=70, load_code=12, price=29210.0)
+
+    assert lookup_plate_price(7.0, 1.2, 1200, db_path=str(db_path)) == pytest.approx(29210.0)
+
+
+def test_lookup_plate_price_raises_when_row_missing(tmp_path: Path) -> None:
+    db_path = tmp_path / "pb.db"
+    _create_empty_price_db(db_path)
+
+    with pytest.raises(PriceNotFoundError):
+        lookup_plate_price(9.9, 1.2, 800, db_path=str(db_path))
 
 
 def test_ensure_order_priced_raises_with_position_labels(

@@ -204,10 +204,26 @@ def get_plate_price(length_m: float, width_m: float, load_class: int = 800) -> f
     return lookup_plate_price(length_m, width_m, load_class, db_path=DB_PATH)
 
 
+from core.commercial_line_format import format_line_name  # noqa: E402
+from core.commercial_offer_layout import (  # noqa: E402
+    commercial_offer_table_headers,
+    is_unified_commercial_document,
+    line_product_type,
+    product_type_label,
+)
 from core.commercial_pricing import (  # noqa: E402
-    VAT_RATE,
     calculate_total_cost as _calculate_total_cost,
     format_phone,
+    is_bridge_pile_order,
+    is_fbs_order,
+    is_march_order,
+    is_pile_order,
+    is_step_order,
+    lookup_bridge_pile_price,
+    lookup_fbs_price,
+    lookup_march_price,
+    lookup_pile_price,
+    lookup_step_price,
 )
 
 
@@ -236,6 +252,45 @@ def _format_payment_conditions_text(payment_conditions: Optional[str]) -> str:
     return "2. Условия оплаты: Предварительная оплата в размере 100%"
 
 
+def _format_money_ru(value: float) -> str:
+    return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", " ")
+
+
+def _resolve_line_unit_price(item: Dict, *, order_mode: str) -> float:
+    """Resolve unit price for one line (unified uses per-line type)."""
+    if "unit_price" in item and item["unit_price"] is not None:
+        return float(item["unit_price"])
+
+    pt = line_product_type(item) if order_mode == "unified" else order_mode
+    mark = str(item.get("mark") or item.get("name") or "").strip()
+    grade = str(item.get("concrete_grade") or "B25").strip()
+
+    if pt in ("piles", "pile"):
+        return lookup_pile_price(mark, grade, db_path=DB_PATH)
+    if pt in ("bridge_piles", "bridge_pile"):
+        return lookup_bridge_pile_price(mark, grade, db_path=DB_PATH)
+    if pt == "fbs":
+        return lookup_fbs_price(mark, grade, db_path=DB_PATH)
+    if pt in ("marches", "march"):
+        return lookup_march_price(mark, grade, db_path=DB_PATH)
+    if pt in ("steps", "step"):
+        return lookup_step_price(mark, db_path=DB_PATH)
+
+    name_raw = item.get("name", "Плиты ПБ")
+    length_m = item.get("length_m", 0)
+    width_m = item.get("width_m", 0)
+    load_class = item.get("load_class")
+    if load_class is None:
+        try:
+            from config_and_data import parse_load_code_from_name
+        except ImportError:
+            load_class = 800
+        else:
+            load_code = parse_load_code_from_name(name_raw, default=8)
+            load_class = max(1, load_code) * 100
+    return get_plate_price(length_m, width_m, load_class)
+
+
 def generate_commercial_offer_pdf(
     order_data: List[Dict],
     offer_number: str,
@@ -249,6 +304,7 @@ def generate_commercial_offer_pdf(
     logistics_cost: float = 0.0,
     delivery_conditions: Optional[str] = None,
     payment_conditions: Optional[str] = None,
+    append_batches: Optional[List[Dict]] = None,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -267,6 +323,7 @@ def generate_commercial_offer_pdf(
         logistics_cost: стоимость одного рейса (без НДС по плитам; итог доставки = рейс × ceil(вес/18600))
         delivery_conditions: условия поставки (пусто — только заголовок, как в XLSX)
         payment_conditions: условия оплаты (пусто — стандартный текст 100% предоплаты)
+        append_batches: metadata заходов (для unified при multi-append одного типа)
     
     Note:
         Детальная разбивка компонентов НЕ включается в PDF.
@@ -382,17 +439,7 @@ def generate_commercial_offer_pdf(
         fontSize=12,
         leading=16
     )
-    
-    style_note = ParagraphStyle(
-        'Note',
-        parent=styles['Normal'],
-        fontName=FONT_NORMAL,
-        fontSize=9,
-        leading=12,
-        textColor=colors.HexColor('#333333'),
-        spaceBefore=2 * mm
-    )
-    
+
     story = []
     
     # Логотип (плашка)
@@ -449,51 +496,88 @@ def generate_commercial_offer_pdf(
     story.append(Paragraph(customer_display, style_customer))
     
     story.append(Spacer(1, 6 * mm))
-    
-    table_data = [['№', 'Наименование', 'Кол-во', 'Ед.', 'Вес(кг)', 'Цена', 'Сумма']]
-    
+
+    unified = is_unified_commercial_document(order_data, append_batches=append_batches)
+    pile_order = is_pile_order(order_data)
+    bridge_pile_order = is_bridge_pile_order(order_data)
+    fbs_order = is_fbs_order(order_data)
+    march_order = is_march_order(order_data)
+    step_order = is_step_order(order_data)
+
+    headers = commercial_offer_table_headers(order_data, append_batches=append_batches)
+    table_data = [list(headers)]
+
     trip_cost = max(0.0, float(logistics_cost or 0.0))
     totals = calculate_total_cost(order_data, discount_percent, logistics_cost=trip_cost)
     total_weight = 0.0
-    
-    for idx, item in enumerate(order_data, start=1):
-        name_raw = item.get('name', 'Плиты ПБ')
-        name = escape(name_raw)
-        qty = item.get('qty', 0)
-        length_m = item.get('length_m', 0)
-        width_m = item.get('width_m', 0)
-        load_class = item.get('load_class')
 
-        # 🔥 ПРИОРИТЕТ: Если цена уже рассчитана (с учётом резов/отходов), используем её!
-        if 'unit_price' in item and item['unit_price'] is not None:
-            unit_price = item['unit_price']
-        else:
-            # Fallback: старая логика (только базовая цена из БД)
-            # Если класс нагрузки явно не передан, пробуем вытащить его из имени плиты.
-            # Формат имени: "Плиты ПБ 71-12-10п", "ПБ 69-12-12,5п" и т.п.
-            if load_class is None:
-                try:
-                    from config_and_data import parse_load_code_from_name
-                except ImportError:
-                    load_class = 800
-                else:
-                    load_code = parse_load_code_from_name(name_raw, default=8)
-                    load_class = max(1, load_code) * 100  # 8 -> 800, 10 -> 1000 и т.п.
-            
-            unit_price = get_plate_price(length_m, width_m, load_class)
-        
-        # Применяем скидку к цене (если указана)
+    if unified:
+        order_mode = "unified"
+    elif pile_order:
+        order_mode = "piles"
+    elif bridge_pile_order:
+        order_mode = "bridge_piles"
+    elif fbs_order:
+        order_mode = "fbs"
+    elif march_order:
+        order_mode = "marches"
+    elif step_order:
+        order_mode = "steps"
+    else:
+        order_mode = "plates"
+
+    for idx, item in enumerate(order_data, start=1):
+        qty = item.get('qty', 0)
+        unit_price = _resolve_line_unit_price(item, order_mode=order_mode)
         discounted_price = unit_price * (1 - discount_percent / 100)
         item_sum = discounted_price * qty
-        
-        # Вес: plate_weights по размерам (нагрузка не учитывается), иначе approximate; как в XLSX
+        price_str = _format_money_ru(discounted_price)
+        sum_str = _format_money_ru(item_sum)
+
+        if unified:
+            pt = line_product_type(item)
+            if pt == "plates":
+                _, line_kg = resolve_kp_line_weight_kg(item)
+                total_weight += line_kg
+            table_data.append([
+                str(idx),
+                escape(product_type_label(pt)),
+                Paragraph(escape(format_line_name(item)), style_table_text),
+                str(qty),
+                price_str,
+                sum_str,
+            ])
+            continue
+
+        if pile_order or bridge_pile_order or fbs_order or march_order:
+            mark_raw = str(item.get('mark') or item.get('name') or '')
+            grade_raw = str(item.get('concrete_grade') or 'B25')
+            table_data.append([
+                str(idx),
+                Paragraph(escape(mark_raw), style_table_text),
+                escape(grade_raw),
+                str(qty),
+                price_str,
+                sum_str,
+            ])
+            continue
+
+        if step_order:
+            mark_raw = str(item.get('mark') or item.get('name') or '')
+            table_data.append([
+                str(idx),
+                Paragraph(escape(mark_raw), style_table_text),
+                str(qty),
+                price_str,
+                sum_str,
+            ])
+            continue
+
+        name_raw = item.get('name', 'Плиты ПБ')
+        name = escape(name_raw)
         _, total_item_weight = resolve_kp_line_weight_kg(item)
         total_weight += total_item_weight
-        
-        weight_str = f"{total_item_weight:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-        price_str = f"{discounted_price:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-        sum_str = f"{item_sum:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-        
+        weight_str = _format_money_ru(total_item_weight)
         table_data.append([
             str(idx),
             Paragraph(name, style_table_text),
@@ -504,47 +588,103 @@ def generate_commercial_offer_pdf(
             sum_str
         ])
 
-    delivery_trips = cargo_delivery_trips_count(total_weight)
-    if trip_cost > 0 and delivery_trips > 0:
-        delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
-        trip_str = f"{trip_cost:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-        delivery_total_str = f"{delivery_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-        table_data.append(
-            [
-                str(len(table_data)),
-                Paragraph(escape("Услуга по доставке грузов"), style_table_text),
-                str(delivery_trips),
-                "рейс",
-                "0,00",
-                trip_str,
-                delivery_total_str,
-            ]
-        )
+    if unified:
+        plates_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
+        total_weight = plates_kg
+        delivery_trips = cargo_delivery_trips_count(plates_kg)
+        if trip_cost > 0 and delivery_trips > 0:
+            delivery_total = delivery_service_charge_rub(trip_cost, plates_kg)
+            table_data.append(
+                [
+                    str(len(table_data)),
+                    "",
+                    Paragraph(escape("Услуга по доставке грузов"), style_table_text),
+                    str(delivery_trips),
+                    _format_money_ru(trip_cost),
+                    _format_money_ru(delivery_total),
+                ]
+            )
+    elif not pile_order and not bridge_pile_order and not fbs_order and not march_order and not step_order:
+        delivery_trips = cargo_delivery_trips_count(total_weight)
+        if trip_cost > 0 and delivery_trips > 0:
+            delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
+            trip_str = _format_money_ru(trip_cost)
+            delivery_total_str = _format_money_ru(delivery_total)
+            table_data.append(
+                [
+                    str(len(table_data)),
+                    Paragraph(escape("Услуга по доставке грузов"), style_table_text),
+                    str(delivery_trips),
+                    "рейс",
+                    "0,00",
+                    trip_str,
+                    delivery_total_str,
+                ]
+            )
     
     no_width = 10 * mm
     qty_width = 14 * mm
-    unit_width = 11 * mm
-    weight_width = 20 * mm
     price_width = 25 * mm
     sum_width = 25 * mm
-    
-    fixed_total = no_width + qty_width + unit_width + weight_width + price_width + sum_width
-    name_width = content_width - fixed_total
-    
-    if name_width <= 0:
-        ratios = (0.05, 0.45, 0.08, 0.06, 0.18, 0.09, 0.09)
-        col_widths = [content_width * ratio for ratio in ratios]
+
+    if unified:
+        type_width = 18 * mm
+        fixed_total = no_width + type_width + qty_width + price_width + sum_width
+        name_width = content_width - fixed_total
+        if name_width <= 0:
+            ratios = (0.05, 0.12, 0.43, 0.10, 0.15, 0.15)
+            col_widths = [content_width * ratio for ratio in ratios]
+        else:
+            col_widths = [no_width, type_width, name_width, qty_width, price_width, sum_width]
+    elif pile_order or bridge_pile_order or fbs_order or march_order:
+        grade_width = 28 * mm
+        fixed_total = no_width + grade_width + qty_width + price_width + sum_width
+        name_width = content_width - fixed_total
+        if name_width <= 0:
+            ratios = (0.05, 0.40, 0.15, 0.10, 0.15, 0.15)
+            col_widths = [content_width * ratio for ratio in ratios]
+        else:
+            col_widths = [no_width, name_width, grade_width, qty_width, price_width, sum_width]
+    elif step_order:
+        fixed_total = no_width + qty_width + price_width + sum_width
+        name_width = content_width - fixed_total
+        if name_width <= 0:
+            ratios = (0.05, 0.50, 0.15, 0.15, 0.15)
+            col_widths = [content_width * ratio for ratio in ratios]
+        else:
+            col_widths = [no_width, name_width, qty_width, price_width, sum_width]
     else:
-        col_widths = [
-            no_width,
-            name_width,
-            qty_width,
-            unit_width,
-            weight_width,
-            price_width,
-            sum_width
-        ]
+        unit_width = 11 * mm
+        weight_width = 20 * mm
+        fixed_total = no_width + qty_width + unit_width + weight_width + price_width + sum_width
+        name_width = content_width - fixed_total
+        if name_width <= 0:
+            ratios = (0.05, 0.45, 0.08, 0.06, 0.18, 0.09, 0.09)
+            col_widths = [content_width * ratio for ratio in ratios]
+        else:
+            col_widths = [
+                no_width,
+                name_width,
+                qty_width,
+                unit_width,
+                weight_width,
+                price_width,
+                sum_width
+            ]
     
+    if unified:
+        body_align = [
+            ('ALIGN', (0, 1), (1, -1), 'CENTER'),
+            ('ALIGN', (3, 1), (3, -1), 'CENTER'),
+            ('ALIGN', (4, 1), (-1, -1), 'RIGHT'),
+        ]
+    else:
+        body_align = [
+            ('ALIGN', (0, 1), (0, -1), 'CENTER'),
+            ('ALIGN', (2, 1), (3, -1), 'CENTER'),
+            ('ALIGN', (4, 1), (-1, -1), 'RIGHT'),
+        ]
+
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0f0f0')),
@@ -557,9 +697,7 @@ def generate_commercial_offer_pdf(
         
         ('FONTNAME', (0, 1), (-1, -1), FONT_NORMAL),
         ('FONTSIZE', (0, 1), (-1, -1), 10),
-        ('ALIGN', (0, 1), (0, -1), 'CENTER'),
-        ('ALIGN', (2, 1), (3, -1), 'CENTER'),
-        ('ALIGN', (4, 1), (-1, -1), 'RIGHT'),
+        *body_align,
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
@@ -578,9 +716,9 @@ def generate_commercial_offer_pdf(
     
     total_items = len(table_data) - 1
     weight_summary = f"{total_weight:,.3f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-    subtotal_str = f"{totals['subtotal']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-    total_with_vat_str = f"{totals['total_with_vat']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
-    vat_str = f"{totals['vat_amount']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
+    subtotal_str = _format_money_ru(totals['subtotal'])
+    total_with_vat_str = _format_money_ru(totals['total_with_vat'])
+    vat_str = _format_money_ru(totals['vat_amount'])
     
     # Основная итоговая строка
     summary_text = (
@@ -618,14 +756,7 @@ def generate_commercial_offer_pdf(
     # Подпись менеджера (только имя, контакты теперь в шапке)
     story.append(Paragraph("С уважением,", style_signature_label))
     story.append(Paragraph(manager_name or "Менеджер", style_signature))
-    
-    story.append(Paragraph(
-        'Доборные плиты ПБ отгружаются только при наличии в наименовании "+доб", '
-        "для получения доборов, просим сообщить Вашему менеджеру до начала изготовления.<br/>"
-        "Все доборы по умолчанию отправляем на утилизацию.",
-        style_note
-    ))
-    
+
     doc.build(story)
     buffer.seek(0)
     return buffer

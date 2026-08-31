@@ -1,6 +1,7 @@
 import type {
   ArchiveOfferListItem,
   ArchiveSection,
+  ProductType,
 } from "@/features/commercial-archive/types/archive";
 import { formatMoney, truncate } from "@/features/commercial-archive/lib/format";
 
@@ -10,6 +11,57 @@ type Props = {
   onSelect: (kpId: number) => void;
   sectionForItem?: (item: ArchiveOfferListItem) => ArchiveSection;
   emptyMessage?: string;
+};
+
+const productTypeBadge = (productType: ProductType | undefined): string => {
+  if (productType === "piles") {
+    return "Сваи";
+  }
+  if (productType === "steps") {
+    return "Ступени";
+  }
+  if (productType === "marches") {
+    return "Марши";
+  }
+  if (productType === "bridge_piles") {
+    return "Мостовые сваи";
+  }
+  if (productType === "fbs") {
+    return "ФБС";
+  }
+  return "Плиты";
+};
+
+const productTypeBadgeStyle = (productType: ProductType | undefined): { background: string; color: string } => {
+  if (productType === "piles") {
+    return { background: "#ecfdf3", color: "#027a48" };
+  }
+  if (productType === "steps") {
+    return { background: "#fff6ed", color: "#b54708" };
+  }
+  if (productType === "marches") {
+    return { background: "#f4f3ff", color: "#5925dc" };
+  }
+  if (productType === "bridge_piles") {
+    return { background: "#f0f9ff", color: "#026aa2" };
+  }
+  if (productType === "fbs") {
+    return { background: "#eef4ff", color: "#3538cd" };
+  }
+  return { background: "#eef4ff", color: "#1d4ed8" };
+};
+
+const resolveBadgeTypes = (item: ArchiveOfferListItem): ProductType[] => {
+  const fromList = (item.product_types ?? []).filter(
+    (type): type is ProductType => Boolean(type) && type !== "mixed",
+  );
+  if (fromList.length > 0) {
+    return fromList;
+  }
+  if (item.product_type && item.product_type !== "mixed") {
+    return [item.product_type];
+  }
+  return ["plates"];
 };
 
 const rowStyle: React.CSSProperties = {
@@ -91,7 +143,37 @@ export const ArchiveOfferList = ({
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
-              <div style={{ fontWeight: 700 }}>КП №{item.kp_id}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700 }}>КП №{item.kp_id}</span>
+                {resolveBadgeTypes(item).map((type) => (
+                  <span
+                    key={type}
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: 999,
+                      ...productTypeBadgeStyle(type),
+                    }}
+                  >
+                    {productTypeBadge(type)}
+                  </span>
+                ))}
+                {item.has_delivery_schedule === true && (
+                  <span
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: 999,
+                      background: "#ecfdf3",
+                      color: "#067647",
+                    }}
+                  >
+                    есть график
+                  </span>
+                )}
+              </div>
               <div style={{ color: "#101828", fontWeight: 600 }}>{formatMoney(item.total_amount)}</div>
             </div>
             <div style={{ color: "#475467", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
@@ -101,6 +183,17 @@ export const ArchiveOfferList = ({
               )}
             </div>
             <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", fontSize: "0.9rem", color: "#667085" }}>
+              {item.status === "На СГП" && <span>🏬 На СГП</span>}
+              {item.sgp_progress && item.sgp_progress.m > 0 && (
+                <span>
+                  {item.sgp_progress.n}/{item.sgp_progress.m} на СГП
+                </span>
+              )}
+              {item.shipped_progress && item.shipped_progress.x > 0 && (
+                <span>
+                  отгружено {item.shipped_progress.x}/{item.shipped_progress.m}
+                </span>
+              )}
               {percentBadge && <span>Готовность: {percentBadge}</span>}
               {trailing && <span>{trailing}</span>}
             </div>

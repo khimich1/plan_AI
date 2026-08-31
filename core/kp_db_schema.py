@@ -66,6 +66,7 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 plan_id TEXT,
                 length_dm_raw TEXT,
                 nomenclature_id TEXT,
+                line_id TEXT,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
             )
         ''')
@@ -107,23 +108,26 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
         
         # Таблица 4: kp_meta - Метаданные
         # kp_id - связь с KP_offers
-        # status - статус КП: выполнено, отклонено, в работе, в ожидании
+        # status - статус КП: выполнено, отклонено, в работе, в ожидании, На СГП
+        # ordered_qty - снимок заказного qty (M для бейджа N/M); freeze при уходе в производство
         cur.execute('''
             CREATE TABLE IF NOT EXISTS kp_meta (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kp_id INTEGER NOT NULL,
                 status TEXT DEFAULT 'в работе',
+                ordered_qty INTEGER,
                 FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE,
                 UNIQUE(kp_id)
             )
         ''')
         
-        # Таблица 5: completed_plates - Выполненные плиты
-        # Сюда переносятся плиты после завершения дня производства
+        # Таблица 5: completed_plates — склад готовой продукции (СГП)
+        # kp_id NULLABLE: отвязанные плиты остаются на складе без КП
+        # plan_id — план, с которого плита пришла; при удалении плана обнуляется
         cur.execute('''
             CREATE TABLE IF NOT EXISTS completed_plates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kp_id INTEGER NOT NULL,
+                kp_id INTEGER,
                 plate_name TEXT NOT NULL,
                 length_m REAL,
                 width_m REAL,
@@ -132,7 +136,8 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 completed_date TEXT NOT NULL,
                 production_day INTEGER,
                 nomenclature_id TEXT,
-                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+                plan_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE SET NULL
             )
         ''')
         
@@ -236,6 +241,11 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             cur.execute("ALTER TABLE kp_plates ADD COLUMN day_number INTEGER")
             print("[DB] ✅ Колонка day_number добавлена")
 
+        if 'length_dm_raw' not in columns:
+            print("[DB] Миграция: добавляем колонку length_dm_raw в kp_plates...")
+            cur.execute("ALTER TABLE kp_plates ADD COLUMN length_dm_raw TEXT")
+            print("[DB] ✅ Колонка length_dm_raw добавлена")
+
         cur.execute(
             'CREATE INDEX IF NOT EXISTS idx_plates_plan_day '
             'ON kp_plates(plan_id, day_number)'
@@ -266,13 +276,13 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             'ON production_plans(is_active)'
         )
         
-        if 'length_dm_raw' not in columns:
-            print("[DB] Миграция: добавляем колонку length_dm_raw в kp_plates...")
-            cur.execute("ALTER TABLE kp_plates ADD COLUMN length_dm_raw TEXT")
-            print("[DB] ✅ Колонка length_dm_raw добавлена")
-        
         # Обратная засылка length_dm_raw из plate_name для существующих строк (один раз после ADD COLUMN)
-        cur.execute("SELECT id, plate_name, length_m FROM kp_plates WHERE length_dm_raw IS NULL OR length_dm_raw = ''")
+        # length_m may be absent on very old shapes — use NULL fallback then.
+        length_m_expr = "length_m" if "length_m" in columns else "NULL"
+        cur.execute(
+            f"SELECT id, plate_name, {length_m_expr} FROM kp_plates "
+            "WHERE length_dm_raw IS NULL OR length_dm_raw = ''"
+        )
         rows = cur.fetchall()
         if rows:
             from core.config_and_data import extract_length_dm_raw_from_plate_name
@@ -309,22 +319,579 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             cur.execute("ALTER TABLE kp_meta ADD COLUMN owner_user_id INTEGER")
             print("[DB] ✅ Колонка owner_user_id добавлена в kp_meta")
 
+        if "ordered_qty" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку ordered_qty в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN ordered_qty INTEGER")
+            print("[DB] ✅ Колонка ordered_qty добавлена в kp_meta")
+
+        if "product_type" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку product_type в kp_meta...")
+            cur.execute(
+                "ALTER TABLE kp_meta ADD COLUMN product_type TEXT DEFAULT 'plates'"
+            )
+            cur.execute(
+                "UPDATE kp_meta SET product_type = 'plates' WHERE product_type IS NULL"
+            )
+            print("[DB] ✅ Колонка product_type добавлена в kp_meta")
+
+        # Таблица kp_piles — позиции КП на сваи (отдельно от kp_plates)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_piles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                line_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_piles ON kp_piles(kp_id)'
+        )
+
+        # Таблица kp_steps — позиции КП на лестничные ступени (без класса бетона)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                line_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_steps ON kp_steps(kp_id)'
+        )
+
+        # Таблица kp_marches — позиции КП на лестничные марши (с классом бетона)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_marches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                line_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_marches ON kp_marches(kp_id)'
+        )
+
+        # Таблица kp_bridge_piles — позиции КП на мостовые сваи (отдельно от kp_piles)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_bridge_piles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                line_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_bridge_piles ON kp_bridge_piles(kp_id)'
+        )
+
+        # Таблица kp_fbs — позиции КП на ФБС (отдельно от kp_piles / kp_bridge_piles)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_fbs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                line_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_fbs ON kp_fbs(kp_id)'
+        )
+
+        # MNA-301: line_id на всех kp_* line-таблицах (idempotent ALTER для legacy БД).
+        # kp_plates уже мигрирована выше (try/except рядом с unit_price); остальные — здесь.
+        _ensure_line_id_columns(cur)
+
         # === МИГРАЦИЯ: Добавляем nomenclature_id ===
         if 'nomenclature_id' not in columns:
             print("[DB] Миграция: добавляем колонку nomenclature_id в kp_plates...")
             cur.execute("ALTER TABLE kp_plates ADD COLUMN nomenclature_id TEXT")
             print("[DB] Колонка nomenclature_id добавлена в kp_plates")
 
-        cur.execute("PRAGMA table_info(completed_plates)")
-        cp_columns = [col[1] for col in cur.fetchall()]
-        if 'nomenclature_id' not in cp_columns:
-            print("[DB] Миграция: добавляем колонку nomenclature_id в completed_plates...")
-            cur.execute("ALTER TABLE completed_plates ADD COLUMN nomenclature_id TEXT")
-            print("[DB] Колонка nomenclature_id добавлена в completed_plates")
-        
+        _migrate_completed_plates_for_sgp(cur)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_completed_plan_id ON completed_plates(plan_id)"
+        )
+
+        _init_shipment_logistics_schema(cur)
+
+        _init_delivery_schedule_schema(cur)
+
+        _init_day_capacity_override_schema(cur)
+
+        _init_gsm_schema(cur)
+
         conn.commit()
     finally:
         conn.close()
+
+
+def _ensure_line_id_columns(cur: sqlite3.Cursor) -> None:
+    """MNA-301: add nullable ``line_id TEXT`` to every kp_* line table (idempotent).
+
+    Fresh CREATE already includes the column; this covers legacy DBs where
+    ``CREATE TABLE IF NOT EXISTS`` left the old shape unchanged.
+    ``kp_meta.product_type`` remains unconstrained TEXT (accepts ``mixed``).
+    """
+    line_tables = (
+        "kp_plates",
+        "kp_piles",
+        "kp_steps",
+        "kp_marches",
+        "kp_bridge_piles",
+        "kp_fbs",
+    )
+    for table in line_tables:
+        cur.execute(f"PRAGMA table_info({table})")
+        columns = {row[1] for row in cur.fetchall()}
+        if "line_id" in columns:
+            continue
+        print(f"[DB] Миграция: добавляем колонку line_id в {table}...")
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN line_id TEXT")
+        print(f"[DB] ✅ Колонка line_id добавлена в {table}")
+
+
+def _init_gsm_schema(cur: sqlite3.Cursor) -> None:
+    """GSM module tables (fuel cards, transactions, waybills).
+
+    FK order: ``gsm_driver`` before ``gsm_vehicle`` (``primary_driver_id``).
+    Physical DELETE of cards is forbidden — archive via ``archived_at``.
+    Drivers/vehicles are deactivated via ``is_active`` (not ``archived_at``).
+    """
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_driver (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            license_number TEXT NOT NULL,
+            license_issued_at TEXT,
+            personnel_number TEXT,
+            snils TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_vehicle (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            plate_number TEXT NOT NULL,
+            tank_volume_liters REAL NOT NULL,
+            norm_summer REAL NOT NULL,
+            norm_winter REAL NOT NULL,
+            primary_driver_id INTEGER REFERENCES gsm_driver(id),
+            is_active INTEGER NOT NULL DEFAULT 1
+        )
+    ''')
+
+    # vehicle_id NULL: unmatched cards from transaction import (link later).
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_fuel_card (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_number TEXT NOT NULL UNIQUE,
+            vehicle_id INTEGER REFERENCES gsm_vehicle(id),
+            assigned_at TEXT NOT NULL,
+            archived_at TEXT
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_station (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            address TEXT NOT NULL UNIQUE,
+            brand TEXT,
+            lat REAL,
+            lon REAL,
+            geocode_source TEXT
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_import_batch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            period_from TEXT,
+            period_to TEXT,
+            rows_total INTEGER,
+            sum_liters REAL,
+            sum_amount REAL,
+            uploaded_by TEXT,
+            uploaded_at TEXT NOT NULL
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_transaction (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_id INTEGER NOT NULL REFERENCES gsm_fuel_card(id),
+            ts TEXT NOT NULL,
+            service_type TEXT NOT NULL,
+            fuel_grade TEXT,
+            qty_liters REAL,
+            amount REAL NOT NULL,
+            station_id INTEGER REFERENCES gsm_station(id),
+            raw_address TEXT NOT NULL,
+            batch_id INTEGER NOT NULL REFERENCES gsm_import_batch(id)
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_route (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_id INTEGER NOT NULL REFERENCES gsm_vehicle(id),
+            addr_a TEXT NOT NULL,
+            addr_b TEXT NOT NULL,
+            km INTEGER NOT NULL,
+            frequency INTEGER NOT NULL DEFAULT 1,
+            typical_station_ids TEXT
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_waybill (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_id INTEGER NOT NULL REFERENCES gsm_vehicle(id),
+            date TEXT NOT NULL,
+            driver_id INTEGER NOT NULL REFERENCES gsm_driver(id),
+            status TEXT NOT NULL DEFAULT 'draft',
+            source TEXT NOT NULL DEFAULT 'auto',
+            odometer_start INTEGER,
+            odometer_end INTEGER,
+            fuel_start REAL,
+            fuel_issued REAL,
+            fuel_end REAL,
+            route_json TEXT NOT NULL,
+            warnings_json TEXT,
+            UNIQUE(vehicle_id, date)
+        )
+    ''')
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_setting (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
+
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_gsm_transaction_card_ts '
+        'ON gsm_transaction(card_id, ts)'
+    )
+    # Spec D14: UNIQUE(card_id, ts, qty_liters, amount). SQLite treats NULLs as
+    # distinct in UNIQUE, so washes (qty_liters NULL) need COALESCE in the index.
+    cur.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_gsm_transaction_dedup '
+        'ON gsm_transaction(card_id, ts, COALESCE(qty_liters, 0), amount)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_gsm_waybill_vehicle_date '
+        'ON gsm_waybill(vehicle_id, date)'
+    )
+
+
+def _init_day_capacity_override_schema(cur: sqlite3.Cursor) -> None:
+    """Per-day production capacity overrides (tracks/day).
+
+    Fallback when no row exists: ``TRACKS_PER_DAY_DEFAULT`` from
+    ``core.production_capacity`` (read by ``DayCapacityRepository``).
+    """
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS day_capacity_override (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            max_tracks INTEGER NOT NULL CHECK (max_tracks >= 0),
+            updated_at TEXT NOT NULL,
+            updated_by TEXT
+        )
+    ''')
+
+
+def _init_delivery_schedule_schema(cur: sqlite3.Cursor) -> None:
+    """Таблицы «Графика поставки»: партии с датами внутри одного заказа (КП).
+
+    Один график на КП (``UNIQUE kp_id``): пересогласование = правка того же
+    графика, истории версий нет. Удаление КП удаляет график каскадно.
+    """
+    # Таблица 10: delivery_schedule — график поставки, шапка (один на КП)
+    # invoice_number — № счёта; NULL пока не выставлен
+    # contract_number — № договора (шапка документа)
+    # status — draft | active | completed
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_schedule (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kp_id INTEGER NOT NULL UNIQUE,
+            invoice_number TEXT,
+            contract_number TEXT,
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+        )
+    ''')
+
+    # Таблица 11: delivery_batch — партия внутри графика
+    # name — свободный текст («1 этаж, 2 подъезд»)
+    # deliver_from / deliver_to — «поставка с/по» (ISO date)
+    # produce_by — «произвести до» (ISO date, задаёт менеджер вручную)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_batch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            deliver_from TEXT NOT NULL,
+            deliver_to TEXT NOT NULL,
+            produce_by TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (schedule_id) REFERENCES delivery_schedule(id) ON DELETE CASCADE
+        )
+    ''')
+
+    # Таблица 12: delivery_batch_item — позиция партии (плита КП + количество)
+    # Инвариант Σ qty ≤ kp_plates.qty проверяется в сервисе, не в БД
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_batch_item (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            plate_id INTEGER NOT NULL,
+            qty INTEGER NOT NULL CHECK (qty >= 1),
+            FOREIGN KEY (batch_id) REFERENCES delivery_batch(id) ON DELETE CASCADE,
+            FOREIGN KEY (plate_id) REFERENCES kp_plates(id) ON DELETE CASCADE
+        )
+    ''')
+
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_batch_schedule '
+        'ON delivery_batch(schedule_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_batch_item_batch '
+        'ON delivery_batch_item(batch_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_batch_item_plate '
+        'ON delivery_batch_item(plate_id)'
+    )
+
+
+def _init_shipment_logistics_schema(cur: sqlite3.Cursor) -> None:
+    """Таблицы раздела «Логистика» (SHIP-000): рейсы, состав, справочники.
+
+    ``shipment_orders.kp_id`` — NULLABLE + ON DELETE SET NULL: рейс переживает
+    удаление КП (план P-H). ``shipment_items.completed_plate_id``/``kp_id`` —
+    snapshot-ссылки: списанные плиты остаются в completed_plates с qty=0,
+    поэтому done-рейс всегда можно показать.
+    """
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS shipments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shipment_date TEXT NOT NULL,
+            delivery_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'in_work',
+            attention INTEGER NOT NULL DEFAULT 0,
+            attention_comment TEXT,
+            carrier_id INTEGER REFERENCES carriers(id),
+            driver_name TEXT,
+            vehicle_text TEXT,
+            vehicle_class TEXT,
+            proxy_no TEXT,
+            upd_no TEXT,
+            freight_request_no TEXT,
+            planned_cost REAL,
+            time_slot TEXT,
+            propose_snapshot TEXT,
+            completed_at TEXT,
+            actor TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS shipment_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+            kp_id INTEGER REFERENCES KP_offers(kp_id) ON DELETE SET NULL,
+            ya_order_no TEXT,
+            UNIQUE (shipment_id, kp_id)
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS shipment_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+            item_type TEXT NOT NULL,
+            completed_plate_id INTEGER REFERENCES completed_plates(id),
+            kp_id INTEGER,
+            mark TEXT,
+            qty INTEGER NOT NULL,
+            unit_weight_kg REAL,
+            weight_kg REAL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            note TEXT
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS carriers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            name_normalized TEXT NOT NULL,
+            source_sheet TEXT,
+            note TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            merged_into_id INTEGER REFERENCES carriers(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS pile_catalog (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mark TEXT NOT NULL UNIQUE,
+            length_m REAL,
+            section_mm INTEGER,
+            volume_m3 REAL,
+            weight_kg REAL NOT NULL,
+            pcs_per_20t INTEGER
+        )
+    ''')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_shipments_date ON shipments(shipment_date)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_shipments_carrier ON shipments(carrier_id)')
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_shipment_orders_shipment ON shipment_orders(shipment_id)'
+    )
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_shipment_orders_kp ON shipment_orders(kp_id)')
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_shipment_items_shipment ON shipment_items(shipment_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_shipment_items_cp ON shipment_items(completed_plate_id)'
+    )
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_carriers_active ON carriers(active)')
+    # Один активный перевозчик на нормализованное имя; слитые дубли слот освобождают.
+    cur.execute(
+        '''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_carriers_name_normalized_active
+        ON carriers(name_normalized) WHERE merged_into_id IS NULL
+        '''
+    )
+
+    cur.execute("PRAGMA table_info(plate_status_log)")
+    log_columns = {row[1] for row in cur.fetchall()}
+    if "shipment_id" not in log_columns:
+        print("[DB] Миграция: добавляем колонку shipment_id в plate_status_log...")
+        cur.execute("ALTER TABLE plate_status_log ADD COLUMN shipment_id INTEGER")
+        print("[DB] ✅ Колонка shipment_id добавлена в plate_status_log")
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_status_log_shipment ON plate_status_log(shipment_id)'
+    )
+
+
+def _migrate_completed_plates_for_sgp(cur: sqlite3.Cursor) -> None:
+    """Make ``completed_plates.kp_id`` nullable + add ``plan_id`` (SGP-000).
+
+    SQLite cannot ALTER column nullability / FK action, so when ``kp_id`` is
+    still NOT NULL we rebuild the table (copy → drop → rename).
+    """
+    cur.execute("PRAGMA table_info(completed_plates)")
+    cp_rows = cur.fetchall()
+    if not cp_rows:
+        return
+
+    cp_by_name = {row[1]: row for row in cp_rows}
+    kp_notnull = int(cp_by_name.get("kp_id", (None, None, None, 1))[3] or 0)
+    has_plan_id = "plan_id" in cp_by_name
+    has_nomenclature = "nomenclature_id" in cp_by_name
+
+    if not has_nomenclature:
+        print("[DB] Миграция: добавляем колонку nomenclature_id в completed_plates...")
+        cur.execute("ALTER TABLE completed_plates ADD COLUMN nomenclature_id TEXT")
+        print("[DB] Колонка nomenclature_id добавлена в completed_plates")
+        has_nomenclature = True
+
+    if kp_notnull == 0 and has_plan_id:
+        return
+
+    if kp_notnull == 0 and not has_plan_id:
+        print("[DB] Миграция: добавляем колонку plan_id в completed_plates...")
+        cur.execute("ALTER TABLE completed_plates ADD COLUMN plan_id TEXT")
+        print("[DB] ✅ Колонка plan_id добавлена в completed_plates")
+        return
+
+    print("[DB] Миграция СГП: пересоздаём completed_plates (kp_id NULLABLE, plan_id)...")
+    cur.execute("PRAGMA foreign_keys = OFF")
+    cur.execute(
+        """
+        CREATE TABLE completed_plates_sgp (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kp_id INTEGER,
+            plate_name TEXT NOT NULL,
+            length_m REAL,
+            width_m REAL,
+            load_class INTEGER,
+            qty INTEGER NOT NULL,
+            completed_date TEXT NOT NULL,
+            production_day INTEGER,
+            nomenclature_id TEXT,
+            plan_id TEXT,
+            FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE SET NULL
+        )
+        """
+    )
+    nomenclature_expr = "nomenclature_id" if has_nomenclature else "NULL"
+    plan_expr = "plan_id" if has_plan_id else "NULL"
+    cur.execute(
+        f"""
+        INSERT INTO completed_plates_sgp (
+            id, kp_id, plate_name, length_m, width_m, load_class,
+            qty, completed_date, production_day, nomenclature_id, plan_id
+        )
+        SELECT
+            id, kp_id, plate_name, length_m, width_m, load_class,
+            qty, completed_date, production_day, {nomenclature_expr}, {plan_expr}
+        FROM completed_plates
+        """
+    )
+    cur.execute("DROP TABLE completed_plates")
+    cur.execute("ALTER TABLE completed_plates_sgp RENAME TO completed_plates")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_completed_kp_id ON completed_plates(kp_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_completed_date ON completed_plates(completed_date)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_completed_plan_id ON completed_plates(plan_id)"
+    )
+    cur.execute("PRAGMA foreign_keys = ON")
+    print("[DB] ✅ completed_plates мигрирована под СГП")
+
 def ensure_schema(db_path: str = DEFAULT_DB) -> None:
     """Idempotent schema initialization (once per absolute db path per process)."""
     abs_path = os.path.abspath(db_path)

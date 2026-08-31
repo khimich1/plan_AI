@@ -95,6 +95,8 @@ async def _run(image_path: Path) -> int:
     print(f"Cost (USD):   {float(result.get('cost_usd', 0.0) or 0.0):.4f}")
     print(f"Verify:       applied={bool(result.get('verify_applied'))}, failed={bool(result.get('verify_failed'))}")
     print(f"Decision:     {verify_decision}")
+    print(f"Select:       {result.get('ocr_verify_select_reason') or '-'}")
+    print(f"Preprocess:   {result.get('ocr_preprocess') or '-'}")
     print("-" * 60)
     print("Recognized text:")
     print(result.get("text") or "(пусто)")

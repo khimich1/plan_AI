@@ -6,6 +6,7 @@ import copy
 import pytest
 
 from core.ocr.parser_gate import apply_parser_gate
+from core.ocr.pile_parser_gate import apply_pile_parser_gate
 
 
 def _plate(**kwargs):
@@ -82,3 +83,34 @@ def test_apply_parser_gate_uses_raw_name_fallback():
     apply_parser_gate(plates)
 
     assert plates[0]["issues"] == []
+
+
+def _pile(**kwargs):
+    base = {
+        "raw_name": "С90.30-11",
+        "normalized_candidate": "С90.30-11",
+        "qty": 189,
+        "confidence": 0.95,
+        "issues": [],
+    }
+    base.update(kwargs)
+    return base
+
+
+def test_apply_pile_parser_gate_valid_piles_unchanged():
+    piles = [_pile(), _pile(normalized_candidate="С110.30-13", qty=26)]
+    original = copy.deepcopy(piles)
+
+    result = apply_pile_parser_gate(piles)
+
+    assert result is piles
+    assert piles == original
+
+
+def test_apply_pile_parser_gate_invalid_mark_adds_issue():
+    piles = [_pile(normalized_candidate="Непонятный текст", confidence=0.99)]
+
+    apply_pile_parser_gate(piles)
+
+    assert piles[0]["issues"] == ["parser_rejected"]
+    assert piles[0]["confidence"] == 0.5

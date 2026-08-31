@@ -1,23 +1,28 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import { buildKpPreviewRows } from "@/features/commercial-offer/lib/buildKpPreviewRows";
+import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
 import { formatOfferNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
+import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
+import { LineActionsCell, LineActionsHeader } from "@/features/commercial-offer/components/LineRowActions";
+import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
 import { Alert } from "@/shared/ui/Alert";
 import { Card } from "@/shared/ui/Card";
 
 type KpPlatePreviewPanelProps = {
   draft: CommercialDraftDetails;
   normalizedText: string;
+  lineRowHandlers?: LineRowHandlers;
 };
 
 const flagLabel = (flag: "wide_direct" | "wide_split"): string =>
   flag === "wide_direct" ? "Шире стандартной" : "Разделена на стандартные позиции";
 
-export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPanelProps) => {
+export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: KpPlatePreviewPanelProps) => {
   const rows = buildKpPreviewRows(draft);
   const wideLines = draft.metadata.wide_plate_lines ?? [];
-  const unparsedLines = draft.metadata.unparsed_lines ?? [];
-  const warnings = draft.metadata.warnings ?? [];
+  const warnings = filterCompositionWarnings(draft.metadata.warnings ?? []);
   const showWideAlert = wideLines.length > 0 && !draft.metadata.wide_plates_resolved;
+  const hasUnpricedRows = rows.some((row) => row.unitPrice === null);
   const normalizedTextChanged =
     normalizedText.trim() !== (draft.metadata.normalized_text ?? "").trim() && normalizedText.trim().length > 0;
 
@@ -27,6 +32,12 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
       subtitle="Наименование, количество и цена — как в документе. Скидка и доставка учитываются позже."
     >
       <div style={{ display: "grid", gap: "0.75rem" }}>
+        {lineRowHandlers?.undoToast ? (
+          <LineUndoToast
+            message={lineRowHandlers.undoToast.message}
+            onUndo={lineRowHandlers.undoToast.onUndo}
+          />
+        ) : null}
         {showWideAlert && (
           <Alert tone="warning">
             {wideLines.length}{" "}
@@ -97,71 +108,77 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText }: KpPlatePreviewPan
                   >
                     Цена
                   </th>
+                  {lineRowHandlers ? <LineActionsHeader enabled /> : null}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, index) => (
-                  <tr key={`${row.name}-${index}`}>
-                    <td
-                      style={{
-                        padding: "0.55rem 0.65rem",
-                        borderBottom: "1px solid #f2f4f7",
-                        fontVariantNumeric: "tabular-nums",
-                        whiteSpace: "nowrap",
-                        width: "1%",
-                        verticalAlign: "top",
-                      }}
-                    >
-                      {index + 1}
-                    </td>
-                    <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7", verticalAlign: "top" }}>
-                      <div style={{ whiteSpace: "nowrap" }}>{row.name}</div>
-                      {row.flag && (
-                        <div style={{ marginTop: "0.25rem", color: "#b54708", fontSize: "0.82rem" }}>
-                          ⚠ {flagLabel(row.flag)}
-                          {row.sourceLine ? ` · из «${row.sourceLine}»` : ""}
-                        </div>
-                      )}
-                    </td>
-                    <td
-                      style={{
-                        padding: "0.55rem 0.65rem",
-                        borderBottom: "1px solid #f2f4f7",
-                        fontVariantNumeric: "tabular-nums",
-                        whiteSpace: "nowrap",
-                        width: "1%",
-                      }}
-                    >
-                      {row.qty}
-                    </td>
-                    <td
-                      style={{
-                        padding: "0.55rem 0.65rem",
-                        paddingRight: "0.75rem",
-                        borderBottom: "1px solid #f2f4f7",
-                        fontVariantNumeric: "tabular-nums",
-                        whiteSpace: "nowrap",
-                        textAlign: "right",
-                      }}
-                    >
-                      {formatOfferNumber(row.unitPrice)}
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((row, index) => {
+                  const isUnpriced = row.unitPrice === null;
+                  return (
+                    <tr key={`${row.name}-${index}`}>
+                      <td
+                        style={{
+                          padding: "0.55rem 0.65rem",
+                          borderBottom: "1px solid #f2f4f7",
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
+                          width: "1%",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        {index + 1}
+                      </td>
+                      <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7", verticalAlign: "top" }}>
+                        <div style={{ whiteSpace: "nowrap" }}>{row.name}</div>
+                        {row.flag && (
+                          <div style={{ marginTop: "0.25rem", color: "#b54708", fontSize: "0.82rem" }}>
+                            ⚠ {flagLabel(row.flag)}
+                            {row.sourceLine ? ` · из «${row.sourceLine}»` : ""}
+                          </div>
+                        )}
+                      </td>
+                      <td
+                        style={{
+                          padding: "0.55rem 0.65rem",
+                          borderBottom: "1px solid #f2f4f7",
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
+                          width: "1%",
+                        }}
+                      >
+                        {row.qty}
+                      </td>
+                      <td
+                        style={{
+                          padding: "0.55rem 0.65rem",
+                          paddingRight: "0.75rem",
+                          borderBottom: "1px solid #f2f4f7",
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
+                          textAlign: "right",
+                          color: isUnpriced ? "#b42318" : "inherit",
+                        }}
+                      >
+                        {isUnpriced ? "нет в прайсе" : formatOfferNumber(row.unitPrice)}
+                      </td>
+                      <LineActionsCell
+                        handlers={lineRowHandlers}
+                        lineId={row.lineId}
+                        qty={row.qty}
+                        sourceText={row.sourceText}
+                      />
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
 
-        {unparsedLines.length > 0 && (
-          <div style={{ borderTop: "1px solid #e4e7ec", paddingTop: "0.75rem" }}>
-            <div style={{ fontWeight: 600, marginBottom: "0.35rem" }}>Не попали в состав</div>
-            <ul style={{ margin: 0, paddingLeft: "1.25rem", color: "#667085", fontSize: "0.9rem" }}>
-              {unparsedLines.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </div>
+        {hasUnpricedRows && (
+          <Alert tone="error">
+            Не все плиты найдены в прайсе — исправьте список перед переходом к клиенту.
+          </Alert>
         )}
       </div>
     </Card>

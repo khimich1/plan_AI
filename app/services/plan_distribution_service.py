@@ -13,7 +13,9 @@ from app.planning.plan_aggregation import (
 from app.planning.plan_distribution import add_tracks_to_plan
 from app.planning.plan_storage import MAX_TRACKS_PER_DAY, count_day_tracks
 from app.repositories.plan_repository import PlanRepository
+from app.services.production_capacity_service import ProductionCapacityService
 from core.plan_track_removal import TrackRemovalError, collect_plate_returns_from_track
+from core.production.capacity import clamp_day_max
 from core.production.dto import FilterMethod
 from core.production.ports import PlanLoadPort
 
@@ -174,14 +176,28 @@ class PlanDistributionService:
         days_info: dict[str, dict[str, Any]] = {}
         completed_days: list[int] = []
 
+        capacity_day_keys = [
+            (earliest_date + timedelta(days=offset)).date()
+            for offset in range(total_days)
+        ]
+        try:
+            capacity_svc = ProductionCapacityService()
+            capacity_map = capacity_svc.get_capacity_map(capacity_day_keys)
+        except Exception:
+            logger.exception(
+                "[GLOBAL_CALENDAR] Failed to load day capacity; using default max"
+            )
+            capacity_map = {}
+
         for day_offset in range(total_days):
             current_date = earliest_date + timedelta(days=day_offset)
             date_key = current_date.strftime("%Y-%m-%d")
             day_number = day_offset + 1
             date_data = all_dates_data.get(date_key, {"occupied": 0, "completed": False})
+            day_max = capacity_map.get(current_date.date(), MAX_TRACKS_PER_DAY)
             days_info[date_key] = {
                 "occupied": date_data["occupied"],
-                "max": MAX_TRACKS_PER_DAY,
+                "max": clamp_day_max(int(day_max)),
                 "completed": date_data["completed"],
                 "day_number": day_number,
             }

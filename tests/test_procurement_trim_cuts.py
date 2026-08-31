@@ -1159,3 +1159,69 @@ def test_real_order_1080_without_plan_uses_waste_not_rest() -> None:
     assert "Продольный рез" in labels
     assert any("Отходы" in label and "120" in label for label in labels)
     assert not any(label.startswith("Остаток (120") for label in labels)
+
+
+BASE_1_2M_43 = 14498.0
+
+
+def _foreign_sameload_rest_plan(*, secondary_type: str = "multiple_transverse", waste: int = 175) -> dict:
+    """Лента 8.6м (300+900) + свои primary 725×2; secondary 725 из rest 900 той же нагрузки."""
+    return {
+        "primary_cuts": [
+            {"width": 300, "rest": 900, "qty": 1, "lengths": [8.6], "load_code": 8},
+            {"width": 725, "rest": 475, "qty": 2, "lengths": [4.3], "load_code": 8},
+        ],
+        "secondary_cuts": [
+            {
+                "source": 900,
+                "source_lengths": [8.6],
+                "lengths": [4.3],
+                "cuts": [725],
+                "qty": 1,
+                "pieces": 1,
+                "waste": waste,
+                "type": secondary_type,
+                "load_code": 8,
+            },
+        ],
+    }
+
+
+def test_foreign_sameload_rest_secondary_counts_longitudinal_cut() -> None:
+    """Secondary 725 из rest 900 чужой primary 8.6м (та же нагрузка):
+    продольный рез 8.6м должен быть учтён у позиции со своими primary."""
+    plan = _foreign_sameload_rest_plan()
+    t = _calc_trim_components(
+        plan,
+        length=4.3,
+        width_mm=725,
+        qty=3,
+        base_price_1_2m=BASE_1_2M_43,
+        base_price=BASE_1_2M_43 * (725 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    # свои primary: 2 × 4.3м + secondary: 1 × 8.6м
+    assert t["long_cut_meterage"] == pytest.approx(2 * 4.3 + 8.6)
+    assert t["transverse_remainder_cost"] == pytest.approx(
+        BASE_1_2M_43 * (725 / 1200.0) * (4.3 / 4.3) / 3
+    )
+    assert t["trans_cuts"] == pytest.approx(1.0 / 3)
+
+
+def test_foreign_sameload_pure_transverse_no_extra_long_cut() -> None:
+    """Pure transverse (waste=0, pieces=1) на чужом rest: продольный метраж не растёт."""
+    plan = _foreign_sameload_rest_plan(secondary_type="transverse", waste=0)
+    t = _calc_trim_components(
+        plan,
+        length=4.3,
+        width_mm=725,
+        qty=3,
+        base_price_1_2m=BASE_1_2M_43,
+        base_price=BASE_1_2M_43 * (725 / 1200.0),
+        load_code=8,
+        price_table={},
+    )
+    # только 2 primary-реза по 4.3м; secondary не добавляет продольный рез
+    assert t["long_cut_meterage"] == pytest.approx(2 * 4.3)
+    assert t["transverse_remainder_cost"] > 0

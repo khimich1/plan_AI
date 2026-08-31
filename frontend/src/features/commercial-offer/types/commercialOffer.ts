@@ -1,4 +1,6 @@
-export type WizardStepId = "plates" | "client" | "result";
+export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
+
+export type WizardStepId = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "client" | "result";
 
 /** Legacy step ids from older drafts (localStorage / server metadata). */
 export type LegacyWizardStepId = "wide-plates" | "manager";
@@ -7,7 +9,13 @@ export type LegacyWizardStepId = "wide-plates" | "manager";
 export type WizardNextRequiredAction =
   | "none"
   | "ingest_plates"
+  | "ingest_piles"
+  | "ingest_steps"
+  | "ingest_marches"
+  | "ingest_bridge_piles"
+  | "ingest_fbs"
   | "resolve_wide_plates"
+  | "resolve_unpriced_plates"
   | "select_manager"
   | "complete_client_terms"
   | "post_calculate";
@@ -27,6 +35,28 @@ export type ConditionsMode = "standard" | "custom";
 export type SaveMode = "database" | "archive" | "skip";
 export type FileKind = "pdf" | "xlsx" | "breakdown" | "schema";
 export type WidePlateAction = "confirm" | "exclude" | "replace";
+export type UnpricedPlateAction = "replace_load" | "exclude";
+
+export type CommercialParseLine = {
+  index: number;
+  text: string;
+  empty: boolean;
+  ok: boolean;
+  reason_text: string | null;
+};
+
+export type CommercialParseResponse = {
+  product_type: ProductType;
+  lines: CommercialParseLine[];
+  unparsed_lines: string[];
+  order?: Record<string, unknown>;
+  normalized_text?: string;
+  normalized_lines?: string[];
+  warnings?: string[];
+  wide_plate_lines?: WidePlateLine[];
+  dobor_pairs?: DoborPair[];
+  diagnostics?: Array<Record<string, unknown>>;
+};
 
 export type Manager = {
   id: number;
@@ -46,6 +76,22 @@ export type WidePlateLine = {
   qty: number;
 };
 
+export type UnpricedPlateReplacement = {
+  load_code: number;
+  price: number;
+};
+
+export type UnpricedPlateLine = {
+  id: string;
+  name: string;
+  line: string;
+  qty: number;
+  length_m: number;
+  width_m: number;
+  load_class: number;
+  replacements: UnpricedPlateReplacement[];
+};
+
 export type DoborPair = {
   id: string;
   source_line: string;
@@ -59,6 +105,52 @@ export type PlateBatch = {
   normalized_text: string;
   ocr_text: string;
   filename: string;
+};
+
+export type PileBatch = PlateBatch;
+
+export type StepBatch = PlateBatch;
+
+export type MarchBatch = PlateBatch;
+
+export type BridgePileBatch = PlateBatch;
+
+export type FbsBatch = PlateBatch;
+
+export type PileOrderLine = {
+  lineId?: string | null;
+  sourceText?: string;
+  mark: string;
+  name: string;
+  concrete_grade: string;
+  available_grades?: string[];
+  qty: number;
+  unit_price: number | null;
+  line_total?: number | null;
+  product_kind?: "pile";
+};
+
+export type StepOrderLine = {
+  lineId?: string | null;
+  sourceText?: string;
+  mark: string;
+  name: string;
+  qty: number;
+  unit_price: number | null;
+  line_total?: number | null;
+  product_kind?: "step";
+};
+
+export type MarchOrderLine = {
+  lineId?: string | null;
+  sourceText?: string;
+  mark: string;
+  name: string;
+  concrete_grade: string;
+  qty: number;
+  unit_price: number | null;
+  line_total?: number | null;
+  product_kind?: "march";
 };
 
 export type CommercialGeneratedFile = {
@@ -90,7 +182,15 @@ export type OcrCorrection = {
   reason?: string;
 };
 
+/** One sealed append cycle (MNA-101 / MNA-501). Used for undo last batch. */
+export type CommercialAppendBatch = {
+  batch_id: string;
+  product_type: ProductType;
+  line_ids: string[];
+};
+
 export type CommercialDraftMetadata = {
+  product_type?: ProductType;
   source_type: "text" | "image" | "ai" | null;
   original_text: string;
   ocr_text: string;
@@ -110,13 +210,21 @@ export type CommercialDraftMetadata = {
   normalized_text: string;
   normalized_lines: string[];
   wide_plate_lines: WidePlateLine[];
+  unpriced_plate_lines?: UnpricedPlateLine[];
   dobor_pairs: DoborPair[];
   diagnostics: Array<Record<string, unknown>>;
   price_rows_count: number;
   breakdown_tables_count: number;
   total_sum: number;
   plate_batches: PlateBatch[];
+  pile_batches?: PileBatch[];
+  step_batches?: StepBatch[];
+  march_batches?: MarchBatch[];
+  bridge_pile_batches?: BridgePileBatch[];
+  fbs_batches?: FbsBatch[];
+  default_concrete_grade?: string;
   wide_plates_resolved: boolean;
+  unpriced_plates_resolved?: boolean;
   last_source_filename: string;
   ai_applied?: boolean;
   last_ai_instruction?: string;
@@ -129,6 +237,10 @@ export type CommercialDraftMetadata = {
   ocr_verify_failed?: boolean;
   ocr_corrections?: OcrCorrection[];
   ocr_row_count_on_image?: number | null;
+  /** Sealed append cycles for undo (empty on mono one-shot before first seal). */
+  append_batches?: CommercialAppendBatch[];
+  /** Archive resume C: existing kp_id being appended. */
+  resume_kp_id?: number | null;
 };
 
 export type BreakdownTable = {
@@ -181,6 +293,7 @@ export type CommercialSaveResult = {
 };
 
 export type WizardStoreState = {
+  productType: ProductType;
   draftId: string | null;
   currentStep: WizardStepId;
   sourceText: string;
@@ -198,6 +311,9 @@ export type WizardStoreState = {
   paymentConditions: string;
   executionTermsInput: string;
   widePlateActions: Record<string, { action: WidePlateAction; replacementText: string }>;
+  unpricedPlateActions: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
   lastDraft: CommercialDraftDetails | null;
   lastSaveResult: CommercialSaveResult | null;
+  /** True while re-picking product type for an append cycle (sticky header retained). */
+  isPickingProductType: boolean;
 };

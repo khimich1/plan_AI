@@ -149,3 +149,30 @@ def test_concurrent_stale_writes_only_first_succeeds(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded["payload"]["name"] == "Writer 1"
     assert loaded["version"] == 2
+
+
+def test_mark_day_completed_on_external_conn_rollback_does_not_persist(
+    tmp_path: Path,
+) -> None:
+    repository = make_repository(tmp_path)
+    repository.create(_sample_payload())
+
+    conn = repository._connect()
+    try:
+        assert (
+            repository.mark_day_completed(
+                "plan_test_001",
+                "1",
+                _external_conn=conn,
+            )
+            is True
+        )
+        conn.rollback()
+    finally:
+        conn.close()
+
+    loaded = repository.get("plan_test_001")
+    assert loaded is not None
+    assert loaded["version"] == 1
+    assert loaded["payload"]["days"]["1"].get("completed") is not True
+    assert loaded["payload"].get("completed_days", []) == []

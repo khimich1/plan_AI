@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildPlateLineHighlightMap,
+  mergeReviewHighlights,
   splitLineByDoborMarker,
 } from "@/features/commercial-offer/lib/plateLineHighlights";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
@@ -141,5 +142,63 @@ describe("splitLineByDoborMarker", () => {
 
   it("returns a single segment when no dobor marker is present", () => {
     expect(splitLineByDoborMarker("ПБ 57-7,2-8п 5")).toEqual([{ text: "ПБ 57-7,2-8п 5", isMarker: false }]);
+  });
+});
+
+describe("mergeReviewHighlights (S3–S6)", () => {
+  it("S3: lint parser-reject lines are unparsed (red)", () => {
+    const map = mergeReviewHighlights(makeDraft(), "плохо\nПБ 78-12-8п 2", [
+      { index: 0, text: "плохо", empty: false, ok: false, reason_text: "не совпал формат строки" },
+      { index: 1, text: "ПБ 78-12-8п 2", empty: false, ok: true, reason_text: null },
+    ]);
+
+    expect(map.get(0)?.kind).toBe("unparsed");
+    expect(map.get(0)?.title).toBe("не совпал формат строки");
+    expect(map.get(1)).toBeUndefined();
+  });
+
+  it("S4: OCR correction stays yellow when the parser accepts the line", () => {
+    const draft = makeDraft({
+      ocr_corrections: [
+        {
+          row_index: 1,
+          action: "changed_mark",
+          before: { normalized_candidate: "ПБ 78-12-8р", qty: 2 },
+          after: { normalized_candidate: "ПБ 78-12-8п", qty: 2 },
+        },
+      ],
+    });
+    const map = mergeReviewHighlights(draft, "ПБ 78-12-8п 2", [
+      { index: 0, text: "ПБ 78-12-8п 2", empty: false, ok: true, reason_text: null },
+    ]);
+
+    expect(map.get(0)?.kind).toBe("correction");
+  });
+
+  it("S4: does not add a н-suffix yellow heuristic", () => {
+    const map = mergeReviewHighlights(makeDraft(), "ПБ 78-12-8н 2", [
+      { index: 0, text: "ПБ 78-12-8н 2", empty: false, ok: true, reason_text: null },
+    ]);
+
+    expect(map.size).toBe(0);
+  });
+
+  it("S5: parser-accepted 8н is not highlighted, even if draft unparsed_lines is stale", () => {
+    const draft = makeDraft({ unparsed_lines: ["ПБ 78-12-8н 2"] });
+    const map = mergeReviewHighlights(draft, "ПБ 78-12-8н 2", [
+      { index: 0, text: "ПБ 78-12-8н 2", empty: false, ok: true, reason_text: null },
+    ]);
+
+    expect(map.get(0)).toBeUndefined();
+  });
+
+  it("S6: does not rewrite н to п — highlight map leaves the source line unchanged", () => {
+    const line = "ПБ 78-12-8н 2";
+    const map = mergeReviewHighlights(makeDraft(), line, [
+      { index: 0, text: line, empty: false, ok: true, reason_text: null },
+    ]);
+
+    expect(map.size).toBe(0);
+    expect(line).toBe("ПБ 78-12-8н 2");
   });
 });

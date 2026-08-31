@@ -3,13 +3,12 @@
 Инкапсулирует «опасные» операции:
 
 - получение сводной статистики;
-- полное обнуление (SQLite + JSON-планы + production calendar);
+- полное обнуление (SQLite КП/плиты + SQLite-планы + legacy JSON + календарь);
 - частичные обнуления (только КП / только планы / только календарь);
 - восстановление «застрявших» плит.
 
 Все мутации идут только через этот сервис, чтобы FastAPI-endpoint'ы
-оставались тонкими, а пути к файлам брались из ``Settings``,
-а не из захардкоженных констант ``bot/handlers/admin.py``.
+оставались тонкими, а пути к файлам брались из ``Settings``.
 
 ВНИМАНИЕ: деструктивные операции требуют ``require_destructive_db_reset``;
 при параллельной записи возможна гонка за ``data/plans/*`` и ``plita.db``.
@@ -63,19 +62,25 @@ class AdminService:
             plates_completed=int(sqlite_stats.get("plates_completed", 0)),
             plate_rests=int(sqlite_stats.get("plate_rests", 0)),
             plans_count=plans_count,
+            legacy_json_files_count=self._count_legacy_json_files(
+                self.settings.plans_dir,
+                self.settings.archived_data_dir / "plans",
+            ),
             current_plan_present=self.settings.current_plan_path.exists(),
         )
 
     # ---------- Reset ----------
 
     def reset_full(self) -> DbResetReport:
-        """Полное обнуление: все таблицы плит + JSON-планы + календарь.
+        """Полное обнуление: SQLite КП/плиты/рейсы + SQLite-планы + legacy JSON + календарь.
 
-        Таблица ``app_users`` НЕ затрагивается — администратор не теряет сессию.
+        Таблицы ``app_users``, ``managers``, ``carriers`` и ``pile_catalog``
+        НЕ затрагиваются — администратор не теряет сессию, справочники сохраняются.
         """
         require_destructive_db_reset()
         sqlite_report = kp_db_offers.clear_all_plates_data(self.db_path)
         plans_report = self._clear_all_plans()
+        plans_report.update(self._clear_archived_legacy())
         calendar_reset = self._reset_calendar()
         return DbResetReport(
             sqlite=_normalize_int_dict(sqlite_report),
@@ -166,6 +171,45 @@ class AdminService:
         except Exception:
             logger.exception("Ошибка при сбросе production-календаря")
             raise
+
+    def _count_legacy_json_files(self, *directories: Path) -> int:
+        total = 0
+        for directory in directories:
+            if directory.is_dir():
+                total += len(list(directory.glob("*.json")))
+        return total
+
+    def _clear_archived_legacy(self) -> dict[str, int]:
+        """Best-effort cleanup of bot_archived/data plan artifacts (full reset only)."""
+        report: dict[str, int] = {
+            "archived_plan_files": 0,
+            "archived_metadata": 0,
+            "archived_calendar": 0,
+        }
+        archived_dir = self.settings.archived_data_dir
+        archived_plans_dir = archived_dir / "plans"
+
+        try:
+            if archived_plans_dir.exists() and archived_plans_dir.is_dir():
+                plan_files = list(archived_plans_dir.glob("*.json"))
+                report["archived_plan_files"] = len(plan_files)
+                shutil.rmtree(archived_plans_dir, ignore_errors=True)
+            archived_plans_dir.mkdir(parents=True, exist_ok=True)
+
+            metadata_path = archived_dir / "plans_metadata.json"
+            if metadata_path.exists():
+                metadata_path.unlink()
+                report["archived_metadata"] = 1
+
+            calendar_path = archived_dir / "work_calendar.json"
+            if calendar_path.exists():
+                calendar_path.unlink()
+                report["archived_calendar"] = 1
+        except Exception:
+            logger.exception("Ошибка при очистке legacy-данных в bot_archived/data")
+            raise
+
+        return report
 
 
 def _normalize_int_dict(raw: dict | None) -> dict[str, int]:

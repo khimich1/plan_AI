@@ -6,6 +6,7 @@ export type DbStatsResponse = {
   plates_completed: number;
   plate_rests: number;
   plans_count: number;
+  legacy_json_files_count: number;
   current_plan_present: boolean;
 };
 

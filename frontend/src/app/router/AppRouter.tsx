@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { AppLayout } from "@/app/layout/AppLayout";
 import { ProtectedRoute } from "@/features/auth/components/ProtectedRoute";
 import { RequireRole } from "@/features/auth/components/RequireRole";
@@ -7,6 +7,9 @@ import { LoginPage } from "@/pages/login/LoginPage";
 import { CommercialOfferCreatePage } from "@/pages/commercial-offer-create/CommercialOfferCreatePage";
 import { CommercialOfferArchivePage } from "@/pages/commercial-offer-archive/CommercialOfferArchivePage";
 import { ProductionPage } from "@/pages/production/ProductionPage";
+import { LogisticsPage } from "@/pages/logistics/LogisticsPage";
+import { LogisticsCarriersPage } from "@/pages/logistics/LogisticsCarriersPage";
+import { GsmPage } from "@/pages/gsm/GsmPage";
 import { defaultRouteForRole } from "@/shared/lib/roleRoutes";
 
 const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -30,6 +33,13 @@ export const AppRouter = () => (
           </Route>
           <Route element={<RequireRole allowedRoles={["admin", "production"]} />}>
             <Route path="production" element={<ProductionPage />} />
+          </Route>
+          <Route element={<RequireRole allowedRoles={["admin", "logistics"]} />}>
+            <Route path="logistics" element={<LogisticsPage />} />
+            <Route path="logistics/carriers" element={<LogisticsCarriersPage />} />
+          </Route>
+          <Route element={<RequireRole allowedRoles={["admin", "accountant"]} />}>
+            <Route path="gsm" element={<GsmPage />} />
           </Route>
           <Route path="*" element={<RoleHomeRedirect />} />
         </Route>

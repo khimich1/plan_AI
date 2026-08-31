@@ -874,9 +874,51 @@ def test_build_order_data_resolves_load_from_order_not_tls_globals() -> None:
     assert order_data[0]["load_class"] == 1200
 
 
+def test_create_draft_stamps_line_id_and_plates_product_type(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """MNA-102: workflow create/parse stamps non-empty line_id + product_type=plates."""
+    import asyncio
+
+    from tests.test_commercial_draft_append import _setup_plate_price_env
+
+    _setup_plate_price_env(monkeypatch, tmp_path)
+
+    workflow = CommercialWorkflowService()
+    details = asyncio.run(
+        workflow.create_draft(
+            text="ПБ 78-12-8п 2\nПБ 60-12-8п 1",
+            image_bytes=None,
+            image_filename=None,
+            owner_user_id=1,
+            plate_order_ctx=PlateOrderContext.fresh_empty(),
+            product_type="plates",
+        )
+    )
+
+    order_data = details["order_data"]
+    assert len(order_data) >= 1
+    line_ids: list[str] = []
+    for idx, line in enumerate(order_data):
+        line_id = str(line.get("line_id") or "").strip()
+        assert line_id, f"order_data[{idx}] missing line_id after create_draft"
+        assert line.get("product_type") == "plates"
+        line_ids.append(line_id)
+    assert len(line_ids) == len(set(line_ids))
+
+
 def test_resolve_wide_plates_applies_line_id_with_normalized_lines(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir()
+    monkeypatch.setenv("DRAFTS_DIR", str(drafts_dir))
+    monkeypatch.setenv("OUTPUTS_DIR", str(tmp_path / "outputs"))
+    (tmp_path / "outputs").mkdir(exist_ok=True)
+    get_settings.cache_clear()
+
     workflow = CommercialWorkflowService()
     draft_payload = {
         "order": PlateOrder(),
@@ -1112,6 +1154,40 @@ def test_save_draft_archive_empty_execution_terms_input_skips_normalize(
     workflow.save_draft("draft-123", mode="archive", execution_terms_input="   ")
 
     assert captured["execution_terms"] == ""
+
+
+def test_save_draft_persists_owner_user_id_from_draft_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """owner_user_id is still persisted on save for audit/attribution."""
+    workflow = CommercialWorkflowService()
+    fake_xlsx = tmp_path / "kp-out.xlsx"
+    fake_xlsx.write_bytes(b"x")
+
+    draft = _sample_draft()
+    draft["metadata"]["owner_user_id"] = 2
+
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft)
+    monkeypatch.setattr(
+        workflow,
+        "generate_files",
+        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+    )
+    monkeypatch.setattr(workflow, "_resolve_generated_file", lambda filename: fake_xlsx)
+
+    captured: dict[str, Any] = {}
+
+    def fake_save_offer(**kwargs: Any) -> int:
+        captured["owner_user_id"] = kwargs.get("owner_user_id")
+        return 103
+
+    monkeypatch.setattr(workflow.kp_repository, "save_offer", fake_save_offer)
+    monkeypatch.setattr(workflow.draft_store, "update_metadata", lambda *args, **kwargs: None)
+
+    workflow.save_draft("draft-123", mode="archive", execution_terms_input="")
+
+    assert captured["owner_user_id"] == 2
 
 
 def test_wizard_state_ingest_plates_validation_errors() -> None:

@@ -13,7 +13,12 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from core.config.settings import Settings, get_settings
 from core.ocr.parsing import parse_gpt_response, parse_verify_response
 from core.ocr.prompts import get_verification_prompt
+from core.bridge_pile_format_prompt import build_bridge_pile_parser_system_prompt
+from core.fbs_format_prompt import build_fbs_parser_system_prompt
+from core.march_format_prompt import build_march_parser_system_prompt
+from core.pile_format_prompt import build_pile_parser_system_prompt
 from core.plate_format_prompt import build_plate_parser_system_prompt
+from core.step_format_prompt import build_step_parser_system_prompt
 
 if TYPE_CHECKING:
     from gigachat import GigaChat
@@ -104,6 +109,183 @@ def _sync_extract_plates(
     return plates, _estimate_cost_rub(tokens_used)
 
 
+def _sync_extract_piles(
+    *,
+    client: "GigaChat",
+    user_text: str,
+    image_base64: str,
+    mime_type: str,
+    max_tokens: int,
+) -> tuple[List[Dict[str, Any]], float]:
+    image_bytes = base64.b64decode(image_base64)
+    uploaded = client.upload_file((_upload_filename(mime_type), image_bytes))
+
+    response = client.chat(
+        Chat(
+            messages=[
+                Messages(
+                    role=MessagesRole.SYSTEM,
+                    content=build_pile_parser_system_prompt(),
+                ),
+                Messages(
+                    role=MessagesRole.USER,
+                    content=user_text,
+                    attachments=[uploaded.id_],
+                ),
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    )
+
+    result_text = response.choices[0].message.content or ""
+    piles = parse_gpt_response(result_text)
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    return piles, _estimate_cost_rub(tokens_used)
+
+
+def _sync_extract_steps(
+    *,
+    client: "GigaChat",
+    user_text: str,
+    image_base64: str,
+    mime_type: str,
+    max_tokens: int,
+) -> tuple[List[Dict[str, Any]], float]:
+    image_bytes = base64.b64decode(image_base64)
+    uploaded = client.upload_file((_upload_filename(mime_type), image_bytes))
+
+    response = client.chat(
+        Chat(
+            messages=[
+                Messages(
+                    role=MessagesRole.SYSTEM,
+                    content=build_step_parser_system_prompt(),
+                ),
+                Messages(
+                    role=MessagesRole.USER,
+                    content=user_text,
+                    attachments=[uploaded.id_],
+                ),
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    )
+
+    result_text = response.choices[0].message.content or ""
+    steps = parse_gpt_response(result_text)
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    return steps, _estimate_cost_rub(tokens_used)
+
+
+def _sync_extract_marches(
+    *,
+    client: "GigaChat",
+    user_text: str,
+    image_base64: str,
+    mime_type: str,
+    max_tokens: int,
+) -> tuple[List[Dict[str, Any]], float]:
+    image_bytes = base64.b64decode(image_base64)
+    uploaded = client.upload_file((_upload_filename(mime_type), image_bytes))
+
+    response = client.chat(
+        Chat(
+            messages=[
+                Messages(
+                    role=MessagesRole.SYSTEM,
+                    content=build_march_parser_system_prompt(),
+                ),
+                Messages(
+                    role=MessagesRole.USER,
+                    content=user_text,
+                    attachments=[uploaded.id_],
+                ),
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    )
+
+    result_text = response.choices[0].message.content or ""
+    marches = parse_gpt_response(result_text)
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    return marches, _estimate_cost_rub(tokens_used)
+
+
+def _sync_extract_bridge_piles(
+    *,
+    client: "GigaChat",
+    user_text: str,
+    image_base64: str,
+    mime_type: str,
+    max_tokens: int,
+) -> tuple[List[Dict[str, Any]], float]:
+    image_bytes = base64.b64decode(image_base64)
+    uploaded = client.upload_file((_upload_filename(mime_type), image_bytes))
+
+    response = client.chat(
+        Chat(
+            messages=[
+                Messages(
+                    role=MessagesRole.SYSTEM,
+                    content=build_bridge_pile_parser_system_prompt(),
+                ),
+                Messages(
+                    role=MessagesRole.USER,
+                    content=user_text,
+                    attachments=[uploaded.id_],
+                ),
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    )
+
+    result_text = response.choices[0].message.content or ""
+    items = parse_gpt_response(result_text)
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    return items, _estimate_cost_rub(tokens_used)
+
+
+
+
+def _sync_extract_fbs(
+    *,
+    client: "GigaChat",
+    user_text: str,
+    image_base64: str,
+    mime_type: str,
+    max_tokens: int,
+) -> tuple[List[Dict[str, Any]], float]:
+    image_bytes = base64.b64decode(image_base64)
+    uploaded = client.upload_file((_upload_filename(mime_type), image_bytes))
+
+    response = client.chat(
+        Chat(
+            messages=[
+                Messages(
+                    role=MessagesRole.SYSTEM,
+                    content=build_fbs_parser_system_prompt(),
+                ),
+                Messages(
+                    role=MessagesRole.USER,
+                    content=user_text,
+                    attachments=[uploaded.id_],
+                ),
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    )
+
+    result_text = response.choices[0].message.content or ""
+    items = parse_gpt_response(result_text)
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    return items, _estimate_cost_rub(tokens_used)
+
+
 def _sync_verify_plates(
     *,
     client: "GigaChat",
@@ -171,6 +353,107 @@ class GigaChatProvider:
 
         return await asyncio.to_thread(
             _sync_extract_plates,
+            client=self._get_client(),
+            user_text=user_text,
+            image_base64=image_base64,
+            mime_type=mime_type,
+            max_tokens=max_tokens,
+        )
+
+    async def extract_piles(
+        self,
+        *,
+        user_text: str,
+        image_base64: str | None = None,
+        mime_type: str | None = None,
+        max_tokens: int = 2500,
+    ) -> tuple[List[Dict[str, Any]], float]:
+        if not image_base64 or not mime_type:
+            raise ValueError("GigaChat Vision требует image_base64 и mime_type.")
+
+        return await asyncio.to_thread(
+            _sync_extract_piles,
+            client=self._get_client(),
+            user_text=user_text,
+            image_base64=image_base64,
+            mime_type=mime_type,
+            max_tokens=max_tokens,
+        )
+
+    async def extract_steps(
+        self,
+        *,
+        user_text: str,
+        image_base64: str | None = None,
+        mime_type: str | None = None,
+        max_tokens: int = 2500,
+    ) -> tuple[List[Dict[str, Any]], float]:
+        if not image_base64 or not mime_type:
+            raise ValueError("GigaChat Vision требует image_base64 и mime_type.")
+
+        return await asyncio.to_thread(
+            _sync_extract_steps,
+            client=self._get_client(),
+            user_text=user_text,
+            image_base64=image_base64,
+            mime_type=mime_type,
+            max_tokens=max_tokens,
+        )
+
+    async def extract_marches(
+        self,
+        *,
+        user_text: str,
+        image_base64: str | None = None,
+        mime_type: str | None = None,
+        max_tokens: int = 2500,
+    ) -> tuple[List[Dict[str, Any]], float]:
+        if not image_base64 or not mime_type:
+            raise ValueError("GigaChat Vision требует image_base64 и mime_type.")
+
+        return await asyncio.to_thread(
+            _sync_extract_marches,
+            client=self._get_client(),
+            user_text=user_text,
+            image_base64=image_base64,
+            mime_type=mime_type,
+            max_tokens=max_tokens,
+        )
+
+
+    async def extract_bridge_piles(
+        self,
+        *,
+        user_text: str,
+        image_base64: str | None = None,
+        mime_type: str | None = None,
+        max_tokens: int = 2500,
+    ) -> tuple[List[Dict[str, Any]], float]:
+        if not image_base64 or not mime_type:
+            raise ValueError("GigaChat Vision требует image_base64 и mime_type.")
+
+        return await asyncio.to_thread(
+            _sync_extract_bridge_piles,
+            client=self._get_client(),
+            user_text=user_text,
+            image_base64=image_base64,
+            mime_type=mime_type,
+            max_tokens=max_tokens,
+        )
+
+    async def extract_fbs(
+        self,
+        *,
+        user_text: str,
+        image_base64: str | None = None,
+        mime_type: str | None = None,
+        max_tokens: int = 2500,
+    ) -> tuple[List[Dict[str, Any]], float]:
+        if not image_base64 or not mime_type:
+            raise ValueError("GigaChat Vision требует image_base64 и mime_type.")
+
+        return await asyncio.to_thread(
+            _sync_extract_fbs,
             client=self._get_client(),
             user_text=user_text,
             image_base64=image_base64,

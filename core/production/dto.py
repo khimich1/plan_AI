@@ -92,6 +92,8 @@ class PersistConfig:
     plan_name: str | None = None
     fill_targets: tuple[dict[str, Any], ...] | None = None
     max_tracks_per_day: int = DEFAULT_MAX_TRACKS_PER_DAY
+    # Per-day max (≤ hard cap). When set, free = day_max − occupied uses this map.
+    day_capacity: tuple[tuple[str, int], ...] | None = None
 
 
 @dataclass(slots=True)

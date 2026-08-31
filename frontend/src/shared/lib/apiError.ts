@@ -107,6 +107,10 @@ export const getErrorMessage = (error: unknown): string => {
   if (error instanceof ApiError) {
     return error.detail || error.message;
   }
+  if (error instanceof TypeError) {
+    // fetch() network failure (ECONNREFUSED / offline)
+    return "Сервер недоступен. Подождите пару секунд после запуска и обновите страницу.";
+  }
   if (error instanceof Error) {
     return error.message;
   }

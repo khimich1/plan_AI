@@ -306,8 +306,10 @@ def _load_db_rows_for_plan_day(
             SELECT plate_id, kp_id, plate_name, SUM(qty) AS moved_qty
             FROM plate_status_log
             WHERE plan_id = ? AND day_number = ?
-              AND to_status = 'completed'
-              AND reason = 'completed'
+              AND (
+                    (to_status = 'completed' AND reason = 'completed')
+                 OR (to_status = 'on_sgp' AND reason = 'sgp_send')
+              )
               AND plate_id IS NOT NULL
             GROUP BY plate_id, kp_id, plate_name
             """,
@@ -584,6 +586,27 @@ def build_day_view_detail(
                 "is_legacy": is_legacy,
             }
         )
+
+    # SGP-403: attach from_sgp rows from plan payload (not on tracks / documents)
+    for plan_id, block in plan_blocks.items():
+        plan = repo.load_plan(plan_id) if hasattr(repo, "load_plan") else None
+        if not plan:
+            continue
+        from_sgp = list(plan.get("from_sgp") or [])
+        if not from_sgp and plan.get("sgp_reservations"):
+            try:
+                from app.services.sgp_service import SgpService
+
+                from_sgp = SgpService(db_path=db_path).build_from_sgp_rows(
+                    list(plan.get("sgp_reservations") or [])
+                )
+            except Exception:
+                logger.exception("[DAY_VIEW] from_sgp enrich failed for %s", plan_id)
+                from_sgp = []
+        block["from_sgp"] = from_sgp
+        block["from_sgp_qty"] = int(plan.get("from_sgp_qty") or sum(
+            int(r.get("qty") or 0) for r in from_sgp
+        ))
 
     return {
         "date": date_key,

@@ -181,6 +181,21 @@ class ProductionPlanningService:
                 plate_order_ctx=plate_order_ctx,
             )
 
+            day_capacity_pairs: tuple[tuple[str, int], ...] | None = None
+            if fill_targets:
+                from app.services.production_capacity_service import (
+                    ProductionCapacityService,
+                )
+
+                capacity_svc = ProductionCapacityService(db_path=self.plita_db_path)
+                capacity_map = capacity_svc.get_capacity_map(
+                    [str(t["date"]) for t in fill_targets]
+                )
+                day_capacity_pairs = tuple(
+                    (day.isoformat(), int(max_tracks))
+                    for day, max_tracks in sorted(capacity_map.items())
+                )
+
             persist_port = PlanPersistAdapter(
                 self.plan_repository,
                 self.plan_distribution,
@@ -197,6 +212,7 @@ class ProductionPlanningService:
                     plan_name=plan_name,
                     fill_targets=tuple(fill_targets or ()),
                     max_tracks_per_day=MAX_TRACKS_PER_DAY,
+                    day_capacity=day_capacity_pairs,
                 ),
                 persist_port,
                 ensure_unique_plan_id=create_plan_id,

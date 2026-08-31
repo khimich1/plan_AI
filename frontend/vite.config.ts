@@ -49,7 +49,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    open: base,
+    open: `${base}new`,
     // Без этого fetch на http://localhost:5173/api/... отдаёт HTML SPA → срыв JSON в auth/me и пустой UI
     proxy: {
       "/api": {

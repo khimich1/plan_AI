@@ -8,33 +8,51 @@ import {
   type PropsWithChildren,
 } from "react";
 import { getCurrentBatchReviewText, needsBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
 import { draftStorage } from "@/features/commercial-offer/store/draftStorage";
-import { mapLegacyWizardStep, WIZARD_STEP_ORDER } from "@/features/commercial-offer/lib/wizardStepOrder";
-import type { CommercialDraftDetails, CommercialSaveResult, WizardStepId, WizardStoreState } from "@/features/commercial-offer/types/commercialOffer";
+import {
+  getProductInputStep,
+  getWizardStepOrder,
+  mapLegacyWizardStep,
+  resolveDraftProductType,
+} from "@/features/commercial-offer/lib/wizardStepOrder";
+import type {
+  CommercialDraftDetails,
+  CommercialSaveResult,
+  ProductType,
+  WizardStepId,
+  WizardStoreState,
+} from "@/features/commercial-offer/types/commercialOffer";
 
-const mergeWizardStepWithServer = (local: WizardStepId, server: WizardStepId | string | undefined): WizardStepId => {
+const mergeWizardStepWithServer = (
+  local: WizardStepId,
+  server: WizardStepId | string | undefined,
+  productType: ProductType,
+): WizardStepId => {
+  const stepOrder = getWizardStepOrder(productType);
   const normalizedLocal = mapLegacyWizardStep(local);
   const normalizedServer = server ? mapLegacyWizardStep(server) : undefined;
 
-  if (!normalizedServer || !WIZARD_STEP_ORDER.includes(normalizedServer)) {
+  if (!normalizedServer || !stepOrder.includes(normalizedServer)) {
     return normalizedLocal;
   }
-  const li = WIZARD_STEP_ORDER.indexOf(normalizedLocal);
-  const si = WIZARD_STEP_ORDER.indexOf(normalizedServer);
+  const li = stepOrder.indexOf(normalizedLocal);
+  const si = stepOrder.indexOf(normalizedServer);
   if (li < 0) {
     return normalizedServer;
   }
   if (si < 0) {
     return normalizedLocal;
   }
-  // After recognize, stay on plates until user clicks "Обработать"
-  if (normalizedLocal === "plates" && si > li) {
+  const inputStep = getProductInputStep(productType);
+  if (normalizedLocal === inputStep && si > li) {
     return normalizedLocal;
   }
-  return WIZARD_STEP_ORDER[Math.max(li, si)];
+  return stepOrder[Math.max(li, si)]!;
 };
 
 type WizardDraftAction =
+  | { type: "set-product-type"; productType: ProductType }
   | { type: "set-step"; step: WizardStepId }
   | { type: "set-source"; text: string; imageName: string | null }
   | { type: "set-normalized-text"; text: string }
@@ -57,14 +75,23 @@ type WizardDraftAction =
       action: WizardStoreState["widePlateActions"][string]["action"];
       replacementText: string;
     }
+  | {
+      type: "set-unpriced-action";
+      lineId: string;
+      action: WizardStoreState["unpricedPlateActions"][string]["action"];
+      loadCode: number | null;
+    }
   | { type: "set-execution-terms"; value: string }
   | { type: "set-draft-id"; draftId: string }
   | { type: "hydrate-draft"; payload: CommercialDraftDetails; refreshBatchText?: boolean }
   | { type: "sync-after-wide-plates"; payload: CommercialDraftDetails }
+  | { type: "sync-after-unpriced-plates"; payload: CommercialDraftDetails }
   | { type: "set-save-result"; payload: CommercialSaveResult | null }
+  | { type: "start-append-cycle" }
   | { type: "reset" };
 
 const initialState: WizardStoreState = {
+  productType: "plates",
   draftId: null,
   currentStep: "plates",
   sourceText: "",
@@ -82,12 +109,34 @@ const initialState: WizardStoreState = {
   paymentConditions: "",
   executionTermsInput: "",
   widePlateActions: {},
+  unpricedPlateActions: {},
   lastDraft: null,
   lastSaveResult: null,
+  isPickingProductType: false,
 };
 
 const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStoreState => {
   switch (action.type) {
+    case "set-product-type":
+      return {
+        ...state,
+        productType: resolveDraftProductType(action.productType),
+        currentStep: getProductInputStep(action.productType),
+        isPickingProductType: false,
+      };
+    case "start-append-cycle":
+      return {
+        ...state,
+        sourceText: "",
+        selectedImageName: null,
+        normalizedText: "",
+        batchReviewText: "",
+        pendingBatchReview: false,
+        confirmedBatchCount: 0,
+        widePlateActions: {},
+        unpricedPlateActions: {},
+        isPickingProductType: true,
+      };
     case "set-step":
       return { ...state, currentStep: mapLegacyWizardStep(action.step) };
     case "set-source":
@@ -97,13 +146,16 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
     case "set-batch-review-text":
       return { ...state, batchReviewText: action.text };
     case "start-batch-review": {
-      const batchCount = action.payload.metadata.plate_batches?.length ?? 0;
+      const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
+      const batchCount = getDraftBatchCount(action.payload);
       return {
         ...state,
+        productType,
         draftId: action.payload.draft_id,
         currentStep: mergeWizardStepWithServer(
           state.currentStep,
           action.payload.wizard_state?.current_step,
+          productType,
         ),
         managerId: action.payload.metadata.manager_id,
         clientName: action.payload.metadata.client_name,
@@ -142,22 +194,35 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
           },
         },
       };
+    case "set-unpriced-action":
+      return {
+        ...state,
+        unpricedPlateActions: {
+          ...state.unpricedPlateActions,
+          [action.lineId]: {
+            action: action.action,
+            loadCode: action.loadCode,
+          },
+        },
+      };
     case "set-execution-terms":
       return { ...state, executionTermsInput: action.value };
     case "set-draft-id":
       return { ...state, draftId: action.draftId };
     case "hydrate-draft": {
+      const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
       const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
+      const batchCount = getDraftBatchCount(action.payload);
       const shouldRefreshBatchText =
-        action.refreshBatchText ||
-        batchReviewPending ||
-        (state.pendingBatchReview && (action.payload.metadata.plate_batches?.length ?? 0) > 0);
+        action.refreshBatchText || batchReviewPending || (state.pendingBatchReview && batchCount > 0);
       return {
         ...state,
+        productType,
         draftId: action.payload.draft_id,
         currentStep: mergeWizardStepWithServer(
           state.currentStep,
           action.payload.wizard_state?.current_step,
+          productType,
         ),
         managerId: action.payload.metadata.manager_id,
         clientName: action.payload.metadata.client_name,
@@ -170,34 +235,52 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
           state.executionTermsInput,
         normalizedText: action.payload.metadata.normalized_text ?? "",
         pendingBatchReview: batchReviewPending,
-        batchReviewText: shouldRefreshBatchText
-          ? getCurrentBatchReviewText(action.payload)
-          : state.batchReviewText,
-        confirmedBatchCount: Math.min(
-          state.confirmedBatchCount,
-          action.payload.metadata.plate_batches?.length ?? 0,
-        ),
+        batchReviewText: shouldRefreshBatchText ? getCurrentBatchReviewText(action.payload) : state.batchReviewText,
+        confirmedBatchCount: Math.min(state.confirmedBatchCount, batchCount),
         widePlateActions: action.payload.metadata.wide_plates_resolved ? {} : state.widePlateActions,
+        unpricedPlateActions: action.payload.metadata.unpriced_plates_resolved ? {} : state.unpricedPlateActions,
         lastDraft: action.payload,
       };
     }
     case "sync-after-wide-plates": {
+      const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
       const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
+      const batchCount = getDraftBatchCount(action.payload);
       return {
         ...state,
+        productType,
         draftId: action.payload.draft_id,
         currentStep: mergeWizardStepWithServer(
           state.currentStep,
           action.payload.wizard_state?.current_step,
+          productType,
         ),
         normalizedText: action.payload.metadata.normalized_text ?? "",
         pendingBatchReview: batchReviewPending,
         batchReviewText: getCurrentBatchReviewText(action.payload),
-        confirmedBatchCount: Math.min(
-          state.confirmedBatchCount,
-          action.payload.metadata.plate_batches?.length ?? 0,
-        ),
+        confirmedBatchCount: Math.min(state.confirmedBatchCount, batchCount),
         widePlateActions: {},
+        lastDraft: action.payload,
+      };
+    }
+    case "sync-after-unpriced-plates": {
+      const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
+      const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
+      const batchCount = getDraftBatchCount(action.payload);
+      return {
+        ...state,
+        productType,
+        draftId: action.payload.draft_id,
+        currentStep: mergeWizardStepWithServer(
+          state.currentStep,
+          action.payload.wizard_state?.current_step,
+          productType,
+        ),
+        normalizedText: action.payload.metadata.normalized_text ?? "",
+        pendingBatchReview: batchReviewPending,
+        batchReviewText: getCurrentBatchReviewText(action.payload),
+        confirmedBatchCount: Math.min(state.confirmedBatchCount, batchCount),
+        unpricedPlateActions: {},
         lastDraft: action.payload,
       };
     }
@@ -223,11 +306,15 @@ export const WizardDraftProvider = ({ children }: PropsWithChildren) => {
     if (!loaded) {
       return value;
     }
+    const productType = resolveDraftProductType(loaded.productType);
     return {
       ...value,
       ...loaded,
+      productType,
       currentStep: mapLegacyWizardStep(loaded.currentStep),
       normalizedText: loaded.normalizedText ?? "",
+      isPickingProductType: loaded.isPickingProductType ?? false,
+      unpricedPlateActions: loaded.unpricedPlateActions ?? {},
     };
   });
 

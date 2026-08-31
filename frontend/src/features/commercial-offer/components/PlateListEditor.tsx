@@ -5,16 +5,29 @@ import {
   DOBOR_MARKER_HIGHLIGHT_STYLE,
   PLATE_LINE_HIGHLIGHT_STYLES,
   splitLineByDoborMarker,
+  type PlateLineHighlight,
   type PlateLineHighlightKind,
 } from "@/features/commercial-offer/lib/plateLineHighlights";
+import {
+  assignNonEmptyLineNumbers,
+  formatPlateLineNumber,
+  lineNumberGutterCh,
+} from "@/features/commercial-offer/lib/plateListLineNumbers";
 import { AutoResizeTextarea } from "@/shared/ui/Field";
 
 type PlateListEditorProps = {
-  draft: CommercialDraftDetails;
+  draft?: CommercialDraftDetails | null;
   value: string;
   onChange: (value: string) => void;
   minHeight?: number;
+  showLineNumbers?: boolean;
+  highlights?: Map<number, PlateLineHighlight>;
+  placeholder?: string;
 };
+
+const EDITOR_PADDING_Y = "0.8rem";
+const EDITOR_PADDING_X = "0.9rem";
+const LINE_NUMBER_COLOR = "#667085";
 
 const LEGEND_ITEMS: Array<{ kind: PlateLineHighlightKind; label: string }> = [
   { kind: "correction", label: "Исправлено при распознавании" },
@@ -23,9 +36,34 @@ const LEGEND_ITEMS: Array<{ kind: PlateLineHighlightKind; label: string }> = [
   { kind: "dobor", label: "Пара добора" },
 ];
 
-export const PlateListEditor = ({ draft, value, onChange, minHeight = 440 }: PlateListEditorProps) => {
+export const PlateListEditor = ({
+  draft,
+  value,
+  onChange,
+  minHeight = 440,
+  showLineNumbers = false,
+  highlights,
+  placeholder = "Пока нет списка плит.",
+}: PlateListEditorProps) => {
   const lines = value.split("\n");
-  const highlightMap = useMemo(() => buildPlateLineHighlightMap(draft, lines), [draft, lines]);
+  const lineNumbers = showLineNumbers ? assignNonEmptyLineNumbers(lines) : [];
+  const maxLineNumber = lineNumbers.reduce<number>(
+    (max, number) => (number != null && number > max ? number : max),
+    0,
+  );
+  const gutterCh = showLineNumbers ? lineNumberGutterCh(maxLineNumber) : 0;
+  const textareaPaddingLeft = showLineNumbers
+    ? `calc(${EDITOR_PADDING_X} + ${gutterCh}ch)`
+    : EDITOR_PADDING_X;
+  const highlightMap = useMemo(() => {
+    if (highlights) {
+      return highlights;
+    }
+    if (draft) {
+      return buildPlateLineHighlightMap(draft, lines);
+    }
+    return new Map<number, PlateLineHighlight>();
+  }, [highlights, draft, lines]);
   const activeKinds = useMemo(() => {
     const kinds = new Set<PlateLineHighlightKind>();
     lines.forEach((line, index) => {
@@ -72,7 +110,7 @@ export const PlateListEditor = ({ draft, value, onChange, minHeight = 440 }: Pla
             pointerEvents: "none",
             borderRadius: 12,
             border: "1px solid transparent",
-            padding: "0.8rem 0.9rem",
+            padding: `${EDITOR_PADDING_Y} ${EDITOR_PADDING_X}`,
             fontFamily: "Consolas, monospace",
             fontSize: "inherit",
             lineHeight: 1.5,
@@ -84,6 +122,7 @@ export const PlateListEditor = ({ draft, value, onChange, minHeight = 440 }: Pla
           {lines.map((line, index) => {
             const highlight = highlightMap.get(index);
             const style = highlight ? PLATE_LINE_HIGHLIGHT_STYLES[highlight.kind] : null;
+            const lineNumber = showLineNumbers ? (lineNumbers[index] ?? null) : null;
             const doborBadge =
               highlight?.kind === "dobor" && highlight.doborPairId ? (
                 <span
@@ -103,31 +142,50 @@ export const PlateListEditor = ({ draft, value, onChange, minHeight = 440 }: Pla
                 key={`${index}-${line}`}
                 title={highlight?.title}
                 style={{
+                  display: showLineNumbers ? "flex" : undefined,
+                  alignItems: showLineNumbers ? "flex-start" : undefined,
                   minHeight: "1.5em",
                   background: style?.background ?? "transparent",
                   boxShadow: style ? `inset 3px 0 0 ${style.border}` : undefined,
                 }}
               >
-                {line ? (
-                  splitLineByDoborMarker(line).map((segment, segmentIndex) =>
-                    segment.isMarker ? (
-                      <span
-                        key={segmentIndex}
-                        style={{
-                          background: DOBOR_MARKER_HIGHLIGHT_STYLE.background,
-                          boxShadow: `inset 0 -2px 0 ${DOBOR_MARKER_HIGHLIGHT_STYLE.border}`,
-                        }}
-                      >
-                        {segment.text}
-                      </span>
-                    ) : (
-                      <span key={segmentIndex}>{segment.text}</span>
-                    ),
-                  )
-                ) : (
-                  "\u00a0"
+                {showLineNumbers && (
+                  <span
+                    data-testid={lineNumber != null ? "plate-line-number" : undefined}
+                    aria-hidden
+                    style={{
+                      width: `${gutterCh}ch`,
+                      flexShrink: 0,
+                      color: LINE_NUMBER_COLOR,
+                      userSelect: "none",
+                      textAlign: "right",
+                    }}
+                  >
+                    {lineNumber != null ? formatPlateLineNumber(lineNumber) : ""}
+                  </span>
                 )}
-                {doborBadge}
+                <div style={showLineNumbers ? { flex: 1, minWidth: 0 } : undefined}>
+                  {line ? (
+                    splitLineByDoborMarker(line).map((segment, segmentIndex) =>
+                      segment.isMarker ? (
+                        <span
+                          key={segmentIndex}
+                          style={{
+                            background: DOBOR_MARKER_HIGHLIGHT_STYLE.background,
+                            boxShadow: `inset 0 -2px 0 ${DOBOR_MARKER_HIGHLIGHT_STYLE.border}`,
+                          }}
+                        >
+                          {segment.text}
+                        </span>
+                      ) : (
+                        <span key={segmentIndex}>{segment.text}</span>
+                      ),
+                    )
+                  ) : (
+                    "\u00a0"
+                  )}
+                  {doborBadge}
+                </div>
               </div>
             );
           })}
@@ -136,7 +194,7 @@ export const PlateListEditor = ({ draft, value, onChange, minHeight = 440 }: Pla
         <AutoResizeTextarea
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="Пока нет списка плит."
+          placeholder={placeholder}
           style={{
             minHeight,
             position: "relative",
@@ -144,6 +202,7 @@ export const PlateListEditor = ({ draft, value, onChange, minHeight = 440 }: Pla
             background: "transparent",
             lineHeight: 1.5,
             caretColor: "#101828",
+            paddingLeft: textareaPaddingLeft,
           }}
         />
       </div>

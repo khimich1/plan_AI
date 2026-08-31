@@ -8,6 +8,7 @@ from app.core.settings import get_settings
 from app.services.draft_store import DraftStore
 from app.services.file_generation_service import FileGenerationService
 from core.commercial_offer_xlsx import DB_PATH
+from core.commercial_pricing import ensure_order_priced
 from core.plate_order_context import PlateOrderContext
 
 
@@ -21,6 +22,8 @@ class CommercialExportService:
         "schema": "Схема раскладки (PDF)",
     }
     DEFAULT_FILE_TYPES = ("pdf", "xlsx", "breakdown")
+    PILE_FILE_TYPES = ("pdf", "xlsx")
+    STEP_FILE_TYPES = ("pdf", "xlsx")
     ALL_FILE_TYPES = ("pdf", "xlsx", "breakdown", "schema")
 
     def __init__(
@@ -42,7 +45,7 @@ class CommercialExportService:
         plate_order_ctx: PlateOrderContext | None = None,
     ) -> list[dict[str, str]]:
         metadata = dict(payload.get("metadata", {}))
-        requested_types = self.normalize_file_types(file_types)
+        requested_types = self.normalize_file_types(file_types, metadata=metadata)
         generated_files = self.normalize_generated_files(metadata.get("generated_files", []))
         files_by_kind = {item["kind"]: item for item in generated_files}
         schema_raw = metadata.get("schema_file")
@@ -51,8 +54,6 @@ class CommercialExportService:
             if schema_items:
                 files_by_kind["schema"] = schema_items[0]
         order_data = payload["order_data"]
-        from app.services.commercial_workflow_service import ensure_order_priced
-
         ensure_order_priced(order_data, db_path=str(DB_PATH))
         manager_name = str(metadata.get("manager_name", "") or "")
         manager_phone = str(metadata.get("manager_phone", "") or "")
@@ -62,6 +63,7 @@ class CommercialExportService:
         delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
         payment_conditions = str(metadata.get("payment_conditions", "") or "")
         logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
+        append_batches = metadata.get("append_batches")
         offer_number, offer_date, file_stem = self.build_offer_identity(draft_id)
 
         for file_type in requested_types:
@@ -88,6 +90,7 @@ class CommercialExportService:
                     logistics_cost=logistics_cost,
                     delivery_conditions=delivery_conditions or None,
                     payment_conditions=payment_conditions or None,
+                    append_batches=append_batches,
                 )
                 files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, output_path)
             elif file_type == "xlsx":
@@ -105,6 +108,7 @@ class CommercialExportService:
                     delivery_conditions=delivery_conditions,
                     payment_conditions=payment_conditions,
                     logistics_cost=logistics_cost,
+                    append_batches=append_batches,
                 )
                 files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, output_path)
             elif file_type == "breakdown":
@@ -133,7 +137,11 @@ class CommercialExportService:
                     if schema_path.exists():
                         files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, schema_path)
 
-        merged_files = [files_by_kind[key] for key in self.DEFAULT_FILE_TYPES if key in files_by_kind]
+        merged_files = [
+            files_by_kind[key]
+            for key in self._default_file_types(metadata)
+            if key in files_by_kind
+        ]
         update_payload: dict[str, Any] = {"generated_files": merged_files}
         if "schema" in files_by_kind:
             update_payload["schema_file"] = files_by_kind["schema"]
@@ -159,11 +167,48 @@ class CommercialExportService:
         """Path under configured ``outputs_dir`` for a generated file basename (no subpaths)."""
         return self.resolve_generated_file(safe_filename)
 
-    def normalize_file_types(self, file_types: Iterable[str] | None) -> list[str]:
-        requested = list(file_types or self.DEFAULT_FILE_TYPES)
+    def _is_pile_draft(self, metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "piles"
+
+    def _is_step_draft(self, metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "steps"
+
+    def _is_march_draft(self, metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "marches"
+
+    def _is_bridge_pile_draft(self, metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "bridge_piles"
+
+    def _is_fbs_draft(self, metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "fbs"
+
+    def _is_non_plate_draft(self, metadata: dict[str, Any]) -> bool:
+        return (
+            self._is_pile_draft(metadata)
+            or self._is_step_draft(metadata)
+            or self._is_march_draft(metadata)
+            or self._is_bridge_pile_draft(metadata)
+            or self._is_fbs_draft(metadata)
+        )
+
+    def _default_file_types(self, metadata: dict[str, Any]) -> tuple[str, ...]:
+        if self._is_non_plate_draft(metadata):
+            return self.PILE_FILE_TYPES
+        return self.DEFAULT_FILE_TYPES
+
+    def normalize_file_types(
+        self,
+        file_types: Iterable[str] | None,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[str]:
+        default_types = self._default_file_types(metadata or {})
+        requested = list(file_types or default_types)
         normalized: list[str] = []
         for item in requested:
             key = str(item).strip().lower()
+            if self._is_non_plate_draft(metadata or {}) and key in {"breakdown", "schema"}:
+                continue
             if key in self.FILE_LABELS and key not in normalized:
                 normalized.append(key)
         if not normalized:

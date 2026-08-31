@@ -22,8 +22,17 @@ vi.mock("@/features/commercial-offer/api/commercialOfferApi", () => ({
     getBreakdown: vi.fn(),
     createDraft: vi.fn(),
     updateDraftPlates: vi.fn(),
+    updateDraftPiles: vi.fn(),
+    updateDraftSteps: vi.fn(),
+    updateDraftMarches: vi.fn(),
     applyAiPlates: vi.fn(),
+    applyAiPiles: vi.fn(),
+    applyAiSteps: vi.fn(),
+    applyAiMarches: vi.fn(),
+    updatePileGrades: vi.fn(),
+    updateMarchGrades: vi.fn(),
     resolveWidePlates: vi.fn(),
+    resolveUnpricedPlates: vi.fn(),
     updateDraftMeta: vi.fn(),
     calculateDraft: vi.fn(),
     generateFiles: vi.fn(),
@@ -76,6 +85,8 @@ function makeDraft(overrides: Partial<CommercialDraftDetails> = {}): CommercialD
       breakdown_tables_count: 0,
       total_sum: 0,
       plate_batches: [],
+      pile_batches: [],
+      product_type: "plates",
       wide_plates_resolved: true,
       last_source_filename: "",
       current_step: "plates",
@@ -199,6 +210,30 @@ describe("useCommercialOfferWizard", () => {
       expect(commercialOfferApi.getBreakdown).toHaveBeenCalledWith(draft.draft_id);
       expect(result.current.breakdownQuery.isSuccess).toBe(true);
     });
+  });
+
+  it("does not fetch breakdown for pile drafts on result step", async () => {
+    const draft = makeDraft({
+      metadata: { product_type: "piles", pile_batches: [], current_step: "piles" },
+      wizard_state: { ...baseWizardState, current_step: "result" },
+    });
+    vi.mocked(commercialOfferApi.getDraft).mockResolvedValue(draft);
+
+    const { result } = renderHook(() => useCommercialOfferWizard(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    act(() => {
+      result.current.dispatch({ type: "set-product-type", productType: "piles" });
+      result.current.dispatch({ type: "set-draft-id", draftId: draft.draft_id });
+      result.current.dispatch({ type: "set-step", step: "result" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.draftQuery.isSuccess).toBe(true);
+    });
+
+    expect(commercialOfferApi.getBreakdown).not.toHaveBeenCalled();
   });
 
   it("createDraftMutation hydrates store and sets draft id", async () => {

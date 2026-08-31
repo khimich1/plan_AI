@@ -18,6 +18,8 @@ def test_save_kp_persists_plate_line(tmp_path) -> None:
             "unit_price": 1000.0,
             "weight": 5000.0,
             "length_dm_raw": "60",
+            # Explicit grade so resolve_concrete_grade short-circuits (no pb.db).
+            "concrete_grade": "М500",
         }
     ]
     kp_id = KpPersistenceService.save_kp_to_db(

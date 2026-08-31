@@ -9,6 +9,7 @@ from app.core.settings import get_settings
 from app.main import create_app
 from app.security.login_rate_limit import (
     configured_worker_count,
+    enforce_single_instance_workers,
     rate_limit_deployment_info,
     validate_rate_limit_shared_store_config,
     warn_if_multi_worker_without_shared_store,
@@ -56,13 +57,19 @@ def test_configured_worker_count_reads_app_workers(
     assert configured_worker_count() == 5
 
 
-def test_rate_limit_deployment_info_without_env() -> None:
+def test_rate_limit_deployment_info_without_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("UVICORN_WORKERS", raising=False)
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    monkeypatch.delenv("APP_WORKERS", raising=False)
     info = rate_limit_deployment_info()
     assert info["store"] == "in-process"
     assert info["shared_across_workers"] is False
     assert info["single_worker_required"] is True
     assert info["configured_workers"] is None
-    assert "warning" not in info
+    assert info["workers_undeclared"] is True
+    assert "undeclared" in info["warning"]
 
 
 def test_rate_limit_deployment_info_warns_on_multi_worker(
@@ -72,6 +79,7 @@ def test_rate_limit_deployment_info_warns_on_multi_worker(
     info = rate_limit_deployment_info()
     assert info["configured_workers"] == 4
     assert "warning" in info
+    assert "workers_undeclared" not in info
 
 
 def test_warn_if_multi_worker_without_shared_store_logs(
@@ -84,6 +92,18 @@ def test_warn_if_multi_worker_without_shared_store_logs(
     assert any("in-process store" in record.message for record in caplog.records)
 
 
+def test_warn_if_undeclared_workers_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.delenv("UVICORN_WORKERS", raising=False)
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    monkeypatch.delenv("APP_WORKERS", raising=False)
+    caplog.set_level(logging.WARNING, logger="app.security.login_rate_limit")
+    warn_if_multi_worker_without_shared_store()
+    assert any("undeclared" in record.message.lower() for record in caplog.records)
+
+
 def test_warn_if_multi_worker_skips_single_worker(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -92,6 +112,45 @@ def test_warn_if_multi_worker_skips_single_worker(
     caplog.set_level(logging.WARNING, logger="app.security.login_rate_limit")
     warn_if_multi_worker_without_shared_store()
     assert caplog.records == []
+
+
+def test_enforce_single_instance_workers_raises_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UVICORN_WORKERS", "2")
+    with pytest.raises(RuntimeError, match="Refusing to start"):
+        enforce_single_instance_workers(
+            app_env="production", storage_layout="single_instance"
+        )
+
+
+def test_enforce_single_instance_workers_skips_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UVICORN_WORKERS", "2")
+    enforce_single_instance_workers(
+        app_env="development", storage_layout="single_instance"
+    )
+
+
+def test_enforce_single_instance_workers_skips_undeclared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("UVICORN_WORKERS", raising=False)
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    monkeypatch.delenv("APP_WORKERS", raising=False)
+    enforce_single_instance_workers(
+        app_env="production", storage_layout="single_instance"
+    )
+
+
+def test_enforce_single_instance_workers_skips_shared_volume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UVICORN_WORKERS", "2")
+    enforce_single_instance_workers(
+        app_env="production", storage_layout="shared_volume"
+    )
 
 
 def test_validate_rate_limit_shared_store_redis_raises(
