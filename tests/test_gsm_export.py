@@ -520,3 +520,150 @@ def test_export_multi_day_zip_names(api_client: CsrfAwareTestClient) -> None:
     assert r.status_code == 200, r.text
     names = sorted(zipfile.ZipFile(io.BytesIO(r.content)).namelist())
     assert names == ["ПЛ 07.04.25.xls", "ПЛ 08.04.25.xls"]
+
+
+def _fake_xls_convert(src: Path, fmt: str, outdir: Path, workdir: Path, timeout: int) -> Path:
+    out = outdir / f"{src.stem}.{fmt}"
+    out.write_bytes(b"stub-xls")
+    return out
+
+
+def _seed_named_export_vehicle(
+    repo: GsmRepository,
+    *,
+    name: str,
+    plate: str,
+    license_number: str,
+    days: list[date],
+    status: str = "draft",
+) -> dict[str, Any]:
+    driver_id = repo.create_driver(
+        full_name=f"Водитель {plate}",
+        license_number=license_number,
+        license_issued_at="2015-01-01",
+    )
+    vehicle_id = repo.create_vehicle(
+        name=name,
+        plate_number=plate,
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=driver_id,
+    )
+    for i, day in enumerate(days):
+        km = 100
+        odo = 10_000 + i * km
+        repo.upsert_waybill(
+            vehicle_id=vehicle_id,
+            date=day,
+            driver_id=driver_id,
+            status=status,
+            source="manual",
+            odometer_start=odo,
+            odometer_end=odo + km,
+            fuel_start=20.0,
+            fuel_issued=10.0,
+            fuel_end=20.5,
+            route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": km}]),
+        )
+    repo.set_setting(
+        "season_switches",
+        json.dumps([{"date": "2026-04-01", "mode": "summer"}], ensure_ascii=False),
+    )
+    return {"vehicle_id": vehicle_id, "driver_id": driver_id}
+
+
+def _waybill_statuses(
+    repo: GsmRepository, vehicle_id: int, period_from: date, period_to: date
+) -> list[str]:
+    return [
+        str(wb["status"])
+        for wb in repo.list_waybills(
+            vehicle_id=vehicle_id,
+            period_from=period_from,
+            period_to=period_to,
+        )
+    ]
+
+
+def test_export_august_monjaro_july_tail_does_not_flip(
+    api_client: CsrfAwareTestClient,
+) -> None:
+    settings = get_settings()
+    repo = GsmRepository(db_path=settings.plita_db_path)
+    monjaro = _seed_named_export_vehicle(
+        repo,
+        name="Monjaro Tail",
+        plate="О 301 МН 44",
+        license_number="44 30 130111",
+        days=[date(2026, 7, 10), date(2026, 8, 5)],
+    )
+    august_from = date(2026, 8, 1)
+    august_to = date(2026, 8, 31)
+
+    with patch(
+        "app.services.gsm_export_service.convert_with_soffice",
+        side_effect=_fake_xls_convert,
+    ):
+        r = api_client.post(
+            EXPORT,
+            json={
+                "vehicle_ids": [monjaro["vehicle_id"]],
+                "from": august_from.isoformat(),
+                "to": august_to.isoformat(),
+            },
+            cookies=_auth(),
+        )
+    assert r.status_code in (400, 404, 422), r.text
+    detail = r.json().get("detail") or r.json()
+    code = detail.get("code") if isinstance(detail, dict) else None
+    assert code == "gsm_kit_tail"
+    assert _waybill_statuses(repo, monjaro["vehicle_id"], august_from, august_to) == [
+        "draft"
+    ]
+
+
+def test_export_august_mix_exports_clean_skips_tail(
+    api_client: CsrfAwareTestClient,
+) -> None:
+    settings = get_settings()
+    repo = GsmRepository(db_path=settings.plita_db_path)
+    monjaro = _seed_named_export_vehicle(
+        repo,
+        name="Monjaro Tail",
+        plate="О 302 МН 44",
+        license_number="44 30 130222",
+        days=[date(2026, 7, 10), date(2026, 8, 5)],
+    )
+    palisade = _seed_named_export_vehicle(
+        repo,
+        name="Palisade Clean",
+        plate="О 303 ПЛ 44",
+        license_number="44 30 130333",
+        days=[date(2026, 8, 10)],
+    )
+    august_from = date(2026, 8, 1)
+    august_to = date(2026, 8, 31)
+
+    with patch(
+        "app.services.gsm_export_service.convert_with_soffice",
+        side_effect=_fake_xls_convert,
+    ):
+        r = api_client.post(
+            EXPORT,
+            json={
+                "vehicle_ids": [monjaro["vehicle_id"], palisade["vehicle_id"]],
+                "from": august_from.isoformat(),
+                "to": august_to.isoformat(),
+            },
+            cookies=_auth(),
+        )
+    assert r.status_code == 200, r.text
+    names = sorted(zipfile.ZipFile(io.BytesIO(r.content)).namelist())
+    assert names == ["ПЛ 10.08.26.xls"]
+    assert _waybill_statuses(repo, palisade["vehicle_id"], august_from, august_to) == [
+        "exported"
+    ]
+    assert _waybill_statuses(repo, monjaro["vehicle_id"], august_from, august_to) == [
+        "draft"
+    ]

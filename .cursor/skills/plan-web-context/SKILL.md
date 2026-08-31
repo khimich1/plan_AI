@@ -90,7 +90,7 @@ Also see: `ai_docs/develop/cursor-dot-folder-guide-RU.md`.
 | Small task | `/implement` → `simple-workflow` |
 | Review | `/review` → `review-workflow` |
 | Refactor | `/refactor` → `refactor-workflow` |
-| Audit | `/audit` → `audit-workflow` |
+| Audit | `/audit gsm` (or kp, layout, auth, `--since`, `--full`) → `audit-workflow`; registry `FINDINGS.md`; no auto-fix |
 
 Engineering-phase skills (`spec-driven-development`, `test-driven-development`, …) plug into these workflows; they do not replace them.
 

@@ -54,12 +54,12 @@ def _chain_broken(row: dict[str, Any]) -> bool:
 def _status_of(agg: dict[str, Any]) -> VehiclePeriodStatus:
     if agg["tx_count"] == 0 and agg["wb_count"] == 0:
         return "no_data"
+    if agg["red_days"] > 0:
+        return "has_red_days"
     if agg["tx_count"] > 0 and (
         agg["wb_count"] == 0 or agg["tx_last_date"] > (agg["wb_last_date"] or "")
     ):
         return "needs_generation"
-    if agg["red_days"] > 0:
-        return "has_red_days"
     if agg["draft_count"] > 0:
         return "drafts_pending"
     if agg["exported_count"] < agg["wb_count"]:

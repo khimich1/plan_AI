@@ -23,6 +23,7 @@ from typing import Any
 from openpyxl import load_workbook
 
 from app.repositories.gsm_repository import GsmRepository
+from app.services.gsm_kit_gate import filter_kit_vehicle_ids
 from core.gsm.blank import (
     BlankDriver,
     BlankWaybill,
@@ -152,6 +153,26 @@ class GsmExportService:
                     f"vehicle #{vid} not found",
                     code="gsm_vehicle_not_found",
                 )
+
+        allowed, blocked = filter_kit_vehicle_ids(
+            self._repo,
+            ids,
+            period_from=period_from,
+            period_to=period_to,
+            purpose="kit",
+        )
+        if not allowed:
+            if len(ids) == 1 and blocked:
+                first = blocked[0]
+                raise GsmExportError(
+                    first.message or "комплект запрещён",
+                    code=first.code or "gsm_kit_red",
+                )
+            raise GsmExportError(
+                "no waybills in period for selected vehicles",
+                code="gsm_export_empty",
+            )
+        ids = allowed
 
         waybills: list[dict[str, Any]] = []
         for vid in ids:

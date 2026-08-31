@@ -1,6 +1,7 @@
 # Spec: ГСМ — один месяц, один комплект
 
 Дата: 2026-08-26. Статус: draft, план готов.
+Гейты хвоста/цепи на API и выгрузка LibreOffice: [`gsm-month-close-hardening.md`](./gsm-month-close-hardening.md) (2026-08-28).
 Идея: [`../ideas/gsm-month-close-kit.md`](../ideas/gsm-month-close-kit.md)
 (2026-08-26, direction confirmed).
 План: [`../develop/plans/2026-08-26-gsm-month-close-kit.md`](../develop/plans/2026-08-26-gsm-month-close-kit.md).

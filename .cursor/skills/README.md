@@ -15,7 +15,7 @@
 | `/implement` | Небольшая задача end-to-end |
 | `/review` | Ревью перед коммитом/PR |
 | `/refactor` | Упрощение/рефакторинг |
-| `/audit` | Архитектура + security + качество |
+| `/audit` | Модуль (gsm/kp/layout/auth) + реестр + дельта; без Health Score и автофикса |
 
 ### Фазы разработки (новые skills)
 

@@ -1,5 +1,7 @@
 # Отчёт по аудиту проекта
 
+> Живой реестр ID (статусы): [FINDINGS.md](./FINDINGS.md). Этот файл — прогон 0 от 2026-08-28, не обновлять статусы здесь.
+
 **Дата**: 2026-08-28  
 **Область**: весь проект (критичные 20–30%: backend FastAPI, frontend React, коммерческий/производственный контур, auth, layout pipeline)  
 **Аудиторы**: senior-reviewer + security-auditor + reviewer

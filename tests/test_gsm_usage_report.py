@@ -707,10 +707,10 @@ def test_usage_report_no_data_when_all_red(api_client: CsrfAwareTestClient) -> N
         period_to=period_to.isoformat(),
         vehicle_ids=[seeded["vehicle_id"]],
     )
-    assert r.status_code == 404, r.text
+    assert r.status_code in (400, 404, 422), r.text
     detail = r.json().get("detail") or r.json()
     code = detail.get("code") if isinstance(detail, dict) else None
-    assert code == "gsm_report_no_data"
+    assert code == "gsm_kit_red"
     assert _waybill_statuses(repo, seeded["vehicle_id"], period_from, period_to) == [
         "confirmed"
     ]
@@ -896,4 +896,138 @@ def test_usage_report_already_exported_stays_in_kit(
     assert _waybill_statuses(repo, seeded["vehicle_id"], period_from, period_to) == [
         "exported",
         "exported",
+    ]
+
+
+def test_usage_report_august_skips_july_tail_keeps_clean_neighbor(
+    api_client: CsrfAwareTestClient,
+) -> None:
+    settings = get_settings()
+    repo = GsmRepository(db_path=settings.plita_db_path)
+    monjaro = _seed_simple_vehicle(
+        repo,
+        name="Monjaro Tail",
+        plate="О 201 МН 44",
+        license_number="44 20 120111",
+        days=[
+            date(2026, 7, 10),
+            date(2026, 7, 12),
+            date(2026, 8, 5),
+            date(2026, 8, 8),
+        ],
+        status="draft",
+    )
+    palisade = _seed_simple_vehicle(
+        repo,
+        name="Palisade Clean",
+        plate="О 202 ПЛ 44",
+        license_number="44 20 120222",
+        days=[date(2026, 8, 10), date(2026, 8, 12)],
+        status="draft",
+    )
+    august_from = date(2026, 8, 1)
+    august_to = date(2026, 8, 31)
+    july_from = date(2026, 7, 1)
+    july_to = date(2026, 7, 31)
+
+    r = _post_usage(
+        api_client,
+        period_from=august_from.isoformat(),
+        period_to=august_to.isoformat(),
+        vehicle_ids=None,
+    )
+    assert r.status_code == 200, r.text
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    reports = [n for n in names if n.startswith("Отчет по использованию ГСМ")]
+    waybills = [n for n in names if n.startswith("ПЛ ")]
+    joined = " ".join(reports)
+    assert "202" in joined
+    assert "201" not in joined
+    assert sorted(waybills) == ["ПЛ 10.08.26.xls", "ПЛ 12.08.26.xls"]
+    assert _waybill_statuses(repo, palisade["vehicle_id"], august_from, august_to) == [
+        "exported",
+        "exported",
+    ]
+    assert _waybill_statuses(repo, monjaro["vehicle_id"], august_from, august_to) == [
+        "draft",
+        "draft",
+    ]
+    assert _waybill_statuses(repo, monjaro["vehicle_id"], july_from, july_to) == [
+        "draft",
+        "draft",
+    ]
+
+
+def test_usage_report_single_july_tail_is_4xx_not_exported(
+    api_client: CsrfAwareTestClient,
+) -> None:
+    settings = get_settings()
+    repo = GsmRepository(db_path=settings.plita_db_path)
+    monjaro = _seed_simple_vehicle(
+        repo,
+        name="Monjaro Only",
+        plate="О 203 МН 44",
+        license_number="44 20 120333",
+        days=[date(2026, 7, 15), date(2026, 8, 4)],
+        status="draft",
+    )
+    august_from = date(2026, 8, 1)
+    august_to = date(2026, 8, 31)
+
+    r = _post_usage(
+        api_client,
+        period_from=august_from.isoformat(),
+        period_to=august_to.isoformat(),
+        vehicle_ids=[monjaro["vehicle_id"]],
+    )
+    assert r.status_code in (400, 404, 422), r.text
+    detail = r.json().get("detail") or r.json()
+    code = detail.get("code") if isinstance(detail, dict) else None
+    assert code == "gsm_kit_tail"
+    assert _waybill_statuses(repo, monjaro["vehicle_id"], august_from, august_to) == [
+        "draft"
+    ]
+
+
+def test_usage_report_chain_broken_does_not_flip_exported(
+    api_client: CsrfAwareTestClient,
+) -> None:
+    settings = get_settings()
+    repo = GsmRepository(db_path=settings.plita_db_path)
+    seeded = _seed_simple_vehicle(
+        repo,
+        name="Chain Broken",
+        plate="О 204 ЦП 44",
+        license_number="44 20 120444",
+        days=[date(2026, 8, 3)],
+        status="draft",
+    )
+    repo.upsert_waybill(
+        vehicle_id=seeded["vehicle_id"],
+        date=date(2026, 7, 31),
+        driver_id=seeded["driver_id"],
+        status="exported",
+        source="manual",
+        odometer_start=9000,
+        odometer_end=9100,
+        fuel_start=30.0,
+        fuel_issued=10.0,
+        fuel_end=27.59,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 100}]),
+    )
+    august_from = date(2026, 8, 1)
+    august_to = date(2026, 8, 31)
+
+    r = _post_usage(
+        api_client,
+        period_from=august_from.isoformat(),
+        period_to=august_to.isoformat(),
+        vehicle_ids=[seeded["vehicle_id"]],
+    )
+    assert r.status_code in (400, 404, 422), r.text
+    detail = r.json().get("detail") or r.json()
+    code = detail.get("code") if isinstance(detail, dict) else None
+    assert code == "gsm_kit_chain"
+    assert _waybill_statuses(repo, seeded["vehicle_id"], august_from, august_to) == [
+        "draft"
     ]

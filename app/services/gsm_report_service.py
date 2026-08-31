@@ -26,6 +26,7 @@ from app.services.gsm_export_service import (
     GsmExportService,
     convert_with_soffice,
 )
+from app.services.gsm_kit_gate import filter_kit_vehicle_ids
 from core.gsm.season import parse_season_switches
 from core.gsm.usage_report import (
     KIT_STATUSES,
@@ -104,10 +105,27 @@ class GsmReportService:
             )
 
         ids = self._resolve_vehicle_ids(vehicle_ids)
+        allowed, blocked = filter_kit_vehicle_ids(
+            self._repo,
+            ids,
+            period_from=period_from,
+            period_to=period_to,
+            purpose="kit",
+        )
+        if not allowed:
+            if len(ids) == 1 and blocked:
+                first = blocked[0]
+                raise GsmReportError(
+                    first.message or "комплект запрещён",
+                    code=first.code or "gsm_kit_red",
+                )
+            raise GsmReportError(
+                "нет ПЛ к комплекту / все красные",
+                code="gsm_report_no_data",
+            )
+
         eligible: list[int] = []
-        for vid in ids:
-            if self._vehicle_has_manual_intervention(vid, period_from, period_to):
-                continue
+        for vid in allowed:
             if not self._kit_waybills(vid, period_from, period_to):
                 continue
             eligible.append(vid)
@@ -242,19 +260,6 @@ class GsmReportService:
                     code="gsm_vehicle_not_found",
                 )
         return ids
-
-    def _vehicle_has_manual_intervention(
-        self,
-        vehicle_id: int,
-        period_from: date,
-        period_to: date,
-    ) -> bool:
-        waybills = self._repo.list_waybills(
-            vehicle_id=vehicle_id,
-            period_from=period_from,
-            period_to=period_to,
-        )
-        return any(_waybill_has_manual_intervention(wb) for wb in waybills)
 
     def _kit_waybills(
         self,
@@ -495,30 +500,6 @@ def _parse_route_list(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(parsed, list):
         return []
     return [item for item in parsed if isinstance(item, dict)]
-
-
-_MANUAL_INTERVENTION = "manual_intervention"
-
-
-def _waybill_has_manual_intervention(wb: dict[str, Any]) -> bool:
-    raw = wb.get("warnings_json")
-    if not raw:
-        return False
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return _MANUAL_INTERVENTION in raw
-    else:
-        parsed = raw
-    if not isinstance(parsed, list):
-        return False
-    for item in parsed:
-        if item == _MANUAL_INTERVENTION:
-            return True
-        if isinstance(item, dict) and item.get("code") == _MANUAL_INTERVENTION:
-            return True
-    return False
 
 
 def _dominant_fuel_grade(txs: Sequence[dict[str, Any]]) -> str | None:
