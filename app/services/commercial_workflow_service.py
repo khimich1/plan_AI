@@ -567,6 +567,8 @@ class CommercialWorkflowService:
         delivery_conditions: str | None = None,
         payment_conditions: str | None = None,
         logistics_cost: float | None = None,
+        pile_logistics_cost: float | None = None,
+        pile_trip_overrides: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.update_draft_meta(
             draft_id,
@@ -577,6 +579,8 @@ class CommercialWorkflowService:
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
             logistics_cost=logistics_cost,
+            pile_logistics_cost=pile_logistics_cost,
+            pile_trip_overrides=pile_trip_overrides,
         )
 
     def calculate_draft(self, draft_id: str) -> dict[str, Any]:

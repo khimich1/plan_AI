@@ -25,6 +25,8 @@ def save_kp_to_db(
     owner_user_id: int | None = None,
     product_type: str = "plates",
     db_path: str = DEFAULT_DB,
+    pile_logistics_cost: float = 0.0,
+    pile_trip_overrides: dict | None = None,
 ) -> int:
     """Сохраняет КП в базу.
 
@@ -47,6 +49,8 @@ def save_kp_to_db(
         owner_user_id,
         product_type,
         db_path,
+        pile_logistics_cost=pile_logistics_cost,
+        pile_trip_overrides=pile_trip_overrides,
     )
 
 
@@ -63,6 +67,8 @@ def update_kp_from_order_data(
     logistics_cost: float | None = None,
     product_type: str = "plates",
     db_path: str = DEFAULT_DB,
+    pile_logistics_cost: float | None = None,
+    pile_trip_overrides: dict | None = None,
 ) -> int:
     """Обновляет существующее КП (sync по line_id). Тот же ``kp_id``.
 
@@ -83,6 +89,8 @@ def update_kp_from_order_data(
         logistics_cost=logistics_cost,
         product_type=product_type,
         db_path=db_path,
+        pile_logistics_cost=pile_logistics_cost,
+        pile_trip_overrides=pile_trip_overrides,
     )
 
 
@@ -209,81 +217,87 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
         conn.close()
 
 
-def update_kp_logistics_cost(kp_id: int, logistics_cost: float, db_path: str = DEFAULT_DB) -> bool:
+def update_kp_logistics_cost(
+    kp_id: int,
+    logistics_cost: float,
+    db_path: str = DEFAULT_DB,
+    *,
+    pile_logistics_cost: float | None = None,
+    pile_trip_overrides: dict | None = None,
+) -> bool:
     """
-    Обновляет стоимость одного рейса (поле KP_offers.logistics_cost) и пересчитывает
-    суммы KP_offers согласно calculate_total_cost (как при генерации PDF/XLSX КП).
-    Цены по плитам не меняются.
+    Обновляет тариф(ы) рейса и пересчитывает суммы KP_offers.
+    PDF не перегенерируется (как раньше для плит).
     """
     trip = max(0.0, float(logistics_cost or 0.0))
     try:
-        from core.commercial_offer_xlsx import calculate_total_cost
+        from core.commercial_pricing import calculate_total_cost
+        from core.kp.offers_read import get_kp_by_id
+        from core.kp_order_data import order_data_from_kp_info
+        from core.pile_trip_pricing import coerce_pile_trip_overrides, dumps_pile_trip_overrides
     except ImportError:
         return False
+
+    kp_info = get_kp_by_id(kp_id, db_path)
+    if not kp_info:
+        return False
+    order_data = order_data_from_kp_info(kp_info)
+    if not order_data:
+        return False
+
+    current_discount = float(kp_info.get("discount_percent") or 0.0)
+    existing_pile_trip = max(0.0, float(kp_info.get("pile_logistics_cost") or 0.0))
+    pile_trip = (
+        existing_pile_trip
+        if pile_logistics_cost is None
+        else max(0.0, float(pile_logistics_cost or 0.0))
+    )
+    existing_overrides = coerce_pile_trip_overrides(kp_info.get("pile_trip_overrides_json"))
+    resolved_overrides = (
+        coerce_pile_trip_overrides(pile_trip_overrides)
+        if pile_trip_overrides is not None
+        else existing_overrides
+    )
+
+    totals = calculate_total_cost(
+        order_data,
+        current_discount,
+        logistics_cost=trip,
+        db_path=db_path,
+        require_all_priced=False,
+        pile_logistics_cost=pile_trip,
+        pile_trip_overrides=resolved_overrides,
+        pile_catalog_db_path=db_path,
+    )
 
     conn = _connect(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.cursor()
-
-        cur.execute(
-            "SELECT discount_percent FROM KP_offers WHERE kp_id = ?",
-            (kp_id,),
-        )
-        row = cur.fetchone()
-        if not row:
-            return False
-        current_discount = float(row[0] or 0.0)
-
-        cur.execute(
-            "SELECT id, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, "
-            "discounted_price, unit_price FROM kp_plates WHERE kp_id = ? ORDER BY position_number",
-            (kp_id,),
-        )
-        plates = cur.fetchall()
-        if not plates:
-            return False
-
-        order_data: list[dict] = []
-        for p in plates:
-            pid, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price_col = p
-            if unit_price_col is not None and unit_price_col > 0:
-                unit_price = float(unit_price_col)
-            else:
-                factor = 1.0 - (current_discount / 100.0)
-                if factor <= 0:
-                    factor = 1.0
-                unit_price = (discounted_price or 0) / factor
-            weight = total_weight if total_weight is not None and total_weight > 0 else (unit_weight or 0) * (qty or 0)
-            order_data.append(
-                {
-                    "name": plate_name or "",
-                    "length_m": length_m or 0,
-                    "width_m": width_m or 0,
-                    "qty": qty or 0,
-                    "load_class": load_class or 800,
-                    "unit_price": unit_price,
-                    "weight": weight,
-                }
-            )
-
-        totals = calculate_total_cost(order_data, current_discount, logistics_cost=trip)
-        subtotal = totals["subtotal"]
-        vat_amount = totals["vat_amount"]
-        total_amount = totals["total_with_vat"]
-
         cur.execute(
             """
             UPDATE KP_offers
-            SET logistics_cost = ?, subtotal = ?, vat_amount = ?, total_amount = ?
+            SET logistics_cost = ?, pile_logistics_cost = ?,
+                subtotal = ?, vat_amount = ?, total_amount = ?
             WHERE kp_id = ?
             """,
-            (trip, subtotal, vat_amount, total_amount, kp_id),
+            (
+                trip,
+                pile_trip,
+                totals["subtotal"],
+                totals["vat_amount"],
+                totals["total_with_vat"],
+                kp_id,
+            ),
         )
-
+        cur.execute(
+            "UPDATE kp_meta SET pile_trip_overrides_json = ? WHERE kp_id = ?",
+            (dumps_pile_trip_overrides(resolved_overrides), kp_id),
+        )
         conn.commit()
         return True
     except Exception:
+        traceback.print_exc()
         return False
     finally:
         conn.close()

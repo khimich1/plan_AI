@@ -179,11 +179,37 @@ class CommercialCalculationService:
         discount_percent: float,
         logistics_cost: float,
         require_all_priced: bool = False,
+        pile_logistics_cost: float = 0.0,
+        pile_trip_overrides: dict[str, int] | None = None,
     ) -> dict[str, Any]:
+        from core.pile_trip_pricing import coerce_pile_trip_overrides
+
         return calculate_total_cost(
             order_data,
             discount_percent,
             logistics_cost=logistics_cost,
             db_path=str(DB_PATH),
             require_all_priced=require_all_priced,
+            pile_logistics_cost=pile_logistics_cost,
+            pile_trip_overrides=coerce_pile_trip_overrides(pile_trip_overrides),
+        )
+
+    def compute_totals_from_metadata(
+        self,
+        order_data: list[Any],
+        metadata: dict[str, Any],
+        *,
+        require_all_priced: bool = False,
+    ) -> dict[str, Any]:
+        from core.pile_trip_pricing import coerce_pile_trip_overrides
+
+        return self.compute_totals(
+            order_data,
+            discount_percent=float(metadata.get("discount_percent", 0.0) or 0.0),
+            logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
+            require_all_priced=require_all_priced,
+            pile_logistics_cost=float(metadata.get("pile_logistics_cost", 0.0) or 0.0),
+            pile_trip_overrides=coerce_pile_trip_overrides(
+                metadata.get("pile_trip_overrides")
+            ),
         )

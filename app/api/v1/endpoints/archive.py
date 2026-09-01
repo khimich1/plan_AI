@@ -236,7 +236,13 @@ def update_archive_logistics_cost(
     service: ArchiveService = Depends(get_archive_service),
 ) -> ArchiveOfferDetails:
     try:
-        return service.update_logistics_cost(kp_id, payload.logistics_cost, user=user)
+        return service.update_logistics_cost(
+            kp_id,
+            payload.logistics_cost,
+            user=user,
+            pile_logistics_cost=payload.pile_logistics_cost,
+            pile_trip_overrides=payload.pile_trip_overrides,
+        )
     except ArchiveNotFoundError as exc:
         raise_not_found_client_error(
             exc,

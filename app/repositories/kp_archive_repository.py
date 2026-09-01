@@ -51,8 +51,14 @@ class KpArchiveRepository:
     def update_discount(self, kp_id: int, discount_percent: float) -> bool:
         return offers_write.update_kp_discount(kp_id, discount_percent, self.db_path)
 
-    def update_logistics_cost(self, kp_id: int, logistics_cost: float) -> bool:
-        return offers_write.update_kp_logistics_cost(kp_id, logistics_cost, self.db_path)
+    def update_logistics_cost(self, kp_id: int, logistics_cost: float, *, pile_logistics_cost: float | None = None, pile_trip_overrides: dict | None = None) -> bool:
+        return offers_write.update_kp_logistics_cost(
+            kp_id,
+            logistics_cost,
+            self.db_path,
+            pile_logistics_cost=pile_logistics_cost,
+            pile_trip_overrides=pile_trip_overrides,
+        )
 
     def update_status(self, kp_id: int, status: str) -> bool:
         return offers_write.update_kp_status(kp_id, status, self.db_path)

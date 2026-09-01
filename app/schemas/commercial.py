@@ -249,6 +249,8 @@ class CommercialDraftMetadata(BaseModel):
     current_save_mode: CommercialSaveMode | None = None
     execution_terms: str = ""
     logistics_cost: float = 0.0
+    pile_logistics_cost: float = 0.0
+    pile_trip_overrides: dict[str, int] = Field(default_factory=dict)
     ocr_recognition_mode: str = ""
     ocr_cost_usd: float = 0.0
     ocr_cost_rub: float = 0.0
@@ -301,6 +303,8 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
     delivery_conditions: str | None = None
     payment_conditions: str | None = None
     logistics_cost: float | None = None
+    pile_logistics_cost: float | None = None
+    pile_trip_overrides: dict[str, int] | None = None
 
 
 class CommercialDraftLinePatchRequest(BaseModel):

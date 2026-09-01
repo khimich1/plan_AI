@@ -15,6 +15,7 @@ from app.schemas.commercial import WizardStepId
 from app.services.commercial_order_identity import APPEND_PRODUCT_TYPES
 from app.services.product_draft_config import SPECS
 from core.kp_order_data import order_data_from_kp_info
+from core.pile_trip_pricing import coerce_pile_trip_overrides
 from core.plate_order_context import PlateOrderContext
 
 _PRODUCT_TYPE_TO_WIZARD_STEP = {key: spec.wizard_step for key, spec in SPECS.items()}
@@ -439,6 +440,8 @@ class CommercialDraftLifecycle:
         delivery_conditions: str | None = None,
         payment_conditions: str | None = None,
         logistics_cost: float | None = None,
+        pile_logistics_cost: float | None = None,
+        pile_trip_overrides: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         payload_before = self._wf._load_draft_or_raise(draft_id)
         prev_step = self._wf._normalize_stored_step(dict(payload_before.get("metadata") or {}))
@@ -473,13 +476,26 @@ class CommercialDraftLifecycle:
             if logistics_cost < 0:
                 raise ValueError("Стоимость рейса не может быть отрицательной.")
             updates["logistics_cost"] = float(logistics_cost)
+        if pile_logistics_cost is not None:
+            if pile_logistics_cost < 0:
+                raise ValueError("Стоимость рейса свай не может быть отрицательной.")
+            updates["pile_logistics_cost"] = float(pile_logistics_cost)
+        if pile_trip_overrides is not None:
+            from core.pile_trip_pricing import coerce_pile_trip_overrides
+
+            updates["pile_trip_overrides"] = coerce_pile_trip_overrides(pile_trip_overrides)
         if updates:
             self._wf.draft_store.update_metadata(draft_id, **updates)
 
         payload_after = self._wf._load_draft_or_raise(draft_id)
         md = dict(payload_after.get("metadata") or {})
 
-        financial_keys = {"discount_percent", "logistics_cost"}
+        financial_keys = {
+            "discount_percent",
+            "logistics_cost",
+            "pile_logistics_cost",
+            "pile_trip_overrides",
+        }
         if updates:
             if prev_step == WizardStepId.result and set(updates.keys()).issubset(financial_keys):
                 self._wf._persist_wizard_step(draft_id, WizardStepId.result)
@@ -557,10 +573,9 @@ class CommercialDraftLifecycle:
     def get_draft_details(self, draft_id: str) -> dict[str, Any]:
         payload = self._wf._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
-        totals = self._wf.calculation_service.compute_totals(
+        totals = self._wf.calculation_service.compute_totals_from_metadata(
             payload["order_data"],
-            discount_percent=float(metadata.get("discount_percent", 0.0) or 0.0),
-            logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
+            metadata,
         )
         public_metadata = {
             key: value
@@ -643,6 +658,10 @@ class CommercialDraftLifecycle:
             "manager_email": manager_email,
             "discount_percent": float(kp_raw.get("discount_percent") or 0.0),
             "logistics_cost": float(kp_raw.get("logistics_cost") or 0.0),
+            "pile_logistics_cost": float(kp_raw.get("pile_logistics_cost") or 0.0),
+            "pile_trip_overrides": coerce_pile_trip_overrides(
+                kp_raw.get("pile_trip_overrides_json")
+            ),
             "delivery_conditions": delivery,
             "payment_conditions": payment,
             "conditions_mode": conditions_mode,
@@ -721,6 +740,10 @@ class CommercialDraftLifecycle:
         manager_name = str(metadata.get("manager_name", "") or "")
         discount_percent = float(metadata.get("discount_percent", 0.0) or 0.0)
         logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
+        pile_logistics_cost = float(metadata.get("pile_logistics_cost", 0.0) or 0.0)
+        pile_trip_overrides = coerce_pile_trip_overrides(
+            metadata.get("pile_trip_overrides")
+        )
         delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
         payment_conditions = str(metadata.get("payment_conditions", "") or "")
         product_type = str(metadata.get("product_type", "plates") or "plates")
@@ -751,6 +774,8 @@ class CommercialDraftLifecycle:
                 manager_name=manager_name,
                 discount_percent=discount_percent,
                 logistics_cost=logistics_cost,
+                pile_logistics_cost=pile_logistics_cost,
+                pile_trip_overrides=pile_trip_overrides,
                 delivery_conditions=delivery_conditions,
                 payment_conditions=payment_conditions,
                 execution_terms=execution_terms,
@@ -764,6 +789,8 @@ class CommercialDraftLifecycle:
                 manager_name=manager_name,
                 discount_percent=discount_percent,
                 logistics_cost=logistics_cost,
+                pile_logistics_cost=pile_logistics_cost,
+                pile_trip_overrides=pile_trip_overrides,
                 delivery_conditions=delivery_conditions,
                 payment_conditions=payment_conditions,
                 execution_terms=execution_terms,
@@ -786,10 +813,9 @@ class CommercialDraftLifecycle:
             current_save_mode=save_mode,
             execution_terms=execution_terms,
         )
-        totals = self._wf.calculation_service.compute_totals(
+        totals = self._wf.calculation_service.compute_totals_from_metadata(
             payload["order_data"],
-            discount_percent=float(metadata.get("discount_percent", 0.0) or 0.0),
-            logistics_cost=float(metadata.get("logistics_cost", 0.0) or 0.0),
+            metadata,
         )
         offer_identity = self._wf.export_service.build_offer_identity_payload(draft_id)
         return {

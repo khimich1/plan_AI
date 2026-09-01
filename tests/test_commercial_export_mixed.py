@@ -109,6 +109,9 @@ def _xlsx_header_and_body(
     *,
     append_batches: list[dict[str, Any]] | None = None,
     logistics_cost: float = 0.0,
+    pile_logistics_cost: float = 0.0,
+    pile_trip_overrides: dict[str, int] | None = None,
+    pile_catalog_db_path: str | None = None,
 ) -> tuple[list[str], pd.DataFrame]:
     kwargs: dict[str, Any] = {
         "order_data": order_data,
@@ -117,6 +120,9 @@ def _xlsx_header_and_body(
         "customer_name": "ООО Тест",
         "kp_db_id": 401,
         "logistics_cost": logistics_cost,
+        "pile_logistics_cost": pile_logistics_cost,
+        "pile_trip_overrides": pile_trip_overrides,
+        "pile_catalog_db_path": pile_catalog_db_path,
     }
     if append_batches is not None:
         kwargs["append_batches"] = append_batches
@@ -388,6 +394,72 @@ def test_xlsx_unified_omits_delivery_when_no_plate_weight() -> None:
     assert headers == UNIFIED_HEADERS
     names = _body_column(body, headers, "Наименование")
     assert not any("доставк" in n.lower() for n in names), names
+
+
+def _seed_export_pile_catalog(tmp_path: Path) -> str:
+    from core.kp_db_schema import init_schema
+    from core.pile_catalog import PileCatalogEntry, upsert_pile_catalog
+
+    db_path = str(tmp_path / "plita.db")
+    init_schema(db_path)
+    upsert_pile_catalog(
+        db_path,
+        [PileCatalogEntry("С60.30", 6.0, 300, 0.55, 1380.0, 14)],
+    )
+    return db_path
+
+
+def test_xlsx_two_delivery_rows_when_plate_and_pile_ready(tmp_path: Path) -> None:
+    db_path = _seed_export_pile_catalog(tmp_path)
+    order = [
+        _plate(line_id="p1", qty=65, length_m=1.0, width_m=1.0),
+        _pile(line_id="s1", mark="С60.30", name="С60.30", qty=14, unit_price=50.0),
+    ]
+    headers, body = _xlsx_header_and_body(
+        order,
+        logistics_cost=1000.0,
+        pile_logistics_cost=2000.0,
+        pile_catalog_db_path=db_path,
+    )
+    names = _body_column(body, headers, "Наименование")
+    assert "Доставка плит" in names
+    assert "Доставка свай" in names
+
+
+def test_xlsx_omits_pile_delivery_when_pending(tmp_path: Path) -> None:
+    db_path = _seed_export_pile_catalog(tmp_path)
+    order = [
+        _pile(
+            line_id="s1",
+            mark="C18-40T8",
+            name="C18-40T8",
+            qty=49,
+            unit_price=10.0,
+            product_type="bridge_piles",
+            product_kind="bridge_pile",
+        )
+    ]
+    headers, body = _xlsx_header_and_body(
+        order,
+        pile_logistics_cost=9000.0,
+        pile_catalog_db_path=db_path,
+    )
+    names = _body_column(body, headers, "Наименование")
+    assert not any("доставк" in n.lower() for n in names), names
+
+
+def test_xlsx_pile_only_ready_shows_pile_delivery_row(tmp_path: Path) -> None:
+    db_path = _seed_export_pile_catalog(tmp_path)
+    order = [_pile(line_id="s1", mark="С60.30", name="С60.30", qty=14, unit_price=50.0)]
+    headers, body = _xlsx_header_and_body(
+        order,
+        pile_logistics_cost=1500.0,
+        pile_catalog_db_path=db_path,
+    )
+    names = _body_column(body, headers, "Наименование")
+    assert "Доставка свай" in names
+    assert "Доставка плит" not in names
+    assert not any("услуга по доставке" in n.lower() for n in names)
 
 
 # --- PDF smoke via shared headers (no PDF text extractor in deps) -------------

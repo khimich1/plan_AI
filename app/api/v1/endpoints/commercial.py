@@ -8,8 +8,12 @@ from fastapi.responses import FileResponse
 
 from app.concurrency.cpu_bound import run_cpu_bound
 from app.core.http_errors import (
-    raise_parse_client_error, raise_unexpected_server_error,
-    raise_unpriced_plates_error, raise_validation_client_error,
+    is_ai_provider_error,
+    raise_ai_provider_unavailable_error,
+    raise_parse_client_error,
+    raise_unexpected_server_error,
+    raise_unpriced_plates_error,
+    raise_validation_client_error,
 )
 from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER
 from app.dependencies.commercial_draft import check_draft_ownership, verify_draft_ownership
@@ -66,6 +70,7 @@ def _raise_draft_http(
     plate_parse: bool = False,
     unpriced: bool = False,
     validation: bool = True,
+    ai_provider: bool = False,
     not_found_detail: str = "Черновик не найден.",
 ) -> NoReturn:
     if not_found and isinstance(exc, FileNotFoundError):
@@ -76,6 +81,8 @@ def _raise_draft_http(
         raise_unpriced_plates_error(exc, where=where)
     if validation and isinstance(exc, ValueError):
         raise_validation_client_error(exc, where=where, detail=str(exc))
+    if ai_provider and is_ai_provider_error(exc):
+        raise_ai_provider_unavailable_error(exc, where=where)
     raise_unexpected_server_error(exc, where=where)
 
 
@@ -121,7 +128,7 @@ async def _run_product_ai(
     try:
         result = await call(draft_id, **kwargs)
     except Exception as exc:
-        _raise_draft_http(exc, where=where, plate_parse=plate_parse)
+        _raise_draft_http(exc, where=where, plate_parse=plate_parse, ai_provider=True)
     return _details(result)
 
 
@@ -373,6 +380,8 @@ def update_draft_meta(
         discount_percent=payload.discount_percent, conditions_mode=payload.conditions_mode,
         delivery_conditions=payload.delivery_conditions, payment_conditions=payload.payment_conditions,
         logistics_cost=payload.logistics_cost,
+        pile_logistics_cost=payload.pile_logistics_cost,
+        pile_trip_overrides=payload.pile_trip_overrides,
     )))
 
 @router.post("/drafts/{draft_id}/calculate", response_model=CommercialDraftDetailsResponse)

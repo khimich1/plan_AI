@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from .plate_line_parser import match_bare_plate_line
+from .plate_line_parser import match_bare_plate_line, parse_line
 
 if TYPE_CHECKING:
     from .dobor_split import DoborPair
@@ -138,6 +138,7 @@ def parse_catalog_mark(
     Условия применения:
         - L_dm >= 20  (плита длиннее 2 м = 20 дм)
         - 1 <= W_dm <= 15  (ширина 0.1–1.5 м = 1–15 дм)
+        - остаток после ядра пустой или количество (иначе это не каталог)
     """
     s = line.strip()
     m = _CATALOG_CORE_RE.search(s)
@@ -162,13 +163,15 @@ def parse_catalog_mark(
     except ValueError:
         load = 8.0
 
-    # Кол-во: ищем цифру в остатке строки после сматченной части
+    # Кол-во: остаток после ядра должен быть пустым или количеством.
+    # Любой другой хвост (−8п, добор, мусор) → это не каталог L.W-load.
     remainder = s[m.end():].strip()
     qty = 1
     if remainder:
         qty_m = _QTY_RE.match(remainder)
-        if qty_m:
-            qty = max(1, int(qty_m.group(1)))
+        if not qty_m:
+            return None
+        qty = max(1, int(qty_m.group(1)))
 
     # Нормализуем префикс: ПВ → ПБ, сохраняем ПК
     prefix_lower = raw_prefix.lower()
@@ -198,6 +201,31 @@ def _format_load(load: float) -> str:
     if abs(load - round(load)) < 1e-6:
         return f"{int(round(load))}п"
     return f"{load:.1f}п".replace(".", ",")
+
+
+_DIM_MATCH_TOL = 1e-3
+
+
+def _catalog_tuple_matches_canonical(
+    L_dm: int,
+    W_dm: int,
+    load: float,
+    qty: int,
+    canonical: str,
+) -> bool:
+    """Сверяет кортеж каталога с разбором канонической строки через parse_line."""
+    parsed = parse_line(canonical)
+    if not parsed.parsed:
+        return False
+    if abs(parsed.length_m - (L_dm / 10.0)) > _DIM_MATCH_TOL:
+        return False
+    if abs(parsed.width_m - (W_dm / 10.0)) > _DIM_MATCH_TOL:
+        return False
+    if parsed.qty != qty:
+        return False
+    if parsed.load_code is None or abs(parsed.load_code - load) > 1e-6:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +261,13 @@ def canonicalize_plate_line(line: str) -> Tuple[str, Optional[str]]:
         canonical = f"{prefix} {L_dm}-{W_str}-{load_str}"
         if qty > 1:
             canonical += f" {qty}"
+        if not _catalog_tuple_matches_canonical(L_dm, W_dm, load, qty, canonical):
+            logger.debug(
+                "Каталожный канон не совпал с кортежем, откат: %r → %r",
+                canonical,
+                cleaned,
+            )
+            return cleaned, None
         warning = f"{stripped!r} → {canonical!r}"
         logger.debug("Каталожная марка нормализована: %s", warning)
         return canonical, warning

@@ -63,6 +63,10 @@ class CommercialExportService:
         delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
         payment_conditions = str(metadata.get("payment_conditions", "") or "")
         logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
+        pile_logistics_cost = float(metadata.get("pile_logistics_cost", 0.0) or 0.0)
+        from core.pile_trip_pricing import coerce_pile_trip_overrides
+
+        pile_trip_overrides = coerce_pile_trip_overrides(metadata.get("pile_trip_overrides"))
         append_batches = metadata.get("append_batches")
         offer_number, offer_date, file_stem = self.build_offer_identity(draft_id)
 
@@ -88,6 +92,8 @@ class CommercialExportService:
                     manager_email=manager_email,
                     discount_percent=discount_percent,
                     logistics_cost=logistics_cost,
+                    pile_logistics_cost=pile_logistics_cost,
+                    pile_trip_overrides=pile_trip_overrides,
                     delivery_conditions=delivery_conditions or None,
                     payment_conditions=payment_conditions or None,
                     append_batches=append_batches,
@@ -108,6 +114,8 @@ class CommercialExportService:
                     delivery_conditions=delivery_conditions,
                     payment_conditions=payment_conditions,
                     logistics_cost=logistics_cost,
+                    pile_logistics_cost=pile_logistics_cost,
+                    pile_trip_overrides=pile_trip_overrides,
                     append_batches=append_batches,
                 )
                 files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, output_path)

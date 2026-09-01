@@ -90,6 +90,14 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             conn.commit()
         except sqlite3.OperationalError:
             pass
+
+        try:
+            cur.execute(
+                "ALTER TABLE KP_offers ADD COLUMN pile_logistics_cost REAL DEFAULT 0"
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
         
         # Таблица 3: kp_files - Файлы XLSX
         # kp_id - связь с KP_offers
@@ -333,6 +341,11 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
                 "UPDATE kp_meta SET product_type = 'plates' WHERE product_type IS NULL"
             )
             print("[DB] ✅ Колонка product_type добавлена в kp_meta")
+
+        if "pile_trip_overrides_json" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку pile_trip_overrides_json в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN pile_trip_overrides_json TEXT")
+            print("[DB] ✅ Колонка pile_trip_overrides_json добавлена в kp_meta")
 
         # Таблица kp_piles — позиции КП на сваи (отдельно от kp_plates)
         cur.execute('''

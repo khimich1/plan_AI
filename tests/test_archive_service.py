@@ -57,6 +57,7 @@ def _make_raw(**overrides: Any) -> dict:
 
 
 def _make_service(repository: MagicMock, tmp_path: Path) -> ArchiveService:
+    repository.db_path = str(tmp_path / "plita.db")
     return ArchiveService(repository=repository, outputs_dir=tmp_path)
 
 
@@ -269,7 +270,9 @@ def test_update_logistics_cost_calls_repository_and_returns_details(tmp_path: Pa
 
     details = service.update_logistics_cost(42, 100.0, user=ADMIN)
 
-    repository.update_logistics_cost.assert_called_once_with(42, 100.0)
+    repository.update_logistics_cost.assert_called_once_with(
+        42, 100.0, pile_logistics_cost=None, pile_trip_overrides=None
+    )
     assert details.logistics_cost == 100.0
     assert details.finance.total_amount == 750.0
     assert details.delivery_service_total_rub == pytest.approx(100.0)

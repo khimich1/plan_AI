@@ -180,6 +180,13 @@ class ArchiveOfferDetails(BaseModel):
     payment_conditions: str | None = None
     finance: ArchiveOfferFinance
     logistics_cost: float = Field(default=0.0, description="Стоимость одного рейса (как logistics_cost при создании КП).")
+    pile_logistics_cost: float = Field(default=0.0, description="Тариф рейса свай/мостовых.")
+    pile_trip_overrides: dict[str, int] = Field(default_factory=dict)
+    pile_trips: int = 0
+    pile_trip_pending_marks: list[str] = Field(default_factory=list)
+    pile_delivery_ready: bool = True
+    plate_delivery_total: float = 0.0
+    pile_delivery_total: float = 0.0
     total_cargo_weight_kg: float = Field(default=0.0, description="Суммарная масса по строкам через resolve_kp_line_weight_kg (как PDF/XLSX).")
     delivery_service_total_rub: float = Field(
         default=0.0,
@@ -201,7 +208,9 @@ class UpdateDiscountRequest(BaseModel):
 
 
 class UpdateLogisticsCostRequest(BaseModel):
-    logistics_cost: float = Field(ge=0, description="Новая стоимость одного рейса.")
+    logistics_cost: float = Field(ge=0, description="Новая стоимость одного рейса плит.")
+    pile_logistics_cost: float | None = Field(default=None, ge=0)
+    pile_trip_overrides: dict[str, int] | None = None
 
 
 class MoveToProductionRequest(BaseModel):

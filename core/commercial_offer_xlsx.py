@@ -8,7 +8,7 @@
 import io
 import logging
 import os
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 try:
     import pandas as pd
@@ -102,6 +102,7 @@ from core.commercial_pricing import (  # noqa: E402
     is_march_order,
     is_pile_order,
     is_step_order,
+    kp_delivery_export_lines,
     lookup_bridge_pile_price,
     lookup_fbs_price,
     lookup_march_price,
@@ -111,13 +112,22 @@ from core.commercial_pricing import (  # noqa: E402
 
 
 def calculate_total_cost(
-    order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0
+    order_data: List[Dict],
+    discount_percent: float = 0,
+    logistics_cost: float = 0,
+    *,
+    pile_logistics_cost: float = 0,
+    pile_trip_overrides: dict | None = None,
+    pile_catalog_db_path: str | None = None,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
         discount_percent,
         logistics_cost,
         db_path=DB_PATH,
+        pile_logistics_cost=pile_logistics_cost,
+        pile_trip_overrides=pile_trip_overrides,
+        pile_catalog_db_path=pile_catalog_db_path,
     )
 
 
@@ -170,6 +180,9 @@ def generate_commercial_offer_xlsx(
     kp_db_id: Optional[int] = None,
     logistics_cost: float = 0.0,
     append_batches: Optional[List[Dict]] = None,
+    pile_logistics_cost: float = 0.0,
+    pile_trip_overrides: Optional[Dict] = None,
+    pile_catalog_db_path: Optional[str] = None,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате XLSX с расчётными формулами
@@ -324,45 +337,37 @@ def generate_commercial_offer_xlsx(
         })
     
     trip_cost = max(0.0, float(logistics_cost or 0.0))
+    pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
+    totals = calculate_total_cost(
+        order_data,
+        discount_percent,
+        logistics_cost=trip_cost,
+        pile_logistics_cost=pile_trip,
+        pile_trip_overrides=pile_trip_overrides,
+        pile_catalog_db_path=pile_catalog_db_path,
+    )
     if unified:
         plates_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
         total_weight = plates_kg
-        delivery_trips = cargo_delivery_trips_count(plates_kg)
-        has_delivery_line = trip_cost > 0 and delivery_trips > 0
-        if has_delivery_line:
-            delivery_total = delivery_service_charge_rub(trip_cost, plates_kg)
-            table_data.append(
-                {
-                    '№': len(table_data) + 1,
-                    'Тип': '',
-                    'Наименование': 'Услуга по доставке грузов',
-                    'Кол-во': delivery_trips,
-                    'Цена': trip_cost,
-                    'Сумма': delivery_total,
-                }
-            )
-    else:
-        delivery_trips = cargo_delivery_trips_count(total_weight)
-        has_delivery_line = (
-            not pile_order
-            and not bridge_pile_order
-            and not fbs_order
-            and not march_order
-            and not step_order
-        ) and trip_cost > 0 and delivery_trips > 0
-        if has_delivery_line:
-            delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
-            table_data.append(
-                {
-                    '№': len(table_data) + 1,
-                    'Наименование': 'Услуга по доставке грузов',
-                    'Кол-во': delivery_trips,
-                    'Ед.': 'рейс',
-                    'Вес(кг)': 0.0,
-                    'Цена': trip_cost,
-                    'Сумма': delivery_total,
-                }
-            )
+    delivery_export = kp_delivery_export_lines(
+        totals, plate_trip_cost=trip_cost, pile_trip_cost=pile_trip
+    )
+    for line in delivery_export:
+        row: dict[str, Any] = {
+            "№": len(table_data) + 1,
+            "Наименование": line["label"],
+            "Кол-во": line["trips"],
+            "Цена": line["unit_price"],
+            "Сумма": line["amount"],
+        }
+        if unified:
+            row["Тип"] = ""
+        elif not pile_order and not bridge_pile_order and not fbs_order and not march_order and not step_order:
+            row["Ед."] = "рейс"
+            row["Вес(кг)"] = 0.0
+        table_data.append(row)
+
+    delivery_row_count = len(delivery_export)
 
     df_table = pd.DataFrame(table_data, columns=table_headers)
 
@@ -522,7 +527,7 @@ def generate_commercial_offer_xlsx(
         subtotal_cell.alignment = right_align
 
         # НДС 22% только от суммы позиций (без строки «Услуга по доставке грузов»).
-        last_plate_row = last_data_row - 1 if has_delivery_line else last_data_row
+        last_plate_row = last_data_row - delivery_row_count if delivery_row_count else last_data_row
         vat_row = summary_row + 1
         worksheet.merge_cells(f'A{vat_row}:{pre_sum_letter}{vat_row}')
         worksheet[f'A{vat_row}'] = "в том числе НДС (22%)"

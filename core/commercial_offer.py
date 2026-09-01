@@ -219,6 +219,7 @@ from core.commercial_pricing import (  # noqa: E402
     is_march_order,
     is_pile_order,
     is_step_order,
+    kp_delivery_export_lines,
     lookup_bridge_pile_price,
     lookup_fbs_price,
     lookup_march_price,
@@ -228,13 +229,22 @@ from core.commercial_pricing import (  # noqa: E402
 
 
 def calculate_total_cost(
-    order_data: List[Dict], discount_percent: float = 0, logistics_cost: float = 0
+    order_data: List[Dict],
+    discount_percent: float = 0,
+    logistics_cost: float = 0,
+    *,
+    pile_logistics_cost: float = 0,
+    pile_trip_overrides: dict | None = None,
+    pile_catalog_db_path: str | None = None,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
         discount_percent,
         logistics_cost,
         db_path=DB_PATH,
+        pile_logistics_cost=pile_logistics_cost,
+        pile_trip_overrides=pile_trip_overrides,
+        pile_catalog_db_path=pile_catalog_db_path,
     )
 
 
@@ -305,6 +315,9 @@ def generate_commercial_offer_pdf(
     delivery_conditions: Optional[str] = None,
     payment_conditions: Optional[str] = None,
     append_batches: Optional[List[Dict]] = None,
+    pile_logistics_cost: float = 0.0,
+    pile_trip_overrides: Optional[Dict] = None,
+    pile_catalog_db_path: Optional[str] = None,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -508,7 +521,15 @@ def generate_commercial_offer_pdf(
     table_data = [list(headers)]
 
     trip_cost = max(0.0, float(logistics_cost or 0.0))
-    totals = calculate_total_cost(order_data, discount_percent, logistics_cost=trip_cost)
+    pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
+    totals = calculate_total_cost(
+        order_data,
+        discount_percent,
+        logistics_cost=trip_cost,
+        pile_logistics_cost=pile_trip,
+        pile_trip_overrides=pile_trip_overrides,
+        pile_catalog_db_path=pile_catalog_db_path,
+    )
     total_weight = 0.0
 
     if unified:
@@ -588,39 +609,23 @@ def generate_commercial_offer_pdf(
             sum_str
         ])
 
-    if unified:
-        plates_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
-        total_weight = plates_kg
-        delivery_trips = cargo_delivery_trips_count(plates_kg)
-        if trip_cost > 0 and delivery_trips > 0:
-            delivery_total = delivery_service_charge_rub(trip_cost, plates_kg)
-            table_data.append(
-                [
-                    str(len(table_data)),
-                    "",
-                    Paragraph(escape("Услуга по доставке грузов"), style_table_text),
-                    str(delivery_trips),
-                    _format_money_ru(trip_cost),
-                    _format_money_ru(delivery_total),
-                ]
-            )
-    elif not pile_order and not bridge_pile_order and not fbs_order and not march_order and not step_order:
-        delivery_trips = cargo_delivery_trips_count(total_weight)
-        if trip_cost > 0 and delivery_trips > 0:
-            delivery_total = delivery_service_charge_rub(trip_cost, total_weight)
-            trip_str = _format_money_ru(trip_cost)
-            delivery_total_str = _format_money_ru(delivery_total)
-            table_data.append(
-                [
-                    str(len(table_data)),
-                    Paragraph(escape("Услуга по доставке грузов"), style_table_text),
-                    str(delivery_trips),
-                    "рейс",
-                    "0,00",
-                    trip_str,
-                    delivery_total_str,
-                ]
-            )
+    delivery_export = kp_delivery_export_lines(
+        totals, plate_trip_cost=trip_cost, pile_trip_cost=pile_trip
+    )
+    for line in delivery_export:
+        label = Paragraph(escape(line["label"]), style_table_text)
+        trips = str(line["trips"])
+        price = _format_money_ru(line["unit_price"])
+        amount = _format_money_ru(line["amount"])
+        idx = str(len(table_data))
+        if unified:
+            table_data.append([idx, "", label, trips, price, amount])
+        elif pile_order or bridge_pile_order or fbs_order or march_order:
+            table_data.append([idx, label, "", trips, price, amount])
+        elif step_order:
+            table_data.append([idx, label, trips, price, amount])
+        else:
+            table_data.append([idx, label, trips, "рейс", "0,00", price, amount])
     
     no_width = 10 * mm
     qty_width = 14 * mm

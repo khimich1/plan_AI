@@ -33,6 +33,8 @@ class KpRepository:
         xlsx_path: str | None = None,
         owner_user_id: int | None = None,
         product_type: str = "plates",
+        pile_logistics_cost: float = 0.0,
+        pile_trip_overrides: dict | None = None,
     ) -> int:
         return offers_write.save_kp_to_db(
             creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
@@ -49,6 +51,8 @@ class KpRepository:
             owner_user_id=owner_user_id,
             product_type=product_type,
             db_path=self.db_path,
+            pile_logistics_cost=pile_logistics_cost,
+            pile_trip_overrides=pile_trip_overrides,
         )
 
     def update_offer_from_order_data(
@@ -65,6 +69,8 @@ class KpRepository:
         execution_terms: str | None = None,
         xlsx_path: str | None = None,
         product_type: str = "plates",
+        pile_logistics_cost: float | None = None,
+        pile_trip_overrides: dict | None = None,
     ) -> int:
         """Append/update existing KP by ``line_id`` (same ``kp_id``)."""
         return offers_write.update_kp_from_order_data(
@@ -80,6 +86,8 @@ class KpRepository:
             execution_terms=execution_terms,
             product_type=product_type,
             db_path=self.db_path,
+            pile_logistics_cost=pile_logistics_cost,
+            pile_trip_overrides=pile_trip_overrides,
         )
 
     def list_offers_grouped(self, **list_filters) -> dict[str, list[dict]]:

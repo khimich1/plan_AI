@@ -14,6 +14,9 @@ _log = logging.getLogger("app.api.commercial")
 MSG_PARSE_FAILED = "Не удалось обработать ввод. Проверьте формат данных."
 MSG_VALIDATION = "Проверьте введённые данные."
 MSG_INTERNAL = "Внутренняя ошибка сервера. Повторите попытку позже."
+MSG_AI_PROVIDER_UNAVAILABLE = (
+    "Не удалось обратиться к помощнику. Проверьте OCR_PROVIDER и доступ к API."
+)
 MSG_NOT_FOUND = "Запрошенный ресурс не найден."
 MSG_ARCHIVE_NOT_FOUND = "КП не найдено."
 MSG_DAY_NOT_FOUND = "Данные за указанную дату не найдены."
@@ -63,6 +66,42 @@ def raise_unexpected_server_error(_exc: BaseException, *, where: str) -> NoRetur
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail=MSG_INTERNAL,
+    ) from None
+
+
+def is_ai_provider_error(exc: BaseException) -> bool:
+    """True for external OCR/AI assistant provider failures (OpenAI, GigaChat, network)."""
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    try:
+        from openai import APIError as OpenAIAPIError
+
+        if isinstance(exc, OpenAIAPIError):
+            return True
+    except ImportError:
+        pass
+    try:
+        from gigachat.exceptions import GigaChatException
+
+        if isinstance(exc, GigaChatException):
+            return True
+    except ImportError:
+        pass
+    try:
+        import httpx
+
+        if isinstance(exc, httpx.HTTPError):
+            return True
+    except ImportError:
+        pass
+    return False
+
+
+def raise_ai_provider_unavailable_error(exc: BaseException, *, where: str) -> NoReturn:
+    _log.exception("%s: AI provider unavailable", where)
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=MSG_AI_PROVIDER_UNAVAILABLE,
     ) from None
 
 
