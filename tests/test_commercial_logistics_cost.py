@@ -6,7 +6,10 @@ from core.cargo_delivery_pricing import (
 )
 from core.commercial_offer import calculate_total_cost as calculate_total_cost_pdf
 from core.commercial_offer_xlsx import calculate_total_cost as calculate_total_cost_xlsx
+from core.commercial_pricing import calculate_total_cost as calculate_total_cost_core
 from core.kp_plate_weight import resolve_kp_line_weight_kg
+from core.pile_catalog import PileCatalogEntry, upsert_pile_catalog
+from tests.helpers import kp_db_fixtures as fx
 
 
 def test_total_order_cargo_weight_kg_empty_and_sum_matches_lines() -> None:
@@ -313,3 +316,108 @@ def test_calculate_total_cost_piles_only_delivery_zero_despite_logistics_cost() 
     assert totals["total_with_vat"] == products
     assert totals["vat_amount"] == round(products * 0.22, 2)
     assert totals["subtotal"] == round(products - totals["vat_amount"], 2)
+
+
+def _seed_mini_pile_catalog(tmp_path) -> str:
+    db_path = fx.make_iso_db(tmp_path)
+    upsert_pile_catalog(
+        db_path,
+        [
+            PileCatalogEntry("С140.40", 14.0, 400, 2.26, 5650.0, 3),
+            PileCatalogEntry("С60.30", 6.0, 300, 0.55, 1380.0, 14),
+        ],
+    )
+    return db_path
+
+
+def test_calculate_total_cost_piles_ready_uses_pile_logistics_cost(tmp_path) -> None:
+    """Сваи с нормой: доставка = pile_logistics_cost × рейсы; logistics_cost плит не берём."""
+    db_path = _seed_mini_pile_catalog(tmp_path)
+    order_data = [
+        {
+            "name": "С60.30",
+            "mark": "С60.30",
+            "product_type": "piles",
+            "qty": 14,
+            "unit_price": 50.0,
+        }
+    ]
+    totals = calculate_total_cost_core(
+        order_data,
+        discount_percent=0,
+        logistics_cost=999.0,
+        db_path=db_path,
+        require_all_priced=False,
+        pile_logistics_cost=100.0,
+        pile_catalog_db_path=db_path,
+    )
+    assert totals["pile_delivery_ready"] is True
+    assert totals["pile_trips"] == 1
+    assert totals["pile_delivery_total"] == 100.0
+    assert totals["plate_delivery_total"] == 0.0
+    assert totals["total_with_vat"] == 800.0  # 14*50 + 100 pile delivery
+    assert CARGO_DELIVERY_TRUCK_CAPACITY_KG == 18600
+
+
+def test_calculate_total_cost_pending_pile_delivery_zero(tmp_path) -> None:
+    db_path = _seed_mini_pile_catalog(tmp_path)
+    order_data = [
+        {
+            "name": "C18-40T8",
+            "mark": "C18-40T8",
+            "product_type": "bridge_piles",
+            "qty": 49,
+            "unit_price": 10.0,
+        }
+    ]
+    totals = calculate_total_cost_core(
+        order_data,
+        0,
+        logistics_cost=0,
+        db_path=db_path,
+        require_all_priced=False,
+        pile_logistics_cost=1000.0,
+        pile_catalog_db_path=db_path,
+    )
+    assert totals["pile_delivery_ready"] is False
+    assert totals["pile_delivery_total"] == 0.0
+    assert totals["pile_trips"] == 0
+    assert totals["total_with_vat"] == 490.0
+
+
+def test_calculate_total_cost_mixed_sums_two_deliveries(tmp_path) -> None:
+    db_path = _seed_mini_pile_catalog(tmp_path)
+    plate = {
+        "name": "ПБ",
+        "product_type": "plates",
+        "qty": 65,
+        "unit_price": 10.0,
+        "length_m": 1.0,
+        "width_m": 1.0,
+    }
+    pile = {
+        "name": "C14-40T4",
+        "mark": "C14-40T4",
+        "product_type": "bridge_piles",
+        "qty": 3,
+        "unit_price": 100.0,
+    }
+    order_data = [plate, pile]
+    plate_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
+    plate_delivery = delivery_service_charge_rub(100.0, plate_kg)
+    totals = calculate_total_cost_core(
+        order_data,
+        0,
+        logistics_cost=100.0,
+        db_path=db_path,
+        require_all_priced=False,
+        pile_logistics_cost=200.0,
+        pile_catalog_db_path=db_path,
+    )
+    assert cargo_delivery_trips_count(plate_kg) == 1
+    assert totals["pile_delivery_ready"] is True
+    assert totals["pile_trips"] == 1  # 3 шт / pcs 3
+    assert totals["plate_delivery_total"] == plate_delivery
+    assert totals["pile_delivery_total"] == 200.0
+    products = 65 * 10.0 + 3 * 100.0
+    assert totals["total_with_vat"] == products + plate_delivery + 200.0

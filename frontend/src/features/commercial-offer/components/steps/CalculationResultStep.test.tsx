@@ -420,7 +420,7 @@ describe("CalculationResultStep MNA-501 — undo last batch / delete line", () =
 });
 
 describe("CalculationResultStep MNA-501 — trip cost gate", () => {
-  it("disables trip cost (стоимость рейса) when there are no plate lines", () => {
+  it("enables trip cost for pile-only offers (writes pile_logistics_cost)", () => {
     renderResultStep(
       makeDraft({
         order_data: [
@@ -445,10 +445,10 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
     );
 
     const tripInput = screen.getByPlaceholderText("Стоимость одного рейса");
-    expect(tripInput).toBeDisabled();
+    expect(tripInput).not.toBeDisabled();
   });
 
-  it("enables trip cost when there is at least one plate line", () => {
+    it("enables trip cost when there is at least one plate line", () => {
     renderResultStep(
       makeDraft({
         order_data: [
@@ -480,8 +480,84 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
       }),
     );
 
-    const tripInput = screen.getByPlaceholderText("Стоимость одного рейса");
-    expect(tripInput).not.toBeDisabled();
+    const plateField = screen.getByText("Рейс плит").closest("label");
+    expect(plateField).not.toBeNull();
+    expect(within(plateField as HTMLElement).getByPlaceholderText("Стоимость одного рейса")).not.toBeDisabled();
+  });
+
+  it("shows two trip fields for mixed plates+piles", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_p",
+            product_type: "plates",
+            name: "ПБ 60-12-8п",
+            qty: 1,
+            unit_price: 10000,
+            weight: 800,
+          },
+          {
+            line_id: "ln_s",
+            product_type: "piles",
+            name: "С80.30-8",
+            mark: "С80.30-8",
+            concrete_grade: "B25",
+            qty: 2,
+            unit_price: 5000,
+          },
+        ],
+        metadata: {
+          ...baseMetadata(),
+          append_batches: [
+            { batch_id: "b1", product_type: "plates", line_ids: ["ln_p"] },
+            { batch_id: "b2", product_type: "piles", line_ids: ["ln_s"] },
+          ],
+        },
+      }),
+    );
+
+    expect(screen.getByText("Рейс плит")).toBeInTheDocument();
+    expect(screen.getByText("Рейс свай")).toBeInTheDocument();
+  });
+
+  it("asks how many trucks for pending marks and shows trip total only", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_c18",
+            product_type: "bridge_piles",
+            name: "C18-40T8",
+            mark: "C18-40T8",
+            qty: 49,
+            unit_price: 1000,
+          },
+        ],
+        metadata: {
+          ...baseMetadata(),
+          product_type: "bridge_piles",
+        },
+        totals: {
+          total_qty: 49,
+          subtotal: 0,
+          vat_amount: 0,
+          total_with_vat: 0,
+          pile_delivery_ready: false,
+          pile_trips: 0,
+          pile_trip_pending_marks: ["C18-40T8"],
+        },
+      }),
+      {},
+      { isBridgePileDraft: true, isSimpleKpDraft: true },
+    );
+
+    expect(
+      screen.getByText(/Для C18-40T8 \(49 шт\.\) нет нормы загрузки в справочнике/),
+    ).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Машин, шт.")).toBeInTheDocument();
+    expect(screen.queryByText(/полных/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Рейсов свай")).not.toBeInTheDocument();
   });
 });
 

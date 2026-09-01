@@ -325,3 +325,77 @@ def test_line_id_column_accepts_text_values(tmp_path: Path) -> None:
         for table, line_id in expected.items():
             cur.execute(f"SELECT line_id FROM {table} WHERE kp_id = 1")
             assert cur.fetchone()[0] == line_id
+
+
+def test_fresh_schema_has_pile_logistics_columns(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "fresh_pile_logistics.db")
+    kp_db_schema._schema_ready.clear()
+    kp_db_schema.ensure_schema(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.cursor()
+        offers = _table_columns(cur, "KP_offers")
+        meta = _table_columns(cur, "kp_meta")
+        assert "pile_logistics_cost" in offers
+        assert "pile_trip_overrides_json" in meta
+        cur.execute(
+            "INSERT INTO KP_offers (creation_date, customer_name) VALUES ('2026-01-01', 'x')"
+        )
+        kp_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO kp_meta (kp_id, status) VALUES (?, 'в работе')",
+            (kp_id,),
+        )
+        conn.commit()
+        pile_cost = cur.execute(
+            "SELECT pile_logistics_cost FROM KP_offers WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchone()[0]
+        overrides = cur.execute(
+            "SELECT pile_trip_overrides_json FROM kp_meta WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchone()[0]
+    assert pile_cost in (0, 0.0, None)
+    assert overrides is None
+
+
+def test_migrate_existing_db_adds_pile_logistics_columns(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "legacy_pile_logistics.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE KP_offers (
+                kp_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                creation_date TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE kp_meta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL UNIQUE,
+                status TEXT DEFAULT 'в работе',
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute("INSERT INTO KP_offers (creation_date) VALUES ('2026-01-01')")
+        conn.execute("INSERT INTO kp_meta (kp_id, status) VALUES (1, 'в работе')")
+        conn.commit()
+
+    kp_db_schema._schema_ready.clear()
+    kp_db_schema.ensure_schema(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.cursor()
+        offers = _table_columns(cur, "KP_offers")
+        meta = _table_columns(cur, "kp_meta")
+        assert "pile_logistics_cost" in offers
+        assert "pile_trip_overrides_json" in meta
+        row = cur.execute(
+            "SELECT COALESCE(pile_logistics_cost, 0), pile_trip_overrides_json "
+            "FROM KP_offers o JOIN kp_meta m ON m.kp_id = o.kp_id WHERE o.kp_id = 1"
+        ).fetchone()
+    assert row[0] == 0
+    assert row[1] is None

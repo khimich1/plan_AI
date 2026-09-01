@@ -79,6 +79,10 @@ type CalculationResultStepProps = {
   isUpdatingDiscount: boolean;
   onDiscountSubmit: (discountPercent: number) => Promise<void>;
   onLogisticsCostSubmit: (logisticsCost: number) => Promise<void>;
+  onPileDeliverySubmit?: (payload: {
+    pileLogisticsCost?: number;
+    pileTripOverrides?: Record<string, number>;
+  }) => Promise<void>;
   onAddOtherNomenclature?: () => void;
   onUndoLastBatch?: () => Promise<void> | void;
   onDeleteLine?: (lineId: string) => Promise<void> | void;
@@ -112,6 +116,7 @@ export const CalculationResultStep = ({
   isUpdatingDiscount,
   onDiscountSubmit,
   onLogisticsCostSubmit,
+  onPileDeliverySubmit,
   onAddOtherNomenclature,
   onUndoLastBatch,
   onDeleteLine,
@@ -122,9 +127,14 @@ export const CalculationResultStep = ({
   const [discountDraft, setDiscountDraft] = useState(String(draft.metadata.discount_percent ?? 0));
   const [targetSumDraft, setTargetSumDraft] = useState("");
   const [logisticsCostDraft, setLogisticsCostDraft] = useState(String(draft.metadata.logistics_cost ?? 0));
+  const [pileLogisticsCostDraft, setPileLogisticsCostDraft] = useState(
+    String(draft.metadata.pile_logistics_cost ?? 0),
+  );
+  const [pileOverrideDrafts, setPileOverrideDrafts] = useState<Record<string, string>>({});
+  const [logisticsError, setLogisticsError] = useState<string | null>(null);
+  const [pileLogisticsError, setPileLogisticsError] = useState<string | null>(null);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [targetSumError, setTargetSumError] = useState<string | null>(null);
-  const [logisticsError, setLogisticsError] = useState<string | null>(null);
   const [selectedPlateName, setSelectedPlateName] = useState<string | null>(null);
   const [pendingDiscountPercent, setPendingDiscountPercent] = useState<number | null>(null);
   const isGradeSimpleDraft = isPileDraft || isMarchDraft || isBridgePileDraft || isFbsDraft;
@@ -145,7 +155,16 @@ export const CalculationResultStep = ({
   }, [draft.order_data]);
   const showTypeColumn = distinctProductTypes.size > 1 || appendBatches.length > 1;
   const hasPlateLines = draft.order_data.some((item) => item.product_type === "plates");
-  const tripCostDisabled = !hasPlateLines;
+  const hasPileLines = draft.order_data.some(
+    (item) => item.product_type === "piles" || item.product_type === "bridge_piles",
+  );
+  const mixedDelivery = hasPlateLines && hasPileLines;
+  const tripCostDisabled = !hasPlateLines && !hasPileLines;
+  const pendingPileMarks = (draft.totals.pile_trip_pending_marks ?? []).filter(
+    (mark): mark is string => typeof mark === "string" && mark.length > 0,
+  );
+  const pileDeliveryReady = draft.totals.pile_delivery_ready !== false;
+  const pileTrips = draft.totals.pile_trips ?? 0;
   const totalWeight = draft.order_data.reduce((acc, item) => acc + (toNumber(item.weight) ?? 0), 0);
   const serverSubtotal = draft.totals.subtotal;
   const serverVat = draft.totals.vat_amount;
@@ -178,6 +197,20 @@ export const CalculationResultStep = ({
   useEffect(() => {
     setLogisticsCostDraft(String(draft.metadata.logistics_cost ?? 0).replace(".", ","));
   }, [draft.metadata.logistics_cost]);
+
+  useEffect(() => {
+    setPileLogisticsCostDraft(String(draft.metadata.pile_logistics_cost ?? 0).replace(".", ","));
+  }, [draft.metadata.pile_logistics_cost]);
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    const saved = draft.metadata.pile_trip_overrides ?? {};
+    for (const mark of pendingPileMarks) {
+      const existing = saved[mark];
+      next[mark] = existing === undefined ? "" : String(existing);
+    }
+    setPileOverrideDrafts(next);
+  }, [draft.metadata.pile_trip_overrides, pendingPileMarks.join("|")]);
 
   const restoreDiscountDrafts = () => {
     setDiscountDraft(String(savedDiscountPercent));
@@ -275,8 +308,37 @@ export const CalculationResultStep = ({
       return;
     }
     setLogisticsError(null);
-    await onLogisticsCostSubmit(parsed);
+    if (!hasPlateLines && hasPileLines) {
+      await onPileDeliverySubmit?.({ pileLogisticsCost: parsed });
+    } else {
+      await onLogisticsCostSubmit(parsed);
+    }
     setLogisticsCostDraft(String(parsed).replace(".", ","));
+  };
+
+  const handleApplyPileLogisticsCost = async () => {
+    const parsed = toNumber(pileLogisticsCostDraft);
+    if (parsed === null || parsed < 0) {
+      setPileLogisticsError("Стоимость рейса свай должна быть числом не меньше 0.");
+      return;
+    }
+    setPileLogisticsError(null);
+    await onPileDeliverySubmit?.({ pileLogisticsCost: parsed });
+    setPileLogisticsCostDraft(String(parsed).replace(".", ","));
+  };
+
+  const handleApplyPileOverrides = async () => {
+    const merged: Record<string, number> = { ...(draft.metadata.pile_trip_overrides ?? {}) };
+    for (const mark of pendingPileMarks) {
+      const parsed = toNumber(pileOverrideDrafts[mark] ?? "");
+      if (parsed === null || parsed < 0 || !Number.isInteger(parsed)) {
+        setPileLogisticsError("Число машин должно быть целым числом не меньше 0.");
+        return;
+      }
+      merged[mark] = parsed;
+    }
+    setPileLogisticsError(null);
+    await onPileDeliverySubmit?.({ pileTripOverrides: merged });
   };
 
   const totalWithVat = formatTotalsMoney(serverTotalWithVat);
@@ -479,43 +541,142 @@ export const CalculationResultStep = ({
       >
         <div style={{ display: "grid", gap: "0.75rem" }}>
           {!isSimpleKpDraft && <SummaryCell label="Общий вес (кг)" value={formatOfferNumber(totalWeight)} />}
-          <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
-            <FieldWrapper label="Стоимость рейса" error={logisticsError}>
-              <div style={{ position: "relative" }}>
+          {hasPileLines && pileDeliveryReady && (
+            <SummaryCell label="Рейсов свай" value={String(pileTrips)} />
+          )}
+          {hasPlateLines && (
+            <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
+              <FieldWrapper label={mixedDelivery ? "Рейс плит" : "Стоимость рейса"} error={logisticsError}>
+                <div style={{ position: "relative" }}>
+                  <input
+                    value={logisticsCostDraft}
+                    onChange={(event) => setLogisticsCostDraft(event.target.value)}
+                    inputMode="decimal"
+                    placeholder="Стоимость одного рейса"
+                    disabled={false}
+                    style={{
+                      width: "100%",
+                      border: "1px solid #d0d5dd",
+                      borderRadius: 12,
+                      padding: "0.8rem 3.5rem 0.8rem 0.9rem",
+                      background: "#ffffff",
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleApplyLogisticsCost}
+                    disabled={isUpdatingDiscount}
+                    style={{
+                      position: "absolute",
+                      right: "0.35rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      borderRadius: 8,
+                      padding: "0.25rem 0.6rem",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    OK
+                  </Button>
+                </div>
+              </FieldWrapper>
+            </div>
+          )}
+          {hasPileLines && (
+            <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
+              <FieldWrapper
+                label={mixedDelivery ? "Рейс свай" : "Стоимость рейса"}
+                error={pileLogisticsError ?? (!mixedDelivery ? logisticsError : null)}
+              >
+                <div style={{ position: "relative" }}>
+                  <input
+                    value={mixedDelivery ? pileLogisticsCostDraft : logisticsCostDraft}
+                    onChange={(event) => {
+                      if (mixedDelivery) {
+                        setPileLogisticsCostDraft(event.target.value);
+                      } else {
+                        setLogisticsCostDraft(event.target.value);
+                      }
+                    }}
+                    inputMode="decimal"
+                    placeholder="Стоимость одного рейса"
+                    disabled={tripCostDisabled}
+                    style={{
+                      width: "100%",
+                      border: "1px solid #d0d5dd",
+                      borderRadius: 12,
+                      padding: "0.8rem 3.5rem 0.8rem 0.9rem",
+                      background: tripCostDisabled ? "#f2f4f7" : "#ffffff",
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={mixedDelivery ? handleApplyPileLogisticsCost : handleApplyLogisticsCost}
+                    disabled={isUpdatingDiscount || tripCostDisabled}
+                    style={{
+                      position: "absolute",
+                      right: "0.35rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      borderRadius: 8,
+                      padding: "0.25rem 0.6rem",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    OK
+                  </Button>
+                </div>
+              </FieldWrapper>
+            </div>
+          )}
+          {!hasPlateLines && !hasPileLines && (
+            <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
+              <FieldWrapper label="Стоимость рейса" error={logisticsError}>
                 <input
                   value={logisticsCostDraft}
-                  onChange={(event) => setLogisticsCostDraft(event.target.value)}
-                  inputMode="decimal"
                   placeholder="Стоимость одного рейса"
-                  disabled={tripCostDisabled}
+                  disabled
                   style={{
                     width: "100%",
                     border: "1px solid #d0d5dd",
                     borderRadius: 12,
-                    padding: "0.8rem 3.5rem 0.8rem 0.9rem",
-                    background: tripCostDisabled ? "#f2f4f7" : "#ffffff",
+                    padding: "0.8rem 0.9rem",
+                    background: "#f2f4f7",
                   }}
                 />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={handleApplyLogisticsCost}
-                  disabled={isUpdatingDiscount || tripCostDisabled}
-                  style={{
-                    position: "absolute",
-                    right: "0.35rem",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    borderRadius: 8,
-                    padding: "0.25rem 0.6rem",
-                    fontSize: "0.8rem",
-                  }}
-                >
-                  OK
-                </Button>
-              </div>
-            </FieldWrapper>
-          </div>
+              </FieldWrapper>
+            </div>
+          )}
+          {pendingPileMarks.length > 0 && (
+            <div style={{ border: "1px solid #f5d0a8", borderRadius: 12, padding: "0.9rem", background: "#fff7ed" }}>
+              {pendingPileMarks.map((mark) => {
+                const qty = draft.order_data
+                  .filter((item) => String(item.mark || item.name || "") === mark)
+                  .reduce((acc, item) => acc + (Number(item.qty) || 0), 0);
+                return (
+                  <FieldWrapper
+                    key={mark}
+                    label={`Для ${mark} (${qty} шт.) нет нормы загрузки в справочнике. Сколько машин нужно?`}
+                    error={null}
+                  >
+                    <Input
+                      value={pileOverrideDrafts[mark] ?? ""}
+                      onChange={(event) =>
+                        setPileOverrideDrafts((prev) => ({ ...prev, [mark]: event.target.value }))
+                      }
+                      inputMode="numeric"
+                      placeholder="Машин, шт."
+                    />
+                  </FieldWrapper>
+                );
+              })}
+              <Button type="button" variant="secondary" onClick={() => void handleApplyPileOverrides()} disabled={isUpdatingDiscount}>
+                Применить число машин
+              </Button>
+            </div>
+          )}
         </div>
         <div style={{ display: "grid", gap: "0.75rem" }}>
           <SummaryCell label="НДС" value={formatTotalsMoney(serverVat)} />

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -101,6 +101,64 @@ def test_apply_ai_plates_requires_instruction(
         data={"instruction": "  "},
     )
     assert response.status_code == 400
+
+
+def test_apply_ai_plates_provider_error_returns_502(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openai import PermissionDeniedError
+    from app.domain.models.optimization_context import OptimizationContext
+    from app.domain.models.plate_order import PlateOrder
+    from app.services.draft_store import DraftStore
+    from app.core.http_errors import MSG_AI_PROVIDER_UNAVAILABLE, MSG_INTERNAL
+
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir()
+    monkeypatch.setenv("DRAFTS_DIR", str(drafts_dir))
+    monkeypatch.setenv("OCR_EXTERNAL_ENABLED", "true")
+    get_settings.cache_clear()
+
+    draft_id = "f" * 32
+    store = DraftStore()
+    order = PlateOrder()
+    oc = OptimizationContext(order=order)
+    store.replace_preview(
+        draft_id,
+        order=order,
+        optimization_context=oc,
+        order_data=[],
+        metadata={"owner_user_id": 1, "input_text": "ПБ 78-12-8п 2"},
+    )
+
+    async def fake_apply(self, draft_id_arg: str, **kwargs):
+        request = MagicMock()
+        response = MagicMock()
+        response.status_code = 403
+        response.headers = {}
+        response.request = request
+        raise PermissionDeniedError(
+            "Country, region, or territory not supported",
+            response=response,
+            body={
+                "error": {
+                    "code": "unsupported_country_region_territory",
+                    "message": "Country, region, or territory not supported",
+                }
+            },
+        )
+
+    monkeypatch.setattr(CommercialWorkflowService, "apply_ai_plates_instruction", fake_apply)
+
+    response = client.post(
+        f"/api/v1/commercial/drafts/{draft_id}/plates/ai",
+        data={"instruction": "замени все 78 на 60"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"] == MSG_AI_PROVIDER_UNAVAILABLE
+    assert MSG_INTERNAL not in response.json()["detail"]
 
 
 async def _run_apply_ai_workflow(monkeypatch, tmp_path):

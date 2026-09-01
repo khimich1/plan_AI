@@ -141,6 +141,13 @@ export type ArchiveOfferDetails = {
   finance: ArchiveOfferFinance;
   /** Стоимость одного рейса — то же поле, что logistics_cost при создании КП. */
   logistics_cost: number;
+  pile_logistics_cost?: number;
+  pile_trip_overrides?: Record<string, number>;
+  pile_trips?: number;
+  pile_trip_pending_marks?: string[];
+  pile_delivery_ready?: boolean;
+  plate_delivery_total?: number;
+  pile_delivery_total?: number;
   /** Масса груза (кг) по тем же правилам, что PDF/XLSX (resolve_kp_line_weight_kg на бэкенде). */
   total_cargo_weight_kg: number;
   /** Строка «Услуга по доставке грузов» = logistics_cost × число рейсов. */

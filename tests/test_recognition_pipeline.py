@@ -318,6 +318,8 @@ def test_recognize_text_smart_verify_disabled(tmp_path, monkeypatch):
 
 async def _run_apply_plates_with_ai(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OCR_PROVIDER", "openai")
+    get_settings.cache_clear()
 
     ai_response = MagicMock()
     ai_response.choices = [MagicMock(message=MagicMock(content=json.dumps([
@@ -351,3 +353,112 @@ async def _run_apply_plates_with_ai(tmp_path, monkeypatch):
 
 def test_apply_plates_with_ai(tmp_path, monkeypatch):
     asyncio.run(_run_apply_plates_with_ai(tmp_path, monkeypatch))
+
+
+async def _run_apply_plates_with_ai_gigachat_text_only(monkeypatch):
+    monkeypatch.setenv("OCR_PROVIDER", "gigachat")
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", "dGVzdA==")
+    monkeypatch.setenv("GIGACHAT_MODEL", "GigaChat-2-Max")
+    get_settings.cache_clear()
+
+    plates_json = json.dumps(
+        [
+            {
+                "raw_name": "ПБ 70-12-8п",
+                "normalized_candidate": "ПБ 70-12-8п",
+                "qty": 5,
+                "confidence": 0.99,
+                "issues": [],
+            },
+            {
+                "raw_name": "ПБ 90-12-8п",
+                "normalized_candidate": "ПБ 90-12-8п",
+                "qty": 5,
+                "confidence": 0.99,
+                "issues": [],
+            },
+        ],
+        ensure_ascii=False,
+    )
+    mock_client = MagicMock()
+    mock_client.chat.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=plates_json))],
+        usage=MagicMock(total_tokens=1500),
+    )
+
+    from core.ocr_gpt import apply_plates_with_ai
+
+    with patch(
+        "core.ocr.providers.gigachat.require_gigachat_client",
+        return_value=mock_client,
+    ):
+        result = await apply_plates_with_ai(
+            current_plates_text="ПБ 70.12-8К7 5\nПБ 90.12-8К7 5",
+            user_instruction="ПБ 70.12-8К7 5 это ПБ 70-12-8п 5 исправь по аналогии",
+        )
+
+    assert result is not None
+    assert "GigaChat" in result["method"]
+    assert result["method"].endswith("+ai")
+    assert "ПБ 70-12-8п 5" in result["text"]
+    assert "ПБ 90-12-8п 5" in result["text"]
+    assert result["ocr_cost_rub"] > 0
+    assert result["cost_usd"] == 0.0
+    mock_client.upload_file.assert_not_called()
+    mock_client.chat.assert_called_once()
+
+
+def test_apply_plates_with_ai_gigachat_text_only(monkeypatch):
+    asyncio.run(_run_apply_plates_with_ai_gigachat_text_only(monkeypatch))
+
+
+async def _run_apply_plates_with_ai_gigachat_with_image(tmp_path, monkeypatch):
+    monkeypatch.setenv("OCR_PROVIDER", "gigachat")
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", "dGVzdA==")
+    monkeypatch.setenv("GIGACHAT_MODEL", "GigaChat-2-Max")
+    get_settings.cache_clear()
+
+    image_path = tmp_path / "plates.png"
+    Image.new("RGB", (32, 32), color=(200, 200, 200)).save(image_path)
+
+    plates_json = json.dumps(
+        [
+            {
+                "raw_name": "ПБ 60-12-8п",
+                "normalized_candidate": "ПБ 60-12-8п",
+                "qty": 7,
+                "confidence": 0.99,
+                "issues": [],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    uploaded = MagicMock(id_="file-ai")
+    mock_client = MagicMock()
+    mock_client.upload_file.return_value = uploaded
+    mock_client.chat.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=plates_json))],
+        usage=MagicMock(total_tokens=2000),
+    )
+
+    from core.ocr_gpt import apply_plates_with_ai
+
+    with patch(
+        "core.ocr.providers.gigachat.require_gigachat_client",
+        return_value=mock_client,
+    ):
+        result = await apply_plates_with_ai(
+            current_plates_text="ПБ 78-12-8п 2",
+            user_instruction="замени 78 на 60 и qty 7",
+            image_path=str(image_path),
+        )
+
+    assert result is not None
+    assert "GigaChat-2-Max+ai" == result["method"]
+    assert "ПБ 60-12-8п 7" in result["text"]
+    mock_client.upload_file.assert_called_once()
+    mock_client.chat.assert_called_once()
+
+
+def test_apply_plates_with_ai_gigachat_with_image(tmp_path, monkeypatch):
+    asyncio.run(_run_apply_plates_with_ai_gigachat_with_image(tmp_path, monkeypatch))

@@ -4,7 +4,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { Spinner } from "@/shared/ui/Spinner";
 import { Alert } from "@/shared/ui/Alert";
-import { FieldWrapper } from "@/shared/ui/Field";
+import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
 import {
   useArchiveOfferQuery,
@@ -110,6 +110,8 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [discountDraft, setDiscountDraft] = useState("");
   const [targetSumDraft, setTargetSumDraft] = useState("");
   const [logisticsDraft, setLogisticsDraft] = useState("");
+  const [pileLogisticsDraft, setPileLogisticsDraft] = useState("");
+  const [pileOverrideDrafts, setPileOverrideDrafts] = useState<Record<string, string>>({});
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [targetSumError, setTargetSumError] = useState<string | null>(null);
   const [logisticsError, setLogisticsError] = useState<string | null>(null);
@@ -230,12 +232,19 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       setDiscountDraft(String(offer.finance.discount_percent ?? 0));
       setTargetSumDraft(savedTargetSum === null ? "" : String(savedTargetSum).replace(".", ","));
       setLogisticsDraft(String(offer.logistics_cost ?? 0).replace(".", ","));
+      setPileLogisticsDraft(String(offer.pile_logistics_cost ?? 0).replace(".", ","));
+      const nextOverrides: Record<string, string> = {};
+      for (const mark of offer.pile_trip_pending_marks ?? []) {
+        const saved = offer.pile_trip_overrides?.[mark];
+        nextOverrides[mark] = saved === undefined ? "" : String(saved);
+      }
+      setPileOverrideDrafts(nextOverrides);
       setDiscountError(null);
       setTargetSumError(null);
       setLogisticsError(null);
       setResumeError(null);
     }
-  }, [offer?.kp_id, offer?.finance.discount_percent, offer?.logistics_cost, offer?.delivery_service_total_rub, savedTargetSum]);
+  }, [offer?.kp_id, offer?.finance.discount_percent, offer?.logistics_cost, offer?.pile_logistics_cost, offer?.delivery_service_total_rub, savedTargetSum]);
 
   const restoreDiscountDrafts = () => {
     if (!offer) {
@@ -355,12 +364,39 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       setLogisticsError("Стоимость рейса должна быть числом не меньше 0.");
       return;
     }
+    const hasPileItems = (offer.piles?.length ?? 0) > 0 || (offer.bridge_piles?.length ?? 0) > 0;
+    const hasPlateItems = (offer.plates?.length ?? 0) > 0;
+    let pileLogisticsCost: number | undefined;
+    if (hasPileItems) {
+      const pileParsed = parseNumberField(hasPlateItems ? pileLogisticsDraft : logisticsDraft);
+      if (pileParsed === null || pileParsed < 0) {
+        setLogisticsError("Стоимость рейса свай должна быть числом не меньше 0.");
+        return;
+      }
+      pileLogisticsCost = pileParsed;
+    }
+    const overrides: Record<string, number> = { ...(offer.pile_trip_overrides ?? {}) };
+    for (const mark of offer.pile_trip_pending_marks ?? []) {
+      const n = parseNumberField(pileOverrideDrafts[mark] ?? "");
+      if (n === null || n < 0 || !Number.isInteger(n)) {
+        setLogisticsError("Число машин должно быть целым числом не меньше 0.");
+        return;
+      }
+      overrides[mark] = n;
+    }
     setLogisticsError(null);
-    await logisticsMutation.mutateAsync({ kpId: offer.kp_id, logisticsCost: parsed });
+    await logisticsMutation.mutateAsync({
+      kpId: offer.kp_id,
+      logisticsCost: hasPlateItems ? parsed : offer.logistics_cost ?? 0,
+      pileLogisticsCost,
+      pileTripOverrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+    });
     setLogisticsDraft(String(parsed).replace(".", ","));
   };
 
   const clientTrips = offer ? cargoDeliveryTripsCount(Math.max(0, offer.total_cargo_weight_kg ?? 0)) : 0;
+  const hasPileItems = (offer?.piles?.length ?? 0) > 0 || (offer?.bridge_piles?.length ?? 0) > 0;
+  const hasPlateItems = (offer?.plates?.length ?? 0) > 0;
 
   return (
     <Modal
@@ -477,7 +513,10 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 </div>
 
                 <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
-                  <FieldWrapper label="Стоимость рейса" error={logisticsError}>
+                  <FieldWrapper
+                    label={hasPlateItems && hasPileItems ? "Рейс плит" : "Стоимость рейса"}
+                    error={logisticsError}
+                  >
                     <div style={{ position: "relative" }}>
                       <input
                         value={logisticsDraft}
@@ -514,6 +553,48 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                     </div>
                   </FieldWrapper>
                 </div>
+                {((offer.piles?.length ?? 0) > 0 || (offer.bridge_piles?.length ?? 0) > 0) &&
+                  (offer.plates?.length ?? 0) > 0 && (
+                  <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
+                    <FieldWrapper label="Рейс свай" error={null}>
+                      <input
+                        value={pileLogisticsDraft}
+                        onChange={(event) => setPileLogisticsDraft(event.target.value)}
+                        inputMode="decimal"
+                        placeholder="Стоимость рейса свай"
+                        disabled={financePending}
+                        style={{
+                          width: "100%",
+                          border: "1px solid #d0d5dd",
+                          borderRadius: 12,
+                          padding: "0.8rem 0.9rem",
+                          background: "#ffffff",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </FieldWrapper>
+                  </div>
+                )}
+                {offer.pile_delivery_ready !== false &&
+                  ((offer.piles?.length ?? 0) > 0 || (offer.bridge_piles?.length ?? 0) > 0) && (
+                    <FinanceCard label="Рейсов свай" value={String(offer.pile_trips ?? 0)} />
+                  )}
+                {(offer.pile_trip_pending_marks ?? []).map((mark) => (
+                  <FieldWrapper
+                    key={mark}
+                    label={`Для ${mark} нет нормы загрузки в справочнике. Сколько машин нужно?`}
+                    error={null}
+                  >
+                    <Input
+                      value={pileOverrideDrafts[mark] ?? ""}
+                      onChange={(event) =>
+                        setPileOverrideDrafts((prev) => ({ ...prev, [mark]: event.target.value }))
+                      }
+                      inputMode="numeric"
+                      placeholder="Машин, шт."
+                    />
+                  </FieldWrapper>
+                ))}
 
                 <div
                   style={{

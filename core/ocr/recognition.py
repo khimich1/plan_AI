@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Распознавание и редактирование списков плит через OCR-провайдеры."""
+"""Распознавание и редактирование списков изделий через OCR-провайдеры."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any, Callable, Awaitable, Dict, Literal, Optional
 
 from core.config.settings import get_settings
 from core.ocr.pipeline import (
+    create_ocr_provider,
     run_ocr_pipeline,
     run_bridge_pile_ocr_pipeline,
     run_fbs_ocr_pipeline,
@@ -17,11 +18,31 @@ from core.ocr.pipeline import (
 )
 from core.ocr.providers.openai import (
     GPT_AVAILABLE,
-    call_gpt_for_plates,
     load_image_payload,
-    require_openai_client,
 )
 from core.ocr.result import build_result_payload
+
+ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs"]
+
+_APPLY_AI_LABELS: dict[str, str] = {
+    "plates": "плит",
+    "piles": "свай",
+    "steps": "ступеней",
+    "marches": "маршей",
+    "bridge_piles": "мостовых свай",
+    "fbs": "ФБС",
+}
+
+_APPLY_AI_EXTRACT: dict[str, str] = {
+    "plates": "extract_plates",
+    "piles": "extract_piles",
+    "steps": "extract_steps",
+    "marches": "extract_marches",
+    "bridge_piles": "extract_bridge_piles",
+    "fbs": "extract_fbs",
+}
+
+_OPENAI_USD_TO_RUB = 75.0
 
 
 async def recognize_text_smart(
@@ -31,7 +52,7 @@ async def recognize_text_smart(
     mode: Literal["full_gpt", "hybrid"] = "full_gpt",
     verify_enabled: Optional[bool] = None,
     on_status: Optional[Callable[[str], Awaitable[None]]] = None,
-    product_type: Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs"] = "plates",
+    product_type: ProductType = "plates",
 ) -> Optional[Dict]:
     """
     Распознавание таблицы через OCR pipeline (GigaChat или OpenAI).
@@ -54,18 +75,7 @@ async def recognize_text_smart(
 
     try:
         if on_status:
-            if normalized_product_type == "piles":
-                label = "свай"
-            elif normalized_product_type == "bridge_piles":
-                label = "мостовых свай"
-            elif normalized_product_type == "fbs":
-                label = "ФБС"
-            elif normalized_product_type == "steps":
-                label = "ступеней"
-            elif normalized_product_type == "marches":
-                label = "маршей"
-            else:
-                label = "плит"
+            label = _APPLY_AI_LABELS.get(normalized_product_type, "плит")
             await on_status(f"Распознавание таблицы {label}...")
 
         if normalized_product_type == "piles":
@@ -101,25 +111,26 @@ async def recognize_text_smart(
     return None
 
 
-async def apply_plates_with_ai(
+async def _apply_with_ai(
     *,
-    current_plates_text: str,
+    product_type: ProductType,
+    current_text: str,
     user_instruction: str,
     image_path: str | None = None,
     show_cost: bool = True,
 ) -> Optional[Dict[str, Any]]:
-    """
-    Применяет инструкцию пользователя к списку плит (опционально с изображением).
-    Один вызов GPT-4o, temperature=0.
-    """
+    """Apply user instruction via OCR_PROVIDER (GigaChat or OpenAI), one extract call."""
     instruction = (user_instruction or "").strip()
     if not instruction:
         raise ValueError("Инструкция для ИИ не может быть пустой.")
 
-    client = require_openai_client()
-    current_text = (current_plates_text or "").strip() or "(пусто)"
+    label = _APPLY_AI_LABELS[product_type]
+    extract_method = _APPLY_AI_EXTRACT[product_type]
+    provider, provider_name, model_label = create_ocr_provider()
+
+    current = (current_text or "").strip() or "(пусто)"
     user_text = (
-        f"Текущий список плит:\n{current_text}\n\n"
+        f"Текущий список {label}:\n{current}\n\n"
         f"Инструкция пользователя:\n{instruction}"
     )
 
@@ -128,33 +139,60 @@ async def apply_plates_with_ai(
     if image_path:
         _, image_base64, mime_type = load_image_payload(image_path)
 
-    print("[AI] GPT-4o (один вызов, инструкция пользователя)...")
-    plates, cost_usd = await call_gpt_for_plates(
+    print(f"[AI] {model_label} (один вызов, инструкция пользователя, {label})...")
+    extract_fn = getattr(provider, extract_method)
+    items, extract_cost = await extract_fn(
         user_text=user_text,
-        client=client,
         image_base64=image_base64,
         mime_type=mime_type,
     )
 
-    if not plates:
+    if not items:
         return None
 
-    cost_rub = cost_usd * 75
-    if show_cost:
-        print(f"[AI] 💰 Стоимость: ${cost_usd:.4f} (~{cost_rub:.2f}₽)")
+    if provider_name == "gigachat":
+        cost_usd = 0.0
+        cost_rub = float(extract_cost)
+    else:
+        cost_usd = float(extract_cost)
+        cost_rub = cost_usd * _OPENAI_USD_TO_RUB
 
-    print(f"[AI] ✅ Итого {len(plates)} строк(и), method=GPT-4o+ai")
+    if show_cost:
+        if provider_name == "gigachat":
+            print(f"[AI] 💰 Стоимость: ~{cost_rub:.2f}₽")
+        else:
+            print(f"[AI] 💰 Стоимость: ${cost_usd:.4f} (~{cost_rub:.2f}₽)")
+
+    method = f"{model_label}+ai"
+    print(f"[AI] ✅ Итого {len(items)} строк(и), method={method}")
     return build_result_payload(
-        plates=plates,
-        draft_plates=plates,
+        plates=items,
+        draft_plates=items,
         corrections=[],
-        row_count_on_image=len(plates),
-        method="GPT-4o+ai",
+        row_count_on_image=len(items),
+        method=method,
         verify_applied=False,
         verify_failed=False,
         cost_usd=cost_usd,
         cost_rub=cost_rub,
         api_calls=1,
+    )
+
+
+async def apply_plates_with_ai(
+    *,
+    current_plates_text: str,
+    user_instruction: str,
+    image_path: str | None = None,
+    show_cost: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Применяет инструкцию пользователя к списку плит (опционально с изображением)."""
+    return await _apply_with_ai(
+        product_type="plates",
+        current_text=current_plates_text,
+        user_instruction=user_instruction,
+        image_path=image_path,
+        show_cost=show_cost,
     )
 
 
@@ -166,51 +204,12 @@ async def apply_piles_with_ai(
     show_cost: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Применяет инструкцию пользователя к списку свай (опционально с изображением)."""
-    instruction = (user_instruction or "").strip()
-    if not instruction:
-        raise ValueError("Инструкция для ИИ не может быть пустой.")
-
-    from core.ocr.providers.openai import call_gpt_for_piles
-
-    client = require_openai_client()
-    current_text = (current_piles_text or "").strip() or "(пусто)"
-    user_text = (
-        f"Текущий список свай:\n{current_text}\n\n"
-        f"Инструкция пользователя:\n{instruction}"
-    )
-
-    image_base64: str | None = None
-    mime_type: str | None = None
-    if image_path:
-        _, image_base64, mime_type = load_image_payload(image_path)
-
-    print("[AI] GPT-4o (один вызов, инструкция пользователя, сваи)...")
-    piles, cost_usd = await call_gpt_for_piles(
-        user_text=user_text,
-        client=client,
-        image_base64=image_base64,
-        mime_type=mime_type,
-    )
-
-    if not piles:
-        return None
-
-    cost_rub = cost_usd * 75
-    if show_cost:
-        print(f"[AI] 💰 Стоимость: ${cost_usd:.4f} (~{cost_rub:.2f}₽)")
-
-    print(f"[AI] ✅ Итого {len(piles)} строк(и), method=GPT-4o+ai")
-    return build_result_payload(
-        plates=piles,
-        draft_plates=piles,
-        corrections=[],
-        row_count_on_image=len(piles),
-        method="GPT-4o+ai",
-        verify_applied=False,
-        verify_failed=False,
-        cost_usd=cost_usd,
-        cost_rub=cost_rub,
-        api_calls=1,
+    return await _apply_with_ai(
+        product_type="piles",
+        current_text=current_piles_text,
+        user_instruction=user_instruction,
+        image_path=image_path,
+        show_cost=show_cost,
     )
 
 
@@ -222,51 +221,12 @@ async def apply_steps_with_ai(
     show_cost: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Применяет инструкцию пользователя к списку ступеней (опционально с изображением)."""
-    instruction = (user_instruction or "").strip()
-    if not instruction:
-        raise ValueError("Инструкция для ИИ не может быть пустой.")
-
-    from core.ocr.providers.openai import call_gpt_for_steps
-
-    client = require_openai_client()
-    current_text = (current_steps_text or "").strip() or "(пусто)"
-    user_text = (
-        f"Текущий список ступеней:\n{current_text}\n\n"
-        f"Инструкция пользователя:\n{instruction}"
-    )
-
-    image_base64: str | None = None
-    mime_type: str | None = None
-    if image_path:
-        _, image_base64, mime_type = load_image_payload(image_path)
-
-    print("[AI] GPT-4o (один вызов, инструкция пользователя, ступени)...")
-    steps, cost_usd = await call_gpt_for_steps(
-        user_text=user_text,
-        client=client,
-        image_base64=image_base64,
-        mime_type=mime_type,
-    )
-
-    if not steps:
-        return None
-
-    cost_rub = cost_usd * 75
-    if show_cost:
-        print(f"[AI] 💰 Стоимость: ${cost_usd:.4f} (~{cost_rub:.2f}₽)")
-
-    print(f"[AI] ✅ Итого {len(steps)} строк(и), method=GPT-4o+ai")
-    return build_result_payload(
-        plates=steps,
-        draft_plates=steps,
-        corrections=[],
-        row_count_on_image=len(steps),
-        method="GPT-4o+ai",
-        verify_applied=False,
-        verify_failed=False,
-        cost_usd=cost_usd,
-        cost_rub=cost_rub,
-        api_calls=1,
+    return await _apply_with_ai(
+        product_type="steps",
+        current_text=current_steps_text,
+        user_instruction=user_instruction,
+        image_path=image_path,
+        show_cost=show_cost,
     )
 
 
@@ -278,51 +238,12 @@ async def apply_marches_with_ai(
     show_cost: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Применяет инструкцию пользователя к списку маршей (опционально с изображением)."""
-    instruction = (user_instruction or "").strip()
-    if not instruction:
-        raise ValueError("Инструкция для ИИ не может быть пустой.")
-
-    from core.ocr.providers.openai import call_gpt_for_marches
-
-    client = require_openai_client()
-    current_text = (current_marches_text or "").strip() or "(пусто)"
-    user_text = (
-        f"Текущий список маршей:\n{current_text}\n\n"
-        f"Инструкция пользователя:\n{instruction}"
-    )
-
-    image_base64: str | None = None
-    mime_type: str | None = None
-    if image_path:
-        _, image_base64, mime_type = load_image_payload(image_path)
-
-    print("[AI] GPT-4o (один вызов, инструкция пользователя, марши)...")
-    marches, cost_usd = await call_gpt_for_marches(
-        user_text=user_text,
-        client=client,
-        image_base64=image_base64,
-        mime_type=mime_type,
-    )
-
-    if not marches:
-        return None
-
-    cost_rub = cost_usd * 75
-    if show_cost:
-        print(f"[AI] 💰 Стоимость: ${cost_usd:.4f} (~{cost_rub:.2f}₽)")
-
-    print(f"[AI] ✅ Итого {len(marches)} строк(и), method=GPT-4o+ai")
-    return build_result_payload(
-        plates=marches,
-        draft_plates=marches,
-        corrections=[],
-        row_count_on_image=len(marches),
-        method="GPT-4o+ai",
-        verify_applied=False,
-        verify_failed=False,
-        cost_usd=cost_usd,
-        cost_rub=cost_rub,
-        api_calls=1,
+    return await _apply_with_ai(
+        product_type="marches",
+        current_text=current_marches_text,
+        user_instruction=user_instruction,
+        image_path=image_path,
+        show_cost=show_cost,
     )
 
 
@@ -334,51 +255,12 @@ async def apply_bridge_piles_with_ai(
     show_cost: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Применяет инструкцию пользователя к списку мостовых свай."""
-    instruction = (user_instruction or "").strip()
-    if not instruction:
-        raise ValueError("Инструкция для ИИ не может быть пустой.")
-
-    from core.ocr.providers.openai import call_gpt_for_bridge_piles
-
-    client = require_openai_client()
-    current_text = (current_bridge_piles_text or "").strip() or "(пусто)"
-    user_text = (
-        f"Текущий список мостовых свай:\n{current_text}\n\n"
-        f"Инструкция пользователя:\n{instruction}"
-    )
-
-    image_base64: str | None = None
-    mime_type: str | None = None
-    if image_path:
-        _, image_base64, mime_type = load_image_payload(image_path)
-
-    print("[AI] GPT-4o (один вызов, инструкция пользователя, мостовые сваи)...")
-    items, cost_usd = await call_gpt_for_bridge_piles(
-        user_text=user_text,
-        client=client,
-        image_base64=image_base64,
-        mime_type=mime_type,
-    )
-
-    if not items:
-        return None
-
-    cost_rub = cost_usd * 75
-    if show_cost:
-        print(f"[AI] 💰 Стоимость: ${cost_usd:.4f} (~{cost_rub:.2f}₽)")
-
-    print(f"[AI] ✅ Итого {len(items)} строк(и), method=GPT-4o+ai")
-    return build_result_payload(
-        plates=items,
-        draft_plates=items,
-        corrections=[],
-        row_count_on_image=len(items),
-        method="GPT-4o+ai",
-        verify_applied=False,
-        verify_failed=False,
-        cost_usd=cost_usd,
-        cost_rub=cost_rub,
-        api_calls=1,
+    return await _apply_with_ai(
+        product_type="bridge_piles",
+        current_text=current_bridge_piles_text,
+        user_instruction=user_instruction,
+        image_path=image_path,
+        show_cost=show_cost,
     )
 
 
@@ -390,49 +272,10 @@ async def apply_fbs_with_ai(
     show_cost: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Применяет инструкцию пользователя к списку ФБС."""
-    instruction = (user_instruction or "").strip()
-    if not instruction:
-        raise ValueError("Инструкция для ИИ не может быть пустой.")
-
-    from core.ocr.providers.openai import call_gpt_for_fbs
-
-    client = require_openai_client()
-    current_text = (current_fbs_text or "").strip() or "(пусто)"
-    user_text = (
-        f"Текущий список ФБС:\n{current_text}\n\n"
-        f"Инструкция пользователя:\n{instruction}"
-    )
-
-    image_base64: str | None = None
-    mime_type: str | None = None
-    if image_path:
-        _, image_base64, mime_type = load_image_payload(image_path)
-
-    print("[AI] GPT-4o (один вызов, инструкция пользователя, ФБС)...")
-    items, cost_usd = await call_gpt_for_fbs(
-        user_text=user_text,
-        client=client,
-        image_base64=image_base64,
-        mime_type=mime_type,
-    )
-
-    if not items:
-        return None
-
-    cost_rub = cost_usd * 75
-    if show_cost:
-        print(f"[AI] 💰 Стоимость: ${cost_usd:.4f} (~{cost_rub:.2f}₽)")
-
-    print(f"[AI] ✅ Итого {len(items)} строк(и), method=GPT-4o+ai")
-    return build_result_payload(
-        plates=items,
-        draft_plates=items,
-        corrections=[],
-        row_count_on_image=len(items),
-        method="GPT-4o+ai",
-        verify_applied=False,
-        verify_failed=False,
-        cost_usd=cost_usd,
-        cost_rub=cost_rub,
-        api_calls=1,
+    return await _apply_with_ai(
+        product_type="fbs",
+        current_text=current_fbs_text,
+        user_instruction=user_instruction,
+        image_path=image_path,
+        show_cost=show_cost,
     )

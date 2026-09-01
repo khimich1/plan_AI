@@ -119,3 +119,31 @@ def test_save_pile_kp_gets_next_kp_id_after_plates(db_path: str) -> None:
         assert cur.fetchone()[0] == 1
         cur.execute("SELECT COUNT(*) FROM kp_plates WHERE kp_id = 3")
         assert cur.fetchone()[0] == 0
+
+
+def test_save_kp_persists_pile_logistics_cost_and_overrides(db_path: str) -> None:
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "04.01.2026",
+        [_pile_order_item(qty=2, product_type="piles")],
+        customer_name="Pile trips",
+        product_type="piles",
+        db_path=db_path,
+        pile_logistics_cost=1500.0,
+        pile_trip_overrides={"C18-40T8": 3},
+        logistics_cost=99.0,
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT logistics_cost, pile_logistics_cost FROM KP_offers WHERE kp_id = ?",
+            (kp_id,),
+        )
+        offer = cur.fetchone()
+        assert offer["logistics_cost"] == pytest.approx(99.0)
+        assert offer["pile_logistics_cost"] == pytest.approx(1500.0)
+        cur.execute("SELECT pile_trip_overrides_json FROM kp_meta WHERE kp_id = ?", (kp_id,))
+        raw = cur.fetchone()["pile_trip_overrides_json"]
+    from core.pile_trip_pricing import coerce_pile_trip_overrides
+
+    assert coerce_pile_trip_overrides(raw)["C18-40T8"] == 3

@@ -38,6 +38,8 @@ type UpdateDraftMetaPayload = {
   deliveryConditions?: string;
   paymentConditions?: string;
   logisticsCost?: number;
+  pileLogisticsCost?: number;
+  pileTripOverrides?: Record<string, number>;
 };
 
 type WidePlateDecisionPayload = {
@@ -255,6 +257,8 @@ export const commercialOfferApi = {
         delivery_conditions: payload.deliveryConditions,
         payment_conditions: payload.paymentConditions,
         logistics_cost: payload.logisticsCost,
+        pile_logistics_cost: payload.pileLogisticsCost,
+        pile_trip_overrides: payload.pileTripOverrides,
       }),
       { "Content-Type": "application/json" },
     ),

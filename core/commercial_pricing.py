@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import Any
+from typing import Any, Mapping
 
-from core.cargo_delivery_pricing import delivery_service_charge_rub, total_order_cargo_weight_kg
+from core.cargo_delivery_pricing import (
+    cargo_delivery_trips_count,
+    delivery_service_charge_rub,
+    total_order_cargo_weight_kg,
+)
 from core.exceptions import PriceNotFoundError, UnpricedPlatesError
 from core.bridge_pile_price_db import get_bridge_pile_price
 from core.fbs_price_db import get_fbs_price
@@ -16,6 +20,35 @@ from core.step_price_db import get_step_price, normalize_step_mark
 _log = logging.getLogger(__name__)
 
 VAT_RATE = 0.22
+
+
+def _resolve_pile_catalog_db_path(explicit: str | None, fallback_db_path: str) -> str:
+    """Каталог свай живёт в plita.db, не в pb.db (прайс)."""
+    if explicit:
+        return explicit
+    try:
+        from core.config.settings import get_settings
+
+        return str(get_settings().plita_db_path)
+    except Exception:
+        return fallback_db_path
+
+
+def _compute_pile_delivery_breakdown(
+    order_data: list[dict[str, Any]],
+    *,
+    overrides: dict[str, int] | None,
+    catalog_db_path: str,
+):
+    from core.pile_catalog import load_pile_catalog, resolve_catalog_for_mark
+    from core.pile_trip_pricing import compute_pile_trips
+
+    entries = load_pile_catalog(catalog_db_path)
+    return compute_pile_trips(
+        order_data,
+        overrides,
+        lambda mark: resolve_catalog_for_mark(mark, entries),
+    )
 
 
 def lookup_pile_price(
@@ -290,6 +323,9 @@ def calculate_total_cost(
     *,
     db_path: str,
     require_all_priced: bool = True,
+    pile_logistics_cost: float = 0,
+    pile_trip_overrides: dict[str, int] | None = None,
+    pile_catalog_db_path: str | None = None,
 ) -> dict[str, Any]:
     """
     Рассчитывает общую стоимость заказа.
@@ -351,14 +387,68 @@ def calculate_total_cost(
 
     trip_cost = max(0.0, float(logistics_cost or 0.0))
     cargo_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
-    delivery_total = delivery_service_charge_rub(trip_cost, cargo_kg)
+    plate_delivery_total = delivery_service_charge_rub(trip_cost, cargo_kg)
+
+    pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
+    catalog_path = _resolve_pile_catalog_db_path(pile_catalog_db_path, db_path)
+    pile_breakdown = _compute_pile_delivery_breakdown(
+        order_data,
+        overrides=pile_trip_overrides,
+        catalog_db_path=catalog_path,
+    )
+    pile_delivery_total = (
+        round(pile_trip * pile_breakdown.total_trips, 2) if pile_breakdown.ready else 0.0
+    )
+    delivery_total = plate_delivery_total + pile_delivery_total
     vat_amount = round(plates_total_with_vat * VAT_RATE, 2)
     total_with_vat = round(plates_total_with_vat + delivery_total, 2)
     subtotal = round(total_with_vat - vat_amount, 2)
 
+    plate_trips = cargo_delivery_trips_count(cargo_kg)
     return {
         "total_qty": total_qty,
         "subtotal": subtotal,
         "vat_amount": vat_amount,
         "total_with_vat": total_with_vat,
+        "plate_delivery_total": plate_delivery_total,
+        "pile_delivery_total": pile_delivery_total,
+        "pile_trips": pile_breakdown.total_trips,
+        "pile_trip_pending_marks": list(pile_breakdown.pending_marks),
+        "pile_delivery_ready": pile_breakdown.ready,
+        "plate_trips": plate_trips,
     }
+
+
+def kp_delivery_export_lines(
+    totals: Mapping[str, Any],
+    *,
+    plate_trip_cost: float,
+    pile_trip_cost: float,
+) -> list[dict[str, Any]]:
+    """Строки доставки для PDF/XLSX: плиты и/или сваи, если сумма > 0."""
+    plate_amount = float(totals.get("plate_delivery_total") or 0.0)
+    pile_amount = float(totals.get("pile_delivery_total") or 0.0)
+    pile_ready = bool(totals.get("pile_delivery_ready", True))
+    show_pile = pile_ready and pile_amount > 0
+    show_plate = plate_amount > 0
+    plate_label = "Доставка плит" if show_pile else "Услуга по доставке грузов"
+    lines: list[dict[str, Any]] = []
+    if show_plate:
+        lines.append(
+            {
+                "label": plate_label,
+                "trips": int(totals.get("plate_trips") or 0),
+                "unit_price": max(0.0, float(plate_trip_cost or 0.0)),
+                "amount": plate_amount,
+            }
+        )
+    if show_pile:
+        lines.append(
+            {
+                "label": "Доставка свай",
+                "trips": int(totals.get("pile_trips") or 0),
+                "unit_price": max(0.0, float(pile_trip_cost or 0.0)),
+                "amount": pile_amount,
+            }
+        )
+    return lines

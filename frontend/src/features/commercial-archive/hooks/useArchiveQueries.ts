@@ -95,8 +95,22 @@ export const useUpdateDiscountMutation = () => {
 export const useUpdateLogisticsCostMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ kpId, logisticsCost }: { kpId: number; logisticsCost: number }) =>
-      archiveApi.updateLogisticsCost(kpId, logisticsCost),
+    mutationFn: ({
+      kpId,
+      logisticsCost,
+      pileLogisticsCost,
+      pileTripOverrides,
+    }: {
+      kpId: number;
+      logisticsCost: number;
+      pileLogisticsCost?: number;
+      pileTripOverrides?: Record<string, number>;
+    }) =>
+      archiveApi.updateLogisticsCost(kpId, {
+        logisticsCost,
+        pileLogisticsCost,
+        pileTripOverrides,
+      }),
     onSuccess: (offer) => {
       queryClient.setQueryData(archiveKeys.detail(offer.kp_id), offer);
       queryClient.invalidateQueries({ queryKey: archiveKeys.all });

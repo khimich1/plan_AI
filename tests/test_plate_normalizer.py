@@ -15,6 +15,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -32,6 +34,7 @@ from core.plate_text_normalizer import (
     _format_width_dm,
     _format_load,
 )
+from core.plate_line_parser import parse_line
 import core.config_and_data as cfg
 
 
@@ -329,6 +332,160 @@ def test_end_to_end_wrong_not_changed():
     canon, warn = canonicalize_plate_line("ПБ 7.3-12-8п 2")
     assert warn is None, f"ПБ 7.3-12-8п не должна трогаться нормализатором, warn={warn}"
     print("  OK  ПБ 7.3-12-8п → нормализатор не трогает")
+
+
+# ── NM-101: каталог vs десятичная длина ────────────────────────────────────
+
+_CATALOG_CASES = [
+    ("ПБ 59.12-8Вр1400-25", "ПБ 59-12-8п", 1),
+    ("ПБ56.05-10", "ПБ 56-5,0-10п", 1),
+    ("ПБ56.05-10 3 шт", "ПБ 56-5,0-10п 3", 3),
+    ("ПБ 59.12-8п", "ПБ 59-12-8п", 1),
+]
+
+_NOT_CATALOG_CASES = [
+    "ПБ 70.5-12-8п",
+    "ПБ 70.5-12-8п 1",
+    "ПБ 47.5-10.7-8  4",
+    "ПБ 70.5-10.7-8п доб. 70.5-1.25-8",
+    "ПБ 47.5-5.3-8п 1",
+    "ПБ 47.5-12-8п 2",
+    "ПБ 60.5-12-8п 2",
+    "ПБ 60.5-10.7-8п 1",
+]
+
+
+def _decimal_length_token(line: str) -> str:
+    for token in ("70.5", "47.5", "60.5"):
+        if token in line:
+            return token
+    raise AssertionError(f"нет десятичной длины 70.5/47.5/60.5 в {line!r}")
+
+
+@pytest.mark.parametrize("raw, expected_canon, expected_qty", _CATALOG_CASES)
+def test_parse_catalog_mark_accepts_factory_catalog(raw, expected_canon, expected_qty):
+    parsed = parse_catalog_mark(raw)
+    assert parsed is not None, f"каталог должен распознаться: {raw!r}"
+    _, _, _, _, qty = parsed
+    assert qty == expected_qty
+
+    canon, warn = canonicalize_plate_line(raw)
+    assert canon == expected_canon
+    assert warn is not None
+    assert "→" in warn
+
+
+@pytest.mark.parametrize("raw", _NOT_CATALOG_CASES)
+def test_parse_catalog_mark_rejects_decimal_length(raw):
+    assert parse_catalog_mark(raw) is None
+
+    canon, warn = canonicalize_plate_line(raw)
+    assert warn is None
+    token = _decimal_length_token(raw)
+    comma = token.replace(".", ",")
+    assert token in canon or comma in canon, (
+        f"канон должен сохранить десятичную длину {token} или {comma}, получено {canon!r}"
+    )
+    assert f"{token.split('.')[0]}-{token.split('.')[1]},0" not in canon
+
+
+# ── NM-102: эталонная ведомость ────────────────────────────────────────────
+
+_REFERENCE_LEDGER = (
+    "ПБ 58-12-8п 4\n"
+    "ПБ 58-10.7-8 2\n"
+    "ПБ 47.5-5.3-8п 1\n"
+    "ПБ 47.5-5.3-8п 1\n"
+    "ПБ 47.5-5.3-8п 1\n"
+    "ПБ 47.5-5.3-8п 1\n"
+    "ПБ 70.5-10.7-8п 3\n"
+    "ПБ 70.5-12-8п 1\n"
+    "ПБ 43.0-12-8п 5\n"
+    "ПБ 43.0-10.7-8 4\n"
+    "ПБ 47.5-10.7-8  4\n"
+    "ПБ 47.5-12-8п 2\n"
+    "ПБ 60.5-12-8п 2\n"
+    "ПБ 60.5-10.7-8п 1\n"
+)
+
+_REFERENCE_EXPECTED = [
+    (5.8, 1.2, 8.0, 4),
+    (5.8, 1.07, 8.0, 2),
+    (4.75, 0.53, 8.0, 1),
+    (4.75, 0.53, 8.0, 1),
+    (4.75, 0.53, 8.0, 1),
+    (4.75, 0.53, 8.0, 1),
+    (7.05, 1.07, 8.0, 3),
+    (7.05, 1.2, 8.0, 1),
+    (4.3, 1.2, 8.0, 5),
+    (4.3, 1.07, 8.0, 4),
+    (4.75, 1.07, 8.0, 4),
+    (4.75, 1.2, 8.0, 2),
+    (6.05, 1.2, 8.0, 2),
+    (6.05, 1.07, 8.0, 1),
+]
+
+_FALSE_CATALOG_ARROWS = (
+    ("47.5", "47-5,0"),
+    ("70.5", "70-5,0"),
+    ("60.5", "60-5,0"),
+)
+
+
+def test_reference_ledger_keeps_sizes_and_qty_32():
+    result = normalize_order_text(_REFERENCE_LEDGER)
+    assert len(result.normalized_lines) == 14
+
+    parsed_rows = [parse_line(line) for line in result.normalized_lines]
+    assert all(row.parsed for row in parsed_rows)
+    assert sum(row.qty for row in parsed_rows) == 32
+
+    for idx, (row, expected) in enumerate(zip(parsed_rows, _REFERENCE_EXPECTED)):
+        length_m, width_m, load, qty = expected
+        assert row.length_m == pytest.approx(length_m, abs=1e-3), f"строка {idx + 1} длина"
+        assert row.width_m == pytest.approx(width_m, abs=1e-3), f"строка {idx + 1} ширина"
+        assert row.load_code == pytest.approx(load, abs=1e-6), f"строка {idx + 1} нагрузка"
+        assert row.qty == qty, f"строка {idx + 1} qty"
+
+    joined_warnings = " ".join(result.warnings)
+    for src, dst in _FALSE_CATALOG_ARROWS:
+        assert not (src in joined_warnings and dst in joined_warnings), (
+            f"ложный каталожный warning {src!r} → {dst!r}: {result.warnings!r}"
+        )
+
+
+def test_comma_and_dot_decimal_length_parse_the_same():
+    comma_line, _ = canonicalize_plate_line("ПБ 47,5-12-8п 2")
+    dot_line, warn_dot = canonicalize_plate_line("ПБ 47.5-12-8п 2")
+    assert warn_dot is None
+
+    comma = parse_line(comma_line)
+    dot = parse_line(dot_line)
+    assert comma.parsed and dot.parsed
+    assert comma.length_m == pytest.approx(dot.length_m)
+    assert comma.width_m == pytest.approx(dot.width_m)
+    assert comma.load_code == pytest.approx(dot.load_code)
+    assert comma.qty == dot.qty == 2
+    assert comma.length_m == pytest.approx(4.75, abs=1e-3)
+    assert comma.width_m == pytest.approx(1.2, abs=1e-3)
+    assert comma.load_code == pytest.approx(8.0, abs=1e-6)
+
+
+# ── NM-301: сторож канона ──────────────────────────────────────────────────
+
+def test_catalog_tuple_matches_canonical_accepts_legit_rewrite():
+    from core.plate_text_normalizer import _catalog_tuple_matches_canonical
+
+    assert _catalog_tuple_matches_canonical(59, 12, 8.0, 1, "ПБ 59-12-8п")
+    assert _catalog_tuple_matches_canonical(56, 5, 10.0, 3, "ПБ 56-5,0-10п 3")
+
+
+def test_catalog_tuple_matches_canonical_rejects_mismatch():
+    from core.plate_text_normalizer import _catalog_tuple_matches_canonical
+
+    # Кортеж каталога 70×5дм / 12п не совпадает с обычной маркой 70.5-12-8п
+    assert not _catalog_tuple_matches_canonical(70, 5, 12.0, 1, "ПБ 70.5-12-8п 1")
+    assert not _catalog_tuple_matches_canonical(59, 12, 8.0, 1, "не плита")
 
 
 # ── Запуск ──────────────────────────────────────────────────────────────────

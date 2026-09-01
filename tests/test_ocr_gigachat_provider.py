@@ -33,8 +33,11 @@ def test_estimate_cost_rub():
     assert _estimate_cost_rub(2000) == pytest.approx(GIGACHAT_COST_PER_1K_TOKENS_RUB * 2)
 
 
-def test_require_gigachat_client_missing_credentials():
+def test_require_gigachat_client_missing_credentials(monkeypatch):
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", "")
     settings = _make_settings(gigachat_credentials="")
+    # Pydantic may still read env; force empty on the instance we pass.
+    object.__setattr__(settings, "gigachat_credentials", "")
     with pytest.raises(ValueError, match="GIGACHAT_CREDENTIALS"):
         require_gigachat_client(settings)
 
@@ -83,6 +86,46 @@ async def _run_extract_plates_mocked():
 
 def test_gigachat_extract_plates_mocked():
     asyncio.run(_run_extract_plates_mocked())
+
+
+async def _run_extract_plates_text_only_mocked():
+    plates_json = json.dumps(
+        [
+            {
+                "raw_name": "ПБ 70-12-8п",
+                "normalized_candidate": "ПБ 70-12-8п",
+                "qty": 5,
+                "confidence": 0.99,
+                "issues": [],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    mock_client = MagicMock()
+    mock_client.chat.return_value = _mock_chat_response(plates_json, tokens=1200)
+
+    settings = _make_settings()
+    provider = GigaChatProvider(settings=settings, client=mock_client)
+
+    plates, cost_rub = await provider.extract_plates(
+        user_text=(
+            "Текущий список плит:\nПБ 70.12-8К7 5\n\n"
+            "Инструкция пользователя:\nисправь на ПБ 70-12-8п"
+        ),
+    )
+
+    assert len(plates) == 1
+    assert plates[0]["normalized_candidate"] == "ПБ 70-12-8п"
+    assert plates[0]["qty"] == 5
+    assert cost_rub == pytest.approx(_estimate_cost_rub(1200))
+    mock_client.upload_file.assert_not_called()
+    mock_client.chat.assert_called_once()
+    user_msg = mock_client.chat.call_args[0][0].messages[1]
+    assert getattr(user_msg, "attachments", None) in (None, [])
+
+
+def test_gigachat_extract_plates_text_only_mocked():
+    asyncio.run(_run_extract_plates_text_only_mocked())
 
 
 async def _run_extract_piles_mocked():

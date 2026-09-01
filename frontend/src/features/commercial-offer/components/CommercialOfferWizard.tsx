@@ -940,6 +940,31 @@ const handleFinishBridgePiles = async () => {
     }
   };
 
+  const handlePileDeliverySubmit = async (payload: {
+    pileLogisticsCost?: number;
+    pileTripOverrides?: Record<string, number>;
+  }) => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await updateMetaMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        pileLogisticsCost: payload.pileLogisticsCost,
+        pileTripOverrides: payload.pileTripOverrides,
+      });
+      const calculated = await calculateMutation.mutateAsync(currentDraft.draft_id);
+      dispatch({ type: "hydrate-draft", payload: calculated });
+      const msgs = (calculated.wizard_state.validation_errors ?? []).filter(Boolean);
+      if (msgs.length > 0) {
+        setStepError(msgs.join(" "));
+      }
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
   const handleCreateNewOffer = () => {
     setStepError(null);
     setWidePlateError(null);
@@ -1480,6 +1505,7 @@ const handleFinishBridgePiles = async () => {
         isUpdatingDiscount={updateMetaMutation.isPending || calculateMutation.isPending}
         onDiscountSubmit={handleDiscountSubmit}
         onLogisticsCostSubmit={handleLogisticsCostSubmit}
+        onPileDeliverySubmit={handlePileDeliverySubmit}
         onAddOtherNomenclature={handleAddOtherNomenclature}
         onUndoLastBatch={() => void handleUndoLastBatch()}
         onDeleteLine={(lineId) => void handleDeleteLine(lineId)}

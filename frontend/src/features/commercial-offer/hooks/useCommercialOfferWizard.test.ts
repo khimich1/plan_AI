@@ -255,4 +255,34 @@ describe("useCommercialOfferWizard", () => {
     expect(result.current.state.clientName).toBe("ООО Тест");
     expect(result.current.currentDraft?.draft_id).toBe("draft-created-99");
   });
+
+  it("forwards discount and pile logistics fields to updateDraftMeta", async () => {
+    const updated = makeDraft();
+    vi.mocked(commercialOfferApi.updateDraftMeta).mockResolvedValue(updated);
+
+    const { result } = renderHook(() => useCommercialOfferWizard(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.updateMetaMutation.mutateAsync({
+        draftId: "draft-test-1",
+        discountPercent: 5,
+        pileLogisticsCost: 1500,
+        pileTripOverrides: { "C18-40T8": 3 },
+      });
+    });
+
+    expect(commercialOfferApi.updateDraftMeta).toHaveBeenCalledWith("draft-test-1", {
+      managerId: undefined,
+      clientName: undefined,
+      discountPercent: 5,
+      conditionsMode: undefined,
+      deliveryConditions: undefined,
+      paymentConditions: undefined,
+      logisticsCost: undefined,
+      pileLogisticsCost: 1500,
+      pileTripOverrides: { "C18-40T8": 3 },
+    });
+  });
 });

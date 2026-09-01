@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Импорт каталога свай из прайса (лист «Вес и объем») в plita.db (SHIP-100)."""
+"""Импорт каталога свай из прайса («Вес и объем» или «Лист1») в plita.db."""
 
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ from core.pile_catalog import parse_pile_catalog_from_xlsx, upsert_pile_catalog
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Загрузить лист «Вес и объем» прайса свай в pile_catalog (upsert по марке)."
+        description="Загрузить прайс свай в pile_catalog (upsert по марке). "
+        "Без --sheet: лист «Вес и объем», иначе «Лист1»."
     )
     parser.add_argument("--xlsx", required=True, help="Путь к Excel-файлу прайса свай")
     parser.add_argument(
@@ -28,8 +29,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--sheet",
-        default="Вес и объем",
-        help="Имя листа (по умолчанию: Вес и объем)",
+        default=None,
+        help="Имя листа (если не задано: «Вес и объем», иначе «Лист1»)",
     )
     args = parser.parse_args()
 
@@ -44,7 +45,7 @@ def main() -> int:
         print(f"❌ {exc}")
         return 1
     if not entries:
-        print("❌ Не удалось прочитать каталог — проверьте лист «Вес и объем»")
+        print("❌ Не удалось прочитать каталог — проверьте лист «Вес и объем» / «Лист1»")
         return 1
 
     inserted, updated = upsert_pile_catalog(args.db, entries)

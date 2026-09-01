@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from core.domain.enums import KpStatus, PlateStatus
 from core.kp_db_common import DEFAULT_DB, _connect
+from core.pile_trip_pricing import coerce_pile_trip_overrides, dumps_pile_trip_overrides
 
 _VALID_PRODUCT_TYPES = frozenset(
     {
@@ -120,13 +121,23 @@ class KpPersistenceService:
         owner_user_id: int | None = None,
         product_type: str = "plates",
         db_path: str = DEFAULT_DB,
+        pile_logistics_cost: float = 0.0,
+        pile_trip_overrides: dict | None = None,
     ) -> int:
         trip_logistics = max(0.0, float(logistics_cost or 0.0))
+        pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
         try:
-            from core.commercial_offer_xlsx import calculate_total_cost
+            from core.commercial_pricing import calculate_total_cost
 
             totals = calculate_total_cost(
-                order_data, discount_percent, logistics_cost=trip_logistics
+                order_data,
+                discount_percent,
+                logistics_cost=trip_logistics,
+                db_path=db_path,
+                require_all_priced=False,
+                pile_logistics_cost=pile_trip,
+                pile_trip_overrides=coerce_pile_trip_overrides(pile_trip_overrides),
+                pile_catalog_db_path=db_path,
             )
             subtotal = totals["subtotal"]
             vat_amount = totals["vat_amount"]
@@ -159,8 +170,9 @@ class KpPersistenceService:
                 INSERT INTO KP_offers (
                     creation_date, customer_name, manager_name, discount_percent,
                     subtotal, vat_amount, total_amount,
-                    delivery_conditions, payment_conditions, execution_terms, logistics_cost
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    delivery_conditions, payment_conditions, execution_terms,
+                    logistics_cost, pile_logistics_cost
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     creation_date,
@@ -174,6 +186,7 @@ class KpPersistenceService:
                     payment_conditions,
                     execution_terms,
                     trip_logistics,
+                    pile_trip,
                 ),
             )
             kp_id = cur.lastrowid
@@ -206,8 +219,18 @@ class KpPersistenceService:
                     )
 
             cur.execute(
-                "INSERT INTO kp_meta (kp_id, status, owner_user_id, product_type) VALUES (?, ?, ?, ?)",
-                (kp_id, status, owner_user_id, meta_type),
+                """
+                INSERT INTO kp_meta (
+                    kp_id, status, owner_user_id, product_type, pile_trip_overrides_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    kp_id,
+                    status,
+                    owner_user_id,
+                    meta_type,
+                    dumps_pile_trip_overrides(pile_trip_overrides),
+                ),
             )
             conn.commit()
             return kp_id
@@ -228,6 +251,8 @@ class KpPersistenceService:
         logistics_cost: float | None = None,
         product_type: str = "plates",
         db_path: str = DEFAULT_DB,
+        pile_logistics_cost: float | None = None,
+        pile_trip_overrides: dict | None = None,
     ) -> int:
         """Sync existing KP lines by ``line_id`` (append/update; same ``kp_id``).
 
@@ -262,6 +287,7 @@ class KpPersistenceService:
             cur.execute(
                 """
                 SELECT discount_percent, COALESCE(logistics_cost, 0),
+                       COALESCE(pile_logistics_cost, 0),
                        customer_name, manager_name,
                        delivery_conditions, payment_conditions, execution_terms
                 FROM KP_offers WHERE kp_id = ?
@@ -272,6 +298,7 @@ class KpPersistenceService:
             assert offer_row is not None
             existing_discount = float(offer_row[0] or 0.0)
             existing_logistics = max(0.0, float(offer_row[1] or 0.0))
+            existing_pile_logistics = max(0.0, float(offer_row[2] or 0.0))
             resolved_discount = (
                 existing_discount
                 if discount_percent is None
@@ -282,31 +309,56 @@ class KpPersistenceService:
                 if logistics_cost is None
                 else max(0.0, float(logistics_cost or 0.0))
             )
+            pile_trip = (
+                existing_pile_logistics
+                if pile_logistics_cost is None
+                else max(0.0, float(pile_logistics_cost or 0.0))
+            )
             resolved_customer = (
-                customer_name if customer_name is not None else offer_row[2]
+                customer_name if customer_name is not None else offer_row[3]
             )
             resolved_manager = (
-                manager_name if manager_name is not None else offer_row[3]
+                manager_name if manager_name is not None else offer_row[4]
             )
             resolved_delivery = (
                 delivery_conditions
                 if delivery_conditions is not None
-                else offer_row[4]
+                else offer_row[5]
             )
             resolved_payment = (
                 payment_conditions
                 if payment_conditions is not None
-                else offer_row[5]
+                else offer_row[6]
             )
             resolved_execution = (
-                execution_terms if execution_terms is not None else offer_row[6]
+                execution_terms if execution_terms is not None else offer_row[7]
+            )
+            cur.execute(
+                "SELECT pile_trip_overrides_json FROM kp_meta WHERE kp_id = ?",
+                (kp_id,),
+            )
+            meta_overrides_row = cur.fetchone()
+            existing_overrides = coerce_pile_trip_overrides(
+                meta_overrides_row[0] if meta_overrides_row else None
+            )
+            resolved_overrides = (
+                coerce_pile_trip_overrides(pile_trip_overrides)
+                if pile_trip_overrides is not None
+                else existing_overrides
             )
 
             try:
-                from core.commercial_offer_xlsx import calculate_total_cost
+                from core.commercial_pricing import calculate_total_cost
 
                 totals = calculate_total_cost(
-                    order_data, resolved_discount, logistics_cost=trip_logistics
+                    order_data,
+                    resolved_discount,
+                    logistics_cost=trip_logistics,
+                    db_path=db_path,
+                    require_all_priced=False,
+                    pile_logistics_cost=pile_trip,
+                    pile_trip_overrides=resolved_overrides,
+                    pile_catalog_db_path=db_path,
                 )
                 subtotal = totals["subtotal"]
                 vat_amount = totals["vat_amount"]
@@ -409,7 +461,8 @@ class KpPersistenceService:
                     delivery_conditions = ?,
                     payment_conditions = ?,
                     execution_terms = ?,
-                    logistics_cost = ?
+                    logistics_cost = ?,
+                    pile_logistics_cost = ?
                 WHERE kp_id = ?
                 """,
                 (
@@ -423,8 +476,13 @@ class KpPersistenceService:
                     resolved_payment,
                     resolved_execution,
                     trip_logistics,
+                    pile_trip,
                     kp_id,
                 ),
+            )
+            cur.execute(
+                "UPDATE kp_meta SET pile_trip_overrides_json = ? WHERE kp_id = ?",
+                (dumps_pile_trip_overrides(resolved_overrides), kp_id),
             )
             cur.execute(
                 "UPDATE kp_meta SET product_type = ? WHERE kp_id = ?",

@@ -44,10 +44,21 @@ export const archiveApi = {
       { "Content-Type": "application/json" },
     ),
 
-  updateLogisticsCost: (kpId: number, logisticsCost: number) =>
+  updateLogisticsCost: (
+    kpId: number,
+    payload: {
+      logisticsCost: number;
+      pileLogisticsCost?: number;
+      pileTripOverrides?: Record<string, number>;
+    },
+  ) =>
     httpClient.patch<ArchiveOfferDetails>(
       `${BASE}/${kpId}/logistics-cost`,
-      JSON.stringify({ logistics_cost: logisticsCost }),
+      JSON.stringify({
+        logistics_cost: payload.logisticsCost,
+        pile_logistics_cost: payload.pileLogisticsCost,
+        pile_trip_overrides: payload.pileTripOverrides,
+      }),
       { "Content-Type": "application/json" },
     ),
 

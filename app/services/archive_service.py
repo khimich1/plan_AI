@@ -191,14 +191,27 @@ class ArchiveService:
             )
         return self.get_details(kp_id, user=user)
 
-    def update_logistics_cost(self, kp_id: int, logistics_cost: float, *, user: dict) -> ArchiveOfferDetails:
-        """Обновляет «стоимость рейса» (поле KP_offers.logistics_cost) и суммы заказа."""
+    def update_logistics_cost(
+        self,
+        kp_id: int,
+        logistics_cost: float,
+        *,
+        user: dict,
+        pile_logistics_cost: float | None = None,
+        pile_trip_overrides: dict | None = None,
+    ) -> ArchiveOfferDetails:
+        """Обновляет тарифы рейсов и суммы заказа (без авто-PDF)."""
         raw = self.repository.get_by_id(kp_id)
         if not raw:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         assert_offer_write_access(user, raw)
         trip = max(0.0, float(logistics_cost or 0.0))
-        if not self.repository.update_logistics_cost(kp_id, trip):
+        if not self.repository.update_logistics_cost(
+            kp_id,
+            trip,
+            pile_logistics_cost=pile_logistics_cost,
+            pile_trip_overrides=pile_trip_overrides,
+        ):
             raise ArchiveNotFoundError(
                 f"Не удалось обновить стоимость рейса. КП №{kp_id} не найдено или пустое."
             )
@@ -293,6 +306,10 @@ class ArchiveService:
         manager_name = raw.get("manager_name")
         discount_percent = float(raw.get("discount_percent") or 0)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
+        pile_logistics_cost = max(0.0, float(raw.get("pile_logistics_cost") or 0.0))
+        from core.pile_trip_pricing import coerce_pile_trip_overrides
+
+        pile_trip_overrides = coerce_pile_trip_overrides(raw.get("pile_trip_overrides_json"))
         append_batches = raw.get("append_batches")
 
         if kind == "pdf":
@@ -308,9 +325,12 @@ class ArchiveService:
                 discount_percent=discount_percent,
                 kp_db_id=kp_id,
                 logistics_cost=logistics_cost,
+                pile_logistics_cost=pile_logistics_cost,
+                pile_trip_overrides=pile_trip_overrides,
                 delivery_conditions=raw.get("delivery_conditions"),
                 payment_conditions=raw.get("payment_conditions"),
                 append_batches=append_batches,
+                pile_catalog_db_path=self.repository.db_path,
             )
             filename = f"КП_{kp_id}.pdf"
         elif kind == "xlsx":
@@ -328,7 +348,10 @@ class ArchiveService:
                 payment_conditions=raw.get("payment_conditions"),
                 kp_db_id=kp_id,
                 logistics_cost=logistics_cost,
+                pile_logistics_cost=pile_logistics_cost,
+                pile_trip_overrides=pile_trip_overrides,
                 append_batches=append_batches,
+                pile_catalog_db_path=self.repository.db_path,
             )
             filename = f"КП_{kp_id}.xlsx"
         elif kind == "schema":
@@ -521,11 +544,29 @@ class ArchiveService:
 
         order_data = order_data_from_kp_info(raw)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
-        # Delivery / cargo for archive details: plates only (mixed KP ignores piles etc.).
+        pile_logistics_cost = max(0.0, float(raw.get("pile_logistics_cost") or 0.0))
+        from core.commercial_pricing import calculate_total_cost
+        from core.pile_trip_pricing import coerce_pile_trip_overrides
+
+        totals = calculate_total_cost(
+            order_data,
+            float(raw.get("discount_percent") or 0.0),
+            logistics_cost=logistics_cost,
+            db_path=self.repository.db_path,
+            require_all_priced=False,
+            pile_logistics_cost=pile_logistics_cost,
+            pile_trip_overrides=coerce_pile_trip_overrides(
+                raw.get("pile_trip_overrides_json")
+            ),
+            pile_catalog_db_path=self.repository.db_path,
+        )
+        # Delivery / cargo for archive details: plates 18600 + piles hybrid.
         total_cargo_weight_kg = float(
             total_order_cargo_weight_kg(order_data, product_types={"plates"})
         )
-        delivery_total = delivery_service_charge_rub(logistics_cost, total_cargo_weight_kg)
+        plate_delivery_total = float(totals.get("plate_delivery_total") or 0.0)
+        pile_delivery_total = float(totals.get("pile_delivery_total") or 0.0)
+        delivery_total = plate_delivery_total + pile_delivery_total
 
         readiness = None
         status = raw.get("status") or ""
@@ -555,6 +596,15 @@ class ArchiveService:
                 discount_percent=float(raw.get("discount_percent") or 0),
             ),
             logistics_cost=logistics_cost,
+            pile_logistics_cost=pile_logistics_cost,
+            pile_trip_overrides=coerce_pile_trip_overrides(
+                raw.get("pile_trip_overrides_json")
+            ),
+            pile_trips=int(totals.get("pile_trips") or 0),
+            pile_trip_pending_marks=list(totals.get("pile_trip_pending_marks") or []),
+            pile_delivery_ready=bool(totals.get("pile_delivery_ready", True)),
+            plate_delivery_total=plate_delivery_total,
+            pile_delivery_total=pile_delivery_total,
             total_cargo_weight_kg=total_cargo_weight_kg,
             delivery_service_total_rub=delivery_total,
             product_type=product_type,

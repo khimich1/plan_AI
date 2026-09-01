@@ -232,6 +232,8 @@ export type CommercialDraftMetadata = {
   current_save_mode: SaveMode | null;
   execution_terms: string;
   logistics_cost: number;
+  pile_logistics_cost?: number;
+  pile_trip_overrides?: Record<string, number>;
   ocr_method?: string;
   ocr_verify_applied?: boolean;
   ocr_verify_failed?: boolean;
@@ -271,6 +273,11 @@ export type CommercialDraftDetails = {
     subtotal?: number;
     vat_amount?: number;
     total_with_vat?: number;
+    plate_delivery_total?: number;
+    pile_delivery_total?: number;
+    pile_trips?: number;
+    pile_trip_pending_marks?: string[];
+    pile_delivery_ready?: boolean;
   };
   offer_identity: CommercialOfferIdentity;
 };
