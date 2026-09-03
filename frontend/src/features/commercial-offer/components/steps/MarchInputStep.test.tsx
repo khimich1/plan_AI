@@ -113,3 +113,61 @@ describe("MarchInputStep AI on batch-review", () => {
     expect(onApplyAi).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("MarchInputStep rerecognize button", () => {
+  const makeDraft = (text: string): CommercialDraftDetails =>
+    ({
+      draft_id: "draft-1",
+      metadata: {
+        product_type: "marches",
+        normalized_text: text,
+        march_batches: [{ batch_index: 0, normalized_text: text, source_kind: "image" }],
+        ocr_corrections: [],
+      },
+    }) as CommercialDraftDetails;
+
+  const makePage = (id: string, status: PageSource["status"] = "ready"): PageSource => ({
+    id,
+    file: new File(["x"], `${id}.png`, { type: "image/png" }),
+    name: `${id}.png`,
+    previewUrl: `blob:${id}`,
+    status,
+    batchReviewText: "1ЛМ 27-11-14-4 B25 5",
+  });
+
+  const baseProps = {
+    draft: makeDraft("1ЛМ 27-11-14-4 B25 5"),
+    pendingBatchReview: true as const,
+    sourceText: "",
+    batchReviewText: "1ЛМ 27-11-14-4 B25 5",
+    normalizedText: "1ЛМ 27-11-14-4 B25 5",
+    recognizedImageUrl: "blob:photo",
+    recognizedImageName: "a.png",
+    errorMessage: null,
+    isRecognizing: false,
+    onTextChange: noop,
+    onBatchReviewTextChange: noop,
+    onAddFiles: noop,
+    onRemovePage: noop,
+    onSelectPage: noop,
+    onRecognize: noop,
+    onRerecognize: noop,
+    onConfirmBatch: noop,
+    onFinishMarches: noop,
+    onReset: noop,
+  };
+
+  it("shows Перераспознать on ready and confirmed pages", () => {
+    const { rerender } = render(
+      <MarchInputStep {...baseProps} pages={[makePage("a", "ready")]} activePageId="a" />,
+    );
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeEnabled();
+    expect(screen.queryByText("Нестандартная ширина")).not.toBeInTheDocument();
+
+    rerender(
+      <MarchInputStep {...baseProps} pages={[makePage("a", "confirmed")]} activePageId="a" />,
+    );
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeEnabled();
+    expect(screen.queryByText("Нестандартная ширина")).not.toBeInTheDocument();
+  });
+});

@@ -7,7 +7,7 @@ export const isSealedOrderLine = (item: Record<string, unknown>): boolean =>
 
 /**
  * Lines belonging to the in-progress input cycle only — exclude already-added (sealed) batches.
- * Used by input-step previews so prior nomenclature does not distract (and does not get grade edits).
+ * Used for grade re-ingest / batch text so sealed same-type lines are not duplicated via append.
  */
 export const getCurrentCycleOrderData = (
   draft: CommercialDraftDetails,
@@ -23,6 +23,26 @@ export const getCurrentCycleOrderData = (
     const rawType = String(item.product_type ?? "").trim().toLowerCase();
     if (!rawType) {
       // Legacy mono lines without product_type: treat as current cycle of metadata type.
+      return metaType === expected;
+    }
+    return rawType === expected;
+  });
+};
+
+/**
+ * Full KP composition for one product type: sealed ∪ current-cycle lines of that type.
+ * Used by step-1 preview panels so «Добавить к списку» never hides already-added lines.
+ */
+export const getProductTypeOrderData = (
+  draft: CommercialDraftDetails,
+  productType: ProductType,
+): CommercialDraftDetails["order_data"] => {
+  const expected = resolveDraftProductType(productType);
+  const metaType = resolveDraftProductType(draft.metadata.product_type);
+
+  return (draft.order_data ?? []).filter((item) => {
+    const rawType = String(item.product_type ?? "").trim().toLowerCase();
+    if (!rawType) {
       return metaType === expected;
     }
     return rawType === expected;

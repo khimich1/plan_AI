@@ -997,7 +997,7 @@ def test_download_mixed_pdf_regenerates_successfully(
     assert len(response.content) > 100
 
 
-# --- MNA-601: hydrate / resume draft from archive KP (status «в работе» only) ---
+# --- MNA-601: hydrate / resume draft from archive KP (status «в архиве» only) ---
 #
 # Assumed HTTP contract:
 #   POST /api/v1/commercial/archive/{kp_id}/resume
@@ -1005,7 +1005,7 @@ def test_download_mixed_pdf_regenerates_successfully(
 #        order_data + header from KP; saved_offer.kp_id == kp_id; resume_kp_id set
 #     → 401 without session
 #     → 404 if KP missing
-#     → 409 or 400 if status ≠ «в работе»
+#     → 409 or 400 if status ≠ «в архиве»
 #   Service method (ArchiveService): resume_as_draft(kp_id, *, user) -> draft details dict
 
 
@@ -1052,8 +1052,8 @@ def _fake_resume_draft_details(kp_id: int = 42) -> dict:
         "files": [],
         "saved_offer": {
             "kp_id": kp_id,
-            "status": "в работе",
-            "mode": "database",
+            "status": "в архиве",
+            "mode": "archive",
             "execution_terms": "",
             "saved_at": "2026-08-12T12:00:00",
         },
@@ -1089,7 +1089,7 @@ def test_resume_archive_kp_as_draft_ok(
     body = response.json()
     assert body["draft_id"]
     assert body["saved_offer"]["kp_id"] == 42
-    assert body["saved_offer"]["status"] == "в работе"
+    assert body["saved_offer"]["status"] == "в архиве"
     assert body["metadata"]["resume_kp_id"] == 42
     assert body["metadata"]["client_name"] == "ООО Тест"
     assert len(body["order_data"]) >= 2
@@ -1099,16 +1099,16 @@ def test_resume_archive_kp_as_draft_ok(
     fake_service.resume_as_draft.assert_called_once_with(42, user=TESTER_USER)
 
 
-def test_resume_archive_kp_as_draft_rejects_non_in_progress(
+def test_resume_archive_kp_as_draft_rejects_non_archived(
     client: TestClient,
     auth_cookie: dict[str, str],
     fake_service: MagicMock,
 ) -> None:
-    """MNA-601 / R2: non-«в работе» → 409 Conflict or 400 Bad Request."""
+    """Archive-edit: non-«в архиве» → 409 Conflict or 400 Bad Request."""
     from app.services.archive_service import ArchiveValidationError
 
     fake_service.resume_as_draft.side_effect = ArchiveValidationError(
-        "Дополнить КП можно только в статусе «в работе»."
+        "Дополнить КП можно только в статусе «в архиве»."
     )
 
     response = client.post(

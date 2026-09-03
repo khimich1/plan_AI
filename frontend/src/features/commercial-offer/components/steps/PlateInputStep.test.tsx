@@ -367,3 +367,264 @@ describe("PlateInputStep ocr verify-failed banner", () => {
     expect(screen.getByText(newCopy)).toBeInTheDocument();
   });
 });
+
+describe("PlateInputStep source image queue CTA", () => {
+  const baseProps = {
+    draft: makeDraft("ПБ 78-12-8п 2"),
+    pendingBatchReview: false,
+    sourceText: "",
+    batchReviewText: "",
+    normalizedText: "ПБ 78-12-8п 2",
+    pages: [] as PageSource[],
+    activePageId: null as string | null,
+    recognizedImageUrl: null,
+    recognizedImageName: null,
+    errorMessage: null,
+    isRecognizing: false,
+    onTextChange: noop,
+    onBatchReviewTextChange: noop,
+    onAddFiles: noop,
+    onRemovePage: noop,
+    onSelectPage: noop,
+    onRecognize: noop,
+    onConfirmBatch: noop,
+    onFinishPlates: noop,
+    onReset: noop,
+  };
+
+  it("hides CTA when sourceQueue is empty", () => {
+    render(<PlateInputStep {...baseProps} sourceQueue={[]} />);
+
+    expect(screen.queryByRole("button", { name: /Исходные фото/i })).not.toBeInTheDocument();
+  });
+
+  it("shows CTA with count and opens Drawer on click", () => {
+    render(
+      <PlateInputStep
+        {...baseProps}
+        sourceQueue={[
+          { id: "a", url: "blob:a", name: "a.png" },
+          { id: "b", url: "blob:b", name: "b.png" },
+        ]}
+      />,
+    );
+
+    const cta = screen.getByRole("button", { name: "Исходные фото (2)" });
+    expect(cta).toBeInTheDocument();
+
+    fireEvent.click(cta);
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "a.png" })).toHaveAttribute("src", "blob:a");
+  });
+});
+
+describe("PlateInputStep rerecognize button", () => {
+  const onRecognize = vi.fn();
+  const onRerecognize = vi.fn();
+
+  const retryProps = {
+    draft: makeDraft("ПБ 78-12-8п 2"),
+    pendingBatchReview: true as const,
+    sourceText: "",
+    batchReviewText: "ПБ 78-12-8п 2",
+    normalizedText: "ПБ 78-12-8п 2",
+    recognizedImageUrl: "blob:photo",
+    recognizedImageName: "a.png",
+    errorMessage: null,
+    isRecognizing: false,
+    onAiInstructionChange: noop,
+    onApplyAi: noop,
+    onTextChange: noop,
+    onBatchReviewTextChange: noop,
+    onAddFiles: noop,
+    onRemovePage: noop,
+    onSelectPage: noop,
+    onRecognize,
+    onRerecognize,
+    onConfirmBatch: noop,
+    onFinishPlates: noop,
+    onReset: noop,
+  };
+
+  beforeEach(() => {
+    onRecognize.mockClear();
+    onRerecognize.mockClear();
+  });
+
+  it("shows Перераспознать under selected photo when page is ready", () => {
+    render(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "ready")]}
+        activePageId="a"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeInTheDocument();
+    expect(screen.getByText(/Ctrl \+ колёсико/)).toBeInTheDocument();
+  });
+
+  it("shows button for error and confirmed pages", () => {
+    const { rerender } = render(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "error")]}
+        activePageId="a"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeEnabled();
+
+    rerender(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "confirmed")]}
+        activePageId="a"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeEnabled();
+  });
+
+  it("disables button when page is running or pending", () => {
+    const { rerender } = render(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "running")]}
+        activePageId="a"
+        isRerecognizing
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Распознавание..." })).toBeDisabled();
+
+    rerender(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "pending")]}
+        activePageId="a"
+        isRerecognizing={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeDisabled();
+  });
+
+  it("click calls onRerecognize", () => {
+    render(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "ready")]}
+        activePageId="a"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Перераспознать" }));
+    expect(onRerecognize).toHaveBeenCalledTimes(1);
+    expect(onRecognize).not.toHaveBeenCalled();
+  });
+});
+
+describe("PlateInputStep live wide overlay", () => {
+  const liveWideProps = {
+    pendingBatchReview: true as const,
+    sourceText: "",
+    pages: [makePage("a")],
+    activePageId: "a",
+    recognizedImageUrl: "blob:photo",
+    recognizedImageName: "a.png",
+    errorMessage: null,
+    isRecognizing: false,
+    onAiInstructionChange: noop,
+    onApplyAi: noop,
+    onTextChange: noop,
+    onBatchReviewTextChange: noop,
+    onAddFiles: noop,
+    onRemovePage: noop,
+    onSelectPage: noop,
+    onRecognize: noop,
+    onConfirmBatch: noop,
+    onFinishPlates: noop,
+    onReset: noop,
+    onWidePlateDecisionChange: noop,
+    onApplyWidePlates: noop,
+  };
+
+  it("uses live editor 34-15-10п 15 instead of stale OCR 44-15-10п 5", () => {
+    const draft = makeDraft("44-15-10п 5");
+    draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];
+    draft.metadata.wide_plates_resolved = false;
+
+    render(
+      <PlateInputStep
+        {...liveWideProps}
+        draft={draft}
+        batchReviewText="34-15-10п 15"
+        normalizedText="44-15-10п 5"
+      />,
+    );
+
+    expect(screen.getByText("Нестандартная ширина")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /позиций требуют внимания/i }));
+    expect(screen.getByText(/Количество:\s*15/)).toBeInTheDocument();
+    expect(screen.queryByText(/Количество:\s*5/)).not.toBeInTheDocument();
+    expect(screen.queryByText("44-15-10п 5")).not.toBeInTheDocument();
+  });
+
+  it("hides wide card and does not block confirm when width is 12 dm", () => {
+    const draft = makeDraft("44-15-10п 5");
+    draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];
+    draft.metadata.wide_plates_resolved = false;
+
+    render(
+      <PlateInputStep
+        {...liveWideProps}
+        draft={draft}
+        batchReviewText="34-12-10п 15"
+        normalizedText="44-15-10п 5"
+      />,
+    );
+
+    expect(screen.queryByText("Нестандартная ширина")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
+  });
+});
+
+describe("PlateInputStep live OCR banners", () => {
+  it("shows page ocrCorrections instead of stale draft hydrate", () => {
+    const draft = makeDraft("two\nlines");
+    draft.metadata.ocr_corrections = [{ action: "replaced", reason: "stale-2-line" }];
+    draft.metadata.ocr_verify_failed = true;
+    const page = {
+      ...makePage("a"),
+      ocrCorrections: [{ action: "replaced", reason: "fresh-full-list" }],
+      ocrVerifyFailed: false,
+    };
+
+    render(
+      <PlateInputStep
+        draft={draft}
+        pendingBatchReview
+        sourceText=""
+        batchReviewText="full list"
+        normalizedText="two\nlines"
+        pages={[page]}
+        activePageId="a"
+        recognizedImageUrl="blob:photo"
+        recognizedImageName="a.png"
+        errorMessage={null}
+        isRecognizing={false}
+        onTextChange={noop}
+        onBatchReviewTextChange={noop}
+        onAddFiles={noop}
+        onRemovePage={noop}
+        onSelectPage={noop}
+        onRecognize={noop}
+        onConfirmBatch={noop}
+        onFinishPlates={noop}
+        onReset={noop}
+      />,
+    );
+
+    expect(screen.getByText(/fresh-full-list/)).toBeInTheDocument();
+    expect(screen.queryByText(/stale-2-line/)).not.toBeInTheDocument();
+    expect(screen.queryByText(OCR_VERIFY_FAILED_REVIEW_MESSAGE)).not.toBeInTheDocument();
+  });
+});

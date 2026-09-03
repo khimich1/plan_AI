@@ -780,8 +780,10 @@ def save_breakdown_to_excel(breakdown_tables: List[Dict], output_path: str) -> b
     """
     try:
         import pandas as pd
+        from openpyxl.styles import Alignment, Font
+        from openpyxl.utils import get_column_letter
     except ImportError:
-        print("[BREAKDOWN] pandas не установлен, невозможно создать Excel файл")
+        print("[BREAKDOWN] pandas/openpyxl не установлены, невозможно создать Excel файл")
         return False
     
     if not breakdown_tables:
@@ -791,9 +793,11 @@ def save_breakdown_to_excel(breakdown_tables: List[Dict], output_path: str) -> b
     try:
         breakdown_headers = ['Компонент', 'Расчёт', 'Сумма']
         all_breakdown_rows = []
+        product_header_row_indexes: list[int] = []  # 0-based among data rows (excl. header)
         
         for breakdown in breakdown_tables:
             # Заголовок с наименованием плиты
+            product_header_row_indexes.append(len(all_breakdown_rows))
             all_breakdown_rows.append([breakdown['name'], '', ''])
             
             # Строки таблицы (все 3 столбца)
@@ -809,7 +813,35 @@ def save_breakdown_to_excel(breakdown_tables: List[Dict], output_path: str) -> b
             all_breakdown_rows.pop()
         
         df_breakdown = pd.DataFrame(all_breakdown_rows, columns=breakdown_headers)
-        df_breakdown.to_excel(output_path, index=False)
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            df_breakdown.to_excel(writer, index=False, sheet_name='Разбивка')
+            ws = writer.sheets['Разбивка']
+
+            header_font = Font(bold=True)
+            product_font = Font(bold=True)
+            for col in range(1, 4):
+                cell = ws.cell(1, col)
+                cell.font = header_font
+                cell.alignment = Alignment(wrap_text=True, vertical='top')
+
+            for idx in product_header_row_indexes:
+                # Excel row = data index + 2 (1 header + 1-based)
+                cell = ws.cell(idx + 2, 1)
+                cell.font = product_font
+
+            # Autosize with floors so LibreOffice/Excel don't clip labels/formulas.
+            min_widths = {1: 42.0, 2: 38.0, 3: 18.0}
+            max_widths = {1: 55.0, 2: 55.0, 3: 22.0}
+            for col in range(1, 4):
+                max_len = len(str(breakdown_headers[col - 1]))
+                for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
+                    value = row[0].value
+                    if value is None:
+                        continue
+                    max_len = max(max_len, min(len(str(value)), 80))
+                width = max(float(min_widths[col]), min(float(max_len) + 2.0, max_widths[col]))
+                ws.column_dimensions[get_column_letter(col)].width = width
+
         print(f'[BREAKDOWN] ✅ Детальная разбивка сохранена: {output_path}')
         return True
         

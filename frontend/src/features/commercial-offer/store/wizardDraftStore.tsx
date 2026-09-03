@@ -88,6 +88,7 @@ type WizardDraftAction =
   | { type: "sync-after-unpriced-plates"; payload: CommercialDraftDetails }
   | { type: "set-save-result"; payload: CommercialSaveResult | null }
   | { type: "start-append-cycle" }
+  | { type: "cancel-append-pick" }
   | { type: "reset" };
 
 const initialState: WizardStoreState = {
@@ -136,6 +137,12 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         widePlateActions: {},
         unpricedPlateActions: {},
         isPickingProductType: true,
+      };
+    case "cancel-append-pick":
+      return {
+        ...state,
+        isPickingProductType: false,
+        currentStep: "result",
       };
     case "set-step":
       return { ...state, currentStep: mapLegacyWizardStep(action.step) };

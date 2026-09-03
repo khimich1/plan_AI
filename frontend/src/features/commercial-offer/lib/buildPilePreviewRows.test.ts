@@ -116,7 +116,7 @@ describe("buildPilePreviewRows", () => {
     ]);
   });
 
-  it("shows empty preview when only sealed prior lines exist", () => {
+  it("shows empty preview when only sealed prior (other-type) lines exist", () => {
     const draft = makePileDraft([
       {
         line_id: "ln-plate",
@@ -127,6 +127,35 @@ describe("buildPilePreviewRows", () => {
       },
     ]);
     expect(buildPilePreviewRows(draft)).toEqual([]);
+  });
+
+  it("keeps sealed same-type piles visible during append", () => {
+    const draft = makePileDraft([
+      {
+        line_id: "ln-sealed",
+        product_type: "piles",
+        append_batch_id: "b1",
+        mark: "С80.30-8",
+        concrete_grade: "B25",
+        qty: 2,
+        unit_price: 1000,
+      },
+      {
+        line_id: "ln-new",
+        product_type: "piles",
+        mark: "С120.35-12",
+        concrete_grade: "B25",
+        qty: 5,
+        unit_price: 2000,
+      },
+    ]);
+    draft.metadata.append_batches = [{ batch_id: "b1", product_type: "piles", line_ids: ["ln-sealed"] }];
+
+    const rows = buildPilePreviewRows(draft);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ lineId: "ln-sealed", sealed: true, mark: "С80.30-8" });
+    expect(rows[1]).toMatchObject({ lineId: "ln-new", sealed: false, mark: "С120.35-12" });
+    expect(buildPileLinesFromOrderData(rows)).toBe("С120.35-12 B25 5");
   });
 
   it("builds normalized lines for grade re-ingest", () => {

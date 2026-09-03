@@ -256,7 +256,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     setTargetSumError(null);
   };
 
-  const handleResumeAppend = async () => {
+  const openInConstructor = async (landing: "append" | "result") => {
     if (!offer || resumePending) {
       return;
     }
@@ -265,7 +265,9 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     try {
       const draft = await archiveApi.resume(offer.kp_id);
       dispatch({ type: "hydrate-draft", payload: draft });
-      dispatch({ type: "start-append-cycle" });
+      if (landing === "append") {
+        dispatch({ type: "start-append-cycle" });
+      }
       navigate(`/new?draft=${encodeURIComponent(draft.draft_id)}`);
       onClose();
     } catch (error) {
@@ -479,7 +481,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             <KpReadinessBlock kpId={offer.kp_id} readiness={offer.readiness} />
           )}
 
-          {/* Итоги: слева вес, НДС, рейс, доставка; справа скидка и под ней «Итого с НДС» */}
+          {/* Итоги: для «в архиве» — только сводка; иначе редактируемые финансы */}
           <section
             style={{
               padding: "1rem",
@@ -488,7 +490,98 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               background: "#ffffff",
             }}
           >
-            <h3 style={{ margin: "0 0 0.75rem", fontSize: "1rem" }}>Итоги</h3>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "0.75rem",
+                flexWrap: "wrap",
+                marginBottom: "0.75rem",
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Итоги</h3>
+              {offer.status === "в архиве" && (
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                  <Button
+                    variant="primary"
+                    disabled={resumePending}
+                    onClick={() => {
+                      void openInConstructor("append");
+                    }}
+                  >
+                    {resumePending ? "Открываем…" : "(+ Добавить)"}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    disabled={resumePending}
+                    onClick={() => {
+                      void openInConstructor("result");
+                    }}
+                  >
+                    {resumePending ? "Открываем…" : "Редактировать"}
+                  </Button>
+                </div>
+              )}
+            </div>
+            {offer.status === "в архиве" ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 2fr) minmax(220px, 1fr)",
+                  gap: "0.75rem",
+                  alignItems: "start",
+                }}
+              >
+                <div style={{ display: "grid", gap: "0.75rem" }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                      gap: "0.75rem",
+                    }}
+                  >
+                    <FinanceCard
+                      label="Общий вес груза, кг"
+                      value={formatNumberLocale(Math.max(0, offer.total_cargo_weight_kg ?? 0))}
+                    />
+                    <FinanceCard label="НДС (22%)" value={formatMoney(offer.finance.vat_amount)} />
+                    {offer.pile_delivery_ready !== false &&
+                      ((offer.piles?.length ?? 0) > 0 || (offer.bridge_piles?.length ?? 0) > 0) && (
+                        <FinanceCard label="Рейсов свай" value={String(offer.pile_trips ?? 0)} />
+                      )}
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "0.75rem",
+                      border: "1px solid #e4e7ec",
+                      borderRadius: 12,
+                      padding: "0.85rem 1rem",
+                      background: "#fafafa",
+                    }}
+                  >
+                    <span style={{ color: "#475467", fontWeight: 500 }}>
+                      Услуга по доставке грузов
+                      {clientTrips > 0 ? ` (${tripsRussianLabel(clientTrips)})` : ""}
+                    </span>
+                    <strong style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {formatMoney(offer.delivery_service_total_rub)}
+                    </strong>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: "0.75rem", alignSelf: "stretch" }}>
+                  <FinanceCard
+                    label="Скидка"
+                    value={`${formatNumberLocale(Math.max(0, offer.finance.discount_percent ?? 0))} %`}
+                  />
+                  <FinanceCard label="Итого с НДС" value={formatMoney(offer.finance.total_amount)} accent />
+                </div>
+              </div>
+            ) : (
+              <>
             <div
               style={{
                 display: "grid",
@@ -717,6 +810,8 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 <Alert tone="error">{getErrorMessage(discountMutation.error ?? logisticsMutation.error)}</Alert>
               </div>
             )}
+              </>
+            )}
           </section>
 
           <section>
@@ -849,17 +944,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 onClick={() => schemaMutation.mutate(offer.kp_id)}
               >
                 {schemaMutation.isPending ? "Формируем…" : "📐 Схема"}
-              </Button>
-            )}
-            {offer.status === "в работе" && (
-              <Button
-                variant="secondary"
-                disabled={resumePending}
-                onClick={() => {
-                  void handleResumeAppend();
-                }}
-              >
-                {resumePending ? "Открываем…" : "Добавить другое наименование"}
               </Button>
             )}
             {canShowDeliverySchedule && (

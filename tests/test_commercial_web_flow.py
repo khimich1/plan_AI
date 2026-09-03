@@ -470,6 +470,33 @@ def test_commercial_upload_rate_limit_returns_429(
     assert client.post("/api/v1/commercial/from-form", data=form, files=files).status_code == 429
 
 
+def test_commercial_upload_rate_limit_zero_allows_eleven_uploads(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("COMMERCIAL_OCR_UPLOADS_PER_HOUR", "0")
+    get_settings.cache_clear()
+    reset_commercial_ocr_rate_limiter_for_tests()
+
+    async def fake_create(self, **kwargs):
+        return _sample_draft("draft-rl-zero")
+
+    monkeypatch.setattr(CommercialWorkflowService, "create_draft_from_form", fake_create)
+
+    form = {
+        "text": "",
+        "manager_id": "1",
+        "client_name": "ООО Тест",
+        "discount_percent": "0",
+        "delivery_conditions": "",
+        "payment_conditions": "",
+    }
+    files = {"image": ("a.png", _MINIMAL_PNG_BYTES, "image/png")}
+    for _ in range(11):
+        assert client.post("/api/v1/commercial/from-form", data=form, files=files).status_code == 200
+
+
 def test_commercial_create_draft_accepts_valid_png_upload(
     client: TestClient,
     auth_cookie: dict[str, str],

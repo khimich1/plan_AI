@@ -280,7 +280,12 @@ export const useCommercialOfferWizard = () => {
       decisions,
     }: {
       draftId: string;
-      decisions: Array<{ sourceLine: string; action: WidePlateAction; replacementText: string }>;
+        decisions: Array<{
+          lineId?: string;
+          sourceLine: string;
+          action: WidePlateAction;
+          replacementText: string;
+        }>;
     }) => commercialOfferApi.resolveWidePlates(draftId, decisions),
     onSuccess: (draft, variables) => {
       dispatch({ type: "sync-after-wide-plates", payload: draft });

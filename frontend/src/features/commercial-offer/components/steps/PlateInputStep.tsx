@@ -22,10 +22,14 @@ import type { MultiPageSourceStepProps } from "@/features/commercial-offer/lib/m
 import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
 import {
   OCR_VERIFY_FAILED_REVIEW_MESSAGE,
+  resolveActivePageOcrCorrections,
   resolveActivePageOcrVerifyFailed,
 } from "@/features/commercial-offer/lib/ocrVerifyFailed";
+import { overlayDraftWithLiveWideLines } from "@/features/commercial-offer/lib/liveWidePlateLines";
 import { UnpricedPlatesInlineSection } from "@/features/commercial-offer/components/UnpricedPlatesInlineSection";
 import { WidePlatesInlineSection } from "@/features/commercial-offer/components/WidePlatesInlineSection";
+import { SourceImageQueueControls } from "@/features/commercial-offer/components/SourceImageQueueControls";
+import type { SourceImageQueueItem } from "@/features/commercial-offer/lib/sourceImageQueue";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -46,6 +50,7 @@ type PlateInputStepProps = {
   canConfirmActivePage?: boolean;
   recognizedImageUrl: string | null;
   recognizedImageName: string | null;
+  sourceQueue?: SourceImageQueueItem[];
   errorMessage: string | null;
   widePlateErrorMessage?: string | null;
   unpricedPlateErrorMessage?: string | null;
@@ -68,6 +73,8 @@ type PlateInputStepProps = {
   onPrevPage?: () => void;
   onNextPage?: () => void;
   onRecognize: (mode: PlateInputMode) => void;
+  onRerecognize?: () => void;
+  isRerecognizing?: boolean;
   onConfirmBatch: () => void;
   onFinishPlates: () => void;
   onWidePlateDecisionChange?: (lineId: string, action: WidePlateAction, replacementText: string) => void;
@@ -128,6 +135,7 @@ export const PlateInputStep = ({
   canConfirmActivePage = true,
   recognizedImageUrl,
   recognizedImageName,
+  sourceQueue = [],
   errorMessage,
   widePlateErrorMessage,
   unpricedPlateErrorMessage,
@@ -150,6 +158,8 @@ export const PlateInputStep = ({
   onPrevPage,
   onNextPage,
   onRecognize,
+  onRerecognize,
+  isRerecognizing = false,
   onConfirmBatch,
   onFinishPlates,
   onWidePlateDecisionChange,
@@ -166,13 +176,18 @@ export const PlateInputStep = ({
     canSubmit: true,
     blockReason: undefined,
   });
+
   const hasDraft = Boolean(draft);
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
+  const liveWideDraft =
+    batchReviewDraft && isBatchReviewMode
+      ? overlayDraftWithLiveWideLines(batchReviewDraft, batchReviewText)
+      : batchReviewDraft;
   const reviewHighlights = useBatchReviewHighlights({
     text: batchReviewText,
     productType: "plates",
-    draft: batchReviewDraft,
+    draft: liveWideDraft,
     enabled: isBatchReviewMode,
   });
 
@@ -181,6 +196,12 @@ export const PlateInputStep = ({
   }, [recognizedImageUrl]);
 
   const hasImage = pages.length > 0;
+  const activePage = pages.find((page) => page.id === activePageId);
+  const showRerecognize = Boolean(recognizedImageUrl) && onRerecognize != null;
+  const rerecognizeBusy =
+    isRerecognizing || activePage?.status === "running";
+  const rerecognizeDisabled =
+    rerecognizeBusy || activePage?.status === "pending" || Boolean(activePage && !activePage.file);
   const hasSourceInput = Boolean(sourceText.trim() || hasImage);
   const sourceSubmit = resolveSourceSubmitDisabled(
     sourceText,
@@ -190,7 +211,11 @@ export const PlateInputStep = ({
     sourceGate,
   );
 
-  const ocrCorrections = draft?.metadata.ocr_corrections ?? [];
+  const ocrCorrections = resolveActivePageOcrCorrections(
+    pages,
+    activePageId,
+    draft?.metadata.ocr_corrections,
+  );
 
   const ocrCorrectionLines = formatOcrCorrections(ocrCorrections);
 
@@ -204,7 +229,7 @@ export const PlateInputStep = ({
 
   const hasUnresolvedWidePlates =
 
-    Boolean(draft?.metadata.wide_plate_lines?.length) && !draft?.metadata.wide_plates_resolved;
+    Boolean(liveWideDraft?.metadata.wide_plate_lines?.length) && !liveWideDraft?.metadata.wide_plates_resolved;
 
   const canConfirmBatch =
     isBatchReviewMode && canConfirmActivePage && !hasUnresolvedWidePlates && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
@@ -474,6 +499,16 @@ export const PlateInputStep = ({
                 <div style={{ marginTop: "0.5rem", fontSize: "0.8rem", color: "#667085" }}>
                   Ctrl + колёсико мыши — масштаб
                 </div>
+                {showRerecognize && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => void onRerecognize()}
+                    disabled={rerecognizeDisabled}
+                  >
+                    {rerecognizeBusy ? "Распознавание..." : "Перераспознать"}
+                  </Button>
+                )}
 
               </Card>
 
@@ -483,9 +518,9 @@ export const PlateInputStep = ({
               title="Список плит для расчёта"
               subtitle="Сверьте позиции текущего источника с фото или текстом."
             >
-              {batchReviewDraft && (
+              {liveWideDraft && (
                 <PlateListEditor
-                  draft={batchReviewDraft}
+                  draft={liveWideDraft}
                   value={batchReviewText}
                   onChange={onBatchReviewTextChange}
                   highlights={reviewHighlights}
@@ -512,7 +547,7 @@ export const PlateInputStep = ({
 
             <WidePlatesInlineSection
 
-              draft={draft}
+              draft={liveWideDraft ?? draft}
 
               decisions={widePlateDecisions}
 
@@ -540,11 +575,14 @@ export const PlateInputStep = ({
           )}
 
           {!isBatchReviewMode && draft && (
-            <KpPlatePreviewPanel
-              draft={draft}
-              normalizedText={normalizedText}
-              lineRowHandlers={lineRowHandlers}
-            />
+            <>
+              <SourceImageQueueControls items={sourceQueue} />
+              <KpPlatePreviewPanel
+                draft={draft}
+                normalizedText={normalizedText}
+                lineRowHandlers={lineRowHandlers}
+              />
+            </>
           )}
 
           {!isBatchReviewMode ? (
@@ -571,7 +609,6 @@ export const PlateInputStep = ({
           {isBatchReviewMode && showSourceInput && sourceInputCard}
         </div>
       )}
-
     </StepLayout>
 
   );

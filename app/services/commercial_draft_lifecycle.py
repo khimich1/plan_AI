@@ -120,6 +120,42 @@ def _rebuild_append_batches(
     return rebuilt
 
 
+def _invalidate_breakdown(metadata: dict[str, Any]) -> None:
+    """Drop cached breakdown so GET/export cannot serve pre-edit tables."""
+    metadata["breakdown_tables"] = []
+    metadata["breakdown_tables_count"] = 0
+    files = list(metadata.get("generated_files") or [])
+    metadata["generated_files"] = [
+        item
+        for item in files
+        if not (isinstance(item, dict) and str(item.get("kind") or "").strip() == "breakdown")
+    ]
+
+
+def _plate_lines_text_from_order(order_data: list[dict[str, Any]]) -> str:
+    """Rebuild plate ingest text from current order_data for breakdown refresh."""
+    lines: list[str] = []
+    for item in order_data:
+        if not isinstance(item, dict):
+            continue
+        raw_type = str(item.get("product_type") or "").strip().lower()
+        if raw_type and raw_type != "plates":
+            continue
+        source = str(item.get("source_text") or "").strip()
+        if source:
+            lines.append(source)
+            continue
+        name = str(item.get("name") or item.get("mark") or "").strip()
+        qty = item.get("qty")
+        if not name:
+            continue
+        if qty is None or qty == "":
+            lines.append(name)
+        else:
+            lines.append(f"{name} {qty}")
+    return "\n".join(lines)
+
+
 class CommercialDraftLifecycle:
     def __init__(self, workflow: Any) -> None:
         self._wf = workflow
@@ -206,6 +242,7 @@ class CommercialDraftLifecycle:
             and str(line.get("line_id") or "").strip() not in remove_ids
         ]
         metadata["append_batches"] = batches[:-1]
+        _invalidate_breakdown(metadata)
         self.persist_order_and_metadata(
             draft_id,
             payload=payload,
@@ -246,6 +283,7 @@ class CommercialDraftLifecycle:
             if next_batch["line_ids"]:
                 next_batches.append(next_batch)
         metadata["append_batches"] = next_batches
+        _invalidate_breakdown(metadata)
         self.persist_order_and_metadata(
             draft_id,
             payload=payload,
@@ -302,6 +340,7 @@ class CommercialDraftLifecycle:
         else:
             self._apply_qty_to_line(order_data[index], int(qty))
 
+        _invalidate_breakdown(metadata)
         self.persist_order_and_metadata(
             draft_id,
             payload=payload,
@@ -353,6 +392,7 @@ class CommercialDraftLifecycle:
             list(metadata.get("append_batches") or []),
             order_data,
         )
+        _invalidate_breakdown(metadata)
         self.persist_order_and_metadata(
             draft_id,
             payload=payload,
@@ -550,7 +590,13 @@ class CommercialDraftLifecycle:
         )
         return self.get_draft_details(draft_id)
 
-    def get_draft_breakdown(self, draft_id: str) -> dict[str, Any]:
+    def get_draft_breakdown(
+        self,
+        draft_id: str,
+        *,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> dict[str, Any]:
+        self.refresh_breakdown_if_needed(draft_id, plate_order_ctx=plate_order_ctx)
         payload = self._wf._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
         raw_tables = metadata.get("breakdown_tables") or []
@@ -569,6 +615,49 @@ class CommercialDraftLifecycle:
                     rows.append(cells)
             items.append({"name": name, "rows": rows})
         return {"draft_id": draft_id, "items": items}
+
+    def refresh_breakdown_if_needed(
+        self,
+        draft_id: str,
+        *,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> None:
+        """When tables are empty after invalidate, rebuild from current plate lines."""
+        if plate_order_ctx is None:
+            return
+        payload = self._wf._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata") or {})
+        if list(metadata.get("breakdown_tables") or []):
+            return
+        order_data = [
+            dict(line)
+            for line in list(payload.get("order_data") or [])
+            if isinstance(line, dict)
+        ]
+        plate_text = _plate_lines_text_from_order(order_data)
+        if not plate_text.strip():
+            return
+        commercial_service = getattr(self._wf, "commercial_service", None)
+        if commercial_service is None:
+            return
+        try:
+            preview = commercial_service.generate_preview(
+                text=plate_text,
+                plate_order_ctx=plate_order_ctx,
+            )
+        except Exception:
+            return
+        tables = list(getattr(preview, "breakdown_tables", None) or [])
+        if not tables:
+            return
+        metadata["breakdown_tables"] = tables
+        metadata["breakdown_tables_count"] = len(tables)
+        self.persist_order_and_metadata(
+            draft_id,
+            payload=payload,
+            order_data=order_data,
+            metadata=metadata,
+        )
 
     def get_draft_details(self, draft_id: str) -> dict[str, Any]:
         payload = self._wf._load_draft_or_raise(draft_id)
@@ -612,14 +701,14 @@ class CommercialDraftLifecycle:
         *,
         owner_user_id: int,
     ) -> dict[str, Any]:
-        """Create a draft bound to an existing KP for append (status «в работе» only)."""
+        """Create a draft bound to an existing KP for append (status «в архиве» only)."""
         kp_raw = self._wf.kp_repository.get_offer(kp_id)
         if not kp_raw:
             raise ValueError(f"КП №{kp_id} не найдено")
 
         status = str(kp_raw.get("status") or "").strip()
-        if status != "в работе":
-            raise ValueError("Дополнить КП можно только в статусе «в работе».")
+        if status != "в архиве":
+            raise ValueError("Дополнить КП можно только в статусе «в архиве».")
 
         order_data = [
             dict(line)
@@ -709,6 +798,7 @@ class CommercialDraftLifecycle:
         *,
         plate_order_ctx: PlateOrderContext | None = None,
     ) -> list[dict[str, str]]:
+        self.refresh_breakdown_if_needed(draft_id, plate_order_ctx=plate_order_ctx)
         payload = self._wf._load_draft_or_raise(draft_id)
         return self._wf.export_service.generate_files(
             draft_id,
@@ -759,13 +849,13 @@ class CommercialDraftLifecycle:
                 existing_saved = {
                     **existing_saved,
                     "kp_id": resume_kp_id,
-                    "status": existing_saved.get("status") or "в работе",
+                    "status": existing_saved.get("status") or "в архиве",
                 }
         if existing_kp_id is not None:
             existing_status = str(existing_saved.get("status", "") or "").strip()
-            if existing_status != "в работе":
+            if existing_status != "в архиве":
                 raise ValueError(
-                    "Дополнить КП можно только в статусе «в работе»."
+                    "Дополнить КП можно только в статусе «в архиве»."
                 )
             kp_id = self._wf.kp_repository.update_offer_from_order_data(
                 int(existing_kp_id),
@@ -782,6 +872,8 @@ class CommercialDraftLifecycle:
                 xlsx_path=xlsx_path,
                 product_type=product_type,
             )
+            # Keep archived status on update; do not flip to default «в работе».
+            persist_status = existing_status
         else:
             kp_id = self._wf.kp_repository.save_offer(
                 creation_date=datetime.now().strftime("%d.%m.%Y"),
@@ -800,9 +892,10 @@ class CommercialDraftLifecycle:
                 owner_user_id=owner_user_id,
                 product_type=product_type,
             )
+            persist_status = status
         saved_offer = {
             "kp_id": kp_id,
-            "status": status,
+            "status": persist_status,
             "mode": save_mode,
             "execution_terms": execution_terms,
             "saved_at": datetime.now().isoformat(timespec="seconds"),

@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 
+import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
+import { archiveKeys } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import { planApplyAiSessionSync } from "@/features/commercial-offer/lib/applyAiSession";
 import { getBatches, getCurrentBatchReviewText, mergeEditedBatchIntoFullText } from "@/features/commercial-offer/lib/batchReview";
 import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
@@ -22,6 +26,7 @@ import {
 import {
   getProductInputStep,
   getWizardStepOrder,
+  isInputStepBlockedWithoutAppendCycle,
   mapLegacyWizardStep,
   shouldSkipClientStep,
 } from "@/features/commercial-offer/lib/wizardStepOrder";
@@ -30,8 +35,16 @@ import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useC
 import {
   useMultiPageRecognize,
   type RecognizePageArgs,
+  type RerunPageArgs,
 } from "@/features/commercial-offer/hooks/useMultiPageRecognize";
 import { useRecognizedImagePreview } from "@/features/commercial-offer/hooks/useRecognizedImagePreview";
+import { useSourceImageQueue } from "@/features/commercial-offer/hooks/useSourceImageQueue";
+import { applyPromoteSourceImageQueue } from "@/features/commercial-offer/lib/promoteSourceImageQueue";
+import { liveWidePlateLines } from "@/features/commercial-offer/lib/liveWidePlateLines";
+import {
+  buildMergedFlushText,
+  flushThenResolveWidePlates,
+} from "@/features/commercial-offer/lib/flushThenResolveWidePlates";
 
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { ProductTypePicker } from "@/features/commercial-offer/components/ProductTypePicker";
@@ -97,6 +110,8 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     isFbsDraft,
     isSimpleKpDraft,
   } = useCommercialOfferWizard();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const [aiInstruction, setAiInstruction] = useState("");
   const [stepError, setStepError] = useState<string | null>(null);
@@ -114,7 +129,9 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     preview: recognizedImagePreview,
     setPreviewFromFile,
     clearPreview: clearRecognizedImagePreview,
+    takePreview: takeRecognizedImagePreview,
   } = useRecognizedImagePreview();
+  const sourceImageQueue = useSourceImageQueue();
 
   const productType = state.productType;
   const isPileFlow = productType === "piles";
@@ -184,7 +201,12 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     [createDraftMutation, updateInputMutation, dispatch],
   );
 
-  const multiPage = useMultiPageRecognize({ recognizePage });
+  const rerunOcrPage = useCallback(
+    async ({ image, draftId }: RerunPageArgs) => commercialOfferApi.ocrPage(draftId, image),
+    [],
+  );
+
+  const multiPage = useMultiPageRecognize({ recognizePage, rerunPage: rerunOcrPage });
 
   useEffect(() => {
     if (state.isPickingProductType) {
@@ -220,8 +242,10 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   };
 
   const handleSourceTextChange = (value: string) => {
-    if (multiPage.pages.length > 0) {
+    if (multiPage.pages.length > 0 || sourceImageQueue.length > 0) {
+      sourceImageQueue.clear();
       multiPage.reset();
+      clearRecognizedImagePreview();
     }
     dispatch({ type: "set-source", text: value, imageName: null });
   };
@@ -254,6 +278,39 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       dispatch({ type: "set-batch-review-text", text: page.batchReviewText });
     }
   };
+
+  const handleRerecognize = useCallback(async () => {
+    if (multiPage.hasStarted && multiPage.activeId) {
+      const pageId = multiPage.activeId;
+      const result = await multiPage.rerunPage(pageId);
+      if (result) {
+        dispatch({ type: "set-batch-review-text", text: result.normalized_text });
+      }
+      return;
+    }
+    const image = recognizedImagePreview?.file ?? null;
+    const draftId = currentDraft?.draft_id;
+    if (!image || !draftId) {
+      return;
+    }
+    try {
+      const draft = await updateInputMutation.mutateAsync({
+        draftId,
+        text: "",
+        image,
+        mode: "replace",
+      });
+      dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  }, [
+    currentDraft?.draft_id,
+    dispatch,
+    multiPage,
+    recognizedImagePreview?.file,
+    updateInputMutation,
+  ]);
 
   // Keep store batch text aligned when OCR marks a page ready / auto-focuses it.
   useEffect(() => {
@@ -436,9 +493,17 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
           });
           dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
         }
-        dispatch({ type: "confirm-batch-review", batchCount: getDraftBatchCount(draft) });
+        // Promote-then-reset: snapshot independent blob URLs before OCR reset.
+        applyPromoteSourceImageQueue(sourceImageQueue, {
+          pages: multiPage.pages,
+          singlePreview: null,
+        });
         multiPage.reset();
         clearRecognizedImagePreview();
+        dispatch({
+          type: "confirm-batch-review",
+          batchCount: getDraftBatchCount(draft),
+        });
       } catch (error) {
         setStepError(getErrorMessage(error));
       }
@@ -473,7 +538,12 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       dispatch({ type: "confirm-batch-review", batchCount: getDraftBatchCount(draft) });
     }
 
-    clearRecognizedImagePreview();
+    // Transfer File into queue (fresh object URL); takePreview already cleared OCR preview.
+    const takenPreview = takeRecognizedImagePreview();
+    applyPromoteSourceImageQueue(sourceImageQueue, {
+      pages: [],
+      singlePreview: takenPreview,
+    });
   };
 
   const proceedFromInputStep = async (next: WizardStepId) => {
@@ -696,8 +766,8 @@ const handleFinishBridgePiles = async () => {
       return;
     }
     setStepError(null);
-    // During append cycles, preview shows only unsealed lines. Use append+text so sealed
-    // same-type batches are preserved (replace would wipe them).
+    // Preview shows sealed ∪ current. Grade re-ingest must send only unsealed lines
+    // (build*LinesFromOrderData skips sealed) with append mode so sealed batches stay intact.
     const hasSealedLines = (currentDraft.order_data ?? []).some(
       (item) => String(item.append_batch_id ?? "").trim().length > 0,
     );
@@ -705,6 +775,9 @@ const handleFinishBridgePiles = async () => {
     try {
       if (isFbsFlow) {
         const rows = buildFbsPreviewRows(currentDraft);
+        if (rows[lineIndex]?.sealed) {
+          return;
+        }
         const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
         const text = buildFbsLinesFromOrderData(updated);
         await updateFbsMutation.mutateAsync({
@@ -717,6 +790,9 @@ const handleFinishBridgePiles = async () => {
       }
       if (isBridgePileFlow) {
         const rows = buildBridgePilePreviewRows(currentDraft);
+        if (rows[lineIndex]?.sealed) {
+          return;
+        }
         const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
         const text = buildBridgePileLinesFromOrderData(updated);
         await updateBridgePilesMutation.mutateAsync({
@@ -729,7 +805,7 @@ const handleFinishBridgePiles = async () => {
       }
       if (isMarchFlow) {
         const rows = buildMarchPreviewRows(currentDraft);
-        if (lineIndex < 0 || lineIndex >= rows.length) {
+        if (lineIndex < 0 || lineIndex >= rows.length || rows[lineIndex]?.sealed) {
           return;
         }
         const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
@@ -744,7 +820,7 @@ const handleFinishBridgePiles = async () => {
       }
 
       const rows = buildPilePreviewRows(currentDraft);
-      if (lineIndex < 0 || lineIndex >= rows.length) {
+      if (lineIndex < 0 || lineIndex >= rows.length || rows[lineIndex]?.sealed) {
         return;
       }
       const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
@@ -766,14 +842,22 @@ const handleFinishBridgePiles = async () => {
     }
     setWidePlateError(null);
     try {
-      await resolveWidePlatesMutation.mutateAsync({
+      const flushText = buildMergedFlushText({
+        hasStarted: multiPage.hasStarted,
+        pages: multiPage.pages,
+        activePageId: multiPage.activeId,
+        editorText: state.batchReviewText,
+        singlePageText: state.batchReviewText,
+      });
+      await flushThenResolveWidePlates({
         draftId: currentDraft.draft_id,
-        decisions: currentDraft.metadata.wide_plate_lines.map((item) => ({
-          lineId: item.id,
-          sourceLine: item.line,
-          action: state.widePlateActions[item.id]?.action ?? "confirm",
-          replacementText: state.widePlateActions[item.id]?.replacementText ?? "",
-        })),
+        flushText,
+        persistedText: (currentDraft.metadata.input_text || currentDraft.metadata.normalized_text || "").trim(),
+        liveLines: liveWidePlateLines(flushText),
+        decisionsById: state.widePlateActions,
+        currentWideLines: currentDraft.metadata.wide_plate_lines ?? [],
+        updateInput: (payload) => updateInputMutation.mutateAsync(payload),
+        resolveWidePlates: (payload) => resolveWidePlatesMutation.mutateAsync(payload),
       });
     } catch (error) {
       setWidePlateError(getErrorMessage(error));
@@ -893,6 +977,19 @@ const handleFinishBridgePiles = async () => {
         mode: payload.mode,
         executionTermsInput: payload.executionTermsInput,
       });
+      // Archive/database save ends the sticky source-image session.
+      sourceImageQueue.clear();
+      const resumeKpId =
+        currentDraft.metadata.resume_kp_id ?? state.lastDraft?.metadata.resume_kp_id ?? null;
+      if (resumeKpId != null && Number(resumeKpId) > 0) {
+        await queryClient.invalidateQueries({ queryKey: archiveKeys.all });
+        setStepError(null);
+        setWidePlateError(null);
+        multiPage.reset();
+        clearRecognizedImagePreview();
+        dispatch({ type: "reset" });
+        navigate("/archive");
+      }
     } catch (error) {
       setStepError(getErrorMessage(error));
     }
@@ -968,6 +1065,7 @@ const handleFinishBridgePiles = async () => {
   const handleCreateNewOffer = () => {
     setStepError(null);
     setWidePlateError(null);
+    sourceImageQueue.clear();
     multiPage.reset();
     clearRecognizedImagePreview();
     dispatch({ type: "reset" });
@@ -975,9 +1073,15 @@ const handleFinishBridgePiles = async () => {
 
   const handleAddOtherNomenclature = () => {
     setStepError(null);
+    sourceImageQueue.clear();
     multiPage.reset();
     clearRecognizedImagePreview();
     dispatch({ type: "start-append-cycle" });
+  };
+
+  const handleCancelAppendPick = () => {
+    setStepError(null);
+    dispatch({ type: "cancel-append-pick" });
   };
 
   const handleAppendProductTypeSelect = async (nextProductType: ProductType) => {
@@ -1145,6 +1249,16 @@ const handleFinishBridgePiles = async () => {
     !currentDraft?.metadata.unpriced_plates_resolved;
 
   const canNavigateToStep = (step: WizardStepId): boolean => {
+    if (
+      isInputStepBlockedWithoutAppendCycle({
+        currentStep: state.currentStep,
+        targetStep: step,
+        inputStep,
+        draftWizardStep: currentDraft?.wizard_state?.current_step as WizardStepId | undefined,
+      })
+    ) {
+      return false;
+    }
     if (step === inputStep) {
       return true;
     }
@@ -1220,6 +1334,9 @@ const handleFinishBridgePiles = async () => {
     ? activeReviewPage?.status === "ready"
     : true;
   const isRecognizingMulti = multiPage.isRecognizing;
+  const isRerecognizing =
+    (activeReviewPage?.status === "running" && Boolean(activeReviewPage.file)) ||
+    (!multiPage.hasStarted && updateInputMutation.isPending && Boolean(recognizedImagePreview?.file));
 
   const multiPageStepProps = {
     pages: multiPage.pages,
@@ -1255,6 +1372,7 @@ const handleFinishBridgePiles = async () => {
         {...multiPageStepProps}
         recognizedImageUrl={reviewImageUrl}
         recognizedImageName={reviewImageName}
+        sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
         isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateFbsMutation.isPending}
         isAiProcessing={applyAiFbsMutation.isPending}
@@ -1273,6 +1391,8 @@ const handleFinishBridgePiles = async () => {
         }}
         
         onRecognize={handleRecognize}
+        onRerecognize={() => void handleRerecognize()}
+        isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishFbs={() => void handleFinishFbs()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
@@ -1290,6 +1410,7 @@ const handleFinishBridgePiles = async () => {
         {...multiPageStepProps}
         recognizedImageUrl={reviewImageUrl}
         recognizedImageName={reviewImageName}
+        sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
         isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateBridgePilesMutation.isPending}
         isAiProcessing={applyAiBridgePilesMutation.isPending}
@@ -1308,6 +1429,8 @@ const handleFinishBridgePiles = async () => {
         }}
         
         onRecognize={handleRecognize}
+        onRerecognize={() => void handleRerecognize()}
+        isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishBridgePiles={() => void handleFinishBridgePiles()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
@@ -1325,6 +1448,7 @@ const handleFinishBridgePiles = async () => {
         {...multiPageStepProps}
         recognizedImageUrl={reviewImageUrl}
         recognizedImageName={reviewImageName}
+        sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
         isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateMarchesMutation.isPending}
         isAiProcessing={applyAiMarchesMutation.isPending}
@@ -1343,6 +1467,8 @@ const handleFinishBridgePiles = async () => {
         }}
         
         onRecognize={handleRecognize}
+        onRerecognize={() => void handleRerecognize()}
+        isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishMarches={() => void handleFinishMarches()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
@@ -1360,6 +1486,7 @@ const handleFinishBridgePiles = async () => {
         {...multiPageStepProps}
         recognizedImageUrl={reviewImageUrl}
         recognizedImageName={reviewImageName}
+        sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
         isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateStepsMutation.isPending}
         isAiProcessing={applyAiStepsMutation.isPending}
@@ -1377,6 +1504,8 @@ const handleFinishBridgePiles = async () => {
         }}
         
         onRecognize={handleRecognize}
+        onRerecognize={() => void handleRerecognize()}
+        isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishSteps={() => void handleFinishSteps()}
         onReset={handleCreateNewOffer}
@@ -1392,6 +1521,7 @@ const handleFinishBridgePiles = async () => {
         {...multiPageStepProps}
         recognizedImageUrl={reviewImageUrl}
         recognizedImageName={reviewImageName}
+        sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
         isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updatePilesMutation.isPending}
         isAiProcessing={applyAiPilesMutation.isPending}
@@ -1410,6 +1540,8 @@ const handleFinishBridgePiles = async () => {
         }}
         
         onRecognize={handleRecognize}
+        onRerecognize={() => void handleRerecognize()}
+        isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishPiles={() => void handleFinishPiles()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
@@ -1427,6 +1559,7 @@ const handleFinishBridgePiles = async () => {
         {...multiPageStepProps}
         recognizedImageUrl={reviewImageUrl}
         recognizedImageName={reviewImageName}
+        sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
         widePlateErrorMessage={widePlateError}
         unpricedPlateErrorMessage={unpricedPlateError}
@@ -1450,6 +1583,8 @@ const handleFinishBridgePiles = async () => {
         }}
         
         onRecognize={handleRecognize}
+        onRerecognize={() => void handleRerecognize()}
+        isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishPlates={() => void handleFinishPlates()}
         onWidePlateDecisionChange={(lineId, action, replacementText) =>
@@ -1495,12 +1630,12 @@ const handleFinishBridgePiles = async () => {
         isGeneratingSchema={generateSchemaMutation.isPending}
         isSaving={saveDraftMutation.isPending}
         lastSaveResult={state.lastSaveResult}
-        executionTermsInput={state.executionTermsInput}
-        onBack={() => dispatch({ type: "set-step", step: skipClient ? inputStep : "client" })}
+        onBack={
+          skipClient ? undefined : () => dispatch({ type: "set-step", step: "client" })
+        }
         onCreateNew={handleCreateNewOffer}
         onGenerateFiles={handleGenerateFiles}
         onGenerateSchema={handleGenerateSchema}
-        onExecutionTermsChange={(value) => dispatch({ type: "set-execution-terms", value })}
         onSave={handleSave}
         isUpdatingDiscount={updateMetaMutation.isPending || calculateMutation.isPending}
         onDiscountSubmit={handleDiscountSubmit}
@@ -1570,19 +1705,55 @@ const handleFinishBridgePiles = async () => {
           </div>
         ));
 
+  const appendOrderLines =
+    currentDraft?.order_data ?? state.lastDraft?.order_data ?? [];
+  const appendSelectedProductTypes = (() => {
+    const seen = new Set<ProductType>();
+    const ordered: ProductType[] = [];
+    for (const line of appendOrderLines) {
+      const raw = String(line.product_type ?? "").trim();
+      if (!raw || seen.has(raw as ProductType)) {
+        continue;
+      }
+      // Only known product types appear as "already in KP".
+      if (
+        raw === "plates" ||
+        raw === "piles" ||
+        raw === "steps" ||
+        raw === "marches" ||
+        raw === "bridge_piles" ||
+        raw === "fbs"
+      ) {
+        seen.add(raw);
+        ordered.push(raw);
+      }
+    }
+    return ordered;
+  })();
+  const appendManagerName =
+    state.lastDraft?.metadata.manager_name?.trim() ||
+    currentDraft?.metadata.manager_name?.trim() ||
+    managers.find((manager) => manager.id === state.managerId)?.fio ||
+    "";
+
   return (
     <div style={{ display: "grid", gap: "1.25rem" }}>
       {managersQuery.error && <Alert tone="error">{getErrorMessage(managersQuery.error)}</Alert>}
       {state.isPickingProductType ? (
         <div style={{ display: "grid", gap: "1rem" }}>
           {stepError ? <Alert tone="error">{stepError}</Alert> : null}
-          {(state.clientName || state.discountPercent > 0) && (
-            <Alert tone="info">
-              Клиент: {state.clientName || "не указан"}
-              {state.discountPercent > 0 ? ` · Скидка: ${state.discountPercent}%` : ""}
-            </Alert>
-          )}
-          <ProductTypePicker onSelect={(nextType) => void handleAppendProductTypeSelect(nextType)} />
+          {state.discountPercent > 0 ? (
+            <Alert tone="info">Скидка: {state.discountPercent}%</Alert>
+          ) : null}
+          <ProductTypePicker
+            mode="append"
+            selectedProductTypes={appendSelectedProductTypes}
+            orderLines={appendOrderLines}
+            managerName={appendManagerName}
+            clientName={state.clientName}
+            onSelect={(nextType) => void handleAppendProductTypeSelect(nextType)}
+            onBackToResult={handleCancelAppendPick}
+          />
         </div>
       ) : (
         <div className="wizard-shell">

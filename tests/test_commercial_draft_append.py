@@ -4,8 +4,8 @@ MNA-101: schema accepts line_id / product_type / append_batches (done).
 MNA-102: plates/piles parse+calculate stamp non-empty ``line_id`` + ``product_type``.
 MNA-103: append/start, cross-type type-update merge, undo-last, delete line.
 MNA-202: mixed discount recomputes all lines; calculate not blocked by is_*_draft.
-MNA-304: save_offer with saved_offer.kp_id → update same id; status gate.
-MNA-601 (TDD RED): hydrate draft from saved KP (status «в работе» only).
+MNA-304: save_offer with saved_offer.kp_id → update same id; status gate «в архиве».
+MNA-601: hydrate draft from saved KP (status «в архиве» only).
 """
 
 from __future__ import annotations
@@ -1393,14 +1393,14 @@ def test_mixed_calculate_blocked_by_unresolved_wide_plates_even_if_cycle_is_pile
 def _draft_with_saved_kp(
     *,
     kp_id: int,
-    status: str = "в работе",
+    status: str = "в архиве",
     draft_id: str = "draft-mna304",
 ) -> dict[str, Any]:
     """Minimal draft payload as returned by draft_store for resume/append save."""
     saved = {
         "kp_id": kp_id,
         "status": status,
-        "mode": "database",
+        "mode": "archive",
         "execution_terms": "",
         "saved_at": "2026-08-12T12:00:00",
     }
@@ -1466,7 +1466,7 @@ def test_save_offer_with_saved_kp_id_updates_same_id_not_create(
     """MNA-304: when saved_offer.kp_id is set, save updates that KP (no new create)."""
     workflow = CommercialWorkflowService()
     existing_kp_id = 55
-    draft = _draft_with_saved_kp(kp_id=existing_kp_id)
+    draft = _draft_with_saved_kp(kp_id=existing_kp_id, status="в архиве")
     fake_xlsx = tmp_path / "kp-append.xlsx"
     fake_xlsx.write_bytes(b"xlsx")
 
@@ -1526,8 +1526,8 @@ def test_save_offer_with_saved_kp_id_updates_same_id_not_create(
     result = workflow.save_offer(
         "draft-mna304",
         execution_terms="",
-        status="в работе",
-        save_mode="database",
+        status="в архиве",
+        save_mode="archive",
     )
 
     assert result["saved_offer"]["kp_id"] == existing_kp_id
@@ -1535,16 +1535,57 @@ def test_save_offer_with_saved_kp_id_updates_same_id_not_create(
     assert update_calls, "must call update_kp_from_order_data / update_offer_from_order_data"
     assert update_calls[0]["kp_id"] == existing_kp_id
     assert generate_calls, "R1: files must be regenerated on append save"
-    assert result["saved_offer"]["status"] == "в работе"
+    assert result["saved_offer"]["status"] == "в архиве"
 
 
-def test_save_offer_with_saved_kp_id_rejects_when_status_not_in_progress(
+def test_save_offer_update_preserves_archived_status_even_if_param_in_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """MNA-304 / R2: resume save rejected when saved KP status ≠ «в работе»."""
+    """Update path must keep «в архиве» even when save_offer status defaults to «в работе»."""
     workflow = CommercialWorkflowService()
-    draft = _draft_with_saved_kp(kp_id=88, status="выполнено")
+    existing_kp_id = 56
+    draft = _draft_with_saved_kp(kp_id=existing_kp_id, status="в архиве")
+    fake_xlsx = tmp_path / "kp-preserve-status.xlsx"
+    fake_xlsx.write_bytes(b"xlsx")
+
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft)
+    monkeypatch.setattr(
+        workflow,
+        "generate_files",
+        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+    )
+    monkeypatch.setattr(
+        workflow.export_service,
+        "resolve_generated_file",
+        lambda filename: fake_xlsx,
+    )
+    monkeypatch.setattr(workflow.draft_store, "update_metadata", lambda *a, **k: None)
+    monkeypatch.setattr(
+        workflow.kp_repository,
+        "update_offer_from_order_data",
+        lambda kp_id, order_data, **kwargs: kp_id,
+        raising=False,
+    )
+
+    result = workflow.save_offer(
+        "draft-mna304",
+        execution_terms="",
+        status="в работе",
+        save_mode="database",
+    )
+
+    assert result["saved_offer"]["kp_id"] == existing_kp_id
+    assert result["saved_offer"]["status"] == "в архиве"
+
+
+def test_save_offer_with_saved_kp_id_rejects_when_status_not_archived(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Archive-edit: resume save rejected when saved KP status ≠ «в архиве»."""
+    workflow = CommercialWorkflowService()
+    draft = _draft_with_saved_kp(kp_id=88, status="в работе")
     fake_xlsx = tmp_path / "kp-blocked.xlsx"
     fake_xlsx.write_bytes(b"x")
 
@@ -1566,7 +1607,7 @@ def test_save_offer_with_saved_kp_id_rejects_when_status_not_in_progress(
         lambda **kwargs: 999,
     )
 
-    with pytest.raises(ValueError, match="в работе"):
+    with pytest.raises(ValueError, match="в архиве"):
         workflow.save_offer(
             "draft-mna304",
             execution_terms="",
@@ -1575,20 +1616,20 @@ def test_save_offer_with_saved_kp_id_rejects_when_status_not_in_progress(
         )
 
 
-# --- MNA-601: hydrate draft from saved KP (Q1=C, status «в работе» only) ----------
+# --- MNA-601: hydrate draft from saved KP (status «в архиве» only) ----------
 #
 # Assumed contracts:
 #   Workflow: CommercialWorkflowService.hydrate_draft_from_saved_kp(kp_id, *, owner_user_id)
 #             → CommercialDraftDetails-shaped dict
 #             → order_data + header from KP; saved_offer.kp_id / resume_kp_id bound
-#             → rejects when kp_meta.status ≠ «в работе» (ValueError)
+#             → rejects when kp_meta.status ≠ «в архиве» (ValueError)
 #   HTTP:     POST /api/v1/commercial/archive/{kp_id}/resume  (see test_archive_endpoints)
 
 
 def _kp_raw_for_hydrate(
     *,
     kp_id: int = 42,
-    status: str = "в работе",
+    status: str = "в архиве",
 ) -> dict[str, Any]:
     """Minimal KP raw dict as returned by get_kp_by_id / archive repository."""
     return {
@@ -1642,7 +1683,7 @@ def test_hydrate_draft_from_saved_kp_loads_order_data_and_header(
     get_settings.cache_clear()
 
     kp_id = 42
-    kp_raw = _kp_raw_for_hydrate(kp_id=kp_id, status="в работе")
+    kp_raw = _kp_raw_for_hydrate(kp_id=kp_id, status="в архиве")
 
     from core.kp import offers_read
 
@@ -1706,7 +1747,7 @@ def test_hydrate_draft_from_saved_kp_binds_saved_offer_and_resume_kp_id(
     get_settings.cache_clear()
 
     kp_id = 77
-    kp_raw = _kp_raw_for_hydrate(kp_id=kp_id, status="в работе")
+    kp_raw = _kp_raw_for_hydrate(kp_id=kp_id, status="в архиве")
 
     from core.kp import offers_read
 
@@ -1742,7 +1783,7 @@ def test_hydrate_draft_from_saved_kp_binds_saved_offer_and_resume_kp_id(
     saved = result.get("saved_offer")
     assert saved is not None, "saved_offer must be set after hydrate"
     assert saved.get("kp_id") == kp_id
-    assert saved.get("status") == "в работе"
+    assert saved.get("status") == "в архиве"
 
     metadata = result.get("metadata") or {}
     assert metadata.get("resume_kp_id") == kp_id
@@ -1750,11 +1791,11 @@ def test_hydrate_draft_from_saved_kp_binds_saved_offer_and_resume_kp_id(
     assert (result.get("wizard_state") or {}).get("current_step") == "result"
 
 
-def test_hydrate_draft_from_saved_kp_rejects_when_status_not_in_progress(
+def test_hydrate_draft_from_saved_kp_rejects_when_status_not_archived(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """MNA-601 / R2: hydrate rejected when KP status ≠ «в работе»."""
+    """Archive-edit: hydrate rejected when KP status ≠ «в архиве»."""
     assert hasattr(CommercialWorkflowService, "hydrate_draft_from_saved_kp"), (
         "CommercialWorkflowService.hydrate_draft_from_saved_kp missing (MNA-601)"
     )
@@ -1783,20 +1824,20 @@ def test_hydrate_draft_from_saved_kp_rejects_when_status_not_in_progress(
         raising=False,
     )
 
-    with pytest.raises(ValueError, match="в работе"):
+    with pytest.raises(ValueError, match="в архиве"):
         workflow.hydrate_draft_from_saved_kp(kp_id, owner_user_id=1)
 
 
 @pytest.mark.parametrize(
     "blocked_status",
-    ["На СГП", "отклонено", "в ожидании", "в архиве", "выполнено"],
+    ["На СГП", "отклонено", "в ожидании", "в работе", "выполнено"],
 )
-def test_hydrate_draft_from_saved_kp_rejects_all_non_in_progress_statuses(
+def test_hydrate_draft_from_saved_kp_rejects_all_non_archived_statuses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     blocked_status: str,
 ) -> None:
-    """MNA-601 / R2: only «в работе» may hydrate; СГП and others blocked."""
+    """Archive-edit: only «в архиве» may hydrate; production and others blocked."""
     assert hasattr(CommercialWorkflowService, "hydrate_draft_from_saved_kp"), (
         "CommercialWorkflowService.hydrate_draft_from_saved_kp missing (MNA-601)"
     )
@@ -1823,5 +1864,5 @@ def test_hydrate_draft_from_saved_kp_rejects_all_non_in_progress_statuses(
         raising=False,
     )
 
-    with pytest.raises(ValueError, match="в работе"):
+    with pytest.raises(ValueError, match="в архиве"):
         workflow.hydrate_draft_from_saved_kp(91, owner_user_id=1)

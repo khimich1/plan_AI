@@ -278,6 +278,12 @@ class CommercialDraftBreakdownResponse(BaseModel):
     items: list[CommercialBreakdownTable] = Field(default_factory=list)
 
 
+class CommercialOcrPageResponse(BaseModel):
+    normalized_text: str
+    ocr_verify_failed: bool = False
+    ocr_corrections: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class CommercialDraftDetailsResponse(BaseModel):
     draft_id: str
     order: dict[str, Any]

@@ -90,6 +90,7 @@ type StoreSnapshot = WizardStoreState & AppendCycleStoreFields;
 /** Dispatch append actions before reducer union grows (RED). */
 type AppendCycleAction =
   | { type: "start-append-cycle" }
+  | { type: "cancel-append-pick" }
   | { type: "set-product-type"; productType: WizardStoreState["productType"] }
   | { type: "set-step"; step: WizardStepId }
   | { type: "hydrate-draft"; payload: CommercialDraftDetails; refreshBatchText?: boolean }
@@ -483,6 +484,51 @@ describe("WizardDraftProvider append cycle sticky header (MNA-502)", () => {
     expect(snap?.currentStep).toBe("plates");
     expect(snap?.sourceText).toBe("");
     expect(screen.getByTestId("current-step")).toHaveTextContent("plates");
+  });
+
+  it("cancel-append-pick clears picking and returns to result without wiping draft", async () => {
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    await seedStickyResultState();
+
+    await act(async () => {
+      dispatchAppend(dispatchRef.current, { type: "start-append-cycle" });
+    });
+    expect(asAppendState(stateRef.current)?.isPickingProductType).toBe(true);
+
+    await act(async () => {
+      dispatchAppend(dispatchRef.current, { type: "cancel-append-pick" });
+    });
+
+    const snap = asAppendState(stateRef.current);
+    expect(snap?.isPickingProductType).toBe(false);
+    expect(snap?.currentStep).toBe("result");
+    expect(snap?.draftId).toBe("draft-append-sticky");
+    expect(snap?.clientName).toBe("ООО Стикки");
+    expect(snap?.discountPercent).toBe(7.5);
+    expect(screen.getByTestId("current-step")).toHaveTextContent("result");
+  });
+
+  it("set-step alone does not clear isPickingProductType", async () => {
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    await seedStickyResultState();
+
+    await act(async () => {
+      dispatchAppend(dispatchRef.current, { type: "start-append-cycle" });
+      dispatchAppend(dispatchRef.current, { type: "set-step", step: "result" });
+    });
+
+    expect(asAppendState(stateRef.current)?.isPickingProductType).toBe(true);
+    expect(asAppendState(stateRef.current)?.currentStep).toBe("result");
   });
 
   it("hydrate after undo/delete-style refresh keeps sticky discount and client (draft refresh contract)", async () => {

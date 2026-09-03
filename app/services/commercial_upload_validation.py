@@ -52,6 +52,8 @@ def reset_commercial_ocr_rate_limiter_for_tests() -> None:
 
 def check_commercial_ocr_rate_limit(user_id: int) -> None:
     lim = get_settings().commercial_ocr_uploads_per_hour
+    if lim <= 0:
+        return
     _ocr_upload_limiter.check(user_id, max_events=lim)
 
 

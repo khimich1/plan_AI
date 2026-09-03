@@ -50,6 +50,20 @@ const wrap = (ui: ReactNode) => {
 };
 
 describe("MoveToProductionDialog capacity gate", () => {
+  it("keeps manufacturing terms field for archive → production", () => {
+    wrap(
+      <MoveToProductionDialog
+        open
+        onClose={() => undefined}
+        kpId={42}
+        initialExecutionTerms="20.03.2026"
+      />,
+    );
+
+    expect(screen.getByText("Срок выполнения")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Перевести в производство/i })).toBeInTheDocument();
+  });
+
   it("keeps hint in modal, calendar only after Ёмкость click", () => {
     wrap(
       <MoveToProductionDialog

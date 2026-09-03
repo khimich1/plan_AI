@@ -155,7 +155,7 @@ function makeResumeDraft(draftId = "draft-resume-42") {
     },
     wizard_state: { current_step: "result" },
     files: [],
-    saved_offer: { kp_id: 42, status: "в работе", execution_terms: "" },
+    saved_offer: { kp_id: 42, status: "в архиве", execution_terms: "" },
     totals: {},
     offer_identity: { title: "КП", subtitle: "" },
   };
@@ -330,7 +330,7 @@ describe("OfferDetailsDrawer pile offers", () => {
   });
 });
 
-describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
+describe("OfferDetailsDrawer archive constructor CTAs", () => {
   beforeEach(() => {
     mockResume.mockReset();
     mockNavigate.mockReset();
@@ -349,9 +349,9 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
     vi.clearAllMocks();
   });
 
-  it("renders CTA «Добавить другое наименование» when status is в работе", () => {
+  it("renders dual constructor CTAs when status is в архиве", () => {
     mockUseArchiveOfferQuery.mockReturnValue({
-      data: makeOffer("в работе"),
+      data: makeOffer("в архиве"),
       isPending: false,
       isError: false,
       error: null,
@@ -359,13 +359,12 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
 
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
-    expect(
-      screen.getByRole("button", { name: "Добавить другое наименование" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "(+ Добавить)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Редактировать" })).toBeInTheDocument();
   });
 
-  it.each(["в архиве", "выполнено", "На СГП", "отклонено", "в ожидании"])(
-    "does not render append CTA when status is %s",
+  it.each(["в работе", "выполнено", "На СГП", "отклонено", "в ожидании"])(
+    "does not render constructor CTAs when status is %s",
     (status) => {
       mockUseArchiveOfferQuery.mockReturnValue({
         data: makeOffer(status),
@@ -376,18 +375,20 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
 
       render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
+      expect(screen.queryByRole("button", { name: "(+ Добавить)" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Редактировать" })).not.toBeInTheDocument();
       expect(
         screen.queryByRole("button", { name: "Добавить другое наименование" }),
       ).not.toBeInTheDocument();
     },
   );
 
-  it("resumes draft, hydrates store, starts append cycle, and navigates to wizard", async () => {
+  it("(+ Добавить) resumes draft, hydrates, starts append cycle, and navigates", async () => {
     const onClose = vi.fn();
     const draft = makeResumeDraft("draft-resume-42");
     mockResume.mockResolvedValue(draft);
     mockUseArchiveOfferQuery.mockReturnValue({
-      data: makeOffer("в работе"),
+      data: makeOffer("в архиве"),
       isPending: false,
       isError: false,
       error: null,
@@ -395,7 +396,7 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
 
     render(<OfferDetailsDrawer open kpId={42} onClose={onClose} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Добавить другое наименование" }));
+    fireEvent.click(screen.getByRole("button", { name: "(+ Добавить)" }));
 
     await waitFor(() => {
       expect(mockResume).toHaveBeenCalledWith(42);
@@ -418,7 +419,35 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
     expect(appendIndex).toBeGreaterThan(hydrateIndex);
   });
 
-  it("disables CTA while resume is pending", async () => {
+  it("Редактировать resumes draft, hydrates to result, without append cycle", async () => {
+    const onClose = vi.fn();
+    const draft = makeResumeDraft("draft-edit-42");
+    mockResume.mockResolvedValue(draft);
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+
+    await waitFor(() => {
+      expect(mockResume).toHaveBeenCalledWith(42);
+    });
+
+    await waitFor(() => {
+      expect(mockDispatch).toHaveBeenCalledWith({ type: "hydrate-draft", payload: draft });
+      expect(mockNavigate).toHaveBeenCalledWith("/new?draft=draft-edit-42");
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    expect(mockDispatch).not.toHaveBeenCalledWith({ type: "start-append-cycle" });
+  });
+
+  it("disables both CTAs while resume is pending", async () => {
     let resolveResume: (value: unknown) => void = () => undefined;
     mockResume.mockReturnValue(
       new Promise((resolve) => {
@@ -426,7 +455,7 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
       }),
     );
     mockUseArchiveOfferQuery.mockReturnValue({
-      data: makeOffer("в работе"),
+      data: makeOffer("в архиве"),
       isPending: false,
       isError: false,
       error: null,
@@ -434,10 +463,12 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
 
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Добавить другое наименование" }));
+    fireEvent.click(screen.getByRole("button", { name: "(+ Добавить)" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Открываем…" })).toBeDisabled();
+      const pendingButtons = screen.getAllByRole("button", { name: "Открываем…" });
+      expect(pendingButtons.length).toBeGreaterThanOrEqual(1);
+      pendingButtons.forEach((btn) => expect(btn).toBeDisabled());
     });
 
     resolveResume(makeResumeDraft());
@@ -451,7 +482,7 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
     const onClose = vi.fn();
     mockResume.mockRejectedValue(new Error("КП недоступно для дописывания"));
     mockUseArchiveOfferQuery.mockReturnValue({
-      data: makeOffer("в работе"),
+      data: makeOffer("в архиве"),
       isPending: false,
       isError: false,
       error: null,
@@ -459,7 +490,7 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
 
     render(<OfferDetailsDrawer open kpId={42} onClose={onClose} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Добавить другое наименование" }));
+    fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
 
     await waitFor(() => {
       expect(screen.getByText("КП недоступно для дописывания")).toBeInTheDocument();
@@ -468,6 +499,40 @@ describe("OfferDetailsDrawer MNA-602 — append CTA", () => {
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(mockDispatch).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Добавить другое наименование" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "(+ Добавить)" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Редактировать" })).not.toBeDisabled();
+  });
+
+  it("shows read-only Итоги without finance inputs for в архиве", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        logistics_cost: 15000,
+        total_cargo_weight_kg: 1200,
+        delivery_service_total_rub: 15000,
+        finance: {
+          subtotal: 1000,
+          vat_amount: 220,
+          total_amount: 1220,
+          discount_percent: 5,
+        },
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Итоги")).toBeInTheDocument();
+    expect(screen.getByText("Общий вес груза, кг")).toBeInTheDocument();
+    expect(screen.getByText("НДС (22%)")).toBeInTheDocument();
+    expect(screen.getByText(/Услуга по доставке грузов/)).toBeInTheDocument();
+    expect(screen.getByText("Скидка")).toBeInTheDocument();
+    expect(screen.getByText("Итого с НДС")).toBeInTheDocument();
+
+    expect(screen.queryByPlaceholderText("Стоимость одного рейса")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Например, 2 000 000")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Например, 5")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "OK" })).not.toBeInTheDocument();
   });
 });

@@ -373,3 +373,147 @@ describe("useMultiPageRecognize", () => {
     expect(result.current.pages[1]?.ocrVerifyFailed).toBe(true);
   });
 });
+
+describe("useMultiPageRecognize.rerunPage", () => {
+  it("rerunPage replaces only that page text (does not append)", async () => {
+    const recognizePage = vi
+      .fn()
+      .mockResolvedValueOnce({ draft: makeDraft("line-a"), batchReviewText: "line-a" })
+      .mockResolvedValueOnce({
+        draft: makeDraft("line-b-1\nline-b-2"),
+        batchReviewText: "line-b-1\nline-b-2",
+      });
+    const rerunPage = vi.fn().mockResolvedValue({
+      normalized_text: "full-b",
+      ocr_verify_failed: false,
+      ocr_corrections: [{ action: "replaced" }],
+    });
+
+    const { result } = renderHook(() => useMultiPageRecognize({ recognizePage, rerunPage }));
+
+    act(() => {
+      result.current.addFiles([makeFile("a.png"), makeFile("b.png")]);
+    });
+    act(() => {
+      void result.current.start({ productType: "plates" });
+    });
+    await waitFor(() => {
+      expect(result.current.pages.every((page) => page.status === "ready")).toBe(true);
+    });
+    const pageAId = result.current.pages[0]!.id;
+    const pageBId = result.current.pages[1]!.id;
+    const recognizeCallsAfterStart = recognizePage.mock.calls.length;
+
+    await act(async () => {
+      await result.current.rerunPage(pageBId);
+    });
+
+    expect(result.current.pages[0]?.id).toBe(pageAId);
+    expect(result.current.pages[0]?.batchReviewText).toBe("line-a");
+    expect(result.current.pages[0]?.status).toBe("ready");
+    expect(result.current.pages[1]?.id).toBe(pageBId);
+    expect(result.current.pages[1]?.batchReviewText).toBe("full-b");
+    expect(result.current.pages[1]?.ocrCorrections).toEqual([{ action: "replaced" }]);
+    expect(recognizePage).toHaveBeenCalledTimes(recognizeCallsAfterStart);
+    expect(rerunPage).toHaveBeenCalledTimes(1);
+    expect(rerunPage.mock.calls[0]?.[0].image).toBe(result.current.pages[1]?.file);
+  });
+
+  it("rerunPage of confirmed page returns status ready", async () => {
+    const recognizePage = vi
+      .fn()
+      .mockResolvedValueOnce({ draft: makeDraft("a"), batchReviewText: "a" })
+      .mockResolvedValueOnce({ draft: makeDraft("b"), batchReviewText: "b" });
+    const rerunPage = vi.fn().mockResolvedValue({
+      normalized_text: "a-again",
+      ocr_verify_failed: false,
+      ocr_corrections: [],
+    });
+    const { result } = renderHook(() => useMultiPageRecognize({ recognizePage, rerunPage }));
+
+    act(() => {
+      result.current.addFiles([makeFile("a.png"), makeFile("b.png")]);
+    });
+    act(() => {
+      void result.current.start({ productType: "plates" });
+    });
+    await waitFor(() => {
+      expect(result.current.pages.every((page) => page.status === "ready")).toBe(true);
+    });
+
+    const firstId = result.current.pages[0]!.id;
+    act(() => {
+      result.current.setActive(firstId);
+      result.current.confirmActive();
+    });
+    expect(result.current.pages[0]?.status).toBe("confirmed");
+
+    await act(async () => {
+      await result.current.rerunPage(firstId);
+    });
+
+    expect(result.current.pages[0]?.status).toBe("ready");
+    expect(result.current.pages[0]?.batchReviewText).toBe("a-again");
+    expect(result.current.pages[1]?.batchReviewText).toBe("b");
+  });
+
+  it("rerunPage OCR failure keeps File and sets error", async () => {
+    const recognizePage = vi.fn().mockResolvedValue({
+      draft: makeDraft("a"),
+      batchReviewText: "a",
+    });
+    const rerunPage = vi.fn().mockRejectedValue(new Error("provider down"));
+    const { result } = renderHook(() => useMultiPageRecognize({ recognizePage, rerunPage }));
+
+    act(() => {
+      result.current.addFiles([makeFile("a.png")]);
+    });
+    act(() => {
+      void result.current.start({ productType: "plates" });
+    });
+    await waitFor(() => {
+      expect(result.current.pages[0]?.status).toBe("ready");
+    });
+    const originalFile = result.current.pages[0]!.file;
+
+    await act(async () => {
+      await result.current.rerunPage(result.current.pages[0]!.id);
+    });
+
+    expect(result.current.pages[0]?.status).toBe("error");
+    expect(result.current.pages[0]?.errorMessage).toMatch(/provider down/i);
+    expect(result.current.pages[0]?.file).toBe(originalFile);
+  });
+
+  it("rerunPage must not enqueue pending", async () => {
+    const recognizePage = vi.fn().mockResolvedValue({
+      draft: makeDraft("a"),
+      batchReviewText: "a",
+    });
+    const rerunPage = vi.fn().mockResolvedValue({
+      normalized_text: "a2",
+      ocr_verify_failed: true,
+      ocr_corrections: [],
+    });
+    const { result } = renderHook(() => useMultiPageRecognize({ recognizePage, rerunPage }));
+
+    act(() => {
+      result.current.addFiles([makeFile("a.png")]);
+    });
+    act(() => {
+      void result.current.start({ productType: "plates" });
+    });
+    await waitFor(() => {
+      expect(result.current.pages[0]?.status).toBe("ready");
+    });
+
+    await act(async () => {
+      await result.current.rerunPage(result.current.pages[0]!.id);
+    });
+
+    expect(result.current.pages.some((page) => page.status === "pending")).toBe(false);
+    expect(result.current.pages[0]?.status).toBe("ready");
+    expect(result.current.pages[0]?.ocrVerifyFailed).toBe(true);
+    expect(recognizePage).toHaveBeenCalledTimes(1);
+  });
+});

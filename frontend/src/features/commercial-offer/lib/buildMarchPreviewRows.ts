@@ -1,10 +1,13 @@
 import type { CommercialDraftDetails, MarchOrderLine } from "@/features/commercial-offer/types/commercialOffer";
-import { getCurrentCycleOrderData } from "@/features/commercial-offer/lib/currentCycleOrderData";
+import {
+  getProductTypeOrderData,
+  isSealedOrderLine,
+} from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export const buildMarchPreviewRows = (draft: CommercialDraftDetails): MarchOrderLine[] =>
-  getCurrentCycleOrderData(draft, "marches").map((item) => {
+  getProductTypeOrderData(draft, "marches").map((item) => {
     const mark = String(item.mark ?? item.name ?? "").trim();
     const qty = toNumber(item.qty) ?? 0;
     const unitPrice = toNumber(item.unit_price);
@@ -20,11 +23,12 @@ export const buildMarchPreviewRows = (draft: CommercialDraftDetails): MarchOrder
       unit_price: unitPrice,
       line_total: lineTotal,
       product_kind: "march",
+      sealed: isSealedOrderLine(item),
     };
   });
 
 export const buildMarchLinesFromOrderData = (rows: MarchOrderLine[]): string =>
   rows
-    .filter((row) => row.mark && row.qty > 0)
+    .filter((row) => row.mark && row.qty > 0 && !row.sealed)
     .map((row) => `${row.mark} ${row.concrete_grade} ${row.qty}`)
     .join("\n");

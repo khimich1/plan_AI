@@ -49,3 +49,20 @@ def test_development_allows_app_debug_true() -> None:
         app_debug=True,
     )
     assert settings.app_debug is True
+
+
+def test_commercial_ocr_uploads_per_hour_allows_zero() -> None:
+    settings = _settings(
+        app_secret_key=VALID_APP_SECRET_KEY,
+        commercial_ocr_uploads_per_hour=0,
+    )
+    assert settings.commercial_ocr_uploads_per_hour == 0
+
+    defaulted = _settings(app_secret_key=VALID_APP_SECRET_KEY)
+    assert defaulted.commercial_ocr_uploads_per_hour == 0
+
+    with pytest.raises(ValidationError):
+        _settings(
+            app_secret_key=VALID_APP_SECRET_KEY,
+            commercial_ocr_uploads_per_hour=-1,
+        )

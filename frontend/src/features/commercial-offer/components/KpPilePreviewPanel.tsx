@@ -45,6 +45,7 @@ export const KpPilePreviewPanel = ({
     normalizedText.trim() !== (draft.metadata.normalized_text ?? "").trim() && normalizedText.trim().length > 0;
 
   const hasUnpricedRows = rows.some((row) => row.unit_price === null);
+  const hasEditableGradeRows = rows.some((row) => !row.sealed);
 
   return (
     <Card
@@ -82,7 +83,7 @@ export const KpPilePreviewPanel = ({
           <Alert tone="info">Изменён список свай — нажмите «Список верен» для пересчёта состава.</Alert>
         )}
 
-        {onApplyGradeToAll && rows.length > 0 && (
+        {onApplyGradeToAll && hasEditableGradeRows && (
           <div
             style={{
               display: "flex",
@@ -95,7 +96,7 @@ export const KpPilePreviewPanel = ({
               background: "#fafafa",
             }}
           >
-            <span style={{ color: "#475467" }}>Применить класс ко всем:</span>
+            <span style={{ color: "#475467" }}>Применить класс ко всем новым:</span>
             <select
               value={bulkGrade}
               onChange={(event) => setBulkGrade(event.target.value)}
@@ -155,7 +156,7 @@ export const KpPilePreviewPanel = ({
                       <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7" }}>{index + 1}</td>
                       <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7" }}>{row.mark}</td>
                       <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7" }}>
-                        {onLineGradeChange ? (
+                        {onLineGradeChange && !row.sealed ? (
                           <select
                             value={row.concrete_grade}
                             disabled={isUpdatingGrades}

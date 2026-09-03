@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getCurrentCycleOrderData,
+  getProductTypeOrderData,
   isSealedOrderLine,
 } from "@/features/commercial-offer/lib/currentCycleOrderData";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
@@ -111,5 +112,72 @@ describe("currentCycleOrderData", () => {
     draft.metadata.append_batches = [];
 
     expect(getCurrentCycleOrderData(draft, "piles")).toHaveLength(1);
+  });
+});
+
+describe("getProductTypeOrderData", () => {
+  it("includes sealed same-type lines for preview (append same type)", () => {
+    const draft = makeDraft(
+      [
+        {
+          line_id: "ln-sealed",
+          product_type: "plates",
+          append_batch_id: "b1",
+          name: "Плиты ПБ 28-5,3-8п",
+          qty: 2,
+        },
+        {
+          line_id: "ln-new",
+          product_type: "plates",
+          name: "Плиты ПБ 51-5,3-8п",
+          qty: 1,
+        },
+      ],
+      "plates",
+    );
+
+    const rows = getProductTypeOrderData(draft, "plates");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.line_id)).toEqual(["ln-sealed", "ln-new"]);
+  });
+
+  it("shows sealed same-type even when current cycle has no new lines yet", () => {
+    const draft = makeDraft(
+      [
+        {
+          line_id: "ln-sealed",
+          product_type: "plates",
+          append_batch_id: "b1",
+          name: "Плиты ПБ 28-5,3-8п",
+          qty: 2,
+        },
+      ],
+      "plates",
+    );
+
+    expect(getProductTypeOrderData(draft, "plates")).toHaveLength(1);
+    expect(getCurrentCycleOrderData(draft, "plates")).toEqual([]);
+  });
+
+  it("hides sealed prior plates during a piles cycle", () => {
+    const draft = makeDraft([
+      {
+        line_id: "ln-plate",
+        product_type: "plates",
+        append_batch_id: "b1",
+        name: "Плиты ПБ 45-12-8п",
+        qty: 10,
+      },
+      {
+        line_id: "ln-pile",
+        product_type: "piles",
+        mark: "С120.35-12",
+        qty: 5,
+      },
+    ]);
+
+    const piles = getProductTypeOrderData(draft, "piles");
+    expect(piles).toHaveLength(1);
+    expect(piles[0]?.line_id).toBe("ln-pile");
   });
 });

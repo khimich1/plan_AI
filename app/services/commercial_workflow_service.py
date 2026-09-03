@@ -512,6 +512,19 @@ class CommercialWorkflowService:
             plate_order_ctx=plate_order_ctx,
         )
 
+    async def recognize_draft_page(
+        self,
+        draft_id: str,
+        *,
+        image_bytes: bytes,
+        image_filename: str | None,
+    ) -> dict[str, Any]:
+        return await self.product_draft_handler.recognize_page(
+            draft_id,
+            image_bytes=image_bytes,
+            image_filename=image_filename,
+        )
+
     async def apply_ai_plates_instruction(
         self,
         draft_id: str,
@@ -586,8 +599,16 @@ class CommercialWorkflowService:
     def calculate_draft(self, draft_id: str) -> dict[str, Any]:
         return self.draft_lifecycle.calculate_draft(draft_id)
 
-    def get_draft_breakdown(self, draft_id: str) -> dict[str, Any]:
-        return self.draft_lifecycle.get_draft_breakdown(draft_id)
+    def get_draft_breakdown(
+        self,
+        draft_id: str,
+        *,
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> dict[str, Any]:
+        return self.draft_lifecycle.get_draft_breakdown(
+            draft_id,
+            plate_order_ctx=plate_order_ctx,
+        )
 
     def get_draft_details(self, draft_id: str) -> dict[str, Any]:
         return self.draft_lifecycle.get_draft_details(draft_id)

@@ -78,4 +78,4 @@ When `UVICORN_WORKERS` or `WEB_CONCURRENCY` is set to a value `> 1`, the app log
 |----------|---------|---------|
 | `AUTH_LOGIN_ATTEMPTS_PER_MINUTE` | (see settings) | Login attempts per IP per window |
 | `AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS` | 60 | Login sliding window |
-| `COMMERCIAL_OCR_UPLOADS_PER_HOUR` | (see settings) | OCR uploads per user per hour |
+| `COMMERCIAL_OCR_UPLOADS_PER_HOUR` | 0 (off) | OCR uploads per user per hour; `0` disables the limiter |

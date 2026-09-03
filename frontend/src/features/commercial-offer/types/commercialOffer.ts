@@ -128,6 +128,7 @@ export type PileOrderLine = {
   unit_price: number | null;
   line_total?: number | null;
   product_kind?: "pile";
+  sealed?: boolean;
 };
 
 export type StepOrderLine = {
@@ -151,6 +152,7 @@ export type MarchOrderLine = {
   unit_price: number | null;
   line_total?: number | null;
   product_kind?: "march";
+  sealed?: boolean;
 };
 
 export type CommercialGeneratedFile = {

@@ -108,6 +108,33 @@ export const mapLegacyWizardStep = (step: string | null | undefined): WizardStep
 export const wizardStepIndex = (step: WizardStepId, productType: ProductType = "plates"): number =>
   getWizardStepOrder(productType).indexOf(step);
 
+/**
+ * From Result (or after Result was reached), the product input step is only
+ * reachable via a new append cycle — not via sidebar / «Назад».
+ */
+export const isInputStepBlockedWithoutAppendCycle = ({
+  currentStep,
+  targetStep,
+  inputStep,
+  draftWizardStep,
+}: {
+  currentStep: WizardStepId;
+  targetStep: WizardStepId;
+  inputStep: WizardStepId;
+  draftWizardStep?: WizardStepId | null;
+}): boolean => {
+  if (targetStep !== inputStep) {
+    return false;
+  }
+  if (currentStep === inputStep) {
+    return false;
+  }
+  if (currentStep === "result") {
+    return true;
+  }
+  return draftWizardStep === "result";
+};
+
 export const resolveDraftProductType = (productType: ProductType | null | undefined): ProductType => {
   if (productType === "piles" || productType === "steps" || productType === "marches" || productType === "bridge_piles" || productType === "fbs") {
     return productType;

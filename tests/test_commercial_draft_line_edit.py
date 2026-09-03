@@ -64,6 +64,143 @@ def test_patch_line_qty_updates_totals_keeps_line_id(
     )
 
 
+def test_patch_line_qty_invalidates_breakdown_tables(
+    mixed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After line edit, cached breakdown must be cleared (not served stale)."""
+    from app.services.draft_store import DraftStore
+
+    draft_id, plates = _create_plates_result_draft(mixed_client, monkeypatch)
+    target_id = str(plates[0]["line_id"])
+    old_qty = int(plates[0]["qty"])
+
+    before = mixed_client.get(f"/api/v1/commercial/drafts/{draft_id}")
+    assert before.status_code == 200
+    assert int(before.json()["metadata"].get("breakdown_tables_count") or 0) > 0
+
+    stored_before = DraftStore().load_raw_json(draft_id) or {}
+    tables_before = list((stored_before.get("metadata") or {}).get("breakdown_tables") or [])
+    assert len(tables_before) > 0
+
+    patch = mixed_client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/{target_id}",
+        json={"qty": old_qty + 3},
+    )
+    assert patch.status_code == 200, patch.text
+    assert int(patch.json()["metadata"].get("breakdown_tables_count") or 0) == 0
+
+    stored_after = DraftStore().load_raw_json(draft_id) or {}
+    meta_after = dict(stored_after.get("metadata") or {})
+    assert list(meta_after.get("breakdown_tables") or []) == []
+    assert int(meta_after.get("breakdown_tables_count") or 0) == 0
+
+
+def test_get_breakdown_regenerates_after_qty_patch(
+    mixed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET breakdown after invalidate rebuilds tables from current composition (not stale cache)."""
+    draft_id, plates = _create_plates_result_draft(mixed_client, monkeypatch)
+    target_id = str(plates[0]["line_id"])
+    old_qty = int(plates[0]["qty"])
+
+    patch = mixed_client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/{target_id}",
+        json={"qty": old_qty + 7},
+    )
+    assert patch.status_code == 200, patch.text
+    assert int(patch.json()["metadata"].get("breakdown_tables_count") or 0) == 0
+
+    response = mixed_client.get(f"/api/v1/commercial/drafts/{draft_id}/breakdown")
+    assert response.status_code == 200, response.text
+    items = list(response.json().get("items") or [])
+    assert len(items) > 0
+
+    details = mixed_client.get(f"/api/v1/commercial/drafts/{draft_id}")
+    assert details.status_code == 200
+    assert int(details.json()["metadata"].get("breakdown_tables_count") or 0) == len(items)
+
+
+def test_delete_line_invalidates_breakdown_tables(
+    mixed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.draft_store import DraftStore
+
+    draft_id, plates = _create_plates_result_draft(mixed_client, monkeypatch)
+    target_id = str(plates[0]["line_id"])
+    assert int(
+        mixed_client.get(f"/api/v1/commercial/drafts/{draft_id}").json()["metadata"].get(
+            "breakdown_tables_count"
+        )
+        or 0
+    ) > 0
+
+    delete = mixed_client.delete(f"/api/v1/commercial/drafts/{draft_id}/lines/{target_id}")
+    assert delete.status_code == 200, delete.text
+    assert int(delete.json()["metadata"].get("breakdown_tables_count") or 0) == 0
+
+    stored = DraftStore().load_raw_json(draft_id) or {}
+    meta = dict(stored.get("metadata") or {})
+    assert list(meta.get("breakdown_tables") or []) == []
+
+
+def test_undo_last_append_invalidates_breakdown_tables(
+    mixed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.draft_store import DraftStore
+
+    draft_id, body, _plate_lines, _pile_lines = _build_plates_then_piles_draft(
+        mixed_client, monkeypatch
+    )
+    # Ensure tables exist (plates calculate may leave them; force via GET if empty).
+    if int(body["metadata"].get("breakdown_tables_count") or 0) == 0:
+        regen = mixed_client.get(f"/api/v1/commercial/drafts/{draft_id}/breakdown")
+        assert regen.status_code == 200, regen.text
+        assert len(list(regen.json().get("items") or [])) > 0
+        body = mixed_client.get(f"/api/v1/commercial/drafts/{draft_id}").json()
+    assert int(body["metadata"].get("breakdown_tables_count") or 0) > 0
+
+    undo = mixed_client.post(f"/api/v1/commercial/drafts/{draft_id}/append/undo-last")
+    assert undo.status_code == 200, undo.text
+    assert int(undo.json()["metadata"].get("breakdown_tables_count") or 0) == 0
+
+    stored = DraftStore().load_raw_json(draft_id) or {}
+    assert list((stored.get("metadata") or {}).get("breakdown_tables") or []) == []
+
+
+def test_restore_line_invalidates_breakdown_tables(
+    mixed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.draft_store import DraftStore
+
+    draft_id, plates = _create_plates_result_draft(mixed_client, monkeypatch)
+    snapshot = dict(plates[0])
+    target_id = str(snapshot["line_id"])
+
+    delete = mixed_client.delete(f"/api/v1/commercial/drafts/{draft_id}/lines/{target_id}")
+    assert delete.status_code == 200, delete.text
+
+    regen = mixed_client.get(f"/api/v1/commercial/drafts/{draft_id}/breakdown")
+    assert regen.status_code == 200, regen.text
+    assert len(list(regen.json().get("items") or [])) > 0
+    details = mixed_client.get(f"/api/v1/commercial/drafts/{draft_id}").json()
+    assert int(details["metadata"].get("breakdown_tables_count") or 0) > 0
+
+    restore = mixed_client.post(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/restore",
+        json={"index": 0, "lines": [snapshot], "replace_line_ids": []},
+    )
+    assert restore.status_code == 200, restore.text
+    assert int(restore.json()["metadata"].get("breakdown_tables_count") or 0) == 0
+
+    stored = DraftStore().load_raw_json(draft_id) or {}
+    assert list((stored.get("metadata") or {}).get("breakdown_tables") or []) == []
+
+
 def test_patch_line_qty_missing_returns_russian_404(
     mixed_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

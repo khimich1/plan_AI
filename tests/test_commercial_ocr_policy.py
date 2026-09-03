@@ -6,7 +6,9 @@ from fastapi.testclient import TestClient
 from app.core.settings import get_settings
 from app.services.commercial_upload_validation import (
     MSG_EXTERNAL_OCR_DISABLED,
+    check_commercial_ocr_rate_limit,
     ensure_external_ocr_enabled,
+    reset_commercial_ocr_rate_limiter_for_tests,
 )
 from tests.test_commercial_web_flow import _MINIMAL_PNG_BYTES
 
@@ -191,3 +193,13 @@ def test_commercial_upload_allowed_when_ocr_enabled(
         files={"image": ("a.png", _MINIMAL_PNG_BYTES, "image/png")},
     )
     assert response.status_code == 200
+
+
+def test_check_commercial_ocr_rate_limit_skips_when_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("COMMERCIAL_OCR_UPLOADS_PER_HOUR", "0")
+    get_settings.cache_clear()
+    reset_commercial_ocr_rate_limiter_for_tests()
+    for _ in range(11):
+        check_commercial_ocr_rate_limit(1)

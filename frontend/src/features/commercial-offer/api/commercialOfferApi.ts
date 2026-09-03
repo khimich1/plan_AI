@@ -12,7 +12,14 @@ import type {
   SaveMode,
   UnpricedPlateAction,
   WidePlateAction,
+  OcrCorrection,
 } from "@/features/commercial-offer/types/commercialOffer";
+
+export type CommercialOcrPageResult = {
+  normalized_text: string;
+  ocr_verify_failed: boolean;
+  ocr_corrections: OcrCorrection[];
+};
 
 type DraftCreatePayload = {
   text: string;
@@ -117,6 +124,15 @@ export const commercialOfferApi = {
 
   createDraft: (payload: DraftCreatePayload) =>
     httpClient.post<CommercialDraftDetails>("/api/v1/commercial/drafts", createMultipartPayload(payload)),
+
+  ocrPage: (draftId: string, image: File) => {
+    const formData = new FormData();
+    formData.append("image", image);
+    return httpClient.post<CommercialOcrPageResult>(
+      `/api/v1/commercial/drafts/${draftId}/ocr-page`,
+      formData,
+    );
+  },
 
   updateDraftPlates: (draftId: string, payload: UpdateDraftPlatesPayload) =>
     httpClient.patch<CommercialDraftDetails>(
