@@ -93,6 +93,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     updateFbsGradesMutation,
     resolveWidePlatesMutation,
     resolveUnpricedPlatesMutation,
+    resolveInvalidWidthsMutation,
     updateMetaMutation,
     calculateMutation,
     generateFilesMutation,
@@ -125,6 +126,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const lineUndoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [widePlateError, setWidePlateError] = useState<string | null>(null);
   const [unpricedPlateError, setUnpricedPlateError] = useState<string | null>(null);
+  const [invalidWidthError, setInvalidWidthError] = useState<string | null>(null);
   const {
     preview: recognizedImagePreview,
     setPreviewFromFile,
@@ -595,6 +597,8 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
       } else if (draft.wizard_state.next_required_action === "resolve_wide_plates") {
         setStepError("Сначала примите решение по позициям шире стандартной.");
+      } else if (draft.wizard_state.next_required_action === "resolve_invalid_widths") {
+        setStepError("Нестандартная ширина: замените на заводской рез или исключите позицию.");
       } else if (draft.wizard_state.next_required_action === "resolve_unpriced_plates") {
         setStepError("Сначала примите решение по позициям без цены в прайсе.");
       } else {
@@ -885,6 +889,33 @@ const handleFinishBridgePiles = async () => {
       });
     } catch (error) {
       setUnpricedPlateError(getErrorMessage(error));
+    }
+  };
+
+  const handleApplyInvalidWidths = async () => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setInvalidWidthError(null);
+    try {
+      await resolveInvalidWidthsMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        decisions: (currentDraft.metadata.invalid_width_lines ?? []).map((item) => {
+          const decision = state.invalidWidthActions[item.id];
+          const upper = item.replacements.reduce<(typeof item.replacements)[number] | null>(
+            (best, repl) => (best == null || repl.width_mm > best.width_mm ? repl : best),
+            null,
+          );
+          return {
+            lineId: item.id,
+            sourceLine: item.line,
+            action: decision?.action ?? (upper != null ? "replace_width" : "exclude"),
+            widthMm: decision?.widthMm ?? upper?.width_mm ?? null,
+          };
+        }),
+      });
+    } catch (error) {
+      setInvalidWidthError(getErrorMessage(error));
     }
   };
 
@@ -1247,6 +1278,9 @@ const handleFinishBridgePiles = async () => {
   const hasUnresolvedUnpricedPlates =
     Boolean(currentDraft?.metadata.unpriced_plate_lines?.length) &&
     !currentDraft?.metadata.unpriced_plates_resolved;
+  const hasUnresolvedInvalidWidths =
+    Boolean(currentDraft?.metadata.invalid_width_lines?.length) &&
+    !currentDraft?.metadata.invalid_widths_resolved;
 
   const canNavigateToStep = (step: WizardStepId): boolean => {
     if (
@@ -1292,14 +1326,19 @@ const handleFinishBridgePiles = async () => {
       if (
         step === "client" &&
         !isSimpleProductFlow &&
-        (hasUnresolvedWidePlates || hasUnresolvedUnpricedPlates || state.pendingBatchReview)
+        (hasUnresolvedWidePlates ||
+          hasUnresolvedInvalidWidths ||
+          hasUnresolvedUnpricedPlates ||
+          state.pendingBatchReview)
       ) {
         setStepError(
           state.pendingBatchReview
             ? "Сначала подтвердите список текущего источника — «Список верен»."
             : hasUnresolvedWidePlates
               ? "Сначала примите решение по позициям шире стандартной."
-              : "Сначала примите решение по позициям без цены в прайсе.",
+              : hasUnresolvedInvalidWidths
+                ? "Нестандартная ширина: замените на заводской рез или исключите позицию."
+                : "Сначала примите решение по позициям без цены в прайсе.",
         );
         return;
       }
@@ -1563,14 +1602,17 @@ const handleFinishBridgePiles = async () => {
         errorMessage={stepError}
         widePlateErrorMessage={widePlateError}
         unpricedPlateErrorMessage={unpricedPlateError}
+        invalidWidthErrorMessage={invalidWidthError}
         isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updatePlatesMutation.isPending}
         isAiProcessing={applyAiPlatesMutation.isPending}
         isResolvingWidePlates={resolveWidePlatesMutation.isPending}
         isResolvingUnpricedPlates={resolveUnpricedPlatesMutation.isPending}
+        isResolvingInvalidWidths={resolveInvalidWidthsMutation.isPending}
         isConfirmingBatch={updatePlatesMutation.isPending}
         isProceeding={false}
         widePlateDecisions={state.widePlateActions}
         unpricedPlateDecisions={state.unpricedPlateActions}
+        invalidWidthDecisions={state.invalidWidthActions}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
@@ -1595,6 +1637,10 @@ const handleFinishBridgePiles = async () => {
           dispatch({ type: "set-unpriced-action", lineId, action, loadCode })
         }
         onApplyUnpricedPlates={() => void handleApplyUnpricedPlates()}
+        onInvalidWidthDecisionChange={(lineId, action, widthMm) =>
+          dispatch({ type: "set-invalid-width-action", lineId, action, widthMm })
+        }
+        onApplyInvalidWidths={() => void handleApplyInvalidWidths()}
         onReset={handleCreateNewOffer}
         lineRowHandlers={lineRowHandlers}
       />

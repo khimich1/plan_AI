@@ -1,10 +1,10 @@
 # Spec: Неверная ширина в составе КП
 
 > **Источник идеи:** [`ai_docs/ideas/kp-nevernaia-shirina.md`](../ideas/kp-nevernaia-shirina.md)  
-> **Фаза SDD:** SPECIFY ✅ → PLAN ✅ → TASKS/IMPLEMENT ⏳  
+> **Фаза SDD:** SPECIFY ✅ → PLAN ✅ → TASKS/IMPLEMENT ✅  
 > **План:** [`ai_docs/develop/plans/2026-09-02-kp-nevernaia-shirina.md`](../develop/plans/2026-09-02-kp-nevernaia-shirina.md)  
 > **Дата:** 2026-09-02  
-> **Статус:** план на ревью  
+> **Статус:** реализовано (2026-09-03), коммит не делался  
 > **Связанные:** `UnpricedPlatesInlineSection`, `WidePlatesInlineSection`, `commercial_plate_resolve`, `parse_pb_width_to_m`, `kp-unpriced-plates-replacement.md`
 
 ---
@@ -263,14 +263,16 @@ def suggest_factory_width_mm(width_mm: int) -> list[int]:
 
 ## Success Criteria
 
-- [ ] Заказ со скрина (смесь 12 и 8): три строки `-8-` в карточке с 7,2 и 8,6; двенадцатье — нет. Расчёт недоступен.
-- [ ] Выбор 8,6 → «Применить» → в составе `ПБ 29-8,6-8п` (и аналоги), гейт пуст, цена не выше полной 1,2 м из‑за «ложной восьмёрки» как 800 мм с резом.
-- [ ] `ПБ 60-10-8п` → гейт, замены 9,2 и 10,2.
-- [ ] `ПБ 78-0.3-8п` и `ПБ 78-3-8п` — без гейта.
-- [ ] `ПБ 60-15-8п` — только wide, не эта карточка.
-- [ ] Карандаш `29-8` → `29-8,6` + «Список верен» — карточки нет.
-- [ ] Exclude единственной неверной при наличии других валидных — заказ жив.
-- [ ] `pytest tests/ -q` и `npm run build` зелёные.
+- [x] Заказ со скрина (смесь 12 и 8): три строки `-8-` в карточке с 7,2 и 8,6; двенадцатье — нет. Расчёт недоступен. — pytest `test_invalid_width_preview` + `test_invalid_width_wizard`; vitest карточки/подсветки.
+- [x] Выбор 8,6 → «Применить» → в составе `ПБ 29-8,6-8п` (и аналоги), гейт пуст, цена не выше полной 1,2 м из‑за «ложной восьмёрки» как 800 мм с резом. — pytest `test_invalid_width_resolve`.
+- [x] `ПБ 60-10-8п` → гейт, замены 9,2 и 10,2. — `suggest_factory_width_mm(1000)==[920,1020]`.
+- [x] `ПБ 78-0.3-8п` и `ПБ 78-3-8п` — без гейта.
+- [x] `ПБ 60-15-8п` — только wide, не эта карточка.
+- [x] Карандаш `29-8` → `29-8,6` + «Список верен» — карточки нет. — тот же `generate_preview`; отдельного браузерного e2e нет (нет chrome-devtools MCP).
+- [x] Exclude единственной неверной при наличии других валидных — заказ жив.
+- [ ] Полный `pytest tests/ -q` — 8 падений **вне фичи** (admin reset, offer identity, capacity gate, plate audit, generate-files schema / MagicMock). Целевые `factory_width` / `invalid_width` / wizard / resolve — зелёные.
+- [x] `cd frontend && npm run test -- --run src/features/commercial-offer` + `npm run typecheck` + `npm run build` — зелёные.
+- [ ] Полный `npm run test -- --run` — 1 падение `GsmPage` (`useAuth` без `AuthProvider`), не этот diff.
 
 ---
 
@@ -282,4 +284,4 @@ def suggest_factory_width_mm(width_mm: int) -> list[int]:
 
 ## Not in this spec
 
-Задачи реализации — в плане. Код не пишем, пока план не подтверждён.
+Задачи реализации — в плане. Код написан 2026-09-03 (IW-001…009). Коммит — только по просьбе.

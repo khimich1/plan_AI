@@ -1,7 +1,7 @@
 # Implementation Plan: Неверная ширина в составе КП
 
 **Created:** 2026-09-02  
-**Status:** 🟢 Ready (ожидает ревью плана)  
+**Status:** ✅ Implemented (IW-001…009, 2026-09-03)  
 **Spec:** [`ai_docs/specs/kp-nevernaia-shirina.md`](../../specs/kp-nevernaia-shirina.md)  
 **Idea:** [`ai_docs/ideas/kp-nevernaia-shirina.md`](../../ideas/kp-nevernaia-shirina.md)  
 **Orchestration:** `orch-2026-09-02-16-01-kp-nevernaia-shirina`
@@ -10,7 +10,7 @@
 
 Третий гейт wizard КП (после wide, до unpriced): любая разобранная ширина ≤ 12 дм вне таблицы резов блокирует расчёт. Менеджер заменяет на соседа (края диапазонов) или исключает строку. Карточка — клон unpriced, не новый UX.
 
-Код не пишем, пока этот план не подтверждён.
+Реализация закрыта. Коммиты не делались.
 
 ## Current state
 
@@ -56,46 +56,48 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 
 ### Phase 1: Foundation
 
-- [ ] **IW-001:** Диапазоны, соседи, rewrite марки `(type: feat-be)` (⏳ Pending)
-- [ ] **IW-002:** Сборка `invalid_width_lines` из order_data `(type: feat-be, dependsOn: IW-001)` (⏳ Pending)
+- [x] **IW-001:** Диапазоны, соседи, rewrite марки `(type: feat-be)` (✅ Done)
+- [x] **IW-002:** Сборка `invalid_width_lines` из order_data `(type: feat-be, dependsOn: IW-001)` (✅ Done)
 
 ### Checkpoint: Foundation
 
-- [ ] `pytest tests/test_factory_width.py tests/test_invalid_width_lines.py -q`
-- [ ] 800→[720,860], 1000→[920,1020], 200→[260], 300/1200 не в lines; wide 15 пропуск
+- [x] `pytest tests/test_factory_width.py tests/test_invalid_width_lines.py -q`
+- [x] 800→[720,860], 1000→[920,1020], 200→[260], 300/1200 не в lines; wide 15 пропуск
 
 ### Phase 2: Backend gate
 
-- [ ] **IW-003:** Preview кладёт lines в metadata `(type: feat-be, dependsOn: IW-002)` (⏳ Pending)
-- [ ] **IW-004:** Wizard блокирует calculate `(type: feat-be, dependsOn: IW-003)` (⏳ Pending)
-- [ ] **IW-005:** Resolve + endpoint `(type: api, dependsOn: IW-001,IW-003)` (⏳ Pending)
+- [x] **IW-003:** Preview кладёт lines в metadata `(type: feat-be, dependsOn: IW-002)` (✅ Done)
+- [x] **IW-004:** Wizard блокирует calculate `(type: feat-be, dependsOn: IW-003)` (✅ Done)
+- [x] **IW-005:** Resolve + endpoint `(type: api, dependsOn: IW-001,IW-003)` (✅ Done)
 
 ### Checkpoint: Backend
 
-- [ ] Preview смеси 12+8 → три invalid, `next_required_action=resolve_invalid_widths`
-- [ ] `replace_width` 860 → марка `8,6`, гейт пуст
-- [ ] Wide 15 и unpriced без ширины — как сейчас
-- [ ] `pytest tests/ -q -k "factory_width or invalid_width or unpriced or wide_plate"`
+- [x] Preview смеси 12+8 → три invalid, `next_required_action=resolve_invalid_widths`
+- [x] `replace_width` 860 → марка `8,6`, гейт пуст
+- [x] Wide 15 и unpriced без ширины — как сейчас
+- [x] `pytest tests/ -q -k "factory_width or invalid_width or unpriced or wide_plate"`
 
 ### Phase 3: Frontend
 
-- [ ] **IW-006:** Types, API, store `(type: feat-fe, dependsOn: IW-003)` (⏳ Pending)
-- [ ] **IW-007:** Подсветка и алерт в таблице `(type: ui, dependsOn: IW-006)` (⏳ Pending)
-- [ ] **IW-008:** Карточка и «Применить» `(type: ui, dependsOn: IW-005,IW-006)` (⏳ Pending)
+- [x] **IW-006:** Types, API, store `(type: feat-fe, dependsOn: IW-003)` (✅ Done)
+- [x] **IW-007:** Подсветка и алерт в таблице `(type: ui, dependsOn: IW-006)` (✅ Done)
+- [x] **IW-008:** Карточка и «Применить» `(type: ui, dependsOn: IW-005,IW-006)` (✅ Done)
 
 ### Checkpoint: UI
 
-- [ ] Карточка под таблицей, предвыбор верхнего соседа, Apply disabled без выбора
-- [ ] Строка `-8-` красная; `12` и `0.3` без этого kind
+- [x] Карточка под таблицей, предвыбор верхнего соседа, Apply disabled без выбора
+- [x] Строка `-8-` красная; `12` и `0.3` без этого kind
 
 ### Phase 4: Verify
 
-- [ ] **IW-009:** Регрессия + спека `(type: chore, dependsOn: IW-004,IW-005,IW-007,IW-008)` (⏳ Pending)
+- [x] **IW-009:** Регрессия + спека `(type: chore, dependsOn: IW-004,IW-005,IW-007,IW-008)` (✅ Done)
 
 ### Checkpoint: Complete
 
-- [ ] Success Criteria спеки
-- [ ] `pytest tests/ -q` и `cd frontend && npm run test -- --run && npm run typecheck && npm run build`
+- [x] Success Criteria спеки (по факту автотестов; браузерный e2e не гонялся)
+- [ ] Полный `pytest tests/ -q` — 8 падений **вне фичи** (admin reset, offer identity, capacity, audit, generate-files schema)
+- [x] `cd frontend && npm run test -- --run src/features/commercial-offer` + `typecheck` + `build`
+- [ ] Полный `npm run test -- --run` — 1 падение `GsmPage` (AuthProvider), не этот diff
 
 ---
 
@@ -104,12 +106,12 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 **Description:** Чистый домен без FastAPI: таблица резов, проверка мм, два соседа, label в дм, перепись только части W в марке `L-W-N`.
 
 **Acceptance criteria:**
-- [ ] `is_factory_width_mm`: 260–320, 460–530, 660–720, 860–920, 1020–1080, 1200 — true; 200, 400, 600, 800, 1000, 1100, 1190 — false
-- [ ] `suggest_factory_width_mm(800)==[720,860]`; `(1000)==[920,1020]`; `(200)==[260]`; `(1100)==[1080,1200]`; in-range → `[]`
-- [ ] `Плиты ПБ 29-8-8п` + 860 → `Плиты ПБ 29-8,6-8п`; qty и нагрузка на месте
+- [x] `is_factory_width_mm`: 260–320, 460–530, 660–720, 860–920, 1020–1080, 1200 — true; 200, 400, 600, 800, 1000, 1100, 1190 — false
+- [x] `suggest_factory_width_mm(800)==[720,860]`; `(1000)==[920,1020]`; `(200)==[260]`; `(1100)==[1080,1200]`; in-range → `[]`
+- [x] `Плиты ПБ 29-8-8п` + 860 → `Плиты ПБ 29-8,6-8п`; qty и нагрузка на месте
 
 **Verification:**
-- [ ] `pytest tests/test_factory_width.py -q`
+- [x] `pytest tests/test_factory_width.py -q`
 
 **Dependencies:** None
 
@@ -126,13 +128,13 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 **Description:** Из `order_data` + `normalized_lines` собрать список проблемных позиций с replacements (`width_mm`, `width_label`, `price` если `lookup_plate_price` > 0). Строки из неresolved `wide_plate_lines` не включать. Не плиты — пропуск.
 
 **Acceptance criteria:**
-- [ ] Смесь 29-12 и 29-8 → одна invalid, replacements 720/860
-- [ ] `78-0.3` / `78-3` → пусто
-- [ ] `60-15` при переданном wide skip → пусто
-- [ ] Нет цены — replacement всё равно есть, `price` null/omit
+- [x] Смесь 29-12 и 29-8 → одна invalid, replacements 720/860
+- [x] `78-0.3` / `78-3` → пусто
+- [x] `60-15` при переданном wide skip → пусто
+- [x] Нет цены — replacement всё равно есть, `price` null/omit
 
 **Verification:**
-- [ ] `pytest tests/test_invalid_width_lines.py -q`
+- [x] `pytest tests/test_invalid_width_lines.py -q`
 
 **Dependencies:** IW-001
 
@@ -149,12 +151,12 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 **Description:** `generate_preview` кладёт lines в `CommercialPreviewResult`. `build_preview_metadata` сериализует `invalid_width_lines` и считает `invalid_widths_resolved`. Схемы Pydantic. Не-плитные черновики — пустой список / resolved true.
 
 **Acceptance criteria:**
-- [ ] Preview текста со скрина (12+8) → ровно три invalid (`29-8`, `32-8`, `36-8`)
-- [ ] `invalid_widths_resolved is False` тогда и только тогда, когда список непуст
-- [ ] Сваи/ступени не получают ложный гейт
+- [x] Preview текста со скрина (12+8) → ровно три invalid (`29-8`, `32-8`, `36-8`)
+- [x] `invalid_widths_resolved is False` тогда и только тогда, когда список непуст
+- [x] Сваи/ступени не получают ложный гейт
 
 **Verification:**
-- [ ] pytest на `generate_preview` / serialize (новый или рядом с commercial_service)
+- [x] pytest на `generate_preview` / serialize (новый или рядом с commercial_service)
 
 **Dependencies:** IW-002
 
@@ -173,13 +175,13 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 **Description:** `ERR_INVALID_WIDTHS`, `WizardNextRequiredAction.resolve_invalid_widths`, blocking в calculation + `infer_wizard_current_step` / `infer_next_required_action`. Порядок: wide раньше, unpriced позже.
 
 **Acceptance criteria:**
-- [ ] Есть invalid и не resolved → `next_required_action=resolve_invalid_widths`, `can_proceed_to=[]`, calculate недоступен
-- [ ] Одновременно wide + invalid → action всё ещё `resolve_wide_plates`
-- [ ] Только unpriced без invalid → как сейчас
+- [x] Есть invalid и не resolved → `next_required_action=resolve_invalid_widths`, `can_proceed_to=[]`, calculate недоступен
+- [x] Одновременно wide + invalid → action всё ещё `resolve_wide_plates`
+- [x] Только unpriced без invalid → как сейчас
 
 **Verification:**
-- [ ] Расширить `tests/test_commercial_unpriced_plates_resolve.py` или `tests/test_invalid_width_wizard.py`
-- [ ] `pytest tests/ -q -k "wizard_state or invalid_width"`
+- [x] Расширить `tests/test_commercial_unpriced_plates_resolve.py` или `tests/test_invalid_width_wizard.py`
+- [x] `pytest tests/ -q -k "wizard_state or invalid_width"`
 
 **Dependencies:** IW-003
 
@@ -198,13 +200,13 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 **Description:** `INVALID_WIDTH_RESOLVE` в `commercial_plate_resolve`: bind `replace_width`/`exclude`, rewrite через IW-001, persist preview. `POST /drafts/{id}/invalid-widths/resolve`. Workflow-обёртка как у unpriced.
 
 **Acceptance criteria:**
-- [ ] replace 29-8 → 860: в draft имя с `8,6`, invalid пуст
-- [ ] `width_mm` не из replacements → 400
-- [ ] exclude всех при пустом остатке → ошибка «список стал пустым»
-- [ ] exclude неверной при живых 12-х — заказ жив
+- [x] replace 29-8 → 860: в draft имя с `8,6`, invalid пуст
+- [x] `width_mm` не из replacements → 400
+- [x] exclude всех при пустом остатке → ошибка «список стал пустым»
+- [x] exclude неверной при живых 12-х — заказ жив
 
 **Verification:**
-- [ ] `pytest tests/test_invalid_width_resolve.py -q` (зеркало `test_commercial_unpriced_plates_resolve.py`)
+- [x] `pytest tests/test_invalid_width_resolve.py -q` (зеркало `test_commercial_unpriced_plates_resolve.py`)
 
 **Dependencies:** IW-001, IW-003
 
@@ -224,12 +226,12 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 **Description:** Зеркало контракта: типы lines/replacements/action, `resolveInvalidWidths` в API, `invalidWidthActions` в wizard store (как unpriced).
 
 **Acceptance criteria:**
-- [ ] `WizardNextRequiredAction` включает `resolve_invalid_widths`
-- [ ] Store сбрасывает actions после resolved preview
-- [ ] `tsc` на затронутых файлах без дыр в типах metadata
+- [x] `WizardNextRequiredAction` включает `resolve_invalid_widths`
+- [x] Store сбрасывает actions после resolved preview
+- [x] `tsc` на затронутых файлах без дыр в типах metadata
 
 **Verification:**
-- [ ] `cd frontend && npm run test -- --run src/features/commercial-offer/store/wizardDraftStore.test.tsx`
+- [x] `cd frontend && npm run test -- --run src/features/commercial-offer/store/wizardDraftStore.test.tsx`
 
 **Dependencies:** IW-003
 
@@ -247,12 +249,12 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 **Description:** kind `invalid_width` в `plateLineHighlights` (стиль как `wide`). Алерт в `KpPlatePreviewPanel`: N позиций вне таблицы.
 
 **Acceptance criteria:**
-- [ ] `29-8-8п` → kind `invalid_width`
-- [ ] `12` и `0.3` этим kind не красятся
-- [ ] Wide не перетирается этим kind (приоритет wide, как в спеке)
+- [x] `29-8-8п` → kind `invalid_width`
+- [x] `12` и `0.3` этим kind не красятся
+- [x] Wide не перетирается этим kind (приоритет wide, как в спеке)
 
 **Verification:**
-- [ ] `cd frontend && npm run test -- --run src/features/commercial-offer/lib/plateLineHighlights.test.ts src/features/commercial-offer/components/KpPlatePreviewPanel.test.tsx`
+- [x] `cd frontend && npm run test -- --run src/features/commercial-offer/lib/plateLineHighlights.test.ts src/features/commercial-offer/components/KpPlatePreviewPanel.test.tsx`
 
 **Dependencies:** IW-006
 
@@ -271,13 +273,13 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 **Description:** `InvalidWidthsInlineSection` (клон unpriced): радио замен с ценой, exclude, предвыбор max(width_mm) среди replacements, Apply. Вставить на `PlateInputStep` между wide и unpriced. Wizard: collect decisions + вызов API.
 
 **Acceptance criteria:**
-- [ ] Apply disabled, пока не по всем строкам есть действие
-- [ ] Для 800 предвыбран 860
-- [ ] `next_required_action=resolve_invalid_widths` не пускает дальше, пока не Apply
-- [ ] Нет `confirm as-is`
+- [x] Apply disabled, пока не по всем строкам есть действие
+- [x] Для 800 предвыбран 860
+- [x] `next_required_action=resolve_invalid_widths` не пускает дальше, пока не Apply
+- [x] Нет `confirm as-is`
 
 **Verification:**
-- [ ] vitest на карточку + кусок wizard/PlateInputStep
+- [x] vitest на карточку + кусок wizard/PlateInputStep
 
 **Dependencies:** IW-005, IW-006
 
@@ -296,9 +298,9 @@ IW-004 и IW-005 после IW-003 можно параллелить. IW-006 typ
 **Description:** Полный прогон тестов. Обновить фазу SDD в спеке (PLAN ✅, TASKS/IMPLEMENT по факту). Не коммитить без просьбы.
 
 **Acceptance criteria:**
-- [ ] `pytest tests/ -q` зелёный
-- [ ] `cd frontend && npm run test -- --run && npm run typecheck && npm run build` зелёные
-- [ ] Спека: ссылка на этот план, чекбоксы Success Criteria отмечены по факту
+- [ ] `pytest tests/ -q` целиком зелёный — нет: 8 падений вне фичи
+- [x] Целевые pytest `factory_width` / `invalid_width` / wizard / resolve + commercial-offer vitest + `typecheck` + `build` зелёные
+- [x] Спека: ссылка на этот план, чекбоксы Success Criteria отмечены по факту
 
 **Verification:** команды выше
 

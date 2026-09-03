@@ -5,6 +5,7 @@ import type {
   CommercialDraftDetails,
   OcrCorrection,
   PlateInputMode,
+  InvalidWidthAction,
   UnpricedPlateAction,
   WidePlateAction,
 } from "@/features/commercial-offer/types/commercialOffer";
@@ -26,6 +27,7 @@ import {
   resolveActivePageOcrVerifyFailed,
 } from "@/features/commercial-offer/lib/ocrVerifyFailed";
 import { overlayDraftWithLiveWideLines } from "@/features/commercial-offer/lib/liveWidePlateLines";
+import { InvalidWidthsInlineSection } from "@/features/commercial-offer/components/InvalidWidthsInlineSection";
 import { UnpricedPlatesInlineSection } from "@/features/commercial-offer/components/UnpricedPlatesInlineSection";
 import { WidePlatesInlineSection } from "@/features/commercial-offer/components/WidePlatesInlineSection";
 import { SourceImageQueueControls } from "@/features/commercial-offer/components/SourceImageQueueControls";
@@ -54,14 +56,17 @@ type PlateInputStepProps = {
   errorMessage: string | null;
   widePlateErrorMessage?: string | null;
   unpricedPlateErrorMessage?: string | null;
+  invalidWidthErrorMessage?: string | null;
   isRecognizing: boolean;
   isAiProcessing?: boolean;
   isResolvingWidePlates?: boolean;
   isResolvingUnpricedPlates?: boolean;
+  isResolvingInvalidWidths?: boolean;
   isConfirmingBatch?: boolean;
   isProceeding?: boolean;
   widePlateDecisions?: Record<string, { action: WidePlateAction; replacementText: string }>;
   unpricedPlateDecisions?: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
+  invalidWidthDecisions?: Record<string, { action: InvalidWidthAction; widthMm: number | null }>;
   aiInstruction?: string;
   onAiInstructionChange?: (value: string) => void;
   onApplyAi?: () => void;
@@ -85,6 +90,12 @@ type PlateInputStepProps = {
     loadCode: number | null,
   ) => void;
   onApplyUnpricedPlates?: () => void;
+  onInvalidWidthDecisionChange?: (
+    lineId: string,
+    action: InvalidWidthAction,
+    widthMm: number | null,
+  ) => void;
+  onApplyInvalidWidths?: () => void;
   onReset: () => void;
   lineRowHandlers?: LineRowHandlers;
 };
@@ -139,14 +150,17 @@ export const PlateInputStep = ({
   errorMessage,
   widePlateErrorMessage,
   unpricedPlateErrorMessage,
+  invalidWidthErrorMessage,
   isRecognizing,
   isAiProcessing = false,
   isResolvingWidePlates = false,
   isResolvingUnpricedPlates = false,
+  isResolvingInvalidWidths = false,
   isConfirmingBatch = false,
   isProceeding = false,
   widePlateDecisions = {},
   unpricedPlateDecisions = {},
+  invalidWidthDecisions = {},
   aiInstruction = "",
   onAiInstructionChange,
   onApplyAi,
@@ -166,6 +180,8 @@ export const PlateInputStep = ({
   onApplyWidePlates,
   onUnpricedPlateDecisionChange,
   onApplyUnpricedPlates,
+  onInvalidWidthDecisionChange,
+  onApplyInvalidWidths,
   onReset,
   lineRowHandlers,
 }: PlateInputStepProps) => {
@@ -561,6 +577,17 @@ export const PlateInputStep = ({
 
             />
 
+          )}
+
+          {draft && onInvalidWidthDecisionChange && onApplyInvalidWidths && (
+            <InvalidWidthsInlineSection
+              draft={draft}
+              decisions={invalidWidthDecisions}
+              isPending={isResolvingInvalidWidths}
+              errorMessage={invalidWidthErrorMessage}
+              onDecisionChange={onInvalidWidthDecisionChange}
+              onApply={onApplyInvalidWidths}
+            />
           )}
 
           {onUnpricedPlateDecisionChange && onApplyUnpricedPlates && (

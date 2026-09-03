@@ -203,6 +203,8 @@ class CommercialDraftLifecycle:
         metadata["march_batches"] = []
         metadata["wide_plate_lines"] = []
         metadata["wide_plates_resolved"] = True
+        metadata["invalid_width_lines"] = []
+        metadata["invalid_widths_resolved"] = True
         metadata["unparsed_lines"] = []
         metadata["warnings"] = []
         metadata["last_source_filename"] = ""
@@ -757,6 +759,8 @@ class CommercialDraftLifecycle:
             "execution_terms": execution_terms,
             "wide_plates_resolved": True,
             "wide_plate_lines": [],
+            "invalid_widths_resolved": True,
+            "invalid_width_lines": [],
             "append_batches": [],
             "resume_kp_id": int(kp_id),
             "current_step": WizardStepId.result.value,

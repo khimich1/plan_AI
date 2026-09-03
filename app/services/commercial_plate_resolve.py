@@ -1,4 +1,4 @@
-"""Unified wide / unpriced plate resolve for commercial drafts.
+"""Unified wide / unpriced / invalid-width plate resolve for commercial drafts.
 
 No workflow import: this module must stay free of CommercialWorkflowService.
 Host is duck-typed (``CommercialWorkflowService`` instance).
@@ -16,7 +16,7 @@ from core.plate_order_context import PlateOrderContext
 
 @dataclass(frozen=True)
 class PlateResolveSpec:
-    kind: Literal["wide", "unpriced"]
+    kind: Literal["wide", "unpriced", "invalid_width"]
     unresolved_error: str
     empty_after_error: str
     invalid_action_error: str
@@ -43,6 +43,16 @@ UNPRICED_PLATE_RESOLVE = PlateResolveSpec(
     invalid_action_error="Некорректное действие для позиции без цены.",
     decisions_meta_key="unpriced_plate_decisions",
     extra_resolved_flag="unpriced_plates_resolved",
+    force_wide_resolved=False,
+    coerce_blank_source_line=True,
+)
+INVALID_WIDTH_RESOLVE = PlateResolveSpec(
+    kind="invalid_width",
+    unresolved_error="Нужно выбрать действие для всех позиций с нестандартной шириной.",
+    empty_after_error="После обработки нестандартной ширины список стал пустым.",
+    invalid_action_error="Некорректное действие для позиции с нестандартной шириной.",
+    decisions_meta_key="invalid_width_decisions",
+    extra_resolved_flag="invalid_widths_resolved",
     force_wide_resolved=False,
     coerce_blank_source_line=True,
 )
@@ -78,6 +88,20 @@ class CommercialPlateResolve:
             decisions,
             plate_order_ctx=plate_order_ctx,
             spec=UNPRICED_PLATE_RESOLVE,
+        )
+
+    def resolve_invalid_widths(
+        self,
+        draft_id: str,
+        decisions: Iterable[dict[str, Any]],
+        *,
+        plate_order_ctx: PlateOrderContext,
+    ) -> dict[str, Any]:
+        return self.resolve_plate_items(
+            draft_id,
+            decisions,
+            plate_order_ctx=plate_order_ctx,
+            spec=INVALID_WIDTH_RESOLVE,
         )
 
     def resolve_plate_items(
@@ -164,6 +188,10 @@ class CommercialPlateResolve:
     ) -> list[dict[str, Any]]:
         if spec.kind == "wide":
             return self._normalize_wide_plate_lines(metadata.get("wide_plate_lines", []))
+        if spec.kind == "invalid_width":
+            return self._wf.draft_service.serialize_invalid_width_lines(
+                metadata.get("invalid_width_lines", [])
+            )
         return self._wf.draft_service.serialize_unpriced_plate_lines(
             metadata.get("unpriced_plate_lines", [])
         )
@@ -225,7 +253,50 @@ class CommercialPlateResolve:
     ) -> dict[str, Any]:
         if spec.kind == "wide":
             return decision
+        if spec.kind == "invalid_width":
+            return self._bind_invalid_width_decision(item, decision)
         return self._bind_unpriced_plate_decision(item, decision)
+
+    @staticmethod
+    def _bind_invalid_width_decision(
+        item: dict[str, Any],
+        decision: dict[str, Any],
+    ) -> dict[str, Any]:
+        action = str(decision.get("action", "")).strip().lower()
+        allowed_widths = {
+            int(repl["width_mm"])
+            for repl in (item.get("replacements") or [])
+            if isinstance(repl, dict) and repl.get("width_mm") is not None
+        }
+        if action == "replace_width":
+            if not allowed_widths:
+                raise ValueError(
+                    "Для позиции без заводских замен доступно только исключение."
+                )
+            raw_width = decision.get("width_mm")
+            if raw_width is None:
+                raise ValueError("Для замены ширины нужно указать width_mm.")
+            try:
+                chosen_width = int(raw_width)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Некорректный width_mm для замены ширины.") from exc
+            if chosen_width not in allowed_widths:
+                raise ValueError(
+                    f"width_mm={chosen_width} не входит в предложенные замены."
+                )
+        elif action == "exclude":
+            pass
+        else:
+            raise ValueError("Некорректное действие для позиции с нестандартной шириной.")
+
+        line_id = str(item.get("id", "")).strip()
+        line = str(item.get("line", "")).strip()
+        return {
+            "line_id": line_id or None,
+            "source_line": line or None,
+            "action": action,
+            "width_mm": decision.get("width_mm"),
+        }
 
     @staticmethod
     def _bind_unpriced_plate_decision(
@@ -400,6 +471,15 @@ class CommercialPlateResolve:
 
         if action == "exclude":
             return []
+        if spec.kind == "invalid_width" and action == "replace_width":
+            new_width = int(decision["width_mm"])
+            rewritten = self._rewrite_invalid_width_line(
+                line,
+                item or {},
+                new_width,
+                restore_qty=not for_batches,
+            )
+            return [rewritten]
         if action == "replace_load":
             new_load = int(decision["load_code"])
             rewritten = self._rewrite_unpriced_load_line(
@@ -412,6 +492,27 @@ class CommercialPlateResolve:
         if for_batches:
             return [line]
         raise ValueError(spec.invalid_action_error)
+
+    @staticmethod
+    def _rewrite_invalid_width_line(
+        line: str,
+        item: dict[str, Any],
+        new_width_mm: int,
+        *,
+        restore_qty: bool,
+    ) -> str:
+        from core.factory_width import rewrite_plate_line_width
+
+        try:
+            return rewrite_plate_line_width(line, new_width_mm)
+        except ValueError:
+            fallback = str(item.get("name") or line)
+            rewritten = rewrite_plate_line_width(fallback, new_width_mm)
+            if restore_qty:
+                qty_match = re.search(r"(\d+)\s*$", line.strip())
+                if qty_match and not re.search(r"\d+\s*$", rewritten.strip()):
+                    rewritten = f"{rewritten} {qty_match.group(1)}"
+            return rewritten
 
     @staticmethod
     def _rewrite_unpriced_load_line(

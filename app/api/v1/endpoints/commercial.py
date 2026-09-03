@@ -29,7 +29,8 @@ from app.schemas.commercial import (
     CommercialPileGradesUpdateRequest,
     CommercialPreviewRequest, CommercialRestoreLinesRequest, CommercialSaveDraftRequest,
     CommercialDraftLinePatchRequest, CommercialSaveOfferResponse,
-    CommercialUnpricedPlatesResolveRequest, CommercialWidePlatesResolveRequest,
+    CommercialInvalidWidthsResolveRequest, CommercialUnpricedPlatesResolveRequest,
+    CommercialWidePlatesResolveRequest,
 )
 from app.services.commercial_draft_service import CommercialDraftService
 from app.services.commercial_line_lint import LineLint, lint_source_lines, unparsed_line_texts
@@ -388,6 +389,21 @@ def resolve_draft_unpriced_plates(
     return _details(_sync_draft(
         "resolve_draft_unpriced_plates",
         lambda: workflow.resolve_unpriced_plates(
+            draft_id, decisions=[item.model_dump() for item in payload.decisions],
+            plate_order_ctx=plate_order_ctx,
+        ),
+        plate_parse=True,
+    ))
+
+@router.post("/drafts/{draft_id}/invalid-widths/resolve", response_model=CommercialDraftDetailsResponse)
+def resolve_draft_invalid_widths(
+    payload: CommercialInvalidWidthsResolveRequest, draft_id: str = Depends(verify_draft_ownership),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    return _details(_sync_draft(
+        "resolve_draft_invalid_widths",
+        lambda: workflow.resolve_invalid_widths(
             draft_id, decisions=[item.model_dump() for item in payload.decisions],
             plate_order_ctx=plate_order_ctx,
         ),

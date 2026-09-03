@@ -108,4 +108,37 @@ describe("KpPlatePreviewPanel row icons", () => {
     expect(screen.getByText(/позиция шире стандартной/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Изменить строку ln_wide" })).not.toBeDisabled();
   });
+
+  it("alerts and marks invalid-width rows, but not 12 or 0.3", () => {
+    const draft = makeDraft({
+      invalid_width_lines: [
+        {
+          id: "invalid-width-1",
+          name: "Плиты ПБ 29-8-8п",
+          line: "ПБ 29-8-8п 1",
+          qty: 1,
+          length_m: 2.9,
+          width_m: 0.8,
+          width_mm: 800,
+          load_class: 800,
+          replacements: [
+            { width_mm: 720, width_label: "7,2" },
+            { width_mm: 860, width_label: "8,6" },
+          ],
+        },
+      ],
+      invalid_widths_resolved: false,
+    });
+    draft.order_data = [
+      { line_id: "ln_8", name: "Плиты ПБ 29-8-8п", qty: 1, unit_price: 11248, length_m: 2.9, width_m: 0.8 },
+      { line_id: "ln_12", name: "Плиты ПБ 29-12-8п", qty: 1, unit_price: 9914, length_m: 2.9, width_m: 1.2 },
+      { line_id: "ln_03", name: "Плиты ПБ 78-0.3-8п", qty: 1, unit_price: 5000, length_m: 7.8, width_m: 0.3 },
+    ];
+    render(<KpPlatePreviewPanel draft={draft} normalizedText="ПБ 29-8-8п 1" />);
+    expect(screen.getByText(/позиция с шириной вне таблицы резов/)).toBeInTheDocument();
+    expect(screen.getByText("Нестандартная ширина — решение ниже")).toBeInTheDocument();
+    expect(screen.getByText("Плиты ПБ 29-12-8п")).toBeInTheDocument();
+    expect(screen.getByText("Плиты ПБ 78-0.3-8п")).toBeInTheDocument();
+    expect(screen.getAllByText("Нестандартная ширина — решение ниже")).toHaveLength(1);
+  });
 });

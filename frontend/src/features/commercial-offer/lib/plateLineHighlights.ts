@@ -1,6 +1,6 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 
-export type PlateLineHighlightKind = "correction" | "unparsed" | "wide" | "dobor";
+export type PlateLineHighlightKind = "correction" | "unparsed" | "wide" | "invalid_width" | "dobor";
 
 export type PlateLineHighlight = {
   kind: PlateLineHighlightKind;
@@ -25,6 +25,11 @@ export const buildPlateLineHighlightMap = (
   );
   const wideKeys = new Set(
     (draft.metadata.wide_plate_lines ?? []).map((item) => normalizeLineKey(item.line)),
+  );
+  const invalidWidthKeys = new Set(
+    (draft.metadata.invalid_width_lines ?? []).flatMap((item) =>
+      [item.line, item.name].filter(Boolean).map((value) => normalizeLineKey(value)),
+    ),
   );
 
   const doborByLineKey = new Map<string, { pairId: string; partnerLine: string }>();
@@ -51,6 +56,13 @@ export const buildPlateLineHighlightMap = (
       highlights.set(index, {
         kind: "wide",
         title: "Позиция шире стандартной — требует решения ниже",
+      });
+      return;
+    }
+    if (invalidWidthKeys.has(key) && !draft.metadata.invalid_widths_resolved) {
+      highlights.set(index, {
+        kind: "invalid_width",
+        title: "Нестандартная ширина — решение ниже",
       });
       return;
     }
@@ -137,6 +149,7 @@ export const PLATE_LINE_HIGHLIGHT_STYLES: Record<PlateLineHighlightKind, { backg
   correction: { background: "#fffaeb", border: "#fec84b" },
   unparsed: { background: "#fff4ed", border: "#f9a86c" },
   wide: { background: "#fef3f2", border: "#f97066" },
+  invalid_width: { background: "#fef3f2", border: "#f97066" },
   dobor: { background: "#f0f9ff", border: "#36bffa" },
 };
 

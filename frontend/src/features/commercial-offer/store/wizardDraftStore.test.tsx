@@ -312,6 +312,66 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
     expect(stateRef.current?.normalizedText).toBe("ПБ 58-15-8 10");
     expect(stateRef.current?.widePlateActions).toEqual({});
   });
+
+  it("hydrate-draft clears invalidWidthActions after resolved preview", async () => {
+    const stateRef: MutableRefObject<ReturnType<typeof useWizardDraftStore>["state"] | null> = { current: null };
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    await act(async () => {
+      dispatchRef.current?.({
+        type: "set-invalid-width-action",
+        lineId: "invalid-width-1",
+        action: "replace_width",
+        widthMm: 860,
+      });
+      dispatchRef.current?.({
+        type: "hydrate-draft",
+        payload: makeDraft({
+          metadata: {
+            invalid_width_lines: [],
+            invalid_widths_resolved: true,
+          },
+        }),
+      });
+    });
+
+    expect(stateRef.current?.invalidWidthActions).toEqual({});
+  });
+
+  it("sync-after-invalid-widths resets invalidWidthActions", async () => {
+    const stateRef: MutableRefObject<ReturnType<typeof useWizardDraftStore>["state"] | null> = { current: null };
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    await act(async () => {
+      dispatchRef.current?.({
+        type: "set-invalid-width-action",
+        lineId: "invalid-width-1",
+        action: "exclude",
+        widthMm: null,
+      });
+      dispatchRef.current?.({
+        type: "sync-after-invalid-widths",
+        payload: makeDraft({
+          metadata: {
+            invalid_width_lines: [],
+            invalid_widths_resolved: true,
+            normalized_text: "ПБ 29-12-8п 1",
+          },
+        }),
+      });
+    });
+
+    expect(stateRef.current?.invalidWidthActions).toEqual({});
+    expect(stateRef.current?.normalizedText).toBe("ПБ 29-12-8п 1");
+  });
 });
 
 /**

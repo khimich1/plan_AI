@@ -569,6 +569,19 @@ class CommercialWorkflowService:
             plate_order_ctx=plate_order_ctx,
         )
 
+    def resolve_invalid_widths(
+        self,
+        draft_id: str,
+        decisions: Iterable[dict[str, Any]],
+        *,
+        plate_order_ctx: PlateOrderContext,
+    ) -> dict[str, Any]:
+        return self.plate_resolve.resolve_invalid_widths(
+            draft_id,
+            decisions,
+            plate_order_ctx=plate_order_ctx,
+        )
+
     def update_draft_meta(
         self,
         draft_id: str,
