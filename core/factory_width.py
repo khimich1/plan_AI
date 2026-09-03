@@ -13,9 +13,10 @@ FACTORY_WIDTH_RANGES_MM: tuple[tuple[int, int], ...] = (
     (1200, 1200),
 )
 
+# «п» optional: user input often omits it («68-11-10 1»), display names keep it.
 _MARK_WIDTH_RE = re.compile(
     r"(?P<head>.*?)(?P<length>\d+(?:[.,]\d+)?)-(?P<width>\d+(?:[.,]\d+)?)-"
-    r"(?P<load>\d+(?:[.,]\d+)?\s*п)(?P<tail>.*)",
+    r"(?P<load>\d+(?:[.,]\d+)?)(?P<pe>\s*п)?(?P<tail>.*)",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -57,7 +58,8 @@ def rewrite_plate_line_width(line: str, new_width_mm: int) -> str:
     if not match:
         raise ValueError(f"Не удалось найти ширину в марке: {line!r}")
     label = format_factory_width_label(new_width_mm)
+    pe = match.group("pe") or ""
     return (
         f"{match.group('head')}{match.group('length')}-{label}-"
-        f"{match.group('load')}{match.group('tail')}"
+        f"{match.group('load')}{pe}{match.group('tail')}"
     )

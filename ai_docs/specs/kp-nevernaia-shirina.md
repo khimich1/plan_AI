@@ -5,7 +5,8 @@
 > **План:** [`ai_docs/develop/plans/2026-09-02-kp-nevernaia-shirina.md`](../develop/plans/2026-09-02-kp-nevernaia-shirina.md)  
 > **Дата:** 2026-09-02  
 > **Статус:** реализовано (2026-09-03), коммит не делался  
-> **Связанные:** `UnpricedPlatesInlineSection`, `WidePlatesInlineSection`, `commercial_plate_resolve`, `parse_pb_width_to_m`, `kp-unpriced-plates-replacement.md`
+> **Связанные:** `UnpricedPlatesInlineSection`, `WidePlatesInlineSection`, `commercial_plate_resolve`, `parse_pb_width_to_m`, `kp-unpriced-plates-replacement.md`  
+> **UX (экран 2 после сверки):** [`kp-plates-width-after-batch-review.md`](./kp-plates-width-after-batch-review.md)
 
 ---
 

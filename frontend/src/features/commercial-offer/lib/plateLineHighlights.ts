@@ -13,9 +13,15 @@ const normalizeLineKey = (line: string) => line.trim().toLowerCase();
 
 const stripUnparsedSuffix = (line: string) => line.replace(/\s*\(пропущено:.*\)\s*$/i, "").trim();
 
+export type PlateLineHighlightOptions = {
+  /** On OCR review screen: highlight wide plates only; invalid-width decisions come later. */
+  batchReview?: boolean;
+};
+
 export const buildPlateLineHighlightMap = (
   draft: CommercialDraftDetails,
   textLines: string[],
+  options?: PlateLineHighlightOptions,
 ): Map<number, PlateLineHighlight> => {
   const highlights = new Map<number, PlateLineHighlight>();
   const lines = textLines;
@@ -55,11 +61,13 @@ export const buildPlateLineHighlightMap = (
     if (wideKeys.has(key)) {
       highlights.set(index, {
         kind: "wide",
-        title: "Позиция шире стандартной — требует решения ниже",
+        title: options?.batchReview
+          ? "Позиция шире стандартной — решение на следующем экране"
+          : "Позиция шире стандартной — требует решения ниже",
       });
       return;
     }
-    if (invalidWidthKeys.has(key) && !draft.metadata.invalid_widths_resolved) {
+    if (!options?.batchReview && invalidWidthKeys.has(key) && !draft.metadata.invalid_widths_resolved) {
       highlights.set(index, {
         kind: "invalid_width",
         title: "Нестандартная ширина — решение ниже",
@@ -120,9 +128,10 @@ export const mergeReviewHighlights = (
   draft: CommercialDraftDetails | null,
   text: string,
   lintLines: Array<{ index: number; empty: boolean; ok: boolean; reason_text: string | null }>,
+  options?: PlateLineHighlightOptions,
 ): Map<number, PlateLineHighlight> => {
   const lines = text.split("\n");
-  const base = draft ? buildPlateLineHighlightMap(draft, lines) : new Map<number, PlateLineHighlight>();
+  const base = draft ? buildPlateLineHighlightMap(draft, lines, options) : new Map<number, PlateLineHighlight>();
   if (lintLines.length === 0) {
     return base;
   }

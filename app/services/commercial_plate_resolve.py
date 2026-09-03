@@ -12,6 +12,7 @@ from typing import Any, Iterable, Literal
 
 from app.schemas.commercial import WizardStepId
 from core.plate_order_context import PlateOrderContext
+from core.unpriced_plate_replacements import _dims_match, _load_code_from_item
 
 
 @dataclass(frozen=True)
@@ -398,6 +399,37 @@ class CommercialPlateResolve:
         return merged_lines
 
     @staticmethod
+    def _match_plate_resolve_item_to_line(
+        line: str,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        stripped = line.strip()
+        if not stripped:
+            return None
+        for item in items:
+            item_line = str(item.get("line", "")).strip()
+            if item_line and item_line == stripped:
+                return item
+            name = str(item.get("name", "")).strip()
+            if name and name in stripped:
+                return item
+        for item in items:
+            try:
+                length_m = float(item["length_m"])
+                width_m = float(item["width_m"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            load_code = _load_code_from_item(item)
+            if _dims_match(
+                length_m=length_m,
+                width_m=width_m,
+                load_code=load_code,
+                line=stripped,
+            ):
+                return item
+        return None
+
+    @staticmethod
     def _lookup_plate_resolve_decision(
         spec: PlateResolveSpec,
         line: str,
@@ -415,18 +447,7 @@ class CommercialPlateResolve:
                 return None, resolved_by_line.get(line)
             return None, resolved_by_line[line]
 
-        matched_item = next(
-            (
-                item
-                for item in items
-                if str(item.get("line", "")).strip() == line
-                or (
-                    str(item.get("name", "")).strip()
-                    and str(item.get("name", "")).strip() in line
-                )
-            ),
-            None,
-        )
+        matched_item = CommercialPlateResolve._match_plate_resolve_item_to_line(line, items)
         if matched_item is None:
             return None, None
         item_line = str(matched_item.get("line", "")).strip()

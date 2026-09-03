@@ -244,15 +244,20 @@ export const PlateInputStep = ({
   );
 
   const hasUnresolvedWidePlates =
-
     Boolean(liveWideDraft?.metadata.wide_plate_lines?.length) && !liveWideDraft?.metadata.wide_plates_resolved;
+  const hasUnresolvedInvalidWidths =
+    Boolean(draft?.metadata.invalid_width_lines?.length) && !draft?.metadata.invalid_widths_resolved;
+  const hasUnresolvedUnpricedPlates =
+    Boolean(draft?.metadata.unpriced_plate_lines?.length) && !draft?.metadata.unpriced_plates_resolved;
 
   const canConfirmBatch =
-    isBatchReviewMode && canConfirmActivePage && !hasUnresolvedWidePlates && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
+    isBatchReviewMode && canConfirmActivePage && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
   const canFinishPlates =
     hasDraft &&
     !pendingBatchReview &&
     !hasUnresolvedWidePlates &&
+    !hasUnresolvedInvalidWidths &&
+    !hasUnresolvedUnpricedPlates &&
     !isRecognizing &&
     !isAiProcessing &&
     !isProceeding;
@@ -321,11 +326,6 @@ export const PlateInputStep = ({
                   variant="primary"
                   onClick={onConfirmBatch}
                   disabled={!canConfirmBatch}
-                  title={
-                    hasUnresolvedWidePlates
-                      ? "Сначала примите решение по позициям шире стандартной"
-                      : undefined
-                  }
                 >
                   {isConfirmingBatch ? "Сохранение..." : "Список верен"}
                 </Button>
@@ -341,7 +341,11 @@ export const PlateInputStep = ({
                       ? "Сначала подтвердите текущий источник — «Список верен»"
                       : hasUnresolvedWidePlates
                         ? "Сначала примите решение по позициям шире стандартной"
-                        : undefined
+                        : hasUnresolvedInvalidWidths
+                          ? "Нестандартная ширина: замените на заводской рез или исключите позицию"
+                          : hasUnresolvedUnpricedPlates
+                            ? "Сначала примите решение по позициям без цены в прайсе"
+                            : undefined
                   }
                 >
                   {isProceeding ? "Переход..." : "Готово, далее"}
@@ -356,7 +360,11 @@ export const PlateInputStep = ({
                     title={
                       hasUnresolvedWidePlates
                         ? "Сначала примите решение по позициям шире стандартной"
-                        : undefined
+                        : hasUnresolvedInvalidWidths
+                          ? "Нестандартная ширина: замените на заводской рез или исключите позицию"
+                          : hasUnresolvedUnpricedPlates
+                            ? "Сначала примите решение по позициям без цены в прайсе"
+                            : undefined
                     }
                   >
                     {isProceeding ? "Переход..." : "Готово, далее"}
@@ -559,27 +567,18 @@ export const PlateInputStep = ({
             </>
           )}
 
-          {onWidePlateDecisionChange && onApplyWidePlates && (
-
+          {!isBatchReviewMode && onWidePlateDecisionChange && onApplyWidePlates && (
             <WidePlatesInlineSection
-
               draft={liveWideDraft ?? draft}
-
               decisions={widePlateDecisions}
-
               isPending={isResolvingWidePlates}
-
               errorMessage={widePlateErrorMessage}
-
               onDecisionChange={onWidePlateDecisionChange}
-
               onApply={onApplyWidePlates}
-
             />
-
           )}
 
-          {draft && onInvalidWidthDecisionChange && onApplyInvalidWidths && (
+          {!isBatchReviewMode && draft && onInvalidWidthDecisionChange && onApplyInvalidWidths && (
             <InvalidWidthsInlineSection
               draft={draft}
               decisions={invalidWidthDecisions}
@@ -590,7 +589,7 @@ export const PlateInputStep = ({
             />
           )}
 
-          {onUnpricedPlateDecisionChange && onApplyUnpricedPlates && (
+          {!isBatchReviewMode && onUnpricedPlateDecisionChange && onApplyUnpricedPlates && (
             <UnpricedPlatesInlineSection
               draft={draft}
               decisions={unpricedPlateDecisions}

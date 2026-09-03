@@ -547,7 +547,7 @@ describe("PlateInputStep live wide overlay", () => {
     onApplyWidePlates: noop,
   };
 
-  it("uses live editor 34-15-10п 15 instead of stale OCR 44-15-10п 5", () => {
+  it("does not show wide card during batch review; confirm stays enabled", () => {
     const draft = makeDraft("44-15-10п 5");
     draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];
     draft.metadata.wide_plates_resolved = false;
@@ -561,14 +561,31 @@ describe("PlateInputStep live wide overlay", () => {
       />,
     );
 
-    expect(screen.getByText("Нестандартная ширина")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /позиций требуют внимания/i }));
-    expect(screen.getByText(/Количество:\s*15/)).toBeInTheDocument();
-    expect(screen.queryByText(/Количество:\s*5/)).not.toBeInTheDocument();
-    expect(screen.queryByText("44-15-10п 5")).not.toBeInTheDocument();
+    expect(screen.queryByText("Нестандартная ширина")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
   });
 
-  it("hides wide card and does not block confirm when width is 12 dm", () => {
+  it("shows wide card after batch review on post-confirm screen", () => {
+    const draft = makeDraft("44-15-10п 5");
+    draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];
+    draft.metadata.wide_plates_resolved = false;
+
+    render(
+      <PlateInputStep
+        {...liveWideProps}
+        pendingBatchReview={false}
+        draft={draft}
+        batchReviewText="34-15-10п 15"
+        normalizedText="44-15-10п 5"
+      />,
+    );
+
+    expect(screen.getByText("Нестандартная ширина")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /позиций требуют внимания/i }));
+    expect(screen.getByText(/Количество:\s*5/)).toBeInTheDocument();
+  });
+
+  it("hides wide card during batch review when editor width is 12 dm", () => {
     const draft = makeDraft("44-15-10п 5");
     draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];
     draft.metadata.wide_plates_resolved = false;
@@ -584,6 +601,166 @@ describe("PlateInputStep live wide overlay", () => {
 
     expect(screen.queryByText("Нестандартная ширина")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
+  });
+});
+
+describe("PlateInputStep two-screen width gates", () => {
+  const decisionHandlers = {
+    onWidePlateDecisionChange: noop,
+    onApplyWidePlates: noop,
+    onInvalidWidthDecisionChange: noop,
+    onApplyInvalidWidths: noop,
+    onUnpricedPlateDecisionChange: noop,
+    onApplyUnpricedPlates: noop,
+  };
+
+  const screenProps = {
+    sourceText: "",
+    pages: [makePage("a")],
+    activePageId: "a",
+    recognizedImageUrl: "blob:photo",
+    recognizedImageName: "a.png",
+    errorMessage: null,
+    isRecognizing: false,
+    onAiInstructionChange: noop,
+    onApplyAi: noop,
+    onTextChange: noop,
+    onBatchReviewTextChange: noop,
+    onAddFiles: noop,
+    onRemovePage: noop,
+    onSelectPage: noop,
+    onRecognize: noop,
+    onConfirmBatch: noop,
+    onFinishPlates: noop,
+    onReset: noop,
+    ...decisionHandlers,
+  };
+
+  const invalidDraft = () => {
+    const draft = makeDraft("ПБ 29-8-8п 1");
+    draft.metadata.invalid_width_lines = [
+      {
+        id: "invalid-width-1",
+        name: "Плиты ПБ 29-8-8п",
+        line: "ПБ 29-8-8п 1",
+        qty: 1,
+        length_m: 2.9,
+        width_m: 0.8,
+        width_mm: 800,
+        load_class: 800,
+        replacements: [
+          { width_mm: 720, width_label: "7,2" },
+          { width_mm: 860, width_label: "8,6" },
+        ],
+      },
+    ];
+    draft.metadata.invalid_widths_resolved = false;
+    draft.metadata.wide_plates_resolved = true;
+    return draft;
+  };
+
+  const unpricedDraft = () => {
+    const draft = makeDraft("ПБ 75-12-12п 1");
+    draft.metadata.unpriced_plate_lines = [
+      {
+        id: "unpriced-1",
+        name: "Плиты ПБ 75-12-12п",
+        line: "ПБ 75-12-12п 1",
+        qty: 1,
+        length_m: 7.5,
+        width_m: 1.2,
+        load_class: 1200,
+        replacements: [{ load_code: 10, price: 31890 }],
+      },
+    ];
+    draft.metadata.unpriced_plates_resolved = false;
+    draft.metadata.wide_plates_resolved = true;
+    return draft;
+  };
+
+  it("hides invalid card and preview during batch review", () => {
+    render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview
+        draft={invalidDraft()}
+        batchReviewText="ПБ 29-8-8п 1"
+        normalizedText="ПБ 29-8-8п 1"
+      />,
+    );
+
+    expect(screen.queryByText("Завод такую ширину не режет — выберите рез или исключите позицию.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Состав КП (предпросмотр)")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toBeDisabled();
+  });
+
+  it("shows invalid card and preview after batch review", () => {
+    render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview={false}
+        draft={invalidDraft()}
+        batchReviewText=""
+        normalizedText="ПБ 29-8-8п 1"
+      />,
+    );
+
+    expect(screen.getByText("Завод такую ширину не режет — выберите рез или исключите позицию.")).toBeInTheDocument();
+    expect(screen.getByText("Состав КП (предпросмотр)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toHaveAttribute(
+      "title",
+      "Нестандартная ширина: замените на заводской рез или исключите позицию",
+    );
+  });
+
+  it("hides unpriced card during batch review and shows it after", () => {
+    const draft = unpricedDraft();
+    const { rerender } = render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview
+        draft={draft}
+        batchReviewText="ПБ 75-12-12п 1"
+        normalizedText="ПБ 75-12-12п 1"
+      />,
+    );
+
+    expect(screen.queryByText("Нет в прайсе / не производится")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
+
+    rerender(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview={false}
+        draft={draft}
+        batchReviewText=""
+        normalizedText="ПБ 75-12-12п 1"
+      />,
+    );
+
+    expect(screen.getByText("Нет в прайсе / не производится")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toBeDisabled();
+  });
+
+  it("enables Готово, далее when width gates are resolved", () => {
+    const draft = makeDraft("ПБ 78-12-8п 2");
+    draft.metadata.wide_plates_resolved = true;
+    draft.metadata.invalid_widths_resolved = true;
+    draft.metadata.unpriced_plates_resolved = true;
+
+    render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview={false}
+        draft={draft}
+        batchReviewText=""
+        normalizedText="ПБ 78-12-8п 2"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toBeEnabled();
   });
 });
 

@@ -87,5 +87,11 @@ def test_rewrite_plate_line_width_keeps_qty_and_load() -> None:
     assert rewrite_plate_line_width("Плиты ПБ 60-10-8п", 1020) == "Плиты ПБ 60-10,2-8п"
 
 
+def test_rewrite_plate_line_width_compact_without_pe_suffix() -> None:
+    assert rewrite_plate_line_width("68-11-10 1", 1080) == "68-10,8-10 1"
+    assert rewrite_plate_line_width("68-11-10", 1080) == "68-10,8-10"
+    assert rewrite_plate_line_width("ПБ 68-11-10 1", 1200) == "ПБ 68-12-10 1"
+
+
 def test_rewrite_plate_line_width_does_not_touch_zero_three_unless_called() -> None:
     assert rewrite_plate_line_width("ПБ 78-0.3-8п 1", 260) == "ПБ 78-2,6-8п 1"
