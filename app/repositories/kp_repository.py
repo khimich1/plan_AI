@@ -11,6 +11,19 @@ from app.repositories.kp_offers_repository import KpOffersRepository
 from core.kp import offers_write
 
 
+def _plate_candidate_dict(plate: dict) -> dict:
+    return {
+        "id": int(plate["id"]),
+        "plate_name": plate.get("plate_name") or "",
+        "length_m": float(plate.get("length_m") or 0.0),
+        "width_m": float(plate.get("width_m") or 0.0),
+        "load_class": (
+            int(plate["load_class"]) if plate.get("load_class") is not None else None
+        ),
+        "qty": int(plate.get("qty") or 0),
+    }
+
+
 class KpRepository:
     def __init__(self, db_path: str | None = None) -> None:
         settings = get_settings()
@@ -182,26 +195,20 @@ class KpRepository:
                 )
                 for plate_row in cursor.fetchall():
                     plate = dict(plate_row)
-                    plates_by_kp[int(plate["kp_id"])].append(
-                        {
-                            "id": int(plate["id"]),
-                            "plate_name": plate.get("plate_name") or "",
-                            "length_m": float(plate.get("length_m") or 0.0),
-                            "width_m": float(plate.get("width_m") or 0.0),
-                            "load_class": (
-                                int(plate["load_class"])
-                                if plate.get("load_class") is not None
-                                else None
-                            ),
-                            "qty": int(plate.get("qty") or 0),
-                        }
-                    )
+                    plates_by_kp[int(plate["kp_id"])].append(_plate_candidate_dict(plate))
+
+        qty_by_kp = self._fetch_qty_breakdown([int(r["kp_id"]) for r in rows]) if rows else {}
 
         for row in rows:
             kp_id = int(row["kp_id"])
             completion = self._offers.get_completion_percentage(kp_id)
             in_plan = self._offers.get_plates_in_plan_percentage(kp_id)
             total_length_m = self._offers.get_total_length(kp_id)
+            qty = qty_by_kp.get(kp_id) or {
+                "remaining_qty": 0,
+                "in_plan_qty": 0,
+                "on_sgp_qty": 0,
+            }
 
             result.append(
                 {
@@ -214,10 +221,81 @@ class KpRepository:
                     "completion_pct": float(completion.get("percentage", 0.0)),
                     "in_plan_pct": float(in_plan.get("percentage", 0.0)),
                     "total_length_m": round(float(total_length_m), 2),
+                    "remaining_qty": qty["remaining_qty"],
+                    "in_plan_qty": qty["in_plan_qty"],
+                    "on_sgp_qty": qty["on_sgp_qty"],
                     "plates": plates_by_kp.get(kp_id, []),
                 }
             )
         return result
+
+    def fetch_plates_in_statuses(
+        self,
+        kp_ids: Sequence[int],
+        statuses: Sequence[str],
+    ) -> dict[int, list[dict]]:
+        """Плиты ``kp_plates`` для набора КП и статусов (не меняет ``list_kps_in_production``)."""
+        out: dict[int, list[dict]] = defaultdict(list)
+        ids = [int(kid) for kid in kp_ids]
+        status_list = [str(s) for s in statuses]
+        if not ids or not status_list:
+            return out
+        id_ph = ",".join("?" * len(ids))
+        st_ph = ",".join("?" * len(status_list))
+        query = f"""
+        SELECT kp_id, id, plate_name, length_m, width_m, load_class, qty
+        FROM kp_plates
+        WHERE kp_id IN ({id_ph}) AND status IN ({st_ph}) AND qty > 0
+        ORDER BY kp_id ASC, position_number, id
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(query, (*ids, *status_list))
+            for plate_row in cursor.fetchall():
+                plate = dict(plate_row)
+                out[int(plate["kp_id"])].append(_plate_candidate_dict(plate))
+        return out
+
+    def _fetch_qty_breakdown(self, kp_ids: Sequence[int]) -> dict[int, dict[str, int]]:
+        ids = [int(kid) for kid in kp_ids]
+        out = {
+            kid: {"remaining_qty": 0, "in_plan_qty": 0, "on_sgp_qty": 0} for kid in ids
+        }
+        if not ids:
+            return out
+        placeholders = ",".join("?" * len(ids))
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT kp_id, status, COALESCE(SUM(qty), 0)
+                FROM kp_plates
+                WHERE kp_id IN ({placeholders})
+                GROUP BY kp_id, status
+                """,
+                ids,
+            )
+            for kp_id, status, qty in cursor.fetchall():
+                bucket = out[int(kp_id)]
+                if status == PlateStatus.IN_PRODUCTION.value:
+                    bucket["remaining_qty"] = int(qty or 0)
+                elif status == PlateStatus.IN_PLAN.value:
+                    bucket["in_plan_qty"] = int(qty or 0)
+            cursor.execute(
+                f"""
+                SELECT kp_id, COALESCE(SUM(qty), 0)
+                FROM completed_plates
+                WHERE kp_id IN ({placeholders})
+                GROUP BY kp_id
+                """,
+                ids,
+            )
+            for kp_id, qty in cursor.fetchall():
+                if kp_id is None:
+                    continue
+                out[int(kp_id)]["on_sgp_qty"] = int(qty or 0)
+        return out
 
     def get_plate_qty_remaining(self, plate_id: int) -> int:
         """Unplanned remaining qty for a single ``kp_plates`` row.

@@ -8,14 +8,15 @@ from typing import NoReturn
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from fastapi.responses import Response
 
-from app.core.http_errors import raise_structured_error
-from app.dependencies.auth import REQUIRE_ACCOUNTING
+from app.core.http_errors import raise_destructive_db_blocked_error, raise_structured_error
+from app.dependencies.auth import REQUIRE_ACCOUNTING, REQUIRE_ADMIN
 from app.dependencies.services import (
     get_gsm_export_service,
     get_gsm_generation_service,
     get_gsm_overview_service,
     get_gsm_registry_service,
     get_gsm_report_service,
+    get_gsm_reset_service,
     get_gsm_transaction_service,
 )
 from app.schemas.gsm import (
@@ -26,6 +27,7 @@ from app.schemas.gsm import (
     DriverOut,
     DriverPatchRequest,
     FleetOverviewRow,
+    GsmResetToAnchorsReport,
     GsmSettings,
     SeasonSwitchRequest,
     StationCreateRequest,
@@ -53,7 +55,12 @@ from app.services.gsm_generation_service import GsmGenerationError, GsmGeneratio
 from app.services.gsm_overview_service import GsmOverviewError, GsmOverviewService
 from app.services.gsm_registry_service import GsmRegistryError, GsmRegistryService
 from app.services.gsm_report_service import GsmReportError, GsmReportService
+from app.services.gsm_reset_service import GsmResetError, GsmResetService
 from app.services.gsm_transaction_service import GsmTransactionError, GsmTransactionService
+from core.destructive_db_guard import (
+    DestructiveDbOperationBlocked,
+    require_destructive_db_reset,
+)
 
 router = APIRouter(prefix="/gsm", tags=["gsm"])
 
@@ -135,6 +142,23 @@ def _raise_report_error(exc: GsmReportError, *, where: str) -> NoReturn:
         code=exc.code,
         message=str(exc),
         details=exc.details,
+        where=where,
+    )
+
+
+def _enforce_destructive_db_reset() -> None:
+    try:
+        require_destructive_db_reset()
+    except DestructiveDbOperationBlocked as exc:
+        raise_destructive_db_blocked_error(exc, where="gsm.destructive_guard")
+
+
+def _raise_reset_error(exc: GsmResetError, *, where: str) -> NoReturn:
+    raise_structured_error(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code=exc.code,
+        message=str(exc),
+        details={},
         where=where,
     )
 
@@ -660,3 +684,24 @@ def export_usage_report(
         "Content-Disposition": f'attachment; filename="{filename}"',
     }
     return Response(content=data, media_type="application/zip", headers=headers)
+
+
+@router.post(
+    "/reset-to-anchors",
+    response_model=GsmResetToAnchorsReport,
+    responses={
+        **_ERROR_4XX,
+        422: {"description": "Нет imported-якорей или ошибка сброса"},
+    },
+)
+def reset_to_anchors(
+    _user: dict = Depends(REQUIRE_ADMIN),
+    _guard: None = Depends(_enforce_destructive_db_reset),
+    service: GsmResetService = Depends(get_gsm_reset_service),
+) -> GsmResetToAnchorsReport:
+    try:
+        return service.reset_to_anchors()
+    except DestructiveDbOperationBlocked as exc:
+        raise_destructive_db_blocked_error(exc, where="gsm.reset_to_anchors")
+    except GsmResetError as exc:
+        _raise_reset_error(exc, where="gsm.reset_to_anchors")

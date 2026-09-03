@@ -266,6 +266,22 @@ def _format_money_ru(value: float) -> str:
     return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", " ")
 
 
+# Table body metrics — money columns sized from font width, not magic mm.
+_TABLE_BODY_SIZE = 10
+_TABLE_HEADER_SIZE = 11
+_TABLE_CELL_PAD = 6  # must match LEFTPADDING/RIGHTPADDING in TableStyle
+_MONEY_FIT_SAMPLE = "999 999 999,99"  # headroom for 9-digit sums with thin spaces
+
+
+def _money_col_width() -> float:
+    """Width for Цена/Сумма so formatted amounts stay inside the cell."""
+    return (
+        pdfmetrics.stringWidth(_MONEY_FIT_SAMPLE, FONT_NORMAL, _TABLE_BODY_SIZE)
+        + 2 * _TABLE_CELL_PAD
+        + 2  # gap so digits do not touch the grid line
+    )
+
+
 def _resolve_line_unit_price(item: Dict, *, order_mode: str) -> float:
     """Resolve unit price for one line (unified uses per-line type)."""
     if "unit_price" in item and item["unit_price"] is not None:
@@ -406,8 +422,17 @@ def generate_commercial_offer_pdf(
         'TableText',
         parent=styles['Normal'],
         fontName=FONT_NORMAL,
-        fontSize=10,
+        fontSize=_TABLE_BODY_SIZE,
         leading=12
+    )
+
+    style_table_header = ParagraphStyle(
+        'TableHeader',
+        parent=styles['Normal'],
+        fontName=FONT_BOLD,
+        fontSize=_TABLE_HEADER_SIZE,
+        leading=13,
+        alignment=1,  # CENTER — wrap long headers like «Класс бетона»
     )
     
     style_summary = ParagraphStyle(
@@ -518,7 +543,7 @@ def generate_commercial_offer_pdf(
     step_order = is_step_order(order_data)
 
     headers = commercial_offer_table_headers(order_data, append_batches=append_batches)
-    table_data = [list(headers)]
+    table_data = [[Paragraph(escape(h), style_table_header) for h in headers]]
 
     trip_cost = max(0.0, float(logistics_cost or 0.0))
     pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
@@ -629,24 +654,26 @@ def generate_commercial_offer_pdf(
     
     no_width = 10 * mm
     qty_width = 14 * mm
-    price_width = 25 * mm
-    sum_width = 25 * mm
+    money_width = _money_col_width()
+    price_width = money_width
+    sum_width = money_width
 
     if unified:
         type_width = 18 * mm
         fixed_total = no_width + type_width + qty_width + price_width + sum_width
         name_width = content_width - fixed_total
         if name_width <= 0:
-            ratios = (0.05, 0.12, 0.43, 0.10, 0.15, 0.15)
+            # Keep Цена/Сумма ~font-fit share so fallback does not re-shrink money cols.
+            ratios = (0.05, 0.10, 0.41, 0.09, 0.175, 0.175)
             col_widths = [content_width * ratio for ratio in ratios]
         else:
             col_widths = [no_width, type_width, name_width, qty_width, price_width, sum_width]
     elif pile_order or bridge_pile_order or fbs_order or march_order:
-        grade_width = 28 * mm
+        grade_width = 32 * mm
         fixed_total = no_width + grade_width + qty_width + price_width + sum_width
         name_width = content_width - fixed_total
         if name_width <= 0:
-            ratios = (0.05, 0.40, 0.15, 0.10, 0.15, 0.15)
+            ratios = (0.04, 0.35, 0.12, 0.08, 0.205, 0.205)
             col_widths = [content_width * ratio for ratio in ratios]
         else:
             col_widths = [no_width, name_width, grade_width, qty_width, price_width, sum_width]
@@ -654,7 +681,7 @@ def generate_commercial_offer_pdf(
         fixed_total = no_width + qty_width + price_width + sum_width
         name_width = content_width - fixed_total
         if name_width <= 0:
-            ratios = (0.05, 0.50, 0.15, 0.15, 0.15)
+            ratios = (0.05, 0.45, 0.10, 0.20, 0.20)
             col_widths = [content_width * ratio for ratio in ratios]
         else:
             col_widths = [no_width, name_width, qty_width, price_width, sum_width]
@@ -664,7 +691,7 @@ def generate_commercial_offer_pdf(
         fixed_total = no_width + qty_width + unit_width + weight_width + price_width + sum_width
         name_width = content_width - fixed_total
         if name_width <= 0:
-            ratios = (0.05, 0.45, 0.08, 0.06, 0.18, 0.09, 0.09)
+            ratios = (0.04, 0.38, 0.07, 0.06, 0.14, 0.155, 0.155)
             col_widths = [content_width * ratio for ratio in ratios]
         else:
             col_widths = [
@@ -695,19 +722,19 @@ def generate_commercial_offer_pdf(
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0f0f0')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
         ('FONTNAME', (0, 0), (-1, 0), FONT_BOLD),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
+        ('FONTSIZE', (0, 0), (-1, 0), _TABLE_HEADER_SIZE),
         ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 3),  # Уменьшено с 6 до 3
-        ('TOPPADDING', (0, 0), (-1, 0), 3),  # Уменьшено с 6 до 3
-        
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 3),
+        ('TOPPADDING', (0, 0), (-1, 0), 3),
+
         ('FONTNAME', (0, 1), (-1, -1), FONT_NORMAL),
-        ('FONTSIZE', (0, 1), (-1, -1), 10),
+        ('FONTSIZE', (0, 1), (-1, -1), _TABLE_BODY_SIZE),
         *body_align,
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 6),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 2),  # Уменьшено с 5 до 2
-        ('TOPPADDING', (0, 1), (-1, -1), 2),  # Уменьшено с 5 до 2
+        ('LEFTPADDING', (0, 0), (-1, -1), _TABLE_CELL_PAD),
+        ('RIGHTPADDING', (0, 0), (-1, -1), _TABLE_CELL_PAD),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
+        ('TOPPADDING', (0, 1), (-1, -1), 2),
         
         ('BOX', (0, 0), (-1, -1), 1.2, colors.black),
         ('INNERGRID', (0, 0), (-1, -1), 0.6, colors.black),

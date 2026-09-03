@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
+from typing import Literal
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
@@ -328,8 +330,9 @@ def get_day_occupancy(
 def get_kp_candidates(
     _user: dict = Depends(require_roles("admin", "production")),
     service: ProductionService = Depends(get_production_service),
+    scope: Literal["plan", "in_work"] = Query("plan"),
 ) -> KpCandidatesResponse:
-    result = service.list_kp_candidates()
+    result = service.list_kp_candidates(scope=scope)
     return KpCandidatesResponse(**result)
 
 

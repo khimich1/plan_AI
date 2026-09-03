@@ -9,8 +9,9 @@ from pathlib import Path
 import pytest
 
 from core import kp_db_schema
+from core.gsm.reset_to_anchors import ResetGsmError, run_reset
 
-mod = importlib.import_module("scripts.reset_gsm_to_anchors")
+cli_mod = importlib.import_module("scripts.reset_gsm_to_anchors")
 
 
 def _fresh_db(tmp_path: Path, name: str = "gsm_reset.db") -> Path:
@@ -115,7 +116,7 @@ def test_dry_run_does_not_mutate(tmp_path: Path) -> None:
     db = _fresh_db(tmp_path)
     _seed_two_vehicles_with_anchors(db)
 
-    plan = mod.run_reset(db_path=db, apply=False)
+    plan = run_reset(db_path=db, apply=False).plan
 
     assert len(plan.anchors) == 2
     assert plan.waybills_to_delete == 3
@@ -131,7 +132,8 @@ def test_apply_keeps_imported_anchors_clears_tx(tmp_path: Path) -> None:
     db = _fresh_db(tmp_path)
     ids = _seed_two_vehicles_with_anchors(db)
 
-    plan = mod.run_reset(db_path=db, apply=True)
+    result = run_reset(db_path=db, apply=True)
+    plan = result.plan
 
     assert {a.waybill_id for a in plan.anchors} == {ids["v1_anchor"], ids["v2_anchor"]}
     assert _count(db, "gsm_waybill") == 2
@@ -177,8 +179,8 @@ def test_missing_imported_anchor_aborts_without_changes(tmp_path: Path) -> None:
     before_wb = _count(db, "gsm_waybill")
     before_tx = _count(db, "gsm_transaction")
 
-    with pytest.raises(mod.ResetGsmError, match="нет imported-якоря"):
-        mod.run_reset(db_path=db, apply=True)
+    with pytest.raises(ResetGsmError, match="нет imported-якоря"):
+        run_reset(db_path=db, apply=True)
 
     assert _count(db, "gsm_waybill") == before_wb
     assert _count(db, "gsm_transaction") == before_tx
@@ -188,7 +190,7 @@ def test_missing_imported_anchor_aborts_without_changes(tmp_path: Path) -> None:
 def test_cli_dry_run_exit_zero(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db = _fresh_db(tmp_path)
     _seed_two_vehicles_with_anchors(db)
-    code = mod.main(["--db", str(db)])
+    code = cli_mod.main(["--db", str(db)])
     assert code == 0
     out = capsys.readouterr().out
     assert "DRY-RUN" in out
@@ -198,7 +200,7 @@ def test_cli_dry_run_exit_zero(tmp_path: Path, capsys: pytest.CaptureFixture[str
 def test_cli_apply_exit_zero(tmp_path: Path) -> None:
     db = _fresh_db(tmp_path)
     _seed_two_vehicles_with_anchors(db)
-    code = mod.main(["--db", str(db), "--apply"])
+    code = cli_mod.main(["--db", str(db), "--apply"])
     assert code == 0
     assert _count(db, "gsm_waybill") == 2
     assert _count(db, "gsm_transaction") == 0

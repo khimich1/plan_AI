@@ -24,6 +24,8 @@ from app.services.production_substrate_service import (
     ProductionSubstrateService,
 )
 from app.services.production_urgent_service import ProductionUrgentService
+from core.domain.enums import PlateStatus
+from core.execution_terms import parse_execution_terms_to_datetime
 from core.plate_order_context import PlateOrderContext
 from core.plan_track_removal import TrackRemovalError
 from core.production.capacity import FUTURE_HORIZON_DAYS, calculate_capacity_deficit
@@ -32,6 +34,20 @@ from core.work_calendar import is_working_day, load_extra_workdays, load_holiday
 logger = logging.getLogger(__name__)
 
 _MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+_UNPARSED_DEADLINE = date.max
+
+
+def _in_work_sort_key(item: Mapping[str, Any]) -> tuple:
+    parsed = parse_execution_terms_to_datetime(str(item.get("execution_terms") or ""))
+    kp_id = int(item["kp_id"])
+    if parsed is None:
+        return (1, _UNPARSED_DEADLINE, kp_id)
+    return (0, parsed.date(), kp_id)
+
+
+def _with_bucket(plates: Sequence[Mapping[str, Any]], bucket: str) -> list[dict[str, Any]]:
+    return [{**dict(plate), "bucket": bucket} for plate in plates]
+
 
 _TRACK_REMOVAL_HTTP_STATUS: dict[str, int] = {
     "plan_not_found": 404,
@@ -142,13 +158,42 @@ class ProductionService:
             "max_by_day": max_by_day,
         }
 
-    def list_kp_candidates(self) -> dict:
+    def list_kp_candidates(self, *, scope: str = "plan") -> dict:
         items = self.kp_repository.list_kps_in_production()
-        visible = [
-            item
-            for item in items
-            if item.get("in_plan_pct", 0) < 100 and item.get("plates")
-        ]
+        if scope == "in_work":
+            return self._candidates_in_work(items)
+        return self._candidates_plan(items)
+
+    def _candidates_plan(self, items: Sequence[Mapping[str, Any]]) -> dict:
+        visible: list[dict[str, Any]] = []
+        for item in items:
+            if float(item.get("in_plan_pct") or 0) >= 100:
+                continue
+            plates = list(item.get("plates") or [])
+            if not plates:
+                continue
+            visible.append({**dict(item), "plates": _with_bucket(plates, "awaiting_plan")})
+        return {"items": visible, "count": len(visible)}
+
+    def _candidates_in_work(self, items: Sequence[Mapping[str, Any]]) -> dict:
+        kp_ids = [int(item["kp_id"]) for item in items]
+        planned_by_kp = self.kp_repository.fetch_plates_in_statuses(
+            kp_ids,
+            (PlateStatus.IN_PLAN.value,),
+        )
+        visible: list[dict[str, Any]] = []
+        for item in items:
+            remaining = int(item.get("remaining_qty") or 0)
+            in_plan = int(item.get("in_plan_qty") or 0)
+            if remaining + in_plan <= 0:
+                continue
+            awaiting = _with_bucket(list(item.get("plates") or []), "awaiting_plan")
+            planned = _with_bucket(
+                planned_by_kp.get(int(item["kp_id"]), []),
+                "in_plan",
+            )
+            visible.append({**dict(item), "plates": awaiting + planned})
+        visible.sort(key=_in_work_sort_key)
         return {"items": visible, "count": len(visible)}
 
     def analyze_substrates(

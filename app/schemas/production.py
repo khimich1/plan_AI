@@ -73,7 +73,7 @@ class SaveWorkCalendarRequest(BaseModel):
 
 
 class KpCandidatePlateItem(BaseModel):
-    """Плита, доступная для постановки в новый план (статус ``в производстве``)."""
+    """Плита очереди цеха или кандидат мастера."""
 
     id: int
     plate_name: str
@@ -81,6 +81,7 @@ class KpCandidatePlateItem(BaseModel):
     width_m: float
     load_class: int | None = None
     qty: int
+    bucket: Literal["awaiting_plan", "in_plan"] = "awaiting_plan"
 
 
 class KpCandidateItem(BaseModel):
@@ -93,6 +94,9 @@ class KpCandidateItem(BaseModel):
     completion_pct: float
     in_plan_pct: float
     total_length_m: float
+    remaining_qty: int = 0
+    in_plan_qty: int = 0
+    on_sgp_qty: int = 0
     plates: list[KpCandidatePlateItem] = Field(default_factory=list)
 
 

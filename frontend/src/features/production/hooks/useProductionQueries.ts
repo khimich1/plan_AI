@@ -32,7 +32,8 @@ export const productionKeys = {
   day: (date: string) => ["production", "day", date] as const,
   occupancy: (excludePlanId?: string | null) =>
     ["production", "occupancy", excludePlanId ?? "all"] as const,
-  kpCandidates: () => ["production", "kp-candidates"] as const,
+  kpCandidates: (scope: "plan" | "in_work" = "plan") =>
+    ["production", "kp-candidates", scope] as const,
   workCalendar: () => ["production", "work-calendar"] as const,
   dayCapacity: (from: string, to: string) =>
     ["production", "day-capacity", from, to] as const,
@@ -81,10 +82,16 @@ export const useDayOccupancyQuery = (excludePlanId?: string | null) =>
     staleTime: 15_000,
   });
 
-export const useKpCandidatesQuery = (enabled = true) =>
+export const useKpCandidatesQuery = (
+  enabled = true,
+  scope: "plan" | "in_work" = "plan",
+) =>
   useQuery<KpCandidatesResponse>({
-    queryKey: productionKeys.kpCandidates(),
-    queryFn: productionApi.listKpCandidates,
+    queryKey: productionKeys.kpCandidates(scope),
+    queryFn: () =>
+      scope === "in_work"
+        ? productionApi.listKpCandidates("in_work")
+        : productionApi.listKpCandidates(),
     enabled,
     staleTime: 30_000,
   });

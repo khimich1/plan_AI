@@ -42,6 +42,9 @@ const CODE_MESSAGES: Record<string, string> = {
   gsm_export_template_missing: "Не найден шаблон бланка путевого листа.",
   gsm_report_invalid_period: "Некорректный период отчёта.",
   gsm_report_no_data: "Нет подтверждённых путевых листов за выбранный период.",
+  gsm_reset_no_anchors:
+    "Не у всех активных машин есть imported-якорь — сброс невозможен.",
+  gsm_reset_error: "Не удалось выполнить сброс ГСМ к якорям.",
 };
 
 export const formatGsmCodeMessage = (code: string | undefined, fallback: string): string => {

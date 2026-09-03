@@ -465,3 +465,35 @@ class UsageReportRequest(BaseModel):
     period_from: date
     period_to: date
     vehicle_ids: list[int] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Dev reset to imported anchors
+# ---------------------------------------------------------------------------
+
+
+class GsmAnchorOut(BaseModel):
+    """Imported waybill kept as fleet anchor after reset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    waybill_id: int
+    vehicle_id: int
+    vehicle_name: str
+    plate_number: str
+    date: str
+    odometer_end: int | None = None
+    fuel_end: float | None = None
+
+
+class GsmResetToAnchorsReport(BaseModel):
+    """Result of POST /gsm/reset-to-anchors."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backup_path: str
+    anchors_kept: int
+    waybills_deleted: int
+    transactions_deleted: int
+    import_batches_deleted: int
+    anchors: list[GsmAnchorOut] = Field(default_factory=list)
