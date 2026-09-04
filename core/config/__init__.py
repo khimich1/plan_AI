@@ -4,6 +4,7 @@
 from .constants import (
     LONG_CUT_PRICE_PER_M,
     MIN_BILLABLE_TRIM_MM,
+    PLATE_WIDTH_MATCH_TOLERANCE_MM,
     TRACK_LENGTH_M,
     TRACK_WIDTH_M,
     TRANSVERSE_CUT_PRICE,
@@ -16,6 +17,7 @@ from .constants import (
 __all__ = [
     "LONG_CUT_PRICE_PER_M",
     "MIN_BILLABLE_TRIM_MM",
+    "PLATE_WIDTH_MATCH_TOLERANCE_MM",
     "TRACK_LENGTH_M",
     "TRACK_WIDTH_M",
     "TRANSVERSE_CUT_PRICE",
