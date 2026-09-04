@@ -569,7 +569,7 @@ describe("OfferDetailsDrawer promise hold badge", () => {
         kind: "hold",
         status: "active",
         tracks_total: 2,
-        promised_date: "2026-09-04",
+        promised_date: "2026-09-18",
         expires_at: "2026-09-03T23:59:59",
         created_by: "alice",
         created_at: "2026-09-03T12:00:00",
@@ -582,7 +582,7 @@ describe("OfferDetailsDrawer promise hold badge", () => {
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
     const badge = screen.getByTestId("promise-hold-badge");
-    expect(badge).toHaveTextContent("срок закреплён до сегодня");
+    expect(badge).toHaveTextContent("к 18.09 · до вечера");
     expect(badge).toHaveAttribute("title", "Закрепил: alice");
   });
 

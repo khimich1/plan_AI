@@ -5,6 +5,7 @@ import type {
 } from "@/features/commercial-archive/types/archive";
 import { formatMoney, truncate } from "@/features/commercial-archive/lib/format";
 import {
+  holdBadgeLabel,
   holdCreatedByTitle,
   usePromiseHoldsMap,
 } from "@/features/factory-capacity/api/promiseQuote";
@@ -195,7 +196,7 @@ export const ArchiveOfferList = ({
                       color: "#b54708",
                     }}
                   >
-                    срок закреплён до сегодня
+                    {holdBadgeLabel(holds.get(item.kp_id)?.promised_date)}
                   </span>
                 )}
               </div>

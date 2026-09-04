@@ -126,6 +126,44 @@ class PromiseRepository:
         self.expire_stale_holds(now=now or _moment_for_day(today))
         return self._sum_allocs_by_week(kind="hold", exclude_kp_id=exclude_kp_id)
 
+    def list_week_allocs(
+        self,
+        week_start: date,
+        kinds: Sequence[str] = ("promise", "hold"),
+        *,
+        now: datetime | None = None,
+    ) -> list[dict]:
+        """Active hold/promise allocs for a week. Does not exclude any kp_id."""
+        moment = now or datetime.now()
+        wanted = tuple(kinds)
+        if not wanted:
+            return []
+        placeholders = ",".join("?" * len(wanted))
+        with self._connect() as conn:
+            self._expire_stale_holds(conn, now=moment)
+            rows = conn.execute(
+                f"""
+                SELECT p.kp_id, p.kind, a.tracks, p.promised_date
+                FROM kp_promise_alloc a
+                JOIN kp_promise p ON p.id = a.promise_id
+                WHERE a.week_start = ?
+                  AND p.status = 'active'
+                  AND a.status = 'active'
+                  AND p.kind IN ({placeholders})
+                ORDER BY CASE p.kind WHEN 'promise' THEN 0 ELSE 1 END, p.kp_id, a.id
+                """,
+                (week_start.isoformat(), *wanted),
+            ).fetchall()
+        return [
+            {
+                "kp_id": int(row[0]),
+                "kind": str(row[1]),
+                "tracks": int(row[2]),
+                "promised_date": date.fromisoformat(str(row[3])),
+            }
+            for row in rows
+        ]
+
     def expire_stale_holds(self, *, now: datetime | None = None) -> int:
         moment = now or datetime.now()
         with self._connect() as conn:

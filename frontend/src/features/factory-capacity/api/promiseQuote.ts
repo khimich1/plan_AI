@@ -29,9 +29,14 @@ export type PromiseQuote = {
   solo_date: string | null;
   solo_week_end_date: string | null;
   earliest_start_week: string | null;
+  first_pour_date?: string | null;
+  first_pour_free?: number;
   window: PromiseQuoteWindow | null;
   weeks: PromiseQuoteWeek[];
   knob: number;
+  holidays?: string[];
+  extra_workdays?: string[];
+  occupancy?: Record<string, number>;
 };
 
 export const promiseQuoteApi = {
@@ -147,6 +152,11 @@ export function holdCreatedByTitle(createdBy: string | null | undefined): string
   return who ? `Закрепил: ${who}` : "Срок закреплён до сегодня";
 }
 
+/** Visible hold badge: client date + TTL, not the pin expiry alone. */
+export function holdBadgeLabel(promisedDate: string | null | undefined): string {
+  return `к ${formatQuoteDayMonth(promisedDate)} · до вечера`;
+}
+
 /** ISO YYYY-MM-DD → «4.09» (спека: «обещать к 25.09»). */
 export function formatQuoteDayMonth(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -212,3 +222,43 @@ export const useUpdatePromiseKnobMutation = () => {
     },
   });
 };
+
+/** GET /archive/{kp_id}/promise-weeks/{week_start}/occupants */
+export type PromiseWeekOccupant = {
+  kp_id: number;
+  customer_name: string;
+  kind: "hold" | "promise";
+  tracks: number;
+  promised_date: string;
+  is_current: boolean;
+};
+
+export type PromiseWeekOccupants = {
+  week_start: string;
+  planned: number;
+  occupants: PromiseWeekOccupant[];
+};
+
+export const promiseWeekOccupantsApi = {
+  get: (kpId: number, weekStart: string) =>
+    httpClient.get<PromiseWeekOccupants>(
+      `${BASE}/${kpId}/promise-weeks/${weekStart}/occupants`,
+    ),
+};
+
+export const promiseWeekOccupantsKeys = {
+  all: ["promise-week-occupants"] as const,
+  week: (kpId: number, weekStart: string) =>
+    ["promise-week-occupants", kpId, weekStart] as const,
+};
+
+export const usePromiseWeekOccupantsQuery = (
+  kpId: number | null,
+  weekStart: string | null,
+) =>
+  useQuery<PromiseWeekOccupants>({
+    queryKey: promiseWeekOccupantsKeys.week(kpId ?? -1, weekStart ?? ""),
+    queryFn: () => promiseWeekOccupantsApi.get(kpId as number, weekStart as string),
+    enabled: kpId !== null && Boolean(weekStart),
+    staleTime: 10_000,
+  });

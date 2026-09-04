@@ -7,11 +7,13 @@ import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { Alert } from "@/shared/ui/Alert";
 import { Spinner } from "@/shared/ui/Spinner";
 import { useMoveToProductionMutation } from "@/features/commercial-archive/hooks/useArchiveQueries";
-import { isCapacityRed } from "@/features/factory-capacity/components/FactoryCapacityPanel";
 import { PromiseKnobSettings } from "@/features/factory-capacity/components/PromiseKnobSettings";
+import { PromisePeriodCalendar } from "@/features/factory-capacity/components/PromisePeriodCalendar";
 import { PromiseQuoteBlock } from "@/features/factory-capacity/components/PromiseQuoteBlock";
-import { PromiseWeekStrip } from "@/features/factory-capacity/components/PromiseWeekStrip";
+import { PromiseWeekOccupants } from "@/features/factory-capacity/components/PromiseWeekOccupants";
+import { PromiseWindowBand } from "@/features/factory-capacity/components/PromiseWindowBand";
 import {
+  addDaysIso,
   holdCreatedByTitle,
   isoToDdMmYyyy,
   promiseHoldKeys,
@@ -20,8 +22,8 @@ import {
   usePromiseHoldQuery,
   usePromiseQuoteQuery,
 } from "@/features/factory-capacity/api/promiseQuote";
-import { useCapacitySnapshotQuery } from "@/features/factory-capacity/hooks/useCapacitySnapshotQuery";
 import { ddMmYyyyToIso } from "@/features/factory-capacity/lib/dates";
+import { isoWeekStart } from "@/features/factory-capacity/lib/isoWeek";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import {
   EXECUTION_TERMS_FIELD_HINT,
@@ -38,13 +40,14 @@ type Props = {
   initialExecutionTerms?: string | null;
 };
 
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(id);
-  }, [value, delayMs]);
-  return debounced;
+const DRAWER_WIDTH = 420;
+
+function firstOfMonth(iso: string): string {
+  return `${iso.slice(0, 7)}-01`;
+}
+
+function maxMonthIso(left: string, right: string): string {
+  return left >= right ? left : right;
 }
 
 export const MoveToProductionDialog = ({
@@ -55,6 +58,9 @@ export const MoveToProductionDialog = ({
 }: Props) => {
   const [value, setValue] = useState("");
   const [capacityOpen, setCapacityOpen] = useState(false);
+  const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [calendarMonth, setCalendarMonth] = useState(() => firstOfMonth(new Date().toISOString().slice(0, 10)));
   const userEditedRef = useRef(false);
   const queryClient = useQueryClient();
   const mutation = useMoveToProductionMutation();
@@ -67,6 +73,8 @@ export const MoveToProductionDialog = ({
     if (!open) {
       userEditedRef.current = false;
       setCapacityOpen(false);
+      setSelectedWeek(null);
+      setSelectedDay(null);
       return;
     }
     mutation.reset();
@@ -74,6 +82,8 @@ export const MoveToProductionDialog = ({
     userEditedRef.current = false;
     setValue("");
     setCapacityOpen(false);
+    setSelectedWeek(null);
+    setSelectedDay(null);
   }, [open, kpId]); // eslint-disable-line react-hooks/exhaustive-deps -- только open/kpId: сброс при открытии/смене КП
 
   useEffect(() => {
@@ -123,16 +133,72 @@ export const MoveToProductionDialog = ({
     () => (normalizedTerms ? ddMmYyyyToIso(normalizedTerms) : null),
     [normalizedTerms],
   );
-  const debouncedTarget = useDebouncedValue(targetIso, 300);
 
-  const capacity = useCapacitySnapshotQuery(open ? kpId : null, debouncedTarget);
-  const capacityBlocked = isCapacityRed(capacity.data);
+  const defaultWeek = useMemo(() => {
+    const promised = quote.data?.window?.promised_date;
+    if (promised) return isoWeekStart(promised);
+    return quote.data?.weeks[0]?.week_start ?? null;
+  }, [quote.data?.window?.promised_date, quote.data?.weeks]);
+
+  const activeWeekStart = selectedWeek ?? defaultWeek;
+  const activeWeek = quote.data?.weeks.find((week) => week.week_start === activeWeekStart);
+  const pourToSunday = quote.data?.solo_date
+    ? addDaysIso(isoWeekStart(quote.data.solo_date), 6)
+    : null;
+
+  useEffect(() => {
+    if (!open || !defaultWeek) {
+      return;
+    }
+    setSelectedWeek((prev) => prev ?? defaultWeek);
+  }, [open, defaultWeek]);
+
+  const fieldMonth = targetIso ? firstOfMonth(targetIso) : null;
+
+  const desiredMonth = useMemo(() => {
+    const promised = quote.data?.window?.promised_date;
+    const base = firstOfMonth(
+      promised ?? defaultWeek ?? new Date().toISOString().slice(0, 10),
+    );
+    if (fieldMonth && fieldMonth > base) {
+      return fieldMonth;
+    }
+    return base;
+  }, [quote.data?.window?.promised_date, defaultWeek, fieldMonth]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setCalendarMonth(desiredMonth);
+  }, [open, desiredMonth]);
+
+  const minMonth = useMemo(() => {
+    const firstWeek = quote.data?.weeks[0]?.week_start;
+    return firstWeek ? firstOfMonth(firstWeek) : firstOfMonth(new Date().toISOString().slice(0, 10));
+  }, [quote.data?.weeks]);
+
+  const maxMonth = useMemo(() => {
+    const weeks = quote.data?.weeks ?? [];
+    const lastWeek = weeks[weeks.length - 1]?.week_start;
+    let end = minMonth;
+    if (lastWeek) {
+      const sunday = new Date(`${lastWeek}T12:00:00`);
+      sunday.setDate(sunday.getDate() + 6);
+      end = firstOfMonth(
+        `${sunday.getFullYear()}-${String(sunday.getMonth() + 1).padStart(2, "0")}-01`,
+      );
+    }
+    if (fieldMonth) {
+      end = maxMonthIso(end, fieldMonth);
+    }
+    return end;
+  }, [quote.data?.weeks, fieldMonth, minMonth]);
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const trimmed = value.trim();
     if (!trimmed || tryNormalizeExecutionTerms(trimmed) === null) return;
-    if (capacityBlocked) return;
 
     try {
       await mutation.mutateAsync({ kpId, executionTerms: trimmed });
@@ -183,7 +249,11 @@ export const MoveToProductionDialog = ({
           {quote.data ? (
             <>
               <PromiseQuoteBlock quote={quote.data} />
-              <PromiseWeekStrip weeks={quote.data.weeks} quoteWindow={quote.data.window} />
+              <PromiseWindowBand
+                window={quote.data.window}
+                firstPourDate={quote.data.first_pour_date}
+                pourToSunday={pourToSunday}
+              />
             </>
           ) : null}
           {activeHold ? (
@@ -218,11 +288,6 @@ export const MoveToProductionDialog = ({
             />
           </FieldWrapper>
           {localParseError && <Alert tone="error">{localParseError}</Alert>}
-          {capacityBlocked && capacity.data?.hint ? (
-            <Alert tone="error">
-              {capacity.data.hint}. Увеличьте срок в поле выше и повторите.
-            </Alert>
-          ) : null}
           {mutation.isError && <Alert tone="error">{getErrorMessage(mutation.error)}</Alert>}
           {holdMutation.isError && <Alert tone="error">{getErrorMessage(holdMutation.error)}</Alert>}
 
@@ -258,8 +323,7 @@ export const MoveToProductionDialog = ({
               disabled={
                 mutation.isPending ||
                 !value.trim() ||
-                tryNormalizeExecutionTerms(value.trim()) === null ||
-                capacityBlocked
+                tryNormalizeExecutionTerms(value.trim()) === null
               }
             >
               {mutation.isPending ? "Перевод..." : "Перевести в производство"}
@@ -273,13 +337,40 @@ export const MoveToProductionDialog = ({
         onClose={() => setCapacityOpen(false)}
         title="Ёмкость завода"
         side="left"
-        width={380}
+        width={DRAWER_WIDTH}
       >
         {quote.data ? (
-          <>
-            <PromiseWeekStrip weeks={quote.data.weeks} quoteWindow={quote.data.window} />
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            <PromisePeriodCalendar
+              month={calendarMonth}
+              minMonth={minMonth}
+              maxMonth={maxMonth}
+              onMonthChange={setCalendarMonth}
+              selectedWeekStart={activeWeekStart}
+              onSelectWeek={setSelectedWeek}
+              onSelectDay={setSelectedDay}
+              promisedDate={quote.data.window?.promised_date}
+              firstPourDate={quote.data.first_pour_date}
+              pourFrom={quote.data.first_pour_date}
+              pourToSunday={pourToSunday}
+              occupancy={quote.data.occupancy ?? {}}
+              knob={quote.data.knob}
+              holidays={quote.data.holidays ?? []}
+              extraWorkdays={quote.data.extra_workdays ?? []}
+            />
+            <PromiseWeekOccupants
+              kpId={kpId}
+              weekStart={activeWeekStart}
+              weekFree={activeWeek?.free}
+              weekCapacity={activeWeek?.capacity}
+              selectedDay={selectedDay}
+              occupancy={quote.data.occupancy ?? {}}
+              knob={quote.data.knob}
+              holidays={quote.data.holidays ?? []}
+              extraWorkdays={quote.data.extra_workdays ?? []}
+            />
             <PromiseKnobSettings currentKnob={quote.data.knob} />
-          </>
+          </div>
         ) : null}
       </Drawer>
     </>

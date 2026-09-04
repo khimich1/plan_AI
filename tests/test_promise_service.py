@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -17,11 +17,12 @@ from app.services.promise_service import (
     PromiseKnobInvalidError,
     PromiseNotFoundError,
     PromiseService,
+    PromiseWeekInvalidError,
     load_plan_occupancy,
 )
 from core import kp_db_schema
 from core.kp_db_common import _connect
-from core.production.promise_buckets import OccupancyUnavailableError
+from core.production.promise_buckets import OccupancyUnavailableError, workday_predicate
 from core.production_capacity import MAX_TRACK_LENGTH_M
 
 ADMIN = {"id": 1, "role": "admin"}
@@ -37,10 +38,10 @@ def _fresh_db(tmp_path: Path, name: str = "promise.db") -> str:
     return db_path
 
 
-def _seed_kp(conn, kp_id: int) -> None:
+def _seed_kp(conn, kp_id: int, customer_name: str = "") -> None:
     conn.execute(
-        "INSERT INTO KP_offers (kp_id, creation_date) VALUES (?, '2026-09-03')",
-        (kp_id,),
+        "INSERT INTO KP_offers (kp_id, creation_date, customer_name) VALUES (?, '2026-09-03', ?)",
+        (kp_id, customer_name),
     )
 
 
@@ -200,6 +201,9 @@ def test_quote_matches_spec_contract(tmp_path: Path) -> None:
     assert quote.window.to_week == WEEK_0
     assert quote.window.promised_date == date(2026, 9, 4)
     assert quote.earliest_start_week == WEEK_0
+    assert quote.first_pour_date == date(2026, 9, 3)
+    assert quote.first_pour_free == 3
+    assert quote.occupancy == {}
     assert len(quote.weeks) == 3
     week0 = quote.weeks[0]
     assert week0.week_start == WEEK_0
@@ -209,6 +213,51 @@ def test_quote_matches_spec_contract(tmp_path: Path) -> None:
     assert week0.promised == 0
     assert week0.held == 0
     assert week0.free == 6
+    assert quote.holidays == []
+    assert quote.extra_workdays == []
+
+
+def test_quote_default_week_count_covers_half_year(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        _seed_kp(conn, 1)
+        _seed_plate(conn, 1, length_m=MAX_TRACK_LENGTH_M, qty=1)
+        conn.commit()
+
+    service = PromiseService(
+        db_path=db_path,
+        occupancy_loader=lambda: {},
+        today=TODAY,
+        is_workday=lambda day: day.weekday() < 5,
+    )
+    quote = service.get_quote(1, user=ADMIN)
+
+    assert len(quote.weeks) >= 26
+
+
+def test_quote_lists_holidays_and_extra_workdays_on_weeks_span(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        _seed_kp(conn, 1)
+        _seed_plate(conn, 1, length_m=MAX_TRACK_LENGTH_M, qty=1)
+        conn.commit()
+
+    holiday = date(2026, 9, 4)
+    extra = date(2026, 9, 5)
+    quote = PromiseService(
+        db_path=db_path,
+        occupancy_loader=lambda: {},
+        today=TODAY,
+        is_workday=workday_predicate(holidays={holiday}, extra_workdays={extra}),
+        week_count=3,
+    ).get_quote(1, user=ADMIN)
+
+    span_start = quote.weeks[0].week_start
+    span_end = quote.weeks[-1].week_start + timedelta(days=6)
+    assert holiday in quote.holidays
+    assert extra in quote.extra_workdays
+    assert all(span_start <= day <= span_end for day in quote.holidays)
+    assert all(span_start <= day <= span_end for day in quote.extra_workdays)
 
 
 def test_quote_second_kp_sees_first_promise(tmp_path: Path) -> None:
@@ -290,6 +339,9 @@ def test_quote_counts_planned_from_occupancy(tmp_path: Path) -> None:
 
     assert quote.weeks[0].planned == 3
     assert quote.weeks[0].free == 3
+    assert quote.occupancy["2026-09-03"] == 2
+    assert quote.occupancy["2026-09-04"] == 1
+    assert "2026-09-05" not in quote.occupancy
 
 
 def test_quote_uses_knob_from_setting(tmp_path: Path) -> None:
@@ -527,6 +579,43 @@ def test_overnight_expire_does_not_touch_promises(tmp_path: Path) -> None:
 
 
 # --- Task 6: move-to-production gate ----------------------------------------
+
+def test_evaluate_move_gate_example_a_rejects_before_week_end(
+    tmp_path: Path,
+) -> None:
+    from app.services.promise_service import PromiseGateError
+
+    occupancy = {
+        date(2026, 9, 7): 3,
+        date(2026, 9, 8): 3,
+        date(2026, 9, 9): 1,
+    }
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        _seed_quote_kp(conn, 1, tracks=5)
+        conn.commit()
+
+    service = PromiseService(
+        db_path=db_path,
+        occupancy_loader=lambda: occupancy,
+        today=date(2026, 9, 4),
+        is_workday=lambda day: day.weekday() < 5,
+        week_count=4,
+    )
+    quote = service.get_quote(1, user=ADMIN)
+    assert quote.first_pour_date == date(2026, 9, 9)
+    assert quote.first_pour_free == 2
+    assert quote.solo_date == date(2026, 9, 10)
+    assert quote.window is not None
+    assert quote.window.promised_date == date(2026, 9, 11)
+    assert quote.occupancy["2026-09-07"] == 3
+    assert quote.occupancy["2026-09-09"] == 1
+
+    with pytest.raises(PromiseGateError, match="11.09.2026") as exc_info:
+        service.evaluate_move_gate(1, date(2026, 9, 10), user=ADMIN)
+
+    assert exc_info.value.earliest == date(2026, 9, 11)
+
 
 def test_evaluate_move_gate_rejects_date_before_promised(tmp_path: Path) -> None:
     from app.services.promise_service import PromiseGateError
@@ -959,7 +1048,7 @@ def test_recalc_increase_that_misses_window_notifies(tmp_path: Path) -> None:
     assert result.notification_id is not None
 
     repo = PromiseRepository(db_path=db_path)
-    assert repo.sum_promised_by_week() == {WEEK_1: 8}
+    assert repo.sum_promised_by_week() == {WEEK_0: 6, WEEK_1: 2}
     notes = repo.list_notifications(user_id=OWNER_ID)
     assert len(notes) == 1
     assert notes[0]["kind"] == "promised_date_shifted"
@@ -1032,3 +1121,154 @@ def test_recalc_without_active_promise_is_noop(tmp_path: Path) -> None:
     assert result.promise_id is None
     assert result.notified is False
     assert PromiseRepository(db_path=db_path).sum_promised_by_week() == {}
+
+
+def test_default_week_count_yields_at_least_26_weeks(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        _seed_quote_kp(conn, 1)
+        conn.commit()
+
+    service = PromiseService(
+        db_path=db_path,
+        occupancy_loader=lambda: {},
+        today=TODAY,
+        is_workday=lambda day: day.weekday() < 5,
+    )
+    quote = service.get_quote(1, user=ADMIN)
+
+    assert len(quote.weeks) >= 26
+
+
+def test_quote_holidays_and_extra_workdays_follow_is_workday_span(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        _seed_quote_kp(conn, 1)
+        conn.commit()
+
+    holiday = date(2026, 9, 4)  # Friday in WEEK_0
+    extra = date(2026, 9, 5)  # Saturday
+
+    def is_workday(day: date) -> bool:
+        if day == extra:
+            return True
+        if day == holiday:
+            return False
+        return day.weekday() < 5
+
+    quote = PromiseService(
+        db_path=db_path,
+        occupancy_loader=lambda: {},
+        today=TODAY,
+        is_workday=is_workday,
+        week_count=3,
+    ).get_quote(1, user=ADMIN)
+
+    assert holiday in quote.holidays
+    assert extra in quote.extra_workdays
+    assert date(2026, 9, 12) not in quote.holidays
+    assert date(2026, 9, 12) not in quote.extra_workdays
+
+
+def test_quote_calendar_fields_empty_when_only_weekends_are_off(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        _seed_quote_kp(conn, 1)
+        conn.commit()
+
+    quote = _service(db_path).get_quote(1, user=ADMIN)
+
+    assert quote.holidays == []
+    assert quote.extra_workdays == []
+
+
+def test_list_week_occupants_rejects_non_monday(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        _seed_kp(conn, 1)
+        conn.commit()
+
+    with pytest.raises(PromiseWeekInvalidError, match="понедельник"):
+        _service(db_path).list_week_occupants(1, date(2026, 9, 2), user=ADMIN)
+
+
+def test_list_week_occupants_not_found_for_missing_kp(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    with pytest.raises(PromiseNotFoundError):
+        _service(db_path).list_week_occupants(99, WEEK_0, user=ADMIN)
+
+
+def test_list_week_occupants_hold_and_promise_named_current_and_order(
+    tmp_path: Path,
+) -> None:
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        _seed_kp(conn, 1, "ООО Текущий")
+        _seed_kp(conn, 2, "АО Чужой")
+        _seed_kp(conn, 3, "ИП Третий")
+        _insert_alloc(conn, kp_id=1, week_start=WEEK_0, tracks=5, kind="hold")
+        _insert_alloc(conn, kp_id=3, week_start=WEEK_0, tracks=2, kind="hold")
+        _insert_alloc(conn, kp_id=2, week_start=WEEK_0, tracks=4, kind="promise")
+        conn.commit()
+
+    result = _service(db_path).list_week_occupants(1, WEEK_0, user=ADMIN)
+
+    assert result.week_start == WEEK_0
+    assert result.planned >= 0
+    kinds = [row.kind for row in result.occupants]
+    assert kinds == ["promise", "hold", "hold"]
+    assert [row.kp_id for row in result.occupants] == [2, 1, 3]
+    current = next(row for row in result.occupants if row.kp_id == 1)
+    assert current.is_current is True
+    assert current.customer_name == "ООО Текущий"
+    assert current.kind == "hold"
+    assert current.tracks == 5
+    assert current.promised_date == date(2026, 9, 25)
+    other = next(row for row in result.occupants if row.kp_id == 2)
+    assert other.is_current is False
+    assert other.customer_name == "АО Чужой"
+    payload = result.model_dump()
+    assert "created_by" not in payload
+    assert all("created_by" not in row for row in payload["occupants"])
+
+
+def test_list_week_occupants_expires_stale_holds(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        _seed_kp(conn, 1)
+        _insert_alloc(
+            conn,
+            kp_id=1,
+            week_start=WEEK_0,
+            tracks=3,
+            kind="hold",
+            expires_at="2026-09-01T23:59:59",
+        )
+        conn.commit()
+
+    result = _service(db_path).list_week_occupants(1, WEEK_0, user=ADMIN)
+
+    assert result.occupants == []
+
+
+def test_list_week_occupants_planned_from_occupancy_outside_quote_horizon(
+    tmp_path: Path,
+) -> None:
+    db_path = _fresh_db(tmp_path)
+    far_monday = date(2027, 3, 1)
+    assert far_monday.weekday() == 0
+    with _connect(db_path) as conn:
+        _seed_kp(conn, 1)
+        conn.commit()
+
+    result = PromiseService(
+        db_path=db_path,
+        occupancy_loader=lambda: {"2027-03-02": 7},
+        today=TODAY,
+        is_workday=lambda day: day.weekday() < 5,
+        week_count=3,
+    ).list_week_occupants(1, far_monday, user=ADMIN)
+
+    assert result.week_start == far_monday
+    assert result.planned == 7
+    assert result.occupants == []

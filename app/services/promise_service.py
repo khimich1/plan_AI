@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from app.core.settings import get_settings
@@ -19,6 +19,8 @@ from app.schemas.archive import (
     PromiseQuoteWeek,
     PromiseQuoteWindow,
     PromiseTracksPerDayResponse,
+    PromiseWeekOccupant,
+    PromiseWeekOccupantsResponse,
 )
 from app.security.offer_access import (
     assert_offer_read_access,
@@ -85,6 +87,10 @@ class PromiseKnobInvalidError(PromiseError):
     """tracks_per_day must be 1..TRACKS_PER_DAY_HARD_CAP."""
 
 
+class PromiseWeekInvalidError(PromiseError):
+    """week_start must be an ISO Monday."""
+
+
 @dataclass(frozen=True, slots=True)
 class PlanExclusionRecord:
     """One journal row written with the plan commit (optional notification)."""
@@ -126,6 +132,15 @@ def _occupied_int(info: object) -> int:
         return int(raw)
     except (TypeError, ValueError) as exc:
         raise OccupancyUnavailableError(_OCCUPANCY_UNAVAILABLE) from exc
+
+
+def _occupied_lookup(occupancy: Mapping[date | str, int], day: date) -> int:
+    if day in occupancy:
+        return int(occupancy[day])
+    iso = day.isoformat()
+    if iso in occupancy:
+        return int(occupancy[iso])
+    return 0
 
 
 def occupancy_map_from_calendar(calendar: object) -> dict[str, int]:
@@ -184,7 +199,53 @@ def _total_length_m(raw: dict) -> float:
     return total
 
 
-def _quote_to_response(quote: PromiseQuote) -> PromiseQuoteResponse:
+def _calendar_in_weeks_span(
+    weeks: Sequence,
+    is_workday: WorkdayFn,
+) -> tuple[list[date], list[date]]:
+    """Weekday holidays and weekend extras inside quote.weeks span."""
+    if not weeks:
+        return [], []
+    start = weeks[0].week_start
+    end = weeks[-1].week_start + timedelta(days=6)
+    holidays: list[date] = []
+    extra_workdays: list[date] = []
+    day = start
+    while day <= end:
+        working = is_workday(day)
+        if day.weekday() >= 5:
+            if working:
+                extra_workdays.append(day)
+        elif not working:
+            holidays.append(day)
+        day += timedelta(days=1)
+    return holidays, extra_workdays
+
+
+def _occupancy_in_weeks_span(
+    weeks: Sequence, occupancy: Mapping[date | str, int]
+) -> dict[str, int]:
+    """Occupied days on quote weeks span; omit zeros (client treats missing as 0)."""
+    if not weeks:
+        return {}
+    start = weeks[0].week_start
+    end = weeks[-1].week_start + timedelta(days=6)
+    out: dict[str, int] = {}
+    day = start
+    while day <= end:
+        occupied = _occupied_lookup(occupancy, day)
+        if occupied:
+            out[day.isoformat()] = occupied
+        day += timedelta(days=1)
+    return out
+
+
+def _quote_to_response(
+    quote: PromiseQuote,
+    *,
+    is_workday: WorkdayFn,
+    occupancy: Mapping[date | str, int] | None = None,
+) -> PromiseQuoteResponse:
     window = None
     if quote.window is not None:
         window = PromiseQuoteWindow(
@@ -192,12 +253,15 @@ def _quote_to_response(quote: PromiseQuote) -> PromiseQuoteResponse:
             to_week=quote.window.to_week,
             promised_date=quote.window.promised_date,
         )
+    holidays, extra_workdays = _calendar_in_weeks_span(quote.weeks, is_workday)
     return PromiseQuoteResponse(
         tracks=quote.tracks,
         solo_days=quote.solo_days,
         solo_date=quote.solo_date,
         solo_week_end_date=quote.solo_week_end_date,
         earliest_start_week=quote.earliest_start_week,
+        first_pour_date=quote.first_pour_date,
+        first_pour_free=quote.first_pour_free,
         window=window,
         weeks=[
             PromiseQuoteWeek(
@@ -212,6 +276,9 @@ def _quote_to_response(quote: PromiseQuote) -> PromiseQuoteResponse:
             for week in quote.weeks
         ],
         knob=quote.knob,
+        holidays=holidays,
+        extra_workdays=extra_workdays,
+        occupancy=_occupancy_in_weeks_span(quote.weeks, occupancy or {}),
     )
 
 
@@ -329,7 +396,7 @@ class PromiseService:
         today: date | None = None,
         now: datetime | None = None,
         is_workday: WorkdayFn | None = None,
-        week_count: int = 12,
+        week_count: int = 26,
     ) -> None:
         settings = get_settings()
         self.db_path = db_path or str(settings.plita_db_path)
@@ -344,7 +411,39 @@ class PromiseService:
     def get_quote(self, kp_id: int, *, user: dict) -> PromiseQuoteResponse:
         raw = self._load_kp(kp_id)
         assert_offer_read_access(user, raw)
-        return _quote_to_response(self._compute_quote(raw, exclude_kp_id=kp_id))
+        occupancy = self._occupancy()
+        quote = self._compute_quote(raw, exclude_kp_id=kp_id, occupancy=occupancy)
+        return _quote_to_response(
+            quote, is_workday=self._resolve_workday(), occupancy=occupancy
+        )
+
+    def list_week_occupants(
+        self, kp_id: int, week_start: date, *, user: dict
+    ) -> PromiseWeekOccupantsResponse:
+        raw = self._load_kp(kp_id)
+        assert_offer_read_access(user, raw)
+        if week_start.weekday() != 0:
+            raise PromiseWeekInvalidError("week_start должен быть понедельником.")
+        moment = self._moment()
+        self.repository.expire_stale_holds(now=moment)
+        rows = self.repository.list_week_allocs(
+            week_start, kinds=("promise", "hold"), now=moment
+        )
+        planned = self._planned_for_week(week_start)
+        occupants = [
+            PromiseWeekOccupant(
+                kp_id=row["kp_id"],
+                customer_name=self._customer_name(row["kp_id"]),
+                kind=row["kind"],
+                tracks=row["tracks"],
+                promised_date=row["promised_date"],
+                is_current=row["kp_id"] == kp_id,
+            )
+            for row in rows
+        ]
+        return PromiseWeekOccupantsResponse(
+            week_start=week_start, planned=planned, occupants=occupants
+        )
 
     def get_tracks_per_day(self, *, user: dict) -> PromiseTracksPerDayResponse:
         del user
@@ -620,9 +719,15 @@ class PromiseService:
             notification_id=notification_id,
         )
 
-    def _compute_quote(self, raw: dict, *, exclude_kp_id: int | None) -> PromiseQuote:
+    def _compute_quote(
+        self,
+        raw: dict,
+        *,
+        exclude_kp_id: int | None,
+        occupancy: Mapping[date | str, int] | None = None,
+    ) -> PromiseQuote:
         today = self._today or self._moment().date()
-        occupancy = self._occupancy()
+        occ = occupancy if occupancy is not None else self._occupancy()
         knob = self.repository.get_promise_tracks_per_day()
         buffer = self.repository.get_promise_buffer()
         promised = self.repository.sum_promised_by_week(exclude_kp_id=exclude_kp_id)
@@ -634,7 +739,7 @@ class PromiseService:
         is_workday = self._resolve_workday()
         weeks = build_weeks(
             today,
-            occupancy,
+            occ,
             promised_by_week=promised,
             held_by_week=held,
             knob=knob,
@@ -648,6 +753,7 @@ class PromiseService:
             knob=knob,
             buffer=buffer,
             is_workday=is_workday,
+            occupancy=occ,
         )
 
     def _moment(self) -> datetime:
@@ -679,6 +785,32 @@ class PromiseService:
         if occupancy is None or not isinstance(occupancy, Mapping):
             raise OccupancyUnavailableError(_OCCUPANCY_UNAVAILABLE)
         return occupancy
+
+    def _planned_for_week(self, week_start: date) -> int:
+        occupancy = self._occupancy()
+        is_workday = self._resolve_workday()
+        today = self._today or self._moment().date()
+        tomorrow = today + timedelta(days=1)
+        sunday = week_start + timedelta(days=6)
+        range_start = week_start if sunday < tomorrow else max(tomorrow, week_start)
+        planned = 0
+        day = range_start
+        while day <= sunday:
+            if is_workday(day):
+                planned += _occupied_lookup(occupancy, day)
+            day += timedelta(days=1)
+        return planned
+
+    def _customer_name(self, occupant_kp_id: int) -> str:
+        try:
+            raw = self._load_kp(occupant_kp_id)
+        except PromiseNotFoundError:
+            return ""
+        name = raw.get("customer_name")
+        if name is None:
+            return ""
+        text = str(name).strip()
+        return text
 
     def _resolve_workday(self) -> WorkdayFn:
         if self._is_workday is not None:

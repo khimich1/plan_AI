@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
@@ -31,6 +32,7 @@ from app.schemas.archive import (
     PromiseQuoteResponse,
     PromiseTracksPerDayRequest,
     PromiseTracksPerDayResponse,
+    PromiseWeekOccupantsResponse,
     UpdateDiscountRequest,
     UpdateLogisticsCostRequest,
 )
@@ -48,6 +50,7 @@ from app.services.promise_service import (
     PromiseKnobInvalidError,
     PromiseNotFoundError,
     PromiseService,
+    PromiseWeekInvalidError,
 )
 from core.plate_order_context import PlateOrderContext
 from core.production.promise_buckets import OccupancyUnavailableError
@@ -339,6 +342,40 @@ def get_promise_quote(
         )
     except OccupancyUnavailableError as exc:
         logger.exception("promise-quote occupancy unavailable for kp_id=%s", kp_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc) or MSG_OCCUPANCY_UNAVAILABLE,
+        ) from exc
+
+
+@router.get(
+    "/{kp_id}/promise-weeks/{week_start}/occupants",
+    response_model=PromiseWeekOccupantsResponse,
+)
+def get_promise_week_occupants(
+    kp_id: int,
+    week_start: date,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: PromiseService = Depends(get_promise_service),
+) -> PromiseWeekOccupantsResponse:
+    try:
+        return service.list_week_occupants(kp_id, week_start, user=user)
+    except PromiseNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_promise_week_occupants",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except PromiseWeekInvalidError as exc:
+        raise_unprocessable_client_error(
+            exc,
+            where="archive.get_promise_week_occupants",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except OccupancyUnavailableError as exc:
+        logger.exception(
+            "promise-week occupants occupancy unavailable for kp_id=%s", kp_id
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc) or MSG_OCCUPANCY_UNAVAILABLE,

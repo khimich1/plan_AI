@@ -274,9 +274,29 @@ class PromiseQuoteResponse(BaseModel):
     solo_date: date | None = None
     solo_week_end_date: date | None = None
     earliest_start_week: date | None = None
+    first_pour_date: date | None = None
+    first_pour_free: int = Field(ge=0, default=0)
     window: PromiseQuoteWindow | None = None
     weeks: list[PromiseQuoteWeek] = Field(default_factory=list)
     knob: int
+    holidays: list[date] = Field(default_factory=list)
+    extra_workdays: list[date] = Field(default_factory=list)
+    occupancy: dict[str, int] = Field(default_factory=dict)
+
+
+class PromiseWeekOccupant(BaseModel):
+    kp_id: int
+    customer_name: str
+    kind: Literal["hold", "promise"]
+    tracks: int = Field(ge=1)
+    promised_date: date
+    is_current: bool
+
+
+class PromiseWeekOccupantsResponse(BaseModel):
+    week_start: date
+    planned: int = Field(ge=0)
+    occupants: list[PromiseWeekOccupant] = Field(default_factory=list)
 
 
 class PromiseHoldAllocation(BaseModel):

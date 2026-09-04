@@ -18,10 +18,13 @@ from core.production.promise_buckets import (
     allocate,
     build_quote,
     build_weeks,
+    day_free,
     estimate_tracks,
     iso_week_start,
     last_workday_of_week,
+    pack_pour,
     solo_days,
+    week_allocations,
     workday_predicate,
 )
 from core.production_capacity import MAX_TRACK_LENGTH_M
@@ -265,6 +268,116 @@ def test_build_quote_large_kp_starts_in_partial_week() -> None:
     assert quote.window is not None
     assert quote.earliest_start_week == WEEK_0
     assert quote.window.allocations == ((WEEK_0, 6), (WEEK_1, 14))
+
+
+EXAMPLE_A_TODAY = date(2026, 9, 4)
+EXAMPLE_A_OCCUPANCY = {
+    date(2026, 9, 7): 3,
+    date(2026, 9, 8): 3,
+    date(2026, 9, 9): 1,
+}
+WEEKDAYS = lambda day: day.weekday() < 5
+
+
+def test_day_free_floors_at_zero() -> None:
+    assert day_free(0, 3) == 3
+    assert day_free(1, 3) == 2
+    assert day_free(3, 3) == 0
+    assert day_free(4, 3) == 0
+
+
+def test_pack_pour_example_a() -> None:
+    weeks = build_weeks(
+        EXAMPLE_A_TODAY, EXAMPLE_A_OCCUPANCY, week_count=4, is_workday=WEEKDAYS
+    )
+    pour = pack_pour(
+        5,
+        EXAMPLE_A_OCCUPANCY,
+        weeks,
+        today=EXAMPLE_A_TODAY,
+        knob=3,
+        is_workday=WEEKDAYS,
+    )
+    assert pour is not None
+    assert pour.first_pour_date == date(2026, 9, 9)
+    assert pour.first_pour_free == 2
+    assert pour.allocations == ((date(2026, 9, 9), 2), (date(2026, 9, 10), 3))
+    assert pour.solo_date == date(2026, 9, 10)
+    assert pour.solo_week_end_date == date(2026, 9, 11)
+    assert week_allocations(pour) == ((WEEK_1, 5),)
+
+
+def test_pack_pour_example_b_skips_week_eaten_by_promised() -> None:
+    weeks = build_weeks(
+        EXAMPLE_A_TODAY,
+        EXAMPLE_A_OCCUPANCY,
+        promised_by_week={WEEK_1: 8},
+        week_count=4,
+        is_workday=WEEKDAYS,
+    )
+    assert weeks[1].week_start == WEEK_1
+    assert weeks[1].free == 0
+    pour = pack_pour(
+        5,
+        EXAMPLE_A_OCCUPANCY,
+        weeks,
+        today=EXAMPLE_A_TODAY,
+        knob=3,
+        is_workday=WEEKDAYS,
+    )
+    assert pour is not None
+    assert pour.first_pour_date >= WEEK_2
+    assert all(day >= WEEK_2 for day, _take in pour.allocations)
+    assert week_allocations(pour)[0][0] != WEEK_1
+
+
+def test_pack_pour_horizon_exhausted_returns_none() -> None:
+    weeks = build_weeks(EXAMPLE_A_TODAY, {}, week_count=1, is_workday=WEEKDAYS)
+    assert (
+        pack_pour(
+            80,
+            {},
+            weeks,
+            today=EXAMPLE_A_TODAY,
+            knob=3,
+            is_workday=WEEKDAYS,
+            horizon_days=14,
+        )
+        is None
+    )
+
+
+def test_pack_pour_zero_tracks_returns_none() -> None:
+    weeks = build_weeks(EXAMPLE_A_TODAY, {}, week_count=1, is_workday=WEEKDAYS)
+    assert (
+        pack_pour(0, {}, weeks, today=EXAMPLE_A_TODAY, knob=3, is_workday=WEEKDAYS)
+        is None
+    )
+
+
+def test_build_quote_example_a_uses_pour_plan() -> None:
+    weeks = build_weeks(
+        EXAMPLE_A_TODAY, EXAMPLE_A_OCCUPANCY, week_count=4, is_workday=WEEKDAYS
+    )
+    quote = build_quote(
+        5 * MAX_TRACK_LENGTH_M,
+        weeks,
+        today=EXAMPLE_A_TODAY,
+        knob=3,
+        occupancy=EXAMPLE_A_OCCUPANCY,
+        is_workday=WEEKDAYS,
+    )
+    assert quote.tracks == 5
+    assert quote.first_pour_date == date(2026, 9, 9)
+    assert quote.first_pour_free == 2
+    assert quote.solo_date == date(2026, 9, 10)
+    assert quote.solo_week_end_date == date(2026, 9, 11)
+    assert quote.earliest_start_week == WEEK_1
+    assert quote.window is not None
+    assert quote.window.promised_date == date(2026, 9, 11)
+    assert quote.window.from_week == WEEK_1
+    assert quote.window.to_week == WEEK_1
+    assert quote.window.allocations == ((WEEK_1, 5),)
 
 
 def test_module_has_no_app_sqlite_or_io() -> None:

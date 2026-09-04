@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -547,6 +548,8 @@ def test_promise_quote_ok(
     assert body["weeks"][0]["free"] == 6
     assert body["weeks"][0]["held"] == 0
     assert body["knob"] == 3
+    assert body["holidays"] == []
+    assert body["extra_workdays"] == []
     fake_promise_service.get_quote.assert_called_once()
 
 
@@ -623,6 +626,203 @@ def test_promise_quote_forbidden_for_accountant(
         "/api/v1/commercial/archive/42/promise-quote",
         cookies=cookie,
     )
+    assert response.status_code == 403
+
+
+def _fake_occupants():
+    from app.schemas.archive import PromiseWeekOccupant, PromiseWeekOccupantsResponse
+
+    return PromiseWeekOccupantsResponse(
+        week_start=date(2026, 8, 31),
+        planned=2,
+        occupants=[
+            PromiseWeekOccupant(
+                kp_id=7,
+                customer_name="АО Чужой",
+                kind="promise",
+                tracks=4,
+                promised_date=date(2026, 9, 18),
+                is_current=False,
+            ),
+            PromiseWeekOccupant(
+                kp_id=42,
+                customer_name="ООО Тест",
+                kind="hold",
+                tracks=3,
+                promised_date=date(2026, 9, 18),
+                is_current=True,
+            ),
+        ],
+    )
+
+
+def test_promise_week_occupants_ok(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    fake_promise_service.list_week_occupants.return_value = _fake_occupants()
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/promise-weeks/2026-08-31/occupants",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["week_start"] == "2026-08-31"
+    assert body["planned"] == 2
+    assert "created_by" not in body
+    assert [row["kind"] for row in body["occupants"]] == ["promise", "hold"]
+    assert body["occupants"][1]["is_current"] is True
+    assert body["occupants"][1]["kp_id"] == 42
+    assert "created_by" not in body["occupants"][0]
+    fake_promise_service.list_week_occupants.assert_called_once()
+
+
+def test_promise_week_occupants_not_found(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    from app.services.promise_service import PromiseNotFoundError
+
+    fake_promise_service.list_week_occupants.side_effect = PromiseNotFoundError("нет")
+
+    response = client.get(
+        "/api/v1/commercial/archive/999/promise-weeks/2026-08-31/occupants",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 404
+
+
+def test_promise_week_occupants_not_monday_is_422(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    from app.services.promise_service import PromiseWeekInvalidError
+
+    fake_promise_service.list_week_occupants.side_effect = PromiseWeekInvalidError(
+        "week_start должен быть понедельником."
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/promise-weeks/2026-09-02/occupants",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 422
+
+
+def test_promise_week_occupants_garbage_date_is_422(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    response = client.get(
+        "/api/v1/commercial/archive/42/promise-weeks/not-a-date/occupants",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 422
+    fake_promise_service.list_week_occupants.assert_not_called()
+
+
+def test_promise_week_occupants_occupancy_unavailable_is_503(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    from core.production.promise_buckets import OccupancyUnavailableError
+
+    fake_promise_service.list_week_occupants.side_effect = OccupancyUnavailableError(
+        "Недоступна занятость плана — котировка остановлена (fail-closed)."
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/promise-weeks/2026-08-31/occupants",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 503
+
+
+def _client_for_role(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: MagicMock,
+    fake_promise_service: MagicMock,
+    *,
+    role: str,
+    username: str = "roleuser",
+    user_id: int = 2,
+) -> tuple[TestClient, dict[str, str]]:
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
+    get_settings.cache_clear()
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": user_id,
+                "username": username,
+                "role": role,
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+                "session_version": 0,
+            }
+        ],
+    )
+    app = create_app()
+    app.dependency_overrides[get_archive_service] = lambda: fake_service
+    app.dependency_overrides[get_promise_service] = lambda: fake_promise_service
+    client = CsrfAwareTestClient(app)
+    cookie = {
+        "app_session": create_session_token(
+            {"id": user_id, "username": username, "role": role},
+            ttl_seconds=300,
+        ),
+    }
+    return client, cookie
+
+
+def test_promise_week_occupants_ok_for_manager(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: MagicMock,
+    fake_promise_service: MagicMock,
+) -> None:
+    fake_promise_service.list_week_occupants.return_value = _fake_occupants()
+    client, cookie = _client_for_role(
+        monkeypatch, fake_service, fake_promise_service, role="manager", username="mgr"
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/promise-weeks/2026-08-31/occupants",
+        cookies=cookie,
+    )
+
+    assert response.status_code == 200
+
+
+def test_promise_week_occupants_forbidden_for_production(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: MagicMock,
+    fake_promise_service: MagicMock,
+) -> None:
+    client, cookie = _client_for_role(
+        monkeypatch,
+        fake_service,
+        fake_promise_service,
+        role="production",
+        username="prod",
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/promise-weeks/2026-08-31/occupants",
+        cookies=cookie,
+    )
+
     assert response.status_code == 403
 
 
@@ -1419,3 +1619,4 @@ def test_promise_tracks_per_day_forbidden_for_accountant(
         cookies=cookie,
     )
     assert response.status_code == 403
+

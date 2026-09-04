@@ -91,14 +91,14 @@ describe("ArchiveOfferList MNA-602 — multi badges", () => {
 });
 
 describe("ArchiveOfferList promise hold badge", () => {
-  it("shows срок закреплён до сегодня with who pinned it", () => {
+  it("shows к 18.09 · до вечера with who pinned it", () => {
     holdsByKp.set(42, {
       id: 1,
       kp_id: 42,
       kind: "hold",
       status: "active",
       tracks_total: 2,
-      promised_date: "2026-09-04",
+      promised_date: "2026-09-18",
       expires_at: "2026-09-03T23:59:59",
       created_by: "alice",
       created_at: "2026-09-03T12:00:00",
@@ -110,7 +110,7 @@ describe("ArchiveOfferList promise hold badge", () => {
     );
 
     const badge = screen.getByTestId("promise-hold-badge");
-    expect(badge).toHaveTextContent("срок закреплён до сегодня");
+    expect(badge).toHaveTextContent("к 18.09 · до вечера");
     expect(badge).toHaveAttribute("title", "Закрепил: alice");
   });
 

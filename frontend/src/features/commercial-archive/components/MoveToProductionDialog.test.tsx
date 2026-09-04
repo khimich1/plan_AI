@@ -15,7 +15,6 @@ afterEach(() => {
   holdState.isPending = false;
   createHoldMutate.mockReset();
   moveMutate.mockReset();
-  capacityState.data = redCapacity;
 });
 
 const sampleQuote: PromiseQuote = {
@@ -24,6 +23,8 @@ const sampleQuote: PromiseQuote = {
   solo_date: "2026-09-04",
   solo_week_end_date: "2026-09-06",
   earliest_start_week: "2026-08-31",
+  first_pour_date: "2026-09-03",
+  first_pour_free: 3,
   window: {
     from_week: "2026-08-31",
     to_week: "2026-08-31",
@@ -41,6 +42,7 @@ const sampleQuote: PromiseQuote = {
     },
   ],
   knob: 3,
+  occupancy: { "2026-09-03": 0 },
 };
 
 const quoteState = {
@@ -71,36 +73,6 @@ const holdState = {
 const createHoldMutate = vi.fn();
 const moveMutate = vi.fn();
 
-const redCapacity = {
-  start_date: "2026-03-03",
-  target_date: "2026-03-20",
-  tracks_needed: 10,
-  tracks_free_in_window: 2,
-  delta: -8,
-  status: "red" as const,
-  hint: "нужно +8 дорожек до 20.03.2026",
-  days_info: {},
-  holidays: [],
-  extra_workdays: [],
-  calendar_from_month: "2026-03",
-  calendar_to_month: "2026-03",
-};
-
-const greenCapacity = {
-  ...redCapacity,
-  status: "green" as const,
-  hint: null,
-  delta: 4,
-  tracks_free_in_window: 12,
-};
-
-const capacityState = {
-  data: redCapacity as typeof redCapacity | typeof greenCapacity,
-  isFetching: false,
-  isError: false,
-  error: null,
-};
-
 vi.mock("@/features/commercial-archive/hooks/useArchiveQueries", () => ({
   useMoveToProductionMutation: () => ({
     mutateAsync: moveMutate,
@@ -126,12 +98,14 @@ vi.mock("@/features/factory-capacity/api/promiseQuote", async () => {
       error: null,
       reset: vi.fn(),
     }),
+    usePromiseWeekOccupantsQuery: () => ({
+      isPending: false,
+      isError: false,
+      error: null,
+      data: { week_start: "2026-08-31", planned: 0, occupants: [] },
+    }),
   };
 });
-
-vi.mock("@/features/factory-capacity/hooks/useCapacitySnapshotQuery", () => ({
-  useCapacitySnapshotQuery: () => capacityState,
-}));
 
 const wrap = (ui: ReactNode) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -153,7 +127,7 @@ describe("MoveToProductionDialog capacity gate", () => {
     expect(screen.getByRole("button", { name: /Перевести в производство/i })).toBeInTheDocument();
   });
 
-  it("shows quote four numbers and week strip instead of production estimate", () => {
+  it("shows quote and window band instead of production estimate", () => {
     wrap(
       <MoveToProductionDialog
         open
@@ -166,10 +140,11 @@ describe("MoveToProductionDialog capacity gate", () => {
     const block = screen.getByTestId("promise-quote-block");
     expect(block).toHaveTextContent("~2 дорожек");
     expect(block).toHaveTextContent(/Обещать к 4\.09/);
-    expect(block).toHaveTextContent(/Начало:\s*31\.08/);
+    expect(block).toHaveTextContent(/Начало:\s*3\.09\s*·\s*остаток 3 дор\./);
     expect(block).toHaveTextContent(/Если только его:\s*4\.09/);
     expect(block).toHaveTextContent(/Соло \+ до конца недели:\s*6\.09/);
-    expect(screen.getByTestId("promise-week-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("promise-window-band")).toBeInTheDocument();
+    expect(screen.queryByTestId("promise-week-strip")).not.toBeInTheDocument();
     expect(screen.queryByText(/Оценка производства/)).not.toBeInTheDocument();
   });
 
@@ -178,7 +153,7 @@ describe("MoveToProductionDialog capacity gate", () => {
     expect(screen.getByRole("textbox")).toHaveValue("04.09.2026");
   });
 
-  it("keeps hint in modal; Ёмкость drawer shows week strip, not mini-calendar", () => {
+  it("does not block submit on capacity-snapshot; Ёмкость shows period calendar", () => {
     wrap(
       <MoveToProductionDialog
         open
@@ -188,17 +163,18 @@ describe("MoveToProductionDialog capacity gate", () => {
       />,
     );
 
-    expect(screen.getByText(/нужно \+8 дорожек/)).toBeInTheDocument();
+    expect(screen.queryByText(/нужно \+8 дорожек/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("factory-capacity-panel")).not.toBeInTheDocument();
     expect(screen.queryByTestId("factory-mini-calendar")).not.toBeInTheDocument();
     const submit = screen.getByRole("button", { name: /Перевести в производство/i });
-    expect(submit).toBeDisabled();
+    expect(submit).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: /^Ёмкость$/i }));
     expect(screen.getByText("Ёмкость завода")).toBeInTheDocument();
-    expect(screen.getAllByTestId("promise-week-strip").length).toBe(2);
+    expect(screen.getByTestId("promise-period-calendar")).toBeInTheDocument();
+    expect(screen.getByTestId("promise-week-occupants")).toBeInTheDocument();
     expect(screen.getByTestId("promise-knob-settings")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Настроить ручку \(3 дор\.\/день\)/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("promise-week-strip")).not.toBeInTheDocument();
     expect(screen.queryByTestId("factory-mini-calendar")).not.toBeInTheDocument();
     expect(screen.queryByTestId("factory-capacity-panel")).not.toBeInTheDocument();
   });
@@ -220,6 +196,7 @@ describe("MoveToProductionDialog capacity gate", () => {
     expect(screen.getByText(/Недоступна занятость плана/)).toBeInTheDocument();
     expect(screen.queryByTestId("promise-quote-block")).not.toBeInTheDocument();
     expect(screen.queryByTestId("promise-week-strip")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("promise-window-band")).not.toBeInTheDocument();
   });
 
   it("Esc closes capacity drawer without closing modal", () => {
@@ -273,7 +250,6 @@ describe("MoveToProductionDialog promise hold", () => {
 
   it("moves to production from an active hold without re-entering the date", async () => {
     holdState.data = sampleHold;
-    capacityState.data = greenCapacity;
     moveMutate.mockResolvedValue({ kp_id: 42 });
 
     wrap(<MoveToProductionDialog open onClose={() => undefined} kpId={42} />);
@@ -286,9 +262,42 @@ describe("MoveToProductionDialog promise hold", () => {
     expect(moveMutate).toHaveBeenCalledWith({ kpId: 42, executionTerms: "04.09.2026" });
   });
 
-  it("still shows чужой холд as холды N on the week strip", () => {
+  it("does not show week-strip cards in the dialog after the window band", () => {
     wrap(<MoveToProductionDialog open onClose={() => undefined} kpId={42} />);
-    expect(screen.getByTestId("promise-week-strip")).toHaveTextContent("холды");
-    expect(screen.getByTestId("promise-week-strip")).toHaveTextContent("1");
+    expect(screen.getByTestId("promise-window-band")).toBeInTheDocument();
+    expect(screen.queryByTestId("promise-week-strip")).not.toBeInTheDocument();
+  });
+
+  it("clicking a calendar day selects the week and does not change execution terms", () => {
+    wrap(
+      <MoveToProductionDialog
+        open
+        onClose={() => undefined}
+        kpId={42}
+        initialExecutionTerms="20.03.2026"
+      />,
+    );
+
+    const field = screen.getByRole("textbox");
+    expect(field).toHaveValue("20.03.2026");
+    fireEvent.click(screen.getByRole("button", { name: /^Ёмкость$/i }));
+    fireEvent.click(screen.getByTestId("promise-cal-day-2026-09-04"));
+    expect(field).toHaveValue("20.03.2026");
+    expect(screen.getByTestId("promise-week-day-line")).toHaveTextContent("4.09: свободно 3");
+    expect(screen.getByTestId("promise-week-free")).toHaveTextContent("Свободно: 6 из 6");
+  });
+
+  it("opens the later field month in Ёмкость even past quote weeks", () => {
+    wrap(
+      <MoveToProductionDialog
+        open
+        onClose={() => undefined}
+        kpId={42}
+        initialExecutionTerms="20.03.2027"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^Ёмкость$/i }));
+    expect(screen.getByTestId("promise-period-calendar")).toHaveTextContent("март 2027");
   });
 });

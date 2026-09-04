@@ -30,9 +30,16 @@ const secondaryStyle: CSSProperties = {
   color: "#475467",
 };
 
+function startLabel(quote: PromiseQuote): string {
+  if (!quote.first_pour_date) {
+    return "Начало: —";
+  }
+  const day = formatQuoteDayMonth(quote.first_pour_date);
+  return `Начало: ${day} · остаток ${quote.first_pour_free ?? 0} дор.`;
+}
+
 export const PromiseQuoteBlock = ({ quote }: Props) => {
   const promised = formatQuoteDayMonth(quote.window?.promised_date);
-  const start = formatQuoteDayMonth(quote.earliest_start_week);
   const solo = formatQuoteDayMonth(quote.solo_date);
   const soloWeekEnd = formatQuoteDayMonth(quote.solo_week_end_date);
 
@@ -41,7 +48,7 @@ export const PromiseQuoteBlock = ({ quote }: Props) => {
       <div style={{ fontSize: "0.85rem", color: "#667085" }}>~{quote.tracks} дорожек</div>
       <div style={primaryStyle}>Обещать к {promised}</div>
       <div style={secondaryStyle}>
-        <div>Начало: {start}</div>
+        <div>{startLabel(quote)}</div>
         <div>Если только его: {solo}</div>
         <div>Соло + до конца недели: {soloWeekEnd}</div>
       </div>

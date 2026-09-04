@@ -13,6 +13,7 @@ import {
   useUpdateLogisticsCostMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import {
+  holdBadgeLabel,
   holdCreatedByTitle,
   usePromiseHoldQuery,
 } from "@/features/factory-capacity/api/promiseQuote";
@@ -443,7 +444,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   color: "#b54708",
                 }}
               >
-                срок закреплён до сегодня
+                {holdBadgeLabel(activeHold.promised_date)}
               </span>
             )}
           </span>
