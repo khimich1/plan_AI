@@ -15,12 +15,22 @@ from core.plate_order_context import PlateOrderContext
 from core.unpriced_plate_replacements import _dims_match, _load_code_from_item
 
 
+def _normalize_wide_line_key(line: str) -> str:
+    """Align compact OCR marks with display marks for wide resolve matching."""
+    text = str(line or "").strip().lower()
+    text = re.sub(r"^плиты\s+", "", text)
+    text = re.sub(r"^пб\s+", "", text)
+    # Avoid \\b with Cyrillic «п» (JS parity); end or whitespace after «п».
+    text = re.sub(r"-(\d+(?:[.,]\d+)?)п(?=\s|$)", r"-\1", text)
+    return re.sub(r"\s+", " ", text)
+
 @dataclass(frozen=True)
 class PlateResolveSpec:
     kind: Literal["wide", "unpriced", "invalid_width"]
     unresolved_error: str
     empty_after_error: str
     invalid_action_error: str
+    apply_miss_error: str
     decisions_meta_key: str
     extra_resolved_flag: str | None
     force_wide_resolved: bool
@@ -32,6 +42,9 @@ WIDE_PLATE_RESOLVE = PlateResolveSpec(
     unresolved_error="Нужно выбрать действие для всех широких плит.",
     empty_after_error="После обработки широких плит список стал пустым.",
     invalid_action_error="Некорректное действие для обработки широкой плиты.",
+    apply_miss_error=(
+        "Не удалось применить решение по широким плитам: позиция не найдена в списке."
+    ),
     decisions_meta_key="wide_plate_decisions",
     extra_resolved_flag=None,
     force_wide_resolved=True,
@@ -42,6 +55,9 @@ UNPRICED_PLATE_RESOLVE = PlateResolveSpec(
     unresolved_error="Нужно выбрать действие для всех позиций без цены.",
     empty_after_error="После обработки позиций без цены список стал пустым.",
     invalid_action_error="Некорректное действие для позиции без цены.",
+    apply_miss_error=(
+        "Не удалось применить решение по позициям без цены: позиция не найдена в списке."
+    ),
     decisions_meta_key="unpriced_plate_decisions",
     extra_resolved_flag="unpriced_plates_resolved",
     force_wide_resolved=False,
@@ -52,6 +68,10 @@ INVALID_WIDTH_RESOLVE = PlateResolveSpec(
     unresolved_error="Нужно выбрать действие для всех позиций с нестандартной шириной.",
     empty_after_error="После обработки нестандартной ширины список стал пустым.",
     invalid_action_error="Некорректное действие для позиции с нестандартной шириной.",
+    apply_miss_error=(
+        "Не удалось применить решение по нестандартной ширине: "
+        "позиция не найдена в текущем списке. Обновите список и повторите."
+    ),
     decisions_meta_key="invalid_width_decisions",
     extra_resolved_flag="invalid_widths_resolved",
     force_wide_resolved=False,
@@ -134,7 +154,7 @@ class CommercialPlateResolve:
             decisions_by_line,
         )
         original_lines = self._original_plate_resolve_lines(metadata, current_text)
-        merged_lines = self._rewrite_plate_resolve_lines(
+        merged_lines, applied_keys = self._rewrite_plate_resolve_lines(
             spec,
             original_lines,
             items,
@@ -143,6 +163,7 @@ class CommercialPlateResolve:
             plate_order_ctx=plate_order_ctx,
             for_batches=False,
         )
+        self._assert_all_plate_resolve_decisions_applied(spec, items, applied_keys)
         if not merged_lines:
             raise ValueError(spec.empty_after_error)
 
@@ -354,6 +375,26 @@ class CommercialPlateResolve:
             ]
         return original_lines
 
+    @staticmethod
+    def _plate_resolve_item_key(spec: PlateResolveSpec, item: dict[str, Any]) -> str:
+        if spec.kind == "wide":
+            return str(item.get("line", "")).strip()
+        return str(item.get("id") or item.get("line") or "").strip()
+
+    @staticmethod
+    def _assert_all_plate_resolve_decisions_applied(
+        spec: PlateResolveSpec,
+        items: list[dict[str, Any]],
+        applied_keys: set[str],
+    ) -> None:
+        expected = {
+            key
+            for item in items
+            if (key := CommercialPlateResolve._plate_resolve_item_key(spec, item))
+        }
+        if expected - applied_keys:
+            raise ValueError(spec.apply_miss_error)
+
     def _rewrite_plate_resolve_lines(
         self,
         spec: PlateResolveSpec,
@@ -364,15 +405,9 @@ class CommercialPlateResolve:
         *,
         plate_order_ctx: PlateOrderContext,
         for_batches: bool,
-    ) -> list[str]:
-        wide_lines: set[str] | None = None
-        if spec.kind == "wide":
-            wide_lines = {
-                str(item.get("line", "")).strip()
-                for item in items
-                if str(item.get("line", "")).strip()
-            }
+    ) -> tuple[list[str], set[str]]:
         merged_lines: list[str] = []
+        applied_keys: set[str] = set()
         for line in original_lines:
             item, decision = self._lookup_plate_resolve_decision(
                 spec,
@@ -380,12 +415,18 @@ class CommercialPlateResolve:
                 items,
                 resolved_by_line,
                 resolved_decisions,
-                wide_lines=wide_lines,
+                wide_lines=None,
                 for_batches=for_batches,
             )
             if decision is None:
                 merged_lines.append(line)
                 continue
+            if item is not None:
+                key = self._plate_resolve_item_key(spec, item)
+            else:
+                key = line.strip()
+            if key:
+                applied_keys.add(key)
             merged_lines.extend(
                 self._apply_plate_resolve_action(
                     spec,
@@ -396,7 +437,7 @@ class CommercialPlateResolve:
                     for_batches=for_batches,
                 )
             )
-        return merged_lines
+        return merged_lines, applied_keys
 
     @staticmethod
     def _match_plate_resolve_item_to_line(
@@ -412,6 +453,14 @@ class CommercialPlateResolve:
                 return item
             name = str(item.get("name", "")).strip()
             if name and name in stripped:
+                return item
+        wide_key = _normalize_wide_line_key(stripped)
+        for item in items:
+            item_line = str(item.get("line", "")).strip()
+            if item_line and _normalize_wide_line_key(item_line) == wide_key:
+                return item
+            name = str(item.get("name", "")).strip()
+            if name and _normalize_wide_line_key(name) == wide_key:
                 return item
         for item in items:
             try:
@@ -440,12 +489,23 @@ class CommercialPlateResolve:
         wide_lines: set[str] | None,
         for_batches: bool,
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        _ = wide_lines  # kept for call-site compatibility; matching is key-based
         if spec.kind == "wide":
-            if wide_lines is None or line not in wide_lines:
+            matched_item = CommercialPlateResolve._match_plate_resolve_item_to_line(line, items)
+            if matched_item is None:
                 return None, None
-            if for_batches:
-                return None, resolved_by_line.get(line)
-            return None, resolved_by_line[line]
+            item_line = str(matched_item.get("line", "")).strip()
+            item_id = str(matched_item.get("id", "")).strip()
+            decision = (
+                resolved_by_line.get(item_line)
+                or resolved_decisions.get(item_id)
+                or resolved_decisions.get(item_line)
+            )
+            if decision is None and for_batches:
+                return matched_item, None
+            if decision is None:
+                return matched_item, None
+            return matched_item, decision
 
         matched_item = CommercialPlateResolve._match_plate_resolve_item_to_line(line, items)
         if matched_item is None:
@@ -572,7 +632,7 @@ class CommercialPlateResolve:
         for batch in plate_batches:
             batch_text = str(batch.get("normalized_text", "") or "")
             batch_lines = [line.strip() for line in batch_text.split("\n") if line.strip()]
-            next_lines = self._rewrite_plate_resolve_lines(
+            next_lines, _applied = self._rewrite_plate_resolve_lines(
                 spec,
                 batch_lines,
                 items,
@@ -618,8 +678,8 @@ class CommercialPlateResolve:
             wide_plates_resolved=wide_resolved,
             source_metadata={},
         )
-        if spec.extra_resolved_flag:
-            next_metadata[spec.extra_resolved_flag] = True
+        # Do not force extra_resolved_flag=True: silent miss used to clear the UI gate
+        # while leaving the old mark in the list. Trust re-detection from preview.
         next_metadata[spec.decisions_meta_key] = list(resolved_decisions.values())
         order_data = self._wf._stamp_order_data(preview.order_data, product_type="plates")
         self._wf.draft_store.replace_preview(

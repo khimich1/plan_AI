@@ -4,11 +4,17 @@ import {
   buildMergedFlushText,
   buildWidePlateResolveDecisions,
   flushThenResolveWidePlates,
+  normalizeLineKey,
 } from "@/features/commercial-offer/lib/flushThenResolveWidePlates";
 import { liveWidePlateLines } from "@/features/commercial-offer/lib/liveWidePlateLines";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 
 describe("flushThenResolveWidePlates", () => {
+  it("normalizeLineKey aligns compact OCR with ПБ…п marks", () => {
+    expect(normalizeLineKey("68-15-8 2")).toBe("68-15-8 2");
+    expect(normalizeLineKey("ПБ 68-15-8п 2")).toBe("68-15-8 2");
+    expect(normalizeLineKey("Плиты ПБ 27-15-8п 2")).toBe("27-15-8 2");
+  });
   it("builds resolve payload from live lines after flush text", () => {
     const editorText = "34-15-10п 15";
     const liveLines = liveWidePlateLines(editorText);
@@ -29,6 +35,25 @@ describe("flushThenResolveWidePlates", () => {
     expect(decisions[0]?.lineId).toBe("wide-after-flush");
     expect(decisions[0]?.action).toBe("replace");
     expect(decisions[0]?.replacementText).toContain("15");
+  });
+
+  it("maps exclude from compact live line without «п» onto flushed ПБ…п line", () => {
+    const decisions = buildWidePlateResolveDecisions({
+      liveLines: liveWidePlateLines("68-15-8 2\n27-15-8 2"),
+      flushedWideLines: [
+        { id: "wide-1", line: "ПБ 68-15-8п 2", qty: 2 },
+        { id: "wide-2", line: "ПБ 27-15-8п 2", qty: 2 },
+      ],
+      decisionsById: {
+        "live-wide-0": { action: "exclude", replacementText: "" },
+        "live-wide-1": { action: "exclude", replacementText: "" },
+      },
+    });
+
+    expect(decisions).toEqual([
+      expect.objectContaining({ lineId: "wide-1", action: "exclude", sourceLine: "ПБ 68-15-8п 2" }),
+      expect.objectContaining({ lineId: "wide-2", action: "exclude", sourceLine: "ПБ 27-15-8п 2" }),
+    ]);
   });
 
   it("multi-page merge does not drop other pages", () => {

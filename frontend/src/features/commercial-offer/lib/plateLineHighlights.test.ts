@@ -137,7 +137,7 @@ describe("buildPlateLineHighlightMap", () => {
     expect(map.get(0)).toBeUndefined();
   });
 
-  it("uses next-screen tooltip for wide on batch review", () => {
+  it("uses below-card tooltip for wide on batch review", () => {
     const draft = makeDraft({
       wide_plate_lines: [{ id: "wide-1", line: "ПБ 59-15-8п 2", qty: 2 }],
     });
@@ -146,7 +146,7 @@ describe("buildPlateLineHighlightMap", () => {
 
     expect(map.get(0)).toEqual({
       kind: "wide",
-      title: "Позиция шире стандартной — решение на следующем экране",
+      title: "Позиция шире стандартной — требует решения ниже",
     });
   });
 
@@ -362,7 +362,7 @@ describe("mergeReviewHighlights (S3–S6)", () => {
     const map = mergeReviewHighlights(draft, "ПБ 59-15-8п 2\nПБ 29-8-8п 1", [], { batchReview: true });
 
     expect(map.get(0)?.kind).toBe("wide");
-    expect(map.get(0)?.title).toBe("Позиция шире стандартной — решение на следующем экране");
+    expect(map.get(0)?.title).toBe("Позиция шире стандартной — требует решения ниже");
     expect(map.get(1)).toBeUndefined();
   });
 });

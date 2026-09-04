@@ -547,7 +547,7 @@ describe("PlateInputStep live wide overlay", () => {
     onApplyWidePlates: noop,
   };
 
-  it("does not show wide card during batch review; confirm stays enabled", () => {
+  it("shows wide card during batch review; confirm stays enabled", () => {
     const draft = makeDraft("44-15-10п 5");
     draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];
     draft.metadata.wide_plates_resolved = false;
@@ -561,7 +561,8 @@ describe("PlateInputStep live wide overlay", () => {
       />,
     );
 
-    expect(screen.queryByText("Нестандартная ширина")).not.toBeInTheDocument();
+    expect(screen.getByText("Нестандартная ширина")).toBeInTheDocument();
+    expect(screen.getByText(/Плита шире стандартной/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
   });
 

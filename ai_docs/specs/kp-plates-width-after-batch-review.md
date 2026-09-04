@@ -5,7 +5,7 @@
 > **Parent:** [`kp-nevernaia-shirina.md`](./kp-nevernaia-shirina.md) (детекция + карточка + API resolve)  
 > **Related:** [`kp-review-apply-sync-and-highlights.md`](./kp-review-apply-sync-and-highlights.md), [`ux-wizard-step-plates.md`](./ux-wizard-step-plates.md)  
 > **Дата:** 2026-09-03  
-> **Статус:** реализовано (UX split + bugfix resolve), коммит — по просьбе
+> **Статус:** реализовано (wide на сверке; invalid/unpriced после «Список верен»; bugfix resolve), коммит — по просьбе
 
 ---
 
@@ -13,7 +13,7 @@
 
 | # | Тема | Решение |
 |---|------|---------|
-| 1 | Где живут карточки ширины | **Не** на экране сверки OCR. Только на **втором экране** внутри шага «1. Плиты» — после «Список верен» (`pendingBatchReview = false`) |
+| 1 | Где живут карточки ширины | **Wide (>12):** на экране сверки OCR (под списком). **Invalid (завод не режет) + unpriced:** только после «Список верен» (`pendingBatchReview = false`) |
 | 2 | Шаг «2. Клиент» | Карточки ширины **не** переносим на шаг клиента |
 | 3 | «Список верен» | Доступен **без** решения по ширине (wide / invalid / unpriced) |
 | 4 | Подсветка на сверке | **Wide** (шире 12 дм) — **да**, красная подсветка строк; tooltip: «решение на следующем экране» |
@@ -74,13 +74,14 @@
 │                              │  • wide → красная подсветка      │
 │                              │  • invalid → без подсветки       │
 ├──────────────────────────────┴──────────────────────────────────┤
+│ [Нестандартная ширина] — wide >12 (если есть)                   │
 │ [Начать заново]                    [Список верен] [Готово, далее*]│
 └─────────────────────────────────────────────────────────────────┘
 * «Готово, далее» disabled, пока pendingBatchReview
 ```
 
-**Показываем:** PageReviewNav, фото, редактор списка, AI-блок (если wired), OCR alerts.  
-**Скрываем:** `WidePlatesInlineSection`, `InvalidWidthsInlineSection`, `UnpricedPlatesInlineSection`, `KpPlatePreviewPanel`.
+**Показываем:** PageReviewNav, фото, редактор списка, AI-блок (если wired), OCR alerts, **WidePlatesInlineSection**.  
+**Скрываем:** `InvalidWidthsInlineSection`, `UnpricedPlatesInlineSection`, `KpPlatePreviewPanel`.
 
 ### Экран 2 — решения + предпросмотр (`pendingBatchReview = false`)
 
@@ -220,7 +221,7 @@ def _match_plate_resolve_item_to_line(line: str, items: list[dict]) -> dict | No
 
 ## Success Criteria
 
-- [x] Карточки wide / invalid / unpriced **не** рендерятся при `isBatchReviewMode`.
+- [x] Карточки invalid / unpriced **не** рендерятся при `isBatchReviewMode`; wide **рендерится** на сверке.
 - [x] «Список верен» **не** блокируется `hasUnresolvedWidePlates`.
 - [x] На сверке: подсветка wide с текстом «решение на следующем экране»; invalid_width highlight отключён.
 - [x] «Готово, далее» блокируется при unresolved wide / invalid / unpriced.

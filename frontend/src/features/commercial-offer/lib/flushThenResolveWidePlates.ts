@@ -34,9 +34,16 @@ export type ResolveWidePlatesPayload = {
   decisions: WidePlateResolveDecision[];
 };
 
-/** Match live overlay ids to flushed server lines (optional ПБ prefix). */
+/** Match live overlay ids to flushed server lines (optional ПБ / «п» / «Плиты»). */
 export const normalizeLineKey = (line: string): string =>
-  line.trim().toLowerCase().replace(/^пб\s+/i, "");
+  line
+    .trim()
+    .toLowerCase()
+    .replace(/^плиты\s+/i, "")
+    .replace(/^пб\s+/i, "")
+    // Do not use \b — in JS it does not treat Cyrillic «п» as a word char.
+    .replace(/-(\d+(?:[.,]\d+)?)п(?=\s|$)/gi, "-$1")
+    .replace(/\s+/g, " ");
 
 export const buildMergedFlushText = ({
   hasStarted,

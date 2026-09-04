@@ -105,6 +105,53 @@ def test_match_plate_resolve_item_to_line_compact_mark_without_pe() -> None:
     assert CommercialPlateResolve._match_plate_resolve_item_to_line("68-11-10 1", [item]) is item
 
 
+def test_resolve_invalid_widths_raises_when_decision_not_applied_to_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Silent-success regression: match miss must 400, not clear the gate."""
+    workflow = CommercialWorkflowService()
+    # No length/width → dims match impossible; display name not in compact input.
+    invalid_item = {
+        "id": "invalid-width-1",
+        "name": "Плиты ПБ 68-11-10п",
+        "line": "Плиты ПБ 68-11-10п",
+        "qty": 1,
+        "width_mm": 1100,
+        "load_class": 1000,
+        "replacements": [
+            {"width_mm": 1080, "width_label": "10,8", "price": 25651.0},
+            {"width_mm": 1200, "width_label": "12", "price": 25651.0},
+        ],
+    }
+    draft_payload = {
+        "order": PlateOrder(),
+        "optimization_context": OptimizationContext(order=PlateOrder()),
+        "order_data": [],
+        "metadata": {
+            "source_type": "text",
+            "input_text": "68-11-10 1",
+            "normalized_lines": ["68-11-10 1"],
+            "wide_plates_resolved": True,
+            "invalid_width_lines": [invalid_item],
+            "invalid_widths_resolved": False,
+            "plate_batches": [],
+        },
+    }
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft_payload)
+    monkeypatch.setattr(
+        workflow.commercial_service,
+        "generate_preview",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not persist on miss")),
+    )
+
+    with pytest.raises(ValueError, match="не найдена в текущем списке"):
+        workflow.resolve_invalid_widths(
+            "draft-1",
+            decisions=[{"line_id": "invalid-width-1", "action": "replace_width", "width_mm": 1080}],
+            plate_order_ctx=PlateOrderContext.fresh_empty(),
+        )
+
+
 def test_resolve_invalid_widths_replace_to_86(monkeypatch: pytest.MonkeyPatch) -> None:
     workflow = CommercialWorkflowService()
     draft_payload = {

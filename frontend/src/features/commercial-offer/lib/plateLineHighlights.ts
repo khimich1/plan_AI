@@ -61,9 +61,7 @@ export const buildPlateLineHighlightMap = (
     if (wideKeys.has(key)) {
       highlights.set(index, {
         kind: "wide",
-        title: options?.batchReview
-          ? "Позиция шире стандартной — решение на следующем экране"
-          : "Позиция шире стандартной — требует решения ниже",
+        title: "Позиция шире стандартной — требует решения ниже",
       });
       return;
     }
