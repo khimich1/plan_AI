@@ -1,4 +1,6 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
+import { useAuth } from "@/features/auth/model/AuthProvider";
+import { ResetConfirmDialog } from "@/features/admin/components/ResetConfirmDialog";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Spinner } from "@/shared/ui/Spinner";
@@ -7,11 +9,12 @@ import { CardsRegistryView } from "@/features/gsm/components/CardsRegistryView";
 import { DriversRegistryView } from "@/features/gsm/components/DriversRegistryView";
 import { VehiclesCard } from "@/features/gsm/components/VehiclesCard";
 import {
+  useGsmResetToAnchorsMutation,
   useGsmSettingsQuery,
   useGsmStationsQuery,
   useUpdateGsmSeasonMutation,
 } from "@/features/gsm/hooks/useGsmQueries";
-import type { GsmSettings } from "@/features/gsm/types/gsm";
+import type { GsmResetToAnchorsReport, GsmSettings } from "@/features/gsm/types/gsm";
 
 const sectionStyle: CSSProperties = {
   display: "grid",
@@ -37,10 +40,24 @@ const seasonLabel = (settings: GsmSettings): string => {
   return settings.season_switched_at ? `${mode} (с ${settings.season_switched_at})` : mode;
 };
 
+const formatResetSuccess = (report: GsmResetToAnchorsReport): string => {
+  const parts = [
+    `Оставлено якорей: ${report.anchors_kept}.`,
+    `Удалено ПЛ: ${report.waybills_deleted}, транзакций: ${report.transactions_deleted}, батчей: ${report.import_batches_deleted}.`,
+    `Бэкап: ${report.backup_path}`,
+  ];
+  return parts.join(" ");
+};
+
 export const GsmRegistriesView = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const stationsQuery = useGsmStationsQuery();
   const settingsQuery = useGsmSettingsQuery();
   const seasonMutation = useUpdateGsmSeasonMutation();
+  const resetMutation = useGsmResetToAnchorsMutation();
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
 
   const isBootLoading = stationsQuery.isLoading || settingsQuery.isLoading;
   const bootError = stationsQuery.error ?? settingsQuery.error;
@@ -56,6 +73,16 @@ export const GsmRegistriesView = () => {
   const stations = stationsQuery.data ?? [];
   const settings = settingsQuery.data;
   const targetMode = settings?.season_mode === "winter" ? "summer" : "winter";
+
+  const handleResetConfirm = () => {
+    setResetSuccessMessage(null);
+    resetMutation.mutate(undefined, {
+      onSuccess: (report) => {
+        setResetDialogOpen(false);
+        setResetSuccessMessage(formatResetSuccess(report));
+      },
+    });
+  };
 
   return (
     <section style={{ display: "grid", gap: "1.25rem" }} aria-label="Справочники ГСМ">
@@ -78,6 +105,29 @@ export const GsmRegistriesView = () => {
           {seasonMutation.isError && (
             <Alert tone="error">{formatGsmError(seasonMutation.error)}</Alert>
           )}
+        </div>
+      )}
+
+      {isAdmin && (
+        <div style={sectionStyle}>
+          <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Dev-инструменты</h2>
+          <p style={{ margin: 0, color: "#475467" }}>
+            Сброс к imported-якорям: удаляет сгенерированные ПЛ, транзакции и батчи импорта.
+            Справочники и якоря на каждую машину сохраняются. Перед сбросом создаётся бэкап БД.
+          </p>
+          <div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setResetSuccessMessage(null);
+                setResetDialogOpen(true);
+              }}
+            >
+              Сброс к якорям
+            </Button>
+          </div>
+          {resetSuccessMessage && <Alert tone="success">{resetSuccessMessage}</Alert>}
         </div>
       )}
 
@@ -110,6 +160,31 @@ export const GsmRegistriesView = () => {
           </div>
         )}
       </div>
+
+      {isAdmin && (
+        <ResetConfirmDialog
+          open={resetDialogOpen}
+          onClose={() => {
+            if (!resetMutation.isPending) {
+              setResetDialogOpen(false);
+            }
+          }}
+          title="Сброс ГСМ к якорям"
+          description={
+            <>
+              Будут удалены все путевые листы кроме imported-якорей, все транзакции и батчи
+              импорта. Справочники (машины, водители, карты, маршруты, станции) не изменятся.
+              Перед сбросом будет создан бэкап базы данных.
+            </>
+          }
+          confirmLabel="Сбросить к якорям"
+          confirmKeyword="СБРОС"
+          isPending={resetMutation.isPending}
+          isError={resetMutation.isError}
+          error={resetMutation.error}
+          onConfirm={handleResetConfirm}
+        />
+      )}
     </section>
   );
 };

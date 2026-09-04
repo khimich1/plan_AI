@@ -1,3 +1,5 @@
+import type { OcrCorrection } from "@/features/commercial-offer/types/commercialOffer";
+
 export const MAX_PAGES = 12;
 
 export type PageStatus = "pending" | "running" | "ready" | "error" | "confirmed";
@@ -13,6 +15,7 @@ export type PageSource = {
   recognizedImageUrl?: string | null;
   /** Second OCR pass failed for this page (empty verify list or API exception). */
   ocrVerifyFailed?: boolean;
+  ocrCorrections?: OcrCorrection[];
   batchReviewText: string;
 };
 

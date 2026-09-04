@@ -5,6 +5,7 @@ import type {
   CommercialDraftDetails,
   OcrCorrection,
   PlateInputMode,
+  InvalidWidthAction,
   UnpricedPlateAction,
   WidePlateAction,
 } from "@/features/commercial-offer/types/commercialOffer";
@@ -22,10 +23,15 @@ import type { MultiPageSourceStepProps } from "@/features/commercial-offer/lib/m
 import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
 import {
   OCR_VERIFY_FAILED_REVIEW_MESSAGE,
+  resolveActivePageOcrCorrections,
   resolveActivePageOcrVerifyFailed,
 } from "@/features/commercial-offer/lib/ocrVerifyFailed";
+import { overlayDraftWithLiveWideLines } from "@/features/commercial-offer/lib/liveWidePlateLines";
+import { InvalidWidthsInlineSection } from "@/features/commercial-offer/components/InvalidWidthsInlineSection";
 import { UnpricedPlatesInlineSection } from "@/features/commercial-offer/components/UnpricedPlatesInlineSection";
 import { WidePlatesInlineSection } from "@/features/commercial-offer/components/WidePlatesInlineSection";
+import { SourceImageQueueControls } from "@/features/commercial-offer/components/SourceImageQueueControls";
+import type { SourceImageQueueItem } from "@/features/commercial-offer/lib/sourceImageQueue";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -46,17 +52,21 @@ type PlateInputStepProps = {
   canConfirmActivePage?: boolean;
   recognizedImageUrl: string | null;
   recognizedImageName: string | null;
+  sourceQueue?: SourceImageQueueItem[];
   errorMessage: string | null;
   widePlateErrorMessage?: string | null;
   unpricedPlateErrorMessage?: string | null;
+  invalidWidthErrorMessage?: string | null;
   isRecognizing: boolean;
   isAiProcessing?: boolean;
   isResolvingWidePlates?: boolean;
   isResolvingUnpricedPlates?: boolean;
+  isResolvingInvalidWidths?: boolean;
   isConfirmingBatch?: boolean;
   isProceeding?: boolean;
   widePlateDecisions?: Record<string, { action: WidePlateAction; replacementText: string }>;
   unpricedPlateDecisions?: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
+  invalidWidthDecisions?: Record<string, { action: InvalidWidthAction; widthMm: number | null }>;
   aiInstruction?: string;
   onAiInstructionChange?: (value: string) => void;
   onApplyAi?: () => void;
@@ -68,6 +78,8 @@ type PlateInputStepProps = {
   onPrevPage?: () => void;
   onNextPage?: () => void;
   onRecognize: (mode: PlateInputMode) => void;
+  onRerecognize?: () => void;
+  isRerecognizing?: boolean;
   onConfirmBatch: () => void;
   onFinishPlates: () => void;
   onWidePlateDecisionChange?: (lineId: string, action: WidePlateAction, replacementText: string) => void;
@@ -78,6 +90,12 @@ type PlateInputStepProps = {
     loadCode: number | null,
   ) => void;
   onApplyUnpricedPlates?: () => void;
+  onInvalidWidthDecisionChange?: (
+    lineId: string,
+    action: InvalidWidthAction,
+    widthMm: number | null,
+  ) => void;
+  onApplyInvalidWidths?: () => void;
   onReset: () => void;
   lineRowHandlers?: LineRowHandlers;
 };
@@ -128,17 +146,21 @@ export const PlateInputStep = ({
   canConfirmActivePage = true,
   recognizedImageUrl,
   recognizedImageName,
+  sourceQueue = [],
   errorMessage,
   widePlateErrorMessage,
   unpricedPlateErrorMessage,
+  invalidWidthErrorMessage,
   isRecognizing,
   isAiProcessing = false,
   isResolvingWidePlates = false,
   isResolvingUnpricedPlates = false,
+  isResolvingInvalidWidths = false,
   isConfirmingBatch = false,
   isProceeding = false,
   widePlateDecisions = {},
   unpricedPlateDecisions = {},
+  invalidWidthDecisions = {},
   aiInstruction = "",
   onAiInstructionChange,
   onApplyAi,
@@ -150,12 +172,16 @@ export const PlateInputStep = ({
   onPrevPage,
   onNextPage,
   onRecognize,
+  onRerecognize,
+  isRerecognizing = false,
   onConfirmBatch,
   onFinishPlates,
   onWidePlateDecisionChange,
   onApplyWidePlates,
   onUnpricedPlateDecisionChange,
   onApplyUnpricedPlates,
+  onInvalidWidthDecisionChange,
+  onApplyInvalidWidths,
   onReset,
   lineRowHandlers,
 }: PlateInputStepProps) => {
@@ -166,13 +192,18 @@ export const PlateInputStep = ({
     canSubmit: true,
     blockReason: undefined,
   });
+
   const hasDraft = Boolean(draft);
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
+  const liveWideDraft =
+    batchReviewDraft && isBatchReviewMode
+      ? overlayDraftWithLiveWideLines(batchReviewDraft, batchReviewText)
+      : batchReviewDraft;
   const reviewHighlights = useBatchReviewHighlights({
     text: batchReviewText,
     productType: "plates",
-    draft: batchReviewDraft,
+    draft: liveWideDraft,
     enabled: isBatchReviewMode,
   });
 
@@ -181,6 +212,12 @@ export const PlateInputStep = ({
   }, [recognizedImageUrl]);
 
   const hasImage = pages.length > 0;
+  const activePage = pages.find((page) => page.id === activePageId);
+  const showRerecognize = Boolean(recognizedImageUrl) && onRerecognize != null;
+  const rerecognizeBusy =
+    isRerecognizing || activePage?.status === "running";
+  const rerecognizeDisabled =
+    rerecognizeBusy || activePage?.status === "pending" || Boolean(activePage && !activePage.file);
   const hasSourceInput = Boolean(sourceText.trim() || hasImage);
   const sourceSubmit = resolveSourceSubmitDisabled(
     sourceText,
@@ -190,7 +227,11 @@ export const PlateInputStep = ({
     sourceGate,
   );
 
-  const ocrCorrections = draft?.metadata.ocr_corrections ?? [];
+  const ocrCorrections = resolveActivePageOcrCorrections(
+    pages,
+    activePageId,
+    draft?.metadata.ocr_corrections,
+  );
 
   const ocrCorrectionLines = formatOcrCorrections(ocrCorrections);
 
@@ -203,15 +244,20 @@ export const PlateInputStep = ({
   );
 
   const hasUnresolvedWidePlates =
-
-    Boolean(draft?.metadata.wide_plate_lines?.length) && !draft?.metadata.wide_plates_resolved;
+    Boolean(liveWideDraft?.metadata.wide_plate_lines?.length) && !liveWideDraft?.metadata.wide_plates_resolved;
+  const hasUnresolvedInvalidWidths =
+    Boolean(draft?.metadata.invalid_width_lines?.length) && !draft?.metadata.invalid_widths_resolved;
+  const hasUnresolvedUnpricedPlates =
+    Boolean(draft?.metadata.unpriced_plate_lines?.length) && !draft?.metadata.unpriced_plates_resolved;
 
   const canConfirmBatch =
-    isBatchReviewMode && canConfirmActivePage && !hasUnresolvedWidePlates && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
+    isBatchReviewMode && canConfirmActivePage && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
   const canFinishPlates =
     hasDraft &&
     !pendingBatchReview &&
     !hasUnresolvedWidePlates &&
+    !hasUnresolvedInvalidWidths &&
+    !hasUnresolvedUnpricedPlates &&
     !isRecognizing &&
     !isAiProcessing &&
     !isProceeding;
@@ -280,11 +326,6 @@ export const PlateInputStep = ({
                   variant="primary"
                   onClick={onConfirmBatch}
                   disabled={!canConfirmBatch}
-                  title={
-                    hasUnresolvedWidePlates
-                      ? "Сначала примите решение по позициям шире стандартной"
-                      : undefined
-                  }
                 >
                   {isConfirmingBatch ? "Сохранение..." : "Список верен"}
                 </Button>
@@ -300,7 +341,11 @@ export const PlateInputStep = ({
                       ? "Сначала подтвердите текущий источник — «Список верен»"
                       : hasUnresolvedWidePlates
                         ? "Сначала примите решение по позициям шире стандартной"
-                        : undefined
+                        : hasUnresolvedInvalidWidths
+                          ? "Нестандартная ширина: замените на заводской рез или исключите позицию"
+                          : hasUnresolvedUnpricedPlates
+                            ? "Сначала примите решение по позициям без цены в прайсе"
+                            : undefined
                   }
                 >
                   {isProceeding ? "Переход..." : "Готово, далее"}
@@ -315,7 +360,11 @@ export const PlateInputStep = ({
                     title={
                       hasUnresolvedWidePlates
                         ? "Сначала примите решение по позициям шире стандартной"
-                        : undefined
+                        : hasUnresolvedInvalidWidths
+                          ? "Нестандартная ширина: замените на заводской рез или исключите позицию"
+                          : hasUnresolvedUnpricedPlates
+                            ? "Сначала примите решение по позициям без цены в прайсе"
+                            : undefined
                     }
                   >
                     {isProceeding ? "Переход..." : "Готово, далее"}
@@ -474,6 +523,16 @@ export const PlateInputStep = ({
                 <div style={{ marginTop: "0.5rem", fontSize: "0.8rem", color: "#667085" }}>
                   Ctrl + колёсико мыши — масштаб
                 </div>
+                {showRerecognize && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => void onRerecognize()}
+                    disabled={rerecognizeDisabled}
+                  >
+                    {rerecognizeBusy ? "Распознавание..." : "Перераспознать"}
+                  </Button>
+                )}
 
               </Card>
 
@@ -483,9 +542,9 @@ export const PlateInputStep = ({
               title="Список плит для расчёта"
               subtitle="Сверьте позиции текущего источника с фото или текстом."
             >
-              {batchReviewDraft && (
+              {liveWideDraft && (
                 <PlateListEditor
-                  draft={batchReviewDraft}
+                  draft={liveWideDraft}
                   value={batchReviewText}
                   onChange={onBatchReviewTextChange}
                   highlights={reviewHighlights}
@@ -509,26 +568,28 @@ export const PlateInputStep = ({
           )}
 
           {onWidePlateDecisionChange && onApplyWidePlates && (
-
             <WidePlatesInlineSection
-
-              draft={draft}
-
+              draft={liveWideDraft ?? draft}
               decisions={widePlateDecisions}
-
               isPending={isResolvingWidePlates}
-
               errorMessage={widePlateErrorMessage}
-
               onDecisionChange={onWidePlateDecisionChange}
-
               onApply={onApplyWidePlates}
-
             />
-
           )}
 
-          {onUnpricedPlateDecisionChange && onApplyUnpricedPlates && (
+          {!isBatchReviewMode && draft && onInvalidWidthDecisionChange && onApplyInvalidWidths && (
+            <InvalidWidthsInlineSection
+              draft={draft}
+              decisions={invalidWidthDecisions}
+              isPending={isResolvingInvalidWidths}
+              errorMessage={invalidWidthErrorMessage}
+              onDecisionChange={onInvalidWidthDecisionChange}
+              onApply={onApplyInvalidWidths}
+            />
+          )}
+
+          {!isBatchReviewMode && onUnpricedPlateDecisionChange && onApplyUnpricedPlates && (
             <UnpricedPlatesInlineSection
               draft={draft}
               decisions={unpricedPlateDecisions}
@@ -540,11 +601,14 @@ export const PlateInputStep = ({
           )}
 
           {!isBatchReviewMode && draft && (
-            <KpPlatePreviewPanel
-              draft={draft}
-              normalizedText={normalizedText}
-              lineRowHandlers={lineRowHandlers}
-            />
+            <>
+              <SourceImageQueueControls items={sourceQueue} />
+              <KpPlatePreviewPanel
+                draft={draft}
+                normalizedText={normalizedText}
+                lineRowHandlers={lineRowHandlers}
+              />
+            </>
           )}
 
           {!isBatchReviewMode ? (
@@ -571,7 +635,6 @@ export const PlateInputStep = ({
           {isBatchReviewMode && showSourceInput && sourceInputCard}
         </div>
       )}
-
     </StepLayout>
 
   );

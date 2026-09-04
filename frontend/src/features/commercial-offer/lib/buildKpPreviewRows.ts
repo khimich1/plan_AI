@@ -1,5 +1,8 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
-import { getCurrentCycleOrderData } from "@/features/commercial-offer/lib/currentCycleOrderData";
+import {
+  getProductTypeOrderData,
+  isSealedOrderLine,
+} from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
@@ -13,6 +16,7 @@ export type KpPreviewRow = {
   flag: KpPreviewFlag | null;
   sourceLine?: string;
   sourceText: string;
+  sealed: boolean;
 };
 
 const WIDE_WIDTH_M = 1.2;
@@ -77,6 +81,10 @@ const buildWideSplitIndex = (
 
     const candidates: number[] = [];
     orderData.forEach((item, index) => {
+      // Sealed (prior append) plates must not be flagged as wide_split for the current cycle.
+      if (isSealedOrderLine(item)) {
+        return;
+      }
       const itemLengthM = toNumber(item.length_m);
       const itemWidthM = toNumber(item.width_m);
       if (itemLengthM === null || itemWidthM === null) {
@@ -108,18 +116,20 @@ const buildWideSplitIndex = (
 };
 
 export const buildKpPreviewRows = (draft: CommercialDraftDetails): KpPreviewRow[] => {
-  const orderData = getCurrentCycleOrderData(draft, "plates");
+  const orderData = getProductTypeOrderData(draft, "plates");
   const wideLines = draft.metadata.wide_plate_lines ?? [];
   const widePlatesResolved = draft.metadata.wide_plates_resolved ?? false;
   const splitSourceByIndex =
     widePlatesResolved || wideLines.length === 0 ? new Map<number, string>() : buildWideSplitIndex(orderData, wideLines);
 
   return orderData.map((item, index) => {
+    const sealed = isSealedOrderLine(item);
     const widthM = toNumber(item.width_m);
     let flag: KpPreviewRow["flag"] = null;
     let sourceLine: string | undefined;
 
-    if (!widePlatesResolved) {
+    // Wide flags apply only to the in-progress cycle; sealed rows are display-only.
+    if (!sealed && !widePlatesResolved) {
       if (widthM !== null && widthM > WIDE_WIDTH_M + DIMENSION_EPS) {
         flag = "wide_direct";
         const lengthM = toNumber(item.length_m);
@@ -140,6 +150,7 @@ export const buildKpPreviewRows = (draft: CommercialDraftDetails): KpPreviewRow[
       flag,
       sourceLine,
       sourceText: formatLineSourceText(item),
+      sealed,
     };
   });
 };

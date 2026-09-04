@@ -110,28 +110,29 @@ function renderResultStep(
     isBridgePileDraft?: boolean;
     isFbsDraft?: boolean;
     isSimpleKpDraft?: boolean;
+    breakdownTables?: ComponentProps<typeof CalculationResultStep>["breakdownTables"];
+    isBreakdownLoading?: boolean;
   } = {},
 ) {
   const onAddOtherNomenclature = handlers.onAddOtherNomenclature ?? vi.fn();
   const onUndoLastBatch = handlers.onUndoLastBatch ?? vi.fn();
   const onDeleteLine = handlers.onDeleteLine ?? vi.fn();
+  const { breakdownTables = [], isBreakdownLoading = false, ...flags } = stepFlags;
 
   // Cast: MNA-501 will add these props to CalculationResultStep.
   const props = {
     draft,
-    breakdownTables: [],
-    isBreakdownLoading: false,
+    breakdownTables,
+    isBreakdownLoading,
     errorMessage: null,
     isGeneratingFiles: false,
     isGeneratingSchema: false,
     isSaving: false,
     lastSaveResult: null,
-    executionTermsInput: "",
     onBack: vi.fn(),
     onCreateNew: vi.fn(),
     onGenerateFiles: vi.fn(),
     onGenerateSchema: vi.fn(),
-    onExecutionTermsChange: vi.fn(),
     onSave: vi.fn(async () => undefined),
     isUpdatingDiscount: false,
     onDiscountSubmit: vi.fn(async () => undefined),
@@ -139,7 +140,7 @@ function renderResultStep(
     onAddOtherNomenclature,
     onUndoLastBatch,
     onDeleteLine,
-    ...stepFlags,
+    ...flags,
   };
 
   render(<CalculationResultStep {...(props as ComponentProps<typeof CalculationResultStep>)} />);
@@ -150,6 +151,35 @@ function renderResultStep(
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+describe("CalculationResultStep back navigation", () => {
+  it("hides Назад when onBack is not provided (no return to input without append)", () => {
+    const props = {
+      draft: makeDraft(),
+      breakdownTables: [],
+      isBreakdownLoading: false,
+      errorMessage: null,
+      isGeneratingFiles: false,
+      isGeneratingSchema: false,
+      isSaving: false,
+      lastSaveResult: null,
+      onCreateNew: vi.fn(),
+      onGenerateFiles: vi.fn(),
+      onGenerateSchema: vi.fn(),
+      onSave: vi.fn(async () => undefined),
+      isUpdatingDiscount: false,
+      onDiscountSubmit: vi.fn(async () => undefined),
+      onLogisticsCostSubmit: vi.fn(async () => undefined),
+    };
+    render(<CalculationResultStep {...(props as ComponentProps<typeof CalculationResultStep>)} />);
+    expect(screen.queryByRole("button", { name: "Назад" })).not.toBeInTheDocument();
+  });
+
+  it("shows Назад when onBack is provided", () => {
+    renderResultStep(makeDraft());
+    expect(screen.getByRole("button", { name: "Назад" })).toBeInTheDocument();
+  });
 });
 
 describe("CalculationResultStep MNA-501 — Тип column", () => {
@@ -579,5 +609,54 @@ describe("CalculationResultStep unparsed UX", () => {
     expect(screen.queryByText(/Строки, не попавшие в расчёт/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Не удалось распознать строк: 1/)).not.toBeInTheDocument();
     expect(screen.getByText(/нагрузка принята 8п по умолчанию/)).toBeInTheDocument();
+  });
+});
+
+describe("CalculationResultStep breakdown availability after invalidate", () => {
+  it("keeps plate breakdown link when draft count is 0 but query tables are present", () => {
+    renderResultStep(
+      makeDraft({
+        metadata: {
+          ...baseMetadata(),
+          breakdown_tables_count: 0,
+        },
+        order_data: [
+          {
+            line_id: "ln1",
+            product_type: "plates",
+            name: "ПБ 60-12-8п",
+            mark: "ПБ 60-12-8п",
+            qty: 2,
+            unit_price: 10000,
+            weight: 1500,
+          },
+        ],
+      }),
+      {},
+      {
+        breakdownTables: [
+          {
+            name: "ПБ 60-12-8п",
+            rows: [["Итого", "", "10000"]],
+          },
+        ],
+      },
+    );
+
+    expect(screen.getByTitle("Показать детальную разбивку цены")).toBeInTheDocument();
+  });
+
+  it("does not show breakdown link when count is 0 and query tables are empty", () => {
+    renderResultStep(
+      makeDraft({
+        metadata: {
+          ...baseMetadata(),
+          breakdown_tables_count: 0,
+        },
+      }),
+    );
+
+    expect(screen.queryByTitle("Показать детальную разбивку цены")).not.toBeInTheDocument();
+    expect(screen.getByText("ПБ 60-12-8п")).toBeInTheDocument();
   });
 });

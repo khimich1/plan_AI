@@ -13,6 +13,8 @@ import core.config_and_data as _cfg  # noqa: F401
 from viz_modules.procurement.trim import (
     _calc_trim_components,
     _is_crossload_rest_secondary,
+    _longitudinal_cuts_for_rest_secondary,
+    _width_matches_cut,
     format_long_cut_calculation,
     format_transverse_remainder_calculation,
 )
@@ -1225,3 +1227,177 @@ def test_foreign_sameload_pure_transverse_no_extra_long_cut() -> None:
     # только 2 primary-реза по 4.3м; secondary не добавляет продольный рез
     assert t["long_cut_meterage"] == pytest.approx(2 * 4.3)
     assert t["transverse_remainder_cost"] > 0
+
+
+def _pb_56_7_and_72_plan() -> dict:
+    """КП 3 / draft: ПБ 56-7 (700) и ПБ 56-7,2 (720) — соседние марки, разные secondary."""
+    return {
+        "primary_cuts": [
+            {"width": 500, "rest": 700, "qty": 1, "lengths": [6.0], "load_code": 8},
+        ],
+        "secondary_cuts": [
+            {
+                "source": 700,
+                "source_lengths": [6.0],
+                "lengths": [5.6],
+                "cuts": [700],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 0,
+                "type": "transverse",
+                "load_code": 8,
+            },
+            {
+                "source": 880,
+                "source_lengths": [6.3],
+                "lengths": [5.6],
+                "cuts": [720],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 160,
+                "type": "multiple_transverse",
+                "load_code": 8,
+            },
+        ],
+    }
+
+
+def test_pb_56_7_does_not_steal_720_secondary() -> None:
+    """ПБ 56-7 (5,6×700) не наследует secondary ПБ 56-7,2 (cuts 720, источник 6,3 м)."""
+    t = _trim(5.6, 700, qty=1, plan=_pb_56_7_and_72_plan())
+    assert t["trans_cuts"] == pytest.approx(1.0)
+    assert t["long_cut_meterage"] == pytest.approx(0.0)
+    assert t["transverse_remainder_terms"] == [(0.4, 1)]
+
+
+def test_pb_56_72_keeps_own_63m_cut() -> None:
+    """ПБ 56-7,2 (5,6×720) держит свой поперечный 6,3→5,6 и продольный 6,3 м."""
+    t = _trim(5.6, 720, qty=1, plan=_pb_56_7_and_72_plan())
+    assert t["trans_cuts"] == pytest.approx(1.0)
+    assert t["long_cut_meterage"] == pytest.approx(6.3)
+    assert t["transverse_remainder_terms"] == [(0.7, 1)]
+    assert not any(abs(rem - 0.4) < 0.01 for rem, _ in t["transverse_remainder_terms"])
+
+
+def _pb_65_9_plan() -> dict:
+    """ПБ 65-9-8п: primary 300@7,4 rest 900; secondary cuts[900] 7,4→6,5 waste 0."""
+    return {
+        "primary_cuts": [
+            {"width": 300, "rest": 900, "qty": 1, "lengths": [7.4], "load_code": 8},
+        ],
+        "secondary_cuts": [
+            {
+                "source": 900,
+                "source_lengths": [7.4],
+                "lengths": [6.5],
+                "cuts": [900],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 0,
+                "type": "transverse",
+                "load_code": 8,
+            },
+        ],
+    }
+
+
+def test_pb_65_9_transverse_no_long_cut() -> None:
+    """ПБ 65-9 (6,5×900): один поперечный, без продольного (эталон, без регрессии)."""
+    t = _trim(6.5, 900, qty=1, plan=_pb_65_9_plan())
+    assert t["trans_cuts"] == pytest.approx(1.0)
+    assert t["long_cut_meterage"] == pytest.approx(0.0)
+
+
+def _neighbor_pair_plan(width_a: int, width_b: int) -> dict:
+    """Две secondary одной длины, разные cuts и source_lengths (остаток/продольный отличаются)."""
+    return {
+        "primary_cuts": [
+            {"width": 200, "rest": width_a, "qty": 1, "lengths": [6.0], "load_code": 8},
+        ],
+        "secondary_cuts": [
+            {
+                "source": width_a,
+                "source_lengths": [6.0],
+                "lengths": [5.6],
+                "cuts": [width_a],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 0,
+                "type": "transverse",
+                "load_code": 8,
+            },
+            {
+                "source": 1190,
+                "source_lengths": [6.3],
+                "lengths": [5.6],
+                "cuts": [width_b],
+                "qty": 1,
+                "pieces": 1,
+                "waste": 160,
+                "type": "multiple_transverse",
+                "load_code": 8,
+            },
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "width_a,width_b",
+    [(700, 720), (300, 320), (480, 500), (880, 900)],
+)
+def test_neighbor_delta20_does_not_share_cuts(width_a: int, width_b: int) -> None:
+    """Соседние марки Δ=20 мм не делят trans_cuts и long_cut_meterage."""
+    plan = _neighbor_pair_plan(width_a, width_b)
+    t_a = _trim(5.6, width_a, qty=1, plan=plan)
+    t_b = _trim(5.6, width_b, qty=1, plan=plan)
+    assert t_a["trans_cuts"] == pytest.approx(1.0)
+    assert t_a["long_cut_meterage"] == pytest.approx(0.0)
+    assert t_a["transverse_remainder_terms"] == [(0.4, 1)]
+    assert t_b["trans_cuts"] == pytest.approx(1.0)
+    assert t_b["long_cut_meterage"] == pytest.approx(6.3)
+    assert t_b["transverse_remainder_terms"] == [(0.7, 1)]
+    assert t_a["long_cut_meterage"] != t_b["long_cut_meterage"]
+
+
+def test_width_matches_cut_mark_tolerance_10mm() -> None:
+    """Допуск марки 10 мм: 710/720 и 700/710 матч; 700/720 (Δ=20) — нет."""
+    assert _width_matches_cut(700, [720]) is False
+    assert _width_matches_cut(700, [710]) is True
+    assert _width_matches_cut(710, [720]) is True
+    assert _width_matches_cut(720, [710]) is True
+    assert _width_matches_cut(665, [670]) is True
+
+
+def test_waste_20_two_pieces_one_longitudinal_cut() -> None:
+    """Две плиты с полосы, кромка 20 мм: один продольный рез, без реза кромки."""
+    sec = {
+        "source": 720,
+        "cuts": [350],
+        "pieces": 2,
+        "waste": 20,
+        "qty": 1,
+        "type": "multiple",
+    }
+    assert _longitudinal_cuts_for_rest_secondary(sec) == 1
+
+    plan = {
+        "primary_cuts": [
+            {"width": 480, "rest": 720, "qty": 1, "lengths": [6.0], "load_code": 8},
+        ],
+        "secondary_cuts": [
+            {
+                "source": 720,
+                "source_lengths": [6.0],
+                "lengths": [6.0],
+                "cuts": [350],
+                "qty": 1,
+                "pieces": 2,
+                "waste": 20,
+                "type": "multiple",
+                "load_code": 8,
+            },
+        ],
+    }
+    t = _trim(6.0, 350, qty=2, plan=plan)
+    assert t["long_cut_meterage"] == pytest.approx(6.0)
+    assert t["total_cuts_for_this_size"] == 1

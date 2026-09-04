@@ -197,6 +197,80 @@ describe("buildKpPreviewRows", () => {
     expect(buildKpPreviewRows(draft)).toEqual([]);
   });
 
+  it("keeps sealed same-type plates visible during append", () => {
+    const draft = makeDraft({
+      metadata: {
+        product_type: "plates",
+        append_batches: [{ batch_id: "b1", product_type: "plates", line_ids: ["ln-sealed"] }],
+        wide_plates_resolved: true,
+      },
+      order_data: [
+        {
+          line_id: "ln-sealed",
+          product_type: "plates",
+          append_batch_id: "b1",
+          name: "Плиты ПБ 28-5,3-8п",
+          qty: 2,
+          unit_price: 5000,
+          length_m: 2.8,
+          width_m: 0.53,
+        },
+        {
+          line_id: "ln-new",
+          product_type: "plates",
+          name: "Плиты ПБ 51-5,3-8п",
+          qty: 1,
+          unit_price: 11755.64,
+          length_m: 5.1,
+          width_m: 0.53,
+        },
+      ],
+    });
+
+    const rows = buildKpPreviewRows(draft);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ lineId: "ln-sealed", sealed: true, name: "Плиты ПБ 28-5,3-8п" });
+    expect(rows[1]).toMatchObject({ lineId: "ln-new", sealed: false, name: "Плиты ПБ 51-5,3-8п" });
+  });
+
+  it("does not flag sealed plates as wide_split when current cycle has unresolved wide line", () => {
+    const draft = makeDraft({
+      metadata: {
+        product_type: "plates",
+        append_batches: [{ batch_id: "b1", product_type: "plates", line_ids: ["ln-sealed-12"] }],
+        wide_plate_lines: [{ id: "wide-1", line: "ПБ 59-15-8п 1", qty: 1 }],
+        wide_plates_resolved: false,
+      },
+      order_data: [
+        {
+          line_id: "ln-sealed-12",
+          product_type: "plates",
+          append_batch_id: "b1",
+          name: "Плиты ПБ 59-12-8п",
+          qty: 2,
+          unit_price: 12000,
+          length_m: 5.9,
+          width_m: 1.2,
+        },
+        {
+          line_id: "ln-new-3",
+          product_type: "plates",
+          name: "Плиты ПБ 59-3-8п",
+          qty: 1,
+          unit_price: 4000,
+          length_m: 5.9,
+          width_m: 0.3,
+        },
+      ],
+    });
+
+    const rows = buildKpPreviewRows(draft);
+    expect(rows[0]).toMatchObject({ lineId: "ln-sealed-12", sealed: true, flag: null });
+    // Single unsealed narrow candidate alone is not a split pair — no false flag on sealed.
+    expect(rows[1]?.sealed).toBe(false);
+    expect(rows[1]?.flag).not.toBe("wide_split");
+  });
+
   it("does not include unparsed lines in preview rows", () => {
     const draft = makeDraft({
       metadata: {

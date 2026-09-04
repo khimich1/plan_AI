@@ -10,9 +10,17 @@ import type {
   PlateInputMode,
   ProductType,
   SaveMode,
+  InvalidWidthAction,
   UnpricedPlateAction,
   WidePlateAction,
+  OcrCorrection,
 } from "@/features/commercial-offer/types/commercialOffer";
+
+export type CommercialOcrPageResult = {
+  normalized_text: string;
+  ocr_verify_failed: boolean;
+  ocr_corrections: OcrCorrection[];
+};
 
 type DraftCreatePayload = {
   text: string;
@@ -54,6 +62,13 @@ type UnpricedPlateDecisionPayload = {
   sourceLine: string;
   action: UnpricedPlateAction;
   loadCode?: number | null;
+};
+
+type InvalidWidthDecisionPayload = {
+  lineId?: string;
+  sourceLine: string;
+  action: InvalidWidthAction;
+  widthMm?: number | null;
 };
 
 type SaveDraftPayload = {
@@ -117,6 +132,15 @@ export const commercialOfferApi = {
 
   createDraft: (payload: DraftCreatePayload) =>
     httpClient.post<CommercialDraftDetails>("/api/v1/commercial/drafts", createMultipartPayload(payload)),
+
+  ocrPage: (draftId: string, image: File) => {
+    const formData = new FormData();
+    formData.append("image", image);
+    return httpClient.post<CommercialOcrPageResult>(
+      `/api/v1/commercial/drafts/${draftId}/ocr-page`,
+      formData,
+    );
+  },
 
   updateDraftPlates: (draftId: string, payload: UpdateDraftPlatesPayload) =>
     httpClient.patch<CommercialDraftDetails>(
@@ -241,6 +265,20 @@ export const commercialOfferApi = {
           source_line: item.sourceLine,
           action: item.action,
           load_code: item.loadCode ?? null,
+        })),
+      }),
+      { "Content-Type": "application/json" },
+    ),
+
+  resolveInvalidWidths: (draftId: string, decisions: InvalidWidthDecisionPayload[]) =>
+    httpClient.post<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/invalid-widths/resolve`,
+      JSON.stringify({
+        decisions: decisions.map((item) => ({
+          line_id: item.lineId ?? null,
+          source_line: item.sourceLine,
+          action: item.action,
+          width_mm: item.widthMm ?? null,
         })),
       }),
       { "Content-Type": "application/json" },

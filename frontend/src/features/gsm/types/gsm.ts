@@ -320,3 +320,22 @@ export type WaybillCreatePayload = {
   fuel_start?: number | null;
   odometer_start?: number | null;
 };
+
+export type GsmAnchor = {
+  waybill_id: number;
+  vehicle_id: number;
+  vehicle_name: string;
+  plate_number: string;
+  date: string;
+  odometer_end: number | null;
+  fuel_end: number | null;
+};
+
+export type GsmResetToAnchorsReport = {
+  backup_path: string;
+  anchors_kept: number;
+  waybills_deleted: number;
+  transactions_deleted: number;
+  import_batches_deleted: number;
+  anchors: GsmAnchor[];
+};

@@ -16,8 +16,11 @@ import type { MultiPageSourceStepProps } from "@/features/commercial-offer/lib/m
 import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
 import {
   OCR_VERIFY_FAILED_REVIEW_MESSAGE,
+  resolveActivePageOcrCorrections,
   resolveActivePageOcrVerifyFailed,
 } from "@/features/commercial-offer/lib/ocrVerifyFailed";
+import { SourceImageQueueControls } from "@/features/commercial-offer/components/SourceImageQueueControls";
+import type { SourceImageQueueItem } from "@/features/commercial-offer/lib/sourceImageQueue";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -38,6 +41,7 @@ type StepInputStepProps = {
   canConfirmActivePage?: boolean;
   recognizedImageUrl: string | null;
   recognizedImageName: string | null;
+  sourceQueue?: SourceImageQueueItem[];
   errorMessage: string | null;
   isRecognizing: boolean;
   isAiProcessing?: boolean;
@@ -54,6 +58,8 @@ type StepInputStepProps = {
   onPrevPage?: () => void;
   onNextPage?: () => void;
   onRecognize: (mode: PlateInputMode) => void;
+  onRerecognize?: () => void;
+  isRerecognizing?: boolean;
   onConfirmBatch: () => void;
   onFinishSteps: () => void;
   onReset: () => void;
@@ -108,6 +114,7 @@ export const StepInputStep = ({
   canConfirmActivePage = true,
   recognizedImageUrl,
   recognizedImageName,
+  sourceQueue = [],
   errorMessage,
   isRecognizing,
   isAiProcessing = false,
@@ -124,6 +131,8 @@ export const StepInputStep = ({
   onPrevPage,
   onNextPage,
   onRecognize,
+  onRerecognize,
+  isRerecognizing = false,
   onConfirmBatch,
   onFinishSteps,
   onReset,
@@ -151,6 +160,12 @@ export const StepInputStep = ({
   }, [recognizedImageUrl]);
 
   const hasImage = pages.length > 0;
+  const activePage = pages.find((page) => page.id === activePageId);
+  const showRerecognize = Boolean(recognizedImageUrl) && onRerecognize != null;
+  const rerecognizeBusy =
+    isRerecognizing || activePage?.status === "running";
+  const rerecognizeDisabled =
+    rerecognizeBusy || activePage?.status === "pending" || Boolean(activePage && !activePage.file);
   const hasSourceInput = Boolean(sourceText.trim() || hasImage);
   const sourceSubmit = resolveSourceSubmitDisabled(
     sourceText,
@@ -161,7 +176,11 @@ export const StepInputStep = ({
   );
 
 
-  const ocrCorrections = draft?.metadata.ocr_corrections ?? [];
+  const ocrCorrections = resolveActivePageOcrCorrections(
+    pages,
+    activePageId,
+    draft?.metadata.ocr_corrections,
+  );
   const ocrCorrectionLines = formatOcrCorrections(ocrCorrections);
   const hiddenCorrectionsCount = Math.max(
     ocrCorrections.filter((item) => item.action !== "verify_failed").length - ocrCorrectionLines.length,
@@ -390,6 +409,16 @@ export const StepInputStep = ({
                         }}
                       />
                     </div>
+                    {showRerecognize && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => void onRerecognize()}
+                        disabled={rerecognizeDisabled}
+                      >
+                        {rerecognizeBusy ? "Распознавание..." : "Перераспознать"}
+                      </Button>
+                    )}
                   </Card>
                 )}
 
@@ -419,11 +448,14 @@ export const StepInputStep = ({
           )}
 
           {!isBatchReviewMode && draft && (
-            <KpStepPreviewPanel
-              draft={draft}
-              normalizedText={normalizedText}
-              lineRowHandlers={lineRowHandlers}
-            />
+            <>
+              <SourceImageQueueControls items={sourceQueue} />
+              <KpStepPreviewPanel
+                draft={draft}
+                normalizedText={normalizedText}
+                lineRowHandlers={lineRowHandlers}
+              />
+            </>
           )}
 
           {!isBatchReviewMode ? (

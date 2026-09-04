@@ -1,5 +1,8 @@
 import type { CommercialDraftDetails, PileOrderLine } from "@/features/commercial-offer/types/commercialOffer";
-import { getCurrentCycleOrderData } from "@/features/commercial-offer/lib/currentCycleOrderData";
+import {
+  getProductTypeOrderData,
+  isSealedOrderLine,
+} from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
@@ -9,7 +12,7 @@ export type FbsOrderLine = Omit<PileOrderLine, "product_kind"> & {
 };
 
 export const buildFbsPreviewRows = (draft: CommercialDraftDetails): FbsOrderLine[] =>
-  getCurrentCycleOrderData(draft, "fbs").map((item) => {
+  getProductTypeOrderData(draft, "fbs").map((item) => {
     const mark = String(item.mark ?? item.name ?? "").trim();
     const qty = toNumber(item.qty) ?? 0;
     const unitPrice = toNumber(item.unit_price);
@@ -29,11 +32,12 @@ export const buildFbsPreviewRows = (draft: CommercialDraftDetails): FbsOrderLine
       unit_price: unitPrice,
       line_total: lineTotal,
       product_kind: "fbs",
+      sealed: isSealedOrderLine(item),
     };
   });
 
 export const buildFbsLinesFromOrderData = (rows: FbsOrderLine[]): string =>
   rows
-    .filter((row) => row.mark && row.qty > 0)
+    .filter((row) => row.mark && row.qty > 0 && !row.sealed)
     .map((row) => `${row.mark} ${row.concrete_grade} ${row.qty}`)
     .join("\n");

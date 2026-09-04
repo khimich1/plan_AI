@@ -332,3 +332,11 @@ export const useDownloadGsmUsageReportMutation = () => {
     },
   });
 };
+
+export const useGsmResetToAnchorsMutation = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => gsmApi.resetToAnchors(),
+    onSuccess: () => invalidateGsm(qc),
+  });
+};

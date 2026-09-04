@@ -86,6 +86,145 @@ describe("buildPlateLineHighlightMap", () => {
     });
   });
 
+  it("highlights 29-8-8п as invalid_width", () => {
+    const draft = makeDraft({
+      invalid_width_lines: [
+        {
+          id: "invalid-width-1",
+          name: "Плиты ПБ 29-8-8п",
+          line: "ПБ 29-8-8п 1",
+          qty: 1,
+          length_m: 2.9,
+          width_m: 0.8,
+          width_mm: 800,
+          load_class: 800,
+          replacements: [
+            { width_mm: 720, width_label: "7,2" },
+            { width_mm: 860, width_label: "8,6" },
+          ],
+        },
+      ],
+      invalid_widths_resolved: false,
+    });
+
+    const map = buildPlateLineHighlightMap(draft, ["ПБ 29-8-8п 1", "ПБ 29-12-8п 1", "ПБ 78-0.3-8п 1"]);
+
+    expect(map.get(0)?.kind).toBe("invalid_width");
+    expect(map.get(1)?.kind).toBeUndefined();
+    expect(map.get(2)?.kind).toBeUndefined();
+  });
+
+  it("skips invalid_width highlight on batch review screen", () => {
+    const draft = makeDraft({
+      invalid_width_lines: [
+        {
+          id: "invalid-width-1",
+          name: "Плиты ПБ 29-8-8п",
+          line: "ПБ 29-8-8п 1",
+          qty: 1,
+          length_m: 2.9,
+          width_m: 0.8,
+          width_mm: 800,
+          load_class: 800,
+          replacements: [{ width_mm: 860, width_label: "8,6" }],
+        },
+      ],
+      invalid_widths_resolved: false,
+    });
+
+    const map = buildPlateLineHighlightMap(draft, ["ПБ 29-8-8п 1"], { batchReview: true });
+
+    expect(map.get(0)).toBeUndefined();
+  });
+
+  it("uses below-card tooltip for wide on batch review", () => {
+    const draft = makeDraft({
+      wide_plate_lines: [{ id: "wide-1", line: "ПБ 59-15-8п 2", qty: 2 }],
+    });
+
+    const map = buildPlateLineHighlightMap(draft, ["ПБ 59-15-8п 2"], { batchReview: true });
+
+    expect(map.get(0)).toEqual({
+      kind: "wide",
+      title: "Позиция шире стандартной — требует решения ниже",
+    });
+  });
+
+  it("keeps only wide among width highlights on batch review", () => {
+    const draft = makeDraft({
+      wide_plate_lines: [{ id: "wide-1", line: "ПБ 59-15-8п 2", qty: 2 }],
+      invalid_width_lines: [
+        {
+          id: "invalid-width-1",
+          name: "Плиты ПБ 29-8-8п",
+          line: "ПБ 29-8-8п 1",
+          qty: 1,
+          length_m: 2.9,
+          width_m: 0.8,
+          width_mm: 800,
+          load_class: 800,
+          replacements: [{ width_mm: 860, width_label: "8,6" }],
+        },
+      ],
+      invalid_widths_resolved: false,
+    });
+
+    const map = buildPlateLineHighlightMap(draft, ["ПБ 59-15-8п 2", "ПБ 29-8-8п 1"], {
+      batchReview: true,
+    });
+
+    expect([...map.values()].map((item) => item.kind)).toEqual(["wide"]);
+    expect(map.get(1)).toBeUndefined();
+  });
+
+  it("highlights invalid_width after batch review", () => {
+    const draft = makeDraft({
+      invalid_width_lines: [
+        {
+          id: "invalid-width-1",
+          name: "Плиты ПБ 29-8-8п",
+          line: "ПБ 29-8-8п 1",
+          qty: 1,
+          length_m: 2.9,
+          width_m: 0.8,
+          width_mm: 800,
+          load_class: 800,
+          replacements: [{ width_mm: 860, width_label: "8,6" }],
+        },
+      ],
+      invalid_widths_resolved: false,
+    });
+
+    const map = buildPlateLineHighlightMap(draft, ["ПБ 29-8-8п 1"], { batchReview: false });
+
+    expect(map.get(0)?.kind).toBe("invalid_width");
+    expect(map.get(0)?.title).toBe("Нестандартная ширина — решение ниже");
+  });
+
+  it("prefers wide over invalid_width when both match", () => {
+    const draft = makeDraft({
+      wide_plate_lines: [{ id: "wide-1", line: "ПБ 59-15-8п 2", qty: 2 }],
+      invalid_width_lines: [
+        {
+          id: "invalid-width-1",
+          name: "ПБ 59-15-8п",
+          line: "ПБ 59-15-8п 2",
+          qty: 2,
+          length_m: 5.9,
+          width_m: 1.5,
+          width_mm: 1500,
+          load_class: 800,
+          replacements: [],
+        },
+      ],
+      invalid_widths_resolved: false,
+    });
+
+    const map = buildPlateLineHighlightMap(draft, ["ПБ 59-15-8п 2"]);
+
+    expect(map.get(0)?.kind).toBe("wide");
+  });
+
   it("prefers wide over dobor when both match", () => {
     const draft = makeDraft({
       wide_plate_lines: [{ id: "wide-1", line: "ПБ 59-15-8п 2", qty: 2 }],
@@ -200,5 +339,30 @@ describe("mergeReviewHighlights (S3–S6)", () => {
 
     expect(map.size).toBe(0);
     expect(line).toBe("ПБ 78-12-8н 2");
+  });
+
+  it("does not add invalid_width when merging batch-review highlights", () => {
+    const draft = makeDraft({
+      wide_plate_lines: [{ id: "wide-1", line: "ПБ 59-15-8п 2", qty: 2 }],
+      invalid_width_lines: [
+        {
+          id: "invalid-width-1",
+          name: "Плиты ПБ 29-8-8п",
+          line: "ПБ 29-8-8п 1",
+          qty: 1,
+          length_m: 2.9,
+          width_m: 0.8,
+          width_mm: 800,
+          load_class: 800,
+          replacements: [{ width_mm: 860, width_label: "8,6" }],
+        },
+      ],
+      invalid_widths_resolved: false,
+    });
+    const map = mergeReviewHighlights(draft, "ПБ 59-15-8п 2\nПБ 29-8-8п 1", [], { batchReview: true });
+
+    expect(map.get(0)?.kind).toBe("wide");
+    expect(map.get(0)?.title).toBe("Позиция шире стандартной — требует решения ниже");
+    expect(map.get(1)).toBeUndefined();
   });
 });

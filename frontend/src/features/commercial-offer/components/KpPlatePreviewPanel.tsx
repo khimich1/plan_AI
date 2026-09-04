@@ -20,8 +20,29 @@ const flagLabel = (flag: "wide_direct" | "wide_split"): string =>
 export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: KpPlatePreviewPanelProps) => {
   const rows = buildKpPreviewRows(draft);
   const wideLines = draft.metadata.wide_plate_lines ?? [];
+  const invalidWidthLines = draft.metadata.invalid_width_lines ?? [];
   const warnings = filterCompositionWarnings(draft.metadata.warnings ?? []);
   const showWideAlert = wideLines.length > 0 && !draft.metadata.wide_plates_resolved;
+  const showInvalidWidthAlert = invalidWidthLines.length > 0 && !draft.metadata.invalid_widths_resolved;
+  const invalidWidthKeys = new Set(
+    invalidWidthLines.flatMap((item) =>
+      [item.line, item.name]
+        .filter(Boolean)
+        .map((value) => value.trim().toLowerCase().replace(/\s+\d+$/, "")),
+    ),
+  );
+  const isInvalidWidthRow = (name: string) => {
+    const key = name.trim().toLowerCase().replace(/\s+\d+$/, "");
+    if (invalidWidthKeys.has(key)) {
+      return true;
+    }
+    for (const invalidKey of invalidWidthKeys) {
+      if (key.includes(invalidKey) || invalidKey.includes(key)) {
+        return true;
+      }
+    }
+    return false;
+  };
   const hasUnpricedRows = rows.some((row) => row.unitPrice === null);
   const normalizedTextChanged =
     normalizedText.trim() !== (draft.metadata.normalized_text ?? "").trim() && normalizedText.trim().length > 0;
@@ -43,6 +64,15 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: 
             {wideLines.length}{" "}
             {wideLines.length === 1 ? "позиция шире стандартной" : "позиций шире стандартной"} в списке —
             примите решение в блоке ниже.
+          </Alert>
+        )}
+        {showInvalidWidthAlert && (
+          <Alert tone="warning">
+            {invalidWidthLines.length}{" "}
+            {invalidWidthLines.length === 1
+              ? "позиция с шириной вне таблицы резов"
+              : "позиций с шириной вне таблицы резов"}{" "}
+            — замените на заводской рез или исключите ниже.
           </Alert>
         )}
 
@@ -114,8 +144,13 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: 
               <tbody>
                 {rows.map((row, index) => {
                   const isUnpriced = row.unitPrice === null;
+                  const isInvalidWidth =
+                    showInvalidWidthAlert && !row.flag && isInvalidWidthRow(row.name);
                   return (
-                    <tr key={`${row.name}-${index}`}>
+                    <tr
+                      key={`${row.name}-${index}`}
+                      style={isInvalidWidth ? { background: "#fef3f2" } : undefined}
+                    >
                       <td
                         style={{
                           padding: "0.55rem 0.65rem",
@@ -134,6 +169,11 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: 
                           <div style={{ marginTop: "0.25rem", color: "#b54708", fontSize: "0.82rem" }}>
                             ⚠ {flagLabel(row.flag)}
                             {row.sourceLine ? ` · из «${row.sourceLine}»` : ""}
+                          </div>
+                        )}
+                        {isInvalidWidth && (
+                          <div style={{ marginTop: "0.25rem", color: "#b42318", fontSize: "0.82rem" }}>
+                            Нестандартная ширина — решение ниже
                           </div>
                         )}
                       </td>

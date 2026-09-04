@@ -81,13 +81,21 @@ type WizardDraftAction =
       action: WizardStoreState["unpricedPlateActions"][string]["action"];
       loadCode: number | null;
     }
+  | {
+      type: "set-invalid-width-action";
+      lineId: string;
+      action: WizardStoreState["invalidWidthActions"][string]["action"];
+      widthMm: number | null;
+    }
   | { type: "set-execution-terms"; value: string }
   | { type: "set-draft-id"; draftId: string }
   | { type: "hydrate-draft"; payload: CommercialDraftDetails; refreshBatchText?: boolean }
   | { type: "sync-after-wide-plates"; payload: CommercialDraftDetails }
   | { type: "sync-after-unpriced-plates"; payload: CommercialDraftDetails }
+  | { type: "sync-after-invalid-widths"; payload: CommercialDraftDetails }
   | { type: "set-save-result"; payload: CommercialSaveResult | null }
   | { type: "start-append-cycle" }
+  | { type: "cancel-append-pick" }
   | { type: "reset" };
 
 const initialState: WizardStoreState = {
@@ -110,6 +118,7 @@ const initialState: WizardStoreState = {
   executionTermsInput: "",
   widePlateActions: {},
   unpricedPlateActions: {},
+  invalidWidthActions: {},
   lastDraft: null,
   lastSaveResult: null,
   isPickingProductType: false,
@@ -135,7 +144,14 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         confirmedBatchCount: 0,
         widePlateActions: {},
         unpricedPlateActions: {},
+        invalidWidthActions: {},
         isPickingProductType: true,
+      };
+    case "cancel-append-pick":
+      return {
+        ...state,
+        isPickingProductType: false,
+        currentStep: "result",
       };
     case "set-step":
       return { ...state, currentStep: mapLegacyWizardStep(action.step) };
@@ -205,6 +221,17 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
           },
         },
       };
+    case "set-invalid-width-action":
+      return {
+        ...state,
+        invalidWidthActions: {
+          ...state.invalidWidthActions,
+          [action.lineId]: {
+            action: action.action,
+            widthMm: action.widthMm,
+          },
+        },
+      };
     case "set-execution-terms":
       return { ...state, executionTermsInput: action.value };
     case "set-draft-id":
@@ -239,6 +266,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         confirmedBatchCount: Math.min(state.confirmedBatchCount, batchCount),
         widePlateActions: action.payload.metadata.wide_plates_resolved ? {} : state.widePlateActions,
         unpricedPlateActions: action.payload.metadata.unpriced_plates_resolved ? {} : state.unpricedPlateActions,
+        invalidWidthActions: action.payload.metadata.invalid_widths_resolved ? {} : state.invalidWidthActions,
         lastDraft: action.payload,
       };
     }
@@ -284,6 +312,27 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         lastDraft: action.payload,
       };
     }
+    case "sync-after-invalid-widths": {
+      const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
+      const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
+      const batchCount = getDraftBatchCount(action.payload);
+      return {
+        ...state,
+        productType,
+        draftId: action.payload.draft_id,
+        currentStep: mergeWizardStepWithServer(
+          state.currentStep,
+          action.payload.wizard_state?.current_step,
+          productType,
+        ),
+        normalizedText: action.payload.metadata.normalized_text ?? "",
+        pendingBatchReview: batchReviewPending,
+        batchReviewText: getCurrentBatchReviewText(action.payload),
+        confirmedBatchCount: Math.min(state.confirmedBatchCount, batchCount),
+        invalidWidthActions: {},
+        lastDraft: action.payload,
+      };
+    }
     case "set-save-result":
       return { ...state, lastSaveResult: action.payload };
     case "reset":
@@ -315,6 +364,7 @@ export const WizardDraftProvider = ({ children }: PropsWithChildren) => {
       normalizedText: loaded.normalizedText ?? "",
       isPickingProductType: loaded.isPickingProductType ?? false,
       unpricedPlateActions: loaded.unpricedPlateActions ?? {},
+      invalidWidthActions: loaded.invalidWidthActions ?? {},
     };
   });
 

@@ -23,7 +23,7 @@ export const useBatchReviewHighlights = ({
 }: UseBatchReviewHighlightsArgs): Map<number, PlateLineHighlight> => {
   const lint = useSourceTextLint({ text, productType, enabled });
   return useMemo(
-    () => mergeReviewHighlights(draft, text, enabled ? lint.lines : []),
+    () => mergeReviewHighlights(draft, text, enabled ? lint.lines : [], { batchReview: true }),
     [draft, text, enabled, lint.lines],
   );
 };

@@ -31,6 +31,7 @@ from core.ports.visualization import (
     build_procurement_items,
     load_price_table_from_xlsx,
 )
+from core.invalid_width_lines import build_invalid_width_lines
 from core.unpriced_plate_replacements import build_unpriced_plate_lines
 
 
@@ -43,6 +44,7 @@ class CommercialPreviewResult:
     breakdown_tables: list[dict[str, Any]]
     total_sum: float
     unpriced_plate_lines: list[dict[str, Any]] = field(default_factory=list)
+    invalid_width_lines: list[dict[str, Any]] = field(default_factory=list)
 
 
 class CommercialService:
@@ -105,6 +107,17 @@ class CommercialService:
             db_path=str(DB_PATH),
             normalized_lines=list(current_parse_result.normalized_lines),
         )
+        skip_wide = [
+            str(item[0]).strip()
+            for item in current_parse_result.wide_plate_lines
+            if item
+        ]
+        invalid_width_lines = build_invalid_width_lines(
+            order_data,
+            db_path=str(DB_PATH),
+            normalized_lines=list(current_parse_result.normalized_lines),
+            skip_wide_lines=skip_wide,
+        )
         return CommercialPreviewResult(
             parse_result=current_parse_result,
             optimization_context=optimization_context,
@@ -113,6 +126,7 @@ class CommercialService:
             breakdown_tables=breakdown_tables,
             total_sum=float(total_sum),
             unpriced_plate_lines=unpriced_plate_lines,
+            invalid_width_lines=invalid_width_lines,
         )
 
     def _build_order_data(

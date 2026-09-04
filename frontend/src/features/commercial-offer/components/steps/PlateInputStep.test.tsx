@@ -367,3 +367,442 @@ describe("PlateInputStep ocr verify-failed banner", () => {
     expect(screen.getByText(newCopy)).toBeInTheDocument();
   });
 });
+
+describe("PlateInputStep source image queue CTA", () => {
+  const baseProps = {
+    draft: makeDraft("ПБ 78-12-8п 2"),
+    pendingBatchReview: false,
+    sourceText: "",
+    batchReviewText: "",
+    normalizedText: "ПБ 78-12-8п 2",
+    pages: [] as PageSource[],
+    activePageId: null as string | null,
+    recognizedImageUrl: null,
+    recognizedImageName: null,
+    errorMessage: null,
+    isRecognizing: false,
+    onTextChange: noop,
+    onBatchReviewTextChange: noop,
+    onAddFiles: noop,
+    onRemovePage: noop,
+    onSelectPage: noop,
+    onRecognize: noop,
+    onConfirmBatch: noop,
+    onFinishPlates: noop,
+    onReset: noop,
+  };
+
+  it("hides CTA when sourceQueue is empty", () => {
+    render(<PlateInputStep {...baseProps} sourceQueue={[]} />);
+
+    expect(screen.queryByRole("button", { name: /Исходные фото/i })).not.toBeInTheDocument();
+  });
+
+  it("shows CTA with count and opens Drawer on click", () => {
+    render(
+      <PlateInputStep
+        {...baseProps}
+        sourceQueue={[
+          { id: "a", url: "blob:a", name: "a.png" },
+          { id: "b", url: "blob:b", name: "b.png" },
+        ]}
+      />,
+    );
+
+    const cta = screen.getByRole("button", { name: "Исходные фото (2)" });
+    expect(cta).toBeInTheDocument();
+
+    fireEvent.click(cta);
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "a.png" })).toHaveAttribute("src", "blob:a");
+  });
+});
+
+describe("PlateInputStep rerecognize button", () => {
+  const onRecognize = vi.fn();
+  const onRerecognize = vi.fn();
+
+  const retryProps = {
+    draft: makeDraft("ПБ 78-12-8п 2"),
+    pendingBatchReview: true as const,
+    sourceText: "",
+    batchReviewText: "ПБ 78-12-8п 2",
+    normalizedText: "ПБ 78-12-8п 2",
+    recognizedImageUrl: "blob:photo",
+    recognizedImageName: "a.png",
+    errorMessage: null,
+    isRecognizing: false,
+    onAiInstructionChange: noop,
+    onApplyAi: noop,
+    onTextChange: noop,
+    onBatchReviewTextChange: noop,
+    onAddFiles: noop,
+    onRemovePage: noop,
+    onSelectPage: noop,
+    onRecognize,
+    onRerecognize,
+    onConfirmBatch: noop,
+    onFinishPlates: noop,
+    onReset: noop,
+  };
+
+  beforeEach(() => {
+    onRecognize.mockClear();
+    onRerecognize.mockClear();
+  });
+
+  it("shows Перераспознать under selected photo when page is ready", () => {
+    render(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "ready")]}
+        activePageId="a"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeInTheDocument();
+    expect(screen.getByText(/Ctrl \+ колёсико/)).toBeInTheDocument();
+  });
+
+  it("shows button for error and confirmed pages", () => {
+    const { rerender } = render(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "error")]}
+        activePageId="a"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeEnabled();
+
+    rerender(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "confirmed")]}
+        activePageId="a"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeEnabled();
+  });
+
+  it("disables button when page is running or pending", () => {
+    const { rerender } = render(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "running")]}
+        activePageId="a"
+        isRerecognizing
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Распознавание..." })).toBeDisabled();
+
+    rerender(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "pending")]}
+        activePageId="a"
+        isRerecognizing={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Перераспознать" })).toBeDisabled();
+  });
+
+  it("click calls onRerecognize", () => {
+    render(
+      <PlateInputStep
+        {...retryProps}
+        pages={[makePage("a", "ready")]}
+        activePageId="a"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Перераспознать" }));
+    expect(onRerecognize).toHaveBeenCalledTimes(1);
+    expect(onRecognize).not.toHaveBeenCalled();
+  });
+});
+
+describe("PlateInputStep live wide overlay", () => {
+  const liveWideProps = {
+    pendingBatchReview: true as const,
+    sourceText: "",
+    pages: [makePage("a")],
+    activePageId: "a",
+    recognizedImageUrl: "blob:photo",
+    recognizedImageName: "a.png",
+    errorMessage: null,
+    isRecognizing: false,
+    onAiInstructionChange: noop,
+    onApplyAi: noop,
+    onTextChange: noop,
+    onBatchReviewTextChange: noop,
+    onAddFiles: noop,
+    onRemovePage: noop,
+    onSelectPage: noop,
+    onRecognize: noop,
+    onConfirmBatch: noop,
+    onFinishPlates: noop,
+    onReset: noop,
+    onWidePlateDecisionChange: noop,
+    onApplyWidePlates: noop,
+  };
+
+  it("shows wide card during batch review; confirm stays enabled", () => {
+    const draft = makeDraft("44-15-10п 5");
+    draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];
+    draft.metadata.wide_plates_resolved = false;
+
+    render(
+      <PlateInputStep
+        {...liveWideProps}
+        draft={draft}
+        batchReviewText="34-15-10п 15"
+        normalizedText="44-15-10п 5"
+      />,
+    );
+
+    expect(screen.getByText("Нестандартная ширина")).toBeInTheDocument();
+    expect(screen.getByText(/Плита шире стандартной/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
+  });
+
+  it("shows wide card after batch review on post-confirm screen", () => {
+    const draft = makeDraft("44-15-10п 5");
+    draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];
+    draft.metadata.wide_plates_resolved = false;
+
+    render(
+      <PlateInputStep
+        {...liveWideProps}
+        pendingBatchReview={false}
+        draft={draft}
+        batchReviewText="34-15-10п 15"
+        normalizedText="44-15-10п 5"
+      />,
+    );
+
+    expect(screen.getByText("Нестандартная ширина")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /позиций требуют внимания/i }));
+    expect(screen.getByText(/Количество:\s*5/)).toBeInTheDocument();
+  });
+
+  it("hides wide card during batch review when editor width is 12 dm", () => {
+    const draft = makeDraft("44-15-10п 5");
+    draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];
+    draft.metadata.wide_plates_resolved = false;
+
+    render(
+      <PlateInputStep
+        {...liveWideProps}
+        draft={draft}
+        batchReviewText="34-12-10п 15"
+        normalizedText="44-15-10п 5"
+      />,
+    );
+
+    expect(screen.queryByText("Нестандартная ширина")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
+  });
+});
+
+describe("PlateInputStep two-screen width gates", () => {
+  const decisionHandlers = {
+    onWidePlateDecisionChange: noop,
+    onApplyWidePlates: noop,
+    onInvalidWidthDecisionChange: noop,
+    onApplyInvalidWidths: noop,
+    onUnpricedPlateDecisionChange: noop,
+    onApplyUnpricedPlates: noop,
+  };
+
+  const screenProps = {
+    sourceText: "",
+    pages: [makePage("a")],
+    activePageId: "a",
+    recognizedImageUrl: "blob:photo",
+    recognizedImageName: "a.png",
+    errorMessage: null,
+    isRecognizing: false,
+    onAiInstructionChange: noop,
+    onApplyAi: noop,
+    onTextChange: noop,
+    onBatchReviewTextChange: noop,
+    onAddFiles: noop,
+    onRemovePage: noop,
+    onSelectPage: noop,
+    onRecognize: noop,
+    onConfirmBatch: noop,
+    onFinishPlates: noop,
+    onReset: noop,
+    ...decisionHandlers,
+  };
+
+  const invalidDraft = () => {
+    const draft = makeDraft("ПБ 29-8-8п 1");
+    draft.metadata.invalid_width_lines = [
+      {
+        id: "invalid-width-1",
+        name: "Плиты ПБ 29-8-8п",
+        line: "ПБ 29-8-8п 1",
+        qty: 1,
+        length_m: 2.9,
+        width_m: 0.8,
+        width_mm: 800,
+        load_class: 800,
+        replacements: [
+          { width_mm: 720, width_label: "7,2" },
+          { width_mm: 860, width_label: "8,6" },
+        ],
+      },
+    ];
+    draft.metadata.invalid_widths_resolved = false;
+    draft.metadata.wide_plates_resolved = true;
+    return draft;
+  };
+
+  const unpricedDraft = () => {
+    const draft = makeDraft("ПБ 75-12-12п 1");
+    draft.metadata.unpriced_plate_lines = [
+      {
+        id: "unpriced-1",
+        name: "Плиты ПБ 75-12-12п",
+        line: "ПБ 75-12-12п 1",
+        qty: 1,
+        length_m: 7.5,
+        width_m: 1.2,
+        load_class: 1200,
+        replacements: [{ load_code: 10, price: 31890 }],
+      },
+    ];
+    draft.metadata.unpriced_plates_resolved = false;
+    draft.metadata.wide_plates_resolved = true;
+    return draft;
+  };
+
+  it("hides invalid card and preview during batch review", () => {
+    render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview
+        draft={invalidDraft()}
+        batchReviewText="ПБ 29-8-8п 1"
+        normalizedText="ПБ 29-8-8п 1"
+      />,
+    );
+
+    expect(screen.queryByText("Завод такую ширину не режет — выберите рез или исключите позицию.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Состав КП (предпросмотр)")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toBeDisabled();
+  });
+
+  it("shows invalid card and preview after batch review", () => {
+    render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview={false}
+        draft={invalidDraft()}
+        batchReviewText=""
+        normalizedText="ПБ 29-8-8п 1"
+      />,
+    );
+
+    expect(screen.getByText("Завод такую ширину не режет — выберите рез или исключите позицию.")).toBeInTheDocument();
+    expect(screen.getByText("Состав КП (предпросмотр)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toHaveAttribute(
+      "title",
+      "Нестандартная ширина: замените на заводской рез или исключите позицию",
+    );
+  });
+
+  it("hides unpriced card during batch review and shows it after", () => {
+    const draft = unpricedDraft();
+    const { rerender } = render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview
+        draft={draft}
+        batchReviewText="ПБ 75-12-12п 1"
+        normalizedText="ПБ 75-12-12п 1"
+      />,
+    );
+
+    expect(screen.queryByText("Нет в прайсе / не производится")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
+
+    rerender(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview={false}
+        draft={draft}
+        batchReviewText=""
+        normalizedText="ПБ 75-12-12п 1"
+      />,
+    );
+
+    expect(screen.getByText("Нет в прайсе / не производится")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toBeDisabled();
+  });
+
+  it("enables Готово, далее when width gates are resolved", () => {
+    const draft = makeDraft("ПБ 78-12-8п 2");
+    draft.metadata.wide_plates_resolved = true;
+    draft.metadata.invalid_widths_resolved = true;
+    draft.metadata.unpriced_plates_resolved = true;
+
+    render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview={false}
+        draft={draft}
+        batchReviewText=""
+        normalizedText="ПБ 78-12-8п 2"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toBeEnabled();
+  });
+});
+
+describe("PlateInputStep live OCR banners", () => {
+  it("shows page ocrCorrections instead of stale draft hydrate", () => {
+    const draft = makeDraft("two\nlines");
+    draft.metadata.ocr_corrections = [{ action: "replaced", reason: "stale-2-line" }];
+    draft.metadata.ocr_verify_failed = true;
+    const page = {
+      ...makePage("a"),
+      ocrCorrections: [{ action: "replaced", reason: "fresh-full-list" }],
+      ocrVerifyFailed: false,
+    };
+
+    render(
+      <PlateInputStep
+        draft={draft}
+        pendingBatchReview
+        sourceText=""
+        batchReviewText="full list"
+        normalizedText="two\nlines"
+        pages={[page]}
+        activePageId="a"
+        recognizedImageUrl="blob:photo"
+        recognizedImageName="a.png"
+        errorMessage={null}
+        isRecognizing={false}
+        onTextChange={noop}
+        onBatchReviewTextChange={noop}
+        onAddFiles={noop}
+        onRemovePage={noop}
+        onSelectPage={noop}
+        onRecognize={noop}
+        onConfirmBatch={noop}
+        onFinishPlates={noop}
+        onReset={noop}
+      />,
+    );
+
+    expect(screen.getByText(/fresh-full-list/)).toBeInTheDocument();
+    expect(screen.queryByText(/stale-2-line/)).not.toBeInTheDocument();
+    expect(screen.queryByText(OCR_VERIFY_FAILED_REVIEW_MESSAGE)).not.toBeInTheDocument();
+  });
+});

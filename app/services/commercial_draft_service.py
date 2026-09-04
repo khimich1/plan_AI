@@ -236,6 +236,12 @@ class CommercialDraftService:
                 "unpriced_plates_resolved": not bool(
                     getattr(preview, "unpriced_plate_lines", None) or []
                 ),
+                "invalid_width_lines": self.serialize_invalid_width_lines(
+                    getattr(preview, "invalid_width_lines", []) or []
+                ),
+                "invalid_widths_resolved": not bool(
+                    getattr(preview, "invalid_width_lines", None) or []
+                ),
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.plates.value,
                 # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
@@ -303,6 +309,8 @@ class CommercialDraftService:
                 "total_sum": preview.total_sum,
                 "pile_batches": pile_batches,
                 "wide_plates_resolved": True,
+                "invalid_width_lines": [],
+                "invalid_widths_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.piles.value,
                 # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
@@ -371,6 +379,8 @@ class CommercialDraftService:
                 "total_sum": preview.total_sum,
                 "march_batches": march_batches,
                 "wide_plates_resolved": True,
+                "invalid_width_lines": [],
+                "invalid_widths_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.marches.value,
                 # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
@@ -439,6 +449,8 @@ class CommercialDraftService:
                 "total_sum": preview.total_sum,
                 "bridge_pile_batches": bridge_pile_batches,
                 "wide_plates_resolved": True,
+                "invalid_width_lines": [],
+                "invalid_widths_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.bridge_piles.value,
                 # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
@@ -507,6 +519,8 @@ class CommercialDraftService:
                 "total_sum": preview.total_sum,
                 "fbs_batches": fbs_batches,
                 "wide_plates_resolved": True,
+                "invalid_width_lines": [],
+                "invalid_widths_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.fbs.value,
                 # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
@@ -575,6 +589,8 @@ class CommercialDraftService:
                 "total_sum": preview.total_sum,
                 "step_batches": step_batches,
                 "wide_plates_resolved": True,
+                "invalid_width_lines": [],
+                "invalid_widths_resolved": True,
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.steps.value,
                 # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
@@ -727,6 +743,52 @@ class CommercialDraftService:
                     "qty": int(item.get("qty", 1) or 1),
                     "length_m": float(item.get("length_m") or 0),
                     "width_m": float(item.get("width_m") or 0),
+                    "load_class": int(item.get("load_class") or 0),
+                    "replacements": replacements,
+                }
+            )
+        return serialized
+
+    @staticmethod
+    def serialize_invalid_width_lines(items: Iterable[Any]) -> list[dict[str, Any]]:
+        serialized: list[dict[str, Any]] = []
+        for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("line") or "").strip()
+            line = str(item.get("line") or name).strip()
+            if not line and not name:
+                continue
+            replacements_raw = item.get("replacements") or []
+            replacements: list[dict[str, Any]] = []
+            for repl in replacements_raw:
+                if not isinstance(repl, dict):
+                    continue
+                try:
+                    width_mm = int(repl.get("width_mm"))
+                except (TypeError, ValueError):
+                    continue
+                width_label = str(repl.get("width_label") or "").strip()
+                entry: dict[str, Any] = {"width_mm": width_mm, "width_label": width_label}
+                raw_price = repl.get("price")
+                if raw_price is not None:
+                    try:
+                        price = float(raw_price)
+                    except (TypeError, ValueError):
+                        price = None
+                    else:
+                        if price > 0:
+                            entry["price"] = price
+                replacements.append(entry)
+            serialized.append(
+                {
+                    "id": str(item.get("id") or f"invalid-width-{idx}"),
+                    "name": name or line,
+                    "line": line or name,
+                    "qty": int(item.get("qty", 1) or 1),
+                    "length_m": float(item.get("length_m") or 0),
+                    "width_m": float(item.get("width_m") or 0),
+                    "width_mm": int(item.get("width_mm") or 0),
                     "load_class": int(item.get("load_class") or 0),
                     "replacements": replacements,
                 }

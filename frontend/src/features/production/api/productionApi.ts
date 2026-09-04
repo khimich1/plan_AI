@@ -67,7 +67,10 @@ export const productionApi = {
     return httpClient.get<DayOccupancyResponse>(`${BASE}/day-occupancy${query}`);
   },
 
-  listKpCandidates: () => httpClient.get<KpCandidatesResponse>(`${BASE}/kp-candidates`),
+  listKpCandidates: (scope?: "in_work") => {
+    const query = scope === "in_work" ? "?scope=in_work" : "";
+    return httpClient.get<KpCandidatesResponse>(`${BASE}/kp-candidates${query}`);
+  },
 
   analyzeSubstrates: (payload: AnalyzeSubstratesRequest) =>
     httpClient.post<AnalyzeSubstratesResponse>(

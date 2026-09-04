@@ -24,11 +24,13 @@ from app.schemas.commercial import (
     CommercialCreateFromFormResponse, CommercialDraftBreakdownResponse,
     CommercialDraftDetailsResponse, CommercialDraftMetaUpdateRequest,
     CommercialFbsGradesUpdateRequest, CommercialGenerateFilesRequest,
-    CommercialGenerateFilesResponse, CommercialMarchGradesUpdateRequest,
-    CommercialParseLine, CommercialParseRequest, CommercialPileGradesUpdateRequest,
+    CommercialGenerateFilesResponse,     CommercialMarchGradesUpdateRequest,
+    CommercialOcrPageResponse, CommercialParseLine, CommercialParseRequest,
+    CommercialPileGradesUpdateRequest,
     CommercialPreviewRequest, CommercialRestoreLinesRequest, CommercialSaveDraftRequest,
     CommercialDraftLinePatchRequest, CommercialSaveOfferResponse,
-    CommercialUnpricedPlatesResolveRequest, CommercialWidePlatesResolveRequest,
+    CommercialInvalidWidthsResolveRequest, CommercialUnpricedPlatesResolveRequest,
+    CommercialWidePlatesResolveRequest,
 )
 from app.services.commercial_draft_service import CommercialDraftService
 from app.services.commercial_line_lint import LineLint, lint_source_lines, unparsed_line_texts
@@ -316,6 +318,29 @@ async def apply_ai_steps_to_draft(
 ) -> CommercialDraftDetailsResponse:
     return await _run_product_ai(draft_id, user, body, workflow.apply_ai_steps_instruction, "apply_ai_steps_to_draft")
 
+@router.post("/drafts/{draft_id}/ocr-page", response_model=CommercialOcrPageResponse)
+async def recognize_commercial_draft_page(
+    draft_id: str = Depends(verify_draft_ownership),
+    image: UploadFile | None = File(default=None),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialOcrPageResponse:
+    image_bytes, image_name = await prepare_commercial_ocr_upload(
+        image=image, user_id=int(user["id"])
+    )
+    if image_bytes is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нужно передать изображение для распознавания.",
+        )
+    try:
+        result = await workflow.recognize_draft_page(
+            draft_id, image_bytes=image_bytes, image_filename=image_name,
+        )
+    except Exception as exc:
+        _raise_draft_http(exc, where="recognize_commercial_draft_page", ai_provider=True)
+    return CommercialOcrPageResponse.model_validate(result)
+
 @router.patch("/drafts/{draft_id}/plates", response_model=CommercialDraftDetailsResponse)
 async def update_commercial_draft_plates(
     body: _ProductUpdateForm = Depends(), draft_id: str = Depends(verify_draft_ownership),
@@ -364,6 +389,21 @@ def resolve_draft_unpriced_plates(
     return _details(_sync_draft(
         "resolve_draft_unpriced_plates",
         lambda: workflow.resolve_unpriced_plates(
+            draft_id, decisions=[item.model_dump() for item in payload.decisions],
+            plate_order_ctx=plate_order_ctx,
+        ),
+        plate_parse=True,
+    ))
+
+@router.post("/drafts/{draft_id}/invalid-widths/resolve", response_model=CommercialDraftDetailsResponse)
+def resolve_draft_invalid_widths(
+    payload: CommercialInvalidWidthsResolveRequest, draft_id: str = Depends(verify_draft_ownership),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    return _details(_sync_draft(
+        "resolve_draft_invalid_widths",
+        lambda: workflow.resolve_invalid_widths(
             draft_id, decisions=[item.model_dump() for item in payload.decisions],
             plate_order_ctx=plate_order_ctx,
         ),
@@ -549,7 +589,12 @@ def get_preview_draft(
 @router.get("/drafts/{draft_id}/breakdown", response_model=CommercialDraftBreakdownResponse)
 def get_draft_breakdown(
     draft_id: str = Depends(verify_draft_ownership),
+    plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftBreakdownResponse:
-    result = _sync_draft("get_draft_breakdown", lambda: workflow.get_draft_breakdown(draft_id), validation=False)
+    result = _sync_draft(
+        "get_draft_breakdown",
+        lambda: workflow.get_draft_breakdown(draft_id, plate_order_ctx=plate_order_ctx),
+        validation=False,
+    )
     return CommercialDraftBreakdownResponse.model_validate(result)

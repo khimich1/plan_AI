@@ -5,6 +5,7 @@ import { ApiError } from "@/shared/lib/apiError";
 import type { GsmSettings } from "@/features/gsm/types/gsm";
 
 const mockSeasonMutate = vi.fn();
+const mockResetMutate = vi.fn();
 
 const SUMMER_SETTINGS: GsmSettings = {
   winter_start: "11-01",
@@ -15,6 +16,12 @@ const SUMMER_SETTINGS: GsmSettings = {
 
 let settingsData: GsmSettings = SUMMER_SETTINGS;
 let mutationState = { isPending: false, isError: false, error: null as unknown };
+let resetMutationState = { isPending: false, isError: false, error: null as unknown };
+let authRole: string | undefined = "accountant";
+
+vi.mock("@/features/auth/model/AuthProvider", () => ({
+  useAuth: () => ({ user: authRole ? { role: authRole } : null }),
+}));
 
 vi.mock("@/features/gsm/components/CardsRegistryView", () => ({
   CardsRegistryView: () => null,
@@ -35,12 +42,20 @@ vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
     isError: mutationState.isError,
     error: mutationState.error,
   }),
+  useGsmResetToAnchorsMutation: () => ({
+    mutate: mockResetMutate,
+    isPending: resetMutationState.isPending,
+    isError: resetMutationState.isError,
+    error: resetMutationState.error,
+  }),
 }));
 
 describe("GsmRegistriesView season switch", () => {
   beforeEach(() => {
     settingsData = SUMMER_SETTINGS;
     mutationState = { isPending: false, isError: false, error: null };
+    resetMutationState = { isPending: false, isError: false, error: null };
+    authRole = "accountant";
   });
 
   afterEach(() => {
@@ -94,5 +109,33 @@ describe("GsmRegistriesView season switch", () => {
     expect(
       screen.getByText("Дата перевода сезона не может быть раньше предыдущего перевода."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("GsmRegistriesView admin reset", () => {
+  beforeEach(() => {
+    settingsData = SUMMER_SETTINGS;
+    mutationState = { isPending: false, isError: false, error: null };
+    resetMutationState = { isPending: false, isError: false, error: null };
+    authRole = "admin";
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("shows reset button for admin", () => {
+    render(<GsmRegistriesView />);
+
+    expect(screen.getByRole("button", { name: "Сброс к якорям" })).toBeInTheDocument();
+    expect(screen.getByText(/Dev-инструменты/)).toBeInTheDocument();
+  });
+
+  it("hides reset button for accountant", () => {
+    authRole = "accountant";
+    render(<GsmRegistriesView />);
+
+    expect(screen.queryByRole("button", { name: "Сброс к якорям" })).not.toBeInTheDocument();
   });
 });

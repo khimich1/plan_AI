@@ -28,6 +28,7 @@ from app.services.gsm_report_service import GsmReportService
 from app.services.gsm_generation_service import GsmGenerationService
 from app.services.gsm_overview_service import GsmOverviewService
 from app.services.gsm_registry_service import GsmRegistryService
+from app.services.gsm_reset_service import GsmResetService
 from app.services.gsm_transaction_service import GsmTransactionService
 from app.services.offers_service import OffersService
 from app.services.production_capacity_service import ProductionCapacityService
@@ -154,6 +155,12 @@ def get_gsm_report_service() -> GsmReportService:
         repo=repo,
         export_service=GsmExportService(repo=repo),
     )
+
+
+def get_gsm_reset_service() -> GsmResetService:
+    from app.repositories.kp_repository import KpRepository
+
+    return GsmResetService(db_path=KpRepository().db_path)
 
 
 def get_auth_service(

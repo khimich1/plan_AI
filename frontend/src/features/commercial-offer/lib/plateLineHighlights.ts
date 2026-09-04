@@ -1,6 +1,6 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 
-export type PlateLineHighlightKind = "correction" | "unparsed" | "wide" | "dobor";
+export type PlateLineHighlightKind = "correction" | "unparsed" | "wide" | "invalid_width" | "dobor";
 
 export type PlateLineHighlight = {
   kind: PlateLineHighlightKind;
@@ -13,9 +13,15 @@ const normalizeLineKey = (line: string) => line.trim().toLowerCase();
 
 const stripUnparsedSuffix = (line: string) => line.replace(/\s*\(пропущено:.*\)\s*$/i, "").trim();
 
+export type PlateLineHighlightOptions = {
+  /** On OCR review screen: highlight wide plates only; invalid-width decisions come later. */
+  batchReview?: boolean;
+};
+
 export const buildPlateLineHighlightMap = (
   draft: CommercialDraftDetails,
   textLines: string[],
+  options?: PlateLineHighlightOptions,
 ): Map<number, PlateLineHighlight> => {
   const highlights = new Map<number, PlateLineHighlight>();
   const lines = textLines;
@@ -25,6 +31,11 @@ export const buildPlateLineHighlightMap = (
   );
   const wideKeys = new Set(
     (draft.metadata.wide_plate_lines ?? []).map((item) => normalizeLineKey(item.line)),
+  );
+  const invalidWidthKeys = new Set(
+    (draft.metadata.invalid_width_lines ?? []).flatMap((item) =>
+      [item.line, item.name].filter(Boolean).map((value) => normalizeLineKey(value)),
+    ),
   );
 
   const doborByLineKey = new Map<string, { pairId: string; partnerLine: string }>();
@@ -51,6 +62,13 @@ export const buildPlateLineHighlightMap = (
       highlights.set(index, {
         kind: "wide",
         title: "Позиция шире стандартной — требует решения ниже",
+      });
+      return;
+    }
+    if (!options?.batchReview && invalidWidthKeys.has(key) && !draft.metadata.invalid_widths_resolved) {
+      highlights.set(index, {
+        kind: "invalid_width",
+        title: "Нестандартная ширина — решение ниже",
       });
       return;
     }
@@ -108,9 +126,10 @@ export const mergeReviewHighlights = (
   draft: CommercialDraftDetails | null,
   text: string,
   lintLines: Array<{ index: number; empty: boolean; ok: boolean; reason_text: string | null }>,
+  options?: PlateLineHighlightOptions,
 ): Map<number, PlateLineHighlight> => {
   const lines = text.split("\n");
-  const base = draft ? buildPlateLineHighlightMap(draft, lines) : new Map<number, PlateLineHighlight>();
+  const base = draft ? buildPlateLineHighlightMap(draft, lines, options) : new Map<number, PlateLineHighlight>();
   if (lintLines.length === 0) {
     return base;
   }
@@ -137,6 +156,7 @@ export const PLATE_LINE_HIGHLIGHT_STYLES: Record<PlateLineHighlightKind, { backg
   correction: { background: "#fffaeb", border: "#fec84b" },
   unparsed: { background: "#fff4ed", border: "#f9a86c" },
   wide: { background: "#fef3f2", border: "#f97066" },
+  invalid_width: { background: "#fef3f2", border: "#f97066" },
   dobor: { background: "#f0f9ff", border: "#36bffa" },
 };
 

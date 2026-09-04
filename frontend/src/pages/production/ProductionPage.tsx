@@ -7,6 +7,7 @@ import { CreatePlanWizard } from "@/features/production/components/CreatePlanWiz
 import { PlansList } from "@/features/production/components/PlansList";
 import { WorkCalendarEditor } from "@/features/production/components/WorkCalendarEditor";
 import { SgpWarehouseView } from "@/features/production/components/SgpWarehouseView";
+import { KpInWorkView } from "@/features/production/components/KpInWorkView";
 import { useGlobalCalendarQuery } from "@/features/production/hooks/useProductionQueries";
 import {
   getBasketKind,
@@ -26,6 +27,7 @@ const VALID_TABS: readonly ProductionTab[] = [
   "calendar",
   "create",
   "plans",
+  "in-work",
   "work-calendar",
   "sgp",
 ];
@@ -262,6 +264,7 @@ export const ProductionPage = () => {
         {tab === "plans" && (
           <PlansList onOpenPlanCalendar={() => setSearchParams({ tab: "calendar" })} />
         )}
+        {tab === "in-work" && <KpInWorkView />}
         {tab === "sgp" && <SgpWarehouseView />}
         {tab === "work-calendar" && <WorkCalendarEditor />}
       </div>

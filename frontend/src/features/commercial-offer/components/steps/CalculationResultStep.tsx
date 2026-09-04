@@ -69,12 +69,10 @@ type CalculationResultStepProps = {
   isGeneratingSchema: boolean;
   isSaving: boolean;
   lastSaveResult: CommercialSaveResult | null;
-  executionTermsInput: string;
-  onBack: () => void;
+  onBack?: () => void;
   onCreateNew: () => void;
   onGenerateFiles: () => void;
   onGenerateSchema: () => void;
-  onExecutionTermsChange: (value: string) => void;
   onSave: (payload: { mode: SaveMode; executionTermsInput: string }) => Promise<void>;
   isUpdatingDiscount: boolean;
   onDiscountSubmit: (discountPercent: number) => Promise<void>;
@@ -106,12 +104,10 @@ export const CalculationResultStep = ({
   isGeneratingSchema,
   isSaving,
   lastSaveResult,
-  executionTermsInput,
   onBack,
   onCreateNew,
   onGenerateFiles,
   onGenerateSchema,
-  onExecutionTermsChange,
   onSave,
   isUpdatingDiscount,
   onDiscountSubmit,
@@ -138,7 +134,11 @@ export const CalculationResultStep = ({
   const [selectedPlateName, setSelectedPlateName] = useState<string | null>(null);
   const [pendingDiscountPercent, setPendingDiscountPercent] = useState<number | null>(null);
   const isGradeSimpleDraft = isPileDraft || isMarchDraft || isBridgePileDraft || isFbsDraft;
-  const breakdownAvailable = !isSimpleKpDraft && (draft.metadata.breakdown_tables_count ?? 0) > 0;
+  // Prefer live query rows: after line mutate draft.metadata.breakdown_tables_count is 0 until
+  // draft refetch catches up, while GET /breakdown may already have regenerated tables.
+  const breakdownAvailable =
+    !isSimpleKpDraft &&
+    (breakdownTables.length > 0 || (draft.metadata.breakdown_tables_count ?? 0) > 0);
   const selectedBreakdownTable = useMemo(
     () => (selectedPlateName ? findBreakdownTable(breakdownTables, selectedPlateName) : undefined),
     [breakdownTables, selectedPlateName],
@@ -350,9 +350,13 @@ export const CalculationResultStep = ({
     description="Проверьте готовность КП, скачайте файлы и сохраните результат."
     footer={
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem" }}>
-        <Button type="button" variant="ghost" onClick={onBack}>
-          Назад
-        </Button>
+        {onBack ? (
+          <Button type="button" variant="ghost" onClick={onBack}>
+            Назад
+          </Button>
+        ) : (
+          <span />
+        )}
         <Button type="button" variant="danger" onClick={onCreateNew}>
           Создать новое КП
         </Button>
@@ -737,12 +741,8 @@ export const CalculationResultStep = ({
     <SaveOfferSection
       draft={draft}
       lastSaveResult={lastSaveResult}
-      defaultExecutionTerms={executionTermsInput}
       isPending={isSaving}
-      onSave={async (payload) => {
-        onExecutionTermsChange(payload.executionTermsInput);
-        await onSave(payload);
-      }}
+      onSave={onSave}
     />
 
     {!isSimpleKpDraft && (

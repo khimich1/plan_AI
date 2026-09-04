@@ -13,6 +13,7 @@ ERR_EMPTY_MARCHES = "Список маршей пустой."
 ERR_EMPTY_BRIDGE_PILES = "Список мостовых свай пустой."
 ERR_EMPTY_FBS = "Список ФБС пустой."
 ERR_WIDE_PLATES = "Сначала примите решение по позициям шире стандартной."
+ERR_INVALID_WIDTHS = "Нестандартная ширина: замените на заводской рез или исключите позицию."
 ERR_UNPRICED_PLATES = "Сначала примите решение по позициям без цены в прайсе."
 ERR_NO_MANAGER = "Выберите менеджера."
 ERR_NO_CLIENT = "Укажите клиента."
@@ -80,6 +81,22 @@ class CommercialCalculationService:
             return [ERR_WIDE_PLATES]
         return []
 
+    def _invalid_width_errors(
+        self,
+        metadata: dict[str, Any],
+        *,
+        order_data: list[Any] | None = None,
+    ) -> list[str]:
+        if order_data is not None:
+            if not self.order_has_plates(order_data):
+                return []
+        elif self._non_plate_cycle(metadata):
+            return []
+        lines = metadata.get("invalid_width_lines") or []
+        if lines and not metadata.get("invalid_widths_resolved"):
+            return [ERR_INVALID_WIDTHS]
+        return []
+
     def _unpriced_plate_errors(
         self,
         metadata: dict[str, Any],
@@ -130,6 +147,7 @@ class CommercialCalculationService:
             else:
                 errors.append(ERR_EMPTY_PLATES)
         errors.extend(self._wide_plate_errors(metadata, order_data=order_data))
+        errors.extend(self._invalid_width_errors(metadata, order_data=order_data))
         errors.extend(self._unpriced_plate_errors(metadata, order_data=order_data))
         errors.extend(self._metadata_errors(metadata))
         return errors
@@ -141,6 +159,14 @@ class CommercialCalculationService:
         order_data: list[Any] | None = None,
     ) -> bool:
         return bool(self._wide_plate_errors(metadata, order_data=order_data))
+
+    def invalid_width_lines_blocking(
+        self,
+        metadata: dict[str, Any],
+        *,
+        order_data: list[Any] | None = None,
+    ) -> bool:
+        return bool(self._invalid_width_errors(metadata, order_data=order_data))
 
     def unpriced_lines_blocking(
         self,

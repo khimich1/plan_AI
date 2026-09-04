@@ -84,7 +84,7 @@ export const AppHeader = () => {
                   location.pathname === NEW_OFFER_PATH ? "app-nav__link app-nav__link--active" : "app-nav__link"
                 }
               >
-                Создать КП
+                Конструктор КП
               </a>
               <NavLink
                 to={ARCHIVE_PATH}

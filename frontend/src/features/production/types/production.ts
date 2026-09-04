@@ -125,6 +125,7 @@ export interface KpCandidatePlateItem {
   width_m: number;
   load_class: number | null;
   qty: number;
+  bucket?: "awaiting_plan" | "in_plan";
 }
 
 export interface KpCandidateItem {
@@ -137,6 +138,9 @@ export interface KpCandidateItem {
   completion_pct: number;
   in_plan_pct: number;
   total_length_m: number;
+  remaining_qty?: number;
+  in_plan_qty?: number;
+  on_sgp_qty?: number;
   plates: KpCandidatePlateItem[];
 }
 
@@ -234,7 +238,7 @@ export interface SaveDayCapacityResponse {
   max_tracks: number;
 }
 
-export type ProductionTab = "calendar" | "create" | "plans" | "work-calendar" | "sgp";
+export type ProductionTab = "calendar" | "create" | "plans" | "in-work" | "work-calendar" | "sgp";
 // `create` — скрытый programmatic route с корзины календаря (не в ProductionTabs).
 
 /** POST /production/analyze-substrates */

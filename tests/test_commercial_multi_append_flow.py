@@ -120,7 +120,7 @@ def _build_plates_piles_plates(
 
 
 def _save_draft_kp(client: TestClient, draft_id: str) -> int:
-    """Persist draft as KP with status «в работе» (append/resume gate R2)."""
+    """Persist draft as KP with status «в работе» (production path)."""
     save = client.post(
         f"/api/v1/commercial/drafts/{draft_id}/save",
         json={"mode": "database", "execution_terms_input": "14 дней"},
@@ -129,6 +129,19 @@ def _save_draft_kp(client: TestClient, draft_id: str) -> int:
     kp_id = int(save.json()["saved_offer"]["kp_id"])
     assert kp_id >= 1
     assert save.json()["saved_offer"]["status"] == "в работе"
+    return kp_id
+
+
+def _save_draft_kp_archive(client: TestClient, draft_id: str) -> int:
+    """Persist draft as KP with status «в архиве» (resume/update gate)."""
+    save = client.post(
+        f"/api/v1/commercial/drafts/{draft_id}/save",
+        json={"mode": "archive", "execution_terms_input": "14 дней"},
+    )
+    assert save.status_code == 200, save.text
+    kp_id = int(save.json()["saved_offer"]["kp_id"])
+    assert kp_id >= 1
+    assert save.json()["saved_offer"]["status"] == "в архиве"
     return kp_id
 
 
@@ -497,11 +510,11 @@ def test_sc6_append_to_saved_kp_keeps_same_kp_id(
     flow_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SC-6: save plates KP → resume → append piles → save updates same kp_id."""
+    """SC-6: archive plates KP → resume → append piles → archive-save same kp_id."""
     _mock_manager_lookup(monkeypatch)
     draft_id, plates = _create_plates_result_draft(flow_client, monkeypatch)
     plate_ids = _assert_order_lines_have_identity(plates, product_type="plates")
-    kp_id = _save_draft_kp(flow_client, draft_id)
+    kp_id = _save_draft_kp_archive(flow_client, draft_id)
     assert _meta_product_type(kp_id) == "plates"
 
     resume = flow_client.post(f"/api/v1/commercial/archive/{kp_id}/resume")
@@ -509,6 +522,7 @@ def test_sc6_append_to_saved_kp_keeps_same_kp_id(
     resumed = resume.json()
     resume_draft_id = resumed["draft_id"]
     assert resumed["saved_offer"]["kp_id"] == kp_id
+    assert resumed["saved_offer"]["status"] == "в архиве"
     assert resumed["metadata"]["resume_kp_id"] == kp_id
     assert resumed["wizard_state"]["current_step"] == "result"
     wizard = _wizard_step_service()
@@ -523,10 +537,11 @@ def test_sc6_append_to_saved_kp_keeps_same_kp_id(
 
     save2 = flow_client.post(
         f"/api/v1/commercial/drafts/{resume_draft_id}/save",
-        json={"mode": "database", "execution_terms_input": "14 дней"},
+        json={"mode": "archive", "execution_terms_input": "14 дней"},
     )
     assert save2.status_code == 200, save2.text
     assert int(save2.json()["saved_offer"]["kp_id"]) == kp_id
+    assert save2.json()["saved_offer"]["status"] == "в архиве"
     assert _meta_product_type(kp_id) == "mixed"
 
     with sqlite3.connect(str(_plita_db_path())) as conn:
@@ -535,16 +550,31 @@ def test_sc6_append_to_saved_kp_keeps_same_kp_id(
         assert int(cur.fetchone()[0]) == 1
         cur.execute("SELECT COUNT(*) FROM kp_piles WHERE kp_id = ?", (kp_id,))
         assert int(cur.fetchone()[0]) >= 1
+        cur.execute("SELECT status FROM kp_meta WHERE kp_id = ?", (kp_id,))
+        assert str(cur.fetchone()[0]) == "в архиве"
 
 
-def test_sc6_resume_blocked_when_status_not_in_progress(
+def test_sc6_resume_blocked_when_status_in_work(
     flow_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SC-6 / R2: resume/append only for status «в работе»."""
+    """SC-6 / archive-edit: resume blocked for status «в работе» (production)."""
     _mock_manager_lookup(monkeypatch)
     draft_id, _plates = _create_plates_result_draft(flow_client, monkeypatch)
     kp_id = _save_draft_kp(flow_client, draft_id)
+
+    resume = flow_client.post(f"/api/v1/commercial/archive/{kp_id}/resume")
+    assert resume.status_code in (400, 409), resume.text
+
+
+def test_sc6_resume_blocked_when_status_not_archived(
+    flow_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SC-6: resume/append only for status «в архиве»."""
+    _mock_manager_lookup(monkeypatch)
+    draft_id, _plates = _create_plates_result_draft(flow_client, monkeypatch)
+    kp_id = _save_draft_kp_archive(flow_client, draft_id)
 
     with sqlite3.connect(str(_plita_db_path())) as conn:
         conn.execute(

@@ -224,6 +224,92 @@ def test_resolve_unpriced_plates_replace_load(monkeypatch: pytest.MonkeyPatch) -
     assert result["metadata"]["plate_batches"][0]["normalized_text"] == "ПБ 75-12-10п 1\nПБ 60-12-8п 1"
 
 
+def test_resolve_unpriced_plates_matches_by_dimensions_when_line_is_display_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = CommercialWorkflowService()
+    draft_payload = {
+        "order": PlateOrder(),
+        "optimization_context": OptimizationContext(order=PlateOrder()),
+        "order_data": [],
+        "metadata": {
+            "source_type": "text",
+            "original_text": "ПБ 75-12-12п 1",
+            "ocr_text": "",
+            "input_text": "ПБ 75-12-12п 1\nПБ 60-12-8п 1",
+            "normalized_lines": ["ПБ 75-12-12п 1", "ПБ 60-12-8п 1"],
+            "wide_plate_lines": [],
+            "wide_plates_resolved": True,
+            "unpriced_plate_lines": [
+                {
+                    "id": "unpriced-1",
+                    "name": "Плиты ПБ 75-12-12п",
+                    "line": "Плиты ПБ 75-12-12п",
+                    "qty": 1,
+                    "length_m": 7.5,
+                    "width_m": 1.2,
+                    "load_class": 1200,
+                    "replacements": [
+                        {"load_code": 10, "price": 31890.0},
+                        {"load_code": 8, "price": 29316.0},
+                    ],
+                }
+            ],
+            "unpriced_plates_resolved": False,
+            "plate_batches": [
+                {
+                    "source_type": "text",
+                    "original_text": "",
+                    "normalized_text": "ПБ 75-12-12п 1\nПБ 60-12-8п 1",
+                    "ocr_text": "",
+                    "filename": "",
+                }
+            ],
+            "last_source_filename": "",
+        },
+    }
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft_payload)
+    captured: dict[str, Any] = {}
+
+    def fake_generate_preview(
+        *,
+        text: str | None = None,
+        parse_result: ParseResult | None = None,
+        plate_order_ctx: Any = None,
+    ) -> CommercialPreviewResult:
+        captured["text"] = text or ""
+        return _fake_preview(text or "", [])
+
+    monkeypatch.setattr(workflow.commercial_service, "generate_preview", fake_generate_preview)
+    saved: dict[str, Any] = {}
+
+    def fake_replace_preview(draft_id: str, **kwargs: Any) -> str:
+        saved["order_data"] = kwargs.get("order_data")
+        saved["metadata"] = kwargs.get("metadata")
+        return draft_id
+
+    monkeypatch.setattr(workflow.draft_store, "replace_preview", fake_replace_preview)
+    monkeypatch.setattr(
+        workflow,
+        "get_draft_details",
+        lambda draft_id: {
+            "draft_id": draft_id,
+            "metadata": saved["metadata"],
+            "order_data": saved["order_data"],
+        },
+    )
+    monkeypatch.setattr(workflow, "_persist_wizard_step", lambda *_args, **_kwargs: None)
+
+    result = workflow.resolve_unpriced_plates(
+        "draft-1",
+        decisions=[{"line_id": "unpriced-1", "action": "replace_load", "load_code": 10}],
+        plate_order_ctx=PlateOrderContext.fresh_empty(),
+    )
+
+    assert captured["text"] == "ПБ 75-12-10п 1\nПБ 60-12-8п 1"
+    assert result["metadata"]["unpriced_plates_resolved"] is True
+
+
 def test_resolve_unpriced_plates_rejects_foreign_load_code(monkeypatch: pytest.MonkeyPatch) -> None:
     workflow = CommercialWorkflowService()
     draft_payload = {

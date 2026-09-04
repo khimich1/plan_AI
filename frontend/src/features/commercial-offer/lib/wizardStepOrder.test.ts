@@ -4,6 +4,7 @@ import {
   FBS_WIZARD_STEP_ORDER,
   getProductInputStep,
   getWizardStepOrder,
+  isInputStepBlockedWithoutAppendCycle,
   isSimpleKpProductType,
   mapLegacyWizardStep,
   MARCHES_WIZARD_STEP_ORDER,
@@ -114,4 +115,49 @@ describe("wizardStepOrder skip client (MNA-104)", () => {
       expect(order).not.toContain("client");
     },
   );
+});
+
+describe("isInputStepBlockedWithoutAppendCycle", () => {
+  it("blocks Result → plates via sidebar/back", () => {
+    expect(
+      isInputStepBlockedWithoutAppendCycle({
+        currentStep: "result",
+        targetStep: "plates",
+        inputStep: "plates",
+      }),
+    ).toBe(true);
+  });
+
+  it("allows staying on / opening input when already on input (append cycle)", () => {
+    expect(
+      isInputStepBlockedWithoutAppendCycle({
+        currentStep: "plates",
+        targetStep: "plates",
+        inputStep: "plates",
+        draftWizardStep: "result",
+      }),
+    ).toBe(false);
+  });
+
+  it("blocks client → input after draft already reached result", () => {
+    expect(
+      isInputStepBlockedWithoutAppendCycle({
+        currentStep: "client",
+        targetStep: "plates",
+        inputStep: "plates",
+        draftWizardStep: "result",
+      }),
+    ).toBe(true);
+  });
+
+  it("allows client → input on first pass before result", () => {
+    expect(
+      isInputStepBlockedWithoutAppendCycle({
+        currentStep: "client",
+        targetStep: "plates",
+        inputStep: "plates",
+        draftWizardStep: "client",
+      }),
+    ).toBe(false);
+  });
 });

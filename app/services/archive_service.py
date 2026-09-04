@@ -116,7 +116,7 @@ class ArchiveService:
         return self._to_details(raw)
 
     def resume_as_draft(self, kp_id: int, *, user: dict) -> dict:
-        """Hydrate a commercial draft from archive KP (status «в работе» only)."""
+        """Hydrate a commercial draft from archive KP (status «в архиве» only)."""
         raw = self.repository.get_by_id(kp_id)
         if not raw:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")

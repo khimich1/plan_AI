@@ -10,9 +10,9 @@ MNA-303 (read):
 - ``get_kp_by_id`` loads all type tables for mixed; stamps ``product_type`` on each line
 - Chronological order by ``position_number`` (typed arrays + ``order_data_from_kp_info``)
 
-MNA-304 (update; TDD RED):
+MNA-304 (update; archive-edit override):
 - ``update_kp_from_order_data`` keeps same ``kp_id``; sync by ``line_id``
-- Status gate: only ``в работе``
+- Status gate: only ``в архиве``
 - Matching ``line_id`` preserves ``kp_plates.id`` (production-safe)
 """
 
@@ -467,6 +467,7 @@ def test_update_kp_from_order_data_keeps_same_kp_id_on_append(db_path: str) -> N
         initial,
         customer_name="Update Same Id",
         product_type="plates",
+        status="в архиве",
         db_path=db_path,
     )
 
@@ -497,6 +498,7 @@ def test_update_kp_from_order_data_inserts_new_line_id_row(db_path: str) -> None
         [_plate_line(line_id="ln_a")],
         customer_name="Insert New Line",
         product_type="plates",
+        status="в архиве",
         db_path=db_path,
     )
 
@@ -526,6 +528,7 @@ def test_update_kp_from_order_data_preserves_kp_plates_id_when_line_id_matches(
         [_plate_line(line_id="ln_keep", qty=1, unit_price=1000.0)],
         customer_name="Preserve Plate Id",
         product_type="plates",
+        status="в архиве",
         db_path=db_path,
     )
     before = _rows(db_path, "kp_plates", kp_id)
@@ -563,6 +566,7 @@ def test_update_kp_from_order_data_reassigns_position_numbers_chronologically(
         [_plate_line(line_id="ln_1")],
         customer_name="Update Chrono",
         product_type="plates",
+        status="в архиве",
         db_path=db_path,
     )
 
@@ -595,24 +599,25 @@ def test_update_kp_from_order_data_reassigns_position_numbers_chronologically(
 
 @pytest.mark.parametrize(
     "blocked_status",
-    ["выполнено", "отклонено", "в ожидании", "На СГП", "в архиве"],
+    ["выполнено", "отклонено", "в ожидании", "На СГП", "в работе"],
 )
-def test_update_kp_from_order_data_rejects_when_status_not_in_progress(
+def test_update_kp_from_order_data_rejects_when_status_not_archived(
     db_path: str,
     blocked_status: str,
 ) -> None:
-    """R2: update/append allowed only when kp_meta.status == «в работе»."""
+    """Archive-edit: update/append allowed only when kp_meta.status == «в архиве»."""
     kp_id = KpPersistenceService.save_kp_to_db(
         "12.08.2026",
         [_plate_line(line_id="ln_gate")],
         customer_name="Status Gate",
         product_type="plates",
+        status="в архиве",
         db_path=db_path,
     )
-    assert _kp_status(db_path, kp_id) == "в работе"
+    assert _kp_status(db_path, kp_id) == "в архиве"
     _set_kp_status(db_path, kp_id, blocked_status)
 
-    with pytest.raises(ValueError, match="в работе"):
+    with pytest.raises(ValueError, match="в архиве"):
         KpPersistenceService.update_kp_from_order_data(
             kp_id,
             [
@@ -629,14 +634,14 @@ def test_update_kp_from_order_data_rejects_when_status_not_in_progress(
     assert _meta_product_type(db_path, kp_id) == "plates"
 
 
-def test_update_kp_from_order_data_allows_when_status_in_progress(db_path: str) -> None:
-    """Happy path gate: «в работе» permits sync."""
+def test_update_kp_from_order_data_allows_when_status_archived(db_path: str) -> None:
+    """Happy path gate: «в архиве» permits sync; status stays «в архиве»."""
     kp_id = KpPersistenceService.save_kp_to_db(
         "12.08.2026",
         [_plate_line(line_id="ln_ok")],
         customer_name="Status Ok",
         product_type="plates",
-        status="в работе",
+        status="в архиве",
         db_path=db_path,
     )
 
@@ -646,7 +651,7 @@ def test_update_kp_from_order_data_allows_when_status_in_progress(db_path: str) 
         db_path=db_path,
     )
     assert returned == kp_id
-    assert _kp_status(db_path, kp_id) == "в работе"
+    assert _kp_status(db_path, kp_id) == "в архиве"
     assert _meta_product_type(db_path, kp_id) == "mixed"
 
 
@@ -665,6 +670,7 @@ def test_offers_write_update_kp_from_order_data_delegates_same_kp_id(
         [_plate_line(line_id="ln_ow")],
         customer_name="Offers Write Update",
         product_type="plates",
+        status="в архиве",
         db_path=db_path,
     )
     returned = offers_write.update_kp_from_order_data(
@@ -686,6 +692,7 @@ def test_update_rejects_delete_of_plate_in_production(db_path: str) -> None:
         ],
         customer_name="Protect In Production",
         product_type="mixed",
+        status="в архиве",
         db_path=db_path,
     )
     plates_before = _rows(db_path, "kp_plates", kp_id)
@@ -715,6 +722,7 @@ def test_update_rejects_when_incoming_line_missing_line_id(db_path: str) -> None
         [_plate_line(line_id="ln_has_id")],
         customer_name="Missing Line Id",
         product_type="plates",
+        status="в архиве",
         db_path=db_path,
     )
     plates_before = _rows(db_path, "kp_plates", kp_id)

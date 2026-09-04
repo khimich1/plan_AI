@@ -8,7 +8,7 @@ import {
   removePage,
   type PageSource,
 } from "@/features/commercial-offer/lib/multiPageSource";
-import type { CommercialDraftDetails, ProductType } from "@/features/commercial-offer/types/commercialOffer";
+import type { CommercialDraftDetails, OcrCorrection, ProductType } from "@/features/commercial-offer/types/commercialOffer";
 import { getErrorMessage } from "@/shared/lib/apiError";
 
 export type RecognizePageArgs = {
@@ -23,8 +23,21 @@ export type RecognizePageResult = {
   batchReviewText: string;
 };
 
+export type RerunPageArgs = {
+  image: File;
+  draftId: string;
+  productType: ProductType;
+};
+
+export type RerunPageResult = {
+  normalized_text: string;
+  ocr_verify_failed: boolean;
+  ocr_corrections: OcrCorrection[];
+};
+
 export type UseMultiPageRecognizeOptions = {
   recognizePage: (args: RecognizePageArgs) => Promise<RecognizePageResult>;
+  rerunPage?: (args: RerunPageArgs) => Promise<RerunPageResult>;
   createId?: () => string;
   createPreviewUrl?: (file: File) => string;
   revokePreviewUrl?: (url: string) => void;
@@ -43,6 +56,8 @@ const defaultRevokePreviewUrl = (url: string) => URL.revokeObjectURL(url);
 export const useMultiPageRecognize = (options: UseMultiPageRecognizeOptions) => {
   const recognizePageRef = useRef(options.recognizePage);
   recognizePageRef.current = options.recognizePage;
+  const rerunPageCallbackRef = useRef(options.rerunPage);
+  rerunPageCallbackRef.current = options.rerunPage;
 
   const createIdRef = useRef(options.createId ?? defaultCreateId);
   createIdRef.current = options.createId ?? defaultCreateId;
@@ -132,6 +147,7 @@ export const useMultiPageRecognize = (options: UseMultiPageRecognizeOptions) => 
                   recognizedImageUrl: page.previewUrl,
                   errorMessage: undefined,
                   ocrVerifyFailed: Boolean(result.draft.metadata.ocr_verify_failed),
+                  ocrCorrections: result.draft.metadata.ocr_corrections ?? [],
                 }
               : page,
           );
@@ -312,6 +328,61 @@ export const useMultiPageRecognize = (options: UseMultiPageRecognizeOptions) => 
     };
   }, [commitPages]);
 
+  const rerunPage = useCallback(
+    async (pageId: string): Promise<RerunPageResult | null> => {
+      const callback = rerunPageCallbackRef.current;
+      const productType = productTypeRef.current;
+      const draftId = draftIdRef.current;
+      const page = pagesRef.current.find((item) => item.id === pageId);
+      if (!callback || !productType || !draftId || !page?.file) {
+        return null;
+      }
+      if (page.status === "running" || page.status === "pending") {
+        return null;
+      }
+
+      commitPages(
+        pagesRef.current.map((item) =>
+          item.id === pageId
+            ? { ...item, status: "running" as const, errorMessage: undefined }
+            : item,
+        ),
+      );
+
+      try {
+        const result = await callback({
+          image: page.file,
+          draftId,
+          productType,
+        });
+        commitPages(
+          pagesRef.current.map((item) =>
+            item.id === pageId
+              ? {
+                  ...item,
+                  status: "ready" as const,
+                  batchReviewText: result.normalized_text,
+                  ocrVerifyFailed: Boolean(result.ocr_verify_failed),
+                  ocrCorrections: result.ocr_corrections,
+                  errorMessage: undefined,
+                }
+              : item,
+          ),
+        );
+        return result;
+      } catch (error) {
+        const message = getErrorMessage(error);
+        commitPages(
+          pagesRef.current.map((item) =>
+            item.id === pageId ? { ...item, status: "error" as const, errorMessage: message } : item,
+          ),
+        );
+        return null;
+      }
+    },
+    [commitPages],
+  );
+
   const reset = useCallback(() => {
     pagesRef.current.forEach(revokePageUrls);
     commitPages([]);
@@ -373,6 +444,7 @@ export const useMultiPageRecognize = (options: UseMultiPageRecognizeOptions) => 
     updatePageText,
     start,
     confirmActive,
+    rerunPage,
     reset,
   };
 };

@@ -125,3 +125,27 @@ describe("commercialOfferApi append / undo / delete (MNA-501)", () => {
     expect(result).toEqual(draftStub);
   });
 });
+
+describe("commercialOfferApi.ocrPage", () => {
+  it("POSTs ocr-page multipart and returns page OCR payload", async () => {
+    const payload = {
+      normalized_text: "ПБ 34-15-10п 15\nПБ 60-12-8п 3",
+      ocr_verify_failed: false,
+      ocr_corrections: [{ action: "replaced", reason: "qty" }],
+    };
+    mockPost.mockResolvedValue(payload);
+    const image = new File(["png"], "page.png", { type: "image/png" });
+
+    const result = await commercialOfferApi.ocrPage("draft-ocr-1", image);
+
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    const [url, body] = mockPost.mock.calls[0] as [string, FormData];
+    expect(url).toBe("/api/v1/commercial/drafts/draft-ocr-1/ocr-page");
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get("image")).toBe(image);
+    expect(body.has("mode")).toBe(false);
+    expect(body.has("text")).toBe(false);
+    expect(mockPatch).not.toHaveBeenCalled();
+    expect(result).toEqual(payload);
+  });
+});

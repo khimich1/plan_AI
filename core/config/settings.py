@@ -148,9 +148,9 @@ class Settings(BaseSettings):
         ge=1024,
     )
     commercial_ocr_uploads_per_hour: int = Field(
-        default=10,
+        default=0,
         alias="COMMERCIAL_OCR_UPLOADS_PER_HOUR",
-        ge=1,
+        ge=0,
     )
     auth_login_attempts_per_minute: int = Field(
         default=5,

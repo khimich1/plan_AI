@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
 import { resolveDraftProductType, isSimpleKpProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
-import type { CommercialDraftDetails, ProductType, SaveMode, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
+import type { CommercialDraftDetails, InvalidWidthAction, ProductType, SaveMode, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
 
 const draftQueryKey = (draftId: string | null) => ["commercial-offer-draft", draftId] as const;
 const breakdownQueryKey = (draftId: string | null) => ["commercial-offer-breakdown", draftId] as const;
@@ -280,7 +280,12 @@ export const useCommercialOfferWizard = () => {
       decisions,
     }: {
       draftId: string;
-      decisions: Array<{ sourceLine: string; action: WidePlateAction; replacementText: string }>;
+        decisions: Array<{
+          lineId?: string;
+          sourceLine: string;
+          action: WidePlateAction;
+          replacementText: string;
+        }>;
     }) => commercialOfferApi.resolveWidePlates(draftId, decisions),
     onSuccess: (draft, variables) => {
       dispatch({ type: "sync-after-wide-plates", payload: draft });
@@ -304,6 +309,26 @@ export const useCommercialOfferWizard = () => {
     }) => commercialOfferApi.resolveUnpricedPlates(draftId, decisions),
     onSuccess: (draft, variables) => {
       dispatch({ type: "sync-after-unpriced-plates", payload: draft });
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
+  const resolveInvalidWidthsMutation = useMutation({
+    mutationFn: ({
+      draftId,
+      decisions,
+    }: {
+      draftId: string;
+      decisions: Array<{
+        lineId?: string;
+        sourceLine: string;
+        action: InvalidWidthAction;
+        widthMm?: number | null;
+      }>;
+    }) => commercialOfferApi.resolveInvalidWidths(draftId, decisions),
+    onSuccess: (draft, variables) => {
+      dispatch({ type: "sync-after-invalid-widths", payload: draft });
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
     },
@@ -470,6 +495,7 @@ export const useCommercialOfferWizard = () => {
     updateFbsGradesMutation,
     resolveWidePlatesMutation,
     resolveUnpricedPlatesMutation,
+    resolveInvalidWidthsMutation,
     updateMetaMutation,
     calculateMutation,
     generateFilesMutation,

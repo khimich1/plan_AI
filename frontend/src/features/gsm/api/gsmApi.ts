@@ -30,6 +30,7 @@ import type {
   UsageReportPayload,
   BulkGenerateResult,
   FleetOverviewRow,
+  GsmResetToAnchorsReport,
 } from "@/features/gsm/types/gsm";
 
 const BASE = "/api/v1/gsm";
@@ -194,4 +195,7 @@ export const gsmApi = {
         headers: JSON_HEADERS,
       },
     ),
+
+  resetToAnchors: () =>
+    httpClient.post<GsmResetToAnchorsReport>(`${BASE}/reset-to-anchors`),
 };

@@ -123,6 +123,28 @@ class ProductDraftHandler:
         self._persist_wizard_after_write(spec, draft_id)
         return self._wf.get_draft_details(draft_id)
 
+    async def recognize_page(
+        self,
+        draft_id: str,
+        *,
+        image_bytes: bytes,
+        image_filename: str | None,
+    ) -> dict[str, Any]:
+        payload = self._wf._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata", {}))
+        product_type = str(metadata.get("product_type") or "plates").strip().lower()
+        source_text, source_metadata = await self._wf.draft_service.resolve_source_input(
+            text=None,
+            image_bytes=image_bytes,
+            image_filename=image_filename,
+            product_type=product_type,
+        )
+        return {
+            "normalized_text": source_text["input_text"],
+            "ocr_verify_failed": bool(source_metadata.get("ocr_verify_failed")),
+            "ocr_corrections": list(source_metadata.get("ocr_corrections") or []),
+        }
+
     async def apply_ai(
         self,
         draft_id: str,

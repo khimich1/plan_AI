@@ -143,6 +143,33 @@ def test_production_allowed_on_kp_candidates(auth_client: tuple[TestClient, str]
     assert len(payload["items"]) >= 1
 
 
+def test_production_allowed_on_kp_candidates_in_work(auth_client: tuple[TestClient, str]) -> None:
+    client, _ = auth_client
+    response = client.get(
+        "/api/v1/production/kp-candidates?scope=in_work",
+        cookies=_session_cookie(2, "production", "prod_user"),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "items" in payload
+    assert len(payload["items"]) >= 1
+    item = payload["items"][0]
+    assert "remaining_qty" in item
+    assert "on_sgp_qty" in item
+    assert "total_amount" not in item
+
+
+def test_kp_candidates_rejects_unknown_scope(
+    auth_client: tuple[TestClient, str],
+) -> None:
+    client, _ = auth_client
+    response = client.get(
+        "/api/v1/production/kp-candidates?scope=archive",
+        cookies=_session_cookie(2, "production", "prod_user"),
+    )
+    assert response.status_code == 422
+
+
 def test_manager_can_list_all_offers(auth_client: tuple[TestClient, str]) -> None:
     client, db_path = auth_client
     KpPersistenceService.save_kp_to_db(

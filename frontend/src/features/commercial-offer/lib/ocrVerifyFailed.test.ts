@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveActivePageOcrVerifyFailed } from "@/features/commercial-offer/lib/ocrVerifyFailed";
+import {
+  resolveActivePageOcrCorrections,
+  resolveActivePageOcrVerifyFailed,
+} from "@/features/commercial-offer/lib/ocrVerifyFailed";
 
 describe("resolveActivePageOcrVerifyFailed", () => {
   it("uses draft flag when there are no pages (legacy single review)", () => {
@@ -23,6 +26,35 @@ describe("resolveActivePageOcrVerifyFailed", () => {
     );
     expect(resolveActivePageOcrVerifyFailed([{ id: "a", ocrVerifyFailed: true }], "missing", true)).toBe(
       false,
+    );
+  });
+});
+
+describe("resolveActivePageOcrCorrections", () => {
+  it("uses draft fallback when there are no pages", () => {
+    const draftFallback = [{ action: "replaced" as const, reason: "old" }];
+    expect(resolveActivePageOcrCorrections([], null, draftFallback)).toEqual(draftFallback);
+  });
+
+  it("lets the active page corrections beat a stale draft hydrate", () => {
+    const draftFallback = [{ action: "replaced", reason: "stale-2-line" }];
+    const pages = [
+      {
+        id: "a",
+        ocrCorrections: [
+          { action: "replaced", reason: "fresh-full-list" },
+        ],
+      },
+    ];
+    expect(resolveActivePageOcrCorrections(pages, "a", draftFallback)).toEqual([
+      { action: "replaced", reason: "fresh-full-list" },
+    ]);
+  });
+
+  it("uses an empty page array after retry instead of stale draft corrections", () => {
+    const draftFallback = [{ action: "replaced", reason: "stale" }];
+    expect(resolveActivePageOcrCorrections([{ id: "a", ocrCorrections: [] }], "a", draftFallback)).toEqual(
+      [],
     );
   });
 });
