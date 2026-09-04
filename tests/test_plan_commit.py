@@ -641,3 +641,87 @@ def test_commit_plan_plates_rolls_back_on_mark_failure(tmp_db, monkeypatch):
 
     assert calls and calls[0]["plan_id"] == "plan_fail"
     assert rollback_calls == ["plan_fail"]
+
+
+def _insert_active_promise(db_path: str, *, kp_id: int, week_start: str, tracks: int) -> int:
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO kp_promise (
+                kp_id, tracks_total, promised_date, kind, status,
+                created_by, created_at, expires_at
+            ) VALUES (?, ?, '2026-09-25', 'promise', 'active', 'alice',
+                      '2026-09-03T12:00:00', NULL)
+            """,
+            (kp_id, tracks),
+        )
+        promise_id = int(cur.lastrowid)
+        cur.execute(
+            """
+            INSERT INTO kp_promise_alloc (promise_id, week_start, tracks, status)
+            VALUES (?, ?, ?, 'active')
+            """,
+            (promise_id, week_start, tracks),
+        )
+        conn.commit()
+    return promise_id
+
+
+def test_commit_plan_plates_consumes_entered_and_overdues_missed(tmp_db):
+    """T8: коммит гасит аллокацию вошедшего КП; невошедшее → overdue, не блок."""
+    from datetime import date
+
+    from app.repositories.promise_repository import PromiseRepository
+    from app.services.promise_service import PromiseService
+
+    week = "2026-09-07"
+    _seed_kp_plate(tmp_db, kp_id=1, plate_name="A", qty=1)
+    _seed_kp_plate(tmp_db, kp_id=2, plate_name="B", qty=1)
+    entered_id = _insert_active_promise(tmp_db, kp_id=1, week_start=week, tracks=4)
+    missed_id = _insert_active_promise(tmp_db, kp_id=2, week_start=week, tracks=3)
+
+    tracks_by_day = {
+        week: [
+            {
+                "production_day": 1,
+                "items": [
+                    {"kp_id": 1, "plate_name": "A", "length": 6.0},
+                ],
+            }
+        ]
+    }
+    commit_plan_plates(
+        plan_id="plan_promise_settle",
+        orders_2d=[{"kp_id": 1, "plate_name": "A", "qty": 1, "load_code": 8}],
+        optimization_result={
+            "plate_assignments": [
+                {"source": "primary", "kp_id": 1, "plate_name": "A"},
+            ],
+        },
+        all_tracks_list=[],
+        db_path=tmp_db,
+        tracks_by_day=tracks_by_day,
+        settle_fn=PromiseService(db_path=tmp_db).settle_plan_commit,
+    )
+
+    with sqlite3.connect(tmp_db) as conn:
+        entered = conn.execute(
+            "SELECT p.status, a.status FROM kp_promise p "
+            "JOIN kp_promise_alloc a ON a.promise_id = p.id WHERE p.id = ?",
+            (entered_id,),
+        ).fetchone()
+        missed = conn.execute(
+            "SELECT p.status, a.status FROM kp_promise p "
+            "JOIN kp_promise_alloc a ON a.promise_id = p.id WHERE p.id = ?",
+            (missed_id,),
+        ).fetchone()
+
+    assert entered == ("consumed", "consumed")
+    assert missed == ("active", "overdue")
+    assert PromiseRepository(db_path=tmp_db).sum_promised_by_week() == {}
+    plates = _fetch_status(tmp_db, 1, "A")
+    assert plates == [("в плане", 1, "plan_promise_settle")]
+    leftover = _fetch_status(tmp_db, 2, "B")
+    assert leftover == [("в производстве", 1, None)]
+    assert date.fromisoformat(week).weekday() == 0

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from tests.helpers.csrf import CsrfAwareTestClient
 
+from app.api.v1.endpoints.archive import get_promise_service
 from app.dependencies.services import get_archive_service
 from app.core.settings import get_settings
 from app.main import create_app
@@ -44,9 +45,15 @@ def fake_service() -> MagicMock:
 
 
 @pytest.fixture()
+def fake_promise_service() -> MagicMock:
+    return MagicMock()
+
+
+@pytest.fixture()
 def client(
     monkeypatch: pytest.MonkeyPatch,
     fake_service: MagicMock,
+    fake_promise_service: MagicMock,
 ) -> TestClient:
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
@@ -66,6 +73,7 @@ def client(
     )
     app = create_app()
     app.dependency_overrides[get_archive_service] = lambda: fake_service
+    app.dependency_overrides[get_promise_service] = lambda: fake_promise_service
     return CsrfAwareTestClient(app)
 
 
@@ -390,6 +398,27 @@ def test_move_to_production_validation_error(
     assert response.status_code == 400
 
 
+def test_move_to_production_promise_gate_returns_earliest(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    fake_service.move_to_production.side_effect = ArchiveValidationError(
+        "Срок раньше ближайшей возможной даты 04.09.2026."
+    )
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/move-to-production",
+        json={"execution_terms": "03.09.2026"},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 400
+    assert "04.09.2026" in response.json()["detail"]
+
+
 def test_move_to_production_archive_error_returns_500(
     client: TestClient,
     auth_cookie: dict[str, str],
@@ -458,6 +487,143 @@ def test_capacity_snapshot_not_found(
     )
 
     assert response.status_code == 404
+
+
+def _fake_promise_quote():
+    from datetime import date
+
+    from app.schemas.archive import (
+        PromiseQuoteResponse,
+        PromiseQuoteWeek,
+        PromiseQuoteWindow,
+    )
+
+    return PromiseQuoteResponse(
+        tracks=2,
+        solo_days=1,
+        solo_date=date(2026, 9, 4),
+        solo_week_end_date=date(2026, 9, 4),
+        earliest_start_week=date(2026, 8, 31),
+        window=PromiseQuoteWindow(
+            from_week=date(2026, 8, 31),
+            to_week=date(2026, 8, 31),
+            promised_date=date(2026, 9, 4),
+        ),
+        weeks=[
+            PromiseQuoteWeek(
+                week_start=date(2026, 8, 31),
+                workdays=2,
+                capacity=6,
+                planned=0,
+                promised=0,
+                held=0,
+                free=6,
+            )
+        ],
+        knob=3,
+    )
+
+
+def test_promise_quote_ok(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    fake_promise_service.get_quote.return_value = _fake_promise_quote()
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/promise-quote",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tracks"] == 2
+    assert body["solo_days"] == 1
+    assert body["solo_date"] == "2026-09-04"
+    assert body["solo_week_end_date"] == "2026-09-04"
+    assert body["earliest_start_week"] == "2026-08-31"
+    assert body["window"]["promised_date"] == "2026-09-04"
+    assert body["weeks"][0]["free"] == 6
+    assert body["weeks"][0]["held"] == 0
+    assert body["knob"] == 3
+    fake_promise_service.get_quote.assert_called_once()
+
+
+def test_promise_quote_not_found(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    from app.services.promise_service import PromiseNotFoundError
+
+    fake_promise_service.get_quote.side_effect = PromiseNotFoundError("нет")
+
+    response = client.get(
+        "/api/v1/commercial/archive/999/promise-quote",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 404
+
+
+def test_promise_quote_occupancy_unavailable_is_503(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    from core.production.promise_buckets import OccupancyUnavailableError
+
+    fake_promise_service.get_quote.side_effect = OccupancyUnavailableError(
+        "Недоступна занятость плана — котировка остановлена (fail-closed)."
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/promise-quote",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 503
+    assert "занятость" in response.json()["detail"]
+
+
+def test_promise_quote_forbidden_for_accountant(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: MagicMock,
+    fake_promise_service: MagicMock,
+) -> None:
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
+    get_settings.cache_clear()
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": 2,
+                "username": "acc",
+                "role": "accountant",
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+                "session_version": 0,
+            }
+        ],
+    )
+    app = create_app()
+    app.dependency_overrides[get_archive_service] = lambda: fake_service
+    app.dependency_overrides[get_promise_service] = lambda: fake_promise_service
+    client = CsrfAwareTestClient(app)
+    cookie = {
+        "app_session": create_session_token(
+            {"id": 2, "username": "acc", "role": "accountant"},
+            ttl_seconds=300,
+        ),
+    }
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/promise-quote",
+        cookies=cookie,
+    )
+    assert response.status_code == 403
 
 
 def test_capacity_snapshot_forbidden_for_accountant(
@@ -1137,3 +1303,119 @@ def test_resume_archive_kp_as_draft_not_found(
 
     assert response.status_code == 404
     fake_service.resume_as_draft.assert_called_once_with(999, user=TESTER_USER)
+
+
+def test_get_promise_tracks_per_day(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    from datetime import datetime
+
+    from app.schemas.archive import PromiseTracksPerDayResponse
+
+    fake_promise_service.get_tracks_per_day.return_value = PromiseTracksPerDayResponse(
+        tracks_per_day=3,
+        updated_by="system",
+        updated_at=datetime(2026, 9, 1, 12, 0, 0),
+        min=1,
+        max=5,
+    )
+
+    response = client.get(
+        "/api/v1/commercial/settings/promise-tracks-per-day",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tracks_per_day"] == 3
+    assert body["updated_by"] == "system"
+    assert body["min"] == 1
+    assert body["max"] == 5
+    fake_promise_service.get_tracks_per_day.assert_called_once()
+
+
+def test_put_promise_tracks_per_day(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    from datetime import datetime
+
+    from app.schemas.archive import PromiseTracksPerDayResponse
+
+    fake_promise_service.set_tracks_per_day.return_value = PromiseTracksPerDayResponse(
+        tracks_per_day=4,
+        updated_by="tester",
+        updated_at=datetime(2026, 9, 3, 15, 30, 0),
+        min=1,
+        max=5,
+    )
+
+    response = client.put(
+        "/api/v1/commercial/settings/promise-tracks-per-day",
+        json={"tracks_per_day": 4},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tracks_per_day"] == 4
+    assert response.json()["updated_by"] == "tester"
+    fake_promise_service.set_tracks_per_day.assert_called_once()
+    assert fake_promise_service.set_tracks_per_day.call_args.kwargs["user"]["username"] == "tester"
+    assert fake_promise_service.set_tracks_per_day.call_args.args[0] == 4
+
+
+def test_put_promise_tracks_per_day_rejects_out_of_range(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_promise_service: MagicMock,
+) -> None:
+    response = client.put(
+        "/api/v1/commercial/settings/promise-tracks-per-day",
+        json={"tracks_per_day": 6},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 422
+    fake_promise_service.set_tracks_per_day.assert_not_called()
+
+
+def test_promise_tracks_per_day_forbidden_for_accountant(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: MagicMock,
+    fake_promise_service: MagicMock,
+) -> None:
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
+    get_settings.cache_clear()
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": 2,
+                "username": "acc",
+                "role": "accountant",
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+                "session_version": 0,
+            }
+        ],
+    )
+    app = create_app()
+    app.dependency_overrides[get_archive_service] = lambda: fake_service
+    app.dependency_overrides[get_promise_service] = lambda: fake_promise_service
+    client = CsrfAwareTestClient(app)
+    cookie = {
+        "app_session": create_session_token(
+            {"id": 2, "username": "acc", "role": "accountant"},
+            ttl_seconds=300,
+        ),
+    }
+
+    response = client.get(
+        "/api/v1/commercial/settings/promise-tracks-per-day",
+        cookies=cookie,
+    )
+    assert response.status_code == 403

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from app.repositories.kp_repository import KpRepository
 from app.repositories.plan_repository import PlanRepository
+from app.repositories.promise_repository import PromiseRepository
 from app.repositories.work_calendar_repository import WorkCalendarRepository
 from app.services.day_view_service import build_day_view_detail
 from app.services.optimization_service import OptimizationService
@@ -84,6 +85,32 @@ def _to_date(value: date | str) -> date:
     return date.fromisoformat(str(value))
 
 
+def _iso_weeks_covering(from_date: date, to_date: date) -> list[date]:
+    start = from_date - timedelta(days=from_date.weekday())
+    last = to_date - timedelta(days=to_date.weekday())
+    weeks: list[date] = []
+    cursor = start
+    while cursor <= last:
+        weeks.append(cursor)
+        cursor += timedelta(days=7)
+    return weeks
+
+
+def _candidate_promise_meta(
+    allocs: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, Any] | None:
+    if not allocs:
+        return None
+    overdue = [row for row in allocs if row["status"] == "overdue"]
+    primary = min(overdue or allocs, key=lambda row: row["week_start"])
+    return {
+        "promised_date": primary["promised_date"],
+        "week_start": primary["week_start"],
+        "status": "overdue" if overdue else "active",
+        "tracks": int(primary["tracks_total"]),
+    }
+
+
 class ProductionService:
     def __init__(
         self,
@@ -94,6 +121,7 @@ class ProductionService:
         optimization_service: OptimizationService | None = None,
         planning_service: ProductionPlanningService | None = None,
         completion_service: ProductionCompletionService | None = None,
+        promise_repository: PromiseRepository | None = None,
     ) -> None:
         self.kp_repository = kp_repository or KpRepository()
         self.plan_repository = plan_repository or PlanRepository()
@@ -103,6 +131,9 @@ class ProductionService:
         self.completion_service = completion_service or ProductionCompletionService(
             db_path=self.kp_repository.db_path,
             plan_repository=self.plan_repository,
+        )
+        self.promise_repository = promise_repository or PromiseRepository(
+            db_path=self.kp_repository.db_path
         )
 
     def list_plans(self) -> dict:
@@ -158,11 +189,61 @@ class ProductionService:
             "max_by_day": max_by_day,
         }
 
-    def list_kp_candidates(self, *, scope: str = "plan") -> dict:
+    def list_kp_candidates(
+        self,
+        *,
+        scope: str = "plan",
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> dict:
         items = self.kp_repository.list_kps_in_production()
         if scope == "in_work":
-            return self._candidates_in_work(items)
-        return self._candidates_plan(items)
+            payload = self._candidates_in_work(items)
+        else:
+            payload = self._candidates_plan(items)
+        return self._attach_promise_meta(
+            payload, from_date=from_date, to_date=to_date
+        )
+
+    def _attach_promise_meta(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        from_date: date | None,
+        to_date: date | None,
+    ) -> dict[str, Any]:
+        week_starts = None
+        if from_date is not None and to_date is not None:
+            week_starts = _iso_weeks_covering(from_date, to_date)
+        allocs = self.promise_repository.list_wizard_promise_allocs(
+            week_starts=week_starts,
+        )
+        by_kp: dict[int, list[dict[str, Any]]] = {}
+        by_week: dict[date, list[dict[str, Any]]] = {}
+        for alloc in allocs:
+            by_kp.setdefault(int(alloc["kp_id"]), []).append(alloc)
+            by_week.setdefault(alloc["week_start"], []).append(alloc)
+
+        items = []
+        for item in payload["items"]:
+            meta = _candidate_promise_meta(by_kp.get(int(item["kp_id"])))
+            items.append({**dict(item), "promise": meta})
+        promised_weeks = [
+            {
+                "week_start": week,
+                "items": [
+                    {
+                        "kp_id": int(row["kp_id"]),
+                        "promised_date": row["promised_date"],
+                        "tracks": int(row["tracks"]),
+                        "status": row["status"],
+                    }
+                    for row in rows
+                ],
+            }
+            for week, rows in sorted(by_week.items())
+        ]
+        return {**dict(payload), "items": items, "promised_weeks": promised_weeks}
 
     def _candidates_plan(self, items: Sequence[Mapping[str, Any]]) -> dict:
         visible: list[dict[str, Any]] = []

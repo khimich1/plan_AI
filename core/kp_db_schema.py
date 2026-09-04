@@ -464,6 +464,8 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
 
         _init_gsm_schema(cur)
 
+        _init_promise_schema(cur)
+
         conn.commit()
     finally:
         conn.close()
@@ -646,6 +648,111 @@ def _init_day_capacity_override_schema(cur: sqlite3.Cursor) -> None:
             updated_by TEXT
         )
     ''')
+
+
+def _init_promise_schema(cur: sqlite3.Cursor) -> None:
+    """Promise journal, in-web notifications, and KP settings (knob + buffer).
+
+    ``kp_setting`` follows ``gsm_setting`` (key/value) plus audit columns
+    from ``day_capacity_override``. Defaults are inserted once (OR IGNORE).
+    ``notifications.user_id`` is a soft reference (no FK across DBs).
+    """
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS kp_promise (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kp_id INTEGER NOT NULL,
+            tracks_total INTEGER NOT NULL,
+            promised_date TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('hold', 'promise')),
+            status TEXT NOT NULL CHECK (
+                status IN ('active', 'consumed', 'released', 'expired')
+            ),
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT,
+            FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+        )
+    ''')
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_kp_promise_kp_id ON kp_promise(kp_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_kp_promise_status ON kp_promise(status)'
+    )
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS kp_promise_alloc (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            promise_id INTEGER NOT NULL,
+            week_start TEXT NOT NULL,
+            tracks INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK (
+                status IN ('active', 'consumed', 'overdue')
+            ),
+            FOREIGN KEY (promise_id) REFERENCES kp_promise(id) ON DELETE CASCADE
+        )
+    ''')
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_kp_promise_alloc_promise '
+        'ON kp_promise_alloc(promise_id)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_kp_promise_alloc_week '
+        'ON kp_promise_alloc(week_start, status)'
+    )
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS kp_promise_exclusion (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kp_id INTEGER NOT NULL,
+            plan_id TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            excluded_by TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+        )
+    ''')
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_kp_promise_exclusion_kp '
+        'ON kp_promise_exclusion(kp_id)'
+    )
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            payload_json TEXT,
+            read_at TEXT,
+            created_at TEXT NOT NULL
+        )
+    ''')
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_notifications_user '
+        'ON notifications(user_id, read_at)'
+    )
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS kp_setting (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_by TEXT,
+            updated_at TEXT
+        )
+    ''')
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO kp_setting (key, value, updated_by, updated_at)
+        VALUES ('promise_tracks_per_day', '3', 'system', datetime('now'))
+        """
+    )
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO kp_setting (key, value, updated_by, updated_at)
+        VALUES ('promise_buffer', '1.0', 'system', datetime('now'))
+        """
+    )
 
 
 def _init_delivery_schedule_schema(cur: sqlite3.Cursor) -> None:

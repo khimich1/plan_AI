@@ -128,6 +128,46 @@ export interface KpCandidatePlateItem {
   bucket?: "awaiting_plan" | "in_plan";
 }
 
+export type PromiseAllocStatus = "active" | "overdue";
+
+export interface CandidatePromiseMeta {
+  promised_date: string;
+  week_start: string;
+  status: PromiseAllocStatus;
+  tracks: number;
+}
+
+export interface PromisedWeekKpItem {
+  kp_id: number;
+  promised_date: string;
+  tracks: number;
+  status: PromiseAllocStatus;
+}
+
+export interface PromisedWeekSummary {
+  week_start: string;
+  items: PromisedWeekKpItem[];
+}
+
+/** Строка блока «Обещано» — сводка недели + имя клиента из кандидата. */
+export interface PromisedBlockItem extends PromisedWeekKpItem {
+  week_start: string;
+  customer_name?: string;
+}
+
+export interface PromiseExclusion {
+  kp_id: number;
+  week_start: string;
+  reason: string;
+}
+
+export type PendingPromiseExclusion = {
+  kpId: number;
+  weekStart: string;
+  kind: "whole" | "partial";
+  plateId?: number;
+};
+
 export interface KpCandidateItem {
   kp_id: number;
   customer_name: string;
@@ -142,11 +182,13 @@ export interface KpCandidateItem {
   in_plan_qty?: number;
   on_sgp_qty?: number;
   plates: KpCandidatePlateItem[];
+  promise?: CandidatePromiseMeta | null;
 }
 
 export interface KpCandidatesResponse {
   items: KpCandidateItem[];
   count: number;
+  promised_weeks?: PromisedWeekSummary[];
 }
 
 export type FilterMethod = "all" | "kp";
@@ -175,6 +217,8 @@ export interface BuildPlanRequest {
   layout_reinforcement_order?: LayoutReinforcementOrder;
   /** Закрытие потребности со СГП (не уходит в оптимизатор). */
   sgp_reservations?: SgpReservationItem[];
+  /** Снятые обещанные КП (причина обязательна). Backend T11 прочитает поле. */
+  exclusions?: PromiseExclusion[];
 }
 
 export interface SgpReservationItem {

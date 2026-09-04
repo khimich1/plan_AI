@@ -1,4 +1,5 @@
 import { Card } from "@/shared/ui/Card";
+import { PromisedWeekBlock } from "@/features/production/components/create-plan-wizard/PromisedWeekBlock";
 import { Step3KpPlateSelection } from "@/features/production/components/create-plan-wizard/Step3KpPlateSelection";
 import { useCreatePlanWizardState } from "@/features/production/hooks/useCreatePlanWizardState";
 import type { FillTargetItem } from "@/features/production/types/production";
@@ -28,6 +29,18 @@ export const CreatePlanWizard = ({
 
   return (
     <Card title={wizard.cardTitle} subtitle={wizard.cardSubtitle}>
+      {wizard.isFillMode && (
+        <div style={{ marginBottom: "1rem" }}>
+          <PromisedWeekBlock
+            items={wizard.promisedBlockItems}
+            selectedPlatesByKp={wizard.selectedPlatesByKp}
+            pendingExclusion={wizard.pendingExclusion}
+            onToggleKp={wizard.togglePromisedKp}
+            onConfirmExclusion={wizard.confirmExclusion}
+            onCancelExclusion={wizard.cancelExclusion}
+          />
+        </div>
+      )}
       <Step3KpPlateSelection
         isFillMode={wizard.isFillMode}
         filterMethod={wizard.filterMethod}

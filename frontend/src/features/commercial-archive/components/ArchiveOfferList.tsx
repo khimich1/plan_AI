@@ -4,6 +4,10 @@ import type {
   ProductType,
 } from "@/features/commercial-archive/types/archive";
 import { formatMoney, truncate } from "@/features/commercial-archive/lib/format";
+import {
+  holdCreatedByTitle,
+  usePromiseHoldsMap,
+} from "@/features/factory-capacity/api/promiseQuote";
 
 type Props = {
   section: ArchiveSection;
@@ -99,6 +103,11 @@ export const ArchiveOfferList = ({
   sectionForItem,
   emptyMessage = "В этом разделе пока нет КП.",
 }: Props) => {
+  const archivedIds = items
+    .filter((item) => (sectionForItem ? sectionForItem(item) : section) === "archived")
+    .map((item) => item.kp_id);
+  const holds = usePromiseHoldsMap(archivedIds);
+
   if (items.length === 0) {
     return (
       <div
@@ -171,6 +180,22 @@ export const ArchiveOfferList = ({
                     }}
                   >
                     есть график
+                  </span>
+                )}
+                {holds.get(item.kp_id) && (
+                  <span
+                    data-testid="promise-hold-badge"
+                    title={holdCreatedByTitle(holds.get(item.kp_id)?.created_by)}
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: 999,
+                      background: "#fff6ed",
+                      color: "#b54708",
+                    }}
+                  >
+                    срок закреплён до сегодня
                   </span>
                 )}
               </div>

@@ -244,6 +244,7 @@ def persist(
     repo: PlanPersistPort,
     *,
     ensure_unique_plan_id: Callable[[], str] | None = None,
+    settle_fn: Callable[..., Any] | None = None,
 ) -> PersistResult:
     """Build plan structure, commit plate statuses, save via repository."""
     all_tracks_list = list(optimize_result.all_tracks_list)
@@ -332,6 +333,7 @@ def persist(
             all_tracks_list=all_tracks_list,
             db_path=config.plita_db_path,
             tracks_by_day=tracks_by_day_for_commit,
+            settle_fn=settle_fn,
         )
     except PlanCommitError as exc:
         logger.error(

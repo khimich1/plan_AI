@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.sgp import SgpProgress
+from core.production.capacity import TRACKS_PER_DAY_HARD_CAP
 
 
 ArchiveSection = Literal["archived", "in_production", "completed"]
@@ -246,3 +248,68 @@ class ArchiveSearchResponse(BaseModel):
     items: list[ArchiveOfferListItem] = Field(default_factory=list)
     total: int = 0
     truncated: bool = False
+
+
+class PromiseQuoteWindow(BaseModel):
+    from_week: date
+    to_week: date
+    promised_date: date
+
+
+class PromiseQuoteWeek(BaseModel):
+    week_start: date
+    workdays: int
+    capacity: int
+    planned: int
+    promised: int
+    held: int
+    free: int
+
+
+class PromiseQuoteResponse(BaseModel):
+    """Котировка недельных корзин для диалога «В производство»."""
+
+    tracks: int
+    solo_days: int
+    solo_date: date | None = None
+    solo_week_end_date: date | None = None
+    earliest_start_week: date | None = None
+    window: PromiseQuoteWindow | None = None
+    weeks: list[PromiseQuoteWeek] = Field(default_factory=list)
+    knob: int
+
+
+class PromiseHoldAllocation(BaseModel):
+    week_start: date
+    tracks: int = Field(ge=1)
+
+
+class PromiseHoldResponse(BaseModel):
+    """Активный или снятый холд срока. Не статус КП — строка журнала."""
+
+    id: int
+    kp_id: int
+    kind: Literal["hold"] = "hold"
+    status: Literal["active", "consumed", "released", "expired"]
+    tracks_total: int
+    promised_date: date
+    expires_at: datetime
+    created_by: str | None = None
+    created_at: datetime
+    allocations: list[PromiseHoldAllocation] = Field(default_factory=list)
+
+
+class PromiseTracksPerDayRequest(BaseModel):
+    """PUT body: factory knob, 1..TRACKS_PER_DAY_HARD_CAP."""
+
+    tracks_per_day: int = Field(ge=1, le=TRACKS_PER_DAY_HARD_CAP)
+
+
+class PromiseTracksPerDayResponse(BaseModel):
+    """Current promise_tracks_per_day with audit (who/when)."""
+
+    tracks_per_day: int
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+    min: int = 1
+    max: int = TRACKS_PER_DAY_HARD_CAP

@@ -4,6 +4,7 @@ import { OfferDetailsDrawer } from "@/features/commercial-archive/components/Off
 import type { ArchiveOfferDetails, KpReadinessSummary } from "@/features/commercial-archive/types/archive";
 
 const mockUseArchiveOfferQuery = vi.fn();
+const mockUsePromiseHoldQuery = vi.fn(() => ({ data: null, isPending: false, isError: false }));
 const mockResume = vi.fn();
 const mockNavigate = vi.fn();
 const mockDispatch = vi.fn();
@@ -29,6 +30,16 @@ vi.mock("@/features/commercial-archive/hooks/useArchiveQueries", () => ({
   useUpdateDiscountMutation: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
   useUpdateLogisticsCostMutation: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
 }));
+
+vi.mock("@/features/factory-capacity/api/promiseQuote", async () => {
+  const actual = await vi.importActual<typeof import("@/features/factory-capacity/api/promiseQuote")>(
+    "@/features/factory-capacity/api/promiseQuote",
+  );
+  return {
+    ...actual,
+    usePromiseHoldQuery: (...args: unknown[]) => mockUsePromiseHoldQuery(...args),
+  };
+});
 
 vi.mock("@/features/commercial-archive/api/archiveApi", () => ({
   archiveApi: {
@@ -534,5 +545,56 @@ describe("OfferDetailsDrawer archive constructor CTAs", () => {
     expect(screen.queryByPlaceholderText("Например, 2 000 000")).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Например, 5")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "OK" })).not.toBeInTheDocument();
+  });
+});
+
+describe("OfferDetailsDrawer promise hold badge", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    mockUsePromiseHoldQuery.mockReturnValue({ data: null, isPending: false, isError: false });
+  });
+
+  it("shows hold badge with who pinned the date", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUsePromiseHoldQuery.mockReturnValue({
+      data: {
+        id: 1,
+        kp_id: 42,
+        kind: "hold",
+        status: "active",
+        tracks_total: 2,
+        promised_date: "2026-09-04",
+        expires_at: "2026-09-03T23:59:59",
+        created_by: "alice",
+        created_at: "2026-09-03T12:00:00",
+        allocations: [],
+      },
+      isPending: false,
+      isError: false,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const badge = screen.getByTestId("promise-hold-badge");
+    expect(badge).toHaveTextContent("срок закреплён до сегодня");
+    expect(badge).toHaveAttribute("title", "Закрепил: alice");
+  });
+
+  it("hides hold badge when there is no active hold", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.queryByTestId("promise-hold-badge")).not.toBeInTheDocument();
   });
 });

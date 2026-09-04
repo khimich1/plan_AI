@@ -660,3 +660,99 @@ describe("CalculationResultStep breakdown availability after invalidate", () => 
     expect(screen.getByText("ПБ 60-12-8п")).toBeInTheDocument();
   });
 });
+
+describe("CalculationResultStep tracks estimate", () => {
+  it("shows ~N дорожек for plate KP from length_m × qty", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln1",
+            product_type: "plates",
+            name: "ПБ 60-12-8п",
+            qty: 20,
+            unit_price: 10000,
+            weight: 1500,
+            length_m: 6.0,
+          },
+        ],
+      }),
+    );
+
+    const estimate = screen.getByTestId("result-tracks-estimate");
+    // 20 × 6.0 м = 120 м → ceil(120/101) = 2
+    expect(estimate).toHaveTextContent("~2 дорожек");
+  });
+
+  it("counts only plate lines in a mixed offer", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_p",
+            product_type: "plates",
+            name: "ПБ 60-12-8п",
+            qty: 20,
+            unit_price: 10000,
+            weight: 800,
+            length_m: 6.0,
+          },
+          {
+            line_id: "ln_s",
+            product_type: "piles",
+            name: "С80.30-8",
+            mark: "С80.30-8",
+            qty: 50,
+            unit_price: 5000,
+            length_m: 8.0,
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("result-tracks-estimate")).toHaveTextContent("~2 дорожек");
+  });
+
+  it.each([
+    {
+      flag: "isPileDraft" as const,
+      productType: "piles",
+      name: "С80.30-8",
+    },
+    {
+      flag: "isStepDraft" as const,
+      productType: "steps",
+      name: "ЛС-12",
+    },
+    {
+      flag: "isFbsDraft" as const,
+      productType: "fbs",
+      name: "ФБС 24-3-6",
+    },
+  ])("hides tracks estimate for $productType", ({ flag, productType, name }) => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_simple",
+            product_type: productType,
+            name,
+            mark: name,
+            qty: 10,
+            unit_price: 1000,
+            length_m: 8.0,
+          },
+        ],
+        metadata: {
+          ...baseMetadata(),
+          product_type: productType as CommercialDraftMetadata["product_type"],
+        },
+      }),
+      {},
+      { [flag]: true, isSimpleKpDraft: true },
+    );
+
+    expect(screen.queryByTestId("result-tracks-estimate")).not.toBeInTheDocument();
+    expect(screen.queryByText(/дорожек/)).not.toBeInTheDocument();
+  });
+});

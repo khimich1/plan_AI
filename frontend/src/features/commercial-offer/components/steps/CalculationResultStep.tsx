@@ -33,7 +33,40 @@ import { LineRowActions } from "@/features/commercial-offer/components/LineRowAc
 import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
 import type { LineSavePayload, LineUndoToastState, LineRowErrorState } from "@/features/commercial-offer/lib/lineRowHandlers";
+import { estimateFromLengthM } from "@/features/production/lib/productionEstimate";
+import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { StepLayout } from "@/shared/ui/StepLayout";
+
+/** Default factory knob; days are approximate until archive quote. Tracks ignore this. */
+const DEFAULT_TRACKS_PER_DAY = 3;
+
+function isPlateOrderLine(item: Record<string, unknown>, isSimpleKpDraft: boolean): boolean {
+  const productType = item.product_type;
+  if (productType === "plates") {
+    return true;
+  }
+  if (typeof productType === "string" && productType.length > 0) {
+    return false;
+  }
+  return !isSimpleKpDraft;
+}
+
+function plateTotalLengthM(
+  orderData: Array<Record<string, unknown>>,
+  isSimpleKpDraft: boolean,
+): number {
+  return orderData.reduce((acc, item) => {
+    if (!isPlateOrderLine(item, isSimpleKpDraft)) {
+      return acc;
+    }
+    const length = toNumber(item.length_m);
+    const qty = toNumber(item.qty) ?? 0;
+    if (length === null || length <= 0 || qty <= 0) {
+      return acc;
+    }
+    return acc + length * qty;
+  }, 0);
+}
 
 const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
   plates: "Плиты",
@@ -155,6 +188,13 @@ export const CalculationResultStep = ({
   }, [draft.order_data]);
   const showTypeColumn = distinctProductTypes.size > 1 || appendBatches.length > 1;
   const hasPlateLines = draft.order_data.some((item) => item.product_type === "plates");
+  const plateEstimate = useMemo(() => {
+    const totalLengthM = plateTotalLengthM(draft.order_data, isSimpleKpDraft);
+    if (totalLengthM <= 0) {
+      return null;
+    }
+    return estimateFromLengthM(totalLengthM, DEFAULT_TRACKS_PER_DAY);
+  }, [draft.order_data, isSimpleKpDraft]);
   const hasPileLines = draft.order_data.some(
     (item) => item.product_type === "piles" || item.product_type === "bridge_piles",
   );
@@ -364,6 +404,16 @@ export const CalculationResultStep = ({
     }
   >
     {errorMessage && <Alert tone="error">{errorMessage}</Alert>}
+
+    {plateEstimate ? (
+      <div data-testid="result-tracks-estimate">
+        <ProductionEstimateAlert
+          estimatedTracks={plateEstimate.estimated_tracks}
+          estimatedDays={plateEstimate.estimated_days}
+          totalLengthM={plateEstimate.total_length_m}
+        />
+      </div>
+    ) : null}
 
     <Card title="Готовность КП" subtitle="Перед отправкой клиенту проверьте ключевые пункты.">
       <ul style={{ margin: 0, paddingLeft: "1.25rem", display: "grid", gap: "0.5rem" }}>

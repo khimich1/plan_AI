@@ -6,6 +6,7 @@ Host is duck-typed (``CommercialWorkflowService`` instance).
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Iterable
 
@@ -19,6 +20,20 @@ from core.pile_trip_pricing import coerce_pile_trip_overrides
 from core.plate_order_context import PlateOrderContext
 
 _PRODUCT_TYPE_TO_WIZARD_STEP = {key: spec.wizard_step for key, spec in SPECS.items()}
+logger = logging.getLogger(__name__)
+
+
+def recalc_promise_after_edit(db_path: str, kp_id: int) -> None:
+    """Recalc active promise after constructor save. Occupancy errors are logged."""
+    from app.services.promise_service import PromiseService
+    from core.production.promise_buckets import OccupancyUnavailableError
+
+    try:
+        PromiseService(db_path=db_path).recalc_on_composition_change(int(kp_id))
+    except OccupancyUnavailableError:
+        logger.exception("promise recalc after edit: occupancy unavailable kp_id=%s", kp_id)
+    except Exception:
+        logger.exception("promise recalc after edit failed kp_id=%s", kp_id)
 
 
 def _preview_unparsed_lines(preview: Any) -> list[str]:
@@ -876,6 +891,7 @@ class CommercialDraftLifecycle:
                 xlsx_path=xlsx_path,
                 product_type=product_type,
             )
+            recalc_promise_after_edit(str(self._wf.kp_repository.db_path), int(kp_id))
             # Keep archived status on update; do not flip to default «в работе».
             persist_status = existing_status
         else:

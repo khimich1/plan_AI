@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/shared/ui/Modal";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Button } from "@/shared/ui/Button";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { Alert } from "@/shared/ui/Alert";
-import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { Spinner } from "@/shared/ui/Spinner";
+import { useMoveToProductionMutation } from "@/features/commercial-archive/hooks/useArchiveQueries";
+import { isCapacityRed } from "@/features/factory-capacity/components/FactoryCapacityPanel";
+import { PromiseKnobSettings } from "@/features/factory-capacity/components/PromiseKnobSettings";
+import { PromiseQuoteBlock } from "@/features/factory-capacity/components/PromiseQuoteBlock";
+import { PromiseWeekStrip } from "@/features/factory-capacity/components/PromiseWeekStrip";
 import {
-  useMoveToProductionMutation,
-  useProductionEstimateQuery,
-} from "@/features/commercial-archive/hooks/useArchiveQueries";
-import {
-  FactoryCapacityPanel,
-  isCapacityRed,
-} from "@/features/factory-capacity/components/FactoryCapacityPanel";
+  holdCreatedByTitle,
+  isoToDdMmYyyy,
+  promiseHoldKeys,
+  promiseQuoteKeys,
+  useCreatePromiseHoldMutation,
+  usePromiseHoldQuery,
+  usePromiseQuoteQuery,
+} from "@/features/factory-capacity/api/promiseQuote";
 import { useCapacitySnapshotQuery } from "@/features/factory-capacity/hooks/useCapacitySnapshotQuery";
 import { ddMmYyyyToIso } from "@/features/factory-capacity/lib/dates";
 import { getErrorMessage } from "@/shared/lib/apiError";
@@ -50,8 +56,12 @@ export const MoveToProductionDialog = ({
   const [value, setValue] = useState("");
   const [capacityOpen, setCapacityOpen] = useState(false);
   const userEditedRef = useRef(false);
+  const queryClient = useQueryClient();
   const mutation = useMoveToProductionMutation();
-  const estimate = useProductionEstimateQuery(open ? kpId : null);
+  const holdMutation = useCreatePromiseHoldMutation();
+  const quote = usePromiseQuoteQuery(open ? kpId : null);
+  const holdQuery = usePromiseHoldQuery(open ? kpId : null);
+  const activeHold = holdQuery.data ?? null;
 
   useEffect(() => {
     if (!open) {
@@ -60,6 +70,7 @@ export const MoveToProductionDialog = ({
       return;
     }
     mutation.reset();
+    holdMutation.reset();
     userEditedRef.current = false;
     setValue("");
     setCapacityOpen(false);
@@ -69,20 +80,26 @@ export const MoveToProductionDialog = ({
     if (!open || userEditedRef.current) {
       return;
     }
+    const fromHold = isoToDdMmYyyy(activeHold?.promised_date);
+    if (fromHold) {
+      setValue(fromHold);
+      return;
+    }
+
     const fromCard = (initialExecutionTerms ?? "").trim();
     if (fromCard) {
       setValue(fromCard);
       return;
     }
 
-    if (estimate.isPending) {
+    if (quote.isPending) {
       setValue("");
       return;
     }
 
-    const days = estimate.data?.estimated_days;
-    if (days != null && Number.isFinite(days)) {
-      setValue(`${days} дней`);
+    const promised = isoToDdMmYyyy(quote.data?.window?.promised_date);
+    if (promised) {
+      setValue(promised);
       return;
     }
 
@@ -91,8 +108,9 @@ export const MoveToProductionDialog = ({
     open,
     kpId,
     initialExecutionTerms,
-    estimate.isPending,
-    estimate.data?.estimated_days,
+    quote.isPending,
+    quote.data?.window?.promised_date,
+    activeHold?.promised_date,
   ]);
 
   const normalizedTerms = useMemo(() => {
@@ -118,9 +136,22 @@ export const MoveToProductionDialog = ({
 
     try {
       await mutation.mutateAsync({ kpId, executionTerms: trimmed });
+      await queryClient.invalidateQueries({ queryKey: promiseQuoteKeys.all });
+      await queryClient.invalidateQueries({ queryKey: promiseHoldKeys.all });
       onClose();
     } catch {
       // ошибка показывается через mutation.error
+    }
+  };
+
+  const onHold = async () => {
+    if (!quote.data?.window || activeHold) {
+      return;
+    }
+    try {
+      await holdMutation.mutateAsync(kpId);
+    } catch {
+      // ошибка показывается через holdMutation.error
     }
   };
 
@@ -141,18 +172,39 @@ export const MoveToProductionDialog = ({
     <>
       <Modal open={open} onClose={handleModalClose} title={`В производство: КП №${kpId}`}>
         <form onSubmit={onSubmit} style={{ display: "grid", gap: "1rem" }}>
-          {estimate.isPending && (
+          {quote.isPending && (
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <Spinner /> Подсчитываю оценку производства...
+              <Spinner /> Считаю срок по корзинам…
             </div>
           )}
-          {estimate.data && (
-            <ProductionEstimateAlert
-              estimatedTracks={estimate.data.estimated_tracks}
-              estimatedDays={estimate.data.estimated_days}
-              totalLengthM={estimate.data.total_length_m}
-            />
-          )}
+          {quote.isError ? (
+            <Alert tone="error">{getErrorMessage(quote.error)}</Alert>
+          ) : null}
+          {quote.data ? (
+            <>
+              <PromiseQuoteBlock quote={quote.data} />
+              <PromiseWeekStrip weeks={quote.data.weeks} quoteWindow={quote.data.window} />
+            </>
+          ) : null}
+          {activeHold ? (
+            <div
+              data-testid="promise-hold-locked"
+              role="status"
+              title={holdCreatedByTitle(activeHold.created_by)}
+              style={{
+                border: "1px solid #bfd4ff",
+                background: "#eef4ff",
+                color: "#1d4ed8",
+                borderRadius: 14,
+                padding: "0.9rem 1rem",
+                fontSize: "0.9rem",
+                fontWeight: 600,
+              }}
+            >
+              Срок закреплён до сегодня
+              {activeHold.created_by ? ` · ${activeHold.created_by}` : ""}
+            </div>
+          ) : null}
           <FieldWrapper label="Срок выполнения" hint={EXECUTION_TERMS_FIELD_HINT}>
             <Input
               type="text"
@@ -172,15 +224,31 @@ export const MoveToProductionDialog = ({
             </Alert>
           ) : null}
           {mutation.isError && <Alert tone="error">{getErrorMessage(mutation.error)}</Alert>}
+          {holdMutation.isError && <Alert tone="error">{getErrorMessage(holdMutation.error)}</Alert>}
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", flexWrap: "wrap" }}>
             <Button
               variant="ghost"
               type="button"
               onClick={() => setCapacityOpen(true)}
-              disabled={!debouncedTarget && !capacity.data}
+              disabled={!quote.data}
             >
               Ёмкость
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => {
+                void onHold();
+              }}
+              disabled={
+                holdMutation.isPending ||
+                mutation.isPending ||
+                Boolean(activeHold) ||
+                !quote.data?.window
+              }
+            >
+              {holdMutation.isPending ? "Закрепляю…" : "Закрепить срок"}
             </Button>
             <Button variant="ghost" type="button" onClick={handleModalClose} disabled={mutation.isPending}>
               Отмена
@@ -207,11 +275,12 @@ export const MoveToProductionDialog = ({
         side="left"
         width={380}
       >
-        <FactoryCapacityPanel
-          snapshot={capacity.data}
-          isLoading={Boolean(debouncedTarget) && capacity.isFetching && !capacity.data}
-          errorMessage={capacity.isError ? getErrorMessage(capacity.error) : null}
-        />
+        {quote.data ? (
+          <>
+            <PromiseWeekStrip weeks={quote.data.weeks} quoteWindow={quote.data.window} />
+            <PromiseKnobSettings currentKnob={quote.data.knob} />
+          </>
+        ) : null}
       </Drawer>
     </>
   );

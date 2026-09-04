@@ -13,6 +13,10 @@ import {
   useUpdateLogisticsCostMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import {
+  holdCreatedByTitle,
+  usePromiseHoldQuery,
+} from "@/features/factory-capacity/api/promiseQuote";
+import {
   cargoDeliveryTripsCount,
 } from "@/features/commercial-offer/utils/cargoDeliveryPricing";
 import { formatMoney, statusEmoji } from "@/features/commercial-archive/lib/format";
@@ -127,6 +131,10 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const offer = query.data;
+  const holdQuery = usePromiseHoldQuery(
+    open && offer?.status === "в архиве" ? offer.kp_id : null,
+  );
+  const activeHold = holdQuery.data ?? null;
   const isPileOffer = offer?.product_type === "piles";
   const isStepOffer = offer?.product_type === "steps";
   const isMarchOffer = offer?.product_type === "marches";
@@ -420,6 +428,22 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 }}
               >
                 есть график
+              </span>
+            )}
+            {activeHold && (
+              <span
+                data-testid="promise-hold-badge"
+                title={holdCreatedByTitle(activeHold.created_by)}
+                style={{
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                  padding: "0.15rem 0.5rem",
+                  borderRadius: 999,
+                  background: "#fff6ed",
+                  color: "#b54708",
+                }}
+              >
+                срок закреплён до сегодня
               </span>
             )}
           </span>

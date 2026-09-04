@@ -18,6 +18,7 @@ from app.services.plan_distribution_service import (
     PlanLoadAdapter,
     PlanPersistAdapter,
 )
+from app.services.promise_service import PromiseService
 from core.production.dto import (
     LoadConfig,
     LoadResult,
@@ -216,6 +217,9 @@ class ProductionPlanningService:
                 ),
                 persist_port,
                 ensure_unique_plan_id=create_plan_id,
+                settle_fn=PromiseService(
+                    db_path=self.plita_db_path
+                ).settle_plan_commit,
             )
         except PlanBuildError as exc:
             raise _map_plan_build_error(exc) from exc

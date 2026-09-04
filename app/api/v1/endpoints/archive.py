@@ -12,7 +12,9 @@ from app.core.http_errors import (
     MSG_ARCHIVE_NOT_FOUND,
     MSG_VALIDATION,
     raise_bad_request_client_error,
+    raise_client_error,
     raise_not_found_client_error,
+    raise_unprocessable_client_error,
     raise_unexpected_server_error,
 )
 from app.schemas.archive import (
@@ -25,6 +27,10 @@ from app.schemas.archive import (
     CapacitySnapshotResponse,
     KpReadinessPositionsResponse,
     MoveToProductionRequest,
+    PromiseHoldResponse,
+    PromiseQuoteResponse,
+    PromiseTracksPerDayRequest,
+    PromiseTracksPerDayResponse,
     UpdateDiscountRequest,
     UpdateLogisticsCostRequest,
 )
@@ -35,12 +41,30 @@ from app.services.archive_service import (
     ArchiveService,
     ArchiveValidationError,
 )
+from app.services.promise_service import (
+    PromiseHoldForbiddenError,
+    PromiseHoldNotFoundError,
+    PromiseHoldUnavailableError,
+    PromiseKnobInvalidError,
+    PromiseNotFoundError,
+    PromiseService,
+)
 from core.plate_order_context import PlateOrderContext
+from core.production.promise_buckets import OccupancyUnavailableError
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/commercial/archive", tags=["commercial-archive"])
+settings_router = APIRouter(prefix="/commercial/settings", tags=["commercial-settings"])
+
+MSG_OCCUPANCY_UNAVAILABLE = (
+    "Недоступна занятость плана — котировка остановлена (fail-closed)."
+)
+
+
+def get_promise_service() -> PromiseService:
+    return PromiseService()
 
 
 @router.get("", response_model=list[ArchiveOfferListItem])
@@ -299,6 +323,112 @@ def move_archive_offer_to_production(
         raise_unexpected_server_error(exc, where="archive.move_to_production")
 
 
+@router.get("/{kp_id}/promise-quote", response_model=PromiseQuoteResponse)
+def get_promise_quote(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: PromiseService = Depends(get_promise_service),
+) -> PromiseQuoteResponse:
+    try:
+        return service.get_quote(kp_id, user=user)
+    except PromiseNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_promise_quote",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except OccupancyUnavailableError as exc:
+        logger.exception("promise-quote occupancy unavailable for kp_id=%s", kp_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc) or MSG_OCCUPANCY_UNAVAILABLE,
+        ) from exc
+
+
+@router.post(
+    "/{kp_id}/promise-hold",
+    response_model=PromiseHoldResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_promise_hold(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: PromiseService = Depends(get_promise_service),
+) -> PromiseHoldResponse:
+    try:
+        return service.create_hold(kp_id, user=user)
+    except PromiseNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.create_promise_hold",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except PromiseHoldUnavailableError as exc:
+        raise_unprocessable_client_error(
+            exc,
+            where="archive.create_promise_hold",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except OccupancyUnavailableError as exc:
+        logger.exception("promise-hold occupancy unavailable for kp_id=%s", kp_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc) or MSG_OCCUPANCY_UNAVAILABLE,
+        ) from exc
+
+
+@router.get("/{kp_id}/promise-hold", response_model=PromiseHoldResponse)
+def get_promise_hold(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: PromiseService = Depends(get_promise_service),
+) -> PromiseHoldResponse:
+    try:
+        hold = service.get_hold(kp_id, user=user)
+    except PromiseNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_promise_hold",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    if hold is None or hold.status != "active":
+        raise_not_found_client_error(
+            PromiseHoldNotFoundError("Активный холд не найден."),
+            where="archive.get_promise_hold",
+            detail="Активный холд не найден.",
+        )
+    return hold
+
+
+@router.delete("/{kp_id}/promise-hold", response_model=PromiseHoldResponse)
+def delete_promise_hold(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: PromiseService = Depends(get_promise_service),
+) -> PromiseHoldResponse:
+    try:
+        return service.release_hold(kp_id, user=user)
+    except PromiseNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.delete_promise_hold",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except PromiseHoldNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.delete_promise_hold",
+            detail="Активный холд не найден.",
+        )
+    except PromiseHoldForbiddenError as exc:
+        raise_client_error(
+            exc,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Снять холд может только владелец или администратор.",
+            where="archive.delete_promise_hold",
+        )
+
+
 @router.get("/{kp_id}/capacity-snapshot", response_model=CapacitySnapshotResponse)
 def get_capacity_snapshot(
     kp_id: int,
@@ -339,3 +469,39 @@ def get_production_estimate(
             where="archive.get_archive_offer",
             detail=MSG_ARCHIVE_NOT_FOUND,
         )
+
+
+@settings_router.get(
+    "/promise-tracks-per-day",
+    response_model=PromiseTracksPerDayResponse,
+)
+def get_promise_tracks_per_day(
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: PromiseService = Depends(get_promise_service),
+) -> PromiseTracksPerDayResponse:
+    return service.get_tracks_per_day(user=user)
+
+
+@settings_router.put(
+    "/promise-tracks-per-day",
+    response_model=PromiseTracksPerDayResponse,
+)
+def put_promise_tracks_per_day(
+    payload: PromiseTracksPerDayRequest,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: PromiseService = Depends(get_promise_service),
+) -> PromiseTracksPerDayResponse:
+    try:
+        return service.set_tracks_per_day(payload.tracks_per_day, user=user)
+    except PromiseKnobInvalidError as exc:
+        raise_unprocessable_client_error(
+            exc,
+            where="archive.put_promise_tracks_per_day",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+
+
+_archive_router = router
+router = APIRouter()
+router.include_router(_archive_router)
+router.include_router(settings_router)

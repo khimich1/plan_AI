@@ -20,16 +20,20 @@ from __future__ import annotations
 
 import logging
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Iterable
 
 from core import kp_db_plates, plate_name as _plate_name
 from core.domain.plate_order import normalize_load_code
+from core.kp_db_common import _connect
 
 logger = logging.getLogger(__name__)
 
 
 OrderIdentity = tuple[int | None, str]
+PromiseSettleFn = Callable[..., Any]
 
 
 class PlanCommitError(RuntimeError):
@@ -305,6 +309,81 @@ def _count_track_items_by_day(
     return {k: dict(v) for k, v in by_identity.items()}
 
 
+def _covered_weeks_from_tracks(
+    tracks_by_day: dict[str, list[dict[str, Any]]] | None,
+) -> tuple[date, ...]:
+    # Lazy: top-level import of core.production.promise_buckets loads
+    # core.production.__init__ → planning → plan_commit (circular).
+    from core.production.promise_buckets import iso_week_start
+
+    weeks: set[date] = set()
+    for key in tracks_by_day or ():
+        try:
+            day = date.fromisoformat(str(key)[:10])
+        except ValueError:
+            continue
+        weeks.add(iso_week_start(day))
+    return tuple(sorted(weeks))
+
+
+def _entered_kp_ids(
+    orders_with_qty: list[tuple[dict[str, Any], int]],
+) -> set[int]:
+    entered: set[int] = set()
+    for order, qty_to_mark in orders_with_qty:
+        kp_id = order.get("kp_id")
+        if qty_to_mark > 0 and kp_id:
+            entered.add(int(kp_id))
+    return entered
+
+
+def _settle_promises_on_commit(
+    *,
+    db_path: str,
+    plan_id: str,
+    entered_kp_ids: set[int],
+    covered_weeks: tuple[date, ...],
+    settle_fn: PromiseSettleFn | None,
+) -> None:
+    """Consume / overdue allocations on a connection owned by this commit.
+
+    Plate rows are already marked (existing per-call commits). A settlement
+    write failure rolls plates back via ``return_plan_plates_to_production``.
+    Overdue is not an error — level 2, commit continues.
+    ``settle_fn`` is injected from the app layer (core must not import app).
+    """
+    if not covered_weeks or settle_fn is None:
+        return
+
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        settle_fn(
+            entered_kp_ids=entered_kp_ids,
+            covered_weeks=covered_weeks,
+            _external_conn=conn,
+        )
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logger.exception(
+            "[PLAN_COMMIT] Ошибка погашения обещаний плана %s. Откатываю плиты.",
+            plan_id,
+        )
+        try:
+            kp_db_plates.return_plan_plates_to_production(plan_id, db_path)
+        except Exception:
+            logger.exception(
+                "[PLAN_COMMIT] Ошибка при откате плит для плана %s",
+                plan_id,
+            )
+        raise PlanCommitError(
+            "Не удалось погасить обещания при коммите плана."
+        ) from exc
+    finally:
+        conn.close()
+
+
 def commit_plan_plates(
     *,
     plan_id: str,
@@ -314,6 +393,7 @@ def commit_plan_plates(
     db_path: str,
     tracks_by_day: dict[str, list[dict[str, Any]]] | None = None,
     day_number_by_date: dict[str, int] | None = None,
+    settle_fn: PromiseSettleFn | None = None,
 ) -> CommitResult:
     """Помечает плиты как «в плане» и валидирует результат.
 
@@ -340,6 +420,9 @@ def commit_plan_plates(
             ``kp_plates``). Без этого аргумента — старое поведение.
         day_number_by_date: ``{date_key: day_number}`` (P5). Используется,
             чтобы перевести ``date_key`` в номер дня для записи в БД.
+        settle_fn: app-layer callback ``(entered_kp_ids, covered_weeks,
+            _external_conn)`` — погашение обещаний в той же tx. Без него
+            settle пропускается (core не импортирует app).
 
     Returns:
         :class:`CommitResult` со статистикой пометки.
@@ -683,6 +766,14 @@ def commit_plan_plates(
             f"Не удалось корректно пометить плиты в БД: "
             f"failed={result.plates_failed}, mismatched={result.plates_mismatched}."
         )
+
+    _settle_promises_on_commit(
+        db_path=db_path,
+        plan_id=plan_id,
+        entered_kp_ids=_entered_kp_ids(orders_with_qty),
+        covered_weeks=_covered_weeks_from_tracks(tracks_by_day),
+        settle_fn=settle_fn,
+    )
 
     return result
 

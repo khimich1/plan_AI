@@ -4,6 +4,8 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.repositories.kp_repository import KpRepository
 from app.schemas.offers import CreateOfferRequest
 from app.security.offer_access import (
@@ -11,17 +13,24 @@ from app.security.offer_access import (
     assert_offer_write_access,
     list_filters_for_user,
 )
+from app.services.promise_service import PromiseGateError, PromiseService
 from core.kp_persistence_service import KpPersistenceService
 from core.execution_terms import parse_execution_terms
 from core.commercial_offer import generate_commercial_offer_pdf
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
+from core.production.promise_buckets import OccupancyUnavailableError
 
 logger = logging.getLogger(__name__)
 
 
 class OffersService:
-    def __init__(self, kp_repository: KpRepository | None = None) -> None:
+    def __init__(
+        self,
+        kp_repository: KpRepository | None = None,
+        promise_service: PromiseService | None = None,
+    ) -> None:
         self.kp_repository = kp_repository or KpRepository()
+        self._promise_service = promise_service
 
     def list_offers(
         self,
@@ -112,9 +121,15 @@ class OffersService:
             raise ValueError("invalid_status")
         execution_terms, used_default = self._parse_execution_terms(execution_terms_input)
         try:
-            from core.kp.offers_write import commit_move_to_production
-
-            commit_move_to_production(kp_id, execution_terms, self.kp_repository.db_path)
+            self._promises().commit_move_with_gate(
+                kp_id, execution_terms, user=user, raw=item
+            )
+        except HTTPException:
+            raise
+        except PromiseGateError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OccupancyUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:
             logger.exception("move_to_production failed for kp_id=%s", kp_id)
             raise ValueError("move_to_production_failed") from exc
@@ -182,6 +197,11 @@ class OffersService:
             kp_db_id=kp_id,
         )
         return (f"KP_{kp_id}.xlsx", xlsx_buffer.getvalue())
+
+    def _promises(self) -> PromiseService:
+        if self._promise_service is not None:
+            return self._promise_service
+        return PromiseService(db_path=self.kp_repository.db_path)
 
     def _parse_execution_terms(self, raw_terms: str) -> tuple[str, bool]:
         return parse_execution_terms(raw_terms, policy="default_if_empty")
