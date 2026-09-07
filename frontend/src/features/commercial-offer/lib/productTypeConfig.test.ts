@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   getProductTypeConfig,
   INGEST_REQUIRED_MESSAGE,
-  NEXT_REQUIRED_ACTION_MESSAGES,
   PRODUCT_TYPE_CONFIG,
+  RESOLVE_GATE_MESSAGES,
 } from "@/features/commercial-offer/lib/productTypeConfig";
 import type { ProductType } from "@/features/commercial-offer/types/commercialOffer";
 
@@ -95,32 +95,42 @@ describe("getProductTypeConfig", () => {
   it("falls back to plates for unknown runtime values", () => {
     expect(getProductTypeConfig("not-a-product" as ProductType).productType).toBe("plates");
   });
+
+  it("falls back to plates for prototype-chain keys", () => {
+    expect(getProductTypeConfig("constructor" as ProductType).productType).toBe("plates");
+    expect(getProductTypeConfig("hasOwnProperty" as ProductType).productType).toBe("plates");
+  });
 });
 
-describe("NEXT_REQUIRED_ACTION_MESSAGES", () => {
-  it("shares one ingest message across all six products", () => {
-    for (const type of ALL_PRODUCT_TYPES) {
-      const action = PRODUCT_TYPE_CONFIG[type].ingestAction;
-      expect(NEXT_REQUIRED_ACTION_MESSAGES[action]).toBe(INGEST_REQUIRED_MESSAGE);
+describe("wizard finish messages", () => {
+  it("maps every product to a distinct ingest action", () => {
+    const actions = ALL_PRODUCT_TYPES.map((type) => PRODUCT_TYPE_CONFIG[type].ingestAction);
+    expect(new Set(actions).size).toBe(ALL_PRODUCT_TYPES.length);
+    for (const action of actions) {
+      expect(action).toMatch(/^ingest_/);
     }
   });
 
-  it("keeps the plates resolve-gate messages", () => {
-    expect(NEXT_REQUIRED_ACTION_MESSAGES.resolve_wide_plates).toBe(
-      "Сначала примите решение по позициям шире стандартной.",
-    );
-    expect(NEXT_REQUIRED_ACTION_MESSAGES.resolve_invalid_widths).toBe(
-      "Нестандартная ширина: замените на заводской рез или исключите позицию.",
-    );
-    expect(NEXT_REQUIRED_ACTION_MESSAGES.resolve_unpriced_plates).toBe(
-      "Сначала примите решение по позициям без цены в прайсе.",
+  it("shares one ingest-required text", () => {
+    expect(INGEST_REQUIRED_MESSAGE).toBe(
+      "Сначала распознайте и получите хотя бы одну позицию в заказе.",
     );
   });
 
-  it("has no message for actions that fall back to the product-specific hint", () => {
-    expect(NEXT_REQUIRED_ACTION_MESSAGES.none).toBeUndefined();
-    expect(NEXT_REQUIRED_ACTION_MESSAGES.select_manager).toBeUndefined();
-    expect(NEXT_REQUIRED_ACTION_MESSAGES.complete_client_terms).toBeUndefined();
-    expect(NEXT_REQUIRED_ACTION_MESSAGES.post_calculate).toBeUndefined();
+  it("keeps the three plates resolve-gate messages", () => {
+    expect(Object.keys(RESOLVE_GATE_MESSAGES).sort()).toEqual([
+      "resolve_invalid_widths",
+      "resolve_unpriced_plates",
+      "resolve_wide_plates",
+    ]);
+    expect(RESOLVE_GATE_MESSAGES.resolve_wide_plates).toBe(
+      "Сначала примите решение по позициям шире стандартной.",
+    );
+    expect(RESOLVE_GATE_MESSAGES.resolve_invalid_widths).toBe(
+      "Нестандартная ширина: замените на заводской рез или исключите позицию.",
+    );
+    expect(RESOLVE_GATE_MESSAGES.resolve_unpriced_plates).toBe(
+      "Сначала примите решение по позициям без цены в прайсе.",
+    );
   });
 });

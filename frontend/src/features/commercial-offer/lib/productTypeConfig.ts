@@ -98,9 +98,12 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
   },
 };
 
-/** Unknown / missing product types resolve to plates — keeps legacy drafts working. */
+/**
+ * Unknown / missing product types resolve to plates — keeps legacy drafts working.
+ * hasOwnProperty (not `in`): junk like "constructor" must not match the prototype chain.
+ */
 export const getProductTypeConfig = (type: ProductType | null | undefined): ProductTypeConfig => {
-  if (type && type in PRODUCT_TYPE_CONFIG) {
+  if (type && Object.prototype.hasOwnProperty.call(PRODUCT_TYPE_CONFIG, type)) {
     return PRODUCT_TYPE_CONFIG[type];
   }
   return PRODUCT_TYPE_CONFIG.plates;
@@ -108,18 +111,18 @@ export const getProductTypeConfig = (type: ProductType | null | undefined): Prod
 
 export const INGEST_REQUIRED_MESSAGE = "Сначала распознайте и получите хотя бы одну позицию в заказе.";
 
+export type ResolveGateAction = Extract<
+  WizardNextRequiredAction,
+  "resolve_wide_plates" | "resolve_invalid_widths" | "resolve_unpriced_plates"
+>;
+
 /**
- * «Нельзя перейти дальше» по серверному next_required_action. Действия без записи
- * (none, select_manager, complete_client_terms, post_calculate) отдают
- * product-specific fallback у вызывающей стороны.
+ * «Нельзя перейти дальше» для plates-гейтов по серверному next_required_action.
+ * Бэкенд выставляет resolve_* только когда соответствующие metadata-списки плит
+ * не пусты, т.е. де-факто для plates-циклов; для остальных изделий эти действия
+ * недостижимы и здесь значатся только ради полноты lookup'а.
  */
-export const NEXT_REQUIRED_ACTION_MESSAGES: Partial<Record<WizardNextRequiredAction, string>> = {
-  ingest_plates: INGEST_REQUIRED_MESSAGE,
-  ingest_piles: INGEST_REQUIRED_MESSAGE,
-  ingest_steps: INGEST_REQUIRED_MESSAGE,
-  ingest_marches: INGEST_REQUIRED_MESSAGE,
-  ingest_bridge_piles: INGEST_REQUIRED_MESSAGE,
-  ingest_fbs: INGEST_REQUIRED_MESSAGE,
+export const RESOLVE_GATE_MESSAGES: Record<ResolveGateAction, string> = {
   resolve_wide_plates: "Сначала примите решение по позициям шире стандартной.",
   resolve_invalid_widths: "Нестандартная ширина: замените на заводской рез или исключите позицию.",
   resolve_unpriced_plates: "Сначала примите решение по позициям без цены в прайсе.",
