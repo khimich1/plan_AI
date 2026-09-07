@@ -4,7 +4,7 @@
 > **Фаза SDD:** SPECIFY → PLAN → TASKS → IMPLEMENT  
 > **Дата:** 2026-07-19  
 > **Статус:** на реализацию  
-> **Связанные документы:** [`strategic-roadmap-pb-pricing-optimizer-1c.md`](./strategic-roadmap-pb-pricing-optimizer-1c.md) (Phase 1), [`../ideas/plate-pricing-fix.md`](../ideas/plate-pricing-fix.md)  
+> **Связанные документы:** [`strategic-roadmap-pb-pricing-optimizer-1c.md`](./strategic-roadmap-pb-pricing-optimizer-1c.md) (Phase 1), [`../ideas/plate-pricing-fix.md`](../ideas/plate-pricing-fix.md), [`trim-neighbor-sku-cuts.md`](./trim-neighbor-sku-cuts.md) (соседние ширины 700/720)  
 > **Эталон:** ручной расчёт менеджера завода
 
 ---

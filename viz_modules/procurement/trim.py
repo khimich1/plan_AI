@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import math
 
-from core.config.constants import LONG_CUT_PRICE_PER_M, MIN_BILLABLE_TRIM_MM
+from core.config.constants import (
+    LONG_CUT_PRICE_PER_M,
+    MIN_BILLABLE_TRIM_MM,
+    PLATE_WIDTH_MATCH_TOLERANCE_MM,
+)
 
 from ..price_utils import find_price_for_plate
 from .plan_lookup import _is_same_length
@@ -35,7 +39,11 @@ def _cut_length_from_lengths(lengths: list | None, default_length: float) -> flo
 
 
 def _width_matches_cut(width_mm: int, sec_cuts: list) -> bool:
-    return any(abs(width_mm - int(cut_width)) <= 20 for cut_width in sec_cuts)
+    """Марка сметы ↔ выход secondary. Допуск 10 мм (1 см), не кромка MIN_BILLABLE_TRIM_MM."""
+    return any(
+        abs(int(cut_width) - int(width_mm)) <= PLATE_WIDTH_MATCH_TOLERANCE_MM
+        for cut_width in sec_cuts
+    )
 
 
 def _secondary_output_width_mm(sec_cut: dict) -> int:

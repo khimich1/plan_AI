@@ -567,7 +567,7 @@ export const PlateInputStep = ({
             </>
           )}
 
-          {!isBatchReviewMode && onWidePlateDecisionChange && onApplyWidePlates && (
+          {onWidePlateDecisionChange && onApplyWidePlates && (
             <WidePlatesInlineSection
               draft={liveWideDraft ?? draft}
               decisions={widePlateDecisions}
