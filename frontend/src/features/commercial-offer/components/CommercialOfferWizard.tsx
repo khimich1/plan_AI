@@ -779,7 +779,7 @@ const handleFinishBridgePiles = async () => {
     try {
       if (isFbsFlow) {
         const rows = buildFbsPreviewRows(currentDraft);
-        if (rows[lineIndex]?.sealed) {
+        if (lineIndex < 0 || lineIndex >= rows.length || rows[lineIndex]?.sealed) {
           return;
         }
         const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
@@ -794,7 +794,7 @@ const handleFinishBridgePiles = async () => {
       }
       if (isBridgePileFlow) {
         const rows = buildBridgePilePreviewRows(currentDraft);
-        if (rows[lineIndex]?.sealed) {
+        if (lineIndex < 0 || lineIndex >= rows.length || rows[lineIndex]?.sealed) {
           return;
         }
         const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
@@ -1417,7 +1417,7 @@ const handleFinishBridgePiles = async () => {
         isAiProcessing={applyAiFbsMutation.isPending}
         isUpdatingGrades={updateFbsGradesMutation.isPending}
         isConfirmingBatch={updateFbsMutation.isPending}
-        isProceeding={false}
+        isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
@@ -1455,7 +1455,7 @@ const handleFinishBridgePiles = async () => {
         isAiProcessing={applyAiBridgePilesMutation.isPending}
         isUpdatingGrades={updateBridgePileGradesMutation.isPending}
         isConfirmingBatch={updateBridgePilesMutation.isPending}
-        isProceeding={false}
+        isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
@@ -1493,7 +1493,7 @@ const handleFinishBridgePiles = async () => {
         isAiProcessing={applyAiMarchesMutation.isPending}
         isUpdatingGrades={updateMarchGradesMutation.isPending}
         isConfirmingBatch={updateMarchesMutation.isPending}
-        isProceeding={false}
+        isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
@@ -1530,7 +1530,7 @@ const handleFinishBridgePiles = async () => {
         isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateStepsMutation.isPending}
         isAiProcessing={applyAiStepsMutation.isPending}
         isConfirmingBatch={updateStepsMutation.isPending}
-        isProceeding={false}
+        isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
@@ -1566,7 +1566,7 @@ const handleFinishBridgePiles = async () => {
         isAiProcessing={applyAiPilesMutation.isPending}
         isUpdatingGrades={updatePileGradesMutation.isPending}
         isConfirmingBatch={updatePilesMutation.isPending}
-        isProceeding={false}
+        isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
         onApplyAi={() => void handleApplyAi()}
@@ -1609,7 +1609,7 @@ const handleFinishBridgePiles = async () => {
         isResolvingUnpricedPlates={resolveUnpricedPlatesMutation.isPending}
         isResolvingInvalidWidths={resolveInvalidWidthsMutation.isPending}
         isConfirmingBatch={updatePlatesMutation.isPending}
-        isProceeding={false}
+        isProceeding={calculateMutation.isPending}
         widePlateDecisions={state.widePlateActions}
         unpricedPlateDecisions={state.unpricedPlateActions}
         invalidWidthDecisions={state.invalidWidthActions}
