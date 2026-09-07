@@ -267,6 +267,10 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       dispatch({ type: "hydrate-draft", payload: draft });
       if (landing === "append") {
         dispatch({ type: "start-append-cycle" });
+      } else {
+        // Hydrate keeps a local input-step (plates/…) on purpose for the live wizard;
+        // archive «Редактировать» must force result before navigate so re-hydrate cannot pin input again.
+        dispatch({ type: "set-step", step: "result" });
       }
       navigate(`/new?draft=${encodeURIComponent(draft.draft_id)}`);
       onClose();

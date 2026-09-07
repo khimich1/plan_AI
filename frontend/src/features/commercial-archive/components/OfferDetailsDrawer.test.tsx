@@ -409,6 +409,8 @@ describe("OfferDetailsDrawer archive constructor CTAs", () => {
       expect(onClose).toHaveBeenCalled();
     });
 
+    expect(mockDispatch).not.toHaveBeenCalledWith({ type: "set-step", step: "result" });
+
     const hydrateIndex = mockDispatch.mock.calls.findIndex(
       (call) => call[0]?.type === "hydrate-draft",
     );
@@ -440,11 +442,21 @@ describe("OfferDetailsDrawer archive constructor CTAs", () => {
 
     await waitFor(() => {
       expect(mockDispatch).toHaveBeenCalledWith({ type: "hydrate-draft", payload: draft });
+      expect(mockDispatch).toHaveBeenCalledWith({ type: "set-step", step: "result" });
       expect(mockNavigate).toHaveBeenCalledWith("/new?draft=draft-edit-42");
       expect(onClose).toHaveBeenCalled();
     });
 
     expect(mockDispatch).not.toHaveBeenCalledWith({ type: "start-append-cycle" });
+
+    const hydrateIndex = mockDispatch.mock.calls.findIndex(
+      (call) => call[0]?.type === "hydrate-draft",
+    );
+    const setStepIndex = mockDispatch.mock.calls.findIndex(
+      (call) => call[0]?.type === "set-step" && call[0]?.step === "result",
+    );
+    expect(hydrateIndex).toBeGreaterThanOrEqual(0);
+    expect(setStepIndex).toBeGreaterThan(hydrateIndex);
   });
 
   it("disables both CTAs while resume is pending", async () => {
