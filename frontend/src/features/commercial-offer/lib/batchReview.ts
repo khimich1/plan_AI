@@ -8,6 +8,7 @@ import type {
   ProductType,
   StepBatch,
 } from "@/features/commercial-offer/types/commercialOffer";
+import { getProductTypeConfig } from "@/features/commercial-offer/lib/productTypeConfig";
 import { resolveDraftProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 
 const normalizeLineKey = (line: string) => line.trim().toLowerCase();
@@ -33,23 +34,8 @@ export const getBatches = (draft: CommercialDraftDetails | null): DraftBatch[] =
   if (!draft) {
     return [];
   }
-  const productType = getDraftProductType(draft);
-  if (productType === "piles") {
-    return draft.metadata.pile_batches ?? [];
-  }
-  if (productType === "steps") {
-    return draft.metadata.step_batches ?? [];
-  }
-  if (productType === "marches") {
-    return draft.metadata.march_batches ?? [];
-  }
-  if (productType === "bridge_piles") {
-    return draft.metadata.bridge_pile_batches ?? [];
-  }
-  if (productType === "fbs") {
-    return draft.metadata.fbs_batches ?? [];
-  }
-  return draft.metadata.plate_batches ?? [];
+  const field = getProductTypeConfig(draft.metadata.product_type).batchesField;
+  return draft.metadata[field] ?? [];
 };
 
 export const getCurrentPlateBatch = (draft: CommercialDraftDetails | null): PlateBatch | null => {
