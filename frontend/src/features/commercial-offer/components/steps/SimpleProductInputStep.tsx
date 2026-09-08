@@ -1,10 +1,19 @@
-import { useEffect, useState, type WheelEvent } from "react";
+import { useEffect, useState, type ComponentType, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
 import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
-import type { CommercialDraftDetails, OcrCorrection, PlateInputMode } from "@/features/commercial-offer/types/commercialOffer";
+import type {
+  CommercialDraftDetails,
+  OcrCorrection,
+  PlateInputMode,
+  SimpleKpProductType,
+} from "@/features/commercial-offer/types/commercialOffer";
 import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
+import { KpBridgePilePreviewPanel } from "@/features/commercial-offer/components/KpBridgePilePreviewPanel";
+import { KpFbsPreviewPanel } from "@/features/commercial-offer/components/KpFbsPreviewPanel";
+import { KpMarchPreviewPanel } from "@/features/commercial-offer/components/KpMarchPreviewPanel";
 import { KpPilePreviewPanel } from "@/features/commercial-offer/components/KpPilePreviewPanel";
+import { KpStepPreviewPanel } from "@/features/commercial-offer/components/KpStepPreviewPanel";
 import { PlateListEditor } from "@/features/commercial-offer/components/PlateListEditor";
 import {
   resolveSourceSubmitDisabled,
@@ -27,7 +36,8 @@ import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { StepLayout } from "@/shared/ui/StepLayout";
 
-type PileInputStepProps = {
+type SimpleProductInputStepProps = {
+  productType: SimpleKpProductType;
   draft: CommercialDraftDetails | null;
   pendingBatchReview: boolean;
   sourceText: string;
@@ -63,14 +73,30 @@ type PileInputStepProps = {
   onRerecognize?: () => void;
   isRerecognizing?: boolean;
   onConfirmBatch: () => void;
-  onFinishPiles: () => void;
+  onFinishInput: () => void;
   onApplyGradeToAll?: (grade: string) => void;
   onLineGradeChange?: (lineIndex: number, grade: string) => void;
   onReset: () => void;
   lineRowHandlers?: LineRowHandlers;
 };
 
+/** Transient (increment 2): per-type panels until KpGradedPreviewPanel lands in increment 3. */
+type SimplePreviewPanelProps = {
+  draft: CommercialDraftDetails;
+  normalizedText: string;
+  isUpdatingGrades?: boolean;
+  onApplyGradeToAll?: (grade: string) => void;
+  onLineGradeChange?: (lineIndex: number, grade: string) => void;
+  lineRowHandlers?: LineRowHandlers;
+};
 
+const SIMPLE_PREVIEW_PANELS: Record<SimpleKpProductType, ComponentType<SimplePreviewPanelProps>> = {
+  piles: KpPilePreviewPanel,
+  steps: KpStepPreviewPanel,
+  marches: KpMarchPreviewPanel,
+  bridge_piles: KpBridgePilePreviewPanel,
+  fbs: KpFbsPreviewPanel,
+};
 
 const IMAGE_ZOOM_MIN = 0.5;
 const IMAGE_ZOOM_MAX = 3;
@@ -103,7 +129,8 @@ const formatOcrCorrections = (corrections: OcrCorrection[], maxItems = 5): strin
   });
 };
 
-export const PileInputStep = ({
+export const SimpleProductInputStep = ({
+  productType,
   draft,
   pendingBatchReview,
   sourceText,
@@ -139,12 +166,12 @@ export const PileInputStep = ({
   onRerecognize,
   isRerecognizing = false,
   onConfirmBatch,
-  onFinishPiles,
+  onFinishInput,
   onApplyGradeToAll,
   onLineGradeChange,
   onReset,
   lineRowHandlers,
-}: PileInputStepProps) => {
+}: SimpleProductInputStepProps) => {
   const [showSourceInput, setShowSourceInput] = useState(false);
   const [imageZoom, setImageZoom] = useState(1);
   const [sourceGate, setSourceGate] = useState<SourceSubmitGate>({
@@ -153,12 +180,12 @@ export const PileInputStep = ({
     blockReason: undefined,
   });
   const hasDraft = Boolean(draft);
-  const labels = PRODUCT_TYPE_CONFIG.piles.labels;
+  const labels = PRODUCT_TYPE_CONFIG[productType].labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
   const reviewHighlights = useBatchReviewHighlights({
     text: batchReviewText,
-    productType: "piles",
+    productType,
     draft: batchReviewDraft,
     enabled: isBatchReviewMode,
   });
@@ -196,7 +223,7 @@ export const PileInputStep = ({
   );
 
   const canConfirmBatch = isBatchReviewMode && canConfirmActivePage && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
-  const canFinishPiles = hasDraft && !pendingBatchReview && !isRecognizing && !isAiProcessing && !isProceeding;
+  const canFinish = hasDraft && !pendingBatchReview && !isRecognizing && !isAiProcessing && !isProceeding;
 
 
   const handleImageWheel = (event: WheelEvent<HTMLDivElement>) => {
@@ -208,10 +235,11 @@ export const PileInputStep = ({
     setImageZoom((current) => clampImageZoom(Number((current + direction * IMAGE_ZOOM_STEP).toFixed(2))));
   };
 
+  const PreviewPanel = SIMPLE_PREVIEW_PANELS[productType];
 
   const sourceInputCard = (
     <SourceInputCard
-      productType="piles"
+      productType={productType}
       hasDraft={hasDraft}
       sourceText={sourceText}
       pages={pages}
@@ -264,8 +292,8 @@ export const PileInputStep = ({
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={onFinishPiles}
-                  disabled={!canFinishPiles}
+                  onClick={onFinishInput}
+                  disabled={!canFinish}
                   title={pendingBatchReview ? "Сначала подтвердите текущий источник — «Список верен»" : undefined}
                 >
                   {isProceeding ? "Переход..." : "Готово, далее"}
@@ -275,8 +303,8 @@ export const PileInputStep = ({
                   <Button
                     type="button"
                     variant="secondary"
-                    onClick={onFinishPiles}
-                    disabled={!canFinishPiles}
+                    onClick={onFinishInput}
+                    disabled={!canFinish}
                   >
                     {isProceeding ? "Переход..." : "Готово, далее"}
                   </Button>
@@ -458,7 +486,7 @@ export const PileInputStep = ({
           {!isBatchReviewMode && draft && (
             <>
               <SourceImageQueueControls items={sourceQueue} />
-              <KpPilePreviewPanel
+              <PreviewPanel
                 draft={draft}
                 normalizedText={normalizedText}
                 isUpdatingGrades={isUpdatingGrades}

@@ -55,15 +55,15 @@ import {
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { ProductTypePicker } from "@/features/commercial-offer/components/ProductTypePicker";
 import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
-import { PileInputStep } from "@/features/commercial-offer/components/steps/PileInputStep";
-import { MarchInputStep } from "@/features/commercial-offer/components/steps/MarchInputStep";
-import { BridgePileInputStep } from "@/features/commercial-offer/components/steps/BridgePileInputStep";
-import { FbsInputStep } from "@/features/commercial-offer/components/steps/FbsInputStep";
-import { StepInputStep } from "@/features/commercial-offer/components/steps/StepInputStep";
+import { SimpleProductInputStep } from "@/features/commercial-offer/components/steps/SimpleProductInputStep";
 import { ClientConditionsStep } from "@/features/commercial-offer/components/steps/ClientConditionsStep";
 import { CalculationResultStep } from "@/features/commercial-offer/components/steps/CalculationResultStep";
 
-import type { ProductType, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
+import type {
+  ProductType,
+  SimpleKpProductType,
+  WizardStepId,
+} from "@/features/commercial-offer/types/commercialOffer";
 import type { LineRowHandlers, LineSavePayload } from "@/features/commercial-offer/lib/lineRowHandlers";
 import { LINE_UNDO_TOAST_MS } from "@/features/commercial-offer/lib/lineRowHandlers";
 
@@ -1224,8 +1224,9 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   };
 
   const currentStepContent =
-    state.currentStep === "fbs" ? (
-      <FbsInputStep
+    state.currentStep === inputStep && productConfig.isSimpleKp ? (
+      <SimpleProductInputStep
+        productType={productType as SimpleKpProductType}
         draft={currentDraft}
         pendingBatchReview={pendingBatchReview}
         sourceText={state.sourceText}
@@ -1251,163 +1252,20 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
             multiPage.updatePageText(multiPage.activeId, value);
           }
         }}
-        
+
         onRecognize={handleRecognize}
         onRerecognize={() => void handleRerecognize()}
         isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishFbs={() => void handleFinishInput()}
-        onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
-        onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
-        onReset={handleCreateNewOffer}
-        lineRowHandlers={lineRowHandlers}
-      />
-    ) :     state.currentStep === "bridge_piles" ? (
-      <BridgePileInputStep
-        draft={currentDraft}
-        pendingBatchReview={pendingBatchReview}
-        sourceText={state.sourceText}
-        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
-        normalizedText={state.normalizedText}
-        {...multiPageStepProps}
-        recognizedImageUrl={reviewImageUrl}
-        recognizedImageName={reviewImageName}
-        sourceQueue={sourceImageQueue.items}
-        errorMessage={stepError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
-        isAiProcessing={applyAiMutation.isPending}
-        isUpdatingGrades={updateGradesMutation.isPending}
-        isConfirmingBatch={updateInputMutation.isPending}
-        isProceeding={calculateMutation.isPending}
-        aiInstruction={aiInstruction}
-        onAiInstructionChange={setAiInstruction}
-        onApplyAi={() => void handleApplyAi()}
-        onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => {
-          dispatch({ type: "set-batch-review-text", text: value });
-          if (multiPage.activeId) {
-            multiPage.updatePageText(multiPage.activeId, value);
-          }
-        }}
-        
-        onRecognize={handleRecognize}
-        onRerecognize={() => void handleRerecognize()}
-        isRerecognizing={isRerecognizing}
-        onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishBridgePiles={() => void handleFinishInput()}
-        onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
-        onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
-        onReset={handleCreateNewOffer}
-        lineRowHandlers={lineRowHandlers}
-      />
-    ) : state.currentStep === "marches" ? (
-      <MarchInputStep
-        draft={currentDraft}
-        pendingBatchReview={pendingBatchReview}
-        sourceText={state.sourceText}
-        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
-        normalizedText={state.normalizedText}
-        {...multiPageStepProps}
-        recognizedImageUrl={reviewImageUrl}
-        recognizedImageName={reviewImageName}
-        sourceQueue={sourceImageQueue.items}
-        errorMessage={stepError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
-        isAiProcessing={applyAiMutation.isPending}
-        isUpdatingGrades={updateGradesMutation.isPending}
-        isConfirmingBatch={updateInputMutation.isPending}
-        isProceeding={calculateMutation.isPending}
-        aiInstruction={aiInstruction}
-        onAiInstructionChange={setAiInstruction}
-        onApplyAi={() => void handleApplyAi()}
-        onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => {
-          dispatch({ type: "set-batch-review-text", text: value });
-          if (multiPage.activeId) {
-            multiPage.updatePageText(multiPage.activeId, value);
-          }
-        }}
-        
-        onRecognize={handleRecognize}
-        onRerecognize={() => void handleRerecognize()}
-        isRerecognizing={isRerecognizing}
-        onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishMarches={() => void handleFinishInput()}
-        onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
-        onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
-        onReset={handleCreateNewOffer}
-        lineRowHandlers={lineRowHandlers}
-      />
-    ) : state.currentStep === "steps" ? (
-      <StepInputStep
-        draft={currentDraft}
-        pendingBatchReview={pendingBatchReview}
-        sourceText={state.sourceText}
-        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
-        normalizedText={state.normalizedText}
-        {...multiPageStepProps}
-        recognizedImageUrl={reviewImageUrl}
-        recognizedImageName={reviewImageName}
-        sourceQueue={sourceImageQueue.items}
-        errorMessage={stepError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
-        isAiProcessing={applyAiMutation.isPending}
-        isConfirmingBatch={updateInputMutation.isPending}
-        isProceeding={calculateMutation.isPending}
-        aiInstruction={aiInstruction}
-        onAiInstructionChange={setAiInstruction}
-        onApplyAi={() => void handleApplyAi()}
-        onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => {
-          dispatch({ type: "set-batch-review-text", text: value });
-          if (multiPage.activeId) {
-            multiPage.updatePageText(multiPage.activeId, value);
-          }
-        }}
-        
-        onRecognize={handleRecognize}
-        onRerecognize={() => void handleRerecognize()}
-        isRerecognizing={isRerecognizing}
-        onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishSteps={() => void handleFinishInput()}
-        onReset={handleCreateNewOffer}
-        lineRowHandlers={lineRowHandlers}
-      />
-    ) : state.currentStep === "piles" ? (
-      <PileInputStep
-        draft={currentDraft}
-        pendingBatchReview={pendingBatchReview}
-        sourceText={state.sourceText}
-        batchReviewText={multiPage.hasStarted ? reviewBatchText : state.batchReviewText}
-        normalizedText={state.normalizedText}
-        {...multiPageStepProps}
-        recognizedImageUrl={reviewImageUrl}
-        recognizedImageName={reviewImageName}
-        sourceQueue={sourceImageQueue.items}
-        errorMessage={stepError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
-        isAiProcessing={applyAiMutation.isPending}
-        isUpdatingGrades={updateGradesMutation.isPending}
-        isConfirmingBatch={updateInputMutation.isPending}
-        isProceeding={calculateMutation.isPending}
-        aiInstruction={aiInstruction}
-        onAiInstructionChange={setAiInstruction}
-        onApplyAi={() => void handleApplyAi()}
-        onTextChange={handleSourceTextChange}
-        onBatchReviewTextChange={(value) => {
-          dispatch({ type: "set-batch-review-text", text: value });
-          if (multiPage.activeId) {
-            multiPage.updatePageText(multiPage.activeId, value);
-          }
-        }}
-        
-        onRecognize={handleRecognize}
-        onRerecognize={() => void handleRerecognize()}
-        isRerecognizing={isRerecognizing}
-        onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishPiles={() => void handleFinishInput()}
-        onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
-        onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
+        onFinishInput={() => void handleFinishInput()}
+        onApplyGradeToAll={
+          productConfig.supportsGrades ? (grade) => void handleApplyGradeToAll(grade) : undefined
+        }
+        onLineGradeChange={
+          productConfig.supportsGrades
+            ? (lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)
+            : undefined
+        }
         onReset={handleCreateNewOffer}
         lineRowHandlers={lineRowHandlers}
       />

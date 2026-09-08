@@ -1,5 +1,8 @@
 export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
 
+/** Simple KP flow (no plate resolve gates): everything except plates. Mirrors ProductTypeConfig.isSimpleKp. */
+export type SimpleKpProductType = Exclude<ProductType, "plates">;
+
 export type WizardStepId = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "client" | "result";
 
 /** Legacy step ids from older drafts (localStorage / server metadata). */
