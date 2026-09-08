@@ -15,6 +15,7 @@ from app.core.http_errors import (
     raise_unpriced_plates_error,
     raise_validation_client_error,
 )
+from app.services.counterparties_service import CounterpartyValidationError
 from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER
 from app.dependencies.commercial_draft import check_draft_ownership, verify_draft_ownership
 from app.dependencies.plate_context import get_plate_order_context
@@ -77,6 +78,10 @@ def _raise_draft_http(
 ) -> NoReturn:
     if not_found and isinstance(exc, FileNotFoundError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_detail) from exc
+    if isinstance(exc, CounterpartyValidationError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     if plate_parse and isinstance(exc, PlateParseError):
         raise_parse_client_error(exc, where=where)
     if unpriced and isinstance(exc, UnpricedPlatesError):
@@ -422,6 +427,7 @@ def update_draft_meta(
         logistics_cost=payload.logistics_cost,
         pile_logistics_cost=payload.pile_logistics_cost,
         pile_trip_overrides=payload.pile_trip_overrides,
+        counterparty_id=payload.counterparty_id,
     )))
 
 @router.post("/drafts/{draft_id}/calculate", response_model=CommercialDraftDetailsResponse)
@@ -523,6 +529,7 @@ async def create_draft_from_form(
     text: str = Form(default=""), manager_id: int = Form(...), client_name: str = Form(...),
     discount_percent: float = Form(default=0.0), delivery_conditions: str = Form(default=""),
     payment_conditions: str = Form(default=""), image: UploadFile | None = File(default=None),
+    counterparty_id: int | None = Form(default=None),
     user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
     plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
@@ -534,6 +541,7 @@ async def create_draft_from_form(
             client_name=client_name, discount_percent=discount_percent,
             delivery_conditions=delivery_conditions, payment_conditions=payment_conditions,
             owner_user_id=int(user["id"]), plate_order_ctx=plate_order_ctx,
+            counterparty_id=counterparty_id,
         )
     except Exception as exc:
         _raise_draft_http(exc, where="create_draft_from_form", plate_parse=True, not_found=False)

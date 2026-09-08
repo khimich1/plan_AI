@@ -473,6 +473,7 @@ class CommercialWorkflowService:
         payment_conditions: str = "",
         owner_user_id: int,
         plate_order_ctx: PlateOrderContext,
+        counterparty_id: int | None = None,
     ) -> dict[str, Any]:
         draft = await self.create_draft(
             text=text,
@@ -490,6 +491,7 @@ class CommercialWorkflowService:
             conditions_mode=conditions_mode,
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
+            counterparty_id=counterparty_id,
         )
 
     async def update_draft_plates(
@@ -595,6 +597,7 @@ class CommercialWorkflowService:
         logistics_cost: float | None = None,
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict[str, int] | None = None,
+        counterparty_id: int | None = None,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.update_draft_meta(
             draft_id,
@@ -607,6 +610,7 @@ class CommercialWorkflowService:
             logistics_cost=logistics_cost,
             pile_logistics_cost=pile_logistics_cost,
             pile_trip_overrides=pile_trip_overrides,
+            counterparty_id=counterparty_id,
         )
 
     def calculate_draft(self, draft_id: str) -> dict[str, Any]:

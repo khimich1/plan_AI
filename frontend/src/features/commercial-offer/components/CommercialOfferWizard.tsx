@@ -114,6 +114,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const isSimpleProductFlow = productConfig.isSimpleKp;
   const skipClient = shouldSkipClientStep({
     clientName: state.clientName,
+    counterpartyId: state.counterpartyId,
     appendBatches: state.lastDraft?.metadata.append_batches ?? currentDraft?.metadata.append_batches,
     resumeKpId: state.lastDraft?.metadata.resume_kp_id ?? currentDraft?.metadata.resume_kp_id ?? null,
   });
@@ -686,6 +687,10 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const handleClientSubmit = async (payload: {
     managerId: number;
     clientName: string;
+    counterpartyId: number;
+    counterpartyCode1c: string;
+    counterpartyInn: string | null;
+    counterpartyKpp: string | null;
     conditionsMode: "standard" | "custom";
     deliveryConditions: string;
     paymentConditions: string;
@@ -699,6 +704,10 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       type: "set-client-form",
       payload: {
         clientName: payload.clientName,
+        counterpartyId: payload.counterpartyId,
+        counterpartyCode1c: payload.counterpartyCode1c,
+        counterpartyInn: payload.counterpartyInn,
+        counterpartyKpp: payload.counterpartyKpp,
         conditionsMode: payload.conditionsMode,
         deliveryConditions: payload.deliveryConditions,
         paymentConditions: payload.paymentConditions,
@@ -709,6 +718,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         draftId: currentDraft.draft_id,
         managerId: payload.managerId,
         clientName: payload.clientName,
+        counterpartyId: payload.counterpartyId,
         conditionsMode: payload.conditionsMode,
         deliveryConditions: payload.deliveryConditions,
         paymentConditions: payload.paymentConditions,
@@ -1266,6 +1276,10 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         selectedManagerId={state.managerId}
         defaultValues={{
           clientName: state.clientName,
+          counterpartyId: state.counterpartyId,
+          counterpartyCode1c: state.counterpartyCode1c,
+          counterpartyInn: state.counterpartyInn,
+          counterpartyKpp: state.counterpartyKpp,
           conditionsMode: state.conditionsMode,
           deliveryConditions: state.deliveryConditions,
           paymentConditions: state.paymentConditions,

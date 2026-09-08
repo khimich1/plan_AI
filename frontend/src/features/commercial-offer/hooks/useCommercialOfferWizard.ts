@@ -194,6 +194,7 @@ export const useCommercialOfferWizard = () => {
       draftId,
       managerId,
       clientName,
+      counterpartyId,
       discountPercent,
       conditionsMode,
       deliveryConditions,
@@ -205,6 +206,7 @@ export const useCommercialOfferWizard = () => {
       draftId: string;
       managerId?: number | null;
       clientName?: string;
+      counterpartyId?: number | null;
       discountPercent?: number;
       conditionsMode?: "standard" | "custom";
       deliveryConditions?: string;
@@ -216,6 +218,7 @@ export const useCommercialOfferWizard = () => {
       commercialOfferApi.updateDraftMeta(draftId, {
         managerId,
         clientName,
+        counterpartyId,
         discountPercent,
         conditionsMode,
         deliveryConditions,

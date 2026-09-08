@@ -27,6 +27,7 @@ const FULL_WIZARD_STEP_ORDER: Record<ProductType, WizardStepId[]> = {
 
 export type SkipClientStepInput = {
   clientName?: string | null;
+  counterpartyId?: number | null;
   appendBatches?: ReadonlyArray<unknown> | null;
   resumeKpId?: number | null;
 };
@@ -35,17 +36,18 @@ export type WizardStepOrderOptions = {
   skipClient?: boolean;
 };
 
-/** Aligns with BE CommercialWizardStepService.should_skip_client_step. */
+/** Aligns with BE CommercialWizardStepService.should_skip_client_step:
+ * new KP skips only when counterpartyId is set; append/resume unchanged.
+ * Free-text clientName does not skip. */
 export const shouldSkipClientStep = (input: SkipClientStepInput): boolean => {
-  const clientName = String(input.clientName ?? "").trim();
-  if (clientName) {
-    return true;
-  }
   const appendBatches = input.appendBatches ?? [];
   if (appendBatches.length > 0) {
     return true;
   }
-  return input.resumeKpId != null;
+  if (input.resumeKpId != null) {
+    return true;
+  }
+  return input.counterpartyId != null;
 };
 
 export const getProductInputStep = (productType: ProductType): WizardStepId =>

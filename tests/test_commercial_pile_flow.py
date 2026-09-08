@@ -10,6 +10,7 @@ import sqlite3
 from fastapi.testclient import TestClient
 
 from core.kp_db_schema import init_schema
+from tests.helpers import kp_db_fixtures as fx
 
 from tests.helpers.csrf import CsrfAwareTestClient
 
@@ -216,9 +217,9 @@ def test_pile_draft_calculate_and_generate_files(
         f"/api/v1/commercial/drafts/{draft_id}/meta",
         json={
             "manager_id": 1,
-            "client_name": "ООО Сваи",
             "discount_percent": 0,
             "conditions_mode": "standard",
+            **fx.client_meta_payload("ООО Сваи"),
         },
     )
     assert meta.status_code == 200, meta.text
@@ -281,6 +282,7 @@ def test_pile_draft_save_to_archive(
             "manager_id": 1,
             "client_name": "ООО Сваи",
             "conditions_mode": "standard",
+            "counterparty_id": fx.seed_test_counterparty(str(plita_db)),
         },
     )
     client.post(f"/api/v1/commercial/drafts/{draft_id}/calculate")
@@ -382,8 +384,8 @@ def test_pile_draft_calculate_rejects_unknown_mark(
         f"/api/v1/commercial/drafts/{draft_id}/meta",
         json={
             "manager_id": 1,
-            "client_name": "ООО Сваи",
             "conditions_mode": "standard",
+            **fx.client_meta_payload("ООО Сваи"),
         },
     )
     assert meta.status_code == 200, meta.text

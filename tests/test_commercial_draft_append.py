@@ -29,6 +29,7 @@ from app.schemas.commercial import (
 )
 from app.security.session import create_session_token
 from app.services.commercial_workflow_service import CommercialWorkflowService
+from tests.helpers import kp_db_fixtures as fx
 from tests.helpers.auth_fixtures import patch_auth_users
 from tests.helpers.csrf import CsrfAwareTestClient
 
@@ -577,9 +578,9 @@ def _patch_client_meta(
         f"/api/v1/commercial/drafts/{draft_id}/meta",
         json={
             "manager_id": 1,
-            "client_name": client_name,
             "discount_percent": discount_percent,
             "conditions_mode": "standard",
+            **fx.client_meta_payload(client_name),
         },
     )
     assert meta.status_code == 200, meta.text

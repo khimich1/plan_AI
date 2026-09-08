@@ -410,6 +410,7 @@ describe("OfferDetailsDrawer archive constructor CTAs", () => {
     });
 
     expect(mockDispatch).not.toHaveBeenCalledWith({ type: "set-step", step: "result" });
+    expect(mockDispatch).not.toHaveBeenCalledWith({ type: "set-save-result", payload: null });
 
     const hydrateIndex = mockDispatch.mock.calls.findIndex(
       (call) => call[0]?.type === "hydrate-draft",
@@ -456,6 +457,40 @@ describe("OfferDetailsDrawer archive constructor CTAs", () => {
       (call) => call[0]?.type === "set-step" && call[0]?.step === "result",
     );
     expect(hydrateIndex).toBeGreaterThanOrEqual(0);
+    expect(setStepIndex).toBeGreaterThan(hydrateIndex);
+  });
+
+  it("Редактировать сбрасывает lastSaveResult до hydrate-draft и set-step result", async () => {
+    const draft = makeResumeDraft("draft-edit-save-flag");
+    mockResume.mockResolvedValue(draft);
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+
+    await waitFor(() => {
+      expect(mockDispatch).toHaveBeenCalledWith({ type: "set-save-result", payload: null });
+      expect(mockDispatch).toHaveBeenCalledWith({ type: "hydrate-draft", payload: draft });
+      expect(mockDispatch).toHaveBeenCalledWith({ type: "set-step", step: "result" });
+    });
+
+    const resetIndex = mockDispatch.mock.calls.findIndex(
+      (call) => call[0]?.type === "set-save-result" && call[0]?.payload === null,
+    );
+    const hydrateIndex = mockDispatch.mock.calls.findIndex(
+      (call) => call[0]?.type === "hydrate-draft",
+    );
+    const setStepIndex = mockDispatch.mock.calls.findIndex(
+      (call) => call[0]?.type === "set-step" && call[0]?.step === "result",
+    );
+    expect(resetIndex).toBeGreaterThanOrEqual(0);
+    expect(hydrateIndex).toBeGreaterThan(resetIndex);
     expect(setStepIndex).toBeGreaterThan(hydrateIndex);
   });
 
@@ -546,5 +581,42 @@ describe("OfferDetailsDrawer archive constructor CTAs", () => {
     expect(screen.queryByPlaceholderText("Например, 2 000 000")).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Например, 5")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "OK" })).not.toBeInTheDocument();
+  });
+});
+
+describe("OfferDetailsDrawer counterparty requisites", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("does not show INN/KPP when the offer has no requisites", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("ООО Тест")).toBeInTheDocument();
+    expect(screen.queryByText(/ИНН /)).not.toBeInTheDocument();
+  });
+
+  it("shows INN/KPP next to the client when they are present", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        customer_inn: "7701234567",
+        customer_kpp: "770101001",
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("ИНН 7701234567 / КПП 770101001")).toBeInTheDocument();
   });
 });

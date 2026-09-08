@@ -277,6 +277,7 @@ describe("useCommercialOfferWizard", () => {
     expect(commercialOfferApi.updateDraftMeta).toHaveBeenCalledWith("draft-test-1", {
       managerId: undefined,
       clientName: undefined,
+      counterpartyId: undefined,
       discountPercent: 5,
       conditionsMode: undefined,
       deliveryConditions: undefined,

@@ -59,7 +59,12 @@ export const parseApiErrorPayload = (
   }
 
   if (typeof record.detail === "string" && record.detail.trim()) {
-    return { message: record.detail };
+    const rest = { ...record };
+    delete rest.detail;
+    return {
+      message: record.detail,
+      details: Object.keys(rest).length > 0 ? rest : undefined,
+    };
   }
 
   return null;

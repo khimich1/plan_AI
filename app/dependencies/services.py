@@ -78,6 +78,13 @@ def get_carrier_service() -> CarrierService:
     return CarrierService(db_path=KpRepository().db_path)
 
 
+def get_counterparties_service() -> CounterpartiesService:
+    from app.repositories.kp_repository import KpRepository
+    from app.services.counterparties_service import CounterpartiesService
+
+    return CounterpartiesService(db_path=KpRepository().db_path)
+
+
 def get_commercial_service() -> CommercialService:
     return CommercialService()
 
