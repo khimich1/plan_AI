@@ -80,7 +80,7 @@ export const useCommercialOfferWizard = () => {
 
   const updatePlatesMutation = useMutation({
     mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftPlates(draftId, { text, image, mode }),
+      commercialOfferApi.updateDraftInput(draftId, "plates", { text, image, mode }),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
@@ -89,7 +89,7 @@ export const useCommercialOfferWizard = () => {
 
   const updatePilesMutation = useMutation({
     mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftPiles(draftId, { text, image, mode }),
+      commercialOfferApi.updateDraftInput(draftId, "piles", { text, image, mode }),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
@@ -98,7 +98,7 @@ export const useCommercialOfferWizard = () => {
 
   const updateStepsMutation = useMutation({
     mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftSteps(draftId, { text, image, mode }),
+      commercialOfferApi.updateDraftInput(draftId, "steps", { text, image, mode }),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
@@ -107,7 +107,7 @@ export const useCommercialOfferWizard = () => {
 
   const updateMarchesMutation = useMutation({
     mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftMarches(draftId, { text, image, mode }),
+      commercialOfferApi.updateDraftInput(draftId, "marches", { text, image, mode }),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
@@ -116,7 +116,7 @@ export const useCommercialOfferWizard = () => {
 
   const updateBridgePilesMutation = useMutation({
     mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftBridgePiles(draftId, { text, image, mode }),
+      commercialOfferApi.updateDraftInput(draftId, "bridge_piles", { text, image, mode }),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
@@ -125,7 +125,7 @@ export const useCommercialOfferWizard = () => {
 
   const updateFbsMutation = useMutation({
     mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftFbs(draftId, { text, image, mode }),
+      commercialOfferApi.updateDraftInput(draftId, "fbs", { text, image, mode }),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
@@ -141,7 +141,7 @@ export const useCommercialOfferWizard = () => {
       draftId: string;
       instruction: string;
       image: File | null;
-    }) => commercialOfferApi.applyAiPlates(draftId, { instruction, image }),
+    }) => commercialOfferApi.applyAiInstruction(draftId, "plates", { instruction, image }),
     onSuccess: (draft, variables) => {
       dispatch({ type: "start-batch-review", payload: draft });
       setDraftCache(variables.draftId, draft);
@@ -158,7 +158,7 @@ export const useCommercialOfferWizard = () => {
       draftId: string;
       instruction: string;
       image: File | null;
-    }) => commercialOfferApi.applyAiPiles(draftId, { instruction, image }),
+    }) => commercialOfferApi.applyAiInstruction(draftId, "piles", { instruction, image }),
     onSuccess: (draft, variables) => {
       dispatch({ type: "start-batch-review", payload: draft });
       setDraftCache(variables.draftId, draft);
@@ -175,7 +175,7 @@ export const useCommercialOfferWizard = () => {
       draftId: string;
       instruction: string;
       image: File | null;
-    }) => commercialOfferApi.applyAiSteps(draftId, { instruction, image }),
+    }) => commercialOfferApi.applyAiInstruction(draftId, "steps", { instruction, image }),
     onSuccess: (draft, variables) => {
       dispatch({ type: "start-batch-review", payload: draft });
       setDraftCache(variables.draftId, draft);
@@ -192,7 +192,7 @@ export const useCommercialOfferWizard = () => {
       draftId: string;
       instruction: string;
       image: File | null;
-    }) => commercialOfferApi.applyAiMarches(draftId, { instruction, image }),
+    }) => commercialOfferApi.applyAiInstruction(draftId, "marches", { instruction, image }),
     onSuccess: (draft, variables) => {
       dispatch({ type: "start-batch-review", payload: draft });
       setDraftCache(variables.draftId, draft);
@@ -209,7 +209,7 @@ export const useCommercialOfferWizard = () => {
       draftId: string;
       instruction: string;
       image: File | null;
-    }) => commercialOfferApi.applyAiBridgePiles(draftId, { instruction, image }),
+    }) => commercialOfferApi.applyAiInstruction(draftId, "bridge_piles", { instruction, image }),
     onSuccess: (draft, variables) => {
       dispatch({ type: "start-batch-review", payload: draft });
       setDraftCache(variables.draftId, draft);
@@ -226,7 +226,7 @@ export const useCommercialOfferWizard = () => {
       draftId: string;
       instruction: string;
       image: File | null;
-    }) => commercialOfferApi.applyAiFbs(draftId, { instruction, image }),
+    }) => commercialOfferApi.applyAiInstruction(draftId, "fbs", { instruction, image }),
     onSuccess: (draft, variables) => {
       dispatch({ type: "start-batch-review", payload: draft });
       setDraftCache(variables.draftId, draft);
@@ -236,7 +236,7 @@ export const useCommercialOfferWizard = () => {
 
   const updatePileGradesMutation = useMutation({
     mutationFn: ({ draftId, concreteGrade }: { draftId: string; concreteGrade: string }) =>
-      commercialOfferApi.updatePileGrades(draftId, concreteGrade),
+      commercialOfferApi.updateGrades(draftId, "piles", concreteGrade),
     onSuccess: (draft, variables) => {
       dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
       setDraftCache(variables.draftId, draft);
@@ -246,7 +246,7 @@ export const useCommercialOfferWizard = () => {
 
   const updateMarchGradesMutation = useMutation({
     mutationFn: ({ draftId, concreteGrade }: { draftId: string; concreteGrade: string }) =>
-      commercialOfferApi.updateMarchGrades(draftId, concreteGrade),
+      commercialOfferApi.updateGrades(draftId, "marches", concreteGrade),
     onSuccess: (draft, variables) => {
       dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
       setDraftCache(variables.draftId, draft);
@@ -256,7 +256,7 @@ export const useCommercialOfferWizard = () => {
 
   const updateBridgePileGradesMutation = useMutation({
     mutationFn: ({ draftId, concreteGrade }: { draftId: string; concreteGrade: string }) =>
-      commercialOfferApi.updateBridgePileGrades(draftId, concreteGrade),
+      commercialOfferApi.updateGrades(draftId, "bridge_piles", concreteGrade),
     onSuccess: (draft, variables) => {
       dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
       setDraftCache(variables.draftId, draft);
@@ -266,7 +266,7 @@ export const useCommercialOfferWizard = () => {
 
   const updateFbsGradesMutation = useMutation({
     mutationFn: ({ draftId, concreteGrade }: { draftId: string; concreteGrade: string }) =>
-      commercialOfferApi.updateFbsGrades(draftId, concreteGrade),
+      commercialOfferApi.updateGrades(draftId, "fbs", concreteGrade),
     onSuccess: (draft, variables) => {
       dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
       setDraftCache(variables.draftId, draft);

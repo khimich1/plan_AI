@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import { httpClient } from "@/shared/api/httpClient";
-import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
+import type { CommercialDraftDetails, ProductType } from "@/features/commercial-offer/types/commercialOffer";
 
 vi.mock("@/shared/api/httpClient", () => ({
   httpClient: {
@@ -147,5 +148,68 @@ describe("commercialOfferApi.ocrPage", () => {
     expect(body.has("text")).toBe(false);
     expect(mockPatch).not.toHaveBeenCalled();
     expect(result).toEqual(payload);
+  });
+});
+
+const ALL_PRODUCT_TYPES = Object.keys(PRODUCT_TYPE_CONFIG) as ProductType[];
+
+describe("commercialOfferApi.updateDraftInput", () => {
+  it.each(ALL_PRODUCT_TYPES)("PATCHes /%s via config endpointSegment without product_type in body", async (productType) => {
+    mockPatch.mockResolvedValue(draftStub);
+    const image = new File(["png"], "list.png", { type: "image/png" });
+    const segment = PRODUCT_TYPE_CONFIG[productType].endpointSegment;
+
+    const result = await commercialOfferApi.updateDraftInput("draft-1", productType, {
+      text: "марка 1",
+      image,
+      mode: "append",
+    });
+
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+    const [url, body] = mockPatch.mock.calls[0] as [string, FormData];
+    expect(url).toBe(`/api/v1/commercial/drafts/draft-1/${segment}`);
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get("text")).toBe("марка 1");
+    expect(body.get("image")).toBe(image);
+    expect(body.get("mode")).toBe("append");
+    expect(body.has("product_type")).toBe(false);
+    expect(result).toEqual(draftStub);
+  });
+});
+
+describe("commercialOfferApi.applyAiInstruction", () => {
+  it.each(ALL_PRODUCT_TYPES)("POSTs /%s/ai via config endpointSegment", async (productType) => {
+    mockPost.mockResolvedValue(draftStub);
+    const image = new File(["png"], "ai.png", { type: "image/png" });
+    const segment = PRODUCT_TYPE_CONFIG[productType].endpointSegment;
+
+    const result = await commercialOfferApi.applyAiInstruction("draft-1", productType, {
+      instruction: "исправь количество",
+      image,
+    });
+
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    const [url, body] = mockPost.mock.calls[0] as [string, FormData];
+    expect(url).toBe(`/api/v1/commercial/drafts/draft-1/${segment}/ai`);
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get("instruction")).toBe("исправь количество");
+    expect(body.get("image")).toBe(image);
+    expect(result).toEqual(draftStub);
+  });
+});
+
+describe("commercialOfferApi.updateGrades", () => {
+  it.each(ALL_PRODUCT_TYPES)("PATCHes /%s/grades with concrete_grade JSON", async (productType) => {
+    mockPatch.mockResolvedValue(draftStub);
+    const segment = PRODUCT_TYPE_CONFIG[productType].endpointSegment;
+
+    const result = await commercialOfferApi.updateGrades("draft-1", productType, "B25");
+
+    expect(mockPatch).toHaveBeenCalledWith(
+      `/api/v1/commercial/drafts/draft-1/${segment}/grades`,
+      JSON.stringify({ concrete_grade: "B25" }),
+      JSON_HEADERS,
+    );
+    expect(result).toEqual(draftStub);
   });
 });
