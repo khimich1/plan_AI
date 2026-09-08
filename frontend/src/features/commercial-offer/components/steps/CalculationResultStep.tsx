@@ -51,11 +51,8 @@ const tdStyle = { padding: "0.75rem", borderBottom: "1px solid #f2f4f7" };
 
 type CalculationResultStepProps = {
   draft: CommercialDraftDetails;
-  isPileDraft?: boolean;
-  isStepDraft?: boolean;
-  isMarchDraft?: boolean;
-  isBridgePileDraft?: boolean;
-  isFbsDraft?: boolean;
+  /** Resolved wizard product type (falls back to draft.metadata.product_type when omitted). */
+  draftProductType?: ProductType;
   isSimpleKpDraft?: boolean;
   breakdownTables: BreakdownTable[];
   isBreakdownLoading: boolean;
@@ -86,11 +83,7 @@ type CalculationResultStepProps = {
 
 export const CalculationResultStep = ({
   draft,
-  isPileDraft = false,
-  isStepDraft = false,
-  isMarchDraft = false,
-  isBridgePileDraft = false,
-  isFbsDraft = false,
+  draftProductType,
   isSimpleKpDraft = false,
   breakdownTables,
   isBreakdownLoading,
@@ -128,7 +121,9 @@ export const CalculationResultStep = ({
   const [targetSumError, setTargetSumError] = useState<string | null>(null);
   const [selectedPlateName, setSelectedPlateName] = useState<string | null>(null);
   const [pendingDiscountPercent, setPendingDiscountPercent] = useState<number | null>(null);
-  const isGradeSimpleDraft = isPileDraft || isMarchDraft || isBridgePileDraft || isFbsDraft;
+  const draftConfig = getProductTypeConfig(draftProductType ?? draft.metadata.product_type);
+  const isGradeSimpleDraft = draftConfig.supportsGrades;
+  const isStepsProduct = draftConfig.productType === "steps";
   // Prefer live query rows: after line mutate draft.metadata.breakdown_tables_count is 0 until
   // draft refetch catches up, while GET /breakdown may already have regenerated tables.
   const breakdownAvailable =
@@ -407,7 +402,7 @@ export const CalculationResultStep = ({
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {(isStepDraft
+              {(isStepsProduct
                 ? ["№", "Марка", "Кол-во", "Цена", "Сумма"]
                 : isGradeSimpleDraft
                   ? ["№", "Марка", "Класс", "Кол-во", "Цена", "Сумма"]
@@ -447,7 +442,7 @@ export const CalculationResultStep = ({
                 </td>
               );
 
-              if (isStepDraft) {
+              if (isStepsProduct) {
                 return (
                   <tr key={lineId ?? `${itemName}-${index}`}>
                     <td style={tdStyle}>{index + 1}</td>

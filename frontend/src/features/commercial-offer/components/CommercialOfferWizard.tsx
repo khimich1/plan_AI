@@ -82,11 +82,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     deleteDraftLineMutation,
     patchDraftLineMutation,
     restoreDraftLinesMutation,
-    isPileDraft,
-    isStepDraft,
-    isMarchDraft,
-    isBridgePileDraft,
-    isFbsDraft,
+    draftProductType,
     isSimpleKpDraft,
   } = useCommercialOfferWizard();
   const navigate = useNavigate();
@@ -1286,11 +1282,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         breakdownTables={breakdownQuery.data?.items ?? []}
         isBreakdownLoading={breakdownQuery.isPending || breakdownQuery.isFetching}
         errorMessage={stepError}
-        isPileDraft={isPileDraft}
-        isStepDraft={isStepDraft}
-        isMarchDraft={isMarchDraft}
-        isBridgePileDraft={isBridgePileDraft}
-        isFbsDraft={isFbsDraft}
+        draftProductType={draftProductType}
         isSimpleKpDraft={isSimpleKpDraft}
         isGeneratingFiles={generateFilesMutation.isPending}
         isGeneratingSchema={generateSchemaMutation.isPending}

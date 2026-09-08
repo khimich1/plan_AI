@@ -5,6 +5,7 @@ import { CalculationResultStep } from "@/features/commercial-offer/components/st
 import type {
   CommercialDraftDetails,
   CommercialDraftMetadata,
+  ProductType,
 } from "@/features/commercial-offer/types/commercialOffer";
 
 /**
@@ -104,11 +105,7 @@ function renderResultStep(
   draft: CommercialDraftDetails,
   handlers: ResultStepAppendHandlers = {},
   stepFlags: {
-    isPileDraft?: boolean;
-    isStepDraft?: boolean;
-    isMarchDraft?: boolean;
-    isBridgePileDraft?: boolean;
-    isFbsDraft?: boolean;
+    draftProductType?: ProductType;
     isSimpleKpDraft?: boolean;
     breakdownTables?: ComponentProps<typeof CalculationResultStep>["breakdownTables"];
     isBreakdownLoading?: boolean;
@@ -471,7 +468,7 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
         },
       }),
       {},
-      { isPileDraft: true, isSimpleKpDraft: true },
+      { draftProductType: "piles", isSimpleKpDraft: true },
     );
 
     const tripInput = screen.getByPlaceholderText("Стоимость одного рейса");
@@ -579,7 +576,7 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
         },
       }),
       {},
-      { isBridgePileDraft: true, isSimpleKpDraft: true },
+      { draftProductType: "bridge_piles", isSimpleKpDraft: true },
     );
 
     expect(

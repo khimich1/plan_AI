@@ -30,11 +30,6 @@ export const useCommercialOfferWizard = () => {
 
   const currentDraft = draftQuery.data ?? state.lastDraft;
   const draftProductType = resolveDraftProductType(currentDraft?.metadata.product_type ?? state.productType);
-  const isPileDraft = draftProductType === "piles";
-  const isStepDraft = draftProductType === "steps";
-  const isMarchDraft = draftProductType === "marches";
-  const isBridgePileDraft = draftProductType === "bridge_piles";
-  const isFbsDraft = draftProductType === "fbs";
   const isSimpleKpDraft = isSimpleKpProductType(draftProductType);
 
   const breakdownQuery = useQuery({
@@ -354,11 +349,7 @@ export const useCommercialOfferWizard = () => {
     patchDraftLineMutation,
     restoreDraftLinesMutation,
     currentDraft,
-    isPileDraft,
-    isStepDraft,
-    isMarchDraft,
-    isBridgePileDraft,
-    isFbsDraft,
+    draftProductType,
     isSimpleKpDraft,
   };
 };
