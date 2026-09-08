@@ -30,6 +30,12 @@ import {
   mapLegacyWizardStep,
   shouldSkipClientStep,
 } from "@/features/commercial-offer/lib/wizardStepOrder";
+import {
+  getProductTypeConfig,
+  INGEST_REQUIRED_MESSAGE,
+  PRODUCT_TYPE_CONFIG,
+  RESOLVE_GATE_MESSAGES,
+} from "@/features/commercial-offer/lib/productTypeConfig";
 
 import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
 import {
@@ -123,12 +129,11 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const sourceImageQueue = useSourceImageQueue();
 
   const productType = state.productType;
-  const isPileFlow = productType === "piles";
-  const isStepFlow = productType === "steps";
+  const productConfig = getProductTypeConfig(productType);
   const isMarchFlow = productType === "marches";
   const isBridgePileFlow = productType === "bridge_piles";
   const isFbsFlow = productType === "fbs";
-  const isSimpleProductFlow = isPileFlow || isStepFlow || isMarchFlow || isBridgePileFlow || isFbsFlow;
+  const isSimpleProductFlow = productConfig.isSimpleKp;
   const skipClient = shouldSkipClientStep({
     clientName: state.clientName,
     appendBatches: state.lastDraft?.metadata.append_batches ?? currentDraft?.metadata.append_batches,
@@ -323,17 +328,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     const hasPages = multiPage.pages.length > 0;
     if (!state.sourceText.trim() && !hasPages) {
       setStepError(
-        isFbsFlow
-          ? "Введите текст списка ФБС или загрузите изображение."
-          : isBridgePileFlow
-          ? "Введите текст списка мостовых свай или загрузите изображение."
-          : isMarchFlow
-          ? "Введите текст списка маршей или загрузите изображение."
-          : isStepFlow
-          ? "Введите текст списка ступеней или загрузите изображение."
-          : isPileFlow
-            ? "Введите текст списка свай или загрузите изображение."
-            : "Введите текст списка плит или загрузите изображение.",
+        `Введите текст списка ${productConfig.labels.nounGenitivePlural} или загрузите изображение.`,
       );
       return;
     }
@@ -387,13 +382,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
     if (!currentDraft?.draft_id) {
       setStepError(
-        isMarchFlow
-          ? "Сначала распознайте список маршей, затем используйте помощника."
-          : isStepFlow
-          ? "Сначала распознайте список ступеней, затем используйте помощника."
-          : isPileFlow
-            ? "Сначала распознайте список свай, затем используйте помощника."
-            : "Сначала распознайте список плит, затем используйте помощника.",
+        `Сначала распознайте список ${productConfig.labels.nounGenitivePlural}, затем используйте помощника.`,
       );
       return;
     }
@@ -548,7 +537,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
   };
 
-  const handleFinishPlates = async () => {
+  const handleFinishInput = async () => {
     setStepError(null);
     if (state.pendingBatchReview) {
       setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
@@ -565,150 +554,20 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
       if (serverMsgs.length > 0) {
         setStepError(serverMsgs.join(" "));
-      } else if (draft.wizard_state.next_required_action === "ingest_plates") {
-        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
-      } else if (draft.wizard_state.next_required_action === "resolve_wide_plates") {
-        setStepError("Сначала примите решение по позициям шире стандартной.");
-      } else if (draft.wizard_state.next_required_action === "resolve_invalid_widths") {
-        setStepError("Нестандартная ширина: замените на заводской рез или исключите позицию.");
-      } else if (draft.wizard_state.next_required_action === "resolve_unpriced_plates") {
-        setStepError("Сначала примите решение по позициям без цены в прайсе.");
+      } else if (draft.wizard_state.next_required_action === productConfig.ingestAction) {
+        setStepError(INGEST_REQUIRED_MESSAGE);
       } else {
-        setStepError("Нельзя перейти дальше — проверьте список плит и повторите.");
-      }
-      return;
-    }
-    await proceedFromInputStep(next);
-  };
-
-  const handleFinishPiles = async () => {
-    setStepError(null);
-    if (state.pendingBatchReview) {
-      setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
-      return;
-    }
-    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
-      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
-      return;
-    }
-
-    const draft = currentDraft;
-    const next = draft.wizard_state.can_proceed_to[0];
-    if (!next) {
-      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
-      if (serverMsgs.length > 0) {
-        setStepError(serverMsgs.join(" "));
-      } else if (draft.wizard_state.next_required_action === "ingest_piles") {
-        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
-      } else {
-        setStepError("Нельзя перейти дальше — проверьте список свай и повторите.");
-      }
-      return;
-    }
-    await proceedFromInputStep(next);
-  };
-
-  const handleFinishSteps = async () => {
-    setStepError(null);
-    if (state.pendingBatchReview) {
-      setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
-      return;
-    }
-    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
-      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
-      return;
-    }
-
-    const draft = currentDraft;
-    const next = draft.wizard_state.can_proceed_to[0];
-    if (!next) {
-      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
-      if (serverMsgs.length > 0) {
-        setStepError(serverMsgs.join(" "));
-      } else if (draft.wizard_state.next_required_action === "ingest_steps") {
-        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
-      } else {
-        setStepError("Нельзя перейти дальше — проверьте список ступеней и повторите.");
-      }
-      return;
-    }
-    await proceedFromInputStep(next);
-  };
-
-  const handleFinishMarches = async () => {
-    setStepError(null);
-    if (state.pendingBatchReview) {
-      setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
-      return;
-    }
-    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
-      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
-      return;
-    }
-
-    const draft = currentDraft;
-    const next = draft.wizard_state.can_proceed_to[0];
-    if (!next) {
-      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
-      if (serverMsgs.length > 0) {
-        setStepError(serverMsgs.join(" "));
-      } else if (draft.wizard_state.next_required_action === "ingest_marches") {
-        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
-      } else {
-        setStepError("Нельзя перейти дальше — проверьте список маршей и повторите.");
-      }
-      return;
-    }
-    await proceedFromInputStep(next);
-  };
-const handleFinishBridgePiles = async () => {
-    setStepError(null);
-    if (state.pendingBatchReview) {
-      setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
-      return;
-    }
-    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
-      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
-      return;
-    }
-
-    const draft = currentDraft;
-    const next = draft.wizard_state.can_proceed_to[0];
-    if (!next) {
-      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
-      if (serverMsgs.length > 0) {
-        setStepError(serverMsgs.join(" "));
-      } else if (draft.wizard_state.next_required_action === "ingest_bridge_piles") {
-        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
-      } else {
-        setStepError("Нельзя перейти дальше — проверьте список мостовых свай и повторите.");
-      }
-      return;
-    }
-    await proceedFromInputStep(next);
-  };
-
-  const handleFinishFbs = async () => {
-    setStepError(null);
-    if (state.pendingBatchReview) {
-      setStepError("Сначала подтвердите список текущего источника — нажмите «Список верен».");
-      return;
-    }
-    if (!currentDraft?.wizard_state || !currentDraft.draft_id) {
-      setStepError("Не удалось загрузить данные черновика. Обновите страницу или начните заново.");
-      return;
-    }
-
-    const draft = currentDraft;
-    const next = draft.wizard_state.can_proceed_to[0];
-    if (!next) {
-      const serverMsgs = (draft.wizard_state.validation_errors ?? []).filter(Boolean);
-      if (serverMsgs.length > 0) {
-        setStepError(serverMsgs.join(" "));
-      } else if (draft.wizard_state.next_required_action === "ingest_fbs") {
-        setStepError("Сначала распознайте и получите хотя бы одну позицию в заказе.");
-      } else {
-        setStepError("Нельзя перейти дальше — проверьте список ФБС и повторите.");
+        const action = draft.wizard_state.next_required_action;
+        const resolveMessage =
+          action === "resolve_wide_plates" ||
+          action === "resolve_invalid_widths" ||
+          action === "resolve_unpriced_plates"
+            ? RESOLVE_GATE_MESSAGES[action]
+            : undefined;
+        setStepError(
+          resolveMessage ??
+            `Нельзя перейти дальше — проверьте список ${productConfig.labels.nounGenitivePlural} и повторите.`,
+        );
       }
       return;
     }
@@ -1283,13 +1142,7 @@ const handleFinishBridgePiles = async () => {
     if (!canNavigateToStep(step)) {
       if (!currentDraft && step !== inputStep) {
         setStepError(
-          isMarchFlow
-            ? "Сначала распознайте и обработайте список маршей."
-            : isStepFlow
-            ? "Сначала распознайте и обработайте список ступеней."
-            : isPileFlow
-              ? "Сначала распознайте и обработайте список свай."
-              : "Сначала распознайте и обработайте список плит.",
+          `Сначала распознайте и обработайте список ${productConfig.labels.nounGenitivePlural}.`,
         );
         return;
       }
@@ -1403,7 +1256,7 @@ const handleFinishBridgePiles = async () => {
         onRerecognize={() => void handleRerecognize()}
         isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishFbs={() => void handleFinishFbs()}
+        onFinishFbs={() => void handleFinishInput()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
         onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
         onReset={handleCreateNewOffer}
@@ -1441,7 +1294,7 @@ const handleFinishBridgePiles = async () => {
         onRerecognize={() => void handleRerecognize()}
         isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishBridgePiles={() => void handleFinishBridgePiles()}
+        onFinishBridgePiles={() => void handleFinishInput()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
         onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
         onReset={handleCreateNewOffer}
@@ -1479,7 +1332,7 @@ const handleFinishBridgePiles = async () => {
         onRerecognize={() => void handleRerecognize()}
         isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishMarches={() => void handleFinishMarches()}
+        onFinishMarches={() => void handleFinishInput()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
         onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
         onReset={handleCreateNewOffer}
@@ -1516,7 +1369,7 @@ const handleFinishBridgePiles = async () => {
         onRerecognize={() => void handleRerecognize()}
         isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishSteps={() => void handleFinishSteps()}
+        onFinishSteps={() => void handleFinishInput()}
         onReset={handleCreateNewOffer}
         lineRowHandlers={lineRowHandlers}
       />
@@ -1552,7 +1405,7 @@ const handleFinishBridgePiles = async () => {
         onRerecognize={() => void handleRerecognize()}
         isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishPiles={() => void handleFinishPiles()}
+        onFinishPiles={() => void handleFinishInput()}
         onApplyGradeToAll={(grade) => void handleApplyGradeToAll(grade)}
         onLineGradeChange={(lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)}
         onReset={handleCreateNewOffer}
@@ -1598,7 +1451,7 @@ const handleFinishBridgePiles = async () => {
         onRerecognize={() => void handleRerecognize()}
         isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
-        onFinishPlates={() => void handleFinishPlates()}
+        onFinishPlates={() => void handleFinishInput()}
         onWidePlateDecisionChange={(lineId, action, replacementText) =>
           dispatch({ type: "set-wide-action", lineId, action, replacementText })
         }
@@ -1731,17 +1584,9 @@ const handleFinishBridgePiles = async () => {
       if (!raw || seen.has(raw as ProductType)) {
         continue;
       }
-      // Only known product types appear as "already in KP".
-      if (
-        raw === "plates" ||
-        raw === "piles" ||
-        raw === "steps" ||
-        raw === "marches" ||
-        raw === "bridge_piles" ||
-        raw === "fbs"
-      ) {
-        seen.add(raw);
-        ordered.push(raw);
+      if (Object.prototype.hasOwnProperty.call(PRODUCT_TYPE_CONFIG, raw)) {
+        seen.add(raw as ProductType);
+        ordered.push(raw as ProductType);
       }
     }
     return ordered;
