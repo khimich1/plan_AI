@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType, type WheelEvent } from "react";
+import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
 import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
@@ -9,11 +9,7 @@ import type {
   SimpleKpProductType,
 } from "@/features/commercial-offer/types/commercialOffer";
 import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
-import { KpBridgePilePreviewPanel } from "@/features/commercial-offer/components/KpBridgePilePreviewPanel";
-import { KpFbsPreviewPanel } from "@/features/commercial-offer/components/KpFbsPreviewPanel";
-import { KpMarchPreviewPanel } from "@/features/commercial-offer/components/KpMarchPreviewPanel";
-import { KpPilePreviewPanel } from "@/features/commercial-offer/components/KpPilePreviewPanel";
-import { KpStepPreviewPanel } from "@/features/commercial-offer/components/KpStepPreviewPanel";
+import { KpGradedPreviewPanel } from "@/features/commercial-offer/components/KpGradedPreviewPanel";
 import { PlateListEditor } from "@/features/commercial-offer/components/PlateListEditor";
 import {
   resolveSourceSubmitDisabled,
@@ -78,24 +74,6 @@ type SimpleProductInputStepProps = {
   onLineGradeChange?: (lineIndex: number, grade: string) => void;
   onReset: () => void;
   lineRowHandlers?: LineRowHandlers;
-};
-
-/** Transient (increment 2): per-type panels until KpGradedPreviewPanel lands in increment 3. */
-type SimplePreviewPanelProps = {
-  draft: CommercialDraftDetails;
-  normalizedText: string;
-  isUpdatingGrades?: boolean;
-  onApplyGradeToAll?: (grade: string) => void;
-  onLineGradeChange?: (lineIndex: number, grade: string) => void;
-  lineRowHandlers?: LineRowHandlers;
-};
-
-const SIMPLE_PREVIEW_PANELS: Record<SimpleKpProductType, ComponentType<SimplePreviewPanelProps>> = {
-  piles: KpPilePreviewPanel,
-  steps: KpStepPreviewPanel,
-  marches: KpMarchPreviewPanel,
-  bridge_piles: KpBridgePilePreviewPanel,
-  fbs: KpFbsPreviewPanel,
 };
 
 const IMAGE_ZOOM_MIN = 0.5;
@@ -234,8 +212,6 @@ export const SimpleProductInputStep = ({
     const direction = event.deltaY < 0 ? 1 : -1;
     setImageZoom((current) => clampImageZoom(Number((current + direction * IMAGE_ZOOM_STEP).toFixed(2))));
   };
-
-  const PreviewPanel = SIMPLE_PREVIEW_PANELS[productType];
 
   const sourceInputCard = (
     <SourceInputCard
@@ -486,7 +462,9 @@ export const SimpleProductInputStep = ({
           {!isBatchReviewMode && draft && (
             <>
               <SourceImageQueueControls items={sourceQueue} />
-              <PreviewPanel
+              <KpGradedPreviewPanel
+                key={productType}
+                productType={productType}
                 draft={draft}
                 normalizedText={normalizedText}
                 isUpdatingGrades={isUpdatingGrades}

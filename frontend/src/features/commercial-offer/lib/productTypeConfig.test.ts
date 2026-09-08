@@ -156,6 +156,34 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.aiPlaceholder).toBe("Например: убери строки с B15");
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.aiPlaceholder).toBe("Например: убери строки с B15");
   });
+
+  it("keeps the exact preview panel subtitles", () => {
+    expect(PRODUCT_TYPE_CONFIG.plates.labels.previewSubtitle).toBe(
+      "Наименование, количество и цена — как в документе. Скидка и доставка учитываются позже.",
+    );
+    expect(PRODUCT_TYPE_CONFIG.steps.labels.previewSubtitle).toBe(
+      "Марка, количество и цена — как в документе.",
+    );
+    for (const type of ["piles", "marches", "bridge_piles", "fbs"] as const) {
+      expect(PRODUCT_TYPE_CONFIG[type].labels.previewSubtitle, type).toBe(
+        "Марка, класс бетона, количество и цена — как в документе.",
+      );
+    }
+  });
+
+  it("keeps the exact preview unpriced alerts", () => {
+    expect(PRODUCT_TYPE_CONFIG.plates.labels.previewUnpricedMessage).toBe(
+      "Не все плиты найдены в прайсе — исправьте список перед переходом к клиенту.",
+    );
+    expect(PRODUCT_TYPE_CONFIG.steps.labels.previewUnpricedMessage).toBe(
+      "Не все марки найдены в прайсе — исправьте список перед переходом к клиенту.",
+    );
+    for (const type of ["piles", "marches", "bridge_piles", "fbs"] as const) {
+      expect(PRODUCT_TYPE_CONFIG[type].labels.previewUnpricedMessage, type).toBe(
+        "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+      );
+    }
+  });
 });
 
 describe("getProductTypeConfig", () => {

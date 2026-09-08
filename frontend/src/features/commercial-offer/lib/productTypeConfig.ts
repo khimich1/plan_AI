@@ -43,6 +43,10 @@ export type ProductTypeLabels = {
   previewChangedMessage: string;
   /** "Список пуст — распознайте сваи." — preview panel empty state. */
   previewEmptyMessage: string;
+  /** "Марка, класс бетона, количество и цена — как в документе." — preview panel card subtitle. */
+  previewSubtitle: string;
+  /** "Не все марки найдены в прайсе — …" — preview panel unpriced alert. */
+  previewUnpricedMessage: string;
 };
 
 export type ProductTypeConfig = {
@@ -82,6 +86,8 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
       initialDescription: "Загрузите фото или вставьте список плит для расчёта.",
       previewChangedMessage: "Изменён список плит — нажмите «Список верен» для пересчёта состава.",
       previewEmptyMessage: "Список пуст — распознайте плиты.",
+      previewSubtitle: "Наименование, количество и цена — как в документе. Скидка и доставка учитываются позже.",
+      previewUnpricedMessage: "Не все плиты найдены в прайсе — исправьте список перед переходом к клиенту.",
     },
   },
   piles: {
@@ -106,6 +112,9 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
       initialDescription: "Загрузите фото или вставьте список свай для расчёта.",
       previewChangedMessage: "Изменён список свай — нажмите «Список верен» для пересчёта состава.",
       previewEmptyMessage: "Список пуст — распознайте сваи.",
+      previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
+      previewUnpricedMessage:
+        "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
     },
   },
   steps: {
@@ -130,6 +139,8 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
       initialDescription: "Загрузите фото или вставьте список ступеней для расчёта.",
       previewChangedMessage: "Изменён список ступеней — нажмите «Список верен» для пересчёта состава.",
       previewEmptyMessage: "Список пуст — распознайте ступени.",
+      previewSubtitle: "Марка, количество и цена — как в документе.",
+      previewUnpricedMessage: "Не все марки найдены в прайсе — исправьте список перед переходом к клиенту.",
     },
   },
   marches: {
@@ -154,6 +165,9 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
       initialDescription: "Загрузите фото или вставьте список маршей для расчёта.",
       previewChangedMessage: "Изменён список маршей — нажмите «Список верен» для пересчёта состава.",
       previewEmptyMessage: "Список пуст — распознайте марши.",
+      previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
+      previewUnpricedMessage:
+        "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
     },
   },
   bridge_piles: {
@@ -180,6 +194,9 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
       initialDescription: "Загрузите фото или вставьте список мостовых свай для расчёта.",
       previewChangedMessage: "Изменён список мостовых свай — нажмите «Список верен» для пересчёта состава.",
       previewEmptyMessage: "Список пуст — распознайте мостовые сваи.",
+      previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
+      previewUnpricedMessage:
+        "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
     },
   },
   fbs: {
@@ -205,6 +222,9 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
       initialDescription: "Загрузите фото или вставьте список ФБС для расчёта.",
       previewChangedMessage: "Изменён список ФБС — нажмите «Список верен» для пересчёта состава.",
       previewEmptyMessage: "Список пуст — распознайте ФБС.",
+      previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
+      previewUnpricedMessage:
+        "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
     },
   },
 };
