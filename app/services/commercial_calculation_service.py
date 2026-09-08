@@ -113,11 +113,27 @@ class CommercialCalculationService:
             return [ERR_UNPRICED_PLATES]
         return []
 
+    @staticmethod
+    def has_counterparty_id(metadata: dict[str, Any]) -> bool:
+        raw = metadata.get("counterparty_id")
+        if raw is None or raw == "":
+            return False
+        try:
+            return int(raw) >= 1
+        except (TypeError, ValueError):
+            return False
+
+    def _client_ready(self, metadata: dict[str, Any]) -> bool:
+        # Archive resume keeps sticky header; create-path needs a catalog pick.
+        if metadata.get("resume_kp_id") is not None:
+            return bool(str(metadata.get("client_name") or "").strip())
+        return self.has_counterparty_id(metadata)
+
     def _metadata_errors(self, metadata: dict[str, Any]) -> list[str]:
         errors: list[str] = []
         if not metadata.get("manager_id"):
             errors.append(ERR_NO_MANAGER)
-        if not str(metadata.get("client_name", "")).strip():
+        if not self._client_ready(metadata):
             errors.append(ERR_NO_CLIENT)
         if metadata.get("conditions_mode") == "custom":
             if not str(metadata.get("delivery_conditions", "")).strip():

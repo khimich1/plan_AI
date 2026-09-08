@@ -83,8 +83,13 @@ describe("wizardStepOrder skip client (MNA-104)", () => {
     expect(getWizardStepOrder("plates", { skipClient: false })).toEqual(["plates", "client", "result"]);
   });
 
-  it("skips client when clientName is already set", () => {
-    expect(shouldSkipClientStep({ clientName: "ООО А" })).toBe(true);
+  it("does not skip client when only clientName is set (legacy draft without id)", () => {
+    expect(shouldSkipClientStep({ clientName: "ООО А" })).toBe(false);
+    expect(shouldSkipClientStep({ clientName: "ООО А", counterpartyId: null })).toBe(false);
+  });
+
+  it("skips client when counterpartyId is already set", () => {
+    expect(shouldSkipClientStep({ clientName: "", counterpartyId: 15 })).toBe(true);
   });
 
   it("skips client when appendBatches is non-empty", () => {

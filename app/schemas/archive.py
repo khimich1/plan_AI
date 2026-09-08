@@ -173,6 +173,8 @@ class ArchiveOfferDetails(BaseModel):
     kp_id: int
     creation_date: str | None = None
     customer_name: str | None = None
+    customer_inn: str | None = None
+    customer_kpp: str | None = None
     manager_name: str | None = None
     status: str | None = None
     execution_terms: str | None = None

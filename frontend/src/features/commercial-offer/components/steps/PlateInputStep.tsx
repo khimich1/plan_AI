@@ -1,6 +1,7 @@
 import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type {
   CommercialDraftDetails,
   OcrCorrection,
@@ -194,6 +195,7 @@ export const PlateInputStep = ({
   });
 
   const hasDraft = Boolean(draft);
+  const labels = PRODUCT_TYPE_CONFIG.plates.labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
   const liveWideDraft =
@@ -283,11 +285,11 @@ export const PlateInputStep = ({
       recognitionStarted={recognitionStarted}
       isRecognizing={isRecognizing}
       isAiProcessing={isAiProcessing}
-      listLabel="Список плит"
-      placeholder={"ПБ 78-12-8п 2\n71-12-8 3\nПБ 66-12-8п 4"}
-      emptySubtitle="Вставьте текст списка плит или загрузите фото таблицы."
-      aiHint="Редкий сценарий: опишите, что сделать со списком плит."
-      aiPlaceholder="Например: убери строки с 6п"
+      listLabel={labels.listLabel}
+      placeholder={labels.placeholder}
+      emptySubtitle={labels.emptySubtitle}
+      aiHint={labels.aiHint}
+      aiPlaceholder={labels.aiPlaceholder}
       aiInstruction={aiInstruction}
       onAiInstructionChange={onAiInstructionChange}
       onApplyAi={onApplyAi}
@@ -304,14 +306,14 @@ export const PlateInputStep = ({
 
     <StepLayout
 
-      title="Шаг 1. Плиты"
+      title={labels.stepTitle}
 
       description={
         isBatchReviewMode
           ? "Сверьте распознанный список текущего источника с фото и нажмите «Список верен»."
           : hasDraft
-            ? "Добавьте ещё плиты или перейдите к оформлению клиента."
-            : "Загрузите фото или вставьте список плит для расчёта."
+            ? labels.addMoreDescription
+            : labels.initialDescription
       }
       footer={
         hasDraft ? (
@@ -539,7 +541,7 @@ export const PlateInputStep = ({
             )}
 
             <Card
-              title="Список плит для расчёта"
+              title={labels.reviewListTitle}
               subtitle="Сверьте позиции текущего источника с фото или текстом."
             >
               {liveWideDraft && (

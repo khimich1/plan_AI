@@ -584,6 +584,8 @@ class ArchiveService:
             kp_id=kp_id,
             creation_date=raw.get("creation_date"),
             customer_name=raw.get("customer_name"),
+            customer_inn=raw.get("customer_inn"),
+            customer_kpp=raw.get("customer_kpp"),
             manager_name=raw.get("manager_name"),
             status=raw.get("status"),
             execution_terms=raw.get("execution_terms") or None,

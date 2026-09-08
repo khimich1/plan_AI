@@ -464,6 +464,8 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
 
         _init_gsm_schema(cur)
 
+        _init_counterparties_schema(cur)
+
         conn.commit()
     finally:
         conn.close()
@@ -492,6 +494,51 @@ def _ensure_line_id_columns(cur: sqlite3.Cursor) -> None:
         print(f"[DB] Миграция: добавляем колонку line_id в {table}...")
         cur.execute(f"ALTER TABLE {table} ADD COLUMN line_id TEXT")
         print(f"[DB] ✅ Колонка line_id добавлена в {table}")
+
+
+def _init_counterparties_schema(cur: sqlite3.Cursor) -> None:
+    """Справочник контрагентов 1С + снапшот-колонки KP_offers.
+
+    Ключ синхронизации — ``code_1c`` (UNIQUE). Физическое удаление запрещено
+    (D8): вместо него ``is_active``. Колонки КП nullable — старые записи
+    без привязки продолжают читаться.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS counterparties (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_1c TEXT NOT NULL UNIQUE,
+            guid_1c TEXT UNIQUE,
+            name TEXT NOT NULL,
+            name_normalized TEXT NOT NULL,
+            inn TEXT,
+            kpp TEXT,
+            is_client INTEGER NOT NULL DEFAULT 1,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            source TEXT NOT NULL DEFAULT 'import',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_counterparties_name_norm "
+        "ON counterparties(name_normalized)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_counterparties_inn ON counterparties(inn)"
+    )
+
+    for sql in (
+        "ALTER TABLE KP_offers ADD COLUMN counterparty_id "
+        "INTEGER REFERENCES counterparties(id)",
+        "ALTER TABLE KP_offers ADD COLUMN customer_inn TEXT",
+        "ALTER TABLE KP_offers ADD COLUMN customer_kpp TEXT",
+    ):
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
 
 
 def _init_gsm_schema(cur: sqlite3.Cursor) -> None:

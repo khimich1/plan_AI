@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.helpers.csrf import CsrfAwareTestClient
+from tests.helpers import kp_db_fixtures as fx
 
 from app.core.http_errors import MSG_INTERNAL, MSG_PARSE_FAILED, MSG_VALIDATION
 from app.core.settings import get_settings
@@ -83,6 +84,20 @@ def _sample_draft(draft_id: str = "draft-123") -> dict:
             "file_stem": f"kp_{draft_id[:8]}",
         },
     }
+
+
+def _attach_counterparty(
+    workflow: CommercialWorkflowService,
+    tmp_path: Path,
+    draft: dict | None = None,
+) -> dict:
+    """Seed a client row and point save_draft lookup at an isolated plita.db (CTR-006)."""
+    db = fx.make_iso_db(tmp_path)
+    cp_id = fx.seed_test_counterparty(db)
+    workflow.kp_repository.db_path = db
+    payload = draft if draft is not None else _sample_draft()
+    payload["metadata"]["counterparty_id"] = cp_id
+    return payload
 
 
 @pytest.fixture()
@@ -1122,8 +1137,9 @@ def test_save_draft_archive_passes_normalized_execution_terms(
     workflow = CommercialWorkflowService()
     fake_xlsx = tmp_path / "kp-out.xlsx"
     fake_xlsx.write_bytes(b"x")
+    draft = _attach_counterparty(workflow, tmp_path)
 
-    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: _sample_draft())
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft)
     monkeypatch.setattr(
         workflow,
         "generate_files",
@@ -1160,8 +1176,9 @@ def test_save_draft_archive_empty_execution_terms_input_skips_normalize(
     workflow = CommercialWorkflowService()
     fake_xlsx = tmp_path / "kp-out.xlsx"
     fake_xlsx.write_bytes(b"x")
+    draft = _attach_counterparty(workflow, tmp_path)
 
-    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: _sample_draft())
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft)
     monkeypatch.setattr(
         workflow,
         "generate_files",
@@ -1194,6 +1211,7 @@ def test_save_draft_persists_owner_user_id_from_draft_metadata(
 
     draft = _sample_draft()
     draft["metadata"]["owner_user_id"] = 2
+    draft = _attach_counterparty(workflow, tmp_path, draft)
 
     monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft)
     monkeypatch.setattr(
@@ -1270,6 +1288,7 @@ def test_wizard_state_client_requires_calculate() -> None:
             "current_step": WizardStepId.client.value,
             "manager_id": 1,
             "client_name": "ООО А",
+            "counterparty_id": 15,
             "conditions_mode": "standard",
             "wide_plate_lines": [],
             "wide_plates_resolved": True,
@@ -1290,6 +1309,7 @@ def test_wizard_state_result_after_calculate() -> None:
             "current_step": WizardStepId.result.value,
             "manager_id": 1,
             "client_name": "ООО А",
+            "counterparty_id": 15,
             "conditions_mode": "standard",
             "wide_plate_lines": [],
             "wide_plates_resolved": True,
@@ -1389,6 +1409,7 @@ def test_get_draft_details_includes_schema_file(
                 },
                 "manager_id": 1,
                 "client_name": "ООО А",
+                "counterparty_id": 15,
                 "conditions_mode": "standard",
                 "wide_plate_lines": [],
                 "wide_plates_resolved": True,

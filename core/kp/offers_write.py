@@ -27,6 +27,9 @@ def save_kp_to_db(
     db_path: str = DEFAULT_DB,
     pile_logistics_cost: float = 0.0,
     pile_trip_overrides: dict | None = None,
+    counterparty_id: int | None = None,
+    customer_inn: str | None = None,
+    customer_kpp: str | None = None,
 ) -> int:
     """Сохраняет КП в базу.
 
@@ -51,6 +54,9 @@ def save_kp_to_db(
         db_path,
         pile_logistics_cost=pile_logistics_cost,
         pile_trip_overrides=pile_trip_overrides,
+        counterparty_id=counterparty_id,
+        customer_inn=customer_inn,
+        customer_kpp=customer_kpp,
     )
 
 

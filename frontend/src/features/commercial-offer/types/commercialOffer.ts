@@ -1,5 +1,8 @@
 export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
 
+/** Simple KP flow (no plate resolve gates): everything except plates. Mirrors ProductTypeConfig.isSimpleKp. */
+export type SimpleKpProductType = Exclude<ProductType, "plates">;
+
 export type WizardStepId = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "client" | "result";
 
 /** Legacy step ids from older drafts (localStorage / server metadata). */
@@ -223,6 +226,7 @@ export type CommercialDraftMetadata = {
   manager_phone: string;
   manager_email: string;
   client_name: string;
+  counterparty_id?: number | null;
   discount_percent: number;
   conditions_mode: ConditionsMode;
   delivery_conditions: string;
@@ -336,6 +340,10 @@ export type WizardStoreState = {
   lastPlateMode: PlateInputMode;
   managerId: number | null;
   clientName: string;
+  counterpartyId: number | null;
+  counterpartyCode1c: string;
+  counterpartyInn: string | null;
+  counterpartyKpp: string | null;
   discountPercent: number;
   conditionsMode: ConditionsMode;
   deliveryConditions: string;

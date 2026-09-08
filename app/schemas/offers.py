@@ -21,6 +21,9 @@ class OfferSummary(BaseModel):
     execution_terms: str | None = None
     status: str = "в работе"
     completion_percentage: float = 0.0
+    counterparty_id: int | None = None
+    customer_inn: str | None = None
+    customer_kpp: str | None = None
 
 
 class OfferPlateItem(BaseModel):
@@ -80,6 +83,7 @@ class CreateOfferRequest(BaseModel):
     execution_terms_input: str = ""
     save_mode: Literal["work", "archive"] = "work"
     order_data: list[OfferOrderItem] = Field(min_length=1)
+    counterparty_id: int = Field(ge=1)
 
 
 class UpdateOfferDiscountRequest(BaseModel):

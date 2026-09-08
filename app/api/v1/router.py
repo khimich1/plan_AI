@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     archive,
     auth,
     commercial,
+    counterparties,
     delivery_schedule,
     gsm,
     health,
@@ -21,6 +22,7 @@ router.include_router(health.router)
 router.include_router(auth.router)
 router.include_router(managers.router)
 router.include_router(commercial.router)
+router.include_router(counterparties.router)
 router.include_router(offers.router)
 router.include_router(archive.router)
 router.include_router(delivery_schedule.router)

@@ -51,6 +51,23 @@ const mergeWizardStepWithServer = (
   return stepOrder[Math.max(li, si)]!;
 };
 
+const counterpartySnapshotFrom = (
+  state: WizardStoreState,
+  metadata: CommercialDraftDetails["metadata"],
+): Pick<
+  WizardStoreState,
+  "counterpartyId" | "counterpartyCode1c" | "counterpartyInn" | "counterpartyKpp"
+> => {
+  const counterpartyId = metadata.counterparty_id ?? null;
+  const keepSnapshot = counterpartyId != null && counterpartyId === state.counterpartyId;
+  return {
+    counterpartyId,
+    counterpartyCode1c: keepSnapshot ? state.counterpartyCode1c : "",
+    counterpartyInn: keepSnapshot ? state.counterpartyInn : null,
+    counterpartyKpp: keepSnapshot ? state.counterpartyKpp : null,
+  };
+};
+
 type WizardDraftAction =
   | { type: "set-product-type"; productType: ProductType }
   | { type: "set-step"; step: WizardStepId }
@@ -64,6 +81,10 @@ type WizardDraftAction =
       type: "set-client-form";
       payload: {
         clientName: string;
+        counterpartyId: number | null;
+        counterpartyCode1c: string;
+        counterpartyInn: string | null;
+        counterpartyKpp: string | null;
         conditionsMode: WizardStoreState["conditionsMode"];
         deliveryConditions: string;
         paymentConditions: string;
@@ -111,6 +132,10 @@ const initialState: WizardStoreState = {
   lastPlateMode: "replace",
   managerId: null,
   clientName: "",
+  counterpartyId: null,
+  counterpartyCode1c: "",
+  counterpartyInn: null,
+  counterpartyKpp: null,
   discountPercent: 0,
   conditionsMode: "standard",
   deliveryConditions: "",
@@ -175,6 +200,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         ),
         managerId: action.payload.metadata.manager_id,
         clientName: action.payload.metadata.client_name,
+        ...counterpartySnapshotFrom(state, action.payload.metadata),
         discountPercent: action.payload.metadata.discount_percent,
         conditionsMode: action.payload.metadata.conditions_mode,
         deliveryConditions: action.payload.metadata.delivery_conditions,
@@ -253,6 +279,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         ),
         managerId: action.payload.metadata.manager_id,
         clientName: action.payload.metadata.client_name,
+        ...counterpartySnapshotFrom(state, action.payload.metadata),
         discountPercent: action.payload.metadata.discount_percent,
         conditionsMode: action.payload.metadata.conditions_mode,
         deliveryConditions: action.payload.metadata.delivery_conditions,
@@ -268,6 +295,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         unpricedPlateActions: action.payload.metadata.unpriced_plates_resolved ? {} : state.unpricedPlateActions,
         invalidWidthActions: action.payload.metadata.invalid_widths_resolved ? {} : state.invalidWidthActions,
         lastDraft: action.payload,
+        lastSaveResult: null,
       };
     }
     case "sync-after-wide-plates": {

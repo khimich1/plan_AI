@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from core.kp_db_schema import init_schema
 from core.kp_persistence_service import KpPersistenceService
+from tests.helpers import kp_db_fixtures as fx
 
 from tests.helpers.csrf import CsrfAwareTestClient
 
@@ -161,9 +162,9 @@ def test_fbs_calculate_and_files(
         f"/api/v1/commercial/drafts/{draft_id}/meta",
         json={
             "manager_id": 1,
-            "client_name": "ООО ФБС",
             "discount_percent": 0,
             "conditions_mode": "standard",
+            **fx.client_meta_payload("ООО ФБС"),
         },
     )
     assert meta.status_code == 200, meta.text

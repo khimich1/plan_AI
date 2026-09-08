@@ -26,6 +26,7 @@ def _ready_metadata(**overrides: object) -> dict:
     base = {
         "manager_id": 1,
         "client_name": "ООО Тест",
+        "counterparty_id": 1,
         "conditions_mode": "standard",
         "wide_plate_lines": [],
         "wide_plates_resolved": True,
@@ -56,6 +57,42 @@ def test_validate_wide_plates_unresolved() -> None:
     assert errors == [ERR_WIDE_PLATES]
     assert _SERVICE.wide_lines_blocking(metadata)
     assert _SERVICE.meta_ready_for_calculate(metadata)
+
+
+def test_create_path_client_name_without_id_is_not_ready() -> None:
+    """Create-path: free-text client_name is not enough — calculate must demand counterparty_id."""
+    metadata = _ready_metadata(counterparty_id=None, client_name="ООО Тест")
+    errors = _SERVICE.validate_calculate_prerequisites(
+        order_data=_SAMPLE_ORDER,
+        metadata=metadata,
+    )
+    assert ERR_NO_CLIENT in errors
+    assert not _SERVICE.meta_ready_for_calculate(metadata)
+
+
+def test_create_path_counterparty_id_is_ready() -> None:
+    metadata = _ready_metadata(counterparty_id=15, client_name="")
+    assert _SERVICE.meta_ready_for_calculate(metadata)
+    errors = _SERVICE.validate_calculate_prerequisites(
+        order_data=_SAMPLE_ORDER,
+        metadata=metadata,
+    )
+    assert ERR_NO_CLIENT not in errors
+
+
+def test_resume_path_client_name_without_id_is_ready() -> None:
+    """Archive resume: sticky header without counterparty_id stays calculable."""
+    metadata = _ready_metadata(
+        resume_kp_id=99,
+        counterparty_id=None,
+        client_name="ООО Архив",
+    )
+    assert _SERVICE.meta_ready_for_calculate(metadata)
+    errors = _SERVICE.validate_calculate_prerequisites(
+        order_data=_SAMPLE_ORDER,
+        metadata=metadata,
+    )
+    assert ERR_NO_CLIENT not in errors
 
 
 def test_validate_missing_manager() -> None:

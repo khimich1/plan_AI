@@ -264,9 +264,16 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     setResumeError(null);
     try {
       const draft = await archiveApi.resume(offer.kp_id);
+      if (landing === "result") {
+        dispatch({ type: "set-save-result", payload: null });
+      }
       dispatch({ type: "hydrate-draft", payload: draft });
       if (landing === "append") {
         dispatch({ type: "start-append-cycle" });
+      } else {
+        // Hydrate keeps a local input-step (plates/…) on purpose for the live wizard;
+        // archive «Редактировать» must force result before navigate so re-hydrate cannot pin input again.
+        dispatch({ type: "set-step", step: "result" });
       }
       navigate(`/new?draft=${encodeURIComponent(draft.draft_id)}`);
       onClose();
@@ -453,6 +460,11 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               <div>
                 <div style={{ color: "#667085", fontSize: "0.85rem" }}>Клиент</div>
                 <div style={{ fontWeight: 600 }}>{offer.customer_name || "—"}</div>
+                {(offer.customer_inn || offer.customer_kpp) && (
+                  <div style={{ color: "#475467", fontSize: "0.9rem", marginTop: "0.2rem" }}>
+                    ИНН {offer.customer_inn || "—"} / КПП {offer.customer_kpp || "—"}
+                  </div>
+                )}
               </div>
               <div>
                 <div style={{ color: "#667085", fontSize: "0.85rem" }}>Менеджер</div>

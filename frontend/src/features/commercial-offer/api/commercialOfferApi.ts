@@ -1,4 +1,5 @@
 import { httpClient } from "@/shared/api/httpClient";
+import { getProductTypeConfig } from "@/features/commercial-offer/lib/productTypeConfig";
 import type {
   BreakdownResponse,
   CommercialDraftDetails,
@@ -28,19 +29,16 @@ type DraftCreatePayload = {
   productType?: ProductType;
 };
 
-type UpdateDraftPlatesPayload = DraftCreatePayload & {
+type UpdateDraftInputPayload = {
+  text: string;
+  image: File | null;
   mode: PlateInputMode;
 };
-
-type UpdateDraftPilesPayload = UpdateDraftPlatesPayload;
-
-type UpdateDraftStepsPayload = UpdateDraftPlatesPayload;
-
-type UpdateDraftMarchesPayload = UpdateDraftPlatesPayload;
 
 type UpdateDraftMetaPayload = {
   managerId?: number | null;
   clientName?: string;
+  counterpartyId?: number | null;
   discountPercent?: number;
   conditionsMode?: ConditionsMode;
   deliveryConditions?: string;
@@ -142,102 +140,21 @@ export const commercialOfferApi = {
     );
   },
 
-  updateDraftPlates: (draftId: string, payload: UpdateDraftPlatesPayload) =>
+  updateDraftInput: (draftId: string, productType: ProductType, payload: UpdateDraftInputPayload) =>
     httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/plates`,
+      `/api/v1/commercial/drafts/${draftId}/${getProductTypeConfig(productType).endpointSegment}`,
       createMultipartPayload(payload),
     ),
 
-  updateDraftPiles: (draftId: string, payload: UpdateDraftPilesPayload) =>
-    httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/piles`,
-      createMultipartPayload(payload),
-    ),
-
-  updateDraftSteps: (draftId: string, payload: UpdateDraftStepsPayload) =>
-    httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/steps`,
-      createMultipartPayload(payload),
-    ),
-
-  updateDraftMarches: (draftId: string, payload: UpdateDraftMarchesPayload) =>
-    httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/marches`,
-      createMultipartPayload(payload),
-    ),
-
-  updateDraftBridgePiles: (draftId: string, payload: UpdateDraftPilesPayload) =>
-    httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/bridge-piles`,
-      createMultipartPayload(payload),
-    ),
-
-  updateDraftFbs: (draftId: string, payload: UpdateDraftPilesPayload) =>
-    httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/fbs`,
-      createMultipartPayload(payload),
-    ),
-
-  applyAiPlates: (draftId: string, payload: ApplyAiPlatesPayload) =>
+  applyAiInstruction: (draftId: string, productType: ProductType, payload: ApplyAiPlatesPayload) =>
     httpClient.post<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/plates/ai`,
+      `/api/v1/commercial/drafts/${draftId}/${getProductTypeConfig(productType).endpointSegment}/ai`,
       createAiMultipartPayload(payload),
     ),
 
-  applyAiPiles: (draftId: string, payload: ApplyAiPlatesPayload) =>
-    httpClient.post<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/piles/ai`,
-      createAiMultipartPayload(payload),
-    ),
-
-  applyAiSteps: (draftId: string, payload: ApplyAiPlatesPayload) =>
-    httpClient.post<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/steps/ai`,
-      createAiMultipartPayload(payload),
-    ),
-
-  applyAiMarches: (draftId: string, payload: ApplyAiPlatesPayload) =>
-    httpClient.post<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/marches/ai`,
-      createAiMultipartPayload(payload),
-    ),
-
-  applyAiBridgePiles: (draftId: string, payload: ApplyAiPlatesPayload) =>
-    httpClient.post<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/bridge-piles/ai`,
-      createAiMultipartPayload(payload),
-    ),
-
-  applyAiFbs: (draftId: string, payload: ApplyAiPlatesPayload) =>
-    httpClient.post<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/fbs/ai`,
-      createAiMultipartPayload(payload),
-    ),
-
-  updatePileGrades: (draftId: string, concreteGrade: string) =>
+  updateGrades: (draftId: string, productType: ProductType, concreteGrade: string) =>
     httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/piles/grades`,
-      JSON.stringify({ concrete_grade: concreteGrade }),
-      { "Content-Type": "application/json" },
-    ),
-
-  updateMarchGrades: (draftId: string, concreteGrade: string) =>
-    httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/marches/grades`,
-      JSON.stringify({ concrete_grade: concreteGrade }),
-      { "Content-Type": "application/json" },
-    ),
-
-  updateBridgePileGrades: (draftId: string, concreteGrade: string) =>
-    httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/bridge-piles/grades`,
-      JSON.stringify({ concrete_grade: concreteGrade }),
-      { "Content-Type": "application/json" },
-    ),
-
-  updateFbsGrades: (draftId: string, concreteGrade: string) =>
-    httpClient.patch<CommercialDraftDetails>(
-      `/api/v1/commercial/drafts/${draftId}/fbs/grades`,
+      `/api/v1/commercial/drafts/${draftId}/${getProductTypeConfig(productType).endpointSegment}/grades`,
       JSON.stringify({ concrete_grade: concreteGrade }),
       { "Content-Type": "application/json" },
     ),
@@ -290,6 +207,7 @@ export const commercialOfferApi = {
       JSON.stringify({
         manager_id: payload.managerId,
         client_name: payload.clientName,
+        counterparty_id: payload.counterpartyId,
         discount_percent: payload.discountPercent,
         conditions_mode: payload.conditionsMode,
         delivery_conditions: payload.deliveryConditions,

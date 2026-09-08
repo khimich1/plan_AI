@@ -13,6 +13,7 @@ from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.plate_order import PlateOrder
 from app.schemas.commercial import WizardStepId
 from app.services.commercial_order_identity import APPEND_PRODUCT_TYPES
+from app.services.counterparties_service import CounterpartiesService
 from app.services.product_draft_config import SPECS
 from core.kp_order_data import order_data_from_kp_info
 from core.pile_trip_pricing import coerce_pile_trip_overrides
@@ -484,6 +485,7 @@ class CommercialDraftLifecycle:
         logistics_cost: float | None = None,
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict[str, int] | None = None,
+        counterparty_id: int | None = None,
     ) -> dict[str, Any]:
         payload_before = self._wf._load_draft_or_raise(draft_id)
         prev_step = self._wf._normalize_stored_step(dict(payload_before.get("metadata") or {}))
@@ -526,6 +528,12 @@ class CommercialDraftLifecycle:
             from core.pile_trip_pricing import coerce_pile_trip_overrides
 
             updates["pile_trip_overrides"] = coerce_pile_trip_overrides(pile_trip_overrides)
+        if counterparty_id is not None:
+            row = CounterpartiesService(
+                db_path=self._wf.kp_repository.db_path
+            ).require_active_client(counterparty_id)
+            updates["counterparty_id"] = int(row["id"])
+            updates["client_name"] = str(row["name"])
         if updates:
             self._wf.draft_store.update_metadata(draft_id, **updates)
 
@@ -830,8 +838,8 @@ class CommercialDraftLifecycle:
 
         raw_owner = metadata.get("owner_user_id")
         owner_user_id = int(raw_owner) if raw_owner is not None else None
-        customer_name = str(metadata.get("client_name", "") or "Клиент")
         manager_name = str(metadata.get("manager_name", "") or "")
+        customer_name = str(metadata.get("client_name", "") or "Клиент")
         discount_percent = float(metadata.get("discount_percent", 0.0) or 0.0)
         logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
         pile_logistics_cost = float(metadata.get("pile_logistics_cost", 0.0) or 0.0)
@@ -879,9 +887,12 @@ class CommercialDraftLifecycle:
             # Keep archived status on update; do not flip to default «в работе».
             persist_status = existing_status
         else:
+            counterparty = CounterpartiesService(
+                db_path=self._wf.kp_repository.db_path
+            ).require_active_client(metadata.get("counterparty_id"))
             kp_id = self._wf.kp_repository.save_offer(
                 creation_date=datetime.now().strftime("%d.%m.%Y"),
-                customer_name=customer_name,
+                customer_name=str(counterparty["name"]),
                 manager_name=manager_name,
                 discount_percent=discount_percent,
                 logistics_cost=logistics_cost,
@@ -895,6 +906,9 @@ class CommercialDraftLifecycle:
                 xlsx_path=xlsx_path,
                 owner_user_id=owner_user_id,
                 product_type=product_type,
+                counterparty_id=int(counterparty["id"]),
+                customer_inn=counterparty.get("inn"),
+                customer_kpp=counterparty.get("kpp"),
             )
             persist_status = status
         saved_offer = {

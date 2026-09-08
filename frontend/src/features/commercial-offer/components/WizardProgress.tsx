@@ -1,4 +1,5 @@
 import type { ProductType, WizardStepId } from "@/features/commercial-offer/types/commercialOffer";
+import { getProductTypeConfig } from "@/features/commercial-offer/lib/productTypeConfig";
 import { getWizardStepOrder } from "@/features/commercial-offer/lib/wizardStepOrder";
 import { Card } from "@/shared/ui/Card";
 
@@ -10,15 +11,14 @@ type WizardProgressProps = {
   skipClient?: boolean;
 };
 
-const stepTitles: Record<WizardStepId, string> = {
-  plates: "1. Плиты",
-  piles: "1. Сваи",
-  steps: "1. Ступени",
-  marches: "1. Марши",
-  bridge_piles: "1. Мостовые сваи",
-  fbs: "1. ФБС",
-  client: "2. Клиент",
-  result: "3. Результат",
+const stepTitle = (id: WizardStepId): string => {
+  if (id === "client") {
+    return "2. Клиент";
+  }
+  if (id === "result") {
+    return "3. Результат";
+  }
+  return `1. ${getProductTypeConfig(id).labels.nounPlural}`;
 };
 
 export const WizardProgress = ({
@@ -30,7 +30,7 @@ export const WizardProgress = ({
 }: WizardProgressProps) => {
   const steps = getWizardStepOrder(productType, { skipClient }).map((id) => ({
     id,
-    title: stepTitles[id],
+    title: stepTitle(id),
   }));
 
   return (
