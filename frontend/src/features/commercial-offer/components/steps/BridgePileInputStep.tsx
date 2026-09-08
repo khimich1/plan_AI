@@ -1,6 +1,7 @@
 import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type { CommercialDraftDetails, OcrCorrection, PlateInputMode } from "@/features/commercial-offer/types/commercialOffer";
 import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
 import { KpBridgePilePreviewPanel } from "@/features/commercial-offer/components/KpBridgePilePreviewPanel";
@@ -152,6 +153,7 @@ export const BridgePileInputStep = ({
     blockReason: undefined,
   });
   const hasDraft = Boolean(draft);
+  const labels = PRODUCT_TYPE_CONFIG.bridge_piles.labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
   const reviewHighlights = useBatchReviewHighlights({
@@ -219,11 +221,11 @@ export const BridgePileInputStep = ({
       recognitionStarted={recognitionStarted}
       isRecognizing={isRecognizing}
       isAiProcessing={isAiProcessing}
-      listLabel="Список мостовых свай"
-      placeholder={"С120.35-12 B25 5\nС120.35-13и 3"}
-      emptySubtitle="Вставьте текст списка мостовых свай или загрузите фото таблицы."
-      aiHint="Редкий сценарий: опишите, что сделать со списком мостовых свай."
-      aiPlaceholder="Например: убери строки с B15"
+      listLabel={labels.listLabel}
+      placeholder={labels.placeholder}
+      emptySubtitle={labels.emptySubtitle}
+      aiHint={labels.aiHint}
+      aiPlaceholder={labels.aiPlaceholder}
       aiInstruction={aiInstruction}
       onAiInstructionChange={onAiInstructionChange}
       onApplyAi={onApplyAi}
@@ -238,13 +240,13 @@ export const BridgePileInputStep = ({
 
   return (
     <StepLayout
-      title="Шаг 1. Мостовые сваи"
+      title={labels.stepTitle}
       description={
         isBatchReviewMode
           ? "Сверьте распознанный список текущего источника с фото и нажмите «Список верен»."
           : hasDraft
-            ? "Добавьте ещё мостовые сваи или перейдите к оформлению клиента."
-            : "Загрузите фото или вставьте список мостовых свай для расчёта."
+            ? labels.addMoreDescription
+            : labels.initialDescription
       }
       footer={
         hasDraft ? (
@@ -428,7 +430,7 @@ export const BridgePileInputStep = ({
                   </Card>
                 )}
 
-                <Card title="Список мостовых свай для расчёта" subtitle="Сверьте позиции текущего источника с фото или текстом.">
+                <Card title={labels.reviewListTitle} subtitle="Сверьте позиции текущего источника с фото или текстом.">
                   {batchReviewDraft && (
                     <PlateListEditor
                       draft={batchReviewDraft}

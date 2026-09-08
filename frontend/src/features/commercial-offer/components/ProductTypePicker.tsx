@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type { ProductType } from "@/features/commercial-offer/types/commercialOffer";
 import { Card } from "@/shared/ui/Card";
 import { Drawer } from "@/shared/ui/Drawer";
@@ -14,49 +15,37 @@ type ProductTypePickerProps = {
   onBackToResult?: () => void;
 };
 
-const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
-  plates: "Плиты",
-  piles: "Сваи",
-  steps: "Ступени",
-  marches: "Марши",
-  bridge_piles: "Мостовые сваи",
-  fbs: "ФБС",
-};
+const productTypeLabel = (type: ProductType): string => PRODUCT_TYPE_CONFIG[type].labels.nounPlural;
 
-const options: Array<{ id: ProductType; title: string; description: string; emoji: string }> = [
+/** Card-specific copy stays local: selection cards are not the input steps' duplication. */
+const options: Array<{ id: ProductType; description: string; emoji: string }> = [
   {
     id: "plates",
-    title: "Плиты",
     description: "Коммерческое предложение на железобетонные плиты перекрытия.",
     emoji: "🧱",
   },
   {
     id: "piles",
-    title: "Сваи",
     description: "Коммерческое предложение на цельные железобетонные сваи.",
     emoji: "🏗️",
   },
   {
     id: "steps",
-    title: "Ступени",
     description: "Коммерческое предложение на лестничные ступени.",
     emoji: "🪜",
   },
   {
     id: "marches",
-    title: "Марши",
     description: "Коммерческое предложение на лестничные марши.",
     emoji: "🪜",
   },
   {
     id: "bridge_piles",
-    title: "Мостовые сваи",
     description: "Коммерческое предложение на мостовые железобетонные сваи.",
     emoji: "🌉",
   },
   {
     id: "fbs",
-    title: "ФБС",
     description: "Коммерческое предложение на фундаментные блоки ФБС.",
     emoji: "📦",
   },
@@ -145,9 +134,7 @@ export const ProductTypePicker = ({
   const selectedSet = useMemo(() => new Set(selectedProductTypes), [selectedProductTypes]);
   const [infoType, setInfoType] = useState<ProductType | null>(null);
 
-  const stripLabels = selectedProductTypes
-    .map((type) => PRODUCT_TYPE_LABELS[type] ?? type)
-    .filter(Boolean);
+  const stripLabels = selectedProductTypes.map((type) => productTypeLabel(type));
 
   const drawerLines = useMemo(() => {
     if (!infoType) {
@@ -157,7 +144,7 @@ export const ProductTypePicker = ({
   }, [infoType, orderLines]);
 
   const drawerTitle = infoType
-    ? `Уже в КП · ${PRODUCT_TYPE_LABELS[infoType] ?? infoType}`
+    ? `Уже в КП · ${productTypeLabel(infoType)}`
     : "Уже в КП";
 
   return (
@@ -231,7 +218,8 @@ export const ProductTypePicker = ({
       >
         {options.map((option) => {
           const isSelected = isAppend && selectedSet.has(option.id);
-          const labelLower = PRODUCT_TYPE_LABELS[option.id].toLowerCase();
+          const title = productTypeLabel(option.id);
+          const labelLower = title.toLowerCase();
 
           if (isSelected) {
             return (
@@ -260,7 +248,7 @@ export const ProductTypePicker = ({
                 >
                   <CheckIcon />
                 </span>
-                <Card title={`${option.emoji} ${option.title}`} subtitle={option.description}>
+                <Card title={`${option.emoji} ${title}`} subtitle={option.description}>
                   <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
                     <button
                       type="button"
@@ -294,7 +282,7 @@ export const ProductTypePicker = ({
               onMouseEnter={(event) => applyHover(event.currentTarget, true)}
               onMouseLeave={(event) => applyHover(event.currentTarget, false)}
             >
-              <Card title={`${option.emoji} ${option.title}`} subtitle={option.description}>
+              <Card title={`${option.emoji} ${title}`} subtitle={option.description}>
                 <div style={{ color: "#175cd3", fontWeight: 600 }}>Выбрать →</div>
               </Card>
             </button>

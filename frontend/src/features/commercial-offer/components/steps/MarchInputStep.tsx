@@ -1,6 +1,7 @@
 import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type { CommercialDraftDetails, OcrCorrection, PlateInputMode } from "@/features/commercial-offer/types/commercialOffer";
 import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
 import { KpMarchPreviewPanel } from "@/features/commercial-offer/components/KpMarchPreviewPanel";
@@ -76,7 +77,7 @@ const IMAGE_ZOOM_MAX = 3;
 const IMAGE_ZOOM_STEP = 0.25;
 
 /** Real marks from `march_prices` (pb.db): 1ЛМ series and short ЛМ. */
-export const MARCH_LIST_PLACEHOLDER = "1ЛМ 27-11-14-4 B25 5\nЛМ 2,8 3";
+export const MARCH_LIST_PLACEHOLDER = PRODUCT_TYPE_CONFIG.marches.labels.placeholder;
 
 const clampImageZoom = (value: number) => Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, value));
 const formatImageZoom = (zoom: number) => `${Math.round(zoom * 100)}%`;
@@ -155,6 +156,7 @@ export const MarchInputStep = ({
     blockReason: undefined,
   });
   const hasDraft = Boolean(draft);
+  const labels = PRODUCT_TYPE_CONFIG.marches.labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
   const reviewHighlights = useBatchReviewHighlights({
@@ -222,11 +224,11 @@ export const MarchInputStep = ({
       recognitionStarted={recognitionStarted}
       isRecognizing={isRecognizing}
       isAiProcessing={isAiProcessing}
-      listLabel="Список маршей"
-      placeholder={MARCH_LIST_PLACEHOLDER}
-      emptySubtitle="Вставьте текст списка маршей или загрузите фото таблицы."
-      aiHint="Редкий сценарий: опишите, что сделать со списком маршей."
-      aiPlaceholder="Например: убери строки с B15"
+      listLabel={labels.listLabel}
+      placeholder={labels.placeholder}
+      emptySubtitle={labels.emptySubtitle}
+      aiHint={labels.aiHint}
+      aiPlaceholder={labels.aiPlaceholder}
       aiInstruction={aiInstruction}
       onAiInstructionChange={onAiInstructionChange}
       onApplyAi={onApplyAi}
@@ -241,13 +243,13 @@ export const MarchInputStep = ({
 
   return (
     <StepLayout
-      title="Шаг 1. Марши"
+      title={labels.stepTitle}
       description={
         isBatchReviewMode
           ? "Сверьте распознанный список текущего источника с фото и нажмите «Список верен»."
           : hasDraft
-            ? "Добавьте ещё марши или перейдите к оформлению клиента."
-            : "Загрузите фото или вставьте список маршей для расчёта."
+            ? labels.addMoreDescription
+            : labels.initialDescription
       }
       footer={
         hasDraft ? (
@@ -431,7 +433,7 @@ export const MarchInputStep = ({
                   </Card>
                 )}
 
-                <Card title="Список маршей для расчёта" subtitle="Сверьте позиции текущего источника с фото или текстом.">
+                <Card title={labels.reviewListTitle} subtitle="Сверьте позиции текущего источника с фото или текстом.">
                   {batchReviewDraft && (
                     <PlateListEditor
                       draft={batchReviewDraft}

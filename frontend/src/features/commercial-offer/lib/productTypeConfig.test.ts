@@ -68,16 +68,93 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.fbs.batchesField).toBe("fbs_batches");
   });
 
-  it("provides display labels for every product", () => {
-    expect(PRODUCT_TYPE_CONFIG.plates.labels).toEqual({ nounPlural: "Плиты", nounGenitivePlural: "плит" });
-    expect(PRODUCT_TYPE_CONFIG.piles.labels).toEqual({ nounPlural: "Сваи", nounGenitivePlural: "свай" });
-    expect(PRODUCT_TYPE_CONFIG.steps.labels).toEqual({ nounPlural: "Ступени", nounGenitivePlural: "ступеней" });
-    expect(PRODUCT_TYPE_CONFIG.marches.labels).toEqual({ nounPlural: "Марши", nounGenitivePlural: "маршей" });
-    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels).toEqual({
-      nounPlural: "Мостовые сваи",
-      nounGenitivePlural: "мостовых свай",
-    });
-    expect(PRODUCT_TYPE_CONFIG.fbs.labels).toEqual({ nounPlural: "ФБС", nounGenitivePlural: "ФБС" });
+  it("provides noun labels for every product", () => {
+    expect(PRODUCT_TYPE_CONFIG.plates.labels.nounPlural).toBe("Плиты");
+    expect(PRODUCT_TYPE_CONFIG.plates.labels.nounGenitivePlural).toBe("плит");
+    expect(PRODUCT_TYPE_CONFIG.piles.labels.nounPlural).toBe("Сваи");
+    expect(PRODUCT_TYPE_CONFIG.piles.labels.nounGenitivePlural).toBe("свай");
+    expect(PRODUCT_TYPE_CONFIG.steps.labels.nounPlural).toBe("Ступени");
+    expect(PRODUCT_TYPE_CONFIG.steps.labels.nounGenitivePlural).toBe("ступеней");
+    expect(PRODUCT_TYPE_CONFIG.marches.labels.nounPlural).toBe("Марши");
+    expect(PRODUCT_TYPE_CONFIG.marches.labels.nounGenitivePlural).toBe("маршей");
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.nounPlural).toBe("Мостовые сваи");
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.nounGenitivePlural).toBe("мостовых свай");
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.nounPlural).toBe("ФБС");
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.nounGenitivePlural).toBe("ФБС");
+  });
+
+  it("fills every input-step label for every product (no empty copy)", () => {
+    for (const type of ALL_PRODUCT_TYPES) {
+      const labels = PRODUCT_TYPE_CONFIG[type].labels;
+      expect(labels.stepTitle, type).toBe(`Шаг 1. ${labels.nounPlural}`);
+      expect(labels.listLabel, type).toBe(`Список ${labels.nounGenitivePlural}`);
+      expect(labels.reviewListTitle, type).toBe(`${labels.listLabel} для расчёта`);
+      expect(labels.emptySubtitle, type).toBe(
+        `Вставьте текст списка ${labels.nounGenitivePlural} или загрузите фото таблицы.`,
+      );
+      expect(labels.aiHint, type).toBe(
+        `Редкий сценарий: опишите, что сделать со списком ${labels.nounGenitivePlural}.`,
+      );
+      expect(labels.initialDescription, type).toBe(
+        `Загрузите фото или вставьте список ${labels.nounGenitivePlural} для расчёта.`,
+      );
+      expect(labels.previewChangedMessage, type).toBe(
+        `Изменён список ${labels.nounGenitivePlural} — нажмите «Список верен» для пересчёта состава.`,
+      );
+      expect(labels.placeholder.length, type).toBeGreaterThan(0);
+      expect(labels.aiPlaceholder, type).toMatch(/^Например: /);
+      expect(labels.addMoreDescription, type).toMatch(/^Добавьте ещё .+ или перейдите к оформлению клиента\.$/);
+      expect(labels.previewEmptyMessage, type).toMatch(/^Список пуст — распознайте .+\.$/);
+    }
+  });
+
+  it("keeps the exact current list placeholders", () => {
+    expect(PRODUCT_TYPE_CONFIG.plates.labels.placeholder).toBe("ПБ 78-12-8п 2\n71-12-8 3\nПБ 66-12-8п 4");
+    expect(PRODUCT_TYPE_CONFIG.piles.labels.placeholder).toBe("С120.35-12 B25 5\nС120.35-13и 3");
+    expect(PRODUCT_TYPE_CONFIG.steps.labels.placeholder).toBe("ЛС11 10\nЛС14-1лев 5\nЛС11-Б-1 2");
+    expect(PRODUCT_TYPE_CONFIG.marches.labels.placeholder).toBe("1ЛМ 27-11-14-4 B25 5\nЛМ 2,8 3");
+    // Deliberate copy-paste leftovers from the pile step — preserved verbatim until the
+    // customer confirms the canonical examples (see plan 2026-09-08 §5).
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.placeholder).toBe("С120.35-12 B25 5\nС120.35-13и 3");
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.placeholder).toBe("С120.35-12 B25 5\nС120.35-13и 3");
+  });
+
+  it("keeps the exact accusative-dependent copy (addMore / previewEmpty)", () => {
+    expect(PRODUCT_TYPE_CONFIG.plates.labels.addMoreDescription).toBe(
+      "Добавьте ещё плиты или перейдите к оформлению клиента.",
+    );
+    expect(PRODUCT_TYPE_CONFIG.piles.labels.addMoreDescription).toBe(
+      "Добавьте ещё сваи или перейдите к оформлению клиента.",
+    );
+    expect(PRODUCT_TYPE_CONFIG.steps.labels.addMoreDescription).toBe(
+      "Добавьте ещё ступени или перейдите к оформлению клиента.",
+    );
+    expect(PRODUCT_TYPE_CONFIG.marches.labels.addMoreDescription).toBe(
+      "Добавьте ещё марши или перейдите к оформлению клиента.",
+    );
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.addMoreDescription).toBe(
+      "Добавьте ещё мостовые сваи или перейдите к оформлению клиента.",
+    );
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.addMoreDescription).toBe(
+      "Добавьте ещё ФБС или перейдите к оформлению клиента.",
+    );
+    expect(PRODUCT_TYPE_CONFIG.plates.labels.previewEmptyMessage).toBe("Список пуст — распознайте плиты.");
+    expect(PRODUCT_TYPE_CONFIG.piles.labels.previewEmptyMessage).toBe("Список пуст — распознайте сваи.");
+    expect(PRODUCT_TYPE_CONFIG.steps.labels.previewEmptyMessage).toBe("Список пуст — распознайте ступени.");
+    expect(PRODUCT_TYPE_CONFIG.marches.labels.previewEmptyMessage).toBe("Список пуст — распознайте марши.");
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.previewEmptyMessage).toBe(
+      "Список пуст — распознайте мостовые сваи.",
+    );
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.previewEmptyMessage).toBe("Список пуст — распознайте ФБС.");
+  });
+
+  it("keeps the exact AI placeholders", () => {
+    expect(PRODUCT_TYPE_CONFIG.plates.labels.aiPlaceholder).toBe("Например: убери строки с 6п");
+    expect(PRODUCT_TYPE_CONFIG.piles.labels.aiPlaceholder).toBe("Например: убери строки с B15");
+    expect(PRODUCT_TYPE_CONFIG.steps.labels.aiPlaceholder).toBe("Например: убери строки с ЛС11");
+    expect(PRODUCT_TYPE_CONFIG.marches.labels.aiPlaceholder).toBe("Например: убери строки с B15");
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.aiPlaceholder).toBe("Например: убери строки с B15");
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.aiPlaceholder).toBe("Например: убери строки с B15");
   });
 });
 

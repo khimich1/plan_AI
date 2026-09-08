@@ -1,6 +1,7 @@
 import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type { CommercialDraftDetails, OcrCorrection, PlateInputMode } from "@/features/commercial-offer/types/commercialOffer";
 import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
 import { KpStepPreviewPanel } from "@/features/commercial-offer/components/KpStepPreviewPanel";
@@ -146,6 +147,7 @@ export const StepInputStep = ({
     blockReason: undefined,
   });
   const hasDraft = Boolean(draft);
+  const labels = PRODUCT_TYPE_CONFIG.steps.labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
   const reviewHighlights = useBatchReviewHighlights({
@@ -213,11 +215,11 @@ export const StepInputStep = ({
       recognitionStarted={recognitionStarted}
       isRecognizing={isRecognizing}
       isAiProcessing={isAiProcessing}
-      listLabel="Список ступеней"
-      placeholder={"ЛС11 10\nЛС14-1лев 5\nЛС11-Б-1 2"}
-      emptySubtitle="Вставьте текст списка ступеней или загрузите фото таблицы."
-      aiHint="Редкий сценарий: опишите, что сделать со списком ступеней."
-      aiPlaceholder="Например: убери строки с ЛС11"
+      listLabel={labels.listLabel}
+      placeholder={labels.placeholder}
+      emptySubtitle={labels.emptySubtitle}
+      aiHint={labels.aiHint}
+      aiPlaceholder={labels.aiPlaceholder}
       aiInstruction={aiInstruction}
       onAiInstructionChange={onAiInstructionChange}
       onApplyAi={onApplyAi}
@@ -232,13 +234,13 @@ export const StepInputStep = ({
 
   return (
     <StepLayout
-      title="Шаг 1. Ступени"
+      title={labels.stepTitle}
       description={
         isBatchReviewMode
           ? "Сверьте распознанный список текущего источника с фото и нажмите «Список верен»."
           : hasDraft
-            ? "Добавьте ещё ступени или перейдите к оформлению клиента."
-            : "Загрузите фото или вставьте список ступеней для расчёта."
+            ? labels.addMoreDescription
+            : labels.initialDescription
       }
       footer={
         hasDraft ? (
@@ -422,7 +424,7 @@ export const StepInputStep = ({
                   </Card>
                 )}
 
-                <Card title="Список ступеней для расчёта" subtitle="Сверьте позиции текущего источника с фото или текстом.">
+                <Card title={labels.reviewListTitle} subtitle="Сверьте позиции текущего источника с фото или текстом.">
                   {batchReviewDraft && (
                     <PlateListEditor
                       draft={batchReviewDraft}

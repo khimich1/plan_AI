@@ -1,6 +1,7 @@
 import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type { CommercialDraftDetails, OcrCorrection, PlateInputMode } from "@/features/commercial-offer/types/commercialOffer";
 import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
 import { KpFbsPreviewPanel } from "@/features/commercial-offer/components/KpFbsPreviewPanel";
@@ -152,6 +153,7 @@ export const FbsInputStep = ({
     blockReason: undefined,
   });
   const hasDraft = Boolean(draft);
+  const labels = PRODUCT_TYPE_CONFIG.fbs.labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
   const reviewHighlights = useBatchReviewHighlights({
@@ -219,11 +221,11 @@ export const FbsInputStep = ({
       recognitionStarted={recognitionStarted}
       isRecognizing={isRecognizing}
       isAiProcessing={isAiProcessing}
-      listLabel="Список ФБС"
-      placeholder={"С120.35-12 B25 5\nС120.35-13и 3"}
-      emptySubtitle="Вставьте текст списка ФБС или загрузите фото таблицы."
-      aiHint="Редкий сценарий: опишите, что сделать со списком ФБС."
-      aiPlaceholder="Например: убери строки с B15"
+      listLabel={labels.listLabel}
+      placeholder={labels.placeholder}
+      emptySubtitle={labels.emptySubtitle}
+      aiHint={labels.aiHint}
+      aiPlaceholder={labels.aiPlaceholder}
       aiInstruction={aiInstruction}
       onAiInstructionChange={onAiInstructionChange}
       onApplyAi={onApplyAi}
@@ -238,13 +240,13 @@ export const FbsInputStep = ({
 
   return (
     <StepLayout
-      title="Шаг 1. ФБС"
+      title={labels.stepTitle}
       description={
         isBatchReviewMode
           ? "Сверьте распознанный список текущего источника с фото и нажмите «Список верен»."
           : hasDraft
-            ? "Добавьте ещё ФБС или перейдите к оформлению клиента."
-            : "Загрузите фото или вставьте список ФБС для расчёта."
+            ? labels.addMoreDescription
+            : labels.initialDescription
       }
       footer={
         hasDraft ? (
@@ -428,7 +430,7 @@ export const FbsInputStep = ({
                   </Card>
                 )}
 
-                <Card title="Список ФБС для расчёта" subtitle="Сверьте позиции текущего источника с фото или текстом.">
+                <Card title={labels.reviewListTitle} subtitle="Сверьте позиции текущего источника с фото или текстом.">
                   {batchReviewDraft && (
                     <PlateListEditor
                       draft={batchReviewDraft}
