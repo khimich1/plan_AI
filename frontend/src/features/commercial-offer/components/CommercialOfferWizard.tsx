@@ -7,22 +7,7 @@ import { archiveKeys } from "@/features/commercial-archive/hooks/useArchiveQueri
 import { planApplyAiSessionSync } from "@/features/commercial-offer/lib/applyAiSession";
 import { getBatches, getCurrentBatchReviewText, mergeEditedBatchIntoFullText } from "@/features/commercial-offer/lib/batchReview";
 import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
-import {
-  buildPileLinesFromOrderData,
-  buildPilePreviewRows,
-} from "@/features/commercial-offer/lib/buildPilePreviewRows";
-import {
-  buildBridgePileLinesFromOrderData,
-  buildBridgePilePreviewRows,
-} from "@/features/commercial-offer/lib/buildBridgePilePreviewRows";
-import {
-  buildFbsLinesFromOrderData,
-  buildFbsPreviewRows,
-} from "@/features/commercial-offer/lib/buildFbsPreviewRows";
-import {
-  buildMarchLinesFromOrderData,
-  buildMarchPreviewRows,
-} from "@/features/commercial-offer/lib/buildMarchPreviewRows";
+import { getProductTypePreview } from "@/features/commercial-offer/lib/productTypePreview";
 import {
   getProductInputStep,
   getWizardStepOrder,
@@ -130,9 +115,6 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
 
   const productType = state.productType;
   const productConfig = getProductTypeConfig(productType);
-  const isMarchFlow = productType === "marches";
-  const isBridgePileFlow = productType === "bridge_piles";
-  const isFbsFlow = productType === "fbs";
   const isSimpleProductFlow = productConfig.isSimpleKp;
   const skipClient = shouldSkipClientStep({
     clientName: state.clientName,
@@ -602,61 +584,18 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     );
     const updateMode = hasSealedLines ? "append" : "replace";
     try {
-      if (isFbsFlow) {
-        const rows = buildFbsPreviewRows(currentDraft);
-        if (lineIndex < 0 || lineIndex >= rows.length || rows[lineIndex]?.sealed) {
-          return;
-        }
-        const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
-        const text = buildFbsLinesFromOrderData(updated);
-        await updateInputMutation.mutateAsync({
-          draftId: currentDraft.draft_id,
-          productType,
-          text,
-          image: null,
-          mode: updateMode,
-        });
+      // Only reachable for grade-supporting simple products — the wizard passes
+      // onLineGradeChange solely when productConfig.supportsGrades.
+      const preview = getProductTypePreview(productType);
+      if (!preview) {
         return;
       }
-      if (isBridgePileFlow) {
-        const rows = buildBridgePilePreviewRows(currentDraft);
-        if (lineIndex < 0 || lineIndex >= rows.length || rows[lineIndex]?.sealed) {
-          return;
-        }
-        const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
-        const text = buildBridgePileLinesFromOrderData(updated);
-        await updateInputMutation.mutateAsync({
-          draftId: currentDraft.draft_id,
-          productType,
-          text,
-          image: null,
-          mode: updateMode,
-        });
-        return;
-      }
-      if (isMarchFlow) {
-        const rows = buildMarchPreviewRows(currentDraft);
-        if (lineIndex < 0 || lineIndex >= rows.length || rows[lineIndex]?.sealed) {
-          return;
-        }
-        const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
-        const text = buildMarchLinesFromOrderData(updated);
-        await updateInputMutation.mutateAsync({
-          draftId: currentDraft.draft_id,
-          productType,
-          text,
-          image: null,
-          mode: updateMode,
-        });
-        return;
-      }
-
-      const rows = buildPilePreviewRows(currentDraft);
+      const rows = preview.buildRows(currentDraft);
       if (lineIndex < 0 || lineIndex >= rows.length || rows[lineIndex]?.sealed) {
         return;
       }
       const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
-      const text = buildPileLinesFromOrderData(updated);
+      const text = preview.buildLines(updated);
       await updateInputMutation.mutateAsync({
         draftId: currentDraft.draft_id,
         productType,
