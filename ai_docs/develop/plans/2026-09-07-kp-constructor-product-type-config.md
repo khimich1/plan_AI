@@ -1,6 +1,6 @@
 # Конструктор КП — шаг 2: конфиг по изделиям (productTypeConfig)
 
-**Статус:** план-хэндофф для выполнения в новом окне.
+**Статус:** выполнен (2026-09-07). Отчёт: `ai_docs/develop/reports/kp-constructor-product-type-config-2026-09-07.md`.
 **Дата:** 2026-09-07. **Основание:** полное ревью конструктора КП + фикс-пак 1
 (`ai_docs/develop/reports/kp-constructor-fixpack-1-2026-09-07.md`).
 
@@ -113,16 +113,16 @@ export const getProductTypeConfig = (type: ProductType | null | undefined): Prod
 
 ## 6. Приёмка
 
-- [ ] `npm run typecheck` — чисто после каждого инкремента
-- [ ] `npx vitest run src/features/commercial-offer` — все тесты зелёные **без модификации
+- [x] `npm run typecheck` — чисто после каждого инкремента
+- [x] `npx vitest run src/features/commercial-offer` — все тесты зелёные **без модификации
       существующих тестов** (правка тестов = сигнал смены поведения; исключение — тесты хука/API,
       если их arrange привязан к удалённым методам: тогда тест переписывается на обобщённый метод
       с теми же ассертами поведения)
-- [ ] Ни одного тернарника/if-цепочки по `ProductType` вне `productTypeConfig.ts`
+- [x] Ни одного тернарника/if-цепочки по `ProductType` вне `productTypeConfig.ts`
       (grep по `isFbsFlow|isPileFlow|isMarchFlow|isStepFlow|isBridgePileFlow` — только определение
       флагов для рендер-блоков, которые уйдут в шаге 3)
-- [ ] Diff суммарно отрицательный по строкам
-- [ ] Отчёт в `ai_docs/develop/reports/` по конвенции проекта
+- [x] Diff суммарно отрицательный по строкам
+- [x] Отчёт в `ai_docs/develop/reports/` по конвенции проекта
 
 ## 7. Рекомендованные скиллы (прочитать в новом окне до старта)
 
