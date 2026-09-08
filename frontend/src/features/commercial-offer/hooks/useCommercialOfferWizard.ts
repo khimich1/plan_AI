@@ -78,70 +78,38 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
-  const updatePlatesMutation = useMutation({
-    mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftInput(draftId, "plates", { text, image, mode }),
-    onSuccess: (draft, variables) => {
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const updatePilesMutation = useMutation({
-    mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftInput(draftId, "piles", { text, image, mode }),
-    onSuccess: (draft, variables) => {
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const updateStepsMutation = useMutation({
-    mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftInput(draftId, "steps", { text, image, mode }),
-    onSuccess: (draft, variables) => {
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const updateMarchesMutation = useMutation({
-    mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftInput(draftId, "marches", { text, image, mode }),
-    onSuccess: (draft, variables) => {
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const updateBridgePilesMutation = useMutation({
-    mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftInput(draftId, "bridge_piles", { text, image, mode }),
-    onSuccess: (draft, variables) => {
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const updateFbsMutation = useMutation({
-    mutationFn: ({ draftId, text, image, mode }: { draftId: string; text: string; image: File | null; mode: "append" | "replace" }) =>
-      commercialOfferApi.updateDraftInput(draftId, "fbs", { text, image, mode }),
-    onSuccess: (draft, variables) => {
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const applyAiPlatesMutation = useMutation({
+  const updateInputMutation = useMutation({
     mutationFn: ({
       draftId,
+      productType,
+      text,
+      image,
+      mode,
+    }: {
+      draftId: string;
+      productType: ProductType;
+      text: string;
+      image: File | null;
+      mode: "append" | "replace";
+    }) => commercialOfferApi.updateDraftInput(draftId, productType, { text, image, mode }),
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
+  const applyAiMutation = useMutation({
+    mutationFn: ({
+      draftId,
+      productType,
       instruction,
       image,
     }: {
       draftId: string;
+      productType: ProductType;
       instruction: string;
       image: File | null;
-    }) => commercialOfferApi.applyAiInstruction(draftId, "plates", { instruction, image }),
+    }) => commercialOfferApi.applyAiInstruction(draftId, productType, { instruction, image }),
     onSuccess: (draft, variables) => {
       dispatch({ type: "start-batch-review", payload: draft });
       setDraftCache(variables.draftId, draft);
@@ -149,124 +117,16 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
-  const applyAiPilesMutation = useMutation({
+  const updateGradesMutation = useMutation({
     mutationFn: ({
       draftId,
-      instruction,
-      image,
+      productType,
+      concreteGrade,
     }: {
       draftId: string;
-      instruction: string;
-      image: File | null;
-    }) => commercialOfferApi.applyAiInstruction(draftId, "piles", { instruction, image }),
-    onSuccess: (draft, variables) => {
-      dispatch({ type: "start-batch-review", payload: draft });
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const applyAiStepsMutation = useMutation({
-    mutationFn: ({
-      draftId,
-      instruction,
-      image,
-    }: {
-      draftId: string;
-      instruction: string;
-      image: File | null;
-    }) => commercialOfferApi.applyAiInstruction(draftId, "steps", { instruction, image }),
-    onSuccess: (draft, variables) => {
-      dispatch({ type: "start-batch-review", payload: draft });
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const applyAiMarchesMutation = useMutation({
-    mutationFn: ({
-      draftId,
-      instruction,
-      image,
-    }: {
-      draftId: string;
-      instruction: string;
-      image: File | null;
-    }) => commercialOfferApi.applyAiInstruction(draftId, "marches", { instruction, image }),
-    onSuccess: (draft, variables) => {
-      dispatch({ type: "start-batch-review", payload: draft });
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const applyAiBridgePilesMutation = useMutation({
-    mutationFn: ({
-      draftId,
-      instruction,
-      image,
-    }: {
-      draftId: string;
-      instruction: string;
-      image: File | null;
-    }) => commercialOfferApi.applyAiInstruction(draftId, "bridge_piles", { instruction, image }),
-    onSuccess: (draft, variables) => {
-      dispatch({ type: "start-batch-review", payload: draft });
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const applyAiFbsMutation = useMutation({
-    mutationFn: ({
-      draftId,
-      instruction,
-      image,
-    }: {
-      draftId: string;
-      instruction: string;
-      image: File | null;
-    }) => commercialOfferApi.applyAiInstruction(draftId, "fbs", { instruction, image }),
-    onSuccess: (draft, variables) => {
-      dispatch({ type: "start-batch-review", payload: draft });
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const updatePileGradesMutation = useMutation({
-    mutationFn: ({ draftId, concreteGrade }: { draftId: string; concreteGrade: string }) =>
-      commercialOfferApi.updateGrades(draftId, "piles", concreteGrade),
-    onSuccess: (draft, variables) => {
-      dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const updateMarchGradesMutation = useMutation({
-    mutationFn: ({ draftId, concreteGrade }: { draftId: string; concreteGrade: string }) =>
-      commercialOfferApi.updateGrades(draftId, "marches", concreteGrade),
-    onSuccess: (draft, variables) => {
-      dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const updateBridgePileGradesMutation = useMutation({
-    mutationFn: ({ draftId, concreteGrade }: { draftId: string; concreteGrade: string }) =>
-      commercialOfferApi.updateGrades(draftId, "bridge_piles", concreteGrade),
-    onSuccess: (draft, variables) => {
-      dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
-      setDraftCache(variables.draftId, draft);
-      invalidateDraft(variables.draftId);
-    },
-  });
-
-  const updateFbsGradesMutation = useMutation({
-    mutationFn: ({ draftId, concreteGrade }: { draftId: string; concreteGrade: string }) =>
-      commercialOfferApi.updateGrades(draftId, "fbs", concreteGrade),
+      productType: ProductType;
+      concreteGrade: string;
+    }) => commercialOfferApi.updateGrades(draftId, productType, concreteGrade),
     onSuccess: (draft, variables) => {
       dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
       setDraftCache(variables.draftId, draft);
@@ -477,22 +337,9 @@ export const useCommercialOfferWizard = () => {
     draftQuery,
     breakdownQuery,
     createDraftMutation,
-    updatePlatesMutation,
-    updatePilesMutation,
-    updateStepsMutation,
-    updateMarchesMutation,
-    updateBridgePilesMutation,
-    updateFbsMutation,
-    applyAiPlatesMutation,
-    applyAiPilesMutation,
-    applyAiStepsMutation,
-    applyAiMarchesMutation,
-    applyAiBridgePilesMutation,
-    applyAiFbsMutation,
-    updatePileGradesMutation,
-    updateMarchGradesMutation,
-    updateBridgePileGradesMutation,
-    updateFbsGradesMutation,
+    updateInputMutation,
+    applyAiMutation,
+    updateGradesMutation,
     resolveWidePlatesMutation,
     resolveUnpricedPlatesMutation,
     resolveInvalidWidthsMutation,

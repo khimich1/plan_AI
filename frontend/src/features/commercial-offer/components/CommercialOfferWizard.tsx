@@ -75,22 +75,9 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     breakdownQuery,
     currentDraft,
     createDraftMutation,
-    updatePlatesMutation,
-    updatePilesMutation,
-    updateStepsMutation,
-    updateMarchesMutation,
-    updateBridgePilesMutation,
-    updateFbsMutation,
-    applyAiPlatesMutation,
-    applyAiPilesMutation,
-    applyAiStepsMutation,
-    applyAiMarchesMutation,
-    applyAiBridgePilesMutation,
-    applyAiFbsMutation,
-    updatePileGradesMutation,
-    updateMarchGradesMutation,
-    updateBridgePileGradesMutation,
-    updateFbsGradesMutation,
+    updateInputMutation,
+    applyAiMutation,
+    updateGradesMutation,
     resolveWidePlatesMutation,
     resolveUnpricedPlatesMutation,
     resolveInvalidWidthsMutation,
@@ -150,28 +137,6 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const stepOrder = getWizardStepOrder(productType, { skipClient });
   const inputStep = getProductInputStep(productType);
   const stepIndex = (step: WizardStepId) => stepOrder.indexOf(step);
-  const updateInputMutation = isFbsFlow
-    ? updateFbsMutation
-    : isBridgePileFlow
-    ? updateBridgePilesMutation
-    : isMarchFlow
-      ? updateMarchesMutation
-      : isStepFlow
-        ? updateStepsMutation
-        : isPileFlow
-          ? updatePilesMutation
-          : updatePlatesMutation;
-  const applyAiMutation = isFbsFlow
-    ? applyAiFbsMutation
-    : isBridgePileFlow
-    ? applyAiBridgePilesMutation
-    : isMarchFlow
-      ? applyAiMarchesMutation
-      : isStepFlow
-        ? applyAiStepsMutation
-        : isPileFlow
-          ? applyAiPilesMutation
-          : applyAiPlatesMutation;
 
   const managers = managersQuery.data?.items ?? [];
 
@@ -187,6 +152,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       } else {
         draft = await updateInputMutation.mutateAsync({
           draftId,
+          productType: pageProductType,
           text: "",
           image,
           mode: isFirst ? "replace" : "append",
@@ -298,6 +264,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     try {
       const draft = await updateInputMutation.mutateAsync({
         draftId,
+        productType,
         text: "",
         image,
         mode: "replace",
@@ -310,6 +277,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     currentDraft?.draft_id,
     dispatch,
     multiPage,
+    productType,
     recognizedImagePreview?.file,
     updateInputMutation,
   ]);
@@ -391,6 +359,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       if (currentDraft?.draft_id) {
         draft = await updateInputMutation.mutateAsync({
           draftId: currentDraft.draft_id,
+          productType,
           text: sourceText,
           image: imageForRecognition,
           mode,
@@ -436,6 +405,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       }
       const draft = await applyAiMutation.mutateAsync({
         draftId: currentDraft.draft_id,
+        productType,
         instruction,
         image,
       });
@@ -489,6 +459,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         if (mergedText && mergedText !== (draft.metadata.normalized_text ?? "").trim()) {
           draft = await updateInputMutation.mutateAsync({
             draftId: draft.draft_id,
+            productType,
             text: mergedText,
             image: null,
             mode: "replace",
@@ -523,6 +494,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         const mergedText = mergeEditedBatchIntoFullText(batches, editedText);
         draft = await updateInputMutation.mutateAsync({
           draftId: draft.draft_id,
+          productType,
           text: mergedText,
           image: null,
           mode: "replace",
@@ -749,15 +721,9 @@ const handleFinishBridgePiles = async () => {
     }
     setStepError(null);
     try {
-      const gradesMutation = isFbsFlow
-        ? updateFbsGradesMutation
-        : isBridgePileFlow
-        ? updateBridgePileGradesMutation
-        : isMarchFlow
-          ? updateMarchGradesMutation
-          : updatePileGradesMutation;
-      await gradesMutation.mutateAsync({
+      await updateGradesMutation.mutateAsync({
         draftId: currentDraft.draft_id,
+        productType,
         concreteGrade: grade,
       });
     } catch (error) {
@@ -784,8 +750,9 @@ const handleFinishBridgePiles = async () => {
         }
         const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
         const text = buildFbsLinesFromOrderData(updated);
-        await updateFbsMutation.mutateAsync({
+        await updateInputMutation.mutateAsync({
           draftId: currentDraft.draft_id,
+          productType,
           text,
           image: null,
           mode: updateMode,
@@ -799,8 +766,9 @@ const handleFinishBridgePiles = async () => {
         }
         const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
         const text = buildBridgePileLinesFromOrderData(updated);
-        await updateBridgePilesMutation.mutateAsync({
+        await updateInputMutation.mutateAsync({
           draftId: currentDraft.draft_id,
+          productType,
           text,
           image: null,
           mode: updateMode,
@@ -814,8 +782,9 @@ const handleFinishBridgePiles = async () => {
         }
         const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
         const text = buildMarchLinesFromOrderData(updated);
-        await updateMarchesMutation.mutateAsync({
+        await updateInputMutation.mutateAsync({
           draftId: currentDraft.draft_id,
+          productType,
           text,
           image: null,
           mode: updateMode,
@@ -829,8 +798,9 @@ const handleFinishBridgePiles = async () => {
       }
       const updated = rows.map((row, idx) => (idx === lineIndex ? { ...row, concrete_grade: grade } : row));
       const text = buildPileLinesFromOrderData(updated);
-      await updatePilesMutation.mutateAsync({
+      await updateInputMutation.mutateAsync({
         draftId: currentDraft.draft_id,
+        productType,
         text,
         image: null,
         mode: updateMode,
@@ -860,7 +830,7 @@ const handleFinishBridgePiles = async () => {
         liveLines: liveWidePlateLines(flushText),
         decisionsById: state.widePlateActions,
         currentWideLines: currentDraft.metadata.wide_plate_lines ?? [],
-        updateInput: (payload) => updateInputMutation.mutateAsync(payload),
+        updateInput: (payload) => updateInputMutation.mutateAsync({ ...payload, productType }),
         resolveWidePlates: (payload) => resolveWidePlatesMutation.mutateAsync(payload),
       });
     } catch (error) {
@@ -1413,10 +1383,10 @@ const handleFinishBridgePiles = async () => {
         recognizedImageName={reviewImageName}
         sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateFbsMutation.isPending}
-        isAiProcessing={applyAiFbsMutation.isPending}
-        isUpdatingGrades={updateFbsGradesMutation.isPending}
-        isConfirmingBatch={updateFbsMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
+        isAiProcessing={applyAiMutation.isPending}
+        isUpdatingGrades={updateGradesMutation.isPending}
+        isConfirmingBatch={updateInputMutation.isPending}
         isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
@@ -1451,10 +1421,10 @@ const handleFinishBridgePiles = async () => {
         recognizedImageName={reviewImageName}
         sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateBridgePilesMutation.isPending}
-        isAiProcessing={applyAiBridgePilesMutation.isPending}
-        isUpdatingGrades={updateBridgePileGradesMutation.isPending}
-        isConfirmingBatch={updateBridgePilesMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
+        isAiProcessing={applyAiMutation.isPending}
+        isUpdatingGrades={updateGradesMutation.isPending}
+        isConfirmingBatch={updateInputMutation.isPending}
         isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
@@ -1489,10 +1459,10 @@ const handleFinishBridgePiles = async () => {
         recognizedImageName={reviewImageName}
         sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateMarchesMutation.isPending}
-        isAiProcessing={applyAiMarchesMutation.isPending}
-        isUpdatingGrades={updateMarchGradesMutation.isPending}
-        isConfirmingBatch={updateMarchesMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
+        isAiProcessing={applyAiMutation.isPending}
+        isUpdatingGrades={updateGradesMutation.isPending}
+        isConfirmingBatch={updateInputMutation.isPending}
         isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
@@ -1527,9 +1497,9 @@ const handleFinishBridgePiles = async () => {
         recognizedImageName={reviewImageName}
         sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateStepsMutation.isPending}
-        isAiProcessing={applyAiStepsMutation.isPending}
-        isConfirmingBatch={updateStepsMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
+        isAiProcessing={applyAiMutation.isPending}
+        isConfirmingBatch={updateInputMutation.isPending}
         isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
@@ -1562,10 +1532,10 @@ const handleFinishBridgePiles = async () => {
         recognizedImageName={reviewImageName}
         sourceQueue={sourceImageQueue.items}
         errorMessage={stepError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updatePilesMutation.isPending}
-        isAiProcessing={applyAiPilesMutation.isPending}
-        isUpdatingGrades={updatePileGradesMutation.isPending}
-        isConfirmingBatch={updatePilesMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
+        isAiProcessing={applyAiMutation.isPending}
+        isUpdatingGrades={updateGradesMutation.isPending}
+        isConfirmingBatch={updateInputMutation.isPending}
         isProceeding={calculateMutation.isPending}
         aiInstruction={aiInstruction}
         onAiInstructionChange={setAiInstruction}
@@ -1603,12 +1573,12 @@ const handleFinishBridgePiles = async () => {
         widePlateErrorMessage={widePlateError}
         unpricedPlateErrorMessage={unpricedPlateError}
         invalidWidthErrorMessage={invalidWidthError}
-        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updatePlatesMutation.isPending}
-        isAiProcessing={applyAiPlatesMutation.isPending}
+        isRecognizing={isRecognizingMulti || createDraftMutation.isPending || updateInputMutation.isPending}
+        isAiProcessing={applyAiMutation.isPending}
         isResolvingWidePlates={resolveWidePlatesMutation.isPending}
         isResolvingUnpricedPlates={resolveUnpricedPlatesMutation.isPending}
         isResolvingInvalidWidths={resolveInvalidWidthsMutation.isPending}
-        isConfirmingBatch={updatePlatesMutation.isPending}
+        isConfirmingBatch={updateInputMutation.isPending}
         isProceeding={calculateMutation.isPending}
         widePlateDecisions={state.widePlateActions}
         unpricedPlateDecisions={state.unpricedPlateActions}
