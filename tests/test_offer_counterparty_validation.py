@@ -210,7 +210,11 @@ def _patch_save(workflow: CommercialWorkflowService, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         workflow.export_service,
         "build_offer_identity_payload",
-        lambda draft_id: {"offer_number": "1", "offer_date": "01.01.2026", "file_stem": "kp_1"},
+        lambda *args, **kwargs: {
+            "offer_number": "1",
+            "offer_date": "01.01.2026",
+            "file_stem": "kp_1",
+        },
     )
 
     def fake_create(**kwargs: Any) -> int:

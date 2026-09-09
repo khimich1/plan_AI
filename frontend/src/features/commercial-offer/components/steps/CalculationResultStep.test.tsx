@@ -609,6 +609,36 @@ describe("CalculationResultStep unparsed UX", () => {
   });
 });
 
+describe("CalculationResultStep discounted line prices", () => {
+  it("shows unit price and sum with discount applied", () => {
+    renderResultStep(
+      makeDraft({
+        metadata: {
+          ...baseMetadata(),
+          discount_percent: 10,
+        },
+        order_data: [
+          {
+            line_id: "ln1",
+            product_type: "plates",
+            name: "ПБ 60-12-8п",
+            mark: "ПБ 60-12-8п",
+            qty: 2,
+            unit_price: 10000,
+            weight: 1500,
+          },
+        ],
+      }),
+    );
+
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("9 000")).toBeInTheDocument();
+    expect(within(table).getByText("18 000")).toBeInTheDocument();
+    expect(within(table).queryByText("10 000")).not.toBeInTheDocument();
+    expect(within(table).queryByText("20 000")).not.toBeInTheDocument();
+  });
+});
+
 describe("CalculationResultStep breakdown availability after invalidate", () => {
   it("keeps plate breakdown link when draft count is 0 but query tables are present", () => {
     renderResultStep(

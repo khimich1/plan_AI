@@ -24,6 +24,7 @@ from app.services.commercial_service import CommercialService
 from app.services.commercial_service import CommercialPreviewResult
 from app.schemas.commercial import WizardNextRequiredAction, WizardStepId
 from app.services.commercial_upload_validation import reset_commercial_ocr_rate_limiter_for_tests
+from app.services.commercial_export_service import CommercialExportService
 from app.services.commercial_workflow_service import CommercialWorkflowService, _safe_ocr_temp_suffix
 from app.services.draft_store import DraftStore, UnsafeDraftIdError
 from core.exceptions import PlateParseError
@@ -1143,7 +1144,7 @@ def test_save_draft_archive_passes_normalized_execution_terms(
     monkeypatch.setattr(
         workflow,
         "generate_files",
-        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+        lambda *_args, **_kwargs: [{"kind": "xlsx", "filename": fake_xlsx.name}],
     )
     # Атрибут экземпляра: вызывается без привязки self — только имя файла.
     monkeypatch.setattr(workflow, "_resolve_generated_file", lambda filename: fake_xlsx)
@@ -1182,7 +1183,7 @@ def test_save_draft_archive_empty_execution_terms_input_skips_normalize(
     monkeypatch.setattr(
         workflow,
         "generate_files",
-        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+        lambda *_args, **_kwargs: [{"kind": "xlsx", "filename": fake_xlsx.name}],
     )
     monkeypatch.setattr(workflow, "_resolve_generated_file", lambda filename: fake_xlsx)
 
@@ -1217,7 +1218,7 @@ def test_save_draft_persists_owner_user_id_from_draft_metadata(
     monkeypatch.setattr(
         workflow,
         "generate_files",
-        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+        lambda *_args, **_kwargs: [{"kind": "xlsx", "filename": fake_xlsx.name}],
     )
     monkeypatch.setattr(workflow, "_resolve_generated_file", lambda filename: fake_xlsx)
 
@@ -1376,7 +1377,11 @@ def test_generate_files_returns_schema_when_requested(
     )
     monkeypatch.setattr(workflow, "_resolve_generated_file", lambda filename: tmp_path / filename)
 
-    result = workflow.generate_files("draft-schema", ("schema",))
+    result = workflow.generate_files(
+        "draft-schema",
+        ("schema",),
+        plate_order_ctx=PlateOrderContext.fresh_empty(),
+    )
 
     assert len(result) == 1
     assert result[0]["kind"] == "schema"
@@ -1426,41 +1431,195 @@ def test_get_draft_details_includes_schema_file(
     assert "schema" in kinds
 
 
-def test_build_offer_identity_uses_predicted_kp_number(
+def test_get_draft_details_offer_number_uses_saved_kp_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workflow = CommercialWorkflowService()
-    metadata: dict[str, Any] = {}
-    captured: dict[str, Any] = {}
+    order = PlateOrder()
 
-    monkeypatch.setattr(workflow.kp_repository, "get_next_kp_number", lambda: 1188)
-    monkeypatch.setattr(
-        workflow.draft_store,
-        "update_metadata",
-        lambda draft_id, **kwargs: captured.update({"draft_id": draft_id, **kwargs}),
-    )
+    def fake_load(_draft_id: str) -> dict[str, Any]:
+        return {
+            "order": order,
+            "optimization_context": OptimizationContext(order=order),
+            "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+            "metadata": {
+                "saved_offer": {"kp_id": 777, "status": "в архиве"},
+                "manager_id": 1,
+                "client_name": "ООО А",
+                "counterparty_id": 15,
+                "conditions_mode": "standard",
+                "wide_plate_lines": [],
+                "wide_plates_resolved": True,
+                "current_step": "result",
+            },
+        }
 
-    offer_number, _offer_date, file_stem, kp_id = workflow._build_offer_identity(
-        "draft-abc",
-        metadata,
-        persist_predicted_kp_id=True,
-    )
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", fake_load)
 
-    assert kp_id == 1188
-    assert offer_number == "1188"
-    assert file_stem.startswith("kp_1188_")
-    assert captured["predicted_kp_id"] == 1188
-    assert metadata["predicted_kp_id"] == 1188
+    details = workflow.get_draft_details("abcdef01-saved")
+
+    assert details["offer_identity"]["offer_number"] == "777"
+
+
+def test_build_offer_identity_uses_web_prefix_when_unsaved() -> None:
+    export = CommercialExportService()
+    draft_id = "abcdef01-unsaved-draft"
+
+    offer_number, _offer_date, file_stem = export.build_offer_identity(draft_id, {})
+
+    assert offer_number == "WEB_ABCDEF01"
+    assert file_stem.startswith("kp_abcdef01_")
+    assert "predicted" not in offer_number.lower()
 
 
 def test_build_offer_identity_prefers_saved_kp_id() -> None:
-    workflow = CommercialWorkflowService()
+    export = CommercialExportService()
     metadata = {"saved_offer": {"kp_id": 777}, "predicted_kp_id": 1188}
 
-    offer_number, _offer_date, _file_stem, kp_id = workflow._build_offer_identity(
-        "draft-abc",
-        metadata,
+    offer_number, _offer_date, file_stem = export.build_offer_identity("abcdef01-saved", metadata)
+
+    assert offer_number == "777"
+    assert file_stem.startswith("kp_777_")
+    assert "WEB_" not in offer_number
+    assert "1188" not in offer_number
+    assert "1188" not in file_stem
+
+
+def test_build_offer_identity_uses_resume_kp_id() -> None:
+    export = CommercialExportService()
+    metadata = {"resume_kp_id": 777}
+
+    offer_number, _offer_date, file_stem = export.build_offer_identity("abcdef01-resume", metadata)
+
+    assert offer_number == "777"
+    assert file_stem.startswith("kp_777_")
+    assert "WEB_" not in offer_number
+
+
+def test_save_offer_persists_then_generates_with_kp_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = CommercialWorkflowService()
+    draft_id = "abcdef01-first-save"
+    draft = _attach_counterparty(workflow, tmp_path)
+    draft["metadata"]["generated_files"] = [
+        {
+            "kind": "pdf",
+            "filename": f"kp_{draft_id[:8]}_old.pdf",
+            "display_name": "PDF",
+            "download_url": "",
+        },
+        {
+            "kind": "xlsx",
+            "filename": f"kp_{draft_id[:8]}_old.xlsx",
+            "display_name": "XLSX",
+            "download_url": "",
+        },
+    ]
+    events: list[str] = []
+    generated: list[dict[str, str]] = []
+
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
+
+    def fake_generate(_did: str, file_types=None, **kwargs: Any) -> list[dict[str, str]]:
+        events.append("generate")
+        identity = workflow.export_service.build_offer_identity_payload(
+            _did, draft.get("metadata")
+        )
+        files = [
+            {"kind": "pdf", "filename": f"{identity['file_stem']}.pdf"},
+            {"kind": "xlsx", "filename": f"{identity['file_stem']}.xlsx"},
+        ]
+        generated.extend(files)
+        draft["metadata"]["generated_files"] = files
+        return files
+
+    def fake_save(**kwargs: Any) -> int:
+        events.append("persist")
+        return 777
+
+    def fake_update_metadata(_did: str, **kwargs: Any) -> None:
+        events.append("metadata")
+        draft.setdefault("metadata", {}).update(kwargs)
+
+    monkeypatch.setattr(workflow, "generate_files", fake_generate)
+    monkeypatch.setattr(workflow.kp_repository, "save_offer", fake_save)
+    monkeypatch.setattr(workflow.draft_store, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(
+        workflow.export_service,
+        "resolve_generated_file",
+        lambda filename: tmp_path / filename,
     )
 
-    assert kp_id == 777
-    assert offer_number == "777"
+    result = workflow.save_offer(
+        draft_id,
+        status="в архиве",
+        save_mode="archive",
+    )
+
+    assert "persist" in events
+    assert "generate" in events
+    assert events.index("persist") < events.index("generate")
+    assert result["result_card"]["offer_number"] == "777"
+    assert result["offer_identity"]["offer_number"] == "777"
+    assert generated
+    for item in generated:
+        assert "WEB_" not in item["filename"]
+        assert f"kp_{draft_id[:8]}" not in item["filename"]
+        assert item["filename"].startswith("kp_777_")
+
+
+def test_generate_files_with_saved_kp_id_does_not_use_web_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    from app.core.settings import get_settings
+    from app.services.draft_store import DraftStore
+    from app.services.file_generation_service import FileGenerationService
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    monkeypatch.setenv("OUTPUTS_DIR", str(outputs))
+    get_settings.cache_clear()
+
+    captured: dict[str, Any] = {}
+    fgs = MagicMock(spec=FileGenerationService)
+
+    def _write_pdf(**kwargs: Any) -> str:
+        captured["offer_number"] = kwargs["offer_number"]
+        captured["output_path"] = kwargs["output_path"]
+        path = Path(kwargs["output_path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-FAKE")
+        return str(path)
+
+    fgs.generate_offer_pdf.side_effect = _write_pdf
+    export = CommercialExportService(
+        draft_store=MagicMock(spec=DraftStore),
+        file_generation_service=fgs,
+    )
+    monkeypatch.setattr(
+        "app.services.commercial_export_service.ensure_order_priced",
+        lambda *args, **kwargs: None,
+    )
+    draft_id = "abcdef01-after-save"
+    payload = {
+        "order_data": [{"name": "n", "qty": 1, "length_m": 1, "width_m": 1, "unit_price": 1}],
+        "metadata": {
+            "saved_offer": {"kp_id": 777, "status": "в архиве"},
+            "client_name": "ООО А",
+            "generated_files": [],
+        },
+    }
+
+    files = export.generate_files(draft_id, payload, file_types=("pdf",))
+
+    assert captured["offer_number"] == "777"
+    assert "WEB_" not in captured["offer_number"]
+    filename = Path(captured["output_path"]).name
+    assert filename.startswith("kp_777_")
+    assert f"kp_{draft_id[:8]}" not in filename
+    assert files[0]["filename"].startswith("kp_777_")

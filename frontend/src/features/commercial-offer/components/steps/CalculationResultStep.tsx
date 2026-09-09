@@ -29,6 +29,7 @@ import {
   formatTotalsMoney,
   toNumber,
 } from "@/features/commercial-offer/lib/formatOfferNumbers";
+import { discountedUnitPrice } from "@/features/commercial-offer/lib/lineDiscountDisplay";
 import { LineRowActions } from "@/features/commercial-offer/components/LineRowActions";
 import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
@@ -422,6 +423,10 @@ export const CalculationResultStep = ({
           <tbody>
             {draft.order_data.map((item, index) => {
               const itemName = String(item.name ?? item.mark ?? "");
+              const displayUnitPrice = discountedUnitPrice(
+                item.unit_price,
+                draft.metadata.discount_percent,
+              );
               const canOpenBreakdown = breakdownAvailable && !isBreakdownLoading && itemName.length > 0;
               const lineId = typeof item.line_id === "string" ? item.line_id : null;
               const typeCell = showTypeColumn ? (
@@ -449,8 +454,8 @@ export const CalculationResultStep = ({
                     {typeCell}
                     <td style={tdStyle}>{itemName}</td>
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
-                    <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
-                    <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
+                    <td style={tdStyle}>{formatOfferNumber(displayUnitPrice)}</td>
+                    <td style={tdStyle}>{formatOfferSum(item.qty, displayUnitPrice)}</td>
                     {actionCell}
                   </tr>
                 );
@@ -464,8 +469,8 @@ export const CalculationResultStep = ({
                     <td style={tdStyle}>{itemName}</td>
                     <td style={tdStyle}>{String(item.concrete_grade ?? "—")}</td>
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
-                    <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
-                    <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
+                    <td style={tdStyle}>{formatOfferNumber(displayUnitPrice)}</td>
+                    <td style={tdStyle}>{formatOfferSum(item.qty, displayUnitPrice)}</td>
                     {actionCell}
                   </tr>
                 );
@@ -502,8 +507,8 @@ export const CalculationResultStep = ({
                   <td style={tdStyle}>{String(item.qty ?? "")}</td>
                   <td style={tdStyle}>шт</td>
                   <td style={tdStyle}>{formatOfferNumber(item.weight)}</td>
-                  <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
-                  <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
+                  <td style={tdStyle}>{formatOfferNumber(displayUnitPrice)}</td>
+                  <td style={tdStyle}>{formatOfferSum(item.qty, displayUnitPrice)}</td>
                   {actionCell}
                 </tr>
               );

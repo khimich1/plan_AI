@@ -654,11 +654,13 @@ class CommercialWorkflowService:
         file_types: Iterable[str] | None = None,
         *,
         plate_order_ctx: PlateOrderContext | None = None,
+        replace_existing: bool = False,
     ) -> list[dict[str, str]]:
         return self.draft_lifecycle.generate_files(
             draft_id,
             file_types,
             plate_order_ctx=plate_order_ctx,
+            replace_existing=replace_existing,
         )
 
     def save_offer(
@@ -668,17 +670,29 @@ class CommercialWorkflowService:
         execution_terms: str = "",
         status: str = "в работе",
         save_mode: str = "database",
+        plate_order_ctx: PlateOrderContext | None = None,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.save_offer(
             draft_id,
             execution_terms=execution_terms,
             status=status,
             save_mode=save_mode,
+            plate_order_ctx=plate_order_ctx,
         )
 
-    def save_draft(self, draft_id: str, *, mode: str, execution_terms_input: str = "") -> dict[str, Any]:
+    def save_draft(
+        self,
+        draft_id: str,
+        *,
+        mode: str,
+        execution_terms_input: str = "",
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> dict[str, Any]:
         return self.draft_lifecycle.save_draft(
-            draft_id, mode=mode, execution_terms_input=execution_terms_input
+            draft_id,
+            mode=mode,
+            execution_terms_input=execution_terms_input,
+            plate_order_ctx=plate_order_ctx,
         )
 
     def _load_draft_or_raise(self, draft_id: str) -> dict[str, Any]:
