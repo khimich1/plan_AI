@@ -29,10 +29,10 @@ export const defaultInvalidWidthDecision = (item: InvalidWidthLine): InvalidWidt
   if (item.replacements.length === 0) {
     return { action: "exclude", widthMm: null };
   }
-  const upper = item.replacements.reduce((best, repl) =>
-    repl.width_mm > best.width_mm ? repl : best,
+  const lower = item.replacements.reduce((best, repl) =>
+    repl.width_mm < best.width_mm ? repl : best,
   );
-  return { action: "replace_width", widthMm: upper.width_mm };
+  return { action: "replace_width", widthMm: lower.width_mm };
 };
 
 const choiceValue = (decision: InvalidWidthDecisionState): string => {

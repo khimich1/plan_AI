@@ -16,13 +16,17 @@ from core.unpriced_plate_replacements import _dims_match, _load_code_from_item
 
 
 def _normalize_wide_line_key(line: str) -> str:
-    """Align compact OCR marks with display marks for wide resolve matching."""
+    """Align compact OCR / Excel marks with display marks for resolve matching."""
     text = str(line or "").strip().lower()
+    text = re.sub(r"[\t\u00a0]+", " ", text)
     text = re.sub(r"^плиты\s+", "", text)
     text = re.sub(r"^пб\s+", "", text)
     # Avoid \\b with Cyrillic «п» (JS parity); end or whitespace after «п».
     text = re.sub(r"-(\d+(?:[.,]\d+)?)п(?=\s|$)", r"-\1", text)
-    return re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+шт\.?\s*", " ", text)
+    text = re.sub(r"\s+\d+\s*$", "", text)
+    return text.strip()
 
 @dataclass(frozen=True)
 class PlateResolveSpec:
