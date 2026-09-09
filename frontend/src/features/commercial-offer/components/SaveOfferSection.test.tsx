@@ -138,6 +138,38 @@ describe("SaveOfferSection archive-only create save", () => {
     });
   });
 
+  it("shows saved kp_id from result_card after save", () => {
+    const lastSaveResult = {
+      draft_id: "d1",
+      saved_offer: {
+        kp_id: 1188,
+        status: "в архиве",
+        mode: "archive",
+        execution_terms: "",
+        saved_at: "2026-09-09T12:00:00",
+      },
+      totals: draft.totals,
+      offer_identity: { offer_number: "WEB_ABCDEF01", offer_date: "09.09.2026", file_stem: "kp_abcdef01" },
+      result_card: {
+        kp_id: 1188,
+        offer_number: "1188",
+        offer_date: "09.09.2026",
+        client_name: "Клиент",
+        manager_name: "Иванов",
+        total_amount: 0,
+        status: "в архиве",
+        execution_terms: "",
+      },
+    };
+
+    render(
+      <SaveOfferSection draft={draft} lastSaveResult={lastSaveResult} isPending={false} onSave={vi.fn()} />,
+    );
+
+    expect(screen.getByText(/1188/)).toBeInTheDocument();
+    expect(screen.queryByText(/WEB_/)).not.toBeInTheDocument();
+  });
+
   it("после hydrate кнопка снова активна", () => {
     const resumeDraft = {
       ...draft,

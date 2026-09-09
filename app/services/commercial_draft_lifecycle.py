@@ -15,6 +15,7 @@ from app.schemas.commercial import WizardStepId
 from app.services.commercial_order_identity import APPEND_PRODUCT_TYPES
 from app.services.counterparties_service import CounterpartiesService
 from app.services.product_draft_config import SPECS
+from core.kp import offers_write
 from core.kp_order_data import order_data_from_kp_info
 from core.pile_trip_pricing import coerce_pile_trip_overrides
 from core.plate_order_context import PlateOrderContext
@@ -702,7 +703,9 @@ class CommercialDraftLifecycle:
             "files": self._wf.export_service.collect_draft_files(metadata, draft_id),
             "saved_offer": self.normalize_saved_offer(metadata.get("saved_offer")),
             "totals": totals,
-            "offer_identity": self._wf.export_service.build_offer_identity_payload(draft_id),
+            "offer_identity": self._wf.export_service.build_offer_identity_payload(
+                draft_id, metadata
+            ),
         }
 
     def hydrate_draft_from_saved_kp(
@@ -809,6 +812,7 @@ class CommercialDraftLifecycle:
         file_types: Iterable[str] | None = None,
         *,
         plate_order_ctx: PlateOrderContext | None = None,
+        replace_existing: bool = False,
     ) -> list[dict[str, str]]:
         self.refresh_breakdown_if_needed(draft_id, plate_order_ctx=plate_order_ctx)
         payload = self._wf._load_draft_or_raise(draft_id)
@@ -817,6 +821,7 @@ class CommercialDraftLifecycle:
             payload,
             file_types,
             plate_order_ctx=plate_order_ctx,
+            replace_existing=replace_existing,
         )
 
     def save_offer(
@@ -826,15 +831,10 @@ class CommercialDraftLifecycle:
         execution_terms: str = "",
         status: str = "в работе",
         save_mode: str = "database",
+        plate_order_ctx: PlateOrderContext | None = None,
     ) -> dict[str, Any]:
         payload = self._wf._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
-        files = self._wf.generate_files(draft_id, ("xlsx",))
-        xlsx_file = next((item for item in files if item["kind"] == "xlsx"), None)
-        xlsx_path = None
-        if xlsx_file:
-            resolved = self._wf.export_service.resolve_generated_file(xlsx_file["filename"])
-            xlsx_path = str(resolved) if resolved.exists() else None
 
         raw_owner = metadata.get("owner_user_id")
         owner_user_id = int(raw_owner) if raw_owner is not None else None
@@ -881,7 +881,7 @@ class CommercialDraftLifecycle:
                 delivery_conditions=delivery_conditions,
                 payment_conditions=payment_conditions,
                 execution_terms=execution_terms,
-                xlsx_path=xlsx_path,
+                xlsx_path=None,
                 product_type=product_type,
             )
             # Keep archived status on update; do not flip to default «в работе».
@@ -903,7 +903,7 @@ class CommercialDraftLifecycle:
                 execution_terms=execution_terms,
                 status=status,
                 order_data=order_data,
-                xlsx_path=xlsx_path,
+                xlsx_path=None,
                 owner_user_id=owner_user_id,
                 product_type=product_type,
                 counterparty_id=int(counterparty["id"]),
@@ -924,11 +924,26 @@ class CommercialDraftLifecycle:
             current_save_mode=save_mode,
             execution_terms=execution_terms,
         )
+        metadata["saved_offer"] = saved_offer
+
+        kinds = list(self._file_kinds_for_post_save_regen(metadata))
+        if "schema" in kinds and plate_order_ctx is None:
+            kinds = [kind for kind in kinds if kind != "schema"]
+        self._wf.generate_files(
+            draft_id,
+            tuple(kinds),
+            plate_order_ctx=plate_order_ctx,
+            replace_existing=True,
+        )
+        self._attach_xlsx_path_after_generate(draft_id, int(kp_id))
+
         totals = self._wf.calculation_service.compute_totals_from_metadata(
             payload["order_data"],
             metadata,
         )
-        offer_identity = self._wf.export_service.build_offer_identity_payload(draft_id)
+        offer_identity = self._wf.export_service.build_offer_identity_payload(
+            draft_id, metadata
+        )
         return {
             "saved_offer": saved_offer,
             "totals": totals,
@@ -941,7 +956,50 @@ class CommercialDraftLifecycle:
             ),
         }
 
-    def save_draft(self, draft_id: str, *, mode: str, execution_terms_input: str = "") -> dict[str, Any]:
+    def _attach_xlsx_path_after_generate(self, draft_id: str, kp_id: int) -> None:
+        payload = self._wf._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata", {}))
+        files = self._wf.export_service.collect_draft_files(metadata, draft_id)
+        xlsx_file = next((item for item in files if item.get("kind") == "xlsx"), None)
+        if not xlsx_file:
+            return
+        resolved = self._wf.export_service.resolve_generated_file(xlsx_file["filename"])
+        if not resolved.exists():
+            return
+        try:
+            offers_write.save_xlsx_file(
+                kp_id,
+                str(resolved),
+                db_path=self._wf.kp_repository.db_path,
+            )
+        except Exception:
+            return
+
+    @staticmethod
+    def _file_kinds_for_post_save_regen(metadata: dict[str, Any]) -> tuple[str, ...]:
+        kinds: list[str] = []
+
+        def add(kind: str) -> None:
+            if kind and kind not in kinds:
+                kinds.append(kind)
+
+        add("xlsx")
+        for item in metadata.get("generated_files") or []:
+            if isinstance(item, dict):
+                add(str(item.get("kind") or "").strip().lower())
+        schema_raw = metadata.get("schema_file")
+        if schema_raw:
+            add("schema")
+        return tuple(kind for kind in kinds if kind in {"pdf", "xlsx", "breakdown", "schema"})
+
+    def save_draft(
+        self,
+        draft_id: str,
+        *,
+        mode: str,
+        execution_terms_input: str = "",
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> dict[str, Any]:
         normalized_mode = mode.strip().lower()
         if normalized_mode == "database":
             execution_terms = self._wf.execution_terms_service.normalize(execution_terms_input)
@@ -950,6 +1008,7 @@ class CommercialDraftLifecycle:
                 execution_terms=execution_terms,
                 status="в работе",
                 save_mode="database",
+                plate_order_ctx=plate_order_ctx,
             )
         if normalized_mode == "archive":
             raw = (execution_terms_input or "").strip()
@@ -959,6 +1018,7 @@ class CommercialDraftLifecycle:
                 execution_terms=execution_terms,
                 status="в архиве",
                 save_mode="archive",
+                plate_order_ctx=plate_order_ctx,
             )
         if normalized_mode == "skip":
             details = self.get_draft_details(draft_id)

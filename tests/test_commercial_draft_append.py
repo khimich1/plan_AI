@@ -1479,7 +1479,7 @@ def test_save_offer_with_saved_kp_id_updates_same_id_not_create(
     monkeypatch.setattr(
         workflow,
         "generate_files",
-        lambda draft_id, file_types=None: (
+        lambda draft_id, file_types=None, **_kwargs: (
             generate_calls.append({"draft_id": draft_id, "file_types": file_types})
             or [{"kind": "xlsx", "filename": fake_xlsx.name}]
         ),
@@ -1554,7 +1554,7 @@ def test_save_offer_update_preserves_archived_status_even_if_param_in_work(
     monkeypatch.setattr(
         workflow,
         "generate_files",
-        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+        lambda *_args, **_kwargs: [{"kind": "xlsx", "filename": fake_xlsx.name}],
     )
     monkeypatch.setattr(
         workflow.export_service,
@@ -1594,7 +1594,7 @@ def test_save_offer_with_saved_kp_id_rejects_when_status_not_archived(
     monkeypatch.setattr(
         workflow,
         "generate_files",
-        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+        lambda *_args, **_kwargs: [{"kind": "xlsx", "filename": fake_xlsx.name}],
     )
     monkeypatch.setattr(
         workflow.export_service,
