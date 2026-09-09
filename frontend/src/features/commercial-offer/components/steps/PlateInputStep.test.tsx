@@ -586,6 +586,36 @@ describe("PlateInputStep live wide overlay", () => {
     expect(screen.getByText(/Количество:\s*5/)).toBeInTheDocument();
   });
 
+  it("shows wide card for Excel tab paste even when server stored one wide as resolved", () => {
+    const excel = [
+      "ПБ 68-12-8\tшт\t12",
+      "ПБ 65-14-8 2",
+      "ПБ 62-15-8\tшт\t2",
+      "ПБ 52-15-8\tшт\t4",
+      "ПБ 18-15-8\tшт\t38",
+    ].join("\n");
+    const draft = makeDraft(excel);
+    draft.metadata.wide_plate_lines = [{ id: "stale", line: "ПБ 65-14-8 2", qty: 2 }];
+    draft.metadata.wide_plates_resolved = true;
+
+    render(
+      <PlateInputStep
+        {...liveWideProps}
+        draft={draft}
+        batchReviewText={excel}
+        normalizedText={excel}
+      />,
+    );
+
+    expect(screen.getByText("Нестандартная ширина")).toBeInTheDocument();
+    expect(screen.getByText(/4 позиций требуют внимания/)).toBeInTheDocument();
+    const list = screen.getByText("Список плит для расчёта").closest("div");
+    const card = screen.getByText("Нестандартная ширина");
+    const ai = screen.getByText("Инструкция для помощника");
+    expect(list?.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(card.compareDocumentPosition(ai) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("hides wide card during batch review when editor width is 12 dm", () => {
     const draft = makeDraft("44-15-10п 5");
     draft.metadata.wide_plate_lines = [{ id: "stale", line: "44-15-10п 5", qty: 5 }];

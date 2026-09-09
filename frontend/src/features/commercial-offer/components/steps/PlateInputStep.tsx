@@ -198,9 +198,10 @@ export const PlateInputStep = ({
   const labels = PRODUCT_TYPE_CONFIG.plates.labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
+  const overlayText = isBatchReviewMode ? batchReviewText : normalizedText;
   const liveWideDraft =
-    batchReviewDraft && isBatchReviewMode
-      ? overlayDraftWithLiveWideLines(batchReviewDraft, batchReviewText)
+    batchReviewDraft && overlayText
+      ? overlayDraftWithLiveWideLines(batchReviewDraft, overlayText)
       : batchReviewDraft;
   const reviewHighlights = useBatchReviewHighlights({
     text: batchReviewText,
@@ -556,16 +557,6 @@ export const PlateInputStep = ({
               )}
             </Card>
           </div>
-              {onAiInstructionChange && onApplyAi && (
-                <AiInstructionBlock
-                  hint="Опишите, что исправить в списке (например, суффикс нагрузки н→п)."
-                  placeholder="Например: замени н на п в суффиксе нагрузки"
-                  instruction={aiInstruction}
-                  onInstructionChange={onAiInstructionChange}
-                  onApply={onApplyAi}
-                  isProcessing={isAiProcessing}
-                />
-              )}
             </>
           )}
 
@@ -577,6 +568,17 @@ export const PlateInputStep = ({
               errorMessage={widePlateErrorMessage}
               onDecisionChange={onWidePlateDecisionChange}
               onApply={onApplyWidePlates}
+            />
+          )}
+
+          {isBatchReviewMode && onAiInstructionChange && onApplyAi && (
+            <AiInstructionBlock
+              hint="Опишите, что исправить в списке (например, суффикс нагрузки н→п)."
+              placeholder="Например: замени н на п в суффиксе нагрузки"
+              instruction={aiInstruction}
+              onInstructionChange={onAiInstructionChange}
+              onApply={onApplyAi}
+              isProcessing={isAiProcessing}
             />
           )}
 

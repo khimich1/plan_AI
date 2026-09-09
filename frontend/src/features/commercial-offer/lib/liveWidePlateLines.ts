@@ -85,9 +85,13 @@ export const overlayDraftWithLiveWideLines = (
 
   const usedKeys = new Set<string>();
   const merged: WidePlateLine[] = [];
+  let liveHasNewWide = false;
   for (const item of live) {
     const key = widePlateMatchKey(item.line);
     const serverHit = key ? serverByKey.get(key) : undefined;
+    if (key && !serverHit) {
+      liveHasNewWide = true;
+    }
     merged.push(serverHit ? { ...serverHit, line: item.line, qty: item.qty } : item);
     if (key) {
       usedKeys.add(key);
@@ -109,7 +113,8 @@ export const overlayDraftWithLiveWideLines = (
     metadata: {
       ...draft.metadata,
       wide_plate_lines: merged,
-      wide_plates_resolved: merged.length === 0 || Boolean(draft.metadata.wide_plates_resolved),
+      wide_plates_resolved:
+        merged.length === 0 || (Boolean(draft.metadata.wide_plates_resolved) && !liveHasNewWide),
     },
   };
 };

@@ -387,4 +387,19 @@ describe("mergeReviewHighlights (S3–S6)", () => {
 
     expect(map.get(0)?.kind).toBe("wide");
   });
+
+  it("highlights all Excel-paste wide lines including шт and tabs", () => {
+    const text = "ПБ 65-14-8 2\nПБ 62-15-8\tшт\t2\nПБ 18-15-8\tшт\t38";
+    const draft = makeDraft({
+      wide_plate_lines: [
+        { id: "wide-1", line: "ПБ 65-14-8 2", qty: 2 },
+        { id: "wide-2", line: "ПБ 62-15-8\tшт\t2", qty: 2 },
+        { id: "wide-3", line: "ПБ 18-15-8\tшт\t38", qty: 38 },
+      ],
+    });
+    const map = buildPlateLineHighlightMap(draft, text.split("\n"), { batchReview: true });
+    expect(map.get(0)?.kind).toBe("wide");
+    expect(map.get(1)?.kind).toBe("wide");
+    expect(map.get(2)?.kind).toBe("wide");
+  });
 });
