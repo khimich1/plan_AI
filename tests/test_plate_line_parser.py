@@ -177,3 +177,31 @@ def test_get_wide_plate_lines_pb_without_qty():
     by_line = dict(result)
     assert by_line["ПБ 65-14-8"] == 1
     assert by_line["ПБ 62-15-8 2"] == 2
+
+
+def test_get_wide_plate_lines_screenshot_excel_list():
+    from core.plate_text_normalizer import get_wide_plate_lines
+
+    text = (
+        "ПБ 68-12-8\tшт\t12\n"
+        "ПБ 65-14-8 2\n"
+        "ПБ 62-15-8\tшт\t2\n"
+        "ПБ 52-15-8\tшт\t4\n"
+        "ПБ 18-15-8\tшт\t38\n"
+        "ПБ 68-12-8\tшт\t12"
+    )
+    by_line = dict(get_wide_plate_lines(text))
+    assert by_line["ПБ 65-14-8 2"] == 2
+    assert by_line["ПБ 62-15-8\tшт\t2"] == 2
+    assert by_line["ПБ 52-15-8\tшт\t4"] == 4
+    assert by_line["ПБ 18-15-8\tшт\t38"] == 38
+    assert "ПБ 68-12-8\tшт\t12" not in by_line
+
+
+def test_get_wide_plate_lines_original_excel_double_tab_and_indent():
+    from core.plate_text_normalizer import get_wide_plate_lines
+
+    text = "ПБ 65-14-8\t\t2\r\n               ПБ 18-15-8\tшт\t38"
+    by_line = dict(get_wide_plate_lines(text))
+    assert by_line["ПБ 65-14-8\t\t2"] == 2
+    assert by_line["ПБ 18-15-8\tшт\t38"] == 38

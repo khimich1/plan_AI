@@ -112,6 +112,51 @@ describe("liveWidePlateLines", () => {
     expect(lines[0]?.qty).toBe(2);
     expect(lines[1]?.qty).toBe(2);
   });
+
+  it("detects the screenshot Excel paste including missing шт and leading spaces", () => {
+    const text = [
+      "ПБ 68-12-8\tшт\t12",
+      "ПБ 68-11-8\tшт\t2",
+      "ПБ 65-12-8\tшт\t26",
+      "ПБ 65-11-8\tшт\t2",
+      "ПБ 65-14-8 2",
+      "ПБ 65-9-8\tшт\t2",
+      "ПБ 64-12-8\tшт\t12",
+      "ПБ 64-5-8\tшт\t2",
+      "ПБ 62-15-8\tшт\t2",
+      "ПБ 62-12-8\tшт\t8",
+      "ПБ 60-12-8\tшт\t24",
+      "ПБ 57-12-8\tшт\t18",
+      "ПБ 57-5-8\tшт\t2",
+      "ПБ 55-12-8\tшт\t16",
+      "ПБ 55-7-8\tшт\t2",
+      "ПБ 55-5-8\tшт\t6",
+      "ПБ 52-12-8\tшт\t6",
+      "ПБ 52-15-8\tшт\t4",
+      "ПБ 49-12-8\tшт\t6",
+      "ПБ 32-12-8\tшт\t2",
+      "ПБ 18-15-8\tшт\t38",
+      "ПБ 18-12-8\tшт\t6",
+      "ПБ 18-5-8\tшт\t2",
+      "ПБ 57-9-8\tшт\t2",
+      "ПБ 55-9-8\tшт\t2",
+    ].join("\n");
+    const lines = liveWidePlateLines(text);
+    expect(lines.map((item) => ({ line: item.line, qty: item.qty }))).toEqual([
+      { line: "ПБ 65-14-8 2", qty: 2 },
+      { line: "ПБ 62-15-8\tшт\t2", qty: 2 },
+      { line: "ПБ 52-15-8\tшт\t4", qty: 4 },
+      { line: "ПБ 18-15-8\tшт\t38", qty: 38 },
+    ]);
+  });
+
+  it("detects original Excel forms with double tab and indented wide mark", () => {
+    const lines = liveWidePlateLines("ПБ 65-14-8\t\t2\n               ПБ 18-15-8\tшт\t38");
+    expect(lines.map((item) => ({ line: item.line, qty: item.qty }))).toEqual([
+      { line: "ПБ 65-14-8\t\t2", qty: 2 },
+      { line: "ПБ 18-15-8\tшт\t38", qty: 38 },
+    ]);
+  });
 });
 
 describe("overlayDraftWithLiveWideLines", () => {
@@ -127,6 +172,27 @@ describe("overlayDraftWithLiveWideLines", () => {
     const draft = makeDraft([{ id: "wide-1", line: "ПБ 62-15-8 2", qty: 2 }], true);
     const overlay = overlayDraftWithLiveWideLines(draft, "ПБ 62-15-8 2");
     expect(overlay.metadata.wide_plates_resolved).toBe(true);
+  });
+
+  it("reopens the card when live paste finds wides the server missed", () => {
+    const draft = makeDraft([{ id: "wide-1", line: "ПБ 65-14-8 2", qty: 2 }], true);
+    const overlay = overlayDraftWithLiveWideLines(
+      draft,
+      "ПБ 65-14-8 2\nПБ 62-15-8\tшт\t2\nПБ 18-15-8\tшт\t38",
+    );
+    expect(overlay.metadata.wide_plates_resolved).toBe(false);
+    expect(overlay.metadata.wide_plate_lines.map((item) => item.line)).toEqual([
+      "ПБ 65-14-8 2",
+      "ПБ 62-15-8\tшт\t2",
+      "ПБ 18-15-8\tшт\t38",
+    ]);
+  });
+
+  it("reopens the card when server stored no wides but Excel paste has them", () => {
+    const draft = makeDraft([], true);
+    const overlay = overlayDraftWithLiveWideLines(draft, "ПБ 18-15-8\tшт\t38");
+    expect(overlay.metadata.wide_plate_lines).toHaveLength(1);
+    expect(overlay.metadata.wide_plates_resolved).toBe(false);
   });
 });
 
