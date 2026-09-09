@@ -44,6 +44,7 @@ class ProductDraftHandler:
             plate_order_ctx=plate_order_ctx,
         )
         batches = [source_text["batch"]]
+        self._align_text_batch_normalized(batches, source_text["source_type"], preview)
         metadata = self._build_metadata(
             spec,
             preview=preview,
@@ -99,6 +100,7 @@ class ProductDraftHandler:
             batches = [source_text["batch"]]
 
         preview = spec.generate_preview(self._wf, next_text, plate_order_ctx=plate_order_ctx)
+        self._align_text_batch_normalized(batches, source_text["source_type"], preview)
         next_metadata = self._build_metadata(
             spec,
             preview=preview,
@@ -279,6 +281,21 @@ class ProductDraftHandler:
             metadata=metadata,
         )
         return self._wf.get_draft_details(draft_id)
+
+    @staticmethod
+    def _align_text_batch_normalized(
+        batches: list[dict[str, Any]],
+        source_type: str,
+        preview: Any,
+    ) -> None:
+        """Keep batch review text on the same strings used for wide_plate_lines."""
+        if source_type != "text" or not batches:
+            return
+        parse_result = getattr(preview, "parse_result", None)
+        normalized = str(getattr(parse_result, "normalized_text", "") or "").strip()
+        if not normalized:
+            return
+        batches[-1]["normalized_text"] = normalized
 
     @staticmethod
     def _guard_update(spec: ProductDraftSpec, metadata: dict[str, Any]) -> None:
