@@ -125,6 +125,14 @@ describe("batchReview", () => {
     expect(filtered.metadata.wide_plate_lines.map((item) => item.line)).toEqual(["batch2 line"]);
   });
 
+  it("keeps server wide lines when paste lacks qty/п that the parser added", () => {
+    const draft = makeDraft([]);
+    draft.metadata.wide_plate_lines = [{ id: "wide-1", line: "ПБ 65-14-8п 1", qty: 1 }];
+    draft.metadata.unparsed_lines = [];
+    const filtered = filterDraftForBatchReview(draft, "ПБ 65-14-8");
+    expect(filtered.metadata.wide_plate_lines).toEqual([{ id: "wide-1", line: "ПБ 65-14-8п 1", qty: 1 }]);
+  });
+
   it("reflects wide-plate exclude in current batch review text", () => {
     const draft = makeDraft([
       {

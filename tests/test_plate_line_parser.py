@@ -157,3 +157,23 @@ def test_get_wide_plate_lines_bare_format():
     result = get_wide_plate_lines("71-15-8 2")
     assert len(result) == 1
     assert result[0] == ("71-15-8 2", 2)
+
+
+def test_get_wide_plate_lines_excel_tabs_and_sht():
+    from core.plate_text_normalizer import get_wide_plate_lines
+
+    text = "ПБ 65-14-8 2\nПБ 62-15-8\tшт\t2\nПБ 18-15-8\tшт\t38\nПБ 68-12-8\tшт\t12"
+    by_line = dict(get_wide_plate_lines(text))
+    assert by_line["ПБ 65-14-8 2"] == 2
+    assert by_line["ПБ 62-15-8\tшт\t2"] == 2
+    assert by_line["ПБ 18-15-8\tшт\t38"] == 38
+    assert "ПБ 68-12-8\tшт\t12" not in by_line
+
+
+def test_get_wide_plate_lines_pb_without_qty():
+    from core.plate_text_normalizer import get_wide_plate_lines
+
+    result = get_wide_plate_lines("ПБ 65-14-8\nПБ 62-15-8 2")
+    by_line = dict(result)
+    assert by_line["ПБ 65-14-8"] == 1
+    assert by_line["ПБ 62-15-8 2"] == 2

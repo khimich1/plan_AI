@@ -8,6 +8,7 @@ import type {
   ProductType,
   StepBatch,
 } from "@/features/commercial-offer/types/commercialOffer";
+import { widePlateMatchKey } from "@/features/commercial-offer/lib/liveWidePlateLines";
 import { getProductTypeConfig } from "@/features/commercial-offer/lib/productTypeConfig";
 import { resolveDraftProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 
@@ -95,7 +96,14 @@ export const filterDraftForBatchReview = (
   }
 
   const unparsed_lines = (draft.metadata.unparsed_lines ?? []).filter((line) => keys.has(normalizeLineKey(line)));
-  const wide_plate_lines = (draft.metadata.wide_plate_lines ?? []).filter((item) => keys.has(normalizeLineKey(item.line)));
+  const batchWideKeys = new Set(
+    [...keys].map((key) => widePlateMatchKey(key)).filter(Boolean),
+  );
+  const wide_plate_lines = (draft.metadata.wide_plate_lines ?? []).filter((item) => {
+    const exact = normalizeLineKey(item.line);
+    const fuzzy = widePlateMatchKey(item.line);
+    return keys.has(exact) || (Boolean(fuzzy) && batchWideKeys.has(fuzzy));
+  });
   const dobor_pairs = (draft.metadata.dobor_pairs ?? []).filter((pair) => {
     const primaryKey = normalizeLineKey(pair.primary_line);
     const complementKey = normalizeLineKey(pair.complement_line);

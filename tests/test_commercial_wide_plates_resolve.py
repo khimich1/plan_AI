@@ -88,3 +88,17 @@ def test_resolve_wide_plates_exclude_compact_without_pe_matches_display_line(
     assert captured["text"] == "68-12-8 1"
     assert "68-15-8" not in captured["text"]
     assert saved["metadata"]["plate_batches"][0]["normalized_text"] == "68-12-8 1"
+
+
+def test_align_text_batch_normalized_uses_parser_text() -> None:
+    from app.services.product_draft_handler import ProductDraftHandler
+    from types import SimpleNamespace
+
+    preview = SimpleNamespace(parse_result=SimpleNamespace(normalized_text="ПБ 65-14-8п"))
+    batches = [{"source_type": "text", "normalized_text": "ПБ 65-14-8"}]
+    ProductDraftHandler._align_text_batch_normalized(batches, "text", preview)
+    assert batches[0]["normalized_text"] == "ПБ 65-14-8п"
+
+    image_batches = [{"source_type": "image", "normalized_text": "raw ocr"}]
+    ProductDraftHandler._align_text_batch_normalized(image_batches, "image", preview)
+    assert image_batches[0]["normalized_text"] == "raw ocr"

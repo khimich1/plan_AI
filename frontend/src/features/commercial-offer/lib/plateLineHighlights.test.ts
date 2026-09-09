@@ -150,6 +150,14 @@ describe("buildPlateLineHighlightMap", () => {
     });
   });
 
+  it("highlights wide Excel-paste line against normalized server mark", () => {
+    const draft = makeDraft({
+      wide_plate_lines: [{ id: "wide-1", line: "ПБ 18-15-8п 38", qty: 38 }],
+    });
+    const map = buildPlateLineHighlightMap(draft, ["ПБ 18-15-8\tшт\t38"], { batchReview: true });
+    expect(map.get(0)?.kind).toBe("wide");
+  });
+
   it("keeps only wide among width highlights on batch review", () => {
     const draft = makeDraft({
       wide_plate_lines: [{ id: "wide-1", line: "ПБ 59-15-8п 2", qty: 2 }],
@@ -364,5 +372,19 @@ describe("mergeReviewHighlights (S3–S6)", () => {
     expect(map.get(0)?.kind).toBe("wide");
     expect(map.get(0)?.title).toBe("Позиция шире стандартной — требует решения ниже");
     expect(map.get(1)).toBeUndefined();
+  });
+
+  it("does not overwrite wide highlight when live lint rejects the line", () => {
+    const draft = makeDraft({
+      wide_plate_lines: [{ id: "wide-1", line: "ПБ 65-14-8", qty: 1 }],
+    });
+    const map = mergeReviewHighlights(
+      draft,
+      "ПБ 65-14-8",
+      [{ index: 0, text: "ПБ 65-14-8", empty: false, ok: false, reason_text: "строка не распознана" }],
+      { batchReview: true },
+    );
+
+    expect(map.get(0)?.kind).toBe("wide");
   });
 });
