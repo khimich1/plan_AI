@@ -105,12 +105,32 @@ def test_match_plate_resolve_item_to_line_compact_mark_without_pe() -> None:
     assert CommercialPlateResolve._match_plate_resolve_item_to_line("68-11-10 1", [item]) is item
 
 
+def test_match_plate_resolve_item_to_line_excel_sht_tabs() -> None:
+    """Excel paste: display name vs «ПБ 68-11-8\\tшт\\t2» must still match."""
+    item = {
+        "id": "invalid-width-1",
+        "line": "Плиты ПБ 68-11-8п",
+        "name": "Плиты ПБ 68-11-8п",
+        "length_m": 6.8,
+        "width_m": 1.1,
+        "load_class": 800,
+    }
+    assert (
+        CommercialPlateResolve._match_plate_resolve_item_to_line("ПБ 68-11-8\tшт\t2", [item])
+        is item
+    )
+    assert (
+        CommercialPlateResolve._match_plate_resolve_item_to_line("ПБ 68-11-8 шт 2", [item])
+        is item
+    )
+
+
 def test_resolve_invalid_widths_raises_when_decision_not_applied_to_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Silent-success regression: match miss must 400, not clear the gate."""
     workflow = CommercialWorkflowService()
-    # No length/width → dims match impossible; display name not in compact input.
+    # Different mark in the list: key/dims cannot match this invalid item.
     invalid_item = {
         "id": "invalid-width-1",
         "name": "Плиты ПБ 68-11-10п",
@@ -129,8 +149,8 @@ def test_resolve_invalid_widths_raises_when_decision_not_applied_to_list(
         "order_data": [],
         "metadata": {
             "source_type": "text",
-            "input_text": "68-11-10 1",
-            "normalized_lines": ["68-11-10 1"],
+            "input_text": "29-8-8 1",
+            "normalized_lines": ["29-8-8 1"],
             "wide_plates_resolved": True,
             "invalid_width_lines": [invalid_item],
             "invalid_widths_resolved": False,
@@ -355,6 +375,97 @@ def test_resolve_invalid_widths_compact_68_11_to_1080(
     names = [row["name"] for row in result["order_data"]]
     assert any("10,8" in name or "10.8" in name for name in names)
     assert not any("68-11-10" in name for name in names)
+
+
+def test_resolve_invalid_widths_excel_sht_tabs_68_11_to_1080(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Excel «ПБ 68-11-8 шт 2» + display invalid item must apply 10,8, not 400."""
+    workflow = CommercialWorkflowService()
+    invalid_item = {
+        "id": "invalid-width-1",
+        "name": "Плиты ПБ 68-11-8п",
+        "line": "Плиты ПБ 68-11-8п",
+        "qty": 2,
+        "length_m": 6.8,
+        "width_m": 1.1,
+        "width_mm": 1100,
+        "load_class": 800,
+        "replacements": [
+            {"width_mm": 1080, "width_label": "10,8", "price": 24160.0},
+            {"width_mm": 1200, "width_label": "12", "price": 24160.0},
+        ],
+    }
+    excel_line = "ПБ 68-11-8\tшт\t2"
+    keep_line = "ПБ 68-12-8\tшт\t12"
+    draft_payload = {
+        "order": PlateOrder(),
+        "optimization_context": OptimizationContext(order=PlateOrder()),
+        "order_data": [],
+        "metadata": {
+            "source_type": "text",
+            "original_text": f"{keep_line}\n{excel_line}",
+            "ocr_text": "",
+            "input_text": f"{keep_line}\n{excel_line}",
+            "normalized_lines": [keep_line, excel_line],
+            "wide_plate_lines": [],
+            "wide_plates_resolved": True,
+            "invalid_width_lines": [invalid_item],
+            "invalid_widths_resolved": False,
+            "plate_batches": [
+                {
+                    "source_type": "text",
+                    "original_text": "",
+                    "normalized_text": f"{keep_line}\n{excel_line}",
+                    "ocr_text": "",
+                    "filename": "",
+                }
+            ],
+            "last_source_filename": "",
+        },
+    }
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft_payload)
+    captured: dict[str, Any] = {}
+
+    def fake_generate_preview(
+        *,
+        text: str | None = None,
+        parse_result: ParseResult | None = None,
+        plate_order_ctx: Any = None,
+    ) -> CommercialPreviewResult:
+        captured["text"] = text or ""
+        return _fake_preview(text or "", [])
+
+    monkeypatch.setattr(workflow.commercial_service, "generate_preview", fake_generate_preview)
+    saved: dict[str, Any] = {}
+
+    def fake_replace_preview(draft_id: str, **kwargs: Any) -> str:
+        saved["metadata"] = kwargs.get("metadata")
+        saved["order_data"] = kwargs.get("order_data")
+        return draft_id
+
+    monkeypatch.setattr(workflow.draft_store, "replace_preview", fake_replace_preview)
+    monkeypatch.setattr(
+        workflow,
+        "get_draft_details",
+        lambda draft_id: {
+            "draft_id": draft_id,
+            "metadata": saved["metadata"],
+            "order_data": saved["order_data"],
+        },
+    )
+    monkeypatch.setattr(workflow, "_persist_wizard_step", lambda *_args, **_kwargs: None)
+
+    result = workflow.resolve_invalid_widths(
+        "draft-1",
+        decisions=[{"line_id": "invalid-width-1", "action": "replace_width", "width_mm": 1080}],
+        plate_order_ctx=PlateOrderContext.fresh_empty(),
+    )
+
+    rewritten = captured["text"].replace(".", ",")
+    assert "10,8" in rewritten
+    assert "68-11-8" not in rewritten.replace("68-10,8", "")
+    assert result["metadata"]["invalid_widths_resolved"] is True
 
 
 def test_resolve_invalid_widths_matches_by_dimensions_when_line_is_display_name(

@@ -43,6 +43,7 @@ import { PlateInputStep } from "@/features/commercial-offer/components/steps/Pla
 import { SimpleProductInputStep } from "@/features/commercial-offer/components/steps/SimpleProductInputStep";
 import { ClientConditionsStep } from "@/features/commercial-offer/components/steps/ClientConditionsStep";
 import { CalculationResultStep } from "@/features/commercial-offer/components/steps/CalculationResultStep";
+import { defaultInvalidWidthDecision } from "@/features/commercial-offer/components/InvalidWidthsInlineSection";
 
 import type {
   ProductType,
@@ -667,15 +668,12 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         draftId: currentDraft.draft_id,
         decisions: (currentDraft.metadata.invalid_width_lines ?? []).map((item) => {
           const decision = state.invalidWidthActions[item.id];
-          const upper = item.replacements.reduce<(typeof item.replacements)[number] | null>(
-            (best, repl) => (best == null || repl.width_mm > best.width_mm ? repl : best),
-            null,
-          );
+          const fallback = defaultInvalidWidthDecision(item);
           return {
             lineId: item.id,
             sourceLine: item.line,
-            action: decision?.action ?? (upper != null ? "replace_width" : "exclude"),
-            widthMm: decision?.widthMm ?? upper?.width_mm ?? null,
+            action: decision?.action ?? fallback.action,
+            widthMm: decision?.widthMm ?? fallback.widthMm,
           };
         }),
       });

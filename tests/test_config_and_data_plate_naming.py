@@ -8,6 +8,7 @@ from core.config_and_data import (
     extract_length_dm_raw_from_plate_name,
     format_reinforcement_from_load_code,
     make_plate_name,
+    parse_load_code_from_name,
     plate_name_to_prays_variant,
     plate_name_to_prays_variants,
 )
@@ -80,3 +81,17 @@ def test_plate_name_to_prays_variants_dedup_and_order() -> None:
 )
 def test_extract_length_dm_raw_from_plate_name(plate_name: str, expected_raw: str | None) -> None:
     assert extract_length_dm_raw_from_plate_name(plate_name) == expected_raw
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Плиты ПБ 71-12-8п", 8),
+        ("68-11-10 1", 10),
+        ("ПБ 68-11-8 шт 2", 8),
+        ("ПБ 68-11-8\tшт\t2", 8),
+        ("ПБ 65-11-8п шт 2", 8),
+    ],
+)
+def test_parse_load_code_from_name_excel_sht(name: str, expected: int) -> None:
+    assert parse_load_code_from_name(name, default=-1) == expected
