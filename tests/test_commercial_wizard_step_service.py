@@ -159,6 +159,7 @@ def test_wizard_state_client_requires_calculate(wizard_service: CommercialWizard
             "current_step": WizardStepId.client.value,
             "manager_id": 1,
             "client_name": "ООО А",
+            "counterparty_id": 15,
             "conditions_mode": "standard",
             "wide_plate_lines": [],
             "wide_plates_resolved": True,
@@ -178,6 +179,7 @@ def test_wizard_state_result_after_calculate(wizard_service: CommercialWizardSte
             "current_step": WizardStepId.result.value,
             "manager_id": 1,
             "client_name": "ООО А",
+            "counterparty_id": 15,
             "conditions_mode": "standard",
             "wide_plate_lines": [],
             "wide_plates_resolved": True,
@@ -265,7 +267,32 @@ def _mono_first_cycle_meta(**overrides: object) -> dict:
     [
         ({"client_name": "", "append_batches": [], "resume_kp_id": None}, False),
         ({"client_name": "   ", "append_batches": [], "resume_kp_id": None}, False),
-        ({"client_name": "ООО А", "append_batches": [], "resume_kp_id": None}, True),
+        (
+            {
+                "client_name": "ООО А",
+                "append_batches": [],
+                "resume_kp_id": None,
+            },
+            False,
+        ),
+        (
+            {
+                "client_name": "ООО А",
+                "counterparty_id": None,
+                "append_batches": [],
+                "resume_kp_id": None,
+            },
+            False,
+        ),
+        (
+            {
+                "client_name": "",
+                "counterparty_id": 15,
+                "append_batches": [],
+                "resume_kp_id": None,
+            },
+            True,
+        ),
         (
             {
                 "client_name": "",
@@ -316,20 +343,33 @@ def test_wizard_step_order_mono_first_cycle_includes_client(
         ("fbs", WizardStepId.fbs),
     ],
 )
-def test_wizard_step_order_skips_client_when_client_name_set(
+def test_wizard_step_order_skips_client_when_counterparty_id_set(
     wizard_service: CommercialWizardStepService,
     product_type: str,
     product_step: WizardStepId,
 ) -> None:
+    """New KP: skip client only after a catalog pick (counterparty_id), not free-text name."""
     order = wizard_service.wizard_step_order(
         _mono_first_cycle_meta(
             product_type=product_type,
             current_step=product_step.value,
             client_name="ООО Клиент",
+            counterparty_id=15,
         )
     )
     assert order == [product_step, WizardStepId.result]
     assert WizardStepId.client not in order
+
+
+def test_wizard_step_order_includes_client_when_only_client_name_set(
+    wizard_service: CommercialWizardStepService,
+) -> None:
+    """Legacy draft: name without id must still stop on Клиент (spec AC)."""
+    order = wizard_service.wizard_step_order(
+        _mono_first_cycle_meta(client_name="ООО Клиент")
+    )
+    assert WizardStepId.client in order
+    assert order == [WizardStepId.plates, WizardStepId.client, WizardStepId.result]
 
 
 def test_wizard_step_order_skips_client_when_append_batches_nonempty(
@@ -354,12 +394,12 @@ def test_wizard_step_order_skips_client_when_resume_kp_id_set(
     assert order == [WizardStepId.plates, WizardStepId.result]
 
 
-def test_can_proceed_to_result_when_skip_client_client_name(
+def test_can_proceed_to_result_when_skip_client_counterparty_id(
     wizard_service: CommercialWizardStepService,
 ) -> None:
-    """Cycle ≥2: from product step proceed to result, not client."""
+    """New KP with catalog pick: from product step proceed to result, not client."""
     payload = {
-        "metadata": _mono_first_cycle_meta(client_name="ООО А"),
+        "metadata": _mono_first_cycle_meta(client_name="ООО А", counterparty_id=15),
         "order_data": [_priced_plate_line()],
     }
     state = wizard_service.build_wizard_state(payload)

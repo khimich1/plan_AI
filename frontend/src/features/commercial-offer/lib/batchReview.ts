@@ -8,6 +8,8 @@ import type {
   ProductType,
   StepBatch,
 } from "@/features/commercial-offer/types/commercialOffer";
+import { widePlateMatchKey } from "@/features/commercial-offer/lib/liveWidePlateLines";
+import { getProductTypeConfig } from "@/features/commercial-offer/lib/productTypeConfig";
 import { resolveDraftProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 
 const normalizeLineKey = (line: string) => line.trim().toLowerCase();
@@ -33,23 +35,8 @@ export const getBatches = (draft: CommercialDraftDetails | null): DraftBatch[] =
   if (!draft) {
     return [];
   }
-  const productType = getDraftProductType(draft);
-  if (productType === "piles") {
-    return draft.metadata.pile_batches ?? [];
-  }
-  if (productType === "steps") {
-    return draft.metadata.step_batches ?? [];
-  }
-  if (productType === "marches") {
-    return draft.metadata.march_batches ?? [];
-  }
-  if (productType === "bridge_piles") {
-    return draft.metadata.bridge_pile_batches ?? [];
-  }
-  if (productType === "fbs") {
-    return draft.metadata.fbs_batches ?? [];
-  }
-  return draft.metadata.plate_batches ?? [];
+  const field = getProductTypeConfig(draft.metadata.product_type).batchesField;
+  return draft.metadata[field] ?? [];
 };
 
 export const getCurrentPlateBatch = (draft: CommercialDraftDetails | null): PlateBatch | null => {
@@ -109,7 +96,14 @@ export const filterDraftForBatchReview = (
   }
 
   const unparsed_lines = (draft.metadata.unparsed_lines ?? []).filter((line) => keys.has(normalizeLineKey(line)));
-  const wide_plate_lines = (draft.metadata.wide_plate_lines ?? []).filter((item) => keys.has(normalizeLineKey(item.line)));
+  const batchWideKeys = new Set(
+    [...keys].map((key) => widePlateMatchKey(key)).filter(Boolean),
+  );
+  const wide_plate_lines = (draft.metadata.wide_plate_lines ?? []).filter((item) => {
+    const exact = normalizeLineKey(item.line);
+    const fuzzy = widePlateMatchKey(item.line);
+    return keys.has(exact) || (Boolean(fuzzy) && batchWideKeys.has(fuzzy));
+  });
   const dobor_pairs = (draft.metadata.dobor_pairs ?? []).filter((pair) => {
     const primaryKey = normalizeLineKey(pair.primary_line);
     const complementKey = normalizeLineKey(pair.complement_line);

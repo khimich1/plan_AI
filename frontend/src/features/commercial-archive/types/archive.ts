@@ -133,6 +133,8 @@ export type ArchiveOfferDetails = {
   kp_id: number;
   creation_date: string | null;
   customer_name: string | null;
+  customer_inn?: string | null;
+  customer_kpp?: string | null;
   manager_name: string | null;
   status: string | null;
   execution_terms: string | null;

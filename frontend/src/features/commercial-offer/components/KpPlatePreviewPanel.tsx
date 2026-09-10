@@ -1,6 +1,7 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import { buildKpPreviewRows } from "@/features/commercial-offer/lib/buildKpPreviewRows";
 import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import { formatOfferNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
 import { LineActionsCell, LineActionsHeader } from "@/features/commercial-offer/components/LineRowActions";
@@ -18,6 +19,7 @@ const flagLabel = (flag: "wide_direct" | "wide_split"): string =>
   flag === "wide_direct" ? "Шире стандартной" : "Разделена на стандартные позиции";
 
 export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: KpPlatePreviewPanelProps) => {
+  const labels = PRODUCT_TYPE_CONFIG.plates.labels;
   const rows = buildKpPreviewRows(draft);
   const wideLines = draft.metadata.wide_plate_lines ?? [];
   const invalidWidthLines = draft.metadata.invalid_width_lines ?? [];
@@ -87,11 +89,11 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: 
         )}
 
         {normalizedTextChanged && (
-          <Alert tone="info">Изменён список плит — нажмите «Список верен» для пересчёта состава.</Alert>
+          <Alert tone="info">{labels.previewChangedMessage}</Alert>
         )}
 
         {rows.length === 0 ? (
-          <div style={{ color: "#667085" }}>Список пуст — распознайте плиты.</div>
+          <div style={{ color: "#667085" }}>{labels.previewEmptyMessage}</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table

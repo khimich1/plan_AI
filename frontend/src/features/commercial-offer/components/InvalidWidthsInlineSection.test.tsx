@@ -50,9 +50,26 @@ describe("InvalidWidthsInlineSection", () => {
     cleanup();
   });
 
-  it("preselects the upper neighbor 860 for 800 mm", () => {
+  it("preselects the lower neighbor 720 for 800 mm", () => {
     const decision = defaultInvalidWidthDecision(invalidLine());
-    expect(decision).toEqual({ action: "replace_width", widthMm: 860 });
+    expect(decision).toEqual({ action: "replace_width", widthMm: 720 });
+  });
+
+  it("preselects 10,8 (1080) rather than 12 for width 11", () => {
+    const decision = defaultInvalidWidthDecision(
+      invalidLine({
+        name: "Плиты ПБ 68-11-8п",
+        line: "ПБ 68-11-8п 2",
+        length_m: 6.8,
+        width_m: 1.1,
+        width_mm: 1100,
+        replacements: [
+          { width_mm: 1080, width_label: "10,8", price: 24160 },
+          { width_mm: 1200, width_label: "12", price: 24160 },
+        ],
+      }),
+    );
+    expect(decision).toEqual({ action: "replace_width", widthMm: 1080 });
   });
 
   it("renders two replacements plus exclude and Apply", () => {
@@ -70,8 +87,8 @@ describe("InvalidWidthsInlineSection", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /позиций требуют внимания/ }));
-    expect(screen.getByLabelText(/8,6/)).toBeChecked();
-    expect(screen.getByLabelText(/7,2/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/7,2/)).toBeChecked();
+    expect(screen.getByLabelText(/8,6/)).toBeInTheDocument();
     expect(screen.getByLabelText("Исключить позицию")).toBeInTheDocument();
     expect(screen.queryByText(/оставить как есть/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Применить" })).toBeEnabled();

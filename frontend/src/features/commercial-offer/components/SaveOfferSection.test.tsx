@@ -137,4 +137,86 @@ describe("SaveOfferSection archive-only create save", () => {
       expect(onSave).toHaveBeenCalledWith({ mode: "archive", executionTermsInput: "" });
     });
   });
+
+  it("shows saved kp_id from result_card after save", () => {
+    const lastSaveResult = {
+      draft_id: "d1",
+      saved_offer: {
+        kp_id: 1188,
+        status: "в архиве",
+        mode: "archive",
+        execution_terms: "",
+        saved_at: "2026-09-09T12:00:00",
+      },
+      totals: draft.totals,
+      offer_identity: { offer_number: "WEB_ABCDEF01", offer_date: "09.09.2026", file_stem: "kp_abcdef01" },
+      result_card: {
+        kp_id: 1188,
+        offer_number: "1188",
+        offer_date: "09.09.2026",
+        client_name: "Клиент",
+        manager_name: "Иванов",
+        total_amount: 0,
+        status: "в архиве",
+        execution_terms: "",
+      },
+    };
+
+    render(
+      <SaveOfferSection draft={draft} lastSaveResult={lastSaveResult} isPending={false} onSave={vi.fn()} />,
+    );
+
+    expect(screen.getByText(/1188/)).toBeInTheDocument();
+    expect(screen.queryByText(/WEB_/)).not.toBeInTheDocument();
+  });
+
+  it("после hydrate кнопка снова активна", () => {
+    const resumeDraft = {
+      ...draft,
+      saved_offer: {
+        kp_id: 42,
+        status: "в архиве",
+        mode: "archive",
+        execution_terms: "",
+        saved_at: "2026-09-02T12:00:00",
+      },
+      metadata: { ...draft.metadata, resume_kp_id: 42 },
+    } as CommercialDraftDetails;
+    const lastSaveResult = {
+      draft_id: "d1",
+      saved_offer: resumeDraft.saved_offer,
+      totals: resumeDraft.totals,
+      offer_identity: resumeDraft.offer_identity,
+      result_card: {
+        kp_id: 42,
+        offer_number: "КП-1",
+        offer_date: "02.09.2026",
+        client_name: "Клиент",
+        manager_name: "Иванов",
+        total_amount: 0,
+        status: "в архиве",
+        execution_terms: "",
+      },
+    };
+
+    const { rerender } = render(
+      <SaveOfferSection draft={resumeDraft} lastSaveResult={null} isPending={false} onSave={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: "Сохранить изменения" })).not.toBeDisabled();
+
+    rerender(
+      <SaveOfferSection
+        draft={resumeDraft}
+        lastSaveResult={lastSaveResult}
+        isPending={false}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Сохранено" })).toBeDisabled();
+
+    rerender(
+      <SaveOfferSection draft={resumeDraft} lastSaveResult={null} isPending={false} onSave={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: "Сохранить изменения" })).not.toBeDisabled();
+  });
 });

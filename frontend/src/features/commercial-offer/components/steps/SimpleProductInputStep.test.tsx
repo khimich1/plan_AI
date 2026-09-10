@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MARCH_LIST_PLACEHOLDER, MarchInputStep } from "./MarchInputStep";
+import { SimpleProductInputStep } from "./SimpleProductInputStep";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import { useSourceTextLint } from "@/features/commercial-offer/hooks/useSourceTextLint";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import type { PageSource } from "@/features/commercial-offer/lib/multiPageSource";
@@ -13,6 +14,8 @@ vi.mock("@/features/commercial-offer/hooks/useSourceTextLint", () => ({
 const useLint = useSourceTextLint as unknown as ReturnType<typeof vi.fn>;
 const noop = vi.fn();
 
+const MARCH_LIST_PLACEHOLDER = PRODUCT_TYPE_CONFIG.marches.labels.placeholder;
+
 afterEach(() => {
   cleanup();
 });
@@ -22,10 +25,11 @@ beforeEach(() => {
   useLint.mockReturnValue({ lines: [], isPending: false, isError: false });
 });
 
-describe("MarchInputStep placeholder", () => {
+describe("SimpleProductInputStep (marches) placeholder", () => {
   it("hints real catalog marks from march_prices, not invented ЛМ-1", () => {
     render(
-      <MarchInputStep
+      <SimpleProductInputStep
+        productType="marches"
         draft={null}
         pendingBatchReview={false}
         sourceText=""
@@ -44,7 +48,7 @@ describe("MarchInputStep placeholder", () => {
         onSelectPage={noop}
         onRecognize={noop}
         onConfirmBatch={noop}
-        onFinishMarches={noop}
+        onFinishInput={noop}
         onReset={noop}
       />,
     );
@@ -56,7 +60,7 @@ describe("MarchInputStep placeholder", () => {
   });
 });
 
-describe("MarchInputStep AI on batch-review", () => {
+describe("SimpleProductInputStep (marches) AI on batch-review", () => {
   const makeDraft = (text: string): CommercialDraftDetails =>
     ({
       draft_id: "draft-1",
@@ -81,7 +85,8 @@ describe("MarchInputStep AI on batch-review", () => {
     const onApplyAi = vi.fn();
 
     render(
-      <MarchInputStep
+      <SimpleProductInputStep
+        productType="marches"
         draft={makeDraft("1ЛМ 27-11-14-4 B25 5")}
         pendingBatchReview
         sourceText=""
@@ -103,7 +108,7 @@ describe("MarchInputStep AI on batch-review", () => {
         onSelectPage={noop}
         onRecognize={noop}
         onConfirmBatch={noop}
-        onFinishMarches={noop}
+        onFinishInput={noop}
         onReset={noop}
       />,
     );
@@ -114,7 +119,7 @@ describe("MarchInputStep AI on batch-review", () => {
   });
 });
 
-describe("MarchInputStep rerecognize button", () => {
+describe("SimpleProductInputStep (marches) rerecognize button", () => {
   const makeDraft = (text: string): CommercialDraftDetails =>
     ({
       draft_id: "draft-1",
@@ -136,6 +141,7 @@ describe("MarchInputStep rerecognize button", () => {
   });
 
   const baseProps = {
+    productType: "marches" as const,
     draft: makeDraft("1ЛМ 27-11-14-4 B25 5"),
     pendingBatchReview: true as const,
     sourceText: "",
@@ -153,19 +159,19 @@ describe("MarchInputStep rerecognize button", () => {
     onRecognize: noop,
     onRerecognize: noop,
     onConfirmBatch: noop,
-    onFinishMarches: noop,
+    onFinishInput: noop,
     onReset: noop,
   };
 
   it("shows Перераспознать on ready and confirmed pages", () => {
     const { rerender } = render(
-      <MarchInputStep {...baseProps} pages={[makePage("a", "ready")]} activePageId="a" />,
+      <SimpleProductInputStep {...baseProps} pages={[makePage("a", "ready")]} activePageId="a" />,
     );
     expect(screen.getByRole("button", { name: "Перераспознать" })).toBeEnabled();
     expect(screen.queryByText("Нестандартная ширина")).not.toBeInTheDocument();
 
     rerender(
-      <MarchInputStep {...baseProps} pages={[makePage("a", "confirmed")]} activePageId="a" />,
+      <SimpleProductInputStep {...baseProps} pages={[makePage("a", "confirmed")]} activePageId="a" />,
     );
     expect(screen.getByRole("button", { name: "Перераспознать" })).toBeEnabled();
     expect(screen.queryByText("Нестандартная ширина")).not.toBeInTheDocument();

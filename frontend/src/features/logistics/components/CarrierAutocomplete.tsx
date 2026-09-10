@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { Input } from "@/shared/ui/Field";
 import { useCarriersQuery } from "@/features/logistics/hooks/useLogisticsQueries";
-import { useDebouncedValue } from "@/features/logistics/lib/useDebouncedValue";
+import { useDebouncedValue } from "@/shared/lib/useDebouncedValue";
 import type { Carrier } from "@/features/logistics/types/logistics";
 
 type Props = {

@@ -359,6 +359,9 @@ def get_all_kp_list(
                 ko.delivery_conditions,
                 ko.payment_conditions,
                 ko.execution_terms,
+                ko.counterparty_id,
+                ko.customer_inn,
+                ko.customer_kpp,
                 m.status,
                 m.owner_user_id,
                 COALESCE(m.product_type, 'plates') AS product_type
@@ -439,6 +442,9 @@ def search_kp_by_customer_name(
                 ko.vat_amount,
                 ko.total_amount,
                 ko.execution_terms,
+                ko.counterparty_id,
+                ko.customer_inn,
+                ko.customer_kpp,
                 m.status,
                 m.owner_user_id,
                 COALESCE(m.product_type, 'plates') AS product_type

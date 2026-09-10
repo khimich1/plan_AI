@@ -12,6 +12,19 @@ from core.commercial_pricing import ensure_order_priced
 from core.plate_order_context import PlateOrderContext
 
 
+def _resolved_kp_id(metadata: dict[str, Any]) -> int | None:
+    saved = metadata.get("saved_offer") or {}
+    raw = saved.get("kp_id") if isinstance(saved, dict) else None
+    if raw is None:
+        raw = metadata.get("resume_kp_id")
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 class CommercialExportService:
     """File generation glue for commercial draft exports (PDF/XLSX/breakdown/schema)."""
 
@@ -43,6 +56,7 @@ class CommercialExportService:
         file_types: Iterable[str] | None = None,
         *,
         plate_order_ctx: PlateOrderContext | None = None,
+        replace_existing: bool = False,
     ) -> list[dict[str, str]]:
         metadata = dict(payload.get("metadata", {}))
         requested_types = self.normalize_file_types(file_types, metadata=metadata)
@@ -68,12 +82,13 @@ class CommercialExportService:
 
         pile_trip_overrides = coerce_pile_trip_overrides(metadata.get("pile_trip_overrides"))
         append_batches = metadata.get("append_batches")
-        offer_number, offer_date, file_stem = self.build_offer_identity(draft_id)
+        offer_number, offer_date, file_stem = self.build_offer_identity(draft_id, metadata)
 
         for file_type in requested_types:
             existing = files_by_kind.get(file_type)
             if (
-                file_type not in {"pdf", "xlsx"}
+                not replace_existing
+                and file_type not in {"pdf", "xlsx"}
                 and existing
                 and self.resolve_generated_file(existing["filename"]).exists()
             ):
@@ -223,15 +238,29 @@ class CommercialExportService:
             raise ValueError("Не выбраны типы файлов для генерации.")
         return normalized
 
-    def build_offer_identity(self, draft_id: str) -> tuple[str, str, str]:
+    def build_offer_identity(
+        self,
+        draft_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[str, str, str]:
         now = datetime.now()
-        offer_number = f"WEB_{draft_id[:8].upper()}"
+        kp_id = _resolved_kp_id(metadata or {})
+        if kp_id is not None:
+            offer_number = str(int(kp_id))
+            stem_id = offer_number
+        else:
+            offer_number = f"WEB_{draft_id[:8].upper()}"
+            stem_id = draft_id[:8]
         offer_date = now.strftime("%d.%m.%Y")
-        file_stem = f"kp_{draft_id[:8]}_{now.strftime('%Y%m%d_%H%M%S')}"
+        file_stem = f"kp_{stem_id}_{now.strftime('%Y%m%d_%H%M%S')}"
         return offer_number, offer_date, file_stem
 
-    def build_offer_identity_payload(self, draft_id: str) -> dict[str, str]:
-        offer_number, offer_date, file_stem = self.build_offer_identity(draft_id)
+    def build_offer_identity_payload(
+        self,
+        draft_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        offer_number, offer_date, file_stem = self.build_offer_identity(draft_id, metadata)
         return {
             "offer_number": offer_number,
             "offer_date": offer_date,

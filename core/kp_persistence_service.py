@@ -124,6 +124,9 @@ class KpPersistenceService:
         db_path: str = DEFAULT_DB,
         pile_logistics_cost: float = 0.0,
         pile_trip_overrides: dict | None = None,
+        counterparty_id: int | None = None,
+        customer_inn: str | None = None,
+        customer_kpp: str | None = None,
     ) -> int:
         trip_logistics = max(0.0, float(logistics_cost or 0.0))
         pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
@@ -172,8 +175,9 @@ class KpPersistenceService:
                     creation_date, customer_name, manager_name, discount_percent,
                     subtotal, vat_amount, total_amount,
                     delivery_conditions, payment_conditions, execution_terms,
-                    logistics_cost, pile_logistics_cost
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    logistics_cost, pile_logistics_cost,
+                    counterparty_id, customer_inn, customer_kpp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     creation_date,
@@ -188,6 +192,9 @@ class KpPersistenceService:
                     execution_terms,
                     trip_logistics,
                     pile_trip,
+                    counterparty_id,
+                    customer_inn,
+                    customer_kpp,
                 ),
             )
             kp_id = cur.lastrowid

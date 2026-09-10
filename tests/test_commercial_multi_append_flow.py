@@ -36,6 +36,7 @@ from core.cargo_delivery_pricing import (
 from core.commercial_line_format import format_line_name
 from core.commercial_offer import is_unified_commercial_document
 from core.kp_db_schema import init_schema
+from tests.helpers import kp_db_fixtures as fx
 from tests.test_commercial_draft_append import (
     _APPEND_CLIENT,
     _APPEND_DISCOUNT,
@@ -121,6 +122,7 @@ def _build_plates_piles_plates(
 
 def _save_draft_kp(client: TestClient, draft_id: str) -> int:
     """Persist draft as KP with status «в работе» (production path)."""
+    fx.bind_draft_counterparty(client, draft_id)
     save = client.post(
         f"/api/v1/commercial/drafts/{draft_id}/save",
         json={"mode": "database", "execution_terms_input": "14 дней"},
@@ -134,6 +136,7 @@ def _save_draft_kp(client: TestClient, draft_id: str) -> int:
 
 def _save_draft_kp_archive(client: TestClient, draft_id: str) -> int:
     """Persist draft as KP with status «в архиве» (resume/update gate)."""
+    fx.bind_draft_counterparty(client, draft_id)
     save = client.post(
         f"/api/v1/commercial/drafts/{draft_id}/save",
         json={"mode": "archive", "execution_terms_input": "14 дней"},
@@ -480,10 +483,10 @@ def test_sc5_piles_only_no_delivery_despite_trip_cost(
         f"/api/v1/commercial/drafts/{draft_id}/meta",
         json={
             "manager_id": 1,
-            "client_name": "ООО Только сваи",
             "discount_percent": 0,
             "conditions_mode": "standard",
             "logistics_cost": 9000.0,
+            **fx.client_meta_payload("ООО Только сваи"),
         },
     )
     assert meta.status_code == 200, meta.text

@@ -29,10 +29,12 @@ import {
   formatTotalsMoney,
   toNumber,
 } from "@/features/commercial-offer/lib/formatOfferNumbers";
+import { discountedUnitPrice } from "@/features/commercial-offer/lib/lineDiscountDisplay";
 import { LineRowActions } from "@/features/commercial-offer/components/LineRowActions";
 import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
 import type { LineSavePayload, LineUndoToastState, LineRowErrorState } from "@/features/commercial-offer/lib/lineRowHandlers";
+import { getProductTypeConfig, PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import { estimateFromLengthM } from "@/features/production/lib/productionEstimate";
 import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { StepLayout } from "@/shared/ui/StepLayout";
@@ -68,20 +70,14 @@ function plateTotalLengthM(
   }, 0);
 }
 
-const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
-  plates: "Плиты",
-  piles: "Сваи",
-  steps: "Ступени",
-  marches: "Марши",
-  bridge_piles: "Мостовые сваи",
-  fbs: "ФБС",
-};
-
 const formatProductTypeLabel = (productType: unknown): string => {
-  if (typeof productType === "string" && productType in PRODUCT_TYPE_LABELS) {
-    return PRODUCT_TYPE_LABELS[productType as ProductType];
+  if (typeof productType !== "string" || productType.length === 0) {
+    return "—";
   }
-  return typeof productType === "string" && productType.length > 0 ? productType : "—";
+  if (Object.prototype.hasOwnProperty.call(PRODUCT_TYPE_CONFIG, productType)) {
+    return PRODUCT_TYPE_CONFIG[productType as ProductType].labels.nounPlural;
+  }
+  return productType;
 };
 
 const thStyle = { textAlign: "left" as const, padding: "0.75rem", borderBottom: "1px solid #e4e7ec" };
@@ -89,11 +85,8 @@ const tdStyle = { padding: "0.75rem", borderBottom: "1px solid #f2f4f7" };
 
 type CalculationResultStepProps = {
   draft: CommercialDraftDetails;
-  isPileDraft?: boolean;
-  isStepDraft?: boolean;
-  isMarchDraft?: boolean;
-  isBridgePileDraft?: boolean;
-  isFbsDraft?: boolean;
+  /** Resolved wizard product type (falls back to draft.metadata.product_type when omitted). */
+  draftProductType?: ProductType;
   isSimpleKpDraft?: boolean;
   breakdownTables: BreakdownTable[];
   isBreakdownLoading: boolean;
@@ -124,11 +117,7 @@ type CalculationResultStepProps = {
 
 export const CalculationResultStep = ({
   draft,
-  isPileDraft = false,
-  isStepDraft = false,
-  isMarchDraft = false,
-  isBridgePileDraft = false,
-  isFbsDraft = false,
+  draftProductType,
   isSimpleKpDraft = false,
   breakdownTables,
   isBreakdownLoading,
@@ -166,7 +155,9 @@ export const CalculationResultStep = ({
   const [targetSumError, setTargetSumError] = useState<string | null>(null);
   const [selectedPlateName, setSelectedPlateName] = useState<string | null>(null);
   const [pendingDiscountPercent, setPendingDiscountPercent] = useState<number | null>(null);
-  const isGradeSimpleDraft = isPileDraft || isMarchDraft || isBridgePileDraft || isFbsDraft;
+  const draftConfig = getProductTypeConfig(draftProductType ?? draft.metadata.product_type);
+  const isGradeSimpleDraft = draftConfig.supportsGrades;
+  const isStepsProduct = draftConfig.productType === "steps";
   // Prefer live query rows: after line mutate draft.metadata.breakdown_tables_count is 0 until
   // draft refetch catches up, while GET /breakdown may already have regenerated tables.
   const breakdownAvailable =
@@ -418,7 +409,7 @@ export const CalculationResultStep = ({
     <Card title="Готовность КП" subtitle="Перед отправкой клиенту проверьте ключевые пункты.">
       <ul style={{ margin: 0, paddingLeft: "1.25rem", display: "grid", gap: "0.5rem" }}>
         <li>✓ {draft.order_data.length} позиций в заказе</li>
-        <li>✓ {draft.totals.total_qty ?? 0} {isStepDraft ? "ступеней" : isMarchDraft ? "маршей" : isBridgePileDraft ? "мостовых свай" : isFbsDraft ? "ФБС" : isPileDraft ? "свай" : "плит"} в заказе</li>
+        <li>✓ {draft.totals.total_qty ?? 0} {getProductTypeConfig(draft.metadata.product_type).labels.nounGenitivePlural} в заказе</li>
         <li>✓ Клиент: {draft.metadata.client_name || "не указан"}</li>
         <li>✓ Сумма с НДС: {totalWithVat}</li>
         {readinessWarnings.length > 0 && (
@@ -462,7 +453,7 @@ export const CalculationResultStep = ({
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {(isStepDraft
+              {(isStepsProduct
                 ? ["№", "Марка", "Кол-во", "Цена", "Сумма"]
                 : isGradeSimpleDraft
                   ? ["№", "Марка", "Класс", "Кол-во", "Цена", "Сумма"]
@@ -482,6 +473,10 @@ export const CalculationResultStep = ({
           <tbody>
             {draft.order_data.map((item, index) => {
               const itemName = String(item.name ?? item.mark ?? "");
+              const displayUnitPrice = discountedUnitPrice(
+                item.unit_price,
+                draft.metadata.discount_percent,
+              );
               const canOpenBreakdown = breakdownAvailable && !isBreakdownLoading && itemName.length > 0;
               const lineId = typeof item.line_id === "string" ? item.line_id : null;
               const typeCell = showTypeColumn ? (
@@ -502,15 +497,15 @@ export const CalculationResultStep = ({
                 </td>
               );
 
-              if (isStepDraft) {
+              if (isStepsProduct) {
                 return (
                   <tr key={lineId ?? `${itemName}-${index}`}>
                     <td style={tdStyle}>{index + 1}</td>
                     {typeCell}
                     <td style={tdStyle}>{itemName}</td>
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
-                    <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
-                    <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
+                    <td style={tdStyle}>{formatOfferNumber(displayUnitPrice)}</td>
+                    <td style={tdStyle}>{formatOfferSum(item.qty, displayUnitPrice)}</td>
                     {actionCell}
                   </tr>
                 );
@@ -524,8 +519,8 @@ export const CalculationResultStep = ({
                     <td style={tdStyle}>{itemName}</td>
                     <td style={tdStyle}>{String(item.concrete_grade ?? "—")}</td>
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
-                    <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
-                    <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
+                    <td style={tdStyle}>{formatOfferNumber(displayUnitPrice)}</td>
+                    <td style={tdStyle}>{formatOfferSum(item.qty, displayUnitPrice)}</td>
                     {actionCell}
                   </tr>
                 );
@@ -562,8 +557,8 @@ export const CalculationResultStep = ({
                   <td style={tdStyle}>{String(item.qty ?? "")}</td>
                   <td style={tdStyle}>шт</td>
                   <td style={tdStyle}>{formatOfferNumber(item.weight)}</td>
-                  <td style={tdStyle}>{formatOfferNumber(item.unit_price)}</td>
-                  <td style={tdStyle}>{formatOfferSum(item.qty, item.unit_price)}</td>
+                  <td style={tdStyle}>{formatOfferNumber(displayUnitPrice)}</td>
+                  <td style={tdStyle}>{formatOfferSum(item.qty, displayUnitPrice)}</td>
                   {actionCell}
                 </tr>
               );

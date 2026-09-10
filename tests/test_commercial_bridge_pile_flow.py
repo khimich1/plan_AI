@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from core.kp_db_schema import init_schema
 from core.kp_persistence_service import KpPersistenceService
+from tests.helpers import kp_db_fixtures as fx
 
 from tests.helpers.csrf import CsrfAwareTestClient
 
@@ -166,9 +167,9 @@ def test_bridge_pile_calculate_and_generate_files(
         f"/api/v1/commercial/drafts/{draft_id}/meta",
         json={
             "manager_id": 1,
-            "client_name": "ООО Мост",
             "discount_percent": 0,
             "conditions_mode": "standard",
+            **fx.client_meta_payload("ООО Мост"),
         },
     )
     assert meta.status_code == 200, meta.text
@@ -337,6 +338,7 @@ def test_bridge_tender_trips_pending_c18_then_override_save_archive_patch(
             "discount_percent": 0,
             "conditions_mode": "standard",
             "pile_logistics_cost": 1000.0,
+            "counterparty_id": fx.seed_test_counterparty(str(plita_db)),
         },
     )
     assert meta.status_code == 200, meta.text

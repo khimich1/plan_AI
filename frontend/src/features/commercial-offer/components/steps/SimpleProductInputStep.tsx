@@ -1,9 +1,15 @@
 import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
-import type { CommercialDraftDetails, OcrCorrection, PlateInputMode } from "@/features/commercial-offer/types/commercialOffer";
+import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
+import type {
+  CommercialDraftDetails,
+  OcrCorrection,
+  PlateInputMode,
+  SimpleKpProductType,
+} from "@/features/commercial-offer/types/commercialOffer";
 import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
-import { KpFbsPreviewPanel } from "@/features/commercial-offer/components/KpFbsPreviewPanel";
+import { KpGradedPreviewPanel } from "@/features/commercial-offer/components/KpGradedPreviewPanel";
 import { PlateListEditor } from "@/features/commercial-offer/components/PlateListEditor";
 import {
   resolveSourceSubmitDisabled,
@@ -26,7 +32,8 @@ import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { StepLayout } from "@/shared/ui/StepLayout";
 
-type FbsInputStepProps = {
+type SimpleProductInputStepProps = {
+  productType: SimpleKpProductType;
   draft: CommercialDraftDetails | null;
   pendingBatchReview: boolean;
   sourceText: string;
@@ -62,14 +69,12 @@ type FbsInputStepProps = {
   onRerecognize?: () => void;
   isRerecognizing?: boolean;
   onConfirmBatch: () => void;
-  onFinishFbs: () => void;
+  onFinishInput: () => void;
   onApplyGradeToAll?: (grade: string) => void;
   onLineGradeChange?: (lineIndex: number, grade: string) => void;
   onReset: () => void;
   lineRowHandlers?: LineRowHandlers;
 };
-
-
 
 const IMAGE_ZOOM_MIN = 0.5;
 const IMAGE_ZOOM_MAX = 3;
@@ -102,7 +107,8 @@ const formatOcrCorrections = (corrections: OcrCorrection[], maxItems = 5): strin
   });
 };
 
-export const FbsInputStep = ({
+export const SimpleProductInputStep = ({
+  productType,
   draft,
   pendingBatchReview,
   sourceText,
@@ -138,12 +144,12 @@ export const FbsInputStep = ({
   onRerecognize,
   isRerecognizing = false,
   onConfirmBatch,
-  onFinishFbs,
+  onFinishInput,
   onApplyGradeToAll,
   onLineGradeChange,
   onReset,
   lineRowHandlers,
-}: FbsInputStepProps) => {
+}: SimpleProductInputStepProps) => {
   const [showSourceInput, setShowSourceInput] = useState(false);
   const [imageZoom, setImageZoom] = useState(1);
   const [sourceGate, setSourceGate] = useState<SourceSubmitGate>({
@@ -152,11 +158,12 @@ export const FbsInputStep = ({
     blockReason: undefined,
   });
   const hasDraft = Boolean(draft);
+  const labels = PRODUCT_TYPE_CONFIG[productType].labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
   const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
   const reviewHighlights = useBatchReviewHighlights({
     text: batchReviewText,
-    productType: "fbs",
+    productType,
     draft: batchReviewDraft,
     enabled: isBatchReviewMode,
   });
@@ -194,7 +201,7 @@ export const FbsInputStep = ({
   );
 
   const canConfirmBatch = isBatchReviewMode && canConfirmActivePage && !isRecognizing && !isAiProcessing && !isConfirmingBatch;
-  const canFinishPiles = hasDraft && !pendingBatchReview && !isRecognizing && !isAiProcessing && !isProceeding;
+  const canFinish = hasDraft && !pendingBatchReview && !isRecognizing && !isAiProcessing && !isProceeding;
 
 
   const handleImageWheel = (event: WheelEvent<HTMLDivElement>) => {
@@ -206,10 +213,9 @@ export const FbsInputStep = ({
     setImageZoom((current) => clampImageZoom(Number((current + direction * IMAGE_ZOOM_STEP).toFixed(2))));
   };
 
-
   const sourceInputCard = (
     <SourceInputCard
-      productType="fbs"
+      productType={productType}
       hasDraft={hasDraft}
       sourceText={sourceText}
       pages={pages}
@@ -219,11 +225,11 @@ export const FbsInputStep = ({
       recognitionStarted={recognitionStarted}
       isRecognizing={isRecognizing}
       isAiProcessing={isAiProcessing}
-      listLabel="Список ФБС"
-      placeholder={"С120.35-12 B25 5\nС120.35-13и 3"}
-      emptySubtitle="Вставьте текст списка ФБС или загрузите фото таблицы."
-      aiHint="Редкий сценарий: опишите, что сделать со списком ФБС."
-      aiPlaceholder="Например: убери строки с B15"
+      listLabel={labels.listLabel}
+      placeholder={labels.placeholder}
+      emptySubtitle={labels.emptySubtitle}
+      aiHint={labels.aiHint}
+      aiPlaceholder={labels.aiPlaceholder}
       aiInstruction={aiInstruction}
       onAiInstructionChange={onAiInstructionChange}
       onApplyAi={onApplyAi}
@@ -238,13 +244,13 @@ export const FbsInputStep = ({
 
   return (
     <StepLayout
-      title="Шаг 1. ФБС"
+      title={labels.stepTitle}
       description={
         isBatchReviewMode
           ? "Сверьте распознанный список текущего источника с фото и нажмите «Список верен»."
           : hasDraft
-            ? "Добавьте ещё ФБС или перейдите к оформлению клиента."
-            : "Загрузите фото или вставьте список ФБС для расчёта."
+            ? labels.addMoreDescription
+            : labels.initialDescription
       }
       footer={
         hasDraft ? (
@@ -262,8 +268,8 @@ export const FbsInputStep = ({
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={onFinishFbs}
-                  disabled={!canFinishPiles}
+                  onClick={onFinishInput}
+                  disabled={!canFinish}
                   title={pendingBatchReview ? "Сначала подтвердите текущий источник — «Список верен»" : undefined}
                 >
                   {isProceeding ? "Переход..." : "Готово, далее"}
@@ -273,8 +279,8 @@ export const FbsInputStep = ({
                   <Button
                     type="button"
                     variant="secondary"
-                    onClick={onFinishFbs}
-                    disabled={!canFinishPiles}
+                    onClick={onFinishInput}
+                    disabled={!canFinish}
                   >
                     {isProceeding ? "Переход..." : "Готово, далее"}
                   </Button>
@@ -428,7 +434,7 @@ export const FbsInputStep = ({
                   </Card>
                 )}
 
-                <Card title="Список ФБС для расчёта" subtitle="Сверьте позиции текущего источника с фото или текстом.">
+                <Card title={labels.reviewListTitle} subtitle="Сверьте позиции текущего источника с фото или текстом.">
                   {batchReviewDraft && (
                     <PlateListEditor
                       draft={batchReviewDraft}
@@ -456,7 +462,9 @@ export const FbsInputStep = ({
           {!isBatchReviewMode && draft && (
             <>
               <SourceImageQueueControls items={sourceQueue} />
-              <KpFbsPreviewPanel
+              <KpGradedPreviewPanel
+                key={productType}
+                productType={productType}
                 draft={draft}
                 normalizedText={normalizedText}
                 isUpdatingGrades={isUpdatingGrades}

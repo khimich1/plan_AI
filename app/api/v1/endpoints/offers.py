@@ -16,6 +16,7 @@ from app.schemas.offers import (
     UpdateOfferDiscountRequest,
 )
 from app.services.offers_service import OffersService
+from app.services.counterparties_service import CounterpartyValidationError
 
 router = APIRouter(prefix="/offers", tags=["offers"])
 
@@ -50,7 +51,10 @@ def create_offer(
     user: dict = Depends(require_roles("admin", "manager")),
     service: OffersService = Depends(get_offers_service),
 ) -> CreateOfferResponse:
-    return CreateOfferResponse.model_validate(service.create_offer(payload, user=user))
+    try:
+        return CreateOfferResponse.model_validate(service.create_offer(payload, user=user))
+    except CounterpartyValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.patch("/{kp_id}/discount", response_model=OfferDetails)

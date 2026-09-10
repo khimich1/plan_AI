@@ -48,6 +48,9 @@ class KpRepository:
         product_type: str = "plates",
         pile_logistics_cost: float = 0.0,
         pile_trip_overrides: dict | None = None,
+        counterparty_id: int | None = None,
+        customer_inn: str | None = None,
+        customer_kpp: str | None = None,
     ) -> int:
         return offers_write.save_kp_to_db(
             creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
@@ -66,6 +69,9 @@ class KpRepository:
             db_path=self.db_path,
             pile_logistics_cost=pile_logistics_cost,
             pile_trip_overrides=pile_trip_overrides,
+            counterparty_id=counterparty_id,
+            customer_inn=customer_inn,
+            customer_kpp=customer_kpp,
         )
 
     def update_offer_from_order_data(
@@ -110,6 +116,7 @@ class KpRepository:
         query = """
         SELECT o.kp_id, o.creation_date, o.customer_name, o.manager_name,
                o.discount_percent, o.subtotal, o.vat_amount, o.total_amount,
+               o.counterparty_id, o.customer_inn, o.customer_kpp,
                COALESCE(m.status, 'в работе') AS status
         FROM KP_offers o
         LEFT JOIN kp_meta m ON m.kp_id = o.kp_id

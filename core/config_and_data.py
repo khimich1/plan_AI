@@ -239,12 +239,15 @@ def parse_load_code_from_name(name: str, default: int = 8) -> int:
       '68-11-10 1'          -> 10
     """
     s = str(name).lower().replace(',', '.')
+    s = re.sub(r'[\t\u00a0]+', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
 
     # Ищем нагрузку: ...-8п, ...-10п, ...-12.5п; или компакт без «п»: «68-11-10 1»
+    # Excel paste: «ПБ 68-11-8 шт 2» / tabs between mark, шт, qty.
     m = re.search(r'-\s*([\d\.]+)\s*п\b', s)
     if not m:
         m = re.search(
-            r'\d+(?:[.,]\d+)?-\d+(?:[.,]\d+)?-([\d\.]+)(?:\s+\d+)?\s*$',
+            r'\d+(?:[.,]\d+)?-\d+(?:[.,]\d+)?-([\d\.]+)(?:\s*шт\.?)?(?:\s+\d+)?\s*$',
             s,
         )
     if not m:

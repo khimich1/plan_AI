@@ -13,6 +13,7 @@ from app.security.offer_access import (
     assert_offer_write_access,
     list_filters_for_user,
 )
+from app.services.counterparties_service import CounterpartiesService
 from app.services.promise_service import PromiseGateError, PromiseService
 from core.kp_persistence_service import KpPersistenceService
 from core.execution_terms import parse_execution_terms
@@ -28,9 +29,13 @@ class OffersService:
         self,
         kp_repository: KpRepository | None = None,
         promise_service: PromiseService | None = None,
+        counterparties: CounterpartiesService | None = None,
     ) -> None:
         self.kp_repository = kp_repository or KpRepository()
         self._promise_service = promise_service
+        self.counterparties = counterparties or CounterpartiesService(
+            db_path=self.kp_repository.db_path
+        )
 
     def list_offers(
         self,
@@ -76,10 +81,11 @@ class OffersService:
             execution_terms, used_default_execution_terms = self._parse_execution_terms(payload.execution_terms_input)
             status = "в работе"
 
+        counterparty = self.counterparties.require_active_client(payload.counterparty_id)
         kp_id = KpPersistenceService.save_kp_to_db(
             creation_date=payload.creation_date,
             order_data=[item.model_dump() for item in payload.order_data],
-            customer_name=payload.customer_name,
+            customer_name=counterparty["name"],
             manager_name=payload.manager_name,
             discount_percent=payload.discount_percent,
             delivery_conditions=payload.delivery_conditions,
@@ -88,6 +94,9 @@ class OffersService:
             status=status,
             owner_user_id=int(user["id"]),
             db_path=self.kp_repository.db_path,
+            counterparty_id=int(counterparty["id"]),
+            customer_inn=counterparty.get("inn"),
+            customer_kpp=counterparty.get("kpp"),
         )
         created = self.kp_repository.get_offer(kp_id)
         if not created:
@@ -221,6 +230,9 @@ class OffersService:
             "payment_conditions": item.get("payment_conditions"),
             "execution_terms": item.get("execution_terms"),
             "status": item.get("status") or "в работе",
+            "counterparty_id": item.get("counterparty_id"),
+            "customer_inn": item.get("customer_inn"),
+            "customer_kpp": item.get("customer_kpp"),
         }
         if summary["status"] in {"в работе", "выполнено"}:
             completion = self.kp_repository.get_completion_percentage(kp_id)

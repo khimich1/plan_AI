@@ -11,7 +11,7 @@ import {
   useMergeCarrierMutation,
 } from "@/features/logistics/hooks/useLogisticsQueries";
 import { isFlagOn } from "@/features/logistics/lib/logisticsFormat";
-import { useDebouncedValue } from "@/features/logistics/lib/useDebouncedValue";
+import { useDebouncedValue } from "@/shared/lib/useDebouncedValue";
 import type { Carrier } from "@/features/logistics/types/logistics";
 
 export const CarriersView = () => {

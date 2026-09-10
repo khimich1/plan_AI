@@ -3,22 +3,33 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { clientConditionsSchema } from "@/features/commercial-offer/schemas/commercialOffer";
 import type { ConditionsMode, Manager } from "@/features/commercial-offer/types/commercialOffer";
+import type { CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
+import {
+  CounterpartyAutocomplete,
+  formatCounterpartyRequisites,
+} from "@/features/commercial-offer/components/CounterpartyAutocomplete";
 import { useAuth } from "@/features/auth/model/AuthProvider";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
-import { FieldWrapper, Input, Textarea } from "@/shared/ui/Field";
+import { FieldWrapper, Textarea } from "@/shared/ui/Field";
 import { StepLayout } from "@/shared/ui/StepLayout";
+
+type ClientConditionsDefaultValues = {
+  clientName: string;
+  counterpartyId: number | null;
+  counterpartyCode1c?: string;
+  counterpartyInn?: string | null;
+  counterpartyKpp?: string | null;
+  conditionsMode: ConditionsMode;
+  deliveryConditions: string;
+  paymentConditions: string;
+};
 
 type ClientConditionsStepProps = {
   managers: Manager[];
   selectedManagerId: number | null;
-  defaultValues: {
-    clientName: string;
-    conditionsMode: ConditionsMode;
-    deliveryConditions: string;
-    paymentConditions: string;
-  };
+  defaultValues: ClientConditionsDefaultValues;
   errorMessage: string | null;
   isPending: boolean;
   onBack: () => void;
@@ -26,6 +37,10 @@ type ClientConditionsStepProps = {
   onSubmit: (payload: {
     managerId: number;
     clientName: string;
+    counterpartyId: number;
+    counterpartyCode1c: string;
+    counterpartyInn: string | null;
+    counterpartyKpp: string | null;
     conditionsMode: ConditionsMode;
     deliveryConditions: string;
     paymentConditions: string;
@@ -34,9 +49,23 @@ type ClientConditionsStepProps = {
 
 type ClientConditionsFormValues = {
   clientName: string;
+  counterpartyId: number;
   conditionsMode: ConditionsMode;
   deliveryConditions: string;
   paymentConditions: string;
+};
+
+const selectedFromDefaults = (values: ClientConditionsDefaultValues): CounterpartyShort | null => {
+  if (values.counterpartyId == null || values.counterpartyId < 1) {
+    return null;
+  }
+  return {
+    id: values.counterpartyId,
+    name: values.clientName,
+    code_1c: values.counterpartyCode1c ?? "",
+    inn: values.counterpartyInn ?? null,
+    kpp: values.counterpartyKpp ?? null,
+  };
 };
 
 export const ClientConditionsStep = ({
@@ -57,14 +86,22 @@ export const ClientConditionsStep = ({
   );
   const hasDefaultManager = profileManagerInList;
   const [showManagerOverride, setShowManagerOverride] = useState(!hasDefaultManager);
+  const [selected, setSelected] = useState<CounterpartyShort | null>(() => selectedFromDefaults(defaultValues));
 
   const form = useForm<ClientConditionsFormValues>({
     resolver: zodResolver(clientConditionsSchema),
-    defaultValues,
+    defaultValues: {
+      ...defaultValues,
+      counterpartyId: defaultValues.counterpartyId ?? 0,
+    },
   });
 
   useEffect(() => {
-    form.reset(defaultValues);
+    form.reset({
+      ...defaultValues,
+      counterpartyId: defaultValues.counterpartyId ?? 0,
+    });
+    setSelected(selectedFromDefaults(defaultValues));
   }, [defaultValues, form]);
 
   useEffect(() => {
@@ -75,17 +112,27 @@ export const ClientConditionsStep = ({
   }, [hasDefaultManager, onManagerChange, profileManagerId, selectedManagerId]);
 
   const conditionsMode = form.watch("conditionsMode");
+  const counterpartyId = form.watch("counterpartyId");
   const effectiveManagerId = selectedManagerId ?? (hasDefaultManager ? profileManagerId : null);
   const selectedManager = managers.find((manager) => manager.id === effectiveManagerId) ?? null;
-  const canSubmit = Boolean(effectiveManagerId) && !isPending;
+  const canSubmit = Boolean(effectiveManagerId) && counterpartyId > 0 && !isPending;
+
+  const handleSelect = (item: CounterpartyShort | null) => {
+    setSelected(item);
+    form.setValue("counterpartyId", item?.id ?? 0, { shouldValidate: true, shouldDirty: true });
+    form.setValue("clientName", item?.name ?? "", { shouldValidate: true, shouldDirty: true });
+  };
 
   const handleSubmit = form.handleSubmit((payload) => {
-    if (!effectiveManagerId) {
+    if (!effectiveManagerId || payload.counterpartyId < 1) {
       return;
     }
     onSubmit({
       managerId: effectiveManagerId,
       ...payload,
+      counterpartyCode1c: selected?.code_1c ?? "",
+      counterpartyInn: selected?.inn ?? null,
+      counterpartyKpp: selected?.kpp ?? null,
     });
   });
 
@@ -166,9 +213,26 @@ export const ClientConditionsStep = ({
 
       <Card title="Основные данные">
         <div style={{ display: "grid", gap: "1rem" }}>
-          <FieldWrapper label="Клиент" error={form.formState.errors.clientName?.message}>
-            <Input {...form.register("clientName")} placeholder="ООО Ромашка" />
+          <FieldWrapper label="Клиент" error={form.formState.errors.counterpartyId?.message ?? form.formState.errors.clientName?.message}>
+            <CounterpartyAutocomplete
+              selected={selected}
+              onSelect={handleSelect}
+              placeholder="Начните вводить название или ИНН"
+            />
           </FieldWrapper>
+          {selected ? (
+            <div
+              style={{
+                border: "1px solid #e4e7ec",
+                borderRadius: 12,
+                padding: "0.75rem 0.9rem",
+                color: "#475467",
+                background: "#f8fafc",
+              }}
+            >
+              {formatCounterpartyRequisites(selected)} · код 1С {selected.code_1c || "—"}
+            </div>
+          ) : null}
         </div>
       </Card>
 

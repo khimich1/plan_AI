@@ -473,6 +473,7 @@ class CommercialWorkflowService:
         payment_conditions: str = "",
         owner_user_id: int,
         plate_order_ctx: PlateOrderContext,
+        counterparty_id: int | None = None,
     ) -> dict[str, Any]:
         draft = await self.create_draft(
             text=text,
@@ -490,6 +491,7 @@ class CommercialWorkflowService:
             conditions_mode=conditions_mode,
             delivery_conditions=delivery_conditions,
             payment_conditions=payment_conditions,
+            counterparty_id=counterparty_id,
         )
 
     async def update_draft_plates(
@@ -595,6 +597,7 @@ class CommercialWorkflowService:
         logistics_cost: float | None = None,
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict[str, int] | None = None,
+        counterparty_id: int | None = None,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.update_draft_meta(
             draft_id,
@@ -607,6 +610,7 @@ class CommercialWorkflowService:
             logistics_cost=logistics_cost,
             pile_logistics_cost=pile_logistics_cost,
             pile_trip_overrides=pile_trip_overrides,
+            counterparty_id=counterparty_id,
         )
 
     def calculate_draft(self, draft_id: str) -> dict[str, Any]:
@@ -650,11 +654,13 @@ class CommercialWorkflowService:
         file_types: Iterable[str] | None = None,
         *,
         plate_order_ctx: PlateOrderContext | None = None,
+        replace_existing: bool = False,
     ) -> list[dict[str, str]]:
         return self.draft_lifecycle.generate_files(
             draft_id,
             file_types,
             plate_order_ctx=plate_order_ctx,
+            replace_existing=replace_existing,
         )
 
     def save_offer(
@@ -664,17 +670,29 @@ class CommercialWorkflowService:
         execution_terms: str = "",
         status: str = "в работе",
         save_mode: str = "database",
+        plate_order_ctx: PlateOrderContext | None = None,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.save_offer(
             draft_id,
             execution_terms=execution_terms,
             status=status,
             save_mode=save_mode,
+            plate_order_ctx=plate_order_ctx,
         )
 
-    def save_draft(self, draft_id: str, *, mode: str, execution_terms_input: str = "") -> dict[str, Any]:
+    def save_draft(
+        self,
+        draft_id: str,
+        *,
+        mode: str,
+        execution_terms_input: str = "",
+        plate_order_ctx: PlateOrderContext | None = None,
+    ) -> dict[str, Any]:
         return self.draft_lifecycle.save_draft(
-            draft_id, mode=mode, execution_terms_input=execution_terms_input
+            draft_id,
+            mode=mode,
+            execution_terms_input=execution_terms_input,
+            plate_order_ctx=plate_order_ctx,
         )
 
     def _load_draft_or_raise(self, draft_id: str) -> dict[str, Any]:

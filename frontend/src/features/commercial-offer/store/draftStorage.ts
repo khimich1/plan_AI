@@ -16,10 +16,20 @@ export const draftStorage = {
   },
 
   save(state: WizardStoreState): void {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    // Persistence is best-effort: a full draft (OCR texts) can exceed the
+    // sessionStorage quota, and storage may be unavailable in private mode.
+    try {
+      window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // ignore — losing the draft snapshot must not break the wizard
+    }
   },
 
   clear(): void {
-    window.sessionStorage.removeItem(STORAGE_KEY);
+    try {
+      window.sessionStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // ignore — same rationale as save()
+    }
   },
 };

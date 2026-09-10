@@ -5,6 +5,7 @@ import { CalculationResultStep } from "@/features/commercial-offer/components/st
 import type {
   CommercialDraftDetails,
   CommercialDraftMetadata,
+  ProductType,
 } from "@/features/commercial-offer/types/commercialOffer";
 
 /**
@@ -104,11 +105,7 @@ function renderResultStep(
   draft: CommercialDraftDetails,
   handlers: ResultStepAppendHandlers = {},
   stepFlags: {
-    isPileDraft?: boolean;
-    isStepDraft?: boolean;
-    isMarchDraft?: boolean;
-    isBridgePileDraft?: boolean;
-    isFbsDraft?: boolean;
+    draftProductType?: ProductType;
     isSimpleKpDraft?: boolean;
     breakdownTables?: ComponentProps<typeof CalculationResultStep>["breakdownTables"];
     isBreakdownLoading?: boolean;
@@ -471,7 +468,7 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
         },
       }),
       {},
-      { isPileDraft: true, isSimpleKpDraft: true },
+      { draftProductType: "piles", isSimpleKpDraft: true },
     );
 
     const tripInput = screen.getByPlaceholderText("Стоимость одного рейса");
@@ -579,7 +576,7 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
         },
       }),
       {},
-      { isBridgePileDraft: true, isSimpleKpDraft: true },
+      { draftProductType: "bridge_piles", isSimpleKpDraft: true },
     );
 
     expect(
@@ -609,6 +606,36 @@ describe("CalculationResultStep unparsed UX", () => {
     expect(screen.queryByText(/Строки, не попавшие в расчёт/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Не удалось распознать строк: 1/)).not.toBeInTheDocument();
     expect(screen.getByText(/нагрузка принята 8п по умолчанию/)).toBeInTheDocument();
+  });
+});
+
+describe("CalculationResultStep discounted line prices", () => {
+  it("shows unit price and sum with discount applied", () => {
+    renderResultStep(
+      makeDraft({
+        metadata: {
+          ...baseMetadata(),
+          discount_percent: 10,
+        },
+        order_data: [
+          {
+            line_id: "ln1",
+            product_type: "plates",
+            name: "ПБ 60-12-8п",
+            mark: "ПБ 60-12-8п",
+            qty: 2,
+            unit_price: 10000,
+            weight: 1500,
+          },
+        ],
+      }),
+    );
+
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("9 000")).toBeInTheDocument();
+    expect(within(table).getByText("18 000")).toBeInTheDocument();
+    expect(within(table).queryByText("10 000")).not.toBeInTheDocument();
+    expect(within(table).queryByText("20 000")).not.toBeInTheDocument();
   });
 });
 

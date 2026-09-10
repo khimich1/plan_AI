@@ -29,6 +29,7 @@ from app.schemas.commercial import (
 )
 from app.security.session import create_session_token
 from app.services.commercial_workflow_service import CommercialWorkflowService
+from tests.helpers import kp_db_fixtures as fx
 from tests.helpers.auth_fixtures import patch_auth_users
 from tests.helpers.csrf import CsrfAwareTestClient
 
@@ -577,9 +578,9 @@ def _patch_client_meta(
         f"/api/v1/commercial/drafts/{draft_id}/meta",
         json={
             "manager_id": 1,
-            "client_name": client_name,
             "discount_percent": discount_percent,
             "conditions_mode": "standard",
+            **fx.client_meta_payload(client_name),
         },
     )
     assert meta.status_code == 200, meta.text
@@ -1478,7 +1479,7 @@ def test_save_offer_with_saved_kp_id_updates_same_id_not_create(
     monkeypatch.setattr(
         workflow,
         "generate_files",
-        lambda draft_id, file_types=None: (
+        lambda draft_id, file_types=None, **_kwargs: (
             generate_calls.append({"draft_id": draft_id, "file_types": file_types})
             or [{"kind": "xlsx", "filename": fake_xlsx.name}]
         ),
@@ -1553,7 +1554,7 @@ def test_save_offer_update_preserves_archived_status_even_if_param_in_work(
     monkeypatch.setattr(
         workflow,
         "generate_files",
-        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+        lambda *_args, **_kwargs: [{"kind": "xlsx", "filename": fake_xlsx.name}],
     )
     monkeypatch.setattr(
         workflow.export_service,
@@ -1593,7 +1594,7 @@ def test_save_offer_with_saved_kp_id_rejects_when_status_not_archived(
     monkeypatch.setattr(
         workflow,
         "generate_files",
-        lambda _draft_id, file_types=None: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+        lambda *_args, **_kwargs: [{"kind": "xlsx", "filename": fake_xlsx.name}],
     )
     monkeypatch.setattr(
         workflow.export_service,

@@ -3,6 +3,7 @@ import type { MutableRefObject } from "react";
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import type {
   CommercialDraftDetails,
+  CommercialSaveResult,
   CommercialWizardState,
   WizardStepId,
   WizardStoreState,
@@ -372,6 +373,80 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
     expect(stateRef.current?.invalidWidthActions).toEqual({});
     expect(stateRef.current?.normalizedText).toBe("ПБ 29-12-8п 1");
   });
+
+  it("hydrate-draft сбрасывает lastSaveResult после set-save-result", async () => {
+    const stateRef: MutableRefObject<ReturnType<typeof useWizardDraftStore>["state"] | null> = {
+      current: null,
+    };
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    const saveResult: CommercialSaveResult = {
+      draft_id: "draft-test-1",
+      saved_offer: {
+        kp_id: 1,
+        status: "в архиве",
+        mode: "archive",
+        execution_terms: "",
+        saved_at: "2026-09-08T12:00:00",
+      },
+      totals: {},
+      offer_identity: { offer_number: "КП-1", offer_date: "08.09.2026", file_stem: "kp-1" },
+      result_card: {
+        kp_id: 1,
+        offer_number: "КП-1",
+        offer_date: "08.09.2026",
+        client_name: "ООО Тест",
+        manager_name: "Менеджер",
+        total_amount: 0,
+        status: "в архиве",
+        execution_terms: "",
+      },
+    };
+
+    await act(async () => {
+      dispatchRef.current?.({ type: "set-save-result", payload: saveResult });
+    });
+    expect(stateRef.current?.lastSaveResult).not.toBeNull();
+
+    await act(async () => {
+      dispatchRef.current?.({
+        type: "hydrate-draft",
+        payload: makeDraft({}),
+      });
+    });
+
+    expect(stateRef.current?.lastSaveResult).toBeNull();
+  });
+
+  it("hydrate-draft picks up counterparty_id from metadata", async () => {
+    const stateRef: MutableRefObject<ReturnType<typeof useWizardDraftStore>["state"] | null> = {
+      current: null,
+    };
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    await act(async () => {
+      dispatchRef.current?.({
+        type: "hydrate-draft",
+        payload: makeDraft({
+          metadata: {
+            client_name: "ООО Ромашка",
+            counterparty_id: 7,
+          },
+        }),
+      });
+    });
+
+    expect(stateRef.current?.clientName).toBe("ООО Ромашка");
+    expect(stateRef.current?.counterpartyId).toBe(7);
+  });
 });
 
 /**
@@ -507,6 +582,7 @@ describe("WizardDraftProvider append cycle sticky header (MNA-502)", () => {
 
     const skipClient = shouldSkipClientStep({
       clientName: snap?.clientName,
+      counterpartyId: snap?.counterpartyId,
       appendBatches: snap?.lastDraft?.metadata.append_batches,
       resumeKpId: snap?.lastDraft?.metadata.resume_kp_id ?? null,
     });

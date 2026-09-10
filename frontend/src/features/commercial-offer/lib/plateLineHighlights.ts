@@ -1,4 +1,5 @@
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
+import { widePlateMatchKey } from "@/features/commercial-offer/lib/liveWidePlateLines";
 
 export type PlateLineHighlightKind = "correction" | "unparsed" | "wide" | "invalid_width" | "dobor";
 
@@ -30,7 +31,7 @@ export const buildPlateLineHighlightMap = (
     (draft.metadata.unparsed_lines ?? []).map((line) => normalizeLineKey(stripUnparsedSuffix(line))),
   );
   const wideKeys = new Set(
-    (draft.metadata.wide_plate_lines ?? []).map((item) => normalizeLineKey(item.line)),
+    (draft.metadata.wide_plate_lines ?? []).map((item) => widePlateMatchKey(item.line)),
   );
   const invalidWidthKeys = new Set(
     (draft.metadata.invalid_width_lines ?? []).flatMap((item) =>
@@ -58,7 +59,7 @@ export const buildPlateLineHighlightMap = (
 
   lines.forEach((line, index) => {
     const key = normalizeLineKey(line);
-    if (wideKeys.has(key)) {
+    if (wideKeys.has(key) || wideKeys.has(widePlateMatchKey(line))) {
       highlights.set(index, {
         kind: "wide",
         title: "Позиция шире стандартной — требует решения ниже",
@@ -139,6 +140,9 @@ export const mergeReviewHighlights = (
       continue;
     }
     if (!line.ok) {
+      if (next.get(line.index)?.kind === "wide") {
+        continue;
+      }
       next.set(line.index, {
         kind: "unparsed",
         title: line.reason_text || DEFAULT_UNPARSED_TITLE,
