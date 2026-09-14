@@ -323,6 +323,11 @@ class ArchiveService:
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
         pile_trip_overrides = coerce_pile_trip_overrides(raw.get("pile_trip_overrides_json"))
+        from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+
+        fbs_lm_delivery_enabled = coerce_fbs_lm_delivery_enabled(
+            raw.get("fbs_lm_delivery_enabled")
+        )
         append_batches = raw.get("append_batches")
 
         if kind == "pdf":
@@ -344,9 +349,11 @@ class ArchiveService:
                 payment_conditions=raw.get("payment_conditions"),
                 append_batches=append_batches,
                 pile_catalog_db_path=self.repository.db_path,
+                fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+                weight_catalog_db_path=self.repository.db_path,
             )
             filename = f"КП_{kp_id}.pdf"
-        elif kind == "xlsx":
+        elif kind in {"xlsx", "xlsx_delivery_in_unit"}:
             buffer = await asyncio.to_thread(
                 generate_commercial_offer_xlsx,
                 order_data,
@@ -365,8 +372,15 @@ class ArchiveService:
                 pile_trip_overrides=pile_trip_overrides,
                 append_batches=append_batches,
                 pile_catalog_db_path=self.repository.db_path,
+                embed_delivery_in_unit_price=(kind == "xlsx_delivery_in_unit"),
+                fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+                weight_catalog_db_path=self.repository.db_path,
             )
-            filename = f"КП_{kp_id}.xlsx"
+            filename = (
+                f"КП_{kp_id}_с_доставкой_в_цене.xlsx"
+                if kind == "xlsx_delivery_in_unit"
+                else f"КП_{kp_id}.xlsx"
+            )
         elif kind == "schema":
             if plate_order_ctx is None:
                 raise ArchiveValidationError(
@@ -558,9 +572,10 @@ class ArchiveService:
         order_data = order_data_from_kp_info(raw)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
         pile_logistics_cost = max(0.0, float(raw.get("pile_logistics_cost") or 0.0))
-        from core.commercial_pricing import calculate_total_cost
+        from core.commercial_pricing import calculate_total_cost, coerce_fbs_lm_delivery_enabled
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
+        fbs_lm_enabled = coerce_fbs_lm_delivery_enabled(raw.get("fbs_lm_delivery_enabled"))
         totals = calculate_total_cost(
             order_data,
             float(raw.get("discount_percent") or 0.0),
@@ -572,14 +587,17 @@ class ArchiveService:
                 raw.get("pile_trip_overrides_json")
             ),
             pile_catalog_db_path=self.repository.db_path,
+            fbs_lm_delivery_enabled=fbs_lm_enabled,
+            weight_catalog_db_path=self.repository.db_path,
         )
-        # Delivery / cargo for archive details: plates 18600 + piles hybrid.
+        # Delivery / cargo for archive details: plates 18600 + piles hybrid + ФБС/ЛС/ЛМ.
         total_cargo_weight_kg = float(
             total_order_cargo_weight_kg(order_data, product_types={"plates"})
         )
         plate_delivery_total = float(totals.get("plate_delivery_total") or 0.0)
         pile_delivery_total = float(totals.get("pile_delivery_total") or 0.0)
-        delivery_total = plate_delivery_total + pile_delivery_total
+        fbs_lm_delivery_total = float(totals.get("fbs_lm_delivery_total") or 0.0)
+        delivery_total = plate_delivery_total + pile_delivery_total + fbs_lm_delivery_total
 
         readiness = None
         status = raw.get("status") or ""
@@ -620,6 +638,12 @@ class ArchiveService:
             pile_delivery_ready=bool(totals.get("pile_delivery_ready", True)),
             plate_delivery_total=plate_delivery_total,
             pile_delivery_total=pile_delivery_total,
+            fbs_lm_delivery_total=fbs_lm_delivery_total,
+            fbs_lm_cargo_kg=float(totals.get("fbs_lm_cargo_kg") or 0.0),
+            fbs_lm_trips=int(totals.get("fbs_lm_trips") or 0),
+            fbs_lm_delivery_ready=bool(totals.get("fbs_lm_delivery_ready", True)),
+            fbs_lm_pending_marks=list(totals.get("fbs_lm_pending_marks") or []),
+            fbs_lm_delivery_enabled=fbs_lm_enabled,
             total_cargo_weight_kg=total_cargo_weight_kg,
             delivery_service_total_rub=delivery_total,
             product_type=product_type,

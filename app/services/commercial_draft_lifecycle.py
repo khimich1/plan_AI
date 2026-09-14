@@ -16,6 +16,7 @@ from app.schemas.commercial import WizardStepId
 from app.services.commercial_order_identity import APPEND_PRODUCT_TYPES
 from app.services.counterparties_service import CounterpartiesService
 from app.services.product_draft_config import SPECS
+from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
 from core.kp import offers_write
 from core.kp_order_data import order_data_from_kp_info
 from core.pile_trip_pricing import coerce_pile_trip_overrides
@@ -779,6 +780,9 @@ class CommercialDraftLifecycle:
             "pile_trip_overrides": coerce_pile_trip_overrides(
                 kp_raw.get("pile_trip_overrides_json")
             ),
+            "fbs_lm_delivery_enabled": coerce_fbs_lm_delivery_enabled(
+                kp_raw.get("fbs_lm_delivery_enabled")
+            ),
             "delivery_conditions": delivery,
             "payment_conditions": payment,
             "conditions_mode": conditions_mode,
@@ -861,6 +865,9 @@ class CommercialDraftLifecycle:
         pile_trip_overrides = coerce_pile_trip_overrides(
             metadata.get("pile_trip_overrides")
         )
+        fbs_lm_delivery_enabled = coerce_fbs_lm_delivery_enabled(
+            metadata.get("fbs_lm_delivery_enabled")
+        )
         delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
         payment_conditions = str(metadata.get("payment_conditions", "") or "")
         product_type = str(metadata.get("product_type", "plates") or "plates")
@@ -893,6 +900,7 @@ class CommercialDraftLifecycle:
                 logistics_cost=logistics_cost,
                 pile_logistics_cost=pile_logistics_cost,
                 pile_trip_overrides=pile_trip_overrides,
+                fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                 delivery_conditions=delivery_conditions,
                 payment_conditions=payment_conditions,
                 execution_terms=execution_terms,
@@ -914,6 +922,7 @@ class CommercialDraftLifecycle:
                 logistics_cost=logistics_cost,
                 pile_logistics_cost=pile_logistics_cost,
                 pile_trip_overrides=pile_trip_overrides,
+                fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                 delivery_conditions=delivery_conditions,
                 payment_conditions=payment_conditions,
                 execution_terms=execution_terms,

@@ -1,5 +1,5 @@
 export type ArchiveSection = "archived" | "in_production" | "completed";
-export type ArchiveFileKind = "pdf" | "xlsx" | "schema";
+export type ArchiveFileKind = "pdf" | "xlsx" | "schema" | "xlsx_delivery_in_unit";
 export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "mixed";
 export type ArchiveProductTypeFilter = "all" | "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
 
@@ -150,6 +150,12 @@ export type ArchiveOfferDetails = {
   pile_delivery_ready?: boolean;
   plate_delivery_total?: number;
   pile_delivery_total?: number;
+  fbs_lm_delivery_total?: number;
+  fbs_lm_cargo_kg?: number;
+  fbs_lm_trips?: number;
+  fbs_lm_delivery_ready?: boolean;
+  fbs_lm_pending_marks?: string[];
+  fbs_lm_delivery_enabled?: boolean;
   /** Масса груза (кг) по тем же правилам, что PDF/XLSX (resolve_kp_line_weight_kg на бэкенде). */
   total_cargo_weight_kg: number;
   /** Строка «Услуга по доставке грузов» = logistics_cost × число рейсов. */

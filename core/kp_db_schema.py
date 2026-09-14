@@ -347,6 +347,13 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             cur.execute("ALTER TABLE kp_meta ADD COLUMN pile_trip_overrides_json TEXT")
             print("[DB] ✅ Колонка pile_trip_overrides_json добавлена в kp_meta")
 
+        if "fbs_lm_delivery_enabled" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку fbs_lm_delivery_enabled в kp_meta...")
+            cur.execute(
+                "ALTER TABLE kp_meta ADD COLUMN fbs_lm_delivery_enabled INTEGER DEFAULT 0"
+            )
+            print("[DB] ✅ Колонка fbs_lm_delivery_enabled добавлена в kp_meta")
+
         # Таблица kp_piles — позиции КП на сваи (отдельно от kp_plates)
         cur.execute('''
             CREATE TABLE IF NOT EXISTS kp_piles (

@@ -306,6 +306,11 @@ export type CommercialDraftDetails = {
     pile_trips?: number;
     pile_trip_pending_marks?: string[];
     pile_delivery_ready?: boolean;
+    fbs_lm_delivery_total?: number;
+    fbs_lm_cargo_kg?: number;
+    fbs_lm_trips?: number;
+    fbs_lm_delivery_ready?: boolean;
+    fbs_lm_pending_marks?: string[];
   };
   offer_identity: CommercialOfferIdentity;
 };

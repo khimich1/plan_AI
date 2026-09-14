@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from core.cargo_delivery_pricing import (
     cargo_delivery_trips_count,
+    compute_fbs_lm_delivery,
     delivery_service_charge_rub,
     total_order_cargo_weight_kg,
 )
@@ -22,8 +23,20 @@ _log = logging.getLogger(__name__)
 VAT_RATE = 0.22
 
 
-def _resolve_pile_catalog_db_path(explicit: str | None, fallback_db_path: str) -> str:
-    """Каталог свай живёт в plita.db, не в pb.db (прайс)."""
+def coerce_fbs_lm_delivery_enabled(raw: Any) -> bool:
+    """Флаг котла ФБС/ЛС/ЛМ: True только при явной отметке; None/0/пусто → False."""
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return False
+    if isinstance(raw, (int, float)):
+        return int(raw) != 0
+    text = str(raw).strip().lower()
+    return text in {"1", "true", "yes", "on"}
+
+
+def _resolve_plita_catalog_db_path(explicit: str | None, fallback_db_path: str) -> str:
+    """Каталоги (сваи, веса ФБС/ЛС/ЛМ) живут в plita.db, не в pb.db."""
     if explicit:
         return explicit
     try:
@@ -32,6 +45,16 @@ def _resolve_pile_catalog_db_path(explicit: str | None, fallback_db_path: str) -
         return str(get_settings().plita_db_path)
     except Exception:
         return fallback_db_path
+
+
+def _resolve_pile_catalog_db_path(explicit: str | None, fallback_db_path: str) -> str:
+    """Каталог свай живёт в plita.db, не в pb.db (прайс)."""
+    return _resolve_plita_catalog_db_path(explicit, fallback_db_path)
+
+
+def _resolve_weight_catalog_db_path(explicit: str | None, fallback_db_path: str) -> str:
+    """Справочник весов ФБС/ЛС/ЛМ живёт в plita.db, не в pb.db."""
+    return _resolve_plita_catalog_db_path(explicit, fallback_db_path)
 
 
 def _compute_pile_delivery_breakdown(
@@ -326,6 +349,8 @@ def calculate_total_cost(
     pile_logistics_cost: float = 0,
     pile_trip_overrides: dict[str, int] | None = None,
     pile_catalog_db_path: str | None = None,
+    fbs_lm_delivery_enabled: bool = False,
+    weight_catalog_db_path: str | None = None,
 ) -> dict[str, Any]:
     """
     Рассчитывает общую стоимость заказа.
@@ -399,7 +424,26 @@ def calculate_total_cost(
     pile_delivery_total = (
         round(pile_trip * pile_breakdown.total_trips, 2) if pile_breakdown.ready else 0.0
     )
-    delivery_total = plate_delivery_total + pile_delivery_total
+    fbs_lm_delivery_total = 0.0
+    fbs_lm_cargo_kg = 0.0
+    fbs_lm_trips = 0
+    fbs_lm_delivery_ready = True
+    fbs_lm_pending_marks: list[str] = []
+    if fbs_lm_delivery_enabled:
+        weight_path = _resolve_weight_catalog_db_path(weight_catalog_db_path, db_path)
+        fbs_lm_breakdown = compute_fbs_lm_delivery(
+            order_data,
+            trip_cost=trip_cost,
+            catalog_db_path=weight_path,
+        )
+        fbs_lm_cargo_kg = fbs_lm_breakdown.cargo_kg
+        fbs_lm_trips = fbs_lm_breakdown.trips
+        fbs_lm_delivery_ready = fbs_lm_breakdown.ready
+        fbs_lm_pending_marks = list(fbs_lm_breakdown.pending_marks)
+        fbs_lm_delivery_total = (
+            round(trip_cost * fbs_lm_breakdown.trips, 2) if fbs_lm_breakdown.ready else 0.0
+        )
+    delivery_total = plate_delivery_total + pile_delivery_total + fbs_lm_delivery_total
     vat_amount = round(plates_total_with_vat * VAT_RATE, 2)
     total_with_vat = round(plates_total_with_vat + delivery_total, 2)
     subtotal = round(total_with_vat - vat_amount, 2)
@@ -416,6 +460,11 @@ def calculate_total_cost(
         "pile_trip_pending_marks": list(pile_breakdown.pending_marks),
         "pile_delivery_ready": pile_breakdown.ready,
         "plate_trips": plate_trips,
+        "fbs_lm_delivery_total": fbs_lm_delivery_total,
+        "fbs_lm_cargo_kg": fbs_lm_cargo_kg,
+        "fbs_lm_trips": fbs_lm_trips,
+        "fbs_lm_delivery_ready": fbs_lm_delivery_ready,
+        "fbs_lm_pending_marks": fbs_lm_pending_marks,
     }
 
 
@@ -425,13 +474,23 @@ def kp_delivery_export_lines(
     plate_trip_cost: float,
     pile_trip_cost: float,
 ) -> list[dict[str, Any]]:
-    """Строки доставки для PDF/XLSX: плиты и/или сваи, если сумма > 0."""
+    """Строки доставки для PDF/XLSX: плиты, сваи и/или ФБС/ЛС/ЛМ."""
     plate_amount = float(totals.get("plate_delivery_total") or 0.0)
     pile_amount = float(totals.get("pile_delivery_total") or 0.0)
+    fbs_amount = float(totals.get("fbs_lm_delivery_total") or 0.0)
     pile_ready = bool(totals.get("pile_delivery_ready", True))
+    fbs_ready = bool(totals.get("fbs_lm_delivery_ready", True))
     show_pile = pile_ready and pile_amount > 0
     show_plate = plate_amount > 0
-    plate_label = "Доставка плит" if show_pile else "Услуга по доставке грузов"
+    show_fbs = fbs_ready and fbs_amount > 0
+    plate_label = (
+        "Доставка плит" if (show_pile or show_fbs) else "Услуга по доставке грузов"
+    )
+    fbs_label = (
+        "Доставка ФБС/ЛС/ЛМ"
+        if (show_plate or show_pile)
+        else "Услуга по доставке грузов"
+    )
     lines: list[dict[str, Any]] = []
     if show_plate:
         lines.append(
@@ -449,6 +508,15 @@ def kp_delivery_export_lines(
                 "trips": int(totals.get("pile_trips") or 0),
                 "unit_price": max(0.0, float(pile_trip_cost or 0.0)),
                 "amount": pile_amount,
+            }
+        )
+    if show_fbs:
+        lines.append(
+            {
+                "label": fbs_label,
+                "trips": int(totals.get("fbs_lm_trips") or 0),
+                "unit_price": max(0.0, float(plate_trip_cost or 0.0)),
+                "amount": fbs_amount,
             }
         )
     return lines

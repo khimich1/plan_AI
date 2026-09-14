@@ -49,6 +49,11 @@ vi.mock("@/features/commercial-archive/api/archiveApi", () => ({
   },
 }));
 
+const mockDownloadFile = vi.fn();
+vi.mock("@/shared/lib/downloadFile", () => ({
+  downloadFile: (...args: unknown[]) => mockDownloadFile(...args),
+}));
+
 vi.mock("@/features/delivery-schedule/hooks/useDeliveryScheduleQueries", () => ({
   useDeliveryScheduleQuery: () => ({
     data: null,
@@ -680,5 +685,152 @@ describe("OfferDetailsDrawer counterparty requisites", () => {
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
     expect(screen.getByText("ИНН 7701234567 / КПП 770101001")).toBeInTheDocument();
+  });
+});
+
+describe("OfferDetailsDrawer embed-delivery XLSX button", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("shows the embed button next to ordinary XLSX and disables it when delivery is 0", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, { delivery_service_total_rub: 0 }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const embedButton = screen.getByRole("button", { name: "XLSX (доставка в цене)" });
+    const plainXlsx = screen.getByRole("button", { name: /XLSX$/ });
+    expect(screen.getByRole("button", { name: /PDF/ })).toBeEnabled();
+    expect(plainXlsx).toBeEnabled();
+    expect(embedButton).toBeDisabled();
+    expect(embedButton).toHaveAttribute("title", "Нет суммы доставки");
+  });
+
+  it("downloads xlsx_delivery_in_unit when delivery is positive", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, { delivery_service_total_rub: 156800 }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const embedButton = screen.getByRole("button", { name: "XLSX (доставка в цене)" });
+    expect(embedButton).toBeEnabled();
+    fireEvent.click(embedButton);
+    expect(mockDownloadFile).toHaveBeenCalledWith(
+      "/api/v1/commercial/archive/42/files/xlsx_delivery_in_unit",
+    );
+  });
+});
+
+describe("OfferDetailsDrawer FBS/LM delivery boiler", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("shows trips and pending marks for a new FBS offer with the flag on", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        product_type: "fbs",
+        fbs_lm_delivery_enabled: true,
+        fbs_lm_delivery_ready: true,
+        fbs_lm_trips: 2,
+        fbs_lm_delivery_total: 100000,
+        delivery_service_total_rub: 100000,
+        fbs: [
+          {
+            position_number: 1,
+            mark: "ФБС 24.4.6-Т",
+            concrete_grade: "",
+            qty: 10,
+            unit_price: 1200,
+            discounted_price: 1200,
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Рейсов ФБС/ЛС/ЛМ")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.queryByText(/Нет веса в справочнике/)).not.toBeInTheDocument();
+    const embedButton = screen.getByRole("button", { name: "XLSX (доставка в цене)" });
+    expect(embedButton).toBeEnabled();
+  });
+
+  it("shows pending marks and hides trips when the boiler is not ready", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в работе", null, {
+        product_type: "fbs",
+        fbs_lm_delivery_enabled: true,
+        fbs_lm_delivery_ready: false,
+        fbs_lm_trips: 0,
+        fbs_lm_pending_marks: ["ЛС99"],
+        fbs: [
+          {
+            position_number: 1,
+            mark: "ЛС99",
+            concrete_grade: "",
+            qty: 4,
+            unit_price: 800,
+            discounted_price: 800,
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Нет веса в справочнике — доставка ФБС/ЛС/ЛМ не посчитана")).toBeInTheDocument();
+    expect(screen.getAllByText("ЛС99").length).toBeGreaterThan(1);
+    expect(screen.queryByText("Рейсов ФБС/ЛС/ЛМ")).not.toBeInTheDocument();
+  });
+
+  it("does not show the FBS/LM boiler on an old offer without the flag", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        product_type: "fbs",
+        fbs_lm_delivery_enabled: false,
+        fbs_lm_delivery_ready: true,
+        fbs_lm_trips: 0,
+        fbs_lm_pending_marks: [],
+        delivery_service_total_rub: 0,
+        fbs: [
+          {
+            position_number: 1,
+            mark: "ФБС 24.4.6-Т",
+            concrete_grade: "",
+            qty: 10,
+            unit_price: 1200,
+            discounted_price: 1200,
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.queryByText("Рейсов ФБС/ЛС/ЛМ")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Нет веса в справочнике/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "XLSX (доставка в цене)" })).toBeDisabled();
   });
 });

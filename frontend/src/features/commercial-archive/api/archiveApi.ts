@@ -83,7 +83,9 @@ export const archiveApi = {
         ? `КП_${kpId}_schema.pdf`
         : kind === "pdf"
           ? `КП_${kpId}.pdf`
-          : `КП_${kpId}.xlsx`;
+          : kind === "xlsx_delivery_in_unit"
+            ? `КП_${kpId}_с_доставкой_в_цене.xlsx`
+            : `КП_${kpId}.xlsx`;
     return httpClient.download(`${BASE}/${kpId}/files/${kind}`, fallbackName);
   },
 

@@ -43,6 +43,7 @@ def save_kp_to_db(
     counterparty_id: int | None = None,
     customer_inn: str | None = None,
     customer_kpp: str | None = None,
+    fbs_lm_delivery_enabled: bool = False,
 ) -> int:
     """Сохраняет КП в базу.
 
@@ -70,6 +71,7 @@ def save_kp_to_db(
         counterparty_id=counterparty_id,
         customer_inn=customer_inn,
         customer_kpp=customer_kpp,
+        fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
     )
 
 
@@ -88,6 +90,7 @@ def update_kp_from_order_data(
     db_path: str = DEFAULT_DB,
     pile_logistics_cost: float | None = None,
     pile_trip_overrides: dict | None = None,
+    fbs_lm_delivery_enabled: bool | None = None,
 ) -> int:
     """Обновляет существующее КП (sync по line_id). Тот же ``kp_id``.
 
@@ -110,6 +113,7 @@ def update_kp_from_order_data(
         db_path=db_path,
         pile_logistics_cost=pile_logistics_cost,
         pile_trip_overrides=pile_trip_overrides,
+        fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
     )
 
 
@@ -250,7 +254,7 @@ def update_kp_logistics_cost(
     """
     trip = max(0.0, float(logistics_cost or 0.0))
     try:
-        from core.commercial_pricing import calculate_total_cost
+        from core.commercial_pricing import calculate_total_cost, coerce_fbs_lm_delivery_enabled
         from core.kp.offers_read import get_kp_by_id
         from core.kp_order_data import order_data_from_kp_info
         from core.pile_trip_pricing import coerce_pile_trip_overrides, dumps_pile_trip_overrides
@@ -287,6 +291,10 @@ def update_kp_logistics_cost(
         pile_logistics_cost=pile_trip,
         pile_trip_overrides=resolved_overrides,
         pile_catalog_db_path=db_path,
+        fbs_lm_delivery_enabled=coerce_fbs_lm_delivery_enabled(
+            kp_info.get("fbs_lm_delivery_enabled")
+        ),
+        weight_catalog_db_path=db_path,
     )
 
     conn = _connect(db_path)

@@ -1068,6 +1068,48 @@ def test_download_file_returns_file(
     assert response.content == b"%PDF-TEST"
 
 
+def test_download_xlsx_delivery_in_unit_returns_spreadsheet(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "КП_42_с_доставкой_в_цене.xlsx"
+    target.write_bytes(b"PK\x03\x04EMBED")
+
+    async def fake_generate(kp_id: int, kind: str, **kwargs) -> Path:
+        assert kind == "xlsx_delivery_in_unit"
+        return target
+
+    fake_service.generate_document = fake_generate  # type: ignore[assignment]
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/files/xlsx_delivery_in_unit",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.headers.get("content-type", "")
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    from urllib.parse import unquote
+
+    assert "с_доставкой_в_цене.xlsx" in unquote(response.headers.get("content-disposition", ""))
+    assert response.content == b"PK\x03\x04EMBED"
+
+
+def test_download_unknown_kind_is_validation_error(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    response = client.get(
+        "/api/v1/commercial/archive/42/files/docx",
+        cookies=auth_cookie,
+    )
+    assert response.status_code == 422
+
+
 def _fake_readiness_summary(*, kp_id: int = 42) -> KpReadinessSummary:
     return KpReadinessSummary(
         completion_percentage=72.0,
@@ -1336,6 +1378,103 @@ def test_download_mixed_xlsx_regenerates_unified_layout(
         if name_col < len(row.tolist()) and pd.notna(row.tolist()[name_col])
     ]
     assert any("доставк" in n.lower() for n in names), names
+
+
+def test_download_xlsx_delivery_in_unit_embeds_and_leaves_db(
+    mixed_archive_client: tuple[TestClient, str, Path],
+) -> None:
+    import io
+    import sqlite3
+
+    import pandas as pd
+    from core.kp_persistence_service import KpPersistenceService
+
+    client, db_path, _outputs = mixed_archive_client
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        _MIXED_ORDER_HTTP,
+        customer_name="Embed HTTP",
+        status="в архиве",
+        discount_percent=10.0,
+        logistics_cost=5000.0,
+        db_path=db_path,
+    )
+    conn = sqlite3.connect(db_path)
+    meta_before = conn.execute(
+        "SELECT discount_percent, logistics_cost FROM KP_offers WHERE kp_id = ?",
+        (kp_id,),
+    ).fetchone()
+    plate_before = [
+        row[0]
+        for row in conn.execute(
+            "SELECT unit_price FROM kp_plates WHERE kp_id = ? ORDER BY id",
+            (kp_id,),
+        )
+    ]
+    conn.close()
+
+    embedded = client.get(
+        f"/api/v1/commercial/archive/{kp_id}/files/xlsx_delivery_in_unit",
+        cookies=_admin_cookie_mna402(),
+    )
+    assert embedded.status_code == 200, embedded.text
+    assert (
+        embedded.headers.get("content-type", "")
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    from urllib.parse import unquote
+
+    assert "с_доставкой_в_цене.xlsx" in unquote(embedded.headers.get("content-disposition", ""))
+
+    df = pd.read_excel(io.BytesIO(embedded.content), sheet_name="КП", header=None)
+    headers: list[str] = []
+    header_idx = None
+    for i, row in df.iterrows():
+        vals = [str(v).strip() for v in row.tolist() if pd.notna(v)]
+        if vals and vals[0] == "№":
+            header_idx = int(i)
+            raw = [v if pd.notna(v) else "" for v in row.tolist()]
+            while raw and raw[-1] == "":
+                raw.pop()
+            headers = [str(c).strip() if c != "" else "" for c in raw]
+            break
+    assert header_idx is not None and "Наименование" in headers
+    name_col = headers.index("Наименование")
+    names = [
+        str(row.tolist()[name_col]).strip()
+        for _, row in df.iloc[header_idx + 1 :].iterrows()
+        if name_col < len(row.tolist()) and pd.notna(row.tolist()[name_col])
+    ]
+    table_names = [n for n in names if n and not n.startswith("Всего") and "НДС" not in n]
+    assert not any("доставк" in n.lower() for n in table_names), table_names
+
+    plain = client.get(
+        f"/api/v1/commercial/archive/{kp_id}/files/xlsx",
+        cookies=_admin_cookie_mna402(),
+    )
+    assert plain.status_code == 200, plain.text
+    plain_df = pd.read_excel(io.BytesIO(plain.content), sheet_name="КП", header=None)
+    plain_names: list[str] = []
+    for _, row in plain_df.iterrows():
+        vals = [str(v).strip() for v in row.tolist() if pd.notna(v)]
+        plain_names.extend(vals)
+    assert any("доставк" in n.lower() for n in plain_names), plain_names
+
+    conn = sqlite3.connect(db_path)
+    meta_after = conn.execute(
+        "SELECT discount_percent, logistics_cost FROM KP_offers WHERE kp_id = ?",
+        (kp_id,),
+    ).fetchone()
+    plate_after = [
+        row[0]
+        for row in conn.execute(
+            "SELECT unit_price FROM kp_plates WHERE kp_id = ? ORDER BY id",
+            (kp_id,),
+        )
+    ]
+    conn.close()
+    assert meta_after == meta_before
+    assert plate_after == plate_before
 
 
 def test_download_mixed_pdf_regenerates_successfully(

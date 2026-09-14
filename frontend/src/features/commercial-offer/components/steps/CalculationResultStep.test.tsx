@@ -114,6 +114,7 @@ function renderResultStep(
   const onAddOtherNomenclature = handlers.onAddOtherNomenclature ?? vi.fn();
   const onUndoLastBatch = handlers.onUndoLastBatch ?? vi.fn();
   const onDeleteLine = handlers.onDeleteLine ?? vi.fn();
+  const onLogisticsCostSubmit = vi.fn(async () => undefined);
   const { breakdownTables = [], isBreakdownLoading = false, ...flags } = stepFlags;
 
   // Cast: MNA-501 will add these props to CalculationResultStep.
@@ -133,7 +134,7 @@ function renderResultStep(
     onSave: vi.fn(async () => undefined),
     isUpdatingDiscount: false,
     onDiscountSubmit: vi.fn(async () => undefined),
-    onLogisticsCostSubmit: vi.fn(async () => undefined),
+    onLogisticsCostSubmit,
     onAddOtherNomenclature,
     onUndoLastBatch,
     onDeleteLine,
@@ -142,7 +143,7 @@ function renderResultStep(
 
   render(<CalculationResultStep {...(props as ComponentProps<typeof CalculationResultStep>)} />);
 
-  return { onAddOtherNomenclature, onUndoLastBatch, onDeleteLine };
+  return { onAddOtherNomenclature, onUndoLastBatch, onDeleteLine, onLogisticsCostSubmit };
 }
 
 afterEach(() => {
@@ -585,6 +586,118 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
     expect(screen.getByPlaceholderText("Машин, шт.")).toBeInTheDocument();
     expect(screen.queryByText(/полных/)).not.toBeInTheDocument();
     expect(screen.queryByText("Рейсов свай")).not.toBeInTheDocument();
+  });
+
+  it.each(["fbs", "steps", "marches"] as const)(
+    "enables trip cost for %s-only offers",
+    (productType) => {
+      renderResultStep(
+        makeDraft({
+          order_data: [
+            {
+              line_id: "ln_one",
+              product_type: productType,
+              name: "Марка-1",
+              mark: "Марка-1",
+              qty: 1,
+              unit_price: 1000,
+            },
+          ],
+          metadata: {
+            ...baseMetadata(),
+            product_type: productType,
+          },
+        }),
+        {},
+        { draftProductType: productType, isSimpleKpDraft: true },
+      );
+
+      expect(screen.getByPlaceholderText("Стоимость одного рейса")).not.toBeDisabled();
+      expect(screen.getByText("Стоимость рейса")).toBeInTheDocument();
+    },
+  );
+
+  it("shows FBS/LM trips and applies trip cost for a mono-FBS draft", () => {
+    const { onLogisticsCostSubmit } = renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_fbs",
+            product_type: "fbs",
+            name: "ФБС 24.4.6-Т",
+            mark: "ФБС 24.4.6-Т",
+            qty: 10,
+            unit_price: 1200,
+          },
+        ],
+        metadata: {
+          ...baseMetadata(),
+          product_type: "fbs",
+          logistics_cost: 50000,
+        },
+        totals: {
+          total_qty: 10,
+          subtotal: 12000,
+          vat_amount: 2640,
+          total_with_vat: 14640,
+          fbs_lm_delivery_ready: true,
+          fbs_lm_trips: 2,
+          fbs_lm_pending_marks: [],
+        },
+      }),
+      {},
+      { draftProductType: "fbs", isSimpleKpDraft: true },
+    );
+
+    const tripInput = screen.getByPlaceholderText("Стоимость одного рейса");
+    expect(tripInput).not.toBeDisabled();
+    expect(screen.getByText("Стоимость рейса")).toBeInTheDocument();
+    expect(screen.getByText("Рейсов ФБС/ЛС/ЛМ")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.queryByText("Рейс плит")).not.toBeInTheDocument();
+    expect(screen.queryByText("Рейс свай")).not.toBeInTheDocument();
+
+    fireEvent.change(tripInput, { target: { value: "50000" } });
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(onLogisticsCostSubmit).toHaveBeenCalledWith(50000);
+  });
+
+  it("shows pending FBS/LM marks and hides trips when the boiler is not ready", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_ls",
+            product_type: "steps",
+            name: "ЛС99",
+            mark: "ЛС99",
+            qty: 4,
+            unit_price: 800,
+          },
+        ],
+        metadata: {
+          ...baseMetadata(),
+          product_type: "steps",
+        },
+        totals: {
+          total_qty: 4,
+          subtotal: 3200,
+          vat_amount: 704,
+          total_with_vat: 3904,
+          fbs_lm_delivery_ready: false,
+          fbs_lm_trips: 0,
+          fbs_lm_pending_marks: ["ЛС99"],
+        },
+      }),
+      {},
+      { draftProductType: "steps", isSimpleKpDraft: true },
+    );
+
+    expect(screen.getByPlaceholderText("Стоимость одного рейса")).not.toBeDisabled();
+    expect(screen.getByText("Нет веса в справочнике — доставка ФБС/ЛС/ЛМ не посчитана")).toBeInTheDocument();
+    expect(screen.getAllByText("ЛС99").length).toBeGreaterThan(1);
+    expect(screen.queryByText("Рейсов ФБС/ЛС/ЛМ")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Машин, шт.")).not.toBeInTheDocument();
   });
 });
 

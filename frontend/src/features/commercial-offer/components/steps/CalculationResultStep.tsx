@@ -189,13 +189,30 @@ export const CalculationResultStep = ({
   const hasPileLines = draft.order_data.some(
     (item) => item.product_type === "piles" || item.product_type === "bridge_piles",
   );
+  const hasFbsLmLines = draft.order_data.some((item) => {
+    const productType = String(item.product_type ?? "");
+    const productKind = String(item.product_kind ?? "");
+    return (
+      productType === "fbs" ||
+      productType === "steps" ||
+      productType === "marches" ||
+      productKind === "fbs" ||
+      productKind === "step" ||
+      productKind === "march"
+    );
+  });
   const mixedDelivery = hasPlateLines && hasPileLines;
-  const tripCostDisabled = !hasPlateLines && !hasPileLines;
+  const tripCostDisabled = !hasPlateLines && !hasPileLines && !hasFbsLmLines;
   const pendingPileMarks = (draft.totals.pile_trip_pending_marks ?? []).filter(
     (mark): mark is string => typeof mark === "string" && mark.length > 0,
   );
+  const pendingFbsLmMarks = (draft.totals.fbs_lm_pending_marks ?? []).filter(
+    (mark): mark is string => typeof mark === "string" && mark.length > 0,
+  );
   const pileDeliveryReady = draft.totals.pile_delivery_ready !== false;
+  const fbsLmDeliveryReady = draft.totals.fbs_lm_delivery_ready !== false;
   const pileTrips = draft.totals.pile_trips ?? 0;
+  const fbsLmTrips = draft.totals.fbs_lm_trips ?? 0;
   const totalWeight = draft.order_data.reduce((acc, item) => acc + (toNumber(item.weight) ?? 0), 0);
   const serverSubtotal = draft.totals.subtotal;
   const serverVat = draft.totals.vat_amount;
@@ -593,7 +610,10 @@ export const CalculationResultStep = ({
           {hasPileLines && pileDeliveryReady && (
             <SummaryCell label="Рейсов свай" value={String(pileTrips)} />
           )}
-          {hasPlateLines && (
+          {hasFbsLmLines && fbsLmDeliveryReady && (
+            <SummaryCell label="Рейсов ФБС/ЛС/ЛМ" value={String(fbsLmTrips)} />
+          )}
+          {(hasPlateLines || hasFbsLmLines) && (
             <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
               <FieldWrapper label={mixedDelivery ? "Рейс плит" : "Стоимость рейса"} error={logisticsError}>
                 <div style={{ position: "relative" }}>
@@ -680,7 +700,7 @@ export const CalculationResultStep = ({
               </FieldWrapper>
             </div>
           )}
-          {!hasPlateLines && !hasPileLines && (
+          {!hasPlateLines && !hasPileLines && !hasFbsLmLines && (
             <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
               <FieldWrapper label="Стоимость рейса" error={logisticsError}>
                 <input
@@ -696,6 +716,18 @@ export const CalculationResultStep = ({
                   }}
                 />
               </FieldWrapper>
+            </div>
+          )}
+          {pendingFbsLmMarks.length > 0 && (
+            <div style={{ border: "1px solid #f5d0a8", borderRadius: 12, padding: "0.9rem", background: "#fff7ed" }}>
+              <div style={{ color: "#9a3412", fontWeight: 600, marginBottom: "0.35rem" }}>
+                Нет веса в справочнике — доставка ФБС/ЛС/ЛМ не посчитана
+              </div>
+              {pendingFbsLmMarks.map((mark) => (
+                <div key={mark} style={{ color: "#9a3412" }}>
+                  {mark}
+                </div>
+              ))}
             </div>
           )}
           {pendingPileMarks.length > 0 && (

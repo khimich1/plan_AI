@@ -11,7 +11,7 @@ from core.production.capacity import TRACKS_PER_DAY_HARD_CAP
 
 
 ArchiveSection = Literal["archived", "in_production", "completed"]
-ArchiveFileKind = Literal["pdf", "xlsx", "schema"]
+ArchiveFileKind = Literal["pdf", "xlsx", "schema", "xlsx_delivery_in_unit"]
 ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs", "mixed"]
 ArchiveProductTypeFilter = Literal["all", "plates", "piles", "steps", "marches", "bridge_piles"]
 
@@ -191,6 +191,12 @@ class ArchiveOfferDetails(BaseModel):
     pile_delivery_ready: bool = True
     plate_delivery_total: float = 0.0
     pile_delivery_total: float = 0.0
+    fbs_lm_delivery_total: float = 0.0
+    fbs_lm_cargo_kg: float = 0.0
+    fbs_lm_trips: int = 0
+    fbs_lm_delivery_ready: bool = True
+    fbs_lm_pending_marks: list[str] = Field(default_factory=list)
+    fbs_lm_delivery_enabled: bool = False
     total_cargo_weight_kg: float = Field(default=0.0, description="Суммарная масса по строкам через resolve_kp_line_weight_kg (как PDF/XLSX).")
     delivery_service_total_rub: float = Field(
         default=0.0,

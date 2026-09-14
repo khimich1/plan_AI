@@ -127,9 +127,13 @@ class KpPersistenceService:
         counterparty_id: int | None = None,
         customer_inn: str | None = None,
         customer_kpp: str | None = None,
+        fbs_lm_delivery_enabled: bool = False,
     ) -> int:
         trip_logistics = max(0.0, float(logistics_cost or 0.0))
         pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
+        from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+
+        fbs_lm_flag = coerce_fbs_lm_delivery_enabled(fbs_lm_delivery_enabled)
         try:
             from core.commercial_pricing import calculate_total_cost
 
@@ -142,6 +146,8 @@ class KpPersistenceService:
                 pile_logistics_cost=pile_trip,
                 pile_trip_overrides=coerce_pile_trip_overrides(pile_trip_overrides),
                 pile_catalog_db_path=db_path,
+                fbs_lm_delivery_enabled=fbs_lm_flag,
+                weight_catalog_db_path=db_path,
             )
             subtotal = totals["subtotal"]
             vat_amount = totals["vat_amount"]
@@ -229,8 +235,9 @@ class KpPersistenceService:
             cur.execute(
                 """
                 INSERT INTO kp_meta (
-                    kp_id, status, owner_user_id, product_type, pile_trip_overrides_json
-                ) VALUES (?, ?, ?, ?, ?)
+                    kp_id, status, owner_user_id, product_type,
+                    pile_trip_overrides_json, fbs_lm_delivery_enabled
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -238,6 +245,7 @@ class KpPersistenceService:
                     owner_user_id,
                     meta_type,
                     dumps_pile_trip_overrides(pile_trip_overrides),
+                    1 if fbs_lm_flag else 0,
                 ),
             )
             conn.commit()
@@ -261,6 +269,7 @@ class KpPersistenceService:
         db_path: str = DEFAULT_DB,
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict | None = None,
+        fbs_lm_delivery_enabled: bool | None = None,
     ) -> int:
         """Sync existing KP lines by ``line_id`` (append/update; same ``kp_id``).
 
@@ -342,7 +351,7 @@ class KpPersistenceService:
                 execution_terms if execution_terms is not None else offer_row[7]
             )
             cur.execute(
-                "SELECT pile_trip_overrides_json FROM kp_meta WHERE kp_id = ?",
+                "SELECT pile_trip_overrides_json, fbs_lm_delivery_enabled FROM kp_meta WHERE kp_id = ?",
                 (kp_id,),
             )
             meta_overrides_row = cur.fetchone()
@@ -353,6 +362,16 @@ class KpPersistenceService:
                 coerce_pile_trip_overrides(pile_trip_overrides)
                 if pile_trip_overrides is not None
                 else existing_overrides
+            )
+            from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+
+            existing_fbs_lm = coerce_fbs_lm_delivery_enabled(
+                meta_overrides_row[1] if meta_overrides_row else None
+            )
+            resolved_fbs_lm = (
+                coerce_fbs_lm_delivery_enabled(fbs_lm_delivery_enabled)
+                if fbs_lm_delivery_enabled is not None
+                else existing_fbs_lm
             )
 
             try:
@@ -367,6 +386,8 @@ class KpPersistenceService:
                     pile_logistics_cost=pile_trip,
                     pile_trip_overrides=resolved_overrides,
                     pile_catalog_db_path=db_path,
+                    fbs_lm_delivery_enabled=resolved_fbs_lm,
+                    weight_catalog_db_path=db_path,
                 )
                 subtotal = totals["subtotal"]
                 vat_amount = totals["vat_amount"]
@@ -489,12 +510,17 @@ class KpPersistenceService:
                 ),
             )
             cur.execute(
-                "UPDATE kp_meta SET pile_trip_overrides_json = ? WHERE kp_id = ?",
-                (dumps_pile_trip_overrides(resolved_overrides), kp_id),
-            )
-            cur.execute(
-                "UPDATE kp_meta SET product_type = ? WHERE kp_id = ?",
-                (meta_type, kp_id),
+                """
+                UPDATE kp_meta
+                SET pile_trip_overrides_json = ?, product_type = ?, fbs_lm_delivery_enabled = ?
+                WHERE kp_id = ?
+                """,
+                (
+                    dumps_pile_trip_overrides(resolved_overrides),
+                    meta_type,
+                    1 if resolved_fbs_lm else 0,
+                    kp_id,
+                ),
             )
 
             if xlsx_file_path:
