@@ -13,6 +13,11 @@ import {
   useUpdateLogisticsCostMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import {
+  holdBadgeLabel,
+  holdCreatedByTitle,
+  usePromiseHoldQuery,
+} from "@/features/factory-capacity/api/promiseQuote";
+import {
   cargoDeliveryTripsCount,
 } from "@/features/commercial-offer/utils/cargoDeliveryPricing";
 import { formatMoney, statusEmoji } from "@/features/commercial-archive/lib/format";
@@ -127,6 +132,10 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const offer = query.data;
+  const holdQuery = usePromiseHoldQuery(
+    open && offer?.status === "в архиве" ? offer.kp_id : null,
+  );
+  const activeHold = holdQuery.data ?? null;
   const isPileOffer = offer?.product_type === "piles";
   const isStepOffer = offer?.product_type === "steps";
   const isMarchOffer = offer?.product_type === "marches";
@@ -406,6 +415,13 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const clientTrips = offer ? cargoDeliveryTripsCount(Math.max(0, offer.total_cargo_weight_kg ?? 0)) : 0;
   const hasPileItems = (offer?.piles?.length ?? 0) > 0 || (offer?.bridge_piles?.length ?? 0) > 0;
   const hasPlateItems = (offer?.plates?.length ?? 0) > 0;
+  const hasFbsLmItems =
+    (offer?.fbs?.length ?? 0) > 0 || (offer?.steps?.length ?? 0) > 0 || (offer?.marches?.length ?? 0) > 0;
+  const showFbsLmTrips =
+    Boolean(offer?.fbs_lm_delivery_enabled) &&
+    offer?.fbs_lm_delivery_ready !== false &&
+    hasFbsLmItems;
+  const fbsLmPendingMarks = offer?.fbs_lm_delivery_enabled ? (offer.fbs_lm_pending_marks ?? []) : [];
 
   return (
     <Modal
@@ -427,6 +443,22 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 }}
               >
                 есть график
+              </span>
+            )}
+            {activeHold && (
+              <span
+                data-testid="promise-hold-badge"
+                title={holdCreatedByTitle(activeHold.created_by)}
+                style={{
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                  padding: "0.15rem 0.5rem",
+                  borderRadius: 999,
+                  background: "#fff6ed",
+                  color: "#b54708",
+                }}
+              >
+                {holdBadgeLabel(activeHold.promised_date)}
               </span>
             )}
           </span>
@@ -562,7 +594,13 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                       ((offer.piles?.length ?? 0) > 0 || (offer.bridge_piles?.length ?? 0) > 0) && (
                         <FinanceCard label="Рейсов свай" value={String(offer.pile_trips ?? 0)} />
                       )}
+                    {showFbsLmTrips && (
+                      <FinanceCard label="Рейсов ФБС/ЛС/ЛМ" value={String(offer.fbs_lm_trips ?? 0)} />
+                    )}
                   </div>
+                  {fbsLmPendingMarks.length > 0 && (
+                    <FbsLmPendingMarks marks={fbsLmPendingMarks} />
+                  )}
                   <div
                     style={{
                       display: "flex",
@@ -684,6 +722,10 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   ((offer.piles?.length ?? 0) > 0 || (offer.bridge_piles?.length ?? 0) > 0) && (
                     <FinanceCard label="Рейсов свай" value={String(offer.pile_trips ?? 0)} />
                   )}
+                {showFbsLmTrips && (
+                  <FinanceCard label="Рейсов ФБС/ЛС/ЛМ" value={String(offer.fbs_lm_trips ?? 0)} />
+                )}
+                {fbsLmPendingMarks.length > 0 && <FbsLmPendingMarks marks={fbsLmPendingMarks} />}
                 {(offer.pile_trip_pending_marks ?? []).map((mark) => (
                   <FieldWrapper
                     key={mark}
@@ -949,6 +991,19 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
           <section style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "pdf"))}>📄 PDF</Button>
             <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "xlsx"))}>📊 XLSX</Button>
+            <Button
+              disabled={offer.delivery_service_total_rub === 0}
+              title={
+                offer.delivery_service_total_rub === 0
+                  ? "Нет суммы доставки"
+                  : "Excel без строки доставки: стоимость рейсов в цене изделий"
+              }
+              onClick={() =>
+                downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "xlsx_delivery_in_unit"))
+              }
+            >
+              XLSX (доставка в цене)
+            </Button>
             {!isSimpleProductOffer && (
               <Button
                 variant="secondary"
@@ -1033,6 +1088,19 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     </Modal>
   );
 };
+
+const FbsLmPendingMarks = ({ marks }: { marks: string[] }) => (
+  <div style={{ border: "1px solid #f5d0a8", borderRadius: 12, padding: "0.9rem", background: "#fff7ed" }}>
+    <div style={{ color: "#9a3412", fontWeight: 600, marginBottom: "0.35rem" }}>
+      Нет веса в справочнике — доставка ФБС/ЛС/ЛМ не посчитана
+    </div>
+    {marks.map((mark) => (
+      <div key={mark} style={{ color: "#9a3412" }}>
+        {mark}
+      </div>
+    ))}
+  </div>
+);
 
 const FinanceCard = ({ label, value, accent }: { label: string; value: string; accent?: boolean }) => (
   <div

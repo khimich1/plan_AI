@@ -27,7 +27,7 @@ export type ProductTypeLabels = {
   listLabel: string;
   /** "Список свай для расчёта" — batch-review editor card title. */
   reviewListTitle: string;
-  /** Exact current placeholder, including known copy-paste leftovers. */
+  /** Exact current list placeholder. Empty is allowed for fbs and bridge_piles. */
   placeholder: string;
   /** "Например: убери строки с B15" — AI instruction placeholder on the source card. */
   aiPlaceholder: string;
@@ -184,9 +184,8 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
       stepTitle: "Шаг 1. Мостовые сваи",
       listLabel: "Список мостовых свай",
       reviewListTitle: "Список мостовых свай для расчёта",
-      // Copy-paste leftover from the pile step — kept verbatim until the customer
-      // confirms the canonical example (plan 2026-09-08 §5).
-      placeholder: "С120.35-12 B25 5\nС120.35-13и 3",
+      // Frozen from pb.db 2026-09-14 (first two priced marks, ORDER BY mark).
+      placeholder: "C10-35B7 B25 2\nC10-35T1 B25 3",
       aiPlaceholder: "Например: убери строки с B15",
       emptySubtitle: "Вставьте текст списка мостовых свай или загрузите фото таблицы.",
       aiHint: "Редкий сценарий: опишите, что сделать со списком мостовых свай.",
@@ -213,8 +212,8 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
       stepTitle: "Шаг 1. ФБС",
       listLabel: "Список ФБС",
       reviewListTitle: "Список ФБС для расчёта",
-      // Same deliberate copy-paste leftover as bridge_piles (plan 2026-09-08 §5).
-      placeholder: "С120.35-12 B25 5\nС120.35-13и 3",
+      // Frozen from pb.db 2026-09-14 (first two priced marks, ORDER BY mark).
+      placeholder: "ФБС 12.4.3-Т B25 2\nФБС 12.4.6-Т B25 3",
       aiPlaceholder: "Например: убери строки с B15",
       emptySubtitle: "Вставьте текст списка ФБС или загрузите фото таблицы.",
       aiHint: "Редкий сценарий: опишите, что сделать со списком ФБС.",

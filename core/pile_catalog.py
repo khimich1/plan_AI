@@ -24,6 +24,7 @@ _BRIDGE_GEOMETRY_RE = re.compile(
     r"^[СC]\s*(\d+(?:[.,]\d+)?)\s*-\s*(\d+)\s*[TТBВ]\s*\d+$",
     re.IGNORECASE | re.UNICODE,
 )
+_LOAD_SUFFIX_RE = re.compile(r"-\d+(?:[иИ])?$", re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -36,13 +37,19 @@ class PileCatalogEntry:
     pcs_per_20t: Optional[int]
 
 
+def strip_pile_load_suffix(mark: str) -> str:
+    """«С110.35-12» / «С120.35-13и» → «С110.35». Мостовые и канон каталога без изменений."""
+    text = (mark or "").strip()
+    return _LOAD_SUFFIX_RE.sub("", text)
+
+
 def parse_pile_mark(mark: str) -> tuple[Optional[float], Optional[int]]:
     """«С137,5.40» → (13.75 м, 400 мм); «С60.30» → (6.0 м, 300 мм).
 
     Длина в марке — в дециметрах (допустима запятая как разделитель),
-    сечение — в сантиметрах.
+    сечение — в сантиметрах. Суффикс нагрузки («-12», «-13и») отрезается до точки.
     """
-    text = mark.strip().lstrip("СсCc").strip()
+    text = strip_pile_load_suffix(mark).lstrip("СсCc").strip()
     length_part, sep, section_part = text.rpartition(".")
     if not sep:
         return None, None
@@ -201,7 +208,7 @@ def resolve_catalog_for_mark(
     mark: str,
     entries: Sequence[PileCatalogEntry],
 ) -> Optional[PileCatalogEntry]:
-    """Точный mark (C↔С), иначе геометрия length_m + section_mm.
+    """Точный mark (C↔С), затем ключ без суффикса нагрузки, иначе геометрия.
 
     При нескольких строках с одной геометрией — любая с непустым pcs_per_20t,
     иначе любая с весом.
@@ -210,6 +217,12 @@ def resolve_catalog_for_mark(
     if key:
         for entry in entries:
             if normalize_pile_mark_key(entry.mark) == key:
+                return entry
+
+    stripped_key = normalize_pile_mark_key(strip_pile_load_suffix(mark))
+    if stripped_key and stripped_key != key:
+        for entry in entries:
+            if normalize_pile_mark_key(entry.mark) == stripped_key:
                 return entry
 
     length_m, section_mm = parse_bridge_pile_geometry(mark)

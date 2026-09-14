@@ -76,6 +76,7 @@ from app.services.production_service import (
     ProductionService,
     ProductionTrackRemovalError,
 )
+from app.services.promise_service import PromiseExclusionError, PromiseService
 from app.services.sgp_service import SgpError, SgpService
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ async def create_plan(
 async def build_plan_from_filters(
     payload: BuildPlanRequest,
     plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
-    _user: dict = Depends(require_roles("admin", "production")),
+    user: dict = Depends(require_roles("admin", "production")),
     service: ProductionService = Depends(get_production_service),
 ) -> BuildPlanResponse:
     try:
@@ -164,6 +165,18 @@ async def build_plan_from_filters(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Не удалось построить план производства.",
         ) from exc
+    try:
+        _record_build_exclusions(payload, result, user, service)
+    except PromiseExclusionError as exc:
+        raise_unprocessable_client_error(
+            exc,
+            where="production.build_plan.exclusions",
+            detail=str(exc),
+        )
+    except Exception:
+        logger.exception(
+            "[production/build] Журнал исключений не записан (план уже собран)."
+        )
     return BuildPlanResponse(**result)
 
 
@@ -331,8 +344,29 @@ def get_kp_candidates(
     _user: dict = Depends(require_roles("admin", "production")),
     service: ProductionService = Depends(get_production_service),
     scope: Literal["plan", "in_work"] = Query("plan"),
+    date_from: date | None = Query(None, alias="from"),
+    date_to: date | None = Query(None, alias="to"),
 ) -> KpCandidatesResponse:
-    result = service.list_kp_candidates(scope=scope)
+    if (date_from is None) != (date_to is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Параметры from и to нужно передавать вместе.",
+        )
+    if date_from is not None and date_to is not None:
+        if date_from > date_to:
+            raise_bad_request_client_error(
+                ValueError("from must be <= to"),
+                where="production.get_kp_candidates",
+                detail="Параметр from не может быть позже to.",
+            )
+        if (date_to - date_from).days > 365:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Диапазон дат не может превышать 366 дней.",
+            )
+    result = service.list_kp_candidates(
+        scope=scope, from_date=date_from, to_date=date_to
+    )
     return KpCandidatesResponse(**result)
 
 
@@ -589,6 +623,28 @@ def save_work_calendar(
     service: ProductionService = Depends(get_production_service),
 ) -> dict:
     return service.save_work_calendar(payload.model_dump())
+
+
+def _record_build_exclusions(
+    payload: BuildPlanRequest,
+    result: dict,
+    user: dict,
+    service: ProductionService,
+) -> None:
+    """Persist wizard exclusions after a successful build. Does not block ILP."""
+    if not payload.exclusions:
+        return
+    plan = result.get("plan") if isinstance(result, dict) else None
+    plan_id = plan.get("id") if isinstance(plan, dict) else None
+    if not plan_id:
+        return
+    actor = user.get("username") or user.get("id")
+    PromiseService(db_path=service.kp_repository.db_path).record_plan_exclusions(
+        plan_id=str(plan_id),
+        exclusions=payload.exclusions,
+        excluded_by="" if actor is None else str(actor),
+        user=user,
+    )
 
 
 def _date_range_inclusive(start: date, end: date) -> list[date]:

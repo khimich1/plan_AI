@@ -32,11 +32,26 @@ import type {
   FilterMethod,
   KpCandidateItem,
   KpCandidatePlateItem,
+  PendingPromiseExclusion,
+  PromisedBlockItem,
+  PromiseExclusion,
   SgpReservationItem,
   SubstrateRecommendation,
   UrgentPosition,
 } from "@/features/production/types/production";
 import { formatRu } from "@/features/production/components/create-plan-wizard/utils";
+
+export const isoWeekStart = (isoDate: string): string => {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const date = new Date(y, (m || 1) - 1, d || 1);
+  const day = date.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + mondayOffset);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
 
 export type UseCreatePlanWizardStateOptions = {
   onCreated?: () => void;
@@ -77,6 +92,11 @@ export const useCreatePlanWizardState = ({
   } | null>(null);
   const [analyzeResult, setAnalyzeResult] =
     useState<AnalyzeSubstratesResponse | null>(null);
+  const [exclusionByKp, setExclusionByKp] = useState<
+    Record<number, PromiseExclusion>
+  >({});
+  const [pendingExclusion, setPendingExclusion] =
+    useState<PendingPromiseExclusion | null>(null);
 
   const calendarQuery = useGlobalCalendarQuery();
   const plansQuery = usePlansListQuery();
@@ -285,7 +305,202 @@ export const useCreatePlanWizardState = ({
     return map;
   };
 
+  const applyPromiseDefaults = (items: KpCandidateItem[]) => {
+    const selectedWeeks = new Set(
+      (fillTargets ?? []).map((target) => isoWeekStart(target.date)),
+    );
+    const promised = items.filter((kp) => {
+      if (!kp.promise || kp.plates.length === 0) {
+        return false;
+      }
+      return (
+        kp.promise.status === "overdue" ||
+        selectedWeeks.has(kp.promise.week_start)
+      );
+    });
+    if (promised.length === 0) {
+      return;
+    }
+    setFilterMethod("kp");
+    setSelectedPlatesByKp((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const kp of promised) {
+        if (exclusionByKp[kp.kp_id]) {
+          continue;
+        }
+        const ids = kp.plates.map((plate) => plate.id);
+        const already = next[kp.kp_id] ?? [];
+        const merged = [...new Set([...already, ...ids])];
+        if (
+          already.length !== merged.length ||
+          merged.some((id, index) => id !== already[index])
+        ) {
+          next[kp.kp_id] = merged;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    setSelectedPlateQtyByKp((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const kp of promised) {
+        if (exclusionByKp[kp.kp_id]) {
+          continue;
+        }
+        const ids = kp.plates.map((plate) => plate.id);
+        const mapped = defaultQtyMap(kp, ids);
+        next[kp.kp_id] = { ...(next[kp.kp_id] ?? {}), ...mapped };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  };
+
+  useEffect(() => {
+    const items = candidatesQuery.data?.items;
+    if (!items || !fillTargets || fillTargets.length === 0) {
+      return;
+    }
+    applyPromiseDefaults(items);
+    // applyPromiseDefaults reads fillTargets / candidates for the current targetsKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidatesQuery.data, targetsKey, exclusionByKp]);
+
+  const promisedBlockItems = useMemo((): PromisedBlockItem[] => {
+    const payload = candidatesQuery.data;
+    if (!payload) {
+      return [];
+    }
+    const selectedWeeks = new Set(
+      (fillTargets ?? []).map((target) => isoWeekStart(target.date)),
+    );
+    const byId = new Map(payload.items.map((kp) => [kp.kp_id, kp]));
+    const seen = new Set<number>();
+    const result: PromisedBlockItem[] = [];
+
+    const pushItem = (
+      kpId: number,
+      weekStart: string,
+      promisedDate: string,
+      tracks: number,
+      status: PromisedBlockItem["status"],
+    ) => {
+      if (seen.has(kpId)) {
+        return;
+      }
+      if (status !== "overdue" && !selectedWeeks.has(weekStart)) {
+        return;
+      }
+      seen.add(kpId);
+      result.push({
+        kp_id: kpId,
+        promised_date: promisedDate,
+        tracks,
+        status,
+        week_start: weekStart,
+        customer_name: byId.get(kpId)?.customer_name,
+      });
+    };
+
+    const weeks = [...(payload.promised_weeks ?? [])].sort((left, right) => {
+      const leftOverdue = left.items.some((item) => item.status === "overdue")
+        ? 0
+        : 1;
+      const rightOverdue = right.items.some((item) => item.status === "overdue")
+        ? 0
+        : 1;
+      if (leftOverdue !== rightOverdue) {
+        return leftOverdue - rightOverdue;
+      }
+      return left.week_start.localeCompare(right.week_start);
+    });
+    for (const week of weeks) {
+      for (const item of week.items) {
+        pushItem(
+          item.kp_id,
+          week.week_start,
+          item.promised_date,
+          item.tracks,
+          item.status,
+        );
+      }
+    }
+    for (const kp of payload.items) {
+      if (!kp.promise) {
+        continue;
+      }
+      pushItem(
+        kp.kp_id,
+        kp.promise.week_start,
+        kp.promise.promised_date,
+        kp.promise.tracks,
+        kp.promise.status,
+      );
+    }
+    return result;
+  }, [candidatesQuery.data, fillTargets]);
+
+  const exclusions = useMemo(
+    () => Object.values(exclusionByKp),
+    [exclusionByKp],
+  );
+
+  const deselectKp = (kpId: number) => {
+    setSelectedPlatesByKp((prev) => {
+      const next = { ...prev };
+      delete next[kpId];
+      return next;
+    });
+    setSelectedPlateQtyByKp((qty) => {
+      const next = { ...qty };
+      delete next[kpId];
+      return next;
+    });
+  };
+
+  const deselectPlate = (kpId: number, plateId: number) => {
+    setSelectedPlatesByKp((prev) => {
+      const next = { ...prev };
+      const current = next[kpId] ?? [];
+      const filtered = current.filter((id) => id !== plateId);
+      if (filtered.length === 0) {
+        delete next[kpId];
+      } else {
+        next[kpId] = filtered;
+      }
+      return next;
+    });
+    setSelectedPlateQtyByKp((qty) => {
+      const perKp = { ...(qty[kpId] ?? {}) };
+      delete perKp[plateId];
+      if (Object.keys(perKp).length === 0) {
+        const next = { ...qty };
+        delete next[kpId];
+        return next;
+      }
+      return { ...qty, [kpId]: perKp };
+    });
+  };
+
   const toggleKp = (kp: KpCandidateItem) => {
+    const selected = (selectedPlatesByKp[kp.kp_id] ?? []).length > 0;
+    if (selected && kp.promise && !exclusionByKp[kp.kp_id]) {
+      setPendingExclusion({
+        kpId: kp.kp_id,
+        weekStart: kp.promise.week_start,
+        kind: "whole",
+      });
+      return;
+    }
+    if (!selected && exclusionByKp[kp.kp_id]) {
+      setExclusionByKp((prev) => {
+        const next = { ...prev };
+        delete next[kp.kp_id];
+        return next;
+      });
+    }
     setSelectedPlatesByKp((prev) => {
       const next = { ...prev };
       if (kp.kp_id in next) {
@@ -308,6 +523,17 @@ export const useCreatePlanWizardState = ({
   };
 
   const togglePlate = (kp: KpCandidateItem, plateId: number) => {
+    const currentIds = selectedPlatesByKp[kp.kp_id];
+    const isRemoving = currentIds !== undefined && currentIds.includes(plateId);
+    if (isRemoving && kp.promise && !exclusionByKp[kp.kp_id]) {
+      setPendingExclusion({
+        kpId: kp.kp_id,
+        weekStart: kp.promise.week_start,
+        kind: "partial",
+        plateId,
+      });
+      return;
+    }
     const plate = kp.plates.find((p) => p.id === plateId);
     setSelectedPlatesByKp((prev) => {
       const next = { ...prev };
@@ -455,7 +681,8 @@ export const useCreatePlanWizardState = ({
     isFillMode &&
     hasAnyPlateSelected &&
     !buildMutation.isPending &&
-    !buildMutation.isSuccess;
+    !buildMutation.isSuccess &&
+    pendingExclusion === null;
 
   const fillTotalTracks = fillTargets
     ? fillTargets.reduce((acc, t) => acc + t.tracks, 0)
@@ -492,7 +719,42 @@ export const useCreatePlanWizardState = ({
     setPendingClose(null);
     setAnalyzeResult(null);
     setFilterMethod("all");
+    setExclusionByKp({});
+    setPendingExclusion(null);
     resetAnalyze();
+  };
+
+  const confirmExclusion = (reason: string) => {
+    const trimmed = reason.trim();
+    if (!pendingExclusion || !trimmed) {
+      return;
+    }
+    const pending = pendingExclusion;
+    setExclusionByKp((prev) => ({
+      ...prev,
+      [pending.kpId]: {
+        kp_id: pending.kpId,
+        week_start: pending.weekStart,
+        reason: trimmed,
+      },
+    }));
+    setPendingExclusion(null);
+    if (pending.kind === "whole") {
+      deselectKp(pending.kpId);
+      return;
+    }
+    if (pending.plateId != null) {
+      deselectPlate(pending.kpId, pending.plateId);
+    }
+  };
+
+  const cancelExclusion = () => setPendingExclusion(null);
+
+  const togglePromisedKp = (kpId: number) => {
+    const kp = candidatesQuery.data?.items.find((item) => item.kp_id === kpId);
+    if (kp) {
+      toggleKp(kp);
+    }
   };
 
   const proposeCloseFromSgp = (kp: KpCandidateItem, plate: KpCandidatePlateItem) => {
@@ -554,6 +816,7 @@ export const useCreatePlanWizardState = ({
 
   const handleSubmit = (order: "asc" | "desc" = "asc") => {
     if (!fillTargets || fillTargets.length === 0) return;
+    if (pendingExclusion) return;
 
     const selectedKpIds = Array.from(
       new Set([
@@ -643,6 +906,10 @@ export const useCreatePlanWizardState = ({
         layout_reinforcement_order: order,
         sgp_reservations:
           sgpReservations.length > 0 ? sgpReservations : undefined,
+        exclusions:
+          filterMethod === "kp" && exclusions.length > 0
+            ? exclusions
+            : undefined,
       },
       {
         onSuccess: () => {
@@ -720,5 +987,11 @@ export const useCreatePlanWizardState = ({
     toggleSubstrateRecommendation,
     setPlateSelectionById,
     applyCapacityOption,
+    promisedBlockItems,
+    pendingExclusion,
+    exclusions,
+    confirmExclusion,
+    cancelExclusion,
+    togglePromisedKp,
   };
 };

@@ -6,6 +6,7 @@ import type {
   CapacityOption,
   DayInfo,
   FillTargetItem,
+  KpCandidateItem,
   SubstrateRecommendation,
   UrgentPosition,
 } from "@/features/production/types/production";
@@ -571,4 +572,269 @@ describe("useCreatePlanWizardState", () => {
     );
   });
 });
+
+const promisedPlate = {
+  id: 501,
+  plate_name: "ПБ 60-12-8п",
+  length_m: 6,
+  width_m: 1.2,
+  load_class: 800,
+  qty: 2,
+};
+
+function makePromisedKp(overrides: Partial<KpCandidateItem> = {}): KpCandidateItem {
+  return {
+    kp_id: 88,
+    customer_name: "Обещанный",
+    creation_date: "01.09.2026",
+    execution_terms: "25.09.2026",
+    total_plates: 1,
+    completed_plates: 0,
+    completion_pct: 0,
+    in_plan_pct: 0,
+    total_length_m: 12,
+    plates: [promisedPlate],
+    promise: {
+      promised_date: "2026-09-25",
+      week_start: "2026-06-15",
+      status: "active",
+      tracks: 2,
+    },
+    ...overrides,
+  };
+}
+
+function mockPromisedCandidates(items: KpCandidateItem[]) {
+  mockUseKpCandidatesQuery.mockReturnValue({
+    data: {
+      items,
+      count: items.length,
+      promised_weeks: items
+        .filter((kp) => kp.promise)
+        .map((kp) => ({
+          week_start: kp.promise!.week_start,
+          items: [
+            {
+              kp_id: kp.kp_id,
+              promised_date: kp.promise!.promised_date,
+              tracks: kp.promise!.tracks,
+              status: kp.promise!.status,
+            },
+          ],
+        })),
+    },
+    isLoading: false,
+  });
+}
+
+describe("useCreatePlanWizardState promised KPs", () => {
+  beforeEach(() => {
+    setupQueryMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("preselects promised KP plates for the fill week", () => {
+    mockPromisedCandidates([makePromisedKp()]);
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      { initialProps: { fillRequest: partialFillRequest } },
+    );
+
+    expect(result.current.filterMethod).toBe("kp");
+    expect(result.current.selectedPlatesByKp).toEqual({ 88: [501] });
+    expect(result.current.selectedPlateQtyByKp).toEqual({ 88: { 501: 2 } });
+    expect(result.current.promisedBlockItems.map((item) => item.kp_id)).toEqual([88]);
+  });
+
+  it("preselects overdue promised KPs even outside the fill week", () => {
+    mockPromisedCandidates([
+      makePromisedKp({
+        kp_id: 91,
+        customer_name: "Просроченный",
+        promise: {
+          promised_date: "2026-09-04",
+          week_start: "2026-06-08",
+          status: "overdue",
+          tracks: 3,
+        },
+      }),
+    ]);
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      { initialProps: { fillRequest: partialFillRequest } },
+    );
+
+    expect(result.current.selectedPlatesByKp).toEqual({ 91: [501] });
+    expect(result.current.promisedBlockItems[0]?.status).toBe("overdue");
+  });
+
+  it("does not uncheck a promised KP without a reason", () => {
+    const kp = makePromisedKp();
+    mockPromisedCandidates([kp]);
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      { initialProps: { fillRequest: partialFillRequest } },
+    );
+
+    act(() => {
+      result.current.toggleKp(kp);
+    });
+
+    expect(result.current.selectedPlatesByKp).toEqual({ 88: [501] });
+    expect(result.current.pendingExclusion).toEqual({
+      kpId: 88,
+      weekStart: "2026-06-15",
+      kind: "whole",
+    });
+    expect(result.current.canSubmit).toBe(false);
+  });
+
+  it("rejects a blank exclusion reason and keeps the KP selected", () => {
+    const kp = makePromisedKp();
+    mockPromisedCandidates([kp]);
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      { initialProps: { fillRequest: partialFillRequest } },
+    );
+
+    act(() => {
+      result.current.toggleKp(kp);
+    });
+    act(() => {
+      result.current.confirmExclusion("   ");
+    });
+
+    expect(result.current.selectedPlatesByKp).toEqual({ 88: [501] });
+    expect(result.current.exclusions).toEqual([]);
+    expect(result.current.pendingExclusion).not.toBeNull();
+  });
+
+  it("stores the reason, deselects the KP, and sends exclusions on submit", () => {
+    const kp = makePromisedKp();
+    mockPromisedCandidates([kp]);
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      { initialProps: { fillRequest: partialFillRequest } },
+    );
+
+    act(() => {
+      result.current.toggleKp(kp);
+    });
+    act(() => {
+      result.current.confirmExclusion("Клиент перенёс поставку");
+    });
+
+    expect(result.current.selectedPlatesByKp).toEqual({});
+    expect(result.current.pendingExclusion).toBeNull();
+    expect(result.current.exclusions).toEqual([
+      {
+        kp_id: 88,
+        week_start: "2026-06-15",
+        reason: "Клиент перенёс поставку",
+      },
+    ]);
+
+    act(() => {
+      result.current.handleSubmit("asc");
+    });
+
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+    expect(mockMutate.mock.calls[0][0].exclusions).toEqual([
+      {
+        kp_id: 88,
+        week_start: "2026-06-15",
+        reason: "Клиент перенёс поставку",
+      },
+    ]);
+  });
+
+  it("requires a reason to uncheck a plate of a promised KP", () => {
+    const kp = makePromisedKp({
+      plates: [
+        promisedPlate,
+        {
+          id: 502,
+          plate_name: "ПБ 51-12-8п",
+          length_m: 5.1,
+          width_m: 1.2,
+          load_class: 800,
+          qty: 1,
+        },
+      ],
+    });
+    mockPromisedCandidates([kp]);
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      { initialProps: { fillRequest: partialFillRequest } },
+    );
+
+    act(() => {
+      result.current.togglePlate(kp, 502);
+    });
+
+    expect(result.current.selectedPlatesByKp[88]).toEqual([501, 502]);
+    expect(result.current.pendingExclusion).toEqual({
+      kpId: 88,
+      weekStart: "2026-06-15",
+      kind: "partial",
+      plateId: 502,
+    });
+
+    act(() => {
+      result.current.confirmExclusion("Часть позиций ушла в другой план");
+    });
+
+    expect(result.current.selectedPlatesByKp[88]).toEqual([501]);
+    expect(result.current.exclusions[0]?.reason).toBe(
+      "Часть позиций ушла в другой план",
+    );
+  });
+
+  it("omits exclusions from the build payload when none were recorded", () => {
+    mockPromisedCandidates([makePromisedKp()]);
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      { initialProps: { fillRequest: emptyFillRequest } },
+    );
+
+    act(() => {
+      result.current.handleSubmit("asc");
+    });
+
+    expect(mockMutate.mock.calls[0][0].exclusions).toBeUndefined();
+  });
+
+  it("clears the exclusion when the promised KP is selected again", () => {
+    const kp = makePromisedKp();
+    mockPromisedCandidates([kp]);
+    const { result } = renderHook(
+      (props: Parameters<typeof useCreatePlanWizardState>[0]) =>
+        useCreatePlanWizardState(props),
+      { initialProps: { fillRequest: partialFillRequest } },
+    );
+
+    act(() => {
+      result.current.toggleKp(kp);
+      result.current.confirmExclusion("Временно снимаем");
+    });
+    act(() => {
+      result.current.toggleKp(kp);
+    });
+
+    expect(result.current.selectedPlatesByKp).toEqual({ 88: [501] });
+    expect(result.current.exclusions).toEqual([]);
+  });
+});
+
 

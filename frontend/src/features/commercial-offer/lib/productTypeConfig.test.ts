@@ -8,6 +8,9 @@ import {
 import type { ProductType } from "@/features/commercial-offer/types/commercialOffer";
 
 const ALL_PRODUCT_TYPES: ProductType[] = ["plates", "piles", "steps", "marches", "bridge_piles", "fbs"];
+const REQUIRED_PLACEHOLDER_TYPES: ProductType[] = ["plates", "piles", "steps", "marches"];
+const OPTIONAL_PLACEHOLDER_TYPES: ProductType[] = ["bridge_piles", "fbs"];
+const PILE_LEFTOVER_PLACEHOLDER = "С120.35-12 B25 5\nС120.35-13и 3";
 
 describe("PRODUCT_TYPE_CONFIG", () => {
   it("covers every ProductType exactly once", () => {
@@ -83,7 +86,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.nounGenitivePlural).toBe("ФБС");
   });
 
-  it("fills every input-step label for every product (no empty copy)", () => {
+  it("fills every input-step label (fbs/bridge_piles placeholder may be empty)", () => {
     for (const type of ALL_PRODUCT_TYPES) {
       const labels = PRODUCT_TYPE_CONFIG[type].labels;
       expect(labels.stepTitle, type).toBe(`Шаг 1. ${labels.nounPlural}`);
@@ -101,7 +104,12 @@ describe("PRODUCT_TYPE_CONFIG", () => {
       expect(labels.previewChangedMessage, type).toBe(
         `Изменён список ${labels.nounGenitivePlural} — нажмите «Список верен» для пересчёта состава.`,
       );
-      expect(labels.placeholder.length, type).toBeGreaterThan(0);
+      if (REQUIRED_PLACEHOLDER_TYPES.includes(type)) {
+        expect(labels.placeholder.length, type).toBeGreaterThan(0);
+      } else {
+        expect(OPTIONAL_PLACEHOLDER_TYPES, type).toContain(type);
+        expect(labels.placeholder, type).toEqual(expect.any(String));
+      }
       expect(labels.aiPlaceholder, type).toMatch(/^Например: /);
       expect(labels.addMoreDescription, type).toMatch(/^Добавьте ещё .+ или перейдите к оформлению клиента\.$/);
       expect(labels.previewEmptyMessage, type).toMatch(/^Список пуст — распознайте .+\.$/);
@@ -113,10 +121,11 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.piles.labels.placeholder).toBe("С120.35-12 B25 5\nС120.35-13и 3");
     expect(PRODUCT_TYPE_CONFIG.steps.labels.placeholder).toBe("ЛС11 10\nЛС14-1лев 5\nЛС11-Б-1 2");
     expect(PRODUCT_TYPE_CONFIG.marches.labels.placeholder).toBe("1ЛМ 27-11-14-4 B25 5\nЛМ 2,8 3");
-    // Deliberate copy-paste leftovers from the pile step — preserved verbatim until the
-    // customer confirms the canonical examples (see plan 2026-09-08 §5).
-    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.placeholder).toBe("С120.35-12 B25 5\nС120.35-13и 3");
-    expect(PRODUCT_TYPE_CONFIG.fbs.labels.placeholder).toBe("С120.35-12 B25 5\nС120.35-13и 3");
+    // Frozen from pb.db 2026-09-14 (first two priced marks, ORDER BY mark).
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.placeholder).toBe("C10-35B7 B25 2\nC10-35T1 B25 3");
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.placeholder).toBe("ФБС 12.4.3-Т B25 2\nФБС 12.4.6-Т B25 3");
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.placeholder).not.toBe(PILE_LEFTOVER_PLACEHOLDER);
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.placeholder).not.toBe(PILE_LEFTOVER_PLACEHOLDER);
   });
 
   it("keeps the exact accusative-dependent copy (addMore / previewEmpty)", () => {

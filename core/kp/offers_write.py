@@ -4,10 +4,23 @@ from __future__ import annotations
 
 import sqlite3
 import traceback
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from core.destructive_db_guard import require_destructive_db_reset
 from core.kp_db_common import DEFAULT_DB, _connect
+
+
+@dataclass(frozen=True, slots=True)
+class MovePromisePayload:
+    """Promise journal write for ``commit_move_to_production`` (same SQLite tx)."""
+
+    tracks_total: int
+    promised_date: str
+    allocations: tuple[tuple[str, int], ...]
+    created_by: str
+    created_at: str
+    convert_hold_id: int | None = None
 
 
 def save_kp_to_db(
@@ -30,6 +43,7 @@ def save_kp_to_db(
     counterparty_id: int | None = None,
     customer_inn: str | None = None,
     customer_kpp: str | None = None,
+    fbs_lm_delivery_enabled: bool = False,
 ) -> int:
     """Сохраняет КП в базу.
 
@@ -57,6 +71,7 @@ def save_kp_to_db(
         counterparty_id=counterparty_id,
         customer_inn=customer_inn,
         customer_kpp=customer_kpp,
+        fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
     )
 
 
@@ -75,6 +90,7 @@ def update_kp_from_order_data(
     db_path: str = DEFAULT_DB,
     pile_logistics_cost: float | None = None,
     pile_trip_overrides: dict | None = None,
+    fbs_lm_delivery_enabled: bool | None = None,
 ) -> int:
     """Обновляет существующее КП (sync по line_id). Тот же ``kp_id``.
 
@@ -97,6 +113,7 @@ def update_kp_from_order_data(
         db_path=db_path,
         pile_logistics_cost=pile_logistics_cost,
         pile_trip_overrides=pile_trip_overrides,
+        fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
     )
 
 
@@ -237,7 +254,7 @@ def update_kp_logistics_cost(
     """
     trip = max(0.0, float(logistics_cost or 0.0))
     try:
-        from core.commercial_pricing import calculate_total_cost
+        from core.commercial_pricing import calculate_total_cost, coerce_fbs_lm_delivery_enabled
         from core.kp.offers_read import get_kp_by_id
         from core.kp_order_data import order_data_from_kp_info
         from core.pile_trip_pricing import coerce_pile_trip_overrides, dumps_pile_trip_overrides
@@ -274,6 +291,10 @@ def update_kp_logistics_cost(
         pile_logistics_cost=pile_trip,
         pile_trip_overrides=resolved_overrides,
         pile_catalog_db_path=db_path,
+        fbs_lm_delivery_enabled=coerce_fbs_lm_delivery_enabled(
+            kp_info.get("fbs_lm_delivery_enabled")
+        ),
+        weight_catalog_db_path=db_path,
     )
 
     conn = _connect(db_path)
@@ -636,10 +657,12 @@ def commit_move_to_production(
     kp_id: int,
     execution_terms: str,
     db_path: str = DEFAULT_DB,
+    promise: MovePromisePayload | None = None,
 ) -> int:
-    """Atomically set execution terms, status «в работе», and freeze ordered_qty (M).
+    """Atomically set execution terms, status «в работе», freeze M, write promise.
 
     Returns frozen ``ordered_qty``. Raises on any step failure after ROLLBACK.
+    ``promise`` is written on the same connection (no nested commit).
     """
     from core.kp_db_plates_completion import freeze_ordered_qty_if_needed
 
@@ -655,6 +678,8 @@ def commit_move_to_production(
         ordered = freeze_ordered_qty_if_needed(conn.cursor(), kp_id)
         if ordered is None:
             raise ValueError("freeze_ordered_qty_failed")
+        if promise is not None:
+            _write_move_promise(conn, kp_id, promise)
         conn.commit()
         return int(ordered)
     except Exception:
@@ -662,6 +687,53 @@ def commit_move_to_production(
         raise
     finally:
         conn.close()
+
+
+def _write_move_promise(
+    conn: sqlite3.Connection,
+    kp_id: int,
+    promise: MovePromisePayload,
+) -> None:
+    """Insert promise+alloc or convert hold→promise on the caller's connection."""
+    if promise.convert_hold_id is not None:
+        cur = conn.execute(
+            """
+            UPDATE kp_promise
+            SET kind = 'promise', expires_at = NULL
+            WHERE id = ? AND kp_id = ? AND kind = 'hold' AND status = 'active'
+            """,
+            (int(promise.convert_hold_id), int(kp_id)),
+        )
+        if cur.rowcount != 1:
+            raise ValueError("convert_hold_failed")
+        return
+
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO kp_promise (
+            kp_id, tracks_total, promised_date, kind, status,
+            created_by, created_at, expires_at
+        ) VALUES (?, ?, ?, 'promise', 'active', ?, ?, NULL)
+        """,
+        (
+            int(kp_id),
+            int(promise.tracks_total),
+            promise.promised_date,
+            promise.created_by,
+            promise.created_at,
+        ),
+    )
+    promise_id = int(cur.lastrowid)
+    for week_start, tracks in promise.allocations:
+        cur.execute(
+            """
+            INSERT INTO kp_promise_alloc (
+                promise_id, week_start, tracks, status
+            ) VALUES (?, ?, ?, 'active')
+            """,
+            (promise_id, week_start, int(tracks)),
+        )
 
 
 def update_kp_execution_date(

@@ -233,6 +233,8 @@ def calculate_total_cost(
     pile_logistics_cost: float = 0,
     pile_trip_overrides: dict | None = None,
     pile_catalog_db_path: str | None = None,
+    fbs_lm_delivery_enabled: bool = False,
+    weight_catalog_db_path: str | None = None,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
@@ -242,6 +244,8 @@ def calculate_total_cost(
         pile_logistics_cost=pile_logistics_cost,
         pile_trip_overrides=pile_trip_overrides,
         pile_catalog_db_path=pile_catalog_db_path,
+        fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+        weight_catalog_db_path=weight_catalog_db_path,
     )
 
 
@@ -331,6 +335,8 @@ def generate_commercial_offer_pdf(
     pile_logistics_cost: float = 0.0,
     pile_trip_overrides: Optional[Dict] = None,
     pile_catalog_db_path: Optional[str] = None,
+    fbs_lm_delivery_enabled: bool = False,
+    weight_catalog_db_path: Optional[str] = None,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -551,6 +557,8 @@ def generate_commercial_offer_pdf(
         pile_logistics_cost=pile_trip,
         pile_trip_overrides=pile_trip_overrides,
         pile_catalog_db_path=pile_catalog_db_path,
+        fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+        weight_catalog_db_path=weight_catalog_db_path,
     )
     total_weight = 0.0
 

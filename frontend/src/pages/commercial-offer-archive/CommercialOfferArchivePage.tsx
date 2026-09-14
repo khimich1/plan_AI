@@ -98,9 +98,20 @@ export const CommercialOfferArchivePage = () => {
 
   useEffect(() => {
     if (!searchParams.get("section")) {
-      setSearchParams({ section: "archived" }, { replace: true });
+      const next = new URLSearchParams(searchParams);
+      next.set("section", "archived");
+      setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const raw = searchParams.get("kp");
+    if (!raw) return;
+    const kpId = Number(raw);
+    if (Number.isInteger(kpId) && kpId > 0) {
+      setSelectedKpId(kpId);
+    }
+  }, [searchParams]);
 
   const onSectionChange = (next: ArchiveSection) => {
     setSearchParams({ section: next });
