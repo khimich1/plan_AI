@@ -18,6 +18,10 @@ vi.mock("@/features/admin/components/DbManagementModal", () => ({
   DbManagementModal: () => null,
 }));
 
+vi.mock("@/features/notifications/components/NotificationBell", () => ({
+  NotificationBell: () => <div data-testid="notification-bell-stub" />,
+}));
+
 describe("AppHeader nav", () => {
   beforeEach(() => {
     mockUseCommercialDraftHeaderBridge.mockReturnValue({

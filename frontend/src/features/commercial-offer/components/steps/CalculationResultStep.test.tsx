@@ -114,6 +114,7 @@ function renderResultStep(
   const onAddOtherNomenclature = handlers.onAddOtherNomenclature ?? vi.fn();
   const onUndoLastBatch = handlers.onUndoLastBatch ?? vi.fn();
   const onDeleteLine = handlers.onDeleteLine ?? vi.fn();
+  const onLogisticsCostSubmit = vi.fn(async () => undefined);
   const { breakdownTables = [], isBreakdownLoading = false, ...flags } = stepFlags;
 
   // Cast: MNA-501 will add these props to CalculationResultStep.
@@ -133,7 +134,7 @@ function renderResultStep(
     onSave: vi.fn(async () => undefined),
     isUpdatingDiscount: false,
     onDiscountSubmit: vi.fn(async () => undefined),
-    onLogisticsCostSubmit: vi.fn(async () => undefined),
+    onLogisticsCostSubmit,
     onAddOtherNomenclature,
     onUndoLastBatch,
     onDeleteLine,
@@ -142,7 +143,7 @@ function renderResultStep(
 
   render(<CalculationResultStep {...(props as ComponentProps<typeof CalculationResultStep>)} />);
 
-  return { onAddOtherNomenclature, onUndoLastBatch, onDeleteLine };
+  return { onAddOtherNomenclature, onUndoLastBatch, onDeleteLine, onLogisticsCostSubmit };
 }
 
 afterEach(() => {
@@ -586,6 +587,118 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
     expect(screen.queryByText(/полных/)).not.toBeInTheDocument();
     expect(screen.queryByText("Рейсов свай")).not.toBeInTheDocument();
   });
+
+  it.each(["fbs", "steps", "marches"] as const)(
+    "enables trip cost for %s-only offers",
+    (productType) => {
+      renderResultStep(
+        makeDraft({
+          order_data: [
+            {
+              line_id: "ln_one",
+              product_type: productType,
+              name: "Марка-1",
+              mark: "Марка-1",
+              qty: 1,
+              unit_price: 1000,
+            },
+          ],
+          metadata: {
+            ...baseMetadata(),
+            product_type: productType,
+          },
+        }),
+        {},
+        { draftProductType: productType, isSimpleKpDraft: true },
+      );
+
+      expect(screen.getByPlaceholderText("Стоимость одного рейса")).not.toBeDisabled();
+      expect(screen.getByText("Стоимость рейса")).toBeInTheDocument();
+    },
+  );
+
+  it("shows FBS/LM trips and applies trip cost for a mono-FBS draft", () => {
+    const { onLogisticsCostSubmit } = renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_fbs",
+            product_type: "fbs",
+            name: "ФБС 24.4.6-Т",
+            mark: "ФБС 24.4.6-Т",
+            qty: 10,
+            unit_price: 1200,
+          },
+        ],
+        metadata: {
+          ...baseMetadata(),
+          product_type: "fbs",
+          logistics_cost: 50000,
+        },
+        totals: {
+          total_qty: 10,
+          subtotal: 12000,
+          vat_amount: 2640,
+          total_with_vat: 14640,
+          fbs_lm_delivery_ready: true,
+          fbs_lm_trips: 2,
+          fbs_lm_pending_marks: [],
+        },
+      }),
+      {},
+      { draftProductType: "fbs", isSimpleKpDraft: true },
+    );
+
+    const tripInput = screen.getByPlaceholderText("Стоимость одного рейса");
+    expect(tripInput).not.toBeDisabled();
+    expect(screen.getByText("Стоимость рейса")).toBeInTheDocument();
+    expect(screen.getByText("Рейсов ФБС/ЛС/ЛМ")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.queryByText("Рейс плит")).not.toBeInTheDocument();
+    expect(screen.queryByText("Рейс свай")).not.toBeInTheDocument();
+
+    fireEvent.change(tripInput, { target: { value: "50000" } });
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(onLogisticsCostSubmit).toHaveBeenCalledWith(50000);
+  });
+
+  it("shows pending FBS/LM marks and hides trips when the boiler is not ready", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_ls",
+            product_type: "steps",
+            name: "ЛС99",
+            mark: "ЛС99",
+            qty: 4,
+            unit_price: 800,
+          },
+        ],
+        metadata: {
+          ...baseMetadata(),
+          product_type: "steps",
+        },
+        totals: {
+          total_qty: 4,
+          subtotal: 3200,
+          vat_amount: 704,
+          total_with_vat: 3904,
+          fbs_lm_delivery_ready: false,
+          fbs_lm_trips: 0,
+          fbs_lm_pending_marks: ["ЛС99"],
+        },
+      }),
+      {},
+      { draftProductType: "steps", isSimpleKpDraft: true },
+    );
+
+    expect(screen.getByPlaceholderText("Стоимость одного рейса")).not.toBeDisabled();
+    expect(screen.getByText("Нет веса в справочнике — доставка ФБС/ЛС/ЛМ не посчитана")).toBeInTheDocument();
+    expect(screen.getAllByText("ЛС99").length).toBeGreaterThan(1);
+    expect(screen.queryByText("Рейсов ФБС/ЛС/ЛМ")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Машин, шт.")).not.toBeInTheDocument();
+  });
 });
 
 describe("CalculationResultStep unparsed UX", () => {
@@ -685,5 +798,101 @@ describe("CalculationResultStep breakdown availability after invalidate", () => 
 
     expect(screen.queryByTitle("Показать детальную разбивку цены")).not.toBeInTheDocument();
     expect(screen.getByText("ПБ 60-12-8п")).toBeInTheDocument();
+  });
+});
+
+describe("CalculationResultStep tracks estimate", () => {
+  it("shows ~N дорожек for plate KP from length_m × qty", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln1",
+            product_type: "plates",
+            name: "ПБ 60-12-8п",
+            qty: 20,
+            unit_price: 10000,
+            weight: 1500,
+            length_m: 6.0,
+          },
+        ],
+      }),
+    );
+
+    const estimate = screen.getByTestId("result-tracks-estimate");
+    // 20 × 6.0 м = 120 м → ceil(120/101) = 2
+    expect(estimate).toHaveTextContent("~2 дорожек");
+  });
+
+  it("counts only plate lines in a mixed offer", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_p",
+            product_type: "plates",
+            name: "ПБ 60-12-8п",
+            qty: 20,
+            unit_price: 10000,
+            weight: 800,
+            length_m: 6.0,
+          },
+          {
+            line_id: "ln_s",
+            product_type: "piles",
+            name: "С80.30-8",
+            mark: "С80.30-8",
+            qty: 50,
+            unit_price: 5000,
+            length_m: 8.0,
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("result-tracks-estimate")).toHaveTextContent("~2 дорожек");
+  });
+
+  it.each([
+    {
+      flag: "isPileDraft" as const,
+      productType: "piles",
+      name: "С80.30-8",
+    },
+    {
+      flag: "isStepDraft" as const,
+      productType: "steps",
+      name: "ЛС-12",
+    },
+    {
+      flag: "isFbsDraft" as const,
+      productType: "fbs",
+      name: "ФБС 24-3-6",
+    },
+  ])("hides tracks estimate for $productType", ({ flag, productType, name }) => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_simple",
+            product_type: productType,
+            name,
+            mark: name,
+            qty: 10,
+            unit_price: 1000,
+            length_m: 8.0,
+          },
+        ],
+        metadata: {
+          ...baseMetadata(),
+          product_type: productType as CommercialDraftMetadata["product_type"],
+        },
+      }),
+      {},
+      { [flag]: true, isSimpleKpDraft: true },
+    );
+
+    expect(screen.queryByTestId("result-tracks-estimate")).not.toBeInTheDocument();
+    expect(screen.queryByText(/дорожек/)).not.toBeInTheDocument();
   });
 });

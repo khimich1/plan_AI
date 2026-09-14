@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.sgp import SgpProgress
+from core.production.capacity import TRACKS_PER_DAY_HARD_CAP
 
 
 ArchiveSection = Literal["archived", "in_production", "completed"]
-ArchiveFileKind = Literal["pdf", "xlsx", "schema"]
+ArchiveFileKind = Literal["pdf", "xlsx", "schema", "xlsx_delivery_in_unit"]
 ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs", "mixed"]
 ArchiveProductTypeFilter = Literal["all", "plates", "piles", "steps", "marches", "bridge_piles"]
 
@@ -189,6 +191,12 @@ class ArchiveOfferDetails(BaseModel):
     pile_delivery_ready: bool = True
     plate_delivery_total: float = 0.0
     pile_delivery_total: float = 0.0
+    fbs_lm_delivery_total: float = 0.0
+    fbs_lm_cargo_kg: float = 0.0
+    fbs_lm_trips: int = 0
+    fbs_lm_delivery_ready: bool = True
+    fbs_lm_pending_marks: list[str] = Field(default_factory=list)
+    fbs_lm_delivery_enabled: bool = False
     total_cargo_weight_kg: float = Field(default=0.0, description="Суммарная масса по строкам через resolve_kp_line_weight_kg (как PDF/XLSX).")
     delivery_service_total_rub: float = Field(
         default=0.0,
@@ -248,3 +256,88 @@ class ArchiveSearchResponse(BaseModel):
     items: list[ArchiveOfferListItem] = Field(default_factory=list)
     total: int = 0
     truncated: bool = False
+
+
+class PromiseQuoteWindow(BaseModel):
+    from_week: date
+    to_week: date
+    promised_date: date
+
+
+class PromiseQuoteWeek(BaseModel):
+    week_start: date
+    workdays: int
+    capacity: int
+    planned: int
+    promised: int
+    held: int
+    free: int
+
+
+class PromiseQuoteResponse(BaseModel):
+    """Котировка недельных корзин для диалога «В производство»."""
+
+    tracks: int
+    solo_days: int
+    solo_date: date | None = None
+    solo_week_end_date: date | None = None
+    earliest_start_week: date | None = None
+    first_pour_date: date | None = None
+    first_pour_free: int = Field(ge=0, default=0)
+    window: PromiseQuoteWindow | None = None
+    weeks: list[PromiseQuoteWeek] = Field(default_factory=list)
+    knob: int
+    holidays: list[date] = Field(default_factory=list)
+    extra_workdays: list[date] = Field(default_factory=list)
+    occupancy: dict[str, int] = Field(default_factory=dict)
+
+
+class PromiseWeekOccupant(BaseModel):
+    kp_id: int
+    customer_name: str
+    kind: Literal["hold", "promise"]
+    tracks: int = Field(ge=1)
+    promised_date: date
+    is_current: bool
+
+
+class PromiseWeekOccupantsResponse(BaseModel):
+    week_start: date
+    planned: int = Field(ge=0)
+    occupants: list[PromiseWeekOccupant] = Field(default_factory=list)
+
+
+class PromiseHoldAllocation(BaseModel):
+    week_start: date
+    tracks: int = Field(ge=1)
+
+
+class PromiseHoldResponse(BaseModel):
+    """Активный или снятый холд срока. Не статус КП — строка журнала."""
+
+    id: int
+    kp_id: int
+    kind: Literal["hold"] = "hold"
+    status: Literal["active", "consumed", "released", "expired"]
+    tracks_total: int
+    promised_date: date
+    expires_at: datetime
+    created_by: str | None = None
+    created_at: datetime
+    allocations: list[PromiseHoldAllocation] = Field(default_factory=list)
+
+
+class PromiseTracksPerDayRequest(BaseModel):
+    """PUT body: factory knob, 1..TRACKS_PER_DAY_HARD_CAP."""
+
+    tracks_per_day: int = Field(ge=1, le=TRACKS_PER_DAY_HARD_CAP)
+
+
+class PromiseTracksPerDayResponse(BaseModel):
+    """Current promise_tracks_per_day with audit (who/when)."""
+
+    tracks_per_day: int
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+    min: int = 1
+    max: int = TRACKS_PER_DAY_HARD_CAP

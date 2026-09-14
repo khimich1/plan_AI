@@ -271,6 +271,7 @@ class ProductDraftHandler:
             "owner_user_id": owner_user_id,
             "current_step": spec.wizard_step.value,
             "wide_plates_resolved": True,
+            "fbs_lm_delivery_enabled": True,
         }
         if spec.empty_create_grade is not None:
             metadata["default_concrete_grade"] = spec.empty_create_grade

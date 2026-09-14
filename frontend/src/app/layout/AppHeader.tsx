@@ -5,6 +5,7 @@ import { useAuth } from "@/features/auth/model/AuthProvider";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { DbManagementModal } from "@/features/admin/components/DbManagementModal";
+import { NotificationBell } from "@/features/notifications/components/NotificationBell";
 
 const NEW_OFFER_PATH = "/new";
 const ARCHIVE_PATH = "/archive";
@@ -162,6 +163,7 @@ export const AppHeader = () => {
               </svg>
             </button>
           )}
+          {user && <NotificationBell />}
           {user && (
             <div className="app-header__user">
               <div className="app-header__user-info">

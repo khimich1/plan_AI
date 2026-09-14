@@ -105,6 +105,10 @@ from core.commercial_pricing import (  # noqa: E402
     lookup_pile_price,
     lookup_step_price,
 )
+from core.embed_delivery_in_unit_price import (  # noqa: E402
+    EmbedDeliveryResult,
+    embed_delivery_in_unit_prices,
+)
 
 
 def calculate_total_cost(
@@ -115,6 +119,8 @@ def calculate_total_cost(
     pile_logistics_cost: float = 0,
     pile_trip_overrides: dict | None = None,
     pile_catalog_db_path: str | None = None,
+    fbs_lm_delivery_enabled: bool = False,
+    weight_catalog_db_path: str | None = None,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
@@ -124,6 +130,8 @@ def calculate_total_cost(
         pile_logistics_cost=pile_logistics_cost,
         pile_trip_overrides=pile_trip_overrides,
         pile_catalog_db_path=pile_catalog_db_path,
+        fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+        weight_catalog_db_path=weight_catalog_db_path,
     )
 
 
@@ -179,6 +187,9 @@ def generate_commercial_offer_xlsx(
     pile_logistics_cost: float = 0.0,
     pile_trip_overrides: Optional[Dict] = None,
     pile_catalog_db_path: Optional[str] = None,
+    embed_delivery_in_unit_price: bool = False,
+    fbs_lm_delivery_enabled: bool = False,
+    weight_catalog_db_path: Optional[str] = None,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате XLSX с расчётными формулами
@@ -277,10 +288,12 @@ def generate_commercial_offer_xlsx(
         order_mode = "plates"
 
     total_weight = 0.0
+    resolved_unit_prices: List[float] = []
 
     for idx, item in enumerate(order_data, start=1):
         qty = item.get('qty', 0)
         unit_price = _resolve_line_unit_price(item, order_mode=order_mode)
+        resolved_unit_prices.append(unit_price)
         discounted_price = unit_price * (1 - discount_percent / 100)
 
         if unified:
@@ -341,6 +354,8 @@ def generate_commercial_offer_xlsx(
         pile_logistics_cost=pile_trip,
         pile_trip_overrides=pile_trip_overrides,
         pile_catalog_db_path=pile_catalog_db_path,
+        fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+        weight_catalog_db_path=weight_catalog_db_path,
     )
     if unified:
         plates_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
@@ -348,6 +363,27 @@ def generate_commercial_offer_xlsx(
     delivery_export = kp_delivery_export_lines(
         totals, plate_trip_cost=trip_cost, pile_trip_cost=pile_trip
     )
+    embedded_result: EmbedDeliveryResult | None = None
+    if embed_delivery_in_unit_price:
+        embedded_result = embed_delivery_in_unit_prices(
+            qty_by_index=[int(item.get("qty") or 0) for item in order_data],
+            product_type_by_index=[line_product_type(item) for item in order_data],
+            unit_price_by_index=resolved_unit_prices,
+            discount_percent=discount_percent,
+            plate_delivery_total=float(totals.get("plate_delivery_total") or 0.0),
+            pile_delivery_total=float(totals.get("pile_delivery_total") or 0.0),
+        )
+        for i, embedded in enumerate(embedded_result.lines):
+            table_data[i]["Цена"] = embedded.unit_price
+            table_data[i]["Сумма"] = embedded.line_sum
+        delivery_export = [
+            line
+            for line in delivery_export
+            if not (
+                (line["label"] == "Доставка свай" and embedded_result.embedded_pile)
+                or (line["label"] != "Доставка свай" and embedded_result.embedded_plate)
+            )
+        ]
     for line in delivery_export:
         row: dict[str, Any] = {
             "№": len(table_data) + 1,
@@ -497,7 +533,8 @@ def generate_commercial_offer_xlsx(
                     cell.alignment = left_align
 
             sum_cell = worksheet.cell(row=row_idx, column=sum_col)
-            sum_cell.value = f"={qty_letter}{row_idx}*{price_letter}{row_idx}"
+            if not embed_delivery_in_unit_price:
+                sum_cell.value = f"={qty_letter}{row_idx}*{price_letter}{row_idx}"
             sum_cell.alignment = right_align
             sum_cell.border = thin_border
             sum_cell.font = table_font
@@ -535,9 +572,29 @@ def generate_commercial_offer_xlsx(
         worksheet[f'{sum_letter}{vat_row}'].font = summary_font
         worksheet[f'{sum_letter}{vat_row}'].number_format = '#,##0.00'
         worksheet[f'{sum_letter}{vat_row}'].alignment = right_align
-        
+
+        embed_footnote = False
+        if embedded_result is not None and (
+            embedded_result.embedded_plate or embedded_result.embedded_pile
+        ):
+            n_trips = 0
+            x_amount = 0.0
+            if embedded_result.embedded_plate:
+                n_trips += int(totals.get("plate_trips") or 0)
+                x_amount += float(totals.get("plate_delivery_total") or 0.0)
+            if embedded_result.embedded_pile:
+                n_trips += int(totals.get("pile_trips") or 0)
+                x_amount += float(totals.get("pile_delivery_total") or 0.0)
+            footnote_row = vat_row + 1
+            worksheet[f"A{footnote_row}"] = (
+                f"В стоимость изделий включена доставка {n_trips} рейс(ов) "
+                f"на сумму {x_amount:.2f} ₽. Скидка на доставку не распространяется."
+            )
+            worksheet[f"A{footnote_row}"].font = table_font
+            embed_footnote = True
+
         # Условия
-        conditions_row = vat_row + 2
+        conditions_row = vat_row + 3 if embed_footnote else vat_row + 2
         
         # Условия поставки (строка 28 с учётом смещения)
         if delivery_conditions:

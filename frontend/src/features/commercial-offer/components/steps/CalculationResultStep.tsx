@@ -35,7 +35,40 @@ import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoTo
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
 import type { LineSavePayload, LineUndoToastState, LineRowErrorState } from "@/features/commercial-offer/lib/lineRowHandlers";
 import { getProductTypeConfig, PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
+import { estimateFromLengthM } from "@/features/production/lib/productionEstimate";
+import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { StepLayout } from "@/shared/ui/StepLayout";
+
+/** Default factory knob; days are approximate until archive quote. Tracks ignore this. */
+const DEFAULT_TRACKS_PER_DAY = 3;
+
+function isPlateOrderLine(item: Record<string, unknown>, isSimpleKpDraft: boolean): boolean {
+  const productType = item.product_type;
+  if (productType === "plates") {
+    return true;
+  }
+  if (typeof productType === "string" && productType.length > 0) {
+    return false;
+  }
+  return !isSimpleKpDraft;
+}
+
+function plateTotalLengthM(
+  orderData: Array<Record<string, unknown>>,
+  isSimpleKpDraft: boolean,
+): number {
+  return orderData.reduce((acc, item) => {
+    if (!isPlateOrderLine(item, isSimpleKpDraft)) {
+      return acc;
+    }
+    const length = toNumber(item.length_m);
+    const qty = toNumber(item.qty) ?? 0;
+    if (length === null || length <= 0 || qty <= 0) {
+      return acc;
+    }
+    return acc + length * qty;
+  }, 0);
+}
 
 const formatProductTypeLabel = (productType: unknown): string => {
   if (typeof productType !== "string" || productType.length === 0) {
@@ -146,16 +179,40 @@ export const CalculationResultStep = ({
   }, [draft.order_data]);
   const showTypeColumn = distinctProductTypes.size > 1 || appendBatches.length > 1;
   const hasPlateLines = draft.order_data.some((item) => item.product_type === "plates");
+  const plateEstimate = useMemo(() => {
+    const totalLengthM = plateTotalLengthM(draft.order_data, isSimpleKpDraft);
+    if (totalLengthM <= 0) {
+      return null;
+    }
+    return estimateFromLengthM(totalLengthM, DEFAULT_TRACKS_PER_DAY);
+  }, [draft.order_data, isSimpleKpDraft]);
   const hasPileLines = draft.order_data.some(
     (item) => item.product_type === "piles" || item.product_type === "bridge_piles",
   );
+  const hasFbsLmLines = draft.order_data.some((item) => {
+    const productType = String(item.product_type ?? "");
+    const productKind = String(item.product_kind ?? "");
+    return (
+      productType === "fbs" ||
+      productType === "steps" ||
+      productType === "marches" ||
+      productKind === "fbs" ||
+      productKind === "step" ||
+      productKind === "march"
+    );
+  });
   const mixedDelivery = hasPlateLines && hasPileLines;
-  const tripCostDisabled = !hasPlateLines && !hasPileLines;
+  const tripCostDisabled = !hasPlateLines && !hasPileLines && !hasFbsLmLines;
   const pendingPileMarks = (draft.totals.pile_trip_pending_marks ?? []).filter(
     (mark): mark is string => typeof mark === "string" && mark.length > 0,
   );
+  const pendingFbsLmMarks = (draft.totals.fbs_lm_pending_marks ?? []).filter(
+    (mark): mark is string => typeof mark === "string" && mark.length > 0,
+  );
   const pileDeliveryReady = draft.totals.pile_delivery_ready !== false;
+  const fbsLmDeliveryReady = draft.totals.fbs_lm_delivery_ready !== false;
   const pileTrips = draft.totals.pile_trips ?? 0;
+  const fbsLmTrips = draft.totals.fbs_lm_trips ?? 0;
   const totalWeight = draft.order_data.reduce((acc, item) => acc + (toNumber(item.weight) ?? 0), 0);
   const serverSubtotal = draft.totals.subtotal;
   const serverVat = draft.totals.vat_amount;
@@ -356,6 +413,16 @@ export const CalculationResultStep = ({
   >
     {errorMessage && <Alert tone="error">{errorMessage}</Alert>}
 
+    {plateEstimate ? (
+      <div data-testid="result-tracks-estimate">
+        <ProductionEstimateAlert
+          estimatedTracks={plateEstimate.estimated_tracks}
+          estimatedDays={plateEstimate.estimated_days}
+          totalLengthM={plateEstimate.total_length_m}
+        />
+      </div>
+    ) : null}
+
     <Card title="Готовность КП" subtitle="Перед отправкой клиенту проверьте ключевые пункты.">
       <ul style={{ margin: 0, paddingLeft: "1.25rem", display: "grid", gap: "0.5rem" }}>
         <li>✓ {draft.order_data.length} позиций в заказе</li>
@@ -543,7 +610,10 @@ export const CalculationResultStep = ({
           {hasPileLines && pileDeliveryReady && (
             <SummaryCell label="Рейсов свай" value={String(pileTrips)} />
           )}
-          {hasPlateLines && (
+          {hasFbsLmLines && fbsLmDeliveryReady && (
+            <SummaryCell label="Рейсов ФБС/ЛС/ЛМ" value={String(fbsLmTrips)} />
+          )}
+          {(hasPlateLines || hasFbsLmLines) && (
             <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
               <FieldWrapper label={mixedDelivery ? "Рейс плит" : "Стоимость рейса"} error={logisticsError}>
                 <div style={{ position: "relative" }}>
@@ -630,7 +700,7 @@ export const CalculationResultStep = ({
               </FieldWrapper>
             </div>
           )}
-          {!hasPlateLines && !hasPileLines && (
+          {!hasPlateLines && !hasPileLines && !hasFbsLmLines && (
             <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
               <FieldWrapper label="Стоимость рейса" error={logisticsError}>
                 <input
@@ -646,6 +716,18 @@ export const CalculationResultStep = ({
                   }}
                 />
               </FieldWrapper>
+            </div>
+          )}
+          {pendingFbsLmMarks.length > 0 && (
+            <div style={{ border: "1px solid #f5d0a8", borderRadius: 12, padding: "0.9rem", background: "#fff7ed" }}>
+              <div style={{ color: "#9a3412", fontWeight: 600, marginBottom: "0.35rem" }}>
+                Нет веса в справочнике — доставка ФБС/ЛС/ЛМ не посчитана
+              </div>
+              {pendingFbsLmMarks.map((mark) => (
+                <div key={mark} style={{ color: "#9a3412" }}>
+                  {mark}
+                </div>
+              ))}
             </div>
           )}
           {pendingPileMarks.length > 0 && (

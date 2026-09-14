@@ -30,9 +30,7 @@ from app.schemas.archive import (
 )
 from app.repositories.plan_repository import PlanRepository
 from app.services.capacity_gate_service import (
-    CapacityGateBlockedError,
     CapacitySnapshot,
-    assert_capacity_allows_save,
     build_capacity_snapshot,
 )
 from app.services.plan_distribution_service import PlanDistributionService
@@ -43,6 +41,8 @@ from app.security.offer_access import (
 )
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
+from app.services.promise_service import PromiseGateError, PromiseService
+from core.production.promise_buckets import OccupancyUnavailableError
 from core.delivery_schedule_check import BatchItemInput
 from core.plate_order_context import PlateOrderContext, run_in_order_context
 from core.ports.visualization import get_visualize_plan
@@ -80,6 +80,7 @@ class ArchiveService:
         outputs_dir: Path | None = None,
         optimization_service: OptimizationService | None = None,
         file_generation_service: FileGenerationService | None = None,
+        promise_service: PromiseService | None = None,
     ) -> None:
         settings = get_settings()
         self.repository = repository or KpArchiveRepository()
@@ -87,6 +88,7 @@ class ArchiveService:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self.optimization_service = optimization_service or OptimizationService()
         self.file_generation_service = file_generation_service or FileGenerationService()
+        self._promise_service = promise_service
         # ISO YYYY-MM-DD для детерминированных тестов гейта ёмкости.
         self._today_override: str | None = None
 
@@ -221,6 +223,7 @@ class ArchiveService:
         if not raw:
             raise ArchiveNotFoundError(f"КП №{kp_id} уже удалено или не существует")
         assert_offer_write_access(user, raw)
+        self._promises().release_on_delete(kp_id)
         if not self.repository.delete(kp_id):
             raise ArchiveNotFoundError(f"КП №{kp_id} уже удалено или не существует")
 
@@ -235,11 +238,14 @@ class ArchiveService:
             )
 
         execution_terms = self._parse_execution_terms(terms_input)
-        self._enforce_capacity_gate_for_terms(raw, execution_terms)
         try:
-            from core.kp.offers_write import commit_move_to_production
-
-            commit_move_to_production(kp_id, execution_terms, self.repository.db_path)
+            self._promises().commit_move_with_gate(
+                kp_id, execution_terms, user=user, raw=raw
+            )
+        except (PromiseGateError, OccupancyUnavailableError) as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        except ArchiveError:
+            raise
         except Exception as exc:
             logger.exception("move_to_production failed for kp_id=%s", kp_id)
             raise ArchiveError(
@@ -247,6 +253,14 @@ class ArchiveService:
             ) from exc
 
         return self.get_details(kp_id, user=user)
+
+    def _promises(self) -> PromiseService:
+        if self._promise_service is not None:
+            return self._promise_service
+        today = None
+        if self._today_override is not None:
+            today = date.fromisoformat(self._today_override)
+        return PromiseService(db_path=self.repository.db_path, today=today)
 
     def get_capacity_snapshot(
         self,
@@ -309,6 +323,11 @@ class ArchiveService:
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
         pile_trip_overrides = coerce_pile_trip_overrides(raw.get("pile_trip_overrides_json"))
+        from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+
+        fbs_lm_delivery_enabled = coerce_fbs_lm_delivery_enabled(
+            raw.get("fbs_lm_delivery_enabled")
+        )
         append_batches = raw.get("append_batches")
 
         if kind == "pdf":
@@ -330,9 +349,11 @@ class ArchiveService:
                 payment_conditions=raw.get("payment_conditions"),
                 append_batches=append_batches,
                 pile_catalog_db_path=self.repository.db_path,
+                fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+                weight_catalog_db_path=self.repository.db_path,
             )
             filename = f"КП_{kp_id}.pdf"
-        elif kind == "xlsx":
+        elif kind in {"xlsx", "xlsx_delivery_in_unit"}:
             buffer = await asyncio.to_thread(
                 generate_commercial_offer_xlsx,
                 order_data,
@@ -351,8 +372,15 @@ class ArchiveService:
                 pile_trip_overrides=pile_trip_overrides,
                 append_batches=append_batches,
                 pile_catalog_db_path=self.repository.db_path,
+                embed_delivery_in_unit_price=(kind == "xlsx_delivery_in_unit"),
+                fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+                weight_catalog_db_path=self.repository.db_path,
             )
-            filename = f"КП_{kp_id}.xlsx"
+            filename = (
+                f"КП_{kp_id}_с_доставкой_в_цене.xlsx"
+                if kind == "xlsx_delivery_in_unit"
+                else f"КП_{kp_id}.xlsx"
+            )
         elif kind == "schema":
             if plate_order_ctx is None:
                 raise ArchiveValidationError(
@@ -544,9 +572,10 @@ class ArchiveService:
         order_data = order_data_from_kp_info(raw)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
         pile_logistics_cost = max(0.0, float(raw.get("pile_logistics_cost") or 0.0))
-        from core.commercial_pricing import calculate_total_cost
+        from core.commercial_pricing import calculate_total_cost, coerce_fbs_lm_delivery_enabled
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
+        fbs_lm_enabled = coerce_fbs_lm_delivery_enabled(raw.get("fbs_lm_delivery_enabled"))
         totals = calculate_total_cost(
             order_data,
             float(raw.get("discount_percent") or 0.0),
@@ -558,14 +587,17 @@ class ArchiveService:
                 raw.get("pile_trip_overrides_json")
             ),
             pile_catalog_db_path=self.repository.db_path,
+            fbs_lm_delivery_enabled=fbs_lm_enabled,
+            weight_catalog_db_path=self.repository.db_path,
         )
-        # Delivery / cargo for archive details: plates 18600 + piles hybrid.
+        # Delivery / cargo for archive details: plates 18600 + piles hybrid + ФБС/ЛС/ЛМ.
         total_cargo_weight_kg = float(
             total_order_cargo_weight_kg(order_data, product_types={"plates"})
         )
         plate_delivery_total = float(totals.get("plate_delivery_total") or 0.0)
         pile_delivery_total = float(totals.get("pile_delivery_total") or 0.0)
-        delivery_total = plate_delivery_total + pile_delivery_total
+        fbs_lm_delivery_total = float(totals.get("fbs_lm_delivery_total") or 0.0)
+        delivery_total = plate_delivery_total + pile_delivery_total + fbs_lm_delivery_total
 
         readiness = None
         status = raw.get("status") or ""
@@ -606,6 +638,12 @@ class ArchiveService:
             pile_delivery_ready=bool(totals.get("pile_delivery_ready", True)),
             plate_delivery_total=plate_delivery_total,
             pile_delivery_total=pile_delivery_total,
+            fbs_lm_delivery_total=fbs_lm_delivery_total,
+            fbs_lm_cargo_kg=float(totals.get("fbs_lm_cargo_kg") or 0.0),
+            fbs_lm_trips=int(totals.get("fbs_lm_trips") or 0),
+            fbs_lm_delivery_ready=bool(totals.get("fbs_lm_delivery_ready", True)),
+            fbs_lm_pending_marks=list(totals.get("fbs_lm_pending_marks") or []),
+            fbs_lm_delivery_enabled=fbs_lm_enabled,
             total_cargo_weight_kg=total_cargo_weight_kg,
             delivery_service_total_rub=delivery_total,
             product_type=product_type,
@@ -714,14 +752,6 @@ class ArchiveService:
                 }
             )
         return result
-
-    def _enforce_capacity_gate_for_terms(self, raw: dict, execution_terms_ddmmyyyy: str) -> None:
-        target_iso = datetime.strptime(execution_terms_ddmmyyyy, "%d.%m.%Y").date().isoformat()
-        snap = self._build_capacity_snapshot(raw, target_iso=target_iso)
-        try:
-            assert_capacity_allows_save(snap)
-        except CapacityGateBlockedError as exc:
-            raise ArchiveValidationError(str(exc)) from exc
 
     def _resolve_target_iso(self, raw: dict, target: str | None) -> str:
         if target:

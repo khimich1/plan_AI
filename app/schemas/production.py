@@ -84,6 +84,27 @@ class KpCandidatePlateItem(BaseModel):
     bucket: Literal["awaiting_plan", "in_plan"] = "awaiting_plan"
 
 
+class CandidatePromiseMeta(BaseModel):
+    """Активное или overdue обещание кандидата (не холд)."""
+
+    promised_date: date
+    week_start: date
+    status: Literal["active", "overdue"]
+    tracks: int = Field(ge=1)
+
+
+class PromisedWeekKpItem(BaseModel):
+    kp_id: int
+    promised_date: date
+    tracks: int = Field(ge=1)
+    status: Literal["active", "overdue"]
+
+
+class PromisedWeekSummary(BaseModel):
+    week_start: date
+    items: list[PromisedWeekKpItem] = Field(default_factory=list)
+
+
 class KpCandidateItem(BaseModel):
     kp_id: int
     customer_name: str
@@ -98,11 +119,13 @@ class KpCandidateItem(BaseModel):
     in_plan_qty: int = 0
     on_sgp_qty: int = 0
     plates: list[KpCandidatePlateItem] = Field(default_factory=list)
+    promise: CandidatePromiseMeta | None = None
 
 
 class KpCandidatesResponse(BaseModel):
     items: list[KpCandidateItem]
     count: int
+    promised_weeks: list[PromisedWeekSummary] = Field(default_factory=list)
 
 
 class DayOccupancyResponse(BaseModel):
@@ -167,6 +190,22 @@ class SgpReservationItem(BaseModel):
     qty: int = Field(ge=1)
 
 
+class PromiseExclusionItem(BaseModel):
+    """Снятие обещанного КП из сборки недели (уровень 2: причина, не блок)."""
+
+    kp_id: int = Field(ge=1)
+    week_start: date
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_required(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Причина снятия обещанного КП обязательна")
+        return stripped
+
+
 class BuildPlanRequest(BaseModel):
     start_date: str
     tracks_count: int = Field(ge=1, le=50)
@@ -179,6 +218,7 @@ class BuildPlanRequest(BaseModel):
     fill_targets: list[FillTargetItem] | None = None
     layout_reinforcement_order: LayoutReinforcementOrder = "asc"
     sgp_reservations: list[SgpReservationItem] = Field(default_factory=list)
+    exclusions: list[PromiseExclusionItem] = Field(default_factory=list)
 
     @field_validator("selected_kp_ids")
     @classmethod

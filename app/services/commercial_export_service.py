@@ -78,9 +78,13 @@ class CommercialExportService:
         payment_conditions = str(metadata.get("payment_conditions", "") or "")
         logistics_cost = float(metadata.get("logistics_cost", 0.0) or 0.0)
         pile_logistics_cost = float(metadata.get("pile_logistics_cost", 0.0) or 0.0)
+        from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
         pile_trip_overrides = coerce_pile_trip_overrides(metadata.get("pile_trip_overrides"))
+        fbs_lm_delivery_enabled = coerce_fbs_lm_delivery_enabled(
+            metadata.get("fbs_lm_delivery_enabled")
+        )
         append_batches = metadata.get("append_batches")
         offer_number, offer_date, file_stem = self.build_offer_identity(draft_id, metadata)
 
@@ -112,6 +116,7 @@ class CommercialExportService:
                     delivery_conditions=delivery_conditions or None,
                     payment_conditions=payment_conditions or None,
                     append_batches=append_batches,
+                    fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                 )
                 files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, output_path)
             elif file_type == "xlsx":
@@ -132,6 +137,7 @@ class CommercialExportService:
                     pile_logistics_cost=pile_logistics_cost,
                     pile_trip_overrides=pile_trip_overrides,
                     append_batches=append_batches,
+                    fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                 )
                 files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, output_path)
             elif file_type == "breakdown":

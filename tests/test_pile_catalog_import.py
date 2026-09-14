@@ -14,6 +14,7 @@ from core.pile_catalog import (
     parse_pile_catalog_from_xlsx,
     parse_pile_mark,
     resolve_catalog_for_mark,
+    strip_pile_load_suffix,
     upsert_pile_catalog,
 )
 from tests.helpers import kp_db_fixtures as fx
@@ -48,12 +49,28 @@ def _standard_rows(count: int = 43) -> list[tuple]:
         ("С60.30", 6.0, 300),
         (QUIRK_MARK, 13.75, 400),
         ("С120.35", 12.0, 350),
+        ("С110.35-12", 11.0, 350),
+        ("С120.35-13и", 12.0, 350),
         ("мусор", None, None),
         ("С60", None, None),
     ],
 )
 def test_parse_pile_mark(mark, expected_length, expected_section) -> None:
     assert parse_pile_mark(mark) == (expected_length, expected_section)
+
+
+@pytest.mark.parametrize(
+    ("mark", "expected"),
+    [
+        ("С110.35-12", "С110.35"),
+        ("С120.35-13и", "С120.35"),
+        ("С120.35", "С120.35"),
+        ("C14-40T4", "C14-40T4"),
+        ("C9-35T6", "C9-35T6"),
+    ],
+)
+def test_strip_pile_load_suffix(mark, expected) -> None:
+    assert strip_pile_load_suffix(mark) == expected
 
 
 def test_parse_full_sheet_44_rows_and_quirks(tmp_path) -> None:
@@ -271,3 +288,32 @@ def test_resolve_catalog_prefers_pcs_when_geometry_ties(tmp_path) -> None:
     assert resolved is not None
     assert resolved.pcs_per_20t == 3
     assert resolved.mark == "С140.40"
+
+
+def _factory_resolve_catalog() -> list[PileCatalogEntry]:
+    """Канон геометрии для заводских марок; живой xlsx — если есть, иначе фикстура."""
+    if REAL_XLSX.is_file():
+        return parse_pile_catalog_from_xlsx(str(REAL_XLSX), sheet="Лист1")
+    return [
+        PileCatalogEntry("С110.35", 11.0, 350, 1.37, 3430.0, 6),
+        PileCatalogEntry("С160.35", 16.0, 350, 1.98, 4950.0, None),
+        PileCatalogEntry("С140.40", 14.0, 400, 2.26, 5650.0, 3),
+        PileCatalogEntry("С90.35", 9.0, 350, 1.12, 2800.0, 7),
+    ]
+
+
+def test_resolve_catalog_factory_load_suffix() -> None:
+    entries = _factory_resolve_catalog()
+    factory = resolve_catalog_for_mark("С110.35-12", entries)
+    assert factory is not None
+    assert factory.mark == "С110.35"
+    assert factory.pcs_per_20t == 6
+
+    long_16m = resolve_catalog_for_mark("С160.35-12", entries)
+    assert long_16m is not None
+    assert long_16m.mark == "С160.35"
+    assert long_16m.pcs_per_20t is None
+
+    assert resolve_catalog_for_mark("C18-40T8", entries) is None
+    assert resolve_catalog_for_mark("C14-40T4", entries).mark == "С140.40"
+    assert resolve_catalog_for_mark("C9-35T6", entries).mark == "С90.35"

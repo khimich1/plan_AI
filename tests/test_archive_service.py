@@ -56,9 +56,29 @@ def _make_raw(**overrides: Any) -> dict:
     return base
 
 
-def _make_service(repository: MagicMock, tmp_path: Path) -> ArchiveService:
+def _passthrough_promise_service(repository: MagicMock) -> MagicMock:
+    stub = MagicMock()
+
+    def _commit(kp_id, execution_terms, *, user, raw=None):
+        from core.kp.offers_write import commit_move_to_production
+
+        return commit_move_to_production(kp_id, execution_terms, repository.db_path)
+
+    stub.commit_move_with_gate.side_effect = _commit
+    return stub
+
+
+def _make_service(
+    repository: MagicMock,
+    tmp_path: Path,
+    promise_service: MagicMock | None = None,
+) -> ArchiveService:
     repository.db_path = str(tmp_path / "plita.db")
-    return ArchiveService(repository=repository, outputs_dir=tmp_path)
+    return ArchiveService(
+        repository=repository,
+        outputs_dir=tmp_path,
+        promise_service=promise_service or _passthrough_promise_service(repository),
+    )
 
 
 def test_list_offers_for_archived_skips_completion(tmp_path: Path) -> None:
@@ -314,41 +334,28 @@ def test_move_to_production_happy_path(
     commit.assert_called_once_with(42, "01.04.2026", repository.db_path)
 
 
-def test_move_to_production_blocks_on_red(
+def test_move_to_production_blocks_before_promised_date(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from datetime import date
+
+    from app.services.promise_service import PromiseGateError
+
     repository = MagicMock()
     repository.db_path = str(tmp_path / "plita.db")
-    # Много плит → дефицит при коротком сроке.
-    raw = _make_raw(
-        status="в архиве",
-        plates=[
-            {
-                "id": 1,
-                "position_number": 1,
-                "plate_name": "ПБ",
-                "length_m": 7.8,
-                "width_m": 1.2,
-                "qty": 100,
-                "load_class": 800,
-                "unit_price": 500.0,
-                "discounted_price": 475.0,
-            }
-        ],
-    )
-    repository.get_by_id.return_value = raw
+    repository.get_by_id.return_value = _make_raw(status="в архиве")
     commit = MagicMock(return_value=2)
     monkeypatch.setattr(
         "core.kp.offers_write.commit_move_to_production", commit
     )
-    monkeypatch.setattr(
-        "app.services.archive_service.ArchiveService._load_occupancy",
-        staticmethod(lambda: {}),
+    promise_service = MagicMock()
+    promise_service.commit_move_with_gate.side_effect = PromiseGateError(
+        "Срок раньше ближайшей возможной даты 06.03.2026.",
+        earliest=date(2026, 3, 6),
     )
-    service = _make_service(repository, tmp_path)
-    service._today_override = "2026-03-02"
+    service = _make_service(repository, tmp_path, promise_service=promise_service)
 
-    with pytest.raises(ArchiveValidationError, match="нужно"):
+    with pytest.raises(ArchiveValidationError, match="06.03.2026"):
         service.move_to_production(42, "2026-03-03", user=ADMIN)
 
     commit.assert_not_called()
@@ -501,6 +508,19 @@ def test_delete_offer_not_found(tmp_path: Path) -> None:
 
     with pytest.raises(ArchiveNotFoundError):
         service.delete_offer(42, user=ADMIN)
+
+
+def test_delete_offer_releases_active_promises_before_delete(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.return_value = _make_raw(kp_id=42)
+    repository.delete.return_value = True
+    promise_service = MagicMock()
+    service = _make_service(repository, tmp_path, promise_service=promise_service)
+
+    service.delete_offer(42, user=ADMIN)
+
+    promise_service.release_on_delete.assert_called_once_with(42)
+    repository.delete.assert_called_once_with(42)
 
 
 def test_generate_document_pdf(

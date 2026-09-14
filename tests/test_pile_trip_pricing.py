@@ -38,7 +38,9 @@ _FALLBACK_CATALOG = [
     PileCatalogEntry("С100.35", 10.0, 350, 1.24, 3100.0, 6),
     PileCatalogEntry("С130.35", 13.0, 350, 1.61, 4030.0, 5),
     PileCatalogEntry("С110.35", 11.0, 350, 1.37, 3430.0, 6),
+    PileCatalogEntry("С120.35", 12.0, 350, 1.49, 3730.0, 5),
     PileCatalogEntry("С150.35", 15.0, 350, 1.86, 4650.0, 4),
+    PileCatalogEntry("С160.35", 16.0, 350, 1.98, 4950.0, None),
     PileCatalogEntry("С160.40", 16.0, 400, 2.58, 6450.0, None),
 ]
 
@@ -134,6 +136,37 @@ def test_pcs_null_is_pending_unless_override() -> None:
     assert ready.total_trips == 2
     assert ready.full_trips == 0
     assert ready.remainder_trips == 0
+
+
+def test_factory_mark_with_catalog_pcs_is_ready() -> None:
+    lookup = _lookup(_catalog_entries())
+    result = compute_pile_trips(
+        [{"mark": "С120.35-12", "qty": 10, "product_type": "piles"}],
+        overrides=None,
+        catalog_lookup=lookup,
+    )
+    assert result.full_trips == 2
+    assert result.pending_marks == ()
+    assert result.ready is True
+
+
+def test_factory_16m_pending_uses_line_mark() -> None:
+    lookup = _lookup(_catalog_entries())
+    line = {"mark": "С160.35-12", "qty": 4, "product_type": "piles"}
+    pending = compute_pile_trips([line], overrides=None, catalog_lookup=lookup)
+    assert pending.ready is False
+    assert "С160.35-12" in pending.pending_marks
+    assert "С160.35" not in pending.pending_marks
+    assert pending.total_trips == 0
+
+    ready = compute_pile_trips(
+        [line],
+        overrides={"С160.35-12": 2},
+        catalog_lookup=lookup,
+    )
+    assert ready.ready is True
+    assert ready.override_trips == 2
+    assert ready.pending_marks == ()
 
 
 def test_unknown_mark_is_pending() -> None:
