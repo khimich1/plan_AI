@@ -7,7 +7,6 @@
 
 import io
 import logging
-import os
 from typing import Any, List, Dict, Optional
 
 try:
@@ -41,24 +40,21 @@ except ImportError:
 
 # ==================== КОНСТАНТЫ ====================
 
-# Вычисляем абсолютный путь к корню проекта (папка выше core/)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 # Реквизиты компании
 COMPANY_NAME = "ООО «Комбинат ЖБК»"
 COMPANY_ADDRESS = "150020, г Ярославль г, проезд Домостроителей, дом 1, строение 3"
 COMPANY_PHONE = "8 (4852) 595 000"
 COMPANY_EMAIL = "info@zhbk.ru"
 
-# Путь к базе данных с ценами (абсолютный)
-DB_PATH = os.path.join(PROJECT_ROOT, "pb.db")
-
 logger = logging.getLogger(__name__)
 
 try:
-    from core.project_paths import resolve_commercial_offer_logo_path
+    from core.project_paths import PRICE_DB_PATH, resolve_commercial_offer_logo_path
 except ImportError:
-    from project_paths import resolve_commercial_offer_logo_path
+    from project_paths import PRICE_DB_PATH, resolve_commercial_offer_logo_path
+
+# Путь к базе данных с ценами: PRICE_DB_PATH env, иначе PB_DB_PATH, иначе PROJECT_ROOT/pb.db
+DB_PATH = str(PRICE_DB_PATH)
 
 # Коэффициент скидки в процентах (0 = без скидки, 5 = скидка 5%, и т.д.)
 DISCOUNT_PERCENT = 0
