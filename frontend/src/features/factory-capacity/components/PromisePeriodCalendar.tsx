@@ -198,7 +198,7 @@ export const PromisePeriodCalendar = ({
                 const off = isNonWorking(iso, holidaySet, extraSet);
                 const yellow = isPourDay(iso, pourFrom, pourToSunday);
                 const occupied = occupancy[iso] ?? 0;
-                const overflow = Boolean(knob) && occupied > knob;
+                const overflow = knob != null && knob > 0 && occupied > knob;
                 const isPromised = promisedDate === iso;
                 const isStart = firstPourDate === iso;
                 const dayNum = Number(iso.slice(8, 10));
