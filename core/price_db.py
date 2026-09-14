@@ -9,6 +9,8 @@ try:
 except Exception:
     pd = None
 
+from core.project_paths import PRICE_DB_PATH
+
 PlatePriceRow = Tuple[int, int, float]
 
 
@@ -21,8 +23,8 @@ def length_m_to_price_length_dm(length_m: float) -> int:
     return int(math.ceil(round(float(length_m) * 10.0, 12)))
 
 
-# Путь к базе данных в корне проекта (на уровень выше core/)
-DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'pb.db')
+# Путь к базе данных: PRICE_DB_PATH env, иначе PB_DB_PATH, иначе PROJECT_ROOT/pb.db
+DEFAULT_DB = str(PRICE_DB_PATH)
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
