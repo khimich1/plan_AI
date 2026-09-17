@@ -88,22 +88,43 @@ describe("ClientConditionsStep", () => {
     expect(screen.getByRole("combobox", { name: /менеджер/i })).toBeInTheDocument();
   });
 
-  it("keeps calculate disabled when the client field has text but no directory choice", async () => {
+  it("submits typed name without a directory choice", async () => {
     mockUseAuth.mockReturnValue({
       user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
     });
-    searchCounterparties.mockResolvedValue({ items: [ROMA], count: 1 });
+    searchCounterparties.mockResolvedValue({ items: [], count: 0 });
+    const onSubmit = vi.fn();
 
-    wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} />);
+    wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} onSubmit={onSubmit} />);
 
     fireEvent.change(screen.getByRole("combobox", { name: /клиент/i }), {
-      target: { value: "ООО Рома" },
+      target: { value: "ИП Петров" },
     });
 
     const submit = screen.getByRole("button", { name: /Рассчитать КП/i });
-    expect(submit).toBeDisabled();
+    expect(submit).toBeEnabled();
     fireEvent.click(submit);
-    expect(defaultProps.onSubmit).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          managerId: 10,
+          clientName: "ИП Петров",
+          counterpartyId: null,
+        }),
+      );
+    });
+  });
+
+  it("shows archive-vs-production hint on the client field", () => {
+    mockUseAuth.mockReturnValue({
+      user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
+    });
+
+    wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} />);
+
+    expect(
+      screen.getByText(/Без карточки 1С можно сохранить в архив; в производство — только после привязки контрагента/),
+    ).toBeInTheDocument();
   });
 
   it("submits the chosen counterparty and shows requisites card", async () => {

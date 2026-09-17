@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from core.bridge_pile_line_parser import parse_bridge_pile_line
 from core.fbs_line_parser import parse_fbs_line
+from core.line_prepare import prepare_source_line
 from core.march_line_parser import parse_march_line
 from core.pile_line_parser import parse_pile_line
 from core.plate_line_parser import parse_line
@@ -65,13 +66,14 @@ def lint_source_lines(text: str, product_type: str) -> list[LineLint]:
         if not raw.strip():
             results.append(LineLint(index=index, text=raw, empty=True, ok=True, reason_text=None))
             continue
+        prepared = prepare_source_line(raw, product_type)
         if product_type == "plates":
-            ok, reason = _lint_plate_line(raw)
+            ok, reason = _lint_plate_line(prepared)
         else:
             linter = _GENERIC_LINTERS.get(product_type)
             if linter is None:
                 raise ValueError(f"Unsupported product_type: {product_type}")
-            ok, reason = linter(raw)
+            ok, reason = linter(prepared)
         results.append(LineLint(index=index, text=raw, empty=False, ok=ok, reason_text=None if ok else reason))
     return results
 

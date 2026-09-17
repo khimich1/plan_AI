@@ -37,7 +37,7 @@ type ClientConditionsStepProps = {
   onSubmit: (payload: {
     managerId: number;
     clientName: string;
-    counterpartyId: number;
+    counterpartyId: number | null;
     counterpartyCode1c: string;
     counterpartyInn: string | null;
     counterpartyKpp: string | null;
@@ -49,7 +49,7 @@ type ClientConditionsStepProps = {
 
 type ClientConditionsFormValues = {
   clientName: string;
-  counterpartyId: number;
+  counterpartyId: number | null;
   conditionsMode: ConditionsMode;
   deliveryConditions: string;
   paymentConditions: string;
@@ -92,14 +92,14 @@ export const ClientConditionsStep = ({
     resolver: zodResolver(clientConditionsSchema),
     defaultValues: {
       ...defaultValues,
-      counterpartyId: defaultValues.counterpartyId ?? 0,
+      counterpartyId: defaultValues.counterpartyId ?? null,
     },
   });
 
   useEffect(() => {
     form.reset({
       ...defaultValues,
-      counterpartyId: defaultValues.counterpartyId ?? 0,
+      counterpartyId: defaultValues.counterpartyId ?? null,
     });
     setSelected(selectedFromDefaults(defaultValues));
   }, [defaultValues, form]);
@@ -112,24 +112,27 @@ export const ClientConditionsStep = ({
   }, [hasDefaultManager, onManagerChange, profileManagerId, selectedManagerId]);
 
   const conditionsMode = form.watch("conditionsMode");
-  const counterpartyId = form.watch("counterpartyId");
+  const clientName = form.watch("clientName");
   const effectiveManagerId = selectedManagerId ?? (hasDefaultManager ? profileManagerId : null);
   const selectedManager = managers.find((manager) => manager.id === effectiveManagerId) ?? null;
-  const canSubmit = Boolean(effectiveManagerId) && counterpartyId > 0 && !isPending;
+  const canSubmit = Boolean(effectiveManagerId) && clientName.trim().length > 0 && !isPending;
 
   const handleSelect = (item: CounterpartyShort | null) => {
     setSelected(item);
-    form.setValue("counterpartyId", item?.id ?? 0, { shouldValidate: true, shouldDirty: true });
-    form.setValue("clientName", item?.name ?? "", { shouldValidate: true, shouldDirty: true });
+    form.setValue("counterpartyId", item?.id ?? null, { shouldValidate: true, shouldDirty: true });
+    if (item) {
+      form.setValue("clientName", item.name, { shouldValidate: true, shouldDirty: true });
+    }
   };
 
   const handleSubmit = form.handleSubmit((payload) => {
-    if (!effectiveManagerId || payload.counterpartyId < 1) {
+    if (!effectiveManagerId || !payload.clientName.trim()) {
       return;
     }
     onSubmit({
       managerId: effectiveManagerId,
       ...payload,
+      counterpartyId: payload.counterpartyId && payload.counterpartyId > 0 ? payload.counterpartyId : null,
       counterpartyCode1c: selected?.code_1c ?? "",
       counterpartyInn: selected?.inn ?? null,
       counterpartyKpp: selected?.kpp ?? null,
@@ -213,10 +216,19 @@ export const ClientConditionsStep = ({
 
       <Card title="Основные данные">
         <div style={{ display: "grid", gap: "1rem" }}>
-          <FieldWrapper label="Клиент" error={form.formState.errors.counterpartyId?.message ?? form.formState.errors.clientName?.message}>
+          <FieldWrapper
+            label="Клиент"
+            hint="Без карточки 1С можно сохранить в архив; в производство — только после привязки контрагента."
+            error={form.formState.errors.clientName?.message}
+          >
             <CounterpartyAutocomplete
+              key={`${defaultValues.counterpartyId ?? "none"}:${defaultValues.clientName}`}
               selected={selected}
+              initialName={defaultValues.clientName}
               onSelect={handleSelect}
+              onTextChange={(value) => {
+                form.setValue("clientName", value, { shouldValidate: true, shouldDirty: true });
+              }}
               placeholder="Начните вводить название или ИНН"
             />
           </FieldWrapper>

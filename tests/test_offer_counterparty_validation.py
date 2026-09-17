@@ -7,14 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
 from app.repositories.counterparties_repository import CounterpartiesRepository
 from app.repositories.kp_repository import KpRepository
 from app.schemas.offers import CreateOfferRequest, OfferOrderItem
 from app.services.commercial_workflow_service import CommercialWorkflowService
 from app.services.counterparties_service import (
-    CounterpartiesService,
     CounterpartyValidationError,
 )
 from app.services.offers_service import OffersService
@@ -77,9 +75,36 @@ def _payload(**overrides: Any) -> CreateOfferRequest:
     return CreateOfferRequest.model_validate(data)
 
 
-def test_create_offer_request_requires_counterparty_id() -> None:
-    with pytest.raises(ValidationError):
-        _payload()
+def test_create_offer_request_allows_missing_counterparty_id() -> None:
+    payload = _payload()
+    assert payload.counterparty_id is None
+    assert payload.customer_name == "Имя из формы"
+
+
+def test_create_offer_archive_without_id_keeps_form_name(tmp_path: Path) -> None:
+    db = fx.make_iso_db(tmp_path)
+    service = OffersService(kp_repository=KpRepository(db_path=db))
+    created = service.create_offer(_payload(), user=_USER)
+    kp_id = int(created["kp_id"])
+    with sqlite3.connect(db) as conn:
+        row = conn.execute(
+            "SELECT customer_name, counterparty_id, customer_inn, customer_kpp, "
+            "(SELECT status FROM kp_meta WHERE kp_id = KP_offers.kp_id) "
+            "FROM KP_offers WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchone()
+    assert row[0] == "Имя из формы"
+    assert row[1] is None
+    assert row[2] is None
+    assert row[3] is None
+    assert row[4] == "в архиве"
+
+
+def test_create_offer_work_without_id_raises(tmp_path: Path) -> None:
+    db = fx.make_iso_db(tmp_path)
+    service = OffersService(kp_repository=KpRepository(db_path=db))
+    with pytest.raises(CounterpartyValidationError, match="не найден"):
+        service.create_offer(_payload(save_mode="work"), user=_USER)
 
 
 def test_create_offer_snapshots_name_from_directory_not_form(tmp_path: Path) -> None:
@@ -169,6 +194,28 @@ def test_post_offers_without_counterparty_id_is_422(
         cookies=session_cookie(1, "admin", "admin"),
     )
     assert response.status_code == 422
+    assert "не найден" in str(response.json()["detail"])
+
+    archive = client.post(
+        "/api/v1/offers",
+        json={
+            "creation_date": "01.01.2026",
+            "customer_name": "ИП Петров",
+            "manager_name": "Иванов",
+            "save_mode": "archive",
+            "order_data": _ORDER,
+        },
+        cookies=session_cookie(1, "admin", "admin"),
+    )
+    assert archive.status_code == 200
+    kp_id = int(archive.json()["kp_id"])
+    with sqlite3.connect(db) as conn:
+        row = conn.execute(
+            "SELECT customer_name, counterparty_id FROM KP_offers WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchone()
+    assert row[0] == "ИП Петров"
+    assert row[1] is None
 
 
 def _draft(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -230,24 +277,85 @@ def _patch_save(workflow: CommercialWorkflowService, monkeypatch: pytest.MonkeyP
     return captured
 
 
-def test_draft_save_create_requires_valid_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_draft_save_create_without_id_uses_typed_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     db = fx.make_iso_db(tmp_path)
-    seeded = _seed_clients(db)
     workflow = CommercialWorkflowService()
     workflow.kp_repository = KpRepository(db_path=db)
     captured = _patch_save(workflow, monkeypatch, tmp_path)
     draft = _draft({"client_name": "Имя из формы", "manager_name": "Иванов"})
     monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
 
-    with pytest.raises(CounterpartyValidationError, match="не найден"):
+    result = workflow.save_offer("draft-cp", status="в архиве", save_mode="archive")
+    assert result["saved_offer"]["kp_id"] == 10
+    assert captured["create"][0]["customer_name"] == "Имя из формы"
+    assert captured["create"][0]["counterparty_id"] is None
+    assert captured["create"][0]["customer_inn"] is None
+    assert captured["create"][0]["customer_kpp"] is None
+
+
+def test_draft_save_create_empty_name_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = fx.make_iso_db(tmp_path)
+    workflow = CommercialWorkflowService()
+    workflow.kp_repository = KpRepository(db_path=db)
+    _patch_save(workflow, monkeypatch, tmp_path)
+    draft = _draft({"client_name": "   ", "manager_name": "Иванов"})
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
+    with pytest.raises(ValueError, match="Укажите имя клиента"):
         workflow.save_offer("draft-cp", status="в архиве", save_mode="archive")
 
-    draft["metadata"]["counterparty_id"] = int(seeded["client"]["id"])
+
+def test_draft_save_create_with_id_snapshots_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = fx.make_iso_db(tmp_path)
+    seeded = _seed_clients(db)
+    workflow = CommercialWorkflowService()
+    workflow.kp_repository = KpRepository(db_path=db)
+    captured = _patch_save(workflow, monkeypatch, tmp_path)
+    draft = _draft(
+        {
+            "client_name": "Имя из формы",
+            "manager_name": "Иванов",
+            "counterparty_id": int(seeded["client"]["id"]),
+        }
+    )
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
     result = workflow.save_offer("draft-cp", status="в архиве", save_mode="archive")
     assert result["saved_offer"]["kp_id"] == 10
     assert captured["create"][0]["customer_name"] == "РОМАШКА ООО"
     assert captured["create"][0]["counterparty_id"] == seeded["client"]["id"]
     assert captured["create"][0]["customer_inn"] == "7701000001"
+
+
+@pytest.mark.parametrize(
+    ("seed_key", "needle"),
+    [
+        ("supplier", "не отмечен как клиент"),
+        ("inactive", "не найден"),
+    ],
+)
+def test_draft_save_create_rejects_non_client_and_inactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seed_key: str, needle: str
+) -> None:
+    db = fx.make_iso_db(tmp_path)
+    seeded = _seed_clients(db)
+    workflow = CommercialWorkflowService()
+    workflow.kp_repository = KpRepository(db_path=db)
+    _patch_save(workflow, monkeypatch, tmp_path)
+    draft = _draft(
+        {
+            "client_name": "Имя из формы",
+            "manager_name": "Иванов",
+            "counterparty_id": int(seeded[seed_key]["id"]),
+        }
+    )
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
+    with pytest.raises(CounterpartyValidationError, match=needle):
+        workflow.save_offer("draft-cp", status="в архиве", save_mode="archive")
 
 
 def test_draft_save_archive_update_skips_counterparty(
@@ -300,4 +408,5 @@ def test_update_draft_meta_validates_when_id_passed(
 
     updates.clear()
     workflow.update_draft_meta("draft-cp", client_name="пока без привязки")
-    assert "counterparty_id" not in updates
+    assert updates["client_name"] == "пока без привязки"
+    assert updates["counterparty_id"] is None

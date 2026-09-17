@@ -195,3 +195,61 @@ def test_upsert_idempotent_updates_without_duplicates(tmp_path: Path) -> None:
     assert resolve_product_weight_kg("ФБС 9.3.6-Т", "fbs", db_path) == pytest.approx(
         350.0
     )
+
+
+def test_universal_report_weights_guid_then_name_skips_manual(tmp_path: Path) -> None:
+    from core.product_weight_catalog import (
+        apply_universal_report_weights,
+        ensure_product_weight_schema,
+        resolve_product_weight_kg,
+    )
+    from core.universal_report_1c_parser import UniversalReportRow
+
+    db_path = str(tmp_path / "plita.db")
+    ensure_product_weight_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO product_weight_catalog (
+                mark_norm, product_type, weight_kg, volume_m3,
+                display_name, source_file, imported_at, guid_1c, origin
+            ) VALUES (?, 'fbs', 999, 0.1, 'ручной', '', '', NULL, 'manual')
+            """,
+            ("ФБC9.3.6-T",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    written, skipped = apply_universal_report_weights(
+        db_path,
+        [
+            UniversalReportRow(
+                guid="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                code="00-1",
+                name="Блоки ФБС 9.3.6-Т",
+                qty=None,
+                weight=350.0,
+                volume=0.146,
+                price=None,
+                source_file="report.xlsx",
+                row_index=9,
+            ),
+            UniversalReportRow(
+                guid="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                code="00-2",
+                name="Лестничные площадки 2ЛП25.12-4-к",
+                qty=None,
+                weight=1160.0,
+                volume=0.464,
+                price=None,
+                source_file="report.xlsx",
+                row_index=10,
+            ),
+        ],
+    )
+    assert written == 0
+    assert skipped == 1
+    assert resolve_product_weight_kg("ФБС 9.3.6-Т", "fbs", db_path) == pytest.approx(999.0)
+

@@ -306,7 +306,7 @@ export const useCommercialOfferWizard = () => {
     }: {
       draftId: string;
       lineId: string;
-      payload: { qty?: number; source_text?: string };
+      payload: { qty?: number; source_text?: string; unit_price?: number | null };
     }) => commercialOfferApi.patchDraftLine(draftId, lineId, payload),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);

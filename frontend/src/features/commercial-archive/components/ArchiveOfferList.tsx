@@ -199,6 +199,21 @@ export const ArchiveOfferList = ({
                     {holdBadgeLabel(holds.get(item.kp_id)?.promised_date)}
                   </span>
                 )}
+                {item.counterparty_id == null && (
+                  <span
+                    data-testid="no-1c-badge"
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: 999,
+                      background: "#fff6ed",
+                      color: "#b54708",
+                    }}
+                  >
+                    нет 1С
+                  </span>
+                )}
               </div>
               <div style={{ color: "#101828", fontWeight: 600 }}>{formatMoney(item.total_amount)}</div>
             </div>

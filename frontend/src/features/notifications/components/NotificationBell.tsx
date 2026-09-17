@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router";
 import {
-  archiveHrefForNotification,
   formatNotificationTitle,
+  hrefForNotification,
   useMarkNotificationReadMutation,
   useNotificationsQuery,
   type NotificationItem,
@@ -136,7 +136,7 @@ export const NotificationBell = () => {
       markRead.mutate(item.id);
     }
     setOpen(false);
-    const href = archiveHrefForNotification(item);
+    const href = hrefForNotification(item);
     if (href) {
       navigate(href);
     }

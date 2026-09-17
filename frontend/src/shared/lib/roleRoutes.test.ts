@@ -20,6 +20,10 @@ describe("defaultRouteForRole", () => {
     expect(defaultRouteForRole("accountant")).toBe("/gsm");
   });
 
+  it("sends economist users to /prices", () => {
+    expect(defaultRouteForRole("economist")).toBe("/prices");
+  });
+
   it("falls back to /new for unknown roles", () => {
     expect(defaultRouteForRole(undefined)).toBe("/new");
     expect(defaultRouteForRole("guest")).toBe("/new");
@@ -74,6 +78,20 @@ describe("canAccessRoute", () => {
     expect(canAccessRoute("production", "/gsm")).toBe(false);
     expect(canAccessRoute("logistics", "/gsm")).toBe(false);
     expect(canAccessRoute(undefined, "/gsm")).toBe(false);
+  });
+
+  it("allows admin and economist on prices route", () => {
+    expect(canAccessRoute("admin", "/prices")).toBe(true);
+    expect(canAccessRoute("economist", "/prices")).toBe(true);
+  });
+
+  it("denies manager, accountant and production on prices route", () => {
+    expect(canAccessRoute("manager", "/prices")).toBe(false);
+    expect(canAccessRoute("accountant", "/prices")).toBe(false);
+    expect(canAccessRoute("production", "/prices")).toBe(false);
+    expect(canAccessRoute("economist", "/new")).toBe(false);
+    expect(canAccessRoute("economist", "/gsm")).toBe(false);
+    expect(canAccessRoute(undefined, "/prices")).toBe(false);
   });
 
   it("normalizes paths without a leading slash", () => {

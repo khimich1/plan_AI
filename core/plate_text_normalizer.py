@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from .plate_line_parser import match_bare_plate_line, parse_line
+from .line_prepare import prepare_source_line
 
 if TYPE_CHECKING:
     from .dobor_split import DoborPair
@@ -248,8 +249,9 @@ def canonicalize_plate_line(line: str) -> Tuple[str, Optional[str]]:
     if not stripped:
         return stripped, None
 
-    # Базовая чистка: тире, умножение, неразрывные пробелы
-    cleaned = basic_text_cleanup(stripped)
+    cleaned = prepare_source_line(stripped, "plates")
+    # Базовая чистка: умножение (NBSP/тире уже в prepare)
+    cleaned = basic_text_cleanup(cleaned)
     # Исправляем OCR-ошибки в префиксе и добавляем пробел
     cleaned = normalize_plate_prefixes(cleaned)
 

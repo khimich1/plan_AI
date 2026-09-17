@@ -66,6 +66,49 @@ def test_empty_and_whitespace_lines_are_ok() -> None:
     assert by_index[3].empty is False
 
 
+@pytest.mark.parametrize(
+    ("product_type", "raw"),
+    [
+        ("bridge_piles", "C14-35T7 80 шт"),
+        ("bridge_piles", "C14-35T7 80шт"),
+        ("bridge_piles", "C 14.35-T7 80 шт"),
+        ("plates", "ПБ 78-12-8п 5шт"),
+        ("piles", "С120.35-12 5шт"),
+        ("piles", "С110.30-9у"),
+        ("piles", "C 110.30-9у"),
+        ("piles", "С120.35-13и"),
+        ("piles", "С110.30-6у"),
+        ("fbs", "ФБС 9.3.6-Т 2шт"),
+        ("steps", "ЛС11 2шт"),
+        ("marches", "1ЛМ 27-11-14-4 2шт"),
+    ],
+)
+def test_lint_prepare_makes_dirty_qty_ok(product_type: ProductType, raw: str) -> None:
+    lines = lint_source_lines(raw, product_type)
+    assert len(lines) == 1
+    assert lines[0].ok is True
+    assert lines[0].text == raw
+
+
+def test_lint_bridge_gost_without_class_not_ok() -> None:
+    lines = lint_source_lines("C 14.35 80", "bridge_piles")
+    assert lines[0].ok is False
+    assert lines[0].text == "C 14.35 80"
+
+
+def test_lint_bridge_mark_on_plates_not_ok() -> None:
+    raw = "C14-35T7 80шт"
+    lines = lint_source_lines(raw, "plates")
+    assert lines[0].ok is False
+    assert lines[0].text == raw
+
+
+def test_lint_slash_plate_still_not_ok() -> None:
+    lines = lint_source_lines("ПБ 40,3/2,6-8п", "plates")
+    assert lines[0].ok is False
+    assert lines[0].text == "ПБ 40,3/2,6-8п"
+
+
 def test_lint_module_does_not_call_preview_optimize_or_draft_store() -> None:
     import ast
 

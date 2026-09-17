@@ -25,6 +25,7 @@ from app.schemas.archive import (
     ArchiveProductTypeFilter,
     ArchiveSearchResponse,
     ArchiveSection,
+    BindCounterpartyRequest,
     CapacitySnapshotResponse,
     KpReadinessPositionsResponse,
     MoveToProductionRequest,
@@ -252,6 +253,29 @@ def update_archive_discount(
             exc,
             where="archive.download_archive_document",
             detail=MSG_VALIDATION,
+        )
+
+
+@router.patch("/{kp_id}/counterparty", response_model=ArchiveOfferDetails)
+def bind_archive_counterparty(
+    kp_id: int,
+    payload: BindCounterpartyRequest,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> ArchiveOfferDetails:
+    try:
+        return service.bind_counterparty(kp_id, payload.counterparty_id, user=user)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.bind_counterparty",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.bind_counterparty",
+            detail=str(exc) or MSG_VALIDATION,
         )
 
 

@@ -8,10 +8,7 @@ import re
 from dataclasses import dataclass, field
 
 from core.step_price_db import extract_step_mark, normalize_step_mark
-
-_DASH_CHARS = "–—‒−"
-
-_STRIP_SHT_RE = re.compile(r"\s+шт\.?\b", re.IGNORECASE | re.UNICODE)
+from core.line_prepare import prepare_source_line
 
 # «Лестничные ступени ЛС11 10» → keep mark + qty
 _FULL_NAME_PREFIX_RE = re.compile(
@@ -26,22 +23,9 @@ class StepNormalizeResult:
     normalized_lines: list[str] = field(default_factory=list)
 
 
-def _basic_cleanup(line: str) -> str:
-    text = line.replace("\u00a0", " ")
-    for ch in _DASH_CHARS:
-        text = text.replace(ch, "-")
-    text = re.sub(r"\s{2,}", " ", text)
-    return text.strip()
-
-
-def _strip_sht_suffix(line: str) -> str:
-    return _STRIP_SHT_RE.sub("", line).strip()
-
-
 def _normalize_line(line: str) -> str:
-    cleaned = _basic_cleanup(line)
+    cleaned = prepare_source_line(line, "steps")
     cleaned = _FULL_NAME_PREFIX_RE.sub("", cleaned)
-    cleaned = _strip_sht_suffix(cleaned)
     mark = extract_step_mark(cleaned)
     if mark:
         # Rebuild as «MARK qty…» with normalized mark

@@ -12,6 +12,7 @@ from app.services.archive_service import (
     ArchiveService,
     ArchiveValidationError,
 )
+from app.services.counterparties_service import CounterpartyValidationError
 from core.cargo_delivery_pricing import (
     delivery_service_charge_rub,
     total_order_cargo_weight_kg,
@@ -19,6 +20,19 @@ from core.cargo_delivery_pricing import (
 from core.kp_plate_weight import resolve_kp_line_weight_kg
 
 ADMIN = {"id": 1, "role": "admin"}
+
+
+@pytest.fixture(autouse=True)
+def _allow_active_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _require(self, cid):  # noqa: ANN001
+        if cid is None:
+            raise CounterpartyValidationError("Контрагент не найден в справочнике")
+        return {"id": int(cid), "name": "ООО Тест", "inn": None, "kpp": None}
+
+    monkeypatch.setattr(
+        "app.services.archive_service.CounterpartiesService.require_active_client",
+        _require,
+    )
 
 
 def _make_raw(**overrides: Any) -> dict:
@@ -37,6 +51,7 @@ def _make_raw(**overrides: Any) -> dict:
         "execution_terms": "",
         "status": "в архиве",
         "owner_user_id": 1,
+        "counterparty_id": 15,
         "plates": [
             {
                 "position_number": 1,
@@ -91,6 +106,7 @@ def test_list_offers_for_archived_skips_completion(tmp_path: Path) -> None:
     assert len(items) == 1
     assert items[0].kp_id == 42
     assert items[0].product_type == "plates"
+    assert items[0].counterparty_id == 15
     assert items[0].completion_percentage is None
     repository.get_completion_percentage.assert_not_called()
     repository.list_by_section.assert_called_once_with("archived", product_type="all")
@@ -296,6 +312,16 @@ def test_update_logistics_cost_calls_repository_and_returns_details(tmp_path: Pa
     assert details.logistics_cost == 100.0
     assert details.finance.total_amount == 750.0
     assert details.delivery_service_total_rub == pytest.approx(100.0)
+
+
+def test_move_to_production_requires_active_client(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.return_value = _make_raw(status="в архиве", counterparty_id=None)
+    service = _make_service(repository, tmp_path)
+
+    with pytest.raises(ArchiveValidationError, match="не найден"):
+        service.move_to_production(42, "5 дней", user=ADMIN)
+    repository.update_status.assert_not_called()
 
 
 def test_move_to_production_requires_archived_status(tmp_path: Path) -> None:

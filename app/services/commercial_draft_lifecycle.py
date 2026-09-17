@@ -7,6 +7,7 @@ Host is duck-typed (``CommercialWorkflowService`` instance).
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any, Iterable
 
@@ -24,6 +25,27 @@ from core.plate_order_context import PlateOrderContext
 
 _PRODUCT_TYPE_TO_WIZARD_STEP = {key: spec.wizard_step for key, spec in SPECS.items()}
 logger = logging.getLogger(__name__)
+
+_ONEOFF_PRICE_MAX = 10_000_000.0
+_PRICE_SOURCE_ONEOFF = "oneoff"
+_MSG_CATALOG_PRICE_LOCKED = "Цена из прайса. Для изменения используйте скидку."
+_MSG_ONEOFF_WITH_SOURCE = "Нельзя задать договорную цену вместе со сменой марки."
+_MSG_ONEOFF_SEALED = "Нельзя изменить цену у добавленной ранее позиции."
+_MSG_ONEOFF_INVALID = "Цена должна быть больше нуля."
+_MSG_ONEOFF_TOO_LARGE = "Цена не может превышать 10 000 000."
+_MSG_ONEOFF_CLEAR_ONLY = "Сбросить можно только договорную цену."
+_MSG_PATCH_EMPTY = "Укажите количество, текст строки или цену."
+_MSG_EMPTY_CLIENT_NAME = "Укажите имя клиента."
+
+
+def _optional_counterparty_id(raw: Any) -> int | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 1 else None
 
 
 def recalc_promise_after_edit(db_path: str, kp_id: int) -> None:
@@ -320,16 +342,20 @@ class CommercialDraftLifecycle:
         qty: int | None = None,
         source_text: str | None = None,
         plate_order_ctx: PlateOrderContext | None = None,
+        unit_price: float | None = None,
+        unit_price_set: bool = False,
     ) -> dict[str, Any]:
-        """Update qty in place, or replace the line with fragment preview of source_text."""
+        """Update qty in place, replace from source_text, or set oneoff unit_price."""
         target_id = (line_id or "").strip()
         if not target_id:
             raise ValueError("Не указан идентификатор строки.")
         text = (source_text or "").strip() if source_text is not None else None
-        if qty is None and not text:
-            raise ValueError("Укажите количество или текст строки.")
+        if qty is None and not text and not unit_price_set:
+            raise ValueError(_MSG_PATCH_EMPTY)
         if qty is not None and int(qty) < 1:
             raise ValueError("Количество должно быть больше нуля.")
+        if unit_price_set and text:
+            raise ValueError(_MSG_ONEOFF_WITH_SOURCE)
 
         payload = self._wf._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata") or {})
@@ -358,7 +384,10 @@ class CommercialDraftLifecycle:
                 plate_order_ctx=plate_order_ctx,
             )
         else:
-            self._apply_qty_to_line(order_data[index], int(qty))
+            if qty is not None:
+                self._apply_qty_to_line(order_data[index], int(qty))
+            if unit_price_set:
+                self._apply_oneoff_unit_price(order_data[index], unit_price)
 
         _invalidate_breakdown(metadata)
         self.persist_order_and_metadata(
@@ -489,6 +518,35 @@ class CommercialDraftLifecycle:
         elif old_qty > 0 and line.get("weight") is not None:
             line["weight"] = float(line["weight"]) / old_qty * qty
 
+    @staticmethod
+    def _apply_oneoff_unit_price(line: dict[str, Any], unit_price: float | None) -> None:
+        sealed = bool(str(line.get("append_batch_id") or "").strip())
+        if sealed:
+            raise ValueError(_MSG_ONEOFF_SEALED)
+        current = line.get("unit_price")
+        is_oneoff = str(line.get("price_source") or "").strip() == _PRICE_SOURCE_ONEOFF
+        if unit_price is None:
+            if not is_oneoff:
+                raise ValueError(_MSG_ONEOFF_CLEAR_ONLY)
+            line["unit_price"] = None
+            line["line_total"] = None
+            line.pop("price_source", None)
+            return
+        if current is not None and not is_oneoff:
+            raise ValueError(_MSG_CATALOG_PRICE_LOCKED)
+        try:
+            price = float(unit_price)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(_MSG_ONEOFF_INVALID) from exc
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError(_MSG_ONEOFF_INVALID)
+        if price > _ONEOFF_PRICE_MAX:
+            raise ValueError(_MSG_ONEOFF_TOO_LARGE)
+        qty = float(line.get("qty") or 0)
+        line["unit_price"] = price
+        line["line_total"] = price * qty
+        line["price_source"] = _PRICE_SOURCE_ONEOFF
+
     def update_draft_meta(
         self,
         draft_id: str,
@@ -520,6 +578,7 @@ class CommercialDraftLifecycle:
             )
         if client_name is not None:
             updates["client_name"] = client_name.strip()
+            updates["counterparty_id"] = None
         if discount_percent is not None:
             if discount_percent < 0 or discount_percent > 100:
                 raise ValueError("Скидка должна быть в диапазоне от 0 до 100.")
@@ -911,12 +970,26 @@ class CommercialDraftLifecycle:
             # Keep archived status on update; do not flip to default «в работе».
             persist_status = existing_status
         else:
-            counterparty = CounterpartiesService(
-                db_path=self._wf.kp_repository.db_path
-            ).require_active_client(metadata.get("counterparty_id"))
+            counterparties = CounterpartiesService(db_path=self._wf.kp_repository.db_path)
+            counterparty_id = _optional_counterparty_id(metadata.get("counterparty_id"))
+            if counterparty_id is not None:
+                counterparty = counterparties.require_active_client(counterparty_id)
+                snap_name = str(counterparty["name"])
+                snap_id = int(counterparty["id"])
+                snap_inn = counterparty.get("inn")
+                snap_kpp = counterparty.get("kpp")
+            else:
+                if status == "в работе":
+                    counterparties.require_active_client(None)
+                snap_name = str(metadata.get("client_name", "") or "").strip()
+                if not snap_name:
+                    raise ValueError(_MSG_EMPTY_CLIENT_NAME)
+                snap_id = None
+                snap_inn = None
+                snap_kpp = None
             kp_id = self._wf.kp_repository.save_offer(
                 creation_date=datetime.now().strftime("%d.%m.%Y"),
-                customer_name=str(counterparty["name"]),
+                customer_name=snap_name,
                 manager_name=manager_name,
                 discount_percent=discount_percent,
                 logistics_cost=logistics_cost,
@@ -931,11 +1004,27 @@ class CommercialDraftLifecycle:
                 xlsx_path=None,
                 owner_user_id=owner_user_id,
                 product_type=product_type,
-                counterparty_id=int(counterparty["id"]),
-                customer_inn=counterparty.get("inn"),
-                customer_kpp=counterparty.get("kpp"),
+                counterparty_id=snap_id,
+                customer_inn=snap_inn,
+                customer_kpp=snap_kpp,
             )
             persist_status = status
+        if persist_status == "в архиве":
+            try:
+                from app.core.settings import get_settings
+                from app.services.kp_guid_notify import notify_kp_guid_missing
+
+                notify_kp_guid_missing(
+                    kp_id=int(kp_id),
+                    seq=int(kp_id),
+                    order_data=order_data,
+                    pb_db_path=str(get_settings().pb_db_path),
+                    plita_db_path=self._wf.kp_repository.db_path,
+                )
+            except Exception:
+                logger.exception(
+                    "Не удалось уведомить экономистов о GUID для КП №%s", kp_id
+                )
         saved_offer = {
             "kp_id": kp_id,
             "status": persist_status,

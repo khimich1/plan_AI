@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from core.fbs_line_parser import parse_fbs_line
+from core.line_prepare import prepare_candidate_qty_line
 
 _PARSER_REJECTED_ISSUE = "parser_rejected"
 _PARSER_REJECTED_CONFIDENCE_CAP = 0.5
@@ -15,7 +16,7 @@ _PARSER_REJECTED_CONFIDENCE_CAP = 0.5
 def _fbs_parse_input(item: Dict[str, Any]) -> str:
     candidate = (item.get("normalized_candidate") or item.get("raw_name") or "").strip()
     qty = int(item.get("qty", 1))
-    return f"{candidate} {qty}"
+    return prepare_candidate_qty_line(candidate, qty, "fbs")
 
 
 def apply_fbs_parser_gate(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

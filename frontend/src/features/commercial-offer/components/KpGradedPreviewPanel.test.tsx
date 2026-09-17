@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KpGradedPreviewPanel } from "@/features/commercial-offer/components/KpGradedPreviewPanel";
 import type { CommercialDraftDetails, ProductType } from "@/features/commercial-offer/types/commercialOffer";
@@ -342,5 +342,100 @@ describe("KpGradedPreviewPanel per-row available grades", () => {
     const select = screen.getByRole("combobox");
     const options = Array.from(select.querySelectorAll("option")).map((option) => option.getAttribute("value"));
     expect(options).toEqual(["B7_5", "B20", "B22_5", "B25"]);
+  });
+});
+
+describe("KpGradedPreviewPanel price catalog and oneoff", () => {
+  const unpricedDraft = (): CommercialDraftDetails =>
+    basePileDraft([
+      {
+        line_id: "ln_gap",
+        product_type: "piles",
+        mark: "C110.30-6",
+        name: "Свая C110.30-6",
+        qty: 2,
+        unit_price: null,
+        concrete_grade: "B25",
+      },
+    ]);
+
+  it("hides Прайс when every unsealed row is priced", () => {
+    render(
+      <KpGradedPreviewPanel
+        productType="piles"
+        draft={basePileDraft([
+          {
+            line_id: "ln1",
+            product_type: "piles",
+            mark: "С60.30",
+            name: "Свая С60.30",
+            qty: 2,
+            unit_price: 1000,
+            concrete_grade: "B25",
+          },
+        ])}
+        normalizedText=""
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Прайс" })).not.toBeInTheDocument();
+  });
+
+  it("opens the drawer with a pin for a missing mark", () => {
+    render(
+      <KpGradedPreviewPanel
+        productType="piles"
+        draft={unpricedDraft()}
+        normalizedText=""
+        catalogItems={[{ mark: "С110.30-9", concrete_grade: "B25", price: 27585.43 }]}
+        catalogQuery="C110"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Прайс" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("В этом КП нет в прайсе")).toBeInTheDocument();
+    expect(screen.getAllByText("C110.30-6").length).toBeGreaterThan(0);
+    expect(screen.getByText("С110.30-9")).toBeInTheDocument();
+  });
+
+  it("calls onSetOneoffPrice when the red cell is saved", () => {
+    const onSetOneoffPrice = vi.fn();
+    render(
+      <KpGradedPreviewPanel
+        productType="piles"
+        draft={unpricedDraft()}
+        normalizedText=""
+        onSetOneoffPrice={onSetOneoffPrice}
+      />,
+    );
+
+    expect(screen.getByText("нет в прайсе")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Договорная цена C110.30-6"), {
+      target: { value: "27585.43" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(onSetOneoffPrice).toHaveBeenCalledWith("ln_gap", 27585.43);
+  });
+
+  it("shows договорная and hides the unpriced alert after oneoff", () => {
+    const draft = unpricedDraft();
+    draft.order_data = [
+      {
+        line_id: "ln_gap",
+        product_type: "piles",
+        mark: "C110.30-6",
+        name: "Свая C110.30-6",
+        qty: 2,
+        unit_price: 27585.43,
+        price_source: "oneoff",
+        concrete_grade: "B25",
+      },
+    ];
+    render(<KpGradedPreviewPanel productType="piles" draft={draft} normalizedText="" />);
+
+    expect(screen.getByText("договорная")).toBeInTheDocument();
+    expect(screen.queryByText("нет в прайсе")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Прайс" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Не все марки найдены в прайсе/)).not.toBeInTheDocument();
   });
 });

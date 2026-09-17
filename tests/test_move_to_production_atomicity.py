@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 
 from core.kp import offers_write
-from tests.helpers.kp_db_fixtures import make_iso_db, seed_kp_offer, seed_plate
+from tests.helpers.kp_db_fixtures import make_iso_db, seed_kp_offer, seed_plate, seed_test_counterparty
 
 
 def _state(db_path: str, kp_id: int) -> dict:
@@ -110,6 +110,13 @@ def _seed_archived_with_plates(db_path: str, kp_id: int, qty: int = 4) -> None:
         qty=qty,
         status="в производстве",
     )
+    cid = seed_test_counterparty(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE KP_offers SET counterparty_id = ? WHERE kp_id = ?",
+            (cid, kp_id),
+        )
+        conn.commit()
 
 
 def test_archive_service_move_to_production_freezes_m(tmp_path) -> None:

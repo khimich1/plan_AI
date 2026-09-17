@@ -92,6 +92,18 @@ export const useUpdateDiscountMutation = () => {
   });
 };
 
+export const useBindCounterpartyMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kpId, counterpartyId }: { kpId: number; counterpartyId: number }) =>
+      archiveApi.bindCounterparty(kpId, counterpartyId),
+    onSuccess: (offer) => {
+      queryClient.setQueryData(archiveKeys.detail(offer.kp_id), offer);
+      queryClient.invalidateQueries({ queryKey: archiveKeys.all });
+    },
+  });
+};
+
 export const useUpdateLogisticsCostMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({

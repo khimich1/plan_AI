@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from core.line_prepare import prepare_candidate_qty_line
 from core.plate_line_parser import parse_line
 
 _PARSER_REJECTED_ISSUE = "parser_rejected"
@@ -20,7 +21,7 @@ def apply_parser_gate(plates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for plate in plates:
         candidate = (plate.get("normalized_candidate") or plate.get("raw_name") or "").strip()
         qty = int(plate.get("qty", 1))
-        result = parse_line(f"{candidate} {qty}")
+        result = parse_line(prepare_candidate_qty_line(candidate, qty, "plates"))
         if result.parsed:
             continue
 

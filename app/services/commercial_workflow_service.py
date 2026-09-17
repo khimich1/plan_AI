@@ -193,6 +193,8 @@ class CommercialWorkflowService:
         qty: int | None = None,
         source_text: str | None = None,
         plate_order_ctx: PlateOrderContext | None = None,
+        unit_price: float | None = None,
+        unit_price_set: bool = False,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.patch_order_line(
             draft_id,
@@ -200,6 +202,8 @@ class CommercialWorkflowService:
             qty=qty,
             source_text=source_text,
             plate_order_ctx=plate_order_ctx,
+            unit_price=unit_price,
+            unit_price_set=unit_price_set,
         )
 
     def restore_order_lines(

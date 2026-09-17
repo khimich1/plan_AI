@@ -10,6 +10,7 @@ import { ProductionPage } from "@/pages/production/ProductionPage";
 import { LogisticsPage } from "@/pages/logistics/LogisticsPage";
 import { LogisticsCarriersPage } from "@/pages/logistics/LogisticsCarriersPage";
 import { GsmPage } from "@/pages/gsm/GsmPage";
+import { PricesPage } from "@/pages/prices/PricesPage";
 import { defaultRouteForRole } from "@/shared/lib/roleRoutes";
 
 const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -40,6 +41,9 @@ export const AppRouter = () => (
           </Route>
           <Route element={<RequireRole allowedRoles={["admin", "accountant"]} />}>
             <Route path="gsm" element={<GsmPage />} />
+          </Route>
+          <Route element={<RequireRole allowedRoles={["admin", "economist"]} />}>
+            <Route path="prices" element={<PricesPage />} />
           </Route>
           <Route path="*" element={<RoleHomeRedirect />} />
         </Route>

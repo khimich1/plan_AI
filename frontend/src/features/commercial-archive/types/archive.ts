@@ -21,6 +21,7 @@ export type ArchiveOfferListItem = {
   product_type?: ProductType;
   /** Concrete types for multi badges (Q3); preferred over a single mixed product_type. */
   product_types?: ProductType[];
+  counterparty_id?: number | null;
   /** Optional: backend may omit — list badge skipped when absent. */
   has_delivery_schedule?: boolean;
 };
@@ -135,6 +136,7 @@ export type ArchiveOfferDetails = {
   customer_name: string | null;
   customer_inn?: string | null;
   customer_kpp?: string | null;
+  counterparty_id?: number | null;
   manager_name: string | null;
   status: string | null;
   execution_terms: string | null;

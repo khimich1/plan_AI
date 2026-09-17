@@ -29,9 +29,10 @@ from app.schemas.commercial import (
     CommercialOcrPageResponse, CommercialParseLine, CommercialParseRequest,
     CommercialPileGradesUpdateRequest,
     CommercialPreviewRequest, CommercialRestoreLinesRequest, CommercialSaveDraftRequest,
-    CommercialDraftLinePatchRequest, CommercialSaveOfferResponse,
+    CommercialDraftLinePatchRequest, CommercialPriceCatalogResponse, CommercialSaveOfferResponse,
     CommercialInvalidWidthsResolveRequest, CommercialUnpricedPlatesResolveRequest,
     CommercialWidePlatesResolveRequest,
+    GuidCheckResponse,
 )
 from app.services.commercial_draft_service import CommercialDraftService
 from app.services.commercial_line_lint import LineLint, lint_source_lines, unparsed_line_texts
@@ -74,6 +75,7 @@ def _raise_draft_http(
     unpriced: bool = False,
     validation: bool = True,
     ai_provider: bool = False,
+    client_detail: bool = False,
     not_found_detail: str = "Черновик не найден.",
 ) -> NoReturn:
     if not_found and isinstance(exc, FileNotFoundError):
@@ -87,6 +89,10 @@ def _raise_draft_http(
     if unpriced and isinstance(exc, UnpricedPlatesError):
         raise_unpriced_plates_error(exc, where=where)
     if validation and isinstance(exc, ValueError):
+        if client_detail:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
         raise_validation_client_error(exc, where=where, detail=str(exc))
     if ai_provider and is_ai_provider_error(exc):
         raise_ai_provider_unavailable_error(exc, where=where)
@@ -157,6 +163,22 @@ def _serialize_line_lint(line: LineLint) -> dict:
         ok=line.ok,
         reason_text=line.reason_text,
     ).model_dump()
+
+
+@router.get("/price-catalog", response_model=CommercialPriceCatalogResponse)
+def get_price_catalog(
+    product_type: str = Query(..., min_length=1),
+    q: str = Query(default=""),
+    _user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+) -> CommercialPriceCatalogResponse:
+    from core.price_catalog_query import list_price_catalog
+    from core.price_db import DEFAULT_DB
+
+    try:
+        items = list_price_catalog(product_type, q=q, db_path=DEFAULT_DB)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return CommercialPriceCatalogResponse.model_validate({"items": items})
 
 
 @router.post("/parse")
@@ -484,6 +506,10 @@ def patch_draft_line(
     plate_order_ctx: PlateOrderContext = Depends(get_plate_order_context),
     workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftDetailsResponse:
+    unit_price_kwargs: dict[str, Any] = {}
+    if "unit_price" in payload.model_fields_set:
+        unit_price_kwargs["unit_price"] = payload.unit_price
+        unit_price_kwargs["unit_price_set"] = True
     return _details(_sync_draft(
         "patch_draft_line",
         lambda: workflow.patch_order_line(
@@ -492,8 +518,10 @@ def patch_draft_line(
             qty=payload.qty,
             source_text=payload.source_text,
             plate_order_ctx=plate_order_ctx,
+            **unit_price_kwargs,
         ),
         plate_parse=True,
+        client_detail=True,
         not_found_detail="Строка не найдена.",
     ))
 
@@ -586,6 +614,41 @@ def download_generated_file(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return FileResponse(path=target_file, filename=target_file.name)
+
+@router.get("/drafts/{draft_id}/guid-check", response_model=GuidCheckResponse)
+def check_draft_guids(
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> GuidCheckResponse:
+    from app.core.settings import get_settings
+    from app.schemas.commercial import GuidCheckMissingItem
+    from core.guid_gate import check_invoice_guids, order_lines_from_order_data
+    import sqlite3
+
+    details = _sync_draft(
+        "check_draft_guids",
+        lambda: workflow.get_draft_details(draft_id),
+        validation=False,
+    )
+    order_data = details.get("order_data") or []
+    lines = order_lines_from_order_data(order_data)
+    conn = sqlite3.connect(str(get_settings().pb_db_path))
+    try:
+        report = check_invoice_guids(lines, conn)
+    finally:
+        conn.close()
+    return GuidCheckResponse(
+        missing=[
+            GuidCheckMissingItem(
+                product_kind=item.line.product_kind,
+                mark=item.line.mark,
+                reason=item.reason,
+                action_hint=item.action_hint,
+            )
+            for item in report.missing
+        ]
+    )
+
 
 @router.get("/drafts/{draft_id}", response_model=CommercialDraftDetailsResponse)
 def get_preview_draft(

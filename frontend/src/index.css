@@ -91,18 +91,26 @@ a {
 
 .app-nav {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.4rem;
   align-items: center;
+  flex: 1;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .app-nav__link {
+  appearance: none;
   text-decoration: none;
   font-weight: 600;
   font-size: 0.95rem;
   color: #344054;
-  padding: 0.55rem 0.9rem;
+  padding: 0.55rem 0.7rem;
   border-radius: 12px;
   border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
   transition: background 0.15s ease, border 0.15s ease, color 0.15s ease;
 }
 
@@ -124,11 +132,18 @@ a {
   color: #ffffff;
 }
 
+.app-header__tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 .app-header__user {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-left: 0.5rem;
+  margin-left: 0.25rem;
   padding-left: 0.75rem;
   border-left: 1px solid #e4e7ec;
 }

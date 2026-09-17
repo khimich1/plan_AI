@@ -151,6 +151,22 @@ def test_parse_lint_only_skips_full_plate_parse(
     assert "order" not in body
 
 
+def test_parse_keeps_original_text_when_prepare_is_needed(
+    client: TestClient, auth_cookie: dict[str, str]
+) -> None:
+    del auth_cookie
+    raw = "C14-35T7 80шт"
+    response = client.post(
+        "/api/v1/commercial/parse",
+        json={"text": raw, "product_type": "bridge_piles", "lint_only": True},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["lines"][0]["ok"] is True
+    assert body["lines"][0]["text"] == raw
+    assert body["unparsed_lines"] == []
+
+
 def test_parse_text_over_max_length_returns_422(client: TestClient, auth_cookie: dict[str, str]) -> None:
     del auth_cookie
     response = client.post(

@@ -2,7 +2,8 @@
 
 **Проект:** 1С:КА ↔ приложение «Шишов» · **Дата:** __________ · **Участники:** __________
 
-**Полное ТЗ:** [`1c-integration-tz-v2.md`](./1c-integration-tz-v2.md)
+**Полное ТЗ:** [`1c-integration-tz-v2.md`](./1c-integration-tz-v2.md)  
+**Пример JSON КП → 1С:** [`1c-kp-export-example.md`](./1c-kp-export-example.md) · файл [`1c-kp-export-example.json`](./1c-kp-export-example.json)
 
 ---
 

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from core.bridge_pile_line_parser import merge_bridge_pile_lines, parse_bridge_pile_line
+from core.bridge_pile_line_parser import (
+    merge_bridge_pile_lines,
+    parse_bridge_pile_line,
+    preserve_display_mark,
+)
 from core.bridge_pile_price_db import (
     list_available_grades,
     resolve_default_bridge_pile_grade,
@@ -11,6 +16,26 @@ from core.bridge_pile_price_db import (
 from core.bridge_pile_text_normalizer import normalize_bridge_pile_order_text
 from core.commercial_pricing import lookup_bridge_pile_price
 from core.exceptions import PriceNotFoundError
+from core.line_prepare import cleanup_source_line
+
+
+_BRIDGE_DISPLAY_MARK_RE = re.compile(
+    r"^("
+    r"[СC]\s*\d+\s*[.,]\s*\d+\s*-\s*[TТBВ]\s*\d+"
+    r"|"
+    r"[СC]\s*\d+\s*-\s*\d+\s*[TТBВ]\s*\d+"
+    r")",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def _bridge_display_mark(raw: str) -> str:
+    """Mark after shared cleanup only (no GOST rewrite)."""
+    cleaned = cleanup_source_line(raw)
+    match = _BRIDGE_DISPLAY_MARK_RE.match(cleaned)
+    if not match:
+        return ""
+    return preserve_display_mark(match.group(1))
 
 
 @dataclass
@@ -34,13 +59,23 @@ class CommercialBridgePileService:
         default_grade: str = "B25",
     ) -> CommercialBridgePilePreviewResult:
         normalized = normalize_bridge_pile_order_text(text)
-        raw_lines = normalized.normalized_lines or [
-            part.strip() for part in (text or "").splitlines() if part.strip()
+        source_lines = [
+            part.strip() for part in re.split(r"[\n;]+", text or "") if part.strip()
         ]
+        raw_lines = normalized.normalized_lines or source_lines
 
         parsed_lines = [
             parse_bridge_pile_line(line, default_grade=default_grade) for line in raw_lines
         ]
+        if len(source_lines) == len(parsed_lines):
+            with_display: list = []
+            for source, result in zip(source_lines, parsed_lines):
+                display = _bridge_display_mark(source)
+                if result.parsed and display:
+                    with_display.append(replace(result, mark=display))
+                else:
+                    with_display.append(result)
+            parsed_lines = with_display
         unparsed_lines = [
             raw_lines[idx]
             for idx, result in enumerate(parsed_lines)

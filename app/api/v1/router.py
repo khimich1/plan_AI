@@ -13,8 +13,10 @@ from app.api.v1.endpoints import (
     health,
     logistics,
     managers,
+    nomenclature,
     notifications,
     offers,
+    price_desk,
     production,
 )
 
@@ -31,5 +33,7 @@ router.include_router(production.router)
 router.include_router(logistics.router)
 router.include_router(gsm.router)
 router.include_router(admin.router)
+router.include_router(nomenclature.router)
+router.include_router(price_desk.router)
 router.include_router(notifications.router)
 

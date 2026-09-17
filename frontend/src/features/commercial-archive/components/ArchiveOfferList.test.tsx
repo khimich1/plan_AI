@@ -121,3 +121,23 @@ describe("ArchiveOfferList promise hold badge", () => {
     expect(screen.queryByTestId("promise-hold-badge")).not.toBeInTheDocument();
   });
 });
+
+describe("ArchiveOfferList нет 1С badge", () => {
+  it("shows the badge when counterparty_id is missing", () => {
+    render(
+      <ArchiveOfferList section="archived" items={[baseItem]} onSelect={vi.fn()} />,
+    );
+    expect(screen.getByTestId("no-1c-badge")).toHaveTextContent("нет 1С");
+  });
+
+  it("hides the badge when counterparty_id is set", () => {
+    render(
+      <ArchiveOfferList
+        section="archived"
+        items={[{ ...baseItem, counterparty_id: 9 }]}
+        onSelect={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("no-1c-badge")).not.toBeInTheDocument();
+  });
+});

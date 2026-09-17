@@ -86,6 +86,12 @@ def test_ensure_order_priced_bridge_raises(bridge_db: str) -> None:
     assert exc_info.value.positions == ["C9-99T1 (B25)"]
 
 
+def test_lookup_bridge_pile_gost_mark(bridge_db: str) -> None:
+    assert lookup_bridge_pile_price("C 8.35-T1", "B25", db_path=bridge_db) == pytest.approx(
+        35695.27, rel=1e-4
+    )
+
+
 def test_manager_typed_mark_label(bridge_db: str) -> None:
     """Position label keeps manager spelling (В not forced to T)."""
     unpriced = collect_unpriced_positions(

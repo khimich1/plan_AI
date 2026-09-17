@@ -13,6 +13,7 @@ const toneStyles = {
 
 export const Alert = ({ tone = "info", children }: AlertProps) => (
   <div
+    role={tone === "error" ? "alert" : undefined}
     style={{
       border: `1px solid ${toneStyles[tone].borderColor}`,
       background: toneStyles[tone].background,

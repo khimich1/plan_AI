@@ -125,6 +125,27 @@ def test_create_bridge_pile_draft_with_text(client: TestClient, auth_cookie: dic
         assert row.get("product_type") == "bridge_piles"
 
 
+def test_create_bridge_pile_draft_gost_sht_keeps_display(
+    client: TestClient, auth_cookie: dict[str, str]
+) -> None:
+    factory = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "bridge_piles", "text": "C8-35T1 2"},
+    )
+    gost = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "bridge_piles", "text": "C 8.35-T1 2 шт"},
+    )
+    assert gost.status_code == 200, gost.text
+    factory_row = factory.json()["order_data"][0]
+    row = gost.json()["order_data"][0]
+    assert row["qty"] == 2
+    assert row["unit_price"] == pytest.approx(factory_row["unit_price"], rel=1e-6)
+    assert "8.35" in row["mark"]
+    assert "T1" in row["mark"].upper().replace("Т", "T")
+    assert "8.35" in row["name"]
+
+
 def test_bulk_grade_skips_unavailable_with_warning(
     client: TestClient, auth_cookie: dict[str, str]
 ) -> None:

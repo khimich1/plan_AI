@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from core.line_prepare import prepare_candidate_qty_line
 from core.pile_line_parser import parse_pile_line
 
 _PARSER_REJECTED_ISSUE = "parser_rejected"
@@ -15,7 +16,7 @@ _PARSER_REJECTED_CONFIDENCE_CAP = 0.5
 def _pile_parse_input(pile: Dict[str, Any]) -> str:
     candidate = (pile.get("normalized_candidate") or pile.get("raw_name") or "").strip()
     qty = int(pile.get("qty", 1))
-    return f"{candidate} {qty}"
+    return prepare_candidate_qty_line(candidate, qty, "piles")
 
 
 def apply_pile_parser_gate(piles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

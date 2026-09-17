@@ -15,6 +15,7 @@ vi.mock("@/shared/api/httpClient", () => ({
   },
 }));
 
+const mockGet = httpClient.get as unknown as Mock;
 const mockPost = httpClient.post as unknown as Mock;
 const mockPatch = httpClient.patch as unknown as Mock;
 const mockDelete = httpClient.delete as unknown as Mock;
@@ -108,6 +109,26 @@ describe("commercialOfferApi append / undo / delete (MNA-501)", () => {
       JSON_HEADERS,
     );
     expect(result).toEqual(draftStub);
+  });
+
+  it("patchDraftLine sends unit_price null in JSON", async () => {
+    mockPatch.mockResolvedValue(draftStub);
+    await commercialOfferApi.patchDraftLine("draft-append-1", "ln_1", { unit_price: null });
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/api/v1/commercial/drafts/draft-append-1/lines/ln_1",
+      JSON.stringify({ unit_price: null }),
+      JSON_HEADERS,
+    );
+  });
+
+  it("getPriceCatalog GETs product_type and q", async () => {
+    mockGet.mockResolvedValue({
+      items: [{ mark: "С110.30-9", concrete_grade: "B25", price: 27585.43 }],
+    });
+    const result = await commercialOfferApi.getPriceCatalog({ productType: "piles", q: "C110" });
+    expect(mockGet).toHaveBeenCalledWith("/api/v1/commercial/price-catalog?product_type=piles&q=C110");
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.mark).toBe("С110.30-9");
   });
 
   it("restoreDraftLines POSTs /lines/restore", async () => {
@@ -211,5 +232,27 @@ describe("commercialOfferApi.updateGrades", () => {
       JSON_HEADERS,
     );
     expect(result).toEqual(draftStub);
+  });
+});
+
+describe("commercialOfferApi.checkGuids", () => {
+  it("GETs /drafts/{id}/guid-check", async () => {
+    const response = {
+      missing: [
+        {
+          product_kind: "pile",
+          mark: "С70.35-9у",
+          reason: "нет guid_1c_u для сваи «у»",
+          action_hint: "заведите карточку «у» в 1С и загрузите отчёт",
+        },
+      ],
+    };
+    mockGet.mockResolvedValue(response);
+
+    const result = await commercialOfferApi.checkGuids("draft-guid-1");
+
+    expect(mockGet).toHaveBeenCalledWith("/api/v1/commercial/drafts/draft-guid-1/guid-check");
+    expect(result.missing).toHaveLength(1);
+    expect(result.missing[0]?.mark).toBe("С70.35-9у");
   });
 });

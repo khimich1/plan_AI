@@ -338,10 +338,11 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
 
 
 class CommercialDraftLinePatchRequest(BaseModel):
-    """Partial update of one draft order line: qty and/or source_text (mark-as-in-list)."""
+    """Partial update of one draft order line: qty, source_text, and/or oneoff unit_price."""
 
     qty: int | None = None
     source_text: str | None = None
+    unit_price: float | None = None
 
 
 class CommercialRestoreLinesRequest(BaseModel):
@@ -408,6 +409,16 @@ class CommercialFbsGradesUpdateRequest(BaseModel):
     concrete_grade: str = Field(min_length=2)
 
 
+class CommercialPriceCatalogItem(BaseModel):
+    mark: str
+    concrete_grade: str | None = None
+    price: float
+
+
+class CommercialPriceCatalogResponse(BaseModel):
+    items: list[CommercialPriceCatalogItem] = Field(default_factory=list)
+
+
 class CommercialGenerateFilesRequest(BaseModel):
     file_types: list[CommercialFileKind] = Field(default_factory=lambda: ["pdf", "xlsx", "breakdown", "schema"])
 
@@ -439,4 +450,15 @@ class CommercialSaveOfferResponse(BaseModel):
     totals: dict[str, Any]
     offer_identity: CommercialOfferIdentity
     result_card: CommercialSaveResultCard
+
+
+class GuidCheckMissingItem(BaseModel):
+    product_kind: str
+    mark: str
+    reason: str
+    action_hint: str
+
+
+class GuidCheckResponse(BaseModel):
+    missing: list[GuidCheckMissingItem] = Field(default_factory=list)
 

@@ -53,6 +53,36 @@ def test_lookup_exact_match(tmp_path) -> None:
     assert match_type == "exact"
 
 
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [
+            ("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "Плиты ПБ 63-12-8п"),
+            ("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "Плиты ПБ 63-12-8п"),
+        ],
+        [
+            ("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "Плиты ПБ 63-12-8п"),
+            ("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "Плиты ПБ 63-12-8п"),
+        ],
+    ],
+)
+def test_lookup_duplicate_names_returns_stable_guid(
+    tmp_path, rows: list[tuple[str, str]]
+) -> None:
+    """Same plate name, two 1C GUIDs: always the lexicographically smallest GUID."""
+    db_path = str(tmp_path / "pb.db")
+    _make_prays_db(db_path, rows)
+
+    with sqlite3.connect(db_path) as conn:
+        name, nom_id, match_type = nom.lookup_nomenclature_by_plate_name(
+            "Плиты ПБ 63-12-8п", conn.cursor()
+        )
+
+    assert name == "Плиты ПБ 63-12-8п"
+    assert nom_id == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    assert match_type == "exact"
+
+
 def test_lookup_prays_width_variant(tmp_path) -> None:
     """Bot-style 0.3 m ribbon maps to prays '-3,0-' variant."""
     db_path = str(tmp_path / "pb.db")

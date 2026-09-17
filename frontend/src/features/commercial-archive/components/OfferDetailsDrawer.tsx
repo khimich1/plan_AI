@@ -7,10 +7,16 @@ import { Alert } from "@/shared/ui/Alert";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
 import {
+  CounterpartyAutocomplete,
+  formatCounterpartyRequisites,
+} from "@/features/commercial-offer/components/CounterpartyAutocomplete";
+import type { CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
+import {
   useArchiveOfferQuery,
   useArchiveDocumentMutation,
   useUpdateDiscountMutation,
   useUpdateLogisticsCostMutation,
+  useBindCounterpartyMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import {
   holdBadgeLabel,
@@ -124,14 +130,19 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [pendingDiscountPercent, setPendingDiscountPercent] = useState<number | null>(null);
   const [resumePending, setResumePending] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const [bindSelected, setBindSelected] = useState<CounterpartyShort | null>(null);
 
   const discountMutation = useUpdateDiscountMutation();
   const logisticsMutation = useUpdateLogisticsCostMutation();
+  const bindMutation = useBindCounterpartyMutation();
   const schemaMutation = useArchiveDocumentMutation("schema");
   const financePending = discountMutation.isPending || logisticsMutation.isPending;
   const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const offer = query.data;
+  useEffect(() => {
+    setBindSelected(null);
+  }, [offer?.kp_id, offer?.counterparty_id]);
   const holdQuery = usePromiseHoldQuery(
     open && offer?.status === "в архиве" ? offer.kp_id : null,
   );
@@ -492,9 +503,63 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               <div>
                 <div style={{ color: "#667085", fontSize: "0.85rem" }}>Клиент</div>
                 <div style={{ fontWeight: 600 }}>{offer.customer_name || "—"}</div>
+                {offer.counterparty_id == null && (
+                  <span
+                    data-testid="no-1c-badge"
+                    style={{
+                      display: "inline-block",
+                      marginTop: "0.35rem",
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: 999,
+                      background: "#fff6ed",
+                      color: "#b54708",
+                    }}
+                  >
+                    нет 1С
+                  </span>
+                )}
                 {(offer.customer_inn || offer.customer_kpp) && (
                   <div style={{ color: "#475467", fontSize: "0.9rem", marginTop: "0.2rem" }}>
                     ИНН {offer.customer_inn || "—"} / КПП {offer.customer_kpp || "—"}
+                  </div>
+                )}
+                {offer.status === "в архиве" && (
+                  <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.75rem", minWidth: 240 }}>
+                    <FieldWrapper label="Занести контрагента">
+                      <CounterpartyAutocomplete
+                        selected={bindSelected}
+                        initialName={offer.customer_name ?? ""}
+                        onSelect={setBindSelected}
+                        placeholder="Найдите клиента из 1С"
+                      />
+                    </FieldWrapper>
+                    {bindSelected ? (
+                      <div style={{ color: "#475467", fontSize: "0.9rem" }}>
+                        {formatCounterpartyRequisites(bindSelected)}
+                      </div>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={!bindSelected || bindMutation.isPending}
+                      data-testid="bind-counterparty-submit"
+                      onClick={() => {
+                        if (!bindSelected) {
+                          return;
+                        }
+                        void bindMutation.mutateAsync({
+                          kpId: offer.kp_id,
+                          counterpartyId: bindSelected.id,
+                        });
+                      }}
+                    >
+                      {bindMutation.isPending ? "Привязываем…" : "Занести контрагента"}
+                    </Button>
+                    {bindMutation.isError && (
+                      <Alert tone="error">{getErrorMessage(bindMutation.error)}</Alert>
+                    )}
                   </div>
                 )}
               </div>
@@ -1032,7 +1097,16 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   🏭 В производство
                 </Button>
               ) : (
-                <Button variant="secondary" onClick={() => setMoveOpen(true)}>
+                <Button
+                  variant="secondary"
+                  disabled={offer.counterparty_id == null}
+                  title={
+                    offer.counterparty_id == null
+                      ? "Сначала занесите контрагента из 1С"
+                      : undefined
+                  }
+                  onClick={() => setMoveOpen(true)}
+                >
                   🏭 В производство
                 </Button>
               )

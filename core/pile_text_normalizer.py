@@ -7,27 +7,24 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-_DASH_CHARS = "–—‒−"
+from core.line_prepare import prepare_source_line
 
 # «Сваи 90.30-11 189» → «С90.30-11 189» (GPT оторвал С от марки).
 _REPAIR_SVAI_PREFIX_RE = re.compile(
-    r"\b[СC]ваи\s+(\d[\d.,]*(?:-[\d.,]+(?:[иИ])?)?)",
+    r"\b[СC]ваи\s+(\d[\d.,]*(?:-[\d.,]+(?:[иИуУ])?)?)",
     re.IGNORECASE | re.UNICODE,
 )
 
 # «Свай 110.30-13 26» → «С110.30-13 26» (единственное число в OCR).
 _REPAIR_SVAY_PREFIX_RE = re.compile(
-    r"\b[СC]вай\s+(\d[\d.,]*(?:-[\d.,]+(?:[иИ])?)?)",
+    r"\b[СC]вай\s+(\d[\d.,]*(?:-[\d.,]+(?:[иИуУ])?)?)",
     re.IGNORECASE | re.UNICODE,
 )
-
-# «… 189 шт» → «… 189»
-_STRIP_SHT_RE = re.compile(r"\s+шт\.?\b", re.IGNORECASE | re.UNICODE)
 
 # OCR: «С120.30-12 20» — 20 в колонке qty, не класс B20 (только после R1/R2).
 _OCR_QTY_GRADE_AMBIGUOUS = frozenset({"15", "20", "22.5", "22,5", "25", "30"})
 _MARK_WITH_TRAILING_TOKEN_RE = re.compile(
-    r"^([СC][\d.,]+(?:-[\d.,]+(?:[иИ])?)?)\s+(\S+)\s*$",
+    r"^([СC][\d.,]+(?:-[\d.,]+(?:[иИуУ])?)?)\s+(\S+)\s*$",
     re.IGNORECASE | re.UNICODE,
 )
 
@@ -38,14 +35,6 @@ class PileNormalizeResult:
     normalized_lines: list[str] = field(default_factory=list)
 
 
-def _basic_cleanup(line: str) -> str:
-    text = line.replace("\u00a0", " ")
-    for ch in _DASH_CHARS:
-        text = text.replace(ch, "-")
-    text = re.sub(r"\s{2,}", " ", text)
-    return text.strip()
-
-
 def _repair_missing_cyrillic_c_mark(line: str) -> str:
     """«Сваи 90.30-11 189» → «С90.30-11 189» (GPT оторвал С от марки)."""
     return _REPAIR_SVAI_PREFIX_RE.sub(r"С\1", line)
@@ -54,11 +43,6 @@ def _repair_missing_cyrillic_c_mark(line: str) -> str:
 def _repair_svay_singular_prefix(line: str) -> str:
     """«Свай 110.30-13 26» → «С110.30-13 26»."""
     return _REPAIR_SVAY_PREFIX_RE.sub(r"С\1", line)
-
-
-def _strip_sht_suffix(line: str) -> str:
-    """«… 189 шт» → «… 189»."""
-    return _STRIP_SHT_RE.sub("", line).strip()
 
 
 def _disambiguate_ocr_qty_vs_grade(line: str) -> str:
@@ -74,13 +58,12 @@ def _disambiguate_ocr_qty_vs_grade(line: str) -> str:
 
 
 def _normalize_line(line: str) -> str:
-    cleaned = _basic_cleanup(line)
+    cleaned = prepare_source_line(line, "piles")
     had_ocr_prefix = bool(
         _REPAIR_SVAI_PREFIX_RE.search(cleaned) or _REPAIR_SVAY_PREFIX_RE.search(cleaned)
     )
     cleaned = _repair_missing_cyrillic_c_mark(cleaned)
     cleaned = _repair_svay_singular_prefix(cleaned)
-    cleaned = _strip_sht_suffix(cleaned)
     if had_ocr_prefix:
         cleaned = _disambiguate_ocr_qty_vs_grade(cleaned)
     cleaned = re.sub(r"^[СC]\s+", "С", cleaned, flags=re.IGNORECASE)

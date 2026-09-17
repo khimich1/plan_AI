@@ -38,6 +38,7 @@ import { getProductTypeConfig, PRODUCT_TYPE_CONFIG } from "@/features/commercial
 import { estimateFromLengthM } from "@/features/production/lib/productionEstimate";
 import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { StepLayout } from "@/shared/ui/StepLayout";
+import { useGuidCheckQuery } from "@/features/commercial-offer/hooks/useGuidCheckQuery";
 
 /** Default factory knob; days are approximate until archive quote. Tracks ignore this. */
 const DEFAULT_TRACKS_PER_DAY = 3;
@@ -69,6 +70,9 @@ function plateTotalLengthM(
     return acc + length * qty;
   }, 0);
 }
+
+const isOneoffPriceSource = (item: Record<string, unknown>): boolean =>
+  String(item.price_source ?? "").trim() === "oneoff";
 
 const formatProductTypeLabel = (productType: unknown): string => {
   if (typeof productType !== "string" || productType.length === 0) {
@@ -155,6 +159,8 @@ export const CalculationResultStep = ({
   const [targetSumError, setTargetSumError] = useState<string | null>(null);
   const [selectedPlateName, setSelectedPlateName] = useState<string | null>(null);
   const [pendingDiscountPercent, setPendingDiscountPercent] = useState<number | null>(null);
+  const guidCheck = useGuidCheckQuery(draft.draft_id);
+  const guidMissing = guidCheck.data?.missing ?? [];
   const draftConfig = getProductTypeConfig(draftProductType ?? draft.metadata.product_type);
   const isGradeSimpleDraft = draftConfig.supportsGrades;
   const isStepsProduct = draftConfig.productType === "steps";
@@ -413,6 +419,23 @@ export const CalculationResultStep = ({
   >
     {errorMessage && <Alert tone="error">{errorMessage}</Alert>}
 
+    {guidMissing.length > 0 ? (
+      <Alert tone="warning">
+        <div data-testid="guid-missing-alert">
+          <div>
+            Счёт в 1С не уйдёт; экономист будет уведомлён при сохранении в архив.
+          </div>
+          <ul style={{ margin: "0.45rem 0 0", paddingLeft: "1.25rem" }}>
+            {guidMissing.map((item) => (
+              <li key={`${item.product_kind}-${item.mark}`}>
+                {item.mark} — {item.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Alert>
+    ) : null}
+
     {plateEstimate ? (
       <div data-testid="result-tracks-estimate">
         <ProductionEstimateAlert
@@ -521,7 +544,14 @@ export const CalculationResultStep = ({
                     {typeCell}
                     <td style={tdStyle}>{itemName}</td>
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
-                    <td style={tdStyle}>{formatOfferNumber(displayUnitPrice)}</td>
+                    <td style={tdStyle}>
+                      <div>
+                        {formatOfferNumber(displayUnitPrice)}
+                        {isOneoffPriceSource(item) ? (
+                          <div style={{ color: "#667085", fontSize: "0.8rem" }}>договорная</div>
+                        ) : null}
+                      </div>
+                    </td>
                     <td style={tdStyle}>{formatOfferSum(item.qty, displayUnitPrice)}</td>
                     {actionCell}
                   </tr>
@@ -536,7 +566,14 @@ export const CalculationResultStep = ({
                     <td style={tdStyle}>{itemName}</td>
                     <td style={tdStyle}>{String(item.concrete_grade ?? "—")}</td>
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
-                    <td style={tdStyle}>{formatOfferNumber(displayUnitPrice)}</td>
+                    <td style={tdStyle}>
+                      <div>
+                        {formatOfferNumber(displayUnitPrice)}
+                        {isOneoffPriceSource(item) ? (
+                          <div style={{ color: "#667085", fontSize: "0.8rem" }}>договорная</div>
+                        ) : null}
+                      </div>
+                    </td>
                     <td style={tdStyle}>{formatOfferSum(item.qty, displayUnitPrice)}</td>
                     {actionCell}
                   </tr>

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from core.line_prepare import prepare_candidate_qty_line
 from core.step_line_parser import parse_step_line
 
 _PARSER_REJECTED_ISSUE = "parser_rejected"
@@ -15,7 +16,7 @@ _PARSER_REJECTED_CONFIDENCE_CAP = 0.5
 def _step_parse_input(step: Dict[str, Any]) -> str:
     candidate = (step.get("normalized_candidate") or step.get("raw_name") or "").strip()
     qty = int(step.get("qty", 1))
-    return f"{candidate} {qty}"
+    return prepare_candidate_qty_line(candidate, qty, "steps")
 
 
 def apply_step_parser_gate(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Optional, Sequence
 
 from openpyxl import load_workbook
+from core.line_prepare import prepare_bridge_pile_mark
 
 PILE_WEIGHT_SHEET = "Вес и объем"
 PILE_FALLBACK_SHEET = "Лист1"
@@ -24,7 +25,7 @@ _BRIDGE_GEOMETRY_RE = re.compile(
     r"^[СC]\s*(\d+(?:[.,]\d+)?)\s*-\s*(\d+)\s*[TТBВ]\s*\d+$",
     re.IGNORECASE | re.UNICODE,
 )
-_LOAD_SUFFIX_RE = re.compile(r"-\d+(?:[иИ])?$", re.UNICODE)
+_LOAD_SUFFIX_RE = re.compile(r"-\d+(?:[.,]\d+)?(?:[иИуУ])?$", re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ class PileCatalogEntry:
 
 
 def strip_pile_load_suffix(mark: str) -> str:
-    """«С110.35-12» / «С120.35-13и» → «С110.35». Мостовые и канон каталога без изменений."""
+    """«С110.35-12» / «С120.35-13и» / «С110.30-9у» → stem. Мостовые без изменений."""
     text = (mark or "").strip()
     return _LOAD_SUFFIX_RE.sub("", text)
 
@@ -62,8 +63,8 @@ def parse_pile_mark(mark: str) -> tuple[Optional[float], Optional[int]]:
 
 
 def parse_bridge_pile_geometry(mark: str) -> tuple[Optional[float], Optional[int]]:
-    """C14-40T4 / С14-40Т4 → (14.0 м, 400 мм). Канон С140.40 сюда не подходит."""
-    text = (mark or "").strip()
+    """C14-40T4 / С14-40Т4 / ГОСТ C 14.35-T7 → (14.0 м, 400/350 мм). Канон С140.40 сюда не подходит."""
+    text = prepare_bridge_pile_mark(mark)
     text = re.sub(r"\s+", "", text)
     match = _BRIDGE_GEOMETRY_RE.match(text)
     if not match:

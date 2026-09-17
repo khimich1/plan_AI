@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from core.line_prepare import prepare_candidate_qty_line
 from core.march_line_parser import parse_march_line
 
 _PARSER_REJECTED_ISSUE = "parser_rejected"
@@ -15,7 +16,7 @@ _PARSER_REJECTED_CONFIDENCE_CAP = 0.5
 def _march_parse_input(march: Dict[str, Any]) -> str:
     candidate = (march.get("normalized_candidate") or march.get("raw_name") or "").strip()
     qty = int(march.get("qty", 1))
-    return f"{candidate} {qty}"
+    return prepare_candidate_qty_line(candidate, qty, "marches")
 
 
 def apply_march_parser_gate(marches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

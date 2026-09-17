@@ -79,6 +79,8 @@ def move_to_production(
 ) -> MoveToProductionResponse:
     try:
         result = service.move_to_production(kp_id, payload.execution_terms_input, user=user)
+    except CounterpartyValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         if str(exc) == "not_found":
             raise HTTPException(status_code=404, detail="Offer not found") from exc
