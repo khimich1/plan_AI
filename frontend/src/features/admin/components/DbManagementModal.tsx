@@ -25,6 +25,7 @@ import type {
 type Props = {
   open: boolean;
   onClose: () => void;
+  onOpenImport1c?: () => void;
 };
 
 type DialogConfig = {
@@ -83,7 +84,7 @@ const RecoverResultLine = ({
   );
 };
 
-export const DbManagementModal = ({ open, onClose }: Props) => {
+export const DbManagementModal = ({ open, onClose, onOpenImport1c }: Props) => {
   const statsQuery = useDbStatsQuery(open);
 
   const fullReset = useFullResetMutation();
@@ -292,6 +293,12 @@ export const DbManagementModal = ({ open, onClose }: Props) => {
             >
               Сервисные операции
             </h3>
+
+            {onOpenImport1c && (
+              <Button variant="secondary" fullWidth onClick={onOpenImport1c}>
+                Загрузить выгрузку 1С
+              </Button>
+            )}
 
             <Button
               variant="secondary"

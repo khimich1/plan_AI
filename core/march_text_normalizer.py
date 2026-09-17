@@ -8,10 +8,7 @@ import re
 from dataclasses import dataclass, field
 
 from core.march_price_db import normalize_march_mark
-
-_DASH_CHARS = "–—‒−"
-
-_STRIP_SHT_RE = re.compile(r"\s+шт\.?\b", re.IGNORECASE | re.UNICODE)
+from core.line_prepare import prepare_source_line
 
 _FULL_NAME_PREFIX_RE = re.compile(
     r"лестничн(?:ые|ая|ый)?\s+марш[иае]?\s+",
@@ -34,22 +31,9 @@ class MarchNormalizeResult:
     normalized_lines: list[str] = field(default_factory=list)
 
 
-def _basic_cleanup(line: str) -> str:
-    text = line.replace("\u00a0", " ")
-    for ch in _DASH_CHARS:
-        text = text.replace(ch, "-")
-    text = re.sub(r"\s{2,}", " ", text)
-    return text.strip()
-
-
-def _strip_sht_suffix(line: str) -> str:
-    return _STRIP_SHT_RE.sub("", line).strip()
-
-
 def _normalize_line(line: str) -> str:
-    cleaned = _basic_cleanup(line)
+    cleaned = prepare_source_line(line, "marches")
     cleaned = _FULL_NAME_PREFIX_RE.sub("", cleaned)
-    cleaned = _strip_sht_suffix(cleaned)
     match = _MARK_AT_START_RE.match(cleaned)
     if match:
         raw_mark = match.group(1)

@@ -2,6 +2,7 @@ import math
 import os
 import re
 import sqlite3
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 try:
@@ -158,16 +159,97 @@ def parse_plate_price_rows_from_xlsx(
     return best_rows
 
 
+def _ensure_prices_date_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(prices)")}
+    if "price_list_date" not in cols:
+        conn.execute("ALTER TABLE prices ADD COLUMN price_list_date TEXT")
+    if "imported_at" not in cols:
+        conn.execute("ALTER TABLE prices ADD COLUMN imported_at TEXT")
+
+
 def init_schema(db_path: str = DEFAULT_DB) -> None:
     conn = _connect(db_path)
     try:
         cur = conn.cursor()
         cur.execute(
-            'CREATE TABLE IF NOT EXISTS prices (length_dm INTEGER, load_code INTEGER, price REAL, PRIMARY KEY(length_dm, load_code))'
+            """
+            CREATE TABLE IF NOT EXISTS prices (
+                length_dm INTEGER,
+                load_code INTEGER,
+                price REAL,
+                price_list_date TEXT,
+                imported_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY(length_dm, load_code)
+            )
+            """
         )
+        _ensure_prices_date_columns(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def list_plate_prices(db_path: str = DEFAULT_DB) -> List[PlatePriceRow]:
+    init_schema(db_path)
+    conn = _connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT length_dm, load_code, price FROM prices")
+        return [(int(row[0]), int(row[1]), float(row[2])) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def plate_prices_meta(db_path: str = DEFAULT_DB) -> tuple[int, Optional[str], Optional[str]]:
+    """Return (row_count, max price_list_date, max imported_at)."""
+    init_schema(db_path)
+    conn = _connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*), MAX(price_list_date), MAX(imported_at) FROM prices"
+        )
+        row = cur.fetchone() or (0, None, None)
+        return int(row[0] or 0), row[1], row[2]
+    finally:
+        conn.close()
+
+
+def import_plate_nikita_from_xlsx(
+    xlsx_path: str,
+    db_path: str = DEFAULT_DB,
+    price_list_date: Optional[str] = None,
+) -> int:
+    from core.plate_nikita_parser import parse_plate_nikita_rows
+    from core.price_desk_classify import parse_price_list_date_from_filename
+
+    rows = parse_plate_nikita_rows(xlsx_path)
+    if not rows:
+        return 0
+
+    list_date = price_list_date or parse_price_list_date_from_filename(xlsx_path)
+    imported_at = datetime.now().isoformat(timespec="seconds")
+    db_rows = [
+        (length_dm, load_code, price, list_date, imported_at)
+        for length_dm, load_code, price in rows
+    ]
+
+    init_schema(db_path)
+    conn = _connect(db_path)
+    try:
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO prices
+                (length_dm, load_code, price, price_list_date, imported_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            db_rows,
+        )
+        conn.commit()
+        return len(db_rows)
+    finally:
+        conn.close()
+
 
 
 def import_from_xlsx(

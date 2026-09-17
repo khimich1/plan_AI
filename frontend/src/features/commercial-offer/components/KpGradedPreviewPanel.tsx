@@ -1,15 +1,33 @@
 import { useMemo, useState } from "react";
-import type { CommercialDraftDetails, SimpleKpProductType } from "@/features/commercial-offer/types/commercialOffer";
+import type {
+  CommercialDraftDetails,
+  PriceCatalogItem,
+  SimpleKpProductType,
+} from "@/features/commercial-offer/types/commercialOffer";
 import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import { getSimpleProductTypePreview } from "@/features/commercial-offer/lib/productTypePreview";
-import { formatOfferNumber, formatOfferSum } from "@/features/commercial-offer/lib/formatOfferNumbers";
+import { formatOfferNumber, formatOfferSum, toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
 import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
+import { commonMarkSearchPrefix } from "@/features/commercial-offer/lib/commonMarkSearchPrefix";
 import { LineActionsCell, LineActionsHeader } from "@/features/commercial-offer/components/LineRowActions";
 import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
+import { PriceCatalogDrawer } from "@/features/commercial-offer/components/PriceCatalogDrawer";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
+
+const readLinePriceSource = (
+  draft: CommercialDraftDetails,
+  lineId: string | null | undefined,
+): string | null => {
+  if (!lineId) {
+    return null;
+  }
+  const line = draft.order_data.find((item) => String(item.line_id ?? "") === lineId);
+  const raw = line?.price_source;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+};
 
 type KpGradedPreviewPanelProps = {
   productType: SimpleKpProductType;
@@ -19,6 +37,14 @@ type KpGradedPreviewPanelProps = {
   onApplyGradeToAll?: (grade: string) => void;
   onLineGradeChange?: (lineIndex: number, grade: string) => void;
   lineRowHandlers?: LineRowHandlers;
+  catalogItems?: PriceCatalogItem[];
+  catalogQuery?: string;
+  onCatalogQueryChange?: (value: string) => void;
+  catalogLoading?: boolean;
+  catalogError?: string | null;
+  onSetOneoffPrice?: (lineId: string, unitPrice: number | null) => void | Promise<void>;
+  oneoffError?: { lineId: string; message: string } | null;
+  oneoffBusyLineId?: string | null;
 };
 
 export const KpGradedPreviewPanel = ({
@@ -29,6 +55,14 @@ export const KpGradedPreviewPanel = ({
   onApplyGradeToAll,
   onLineGradeChange,
   lineRowHandlers,
+  catalogItems = [],
+  catalogQuery,
+  onCatalogQueryChange,
+  catalogLoading = false,
+  catalogError = null,
+  onSetOneoffPrice,
+  oneoffError = null,
+  oneoffBusyLineId = null,
 }: KpGradedPreviewPanelProps) => {
   const config = PRODUCT_TYPE_CONFIG[productType];
   const labels = config.labels;
@@ -39,17 +73,55 @@ export const KpGradedPreviewPanel = ({
   const validationErrors = draft.wizard_state.validation_errors ?? [];
   const defaultGrade = draft.metadata.default_concrete_grade ?? "B25";
   const [bulkGrade, setBulkGrade] = useState(defaultGrade);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [internalCatalogQuery, setInternalCatalogQuery] = useState("");
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
 
+  const searchQuery = catalogQuery ?? internalCatalogQuery;
+  const setSearchQuery = onCatalogQueryChange ?? setInternalCatalogQuery;
+
+  const unpricedUnsealedRows = rows.filter((row) => row.unit_price === null && !row.sealed);
+  const hasUnpricedRows = unpricedUnsealedRows.length > 0;
+  const missingMarks = unpricedUnsealedRows.map((row) => row.mark);
+  const hasEditableGradeRows = rows.some((row) => !row.sealed);
   const normalizedTextChanged =
     normalizedText.trim() !== (draft.metadata.normalized_text ?? "").trim() && normalizedText.trim().length > 0;
 
-  const hasUnpricedRows = rows.some((row) => row.unit_price === null);
-  const hasEditableGradeRows = rows.some((row) => !row.sealed);
+  const openCatalog = () => {
+    setSearchQuery(commonMarkSearchPrefix(missingMarks));
+    setCatalogOpen(true);
+  };
+
+  const submitOneoff = (lineId: string, isOneoff: boolean) => {
+    if (!onSetOneoffPrice) {
+      return;
+    }
+    const raw = (priceDrafts[lineId] ?? "").trim();
+    if (!raw) {
+      if (isOneoff) {
+        void onSetOneoffPrice(lineId, null);
+      }
+      return;
+    }
+    const parsed = toNumber(raw);
+    if (parsed === null || parsed <= 0 || parsed > 10_000_000) {
+      return;
+    }
+    void onSetOneoffPrice(lineId, parsed);
+  };
 
   return (
+    <>
     <Card
       title="Состав КП (предпросмотр)"
       subtitle={labels.previewSubtitle}
+      actions={
+        hasUnpricedRows ? (
+          <Button type="button" variant="secondary" onClick={openCatalog}>
+            Прайс
+          </Button>
+        ) : null
+      }
     >
       <div style={{ display: "grid", gap: "0.75rem" }}>
         {lineRowHandlers?.undoToast ? (
@@ -153,6 +225,9 @@ export const KpGradedPreviewPanel = ({
               <tbody>
                 {rows.map((row, index) => {
                   const isUnpriced = row.unit_price === null;
+                  const isOneoff = readLinePriceSource(draft, row.lineId) === "oneoff";
+                  const lineId = row.lineId ?? "";
+                  const canEditOneoff = Boolean(onSetOneoffPrice && lineId && !row.sealed && (isUnpriced || isOneoff));
                   return (
                     <tr
                       key={
@@ -198,7 +273,57 @@ export const KpGradedPreviewPanel = ({
                           color: isUnpriced ? "#b42318" : "inherit",
                         }}
                       >
-                        {isUnpriced ? "нет в прайсе" : formatOfferNumber(row.unit_price)}
+                        {isOneoff ? (
+                          <div style={{ display: "grid", gap: "0.25rem" }}>
+                            <span>{formatOfferNumber(row.unit_price)}</span>
+                            <span style={{ color: "#667085", fontSize: "0.8rem" }}>договорная</span>
+                          </div>
+                        ) : isUnpriced ? (
+                          "нет в прайсе"
+                        ) : (
+                          formatOfferNumber(row.unit_price)
+                        )}
+                        {canEditOneoff ? (
+                          <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", marginTop: isOneoff ? "0.25rem" : 0 }}>
+                            <input
+                              aria-label={`Договорная цена ${row.mark}`}
+                              inputMode="decimal"
+                              value={priceDrafts[lineId] ?? ""}
+                              disabled={oneoffBusyLineId === lineId}
+                              onChange={(event) =>
+                                setPriceDrafts((current) => ({ ...current, [lineId]: event.target.value }))
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  submitOneoff(lineId, isOneoff);
+                                }
+                              }}
+                              placeholder="₽/шт"
+                              style={{
+                                width: 96,
+                                border: "1px solid #d0d5dd",
+                                borderRadius: 8,
+                                padding: "0.3rem 0.45rem",
+                                background: "#ffffff",
+                                color: "#101828",
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={oneoffBusyLineId === lineId}
+                              onClick={() => submitOneoff(lineId, isOneoff)}
+                            >
+                              OK
+                            </Button>
+                          </div>
+                        ) : null}
+                        {oneoffError?.lineId === lineId ? (
+                          <div style={{ color: "#b42318", fontSize: "0.8rem", marginTop: "0.25rem" }}>
+                            {oneoffError.message}
+                          </div>
+                        ) : null}
                       </td>
                       <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7" }}>
                         {isUnpriced ? "—" : formatOfferSum(row.qty, row.unit_price)}
@@ -225,5 +350,16 @@ export const KpGradedPreviewPanel = ({
 
       </div>
     </Card>
+    <PriceCatalogDrawer
+      open={catalogOpen}
+      onClose={() => setCatalogOpen(false)}
+      q={searchQuery}
+      onQueryChange={setSearchQuery}
+      items={catalogItems}
+      missingMarks={missingMarks}
+      loading={catalogLoading}
+      errorMessage={catalogError}
+    />
+    </>
   );
 };

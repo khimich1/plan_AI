@@ -6,11 +6,13 @@ const DEFAULT_COMMERCIAL_ROUTE = "/new";
 const DEFAULT_PRODUCTION_ROUTE = "/production";
 const DEFAULT_LOGISTICS_ROUTE = "/logistics";
 const DEFAULT_GSM_ROUTE = "/gsm";
+const DEFAULT_PRICES_ROUTE = "/prices";
 
 const COMMERCIAL_ROLES = ["admin", "manager"] as const satisfies readonly UserRole[];
 const PRODUCTION_ROLES = ["admin", "production"] as const satisfies readonly UserRole[];
 const LOGISTICS_ROLES = ["admin", "logistics"] as const satisfies readonly UserRole[];
 const GSM_ROLES = ["admin", "accountant"] as const satisfies readonly UserRole[];
+const PRICES_ROLES = ["admin", "economist"] as const satisfies readonly UserRole[];
 
 export const ROUTE_ACCESS: Record<string, readonly UserRole[]> = {
   "/new": COMMERCIAL_ROLES,
@@ -19,6 +21,7 @@ export const ROUTE_ACCESS: Record<string, readonly UserRole[]> = {
   "/logistics": LOGISTICS_ROLES,
   "/logistics/carriers": LOGISTICS_ROLES,
   "/gsm": GSM_ROLES,
+  "/prices": PRICES_ROLES,
 };
 
 function normalizeRoutePath(path: string): string {
@@ -47,6 +50,9 @@ export function defaultRouteForRole(role: UserRole | undefined): string {
   }
   if (role === "accountant") {
     return DEFAULT_GSM_ROUTE;
+  }
+  if (role === "economist") {
+    return DEFAULT_PRICES_ROUTE;
   }
   return DEFAULT_COMMERCIAL_ROUTE;
 }

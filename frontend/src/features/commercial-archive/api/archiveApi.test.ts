@@ -16,6 +16,7 @@ vi.mock("@/shared/api/httpClient", () => ({
 }));
 
 const mockPost = httpClient.post as unknown as Mock;
+const mockPatch = httpClient.patch as unknown as Mock;
 const mockDownload = httpClient.download as unknown as Mock;
 
 beforeEach(() => {
@@ -59,6 +60,20 @@ describe("archiveApi xlsx_delivery_in_unit", () => {
     expect(mockDownload).toHaveBeenCalledWith(
       "/api/v1/commercial/archive/7/files/xlsx",
       "КП_7.xlsx",
+    );
+  });
+});
+
+describe("archiveApi bindCounterparty", () => {
+  it("PATCHes /counterparty with the chosen id", async () => {
+    mockPatch.mockResolvedValue({ kp_id: 42, counterparty_id: 7 });
+
+    await archiveApi.bindCounterparty(42, 7);
+
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/api/v1/commercial/archive/42/counterparty",
+      JSON.stringify({ counterparty_id: 7 }),
+      { "Content-Type": "application/json" },
     );
   });
 });

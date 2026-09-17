@@ -781,6 +781,24 @@ class PromiseRepository:
                 created_at=created_at,
             )
 
+    def create_notification(
+        self,
+        *,
+        user_id: int,
+        kind: str,
+        payload: dict,
+        created_at: datetime | None = None,
+    ) -> int:
+        moment = created_at or datetime.now()
+        with self._connect() as conn:
+            return self._insert_notification(
+                conn,
+                user_id=user_id,
+                kind=kind,
+                payload=payload,
+                created_at=moment,
+            )
+
     def _insert_notification(
         self,
         conn,

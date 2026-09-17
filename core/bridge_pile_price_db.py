@@ -22,6 +22,7 @@ except Exception:
     pd = None
 
 from core.price_db import DEFAULT_DB, _connect
+from core.line_prepare import prepare_bridge_pile_mark
 
 # Only grades present in the bridge-pile price list.
 BRIDGE_PILE_GRADE_CODES = ("B25", "B30")
@@ -33,7 +34,8 @@ _DEFAULT_SHEET_NAMES = ("прайс", "price")
 
 def normalize_bridge_pile_mark_for_lookup(mark: str) -> str:
     """Normalize mark for price lookup only (does not rewrite display text)."""
-    text = str(mark or "").strip().upper()
+    text = prepare_bridge_pile_mark(mark)
+    text = str(text or "").strip().upper()
     text = (
         text.replace("С", "C")
         .replace("В", "B")

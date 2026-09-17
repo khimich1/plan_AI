@@ -69,6 +69,7 @@ class CommercialPileService:
                     "qty": qty,
                     "unit_price": unit_price,
                     "line_total": line_total if unit_price is not None else None,
+                    "reinforced": bool(item.reinforced),
                 }
             )
 

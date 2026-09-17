@@ -79,3 +79,13 @@ def test_parse_bridge_pile_text_multiline() -> None:
     assert by_mark["C8-35T1"].qty == 2
     assert by_mark["C8-35В4"].qty == 1
     assert by_mark["C13-40T3"].concrete_grade == "B30"
+
+
+def test_parse_bridge_pile_requires_prepare_for_gost() -> None:
+    assert parse_bridge_pile_line("C 14.35-T7 80").parsed is False
+    from core.line_prepare import prepare_source_line
+
+    prepared = prepare_source_line("C 14.35-T7 80 шт", "bridge_piles")
+    result = parse_bridge_pile_line(prepared)
+    assert result.parsed is True
+    assert result.qty == 80

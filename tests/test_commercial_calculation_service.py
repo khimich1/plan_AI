@@ -59,15 +59,15 @@ def test_validate_wide_plates_unresolved() -> None:
     assert _SERVICE.meta_ready_for_calculate(metadata)
 
 
-def test_create_path_client_name_without_id_is_not_ready() -> None:
-    """Create-path: free-text client_name is not enough — calculate must demand counterparty_id."""
+def test_create_path_client_name_without_id_is_ready() -> None:
+    """Create-path: непустое имя без карточки 1С достаточно для расчёта."""
     metadata = _ready_metadata(counterparty_id=None, client_name="ООО Тест")
     errors = _SERVICE.validate_calculate_prerequisites(
         order_data=_SAMPLE_ORDER,
         metadata=metadata,
     )
-    assert ERR_NO_CLIENT in errors
-    assert not _SERVICE.meta_ready_for_calculate(metadata)
+    assert ERR_NO_CLIENT not in errors
+    assert _SERVICE.meta_ready_for_calculate(metadata)
 
 
 def test_create_path_counterparty_id_is_ready() -> None:

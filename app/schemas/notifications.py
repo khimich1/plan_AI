@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+KIND_KP_GUID_MISSING = "kp_guid_missing"
+
 
 class NotificationItem(BaseModel):
     model_config = ConfigDict(extra="ignore")

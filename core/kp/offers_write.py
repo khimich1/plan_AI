@@ -117,6 +117,40 @@ def update_kp_from_order_data(
     )
 
 
+def update_kp_counterparty(
+    kp_id: int,
+    *,
+    counterparty_id: int,
+    customer_name: str,
+    customer_inn: str | None,
+    customer_kpp: str | None,
+    db_path: str = DEFAULT_DB,
+) -> bool:
+    """Перезаписывает FK и снапшот контрагента у КП. Файлы не трогает."""
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE KP_offers
+            SET counterparty_id = ?, customer_name = ?, customer_inn = ?, customer_kpp = ?
+            WHERE kp_id = ?
+            """,
+            (int(counterparty_id), customer_name, customer_inn, customer_kpp, int(kp_id)),
+        )
+        if cur.rowcount <= 0:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
 def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_DB) -> bool:
     """
     Обновляет процент скидки для КП, пересчитывает итоги и discounted_price по плитам.

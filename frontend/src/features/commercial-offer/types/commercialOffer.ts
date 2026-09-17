@@ -3,6 +3,16 @@ export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_pil
 /** Simple KP flow (no plate resolve gates): everything except plates. Mirrors ProductTypeConfig.isSimpleKp. */
 export type SimpleKpProductType = Exclude<ProductType, "plates">;
 
+export type PriceCatalogItem = {
+  mark: string;
+  concrete_grade: string | null;
+  price: number;
+};
+
+export type PriceCatalogResponse = {
+  items: PriceCatalogItem[];
+};
+
 export type WizardStepId = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "client" | "result";
 
 /** Legacy step ids from older drafts (localStorage / server metadata). */
@@ -361,4 +371,15 @@ export type WizardStoreState = {
   lastSaveResult: CommercialSaveResult | null;
   /** True while re-picking product type for an append cycle (sticky header retained). */
   isPickingProductType: boolean;
+};
+
+export type GuidCheckMissingItem = {
+  product_kind: string;
+  mark: string;
+  reason: string;
+  action_hint: string;
+};
+
+export type GuidCheckResponse = {
+  missing: GuidCheckMissingItem[];
 };

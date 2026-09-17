@@ -42,6 +42,7 @@ class ProductWeightRecord:
     weight_kg: float
     volume_m3: Optional[float]
     display_name: str
+    guid_1c: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -310,6 +311,13 @@ def ensure_product_weight_schema(db_path: str) -> None:
             )
             """
         )
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(product_weight_catalog)")}
+        if "guid_1c" not in cols:
+            conn.execute("ALTER TABLE product_weight_catalog ADD COLUMN guid_1c TEXT")
+        if "origin" not in cols:
+            conn.execute(
+                "ALTER TABLE product_weight_catalog ADD COLUMN origin TEXT NOT NULL DEFAULT '1c'"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -414,3 +422,143 @@ def resolve_product_weight_kg(
         return None
     finally:
         conn.close()
+
+
+def apply_universal_report_weights(
+    db_path: str,
+    rows: Sequence[object],
+    *,
+    source_file: str = "",
+) -> tuple[int, int]:
+    """Upsert вес/объём из универсального отчёта.
+
+    Мэтч: GUID, иначе нормализованное имя. origin=manual не перетирается.
+    Строки вне fbs/steps/marches пропускаются. Возвращает (updated_or_inserted, skipped).
+    """
+    records: list[ProductWeightRecord] = []
+    skipped = 0
+    for row in rows:
+        name = str(getattr(row, "name", "") or "").strip()
+        weight = getattr(row, "weight", None)
+        if not name or weight is None:
+            skipped += 1
+            continue
+        try:
+            weight_kg = float(weight)
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+        if weight_kg <= 0:
+            skipped += 1
+            continue
+        scope = classify_product_scope(name)
+        if scope not in PRODUCT_WEIGHT_TYPES:
+            skipped += 1
+            continue
+        volume = getattr(row, "volume", None)
+        try:
+            volume_m3 = float(volume) if volume is not None else None
+        except (TypeError, ValueError):
+            volume_m3 = None
+        guid = str(getattr(row, "guid", "") or "").strip().lower() or None
+        mark = extract_product_mark(name)
+        records.append(
+            ProductWeightRecord(
+                mark=mark,
+                mark_norm=normalize_product_mark(mark),
+                product_type=scope,
+                weight_kg=weight_kg,
+                volume_m3=volume_m3,
+                display_name=name,
+                guid_1c=guid,
+            )
+        )
+    written = _upsert_1c_weights(db_path, records, source_file=source_file)
+    return written, skipped
+
+
+def _upsert_1c_weights(
+    db_path: str,
+    records: Sequence[ProductWeightRecord],
+    *,
+    source_file: str,
+) -> int:
+    ensure_product_weight_schema(db_path)
+    imported_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    written = 0
+    conn = sqlite3.connect(os.fspath(db_path))
+    try:
+        cur = conn.cursor()
+        for record in records:
+            existing = _find_weight_row(cur, record)
+            if existing is not None:
+                mark_norm, origin = existing
+                if str(origin or "1c").strip().lower() == "manual":
+                    continue
+                cur.execute(
+                    """
+                    UPDATE product_weight_catalog
+                    SET product_type = ?, weight_kg = ?, volume_m3 = ?,
+                        display_name = ?, source_file = ?, imported_at = ?,
+                        guid_1c = COALESCE(?, guid_1c), origin = '1c'
+                    WHERE mark_norm = ?
+                    """,
+                    (
+                        record.product_type,
+                        record.weight_kg,
+                        record.volume_m3,
+                        record.display_name,
+                        source_file,
+                        imported_at,
+                        record.guid_1c,
+                        mark_norm,
+                    ),
+                )
+                written += 1
+                continue
+            cur.execute(
+                """
+                INSERT INTO product_weight_catalog (
+                    mark_norm, product_type, weight_kg, volume_m3,
+                    display_name, source_file, imported_at, guid_1c, origin
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '1c')
+                """,
+                (
+                    record.mark_norm,
+                    record.product_type,
+                    record.weight_kg,
+                    record.volume_m3,
+                    record.display_name,
+                    source_file,
+                    imported_at,
+                    record.guid_1c,
+                ),
+            )
+            written += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return written
+
+
+def _find_weight_row(
+    cur: sqlite3.Cursor,
+    record: ProductWeightRecord,
+) -> Optional[tuple[str, Optional[str]]]:
+    if record.guid_1c:
+        cur.execute(
+            "SELECT mark_norm, origin FROM product_weight_catalog WHERE guid_1c = ?",
+            (record.guid_1c,),
+        )
+        found = cur.fetchone()
+        if found:
+            return found[0], found[1]
+    cur.execute(
+        "SELECT mark_norm, origin FROM product_weight_catalog WHERE mark_norm = ?",
+        (record.mark_norm,),
+    )
+    found = cur.fetchone()
+    if found:
+        return found[0], found[1]
+    return None
+

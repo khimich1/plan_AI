@@ -7,9 +7,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-_DASH_CHARS = "–—‒−"
-
-_STRIP_SHT_RE = re.compile(r"\s+шт\.?\b", re.IGNORECASE | re.UNICODE)
+from core.line_prepare import prepare_source_line
 
 
 @dataclass
@@ -18,17 +16,8 @@ class BridgePileNormalizeResult:
     normalized_lines: list[str] = field(default_factory=list)
 
 
-def _basic_cleanup(line: str) -> str:
-    text = line.replace("\u00a0", " ")
-    for ch in _DASH_CHARS:
-        text = text.replace(ch, "-")
-    text = re.sub(r"\s{2,}", " ", text)
-    text = _STRIP_SHT_RE.sub("", text).strip()
-    return text.strip()
-
-
 def _normalize_line(line: str) -> str:
-    return _basic_cleanup(line)
+    return prepare_source_line(line, "bridge_piles")
 
 
 def normalize_bridge_pile_order_text(text: str) -> BridgePileNormalizeResult:

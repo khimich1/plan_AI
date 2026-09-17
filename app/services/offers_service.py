@@ -13,7 +13,10 @@ from app.security.offer_access import (
     assert_offer_write_access,
     list_filters_for_user,
 )
-from app.services.counterparties_service import CounterpartiesService
+from app.services.counterparties_service import (
+    CounterpartiesService,
+    CounterpartyValidationError,
+)
 from app.services.promise_service import PromiseGateError, PromiseService
 from core.kp_persistence_service import KpPersistenceService
 from core.execution_terms import parse_execution_terms
@@ -81,11 +84,23 @@ class OffersService:
             execution_terms, used_default_execution_terms = self._parse_execution_terms(payload.execution_terms_input)
             status = "в работе"
 
-        counterparty = self.counterparties.require_active_client(payload.counterparty_id)
+        if payload.save_mode == "work" or payload.counterparty_id is not None:
+            counterparty = self.counterparties.require_active_client(payload.counterparty_id)
+            customer_name = counterparty["name"]
+            counterparty_id = int(counterparty["id"])
+            customer_inn = counterparty.get("inn")
+            customer_kpp = counterparty.get("kpp")
+        else:
+            customer_name = payload.customer_name.strip()
+            if not customer_name:
+                raise CounterpartyValidationError("Укажите имя клиента.")
+            counterparty_id = None
+            customer_inn = None
+            customer_kpp = None
         kp_id = KpPersistenceService.save_kp_to_db(
             creation_date=payload.creation_date,
             order_data=[item.model_dump() for item in payload.order_data],
-            customer_name=counterparty["name"],
+            customer_name=customer_name,
             manager_name=payload.manager_name,
             discount_percent=payload.discount_percent,
             delivery_conditions=payload.delivery_conditions,
@@ -94,10 +109,12 @@ class OffersService:
             status=status,
             owner_user_id=int(user["id"]),
             db_path=self.kp_repository.db_path,
-            counterparty_id=int(counterparty["id"]),
-            customer_inn=counterparty.get("inn"),
-            customer_kpp=counterparty.get("kpp"),
+            counterparty_id=counterparty_id,
+            customer_inn=customer_inn,
+            customer_kpp=customer_kpp,
         )
+        if status == "в архиве":
+            self._notify_guid_missing(kp_id, payload.order_data)
         created = self.kp_repository.get_offer(kp_id)
         if not created:
             return {"kp_id": kp_id, "status": status, "execution_terms": execution_terms}
@@ -128,6 +145,7 @@ class OffersService:
         assert_offer_write_access(user, item)
         if item.get("status") != "в архиве":
             raise ValueError("invalid_status")
+        self.counterparties.require_active_client(item.get("counterparty_id"))
         execution_terms, used_default = self._parse_execution_terms(execution_terms_input)
         try:
             self._promises().commit_move_with_gate(
@@ -211,6 +229,23 @@ class OffersService:
         if self._promise_service is not None:
             return self._promise_service
         return PromiseService(db_path=self.kp_repository.db_path)
+
+    def _notify_guid_missing(self, kp_id: int, order_data: Any) -> None:
+        try:
+            from app.core.settings import get_settings
+            from app.services.kp_guid_notify import notify_kp_guid_missing
+
+            notify_kp_guid_missing(
+                kp_id=int(kp_id),
+                seq=int(kp_id),
+                order_data=order_data,
+                pb_db_path=str(get_settings().pb_db_path),
+                plita_db_path=self.kp_repository.db_path,
+            )
+        except Exception:
+            logger.exception(
+                "Не удалось уведомить экономистов о GUID для КП №%s", kp_id
+            )
 
     def _parse_execution_terms(self, raw_terms: str) -> tuple[str, bool]:
         return parse_execution_terms(raw_terms, policy="default_if_empty")

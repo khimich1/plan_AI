@@ -229,6 +229,49 @@ def test_update_discount_ok(
     fake_service.update_discount.assert_called_once_with(42, 10.0, user=TESTER_USER)
 
 
+def test_bind_counterparty_ok(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.bind_counterparty.return_value = _fake_details(
+        customer_inn="7701000001",
+        customer_kpp="770101001",
+        counterparty_id=7,
+    )
+
+    response = client.patch(
+        "/api/v1/commercial/archive/42/counterparty",
+        json={"counterparty_id": 7},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["counterparty_id"] == 7
+    assert payload["customer_inn"] == "7701000001"
+    fake_service.bind_counterparty.assert_called_once_with(42, 7, user=TESTER_USER)
+
+
+def test_bind_counterparty_validation(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    fake_service.bind_counterparty.side_effect = ArchiveValidationError(
+        "Контрагент не найден в справочнике"
+    )
+    response = client.patch(
+        "/api/v1/commercial/archive/42/counterparty",
+        json={"counterparty_id": 9},
+        cookies=auth_cookie,
+    )
+    assert response.status_code == 400
+    assert "не найден" in response.json()["detail"]
+
+
 def test_update_discount_validation(
     client: TestClient,
     auth_cookie: dict[str, str],

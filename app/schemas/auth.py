@@ -26,7 +26,7 @@ class LoginRequest(BaseModel):
 class RegisterUserRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: StrongPassword
-    role: Literal["admin", "manager", "production", "logistics", "accountant"]
+    role: Literal["admin", "manager", "production", "logistics", "accountant", "economist"]
     manager_id: int | None = None
     is_active: bool = True
 

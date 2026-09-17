@@ -19,3 +19,8 @@ def test_normalize_bridge_pile_order_text_basic() -> None:
     result = normalize_bridge_pile_order_text("C8-35T1  2\nC8-35В4 1 шт")
     assert result.normalized_lines == ["C8-35T1 2", "C8-35В4 1"]
     assert "C8-35В4" in result.normalized_text
+
+
+def test_normalize_bridge_joined_sht_and_gost() -> None:
+    result = normalize_bridge_pile_order_text("C8-35В4 1шт\nC 8.35-T1 2 шт")
+    assert result.normalized_lines == ["C8-35В4 1", "C8-35T1 2"]

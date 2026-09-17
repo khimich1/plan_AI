@@ -44,6 +44,13 @@ export const archiveApi = {
       { "Content-Type": "application/json" },
     ),
 
+  bindCounterparty: (kpId: number, counterpartyId: number) =>
+    httpClient.patch<ArchiveOfferDetails>(
+      `${BASE}/${kpId}/counterparty`,
+      JSON.stringify({ counterparty_id: counterpartyId }),
+      { "Content-Type": "application/json" },
+    ),
+
   updateLogisticsCost: (
     kpId: number,
     payload: {

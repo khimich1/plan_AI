@@ -64,6 +64,15 @@ export function formatWeekStart(iso: string | undefined): string {
 
 export function formatNotificationTitle(item: NotificationItem): string {
   const kpId = item.payload.kp_id;
+  if (item.kind === "kp_guid_missing") {
+    const marks = Array.isArray(item.payload.marks)
+      ? item.payload.marks.map((mark) => String(mark)).filter(Boolean)
+      : [];
+    const seq = typeof item.payload.seq === "number" ? item.payload.seq : kpId;
+    const head = typeof seq === "number" ? `КП №${seq}` : "КП";
+    const tail = marks.length > 0 ? marks.join(", ") : "изделия без GUID";
+    return `${head}: изделия без GUID — ${tail}`;
+  }
   if (item.kind === "promise_excluded" && typeof kpId === "number") {
     const week = formatWeekStart(item.payload.week_start);
     const reason = String(item.payload.reason ?? "").trim();
@@ -79,7 +88,14 @@ export function formatNotificationTitle(item: NotificationItem): string {
   return item.kind;
 }
 
-export function archiveHrefForNotification(item: NotificationItem): string | null {
+export function hrefForNotification(item: NotificationItem): string | null {
+  if (item.kind === "kp_guid_missing") {
+    return "/prices";
+  }
   const kpId = item.payload.kp_id;
   return typeof kpId === "number" && kpId > 0 ? `/archive?kp=${kpId}` : null;
+}
+
+export function archiveHrefForNotification(item: NotificationItem): string | null {
+  return hrefForNotification(item);
 }

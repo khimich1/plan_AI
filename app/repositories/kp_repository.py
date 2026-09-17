@@ -136,6 +136,24 @@ class KpRepository:
     def get_offer(self, kp_id: int) -> dict | None:
         return self._offers.get_by_id(kp_id)
 
+    def update_offer_counterparty(
+        self,
+        kp_id: int,
+        *,
+        counterparty_id: int,
+        customer_name: str,
+        customer_inn: str | None,
+        customer_kpp: str | None,
+    ) -> bool:
+        return offers_write.update_kp_counterparty(
+            kp_id,
+            counterparty_id=counterparty_id,
+            customer_name=customer_name,
+            customer_inn=customer_inn,
+            customer_kpp=customer_kpp,
+            db_path=self.db_path,
+        )
+
     def update_offer_discount(self, kp_id: int, discount_percent: float) -> bool:
         return offers_write.update_kp_discount(kp_id, discount_percent, self.db_path)
 

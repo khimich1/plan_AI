@@ -27,6 +27,10 @@ MARK_13I = "С120.35-13и"
         (f"{MARK_12}", MARK_12, "B25", 1),
         (f"{MARK_12} B20 3", MARK_12, "B20", 3),
         (f"{MARK_12} 22.5 4", MARK_12, "B22_5", 4),
+        ("С110.30-9у 3", "С110.30-9у", "B25", 3),
+        ("C 110.30-9у 2", "С110.30-9у", "B25", 2),
+        ("С110.30-9.1у 1", "С110.30-9.1у", "B25", 1),
+        ("С110.30-6у", "С110.30-6у", "B25", 1),
     ],
 )
 def test_parse_pile_line(line: str, mark: str, grade: str, qty: int) -> None:
@@ -35,6 +39,12 @@ def test_parse_pile_line(line: str, mark: str, grade: str, qty: int) -> None:
     assert result.mark == mark
     assert result.concrete_grade == grade
     assert result.qty == qty
+
+
+def test_reinforced_flag_on_u_suffix() -> None:
+    assert parse_pile_line("С110.30-9у").reinforced is True
+    assert parse_pile_line("С110.30-9").reinforced is False
+    assert parse_pile_line("С120.35-13и").reinforced is False
 
 
 def test_parse_pile_line_empty_and_invalid() -> None:
@@ -67,6 +77,20 @@ def test_merge_different_grades_stay_separate() -> None:
     assert len(merged) == 2
     by_grade = {m.concrete_grade: m.qty for m in merged}
     assert by_grade == {"B25": 5, "B20": 3}
+
+
+def test_merge_plain_and_reinforced_stay_separate() -> None:
+    lines = [
+        parse_pile_line("С110.30-9 2"),
+        parse_pile_line("С110.30-9у 3"),
+    ]
+    merged = merge_pile_lines(lines)
+    assert len(merged) == 2
+    by_mark = {item.mark: item for item in merged}
+    assert by_mark["С110.30-9"].qty == 2
+    assert by_mark["С110.30-9у"].qty == 3
+    assert by_mark["С110.30-9"].reinforced is False
+    assert by_mark["С110.30-9у"].reinforced is True
 
 
 def test_parse_pile_text_multiline_with_merge() -> None:

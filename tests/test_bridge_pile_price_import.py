@@ -39,6 +39,8 @@ def test_normalize_lookup_cyrillic_latin() -> None:
     assert normalize_bridge_pile_mark_for_lookup("C8-35В4") == "C8-35B4"
     assert normalize_bridge_pile_mark_for_lookup("С7-35Т5") == "C7-35T5"
     assert normalize_bridge_pile_mark_for_lookup("C8-35B4") == "C8-35B4"
+    assert normalize_bridge_pile_mark_for_lookup("C 8.35-T1") == "C8-35T1"
+    assert normalize_bridge_pile_mark_for_lookup("C8.35-T1") == "C8-35T1"
 
 
 def test_parse_bridge_pile_price_rows_from_xlsx(tmp_path: Path) -> None:

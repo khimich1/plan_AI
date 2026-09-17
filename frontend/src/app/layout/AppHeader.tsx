@@ -12,6 +12,7 @@ const ARCHIVE_PATH = "/archive";
 const PRODUCTION_PATH = "/production";
 const LOGISTICS_PATH = "/logistics";
 const GSM_PATH = "/gsm";
+const PRICES_PATH = "/prices";
 
 export const AppHeader = () => {
   const { hasDraft, resetDraft } = useCommercialDraftHeaderBridge();
@@ -26,10 +27,12 @@ export const AppHeader = () => {
   const isManager = user?.role === "manager";
   const isLogistics = user?.role === "logistics";
   const isAccountant = user?.role === "accountant";
+  const isEconomist = user?.role === "economist";
   const canSeeCommercial = isAdmin || isManager;
   const canSeeProduction = isAdmin || isProduction;
   const canSeeLogistics = isAdmin || isLogistics;
   const canSeeGsm = isAdmin || isAccountant;
+  const canSeePrices = isAdmin || isEconomist;
 
   const onLogoutClick = async () => {
     try {
@@ -127,6 +130,18 @@ export const AppHeader = () => {
               ГСМ
             </NavLink>
           )}
+          {canSeePrices && (
+            <NavLink
+              to={PRICES_PATH}
+              className={({ isActive }) =>
+                isActive ? "app-nav__link app-nav__link--active" : "app-nav__link"
+              }
+            >
+              Прайсы
+            </NavLink>
+          )}
+        </nav>
+        <div className="app-header__tools">
           {isAdmin && (
             <button
               type="button"
@@ -134,7 +149,6 @@ export const AppHeader = () => {
               aria-label="Управление БД"
               title="Управление БД"
               style={{
-                marginLeft: "0.75rem",
                 width: 36,
                 height: 36,
                 borderRadius: "50%",
@@ -145,6 +159,7 @@ export const AppHeader = () => {
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
+                flexShrink: 0,
               }}
             >
               <svg
@@ -175,7 +190,7 @@ export const AppHeader = () => {
               </Button>
             </div>
           )}
-        </nav>
+        </div>
       </div>
 
       <Modal open={confirmOpen} onClose={() => setConfirmOpen(false)} title="У вас есть незавершённый черновик">
@@ -200,6 +215,10 @@ export const AppHeader = () => {
         <DbManagementModal
           open={dbModalOpen}
           onClose={() => setDbModalOpen(false)}
+          onOpenImport1c={() => {
+            setDbModalOpen(false);
+            navigate(PRICES_PATH);
+          }}
         />
       )}
     </header>

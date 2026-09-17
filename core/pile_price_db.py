@@ -15,7 +15,16 @@ try:
 except Exception:
     pd = None
 
+from core.pile_catalog import normalize_pile_mark_key
 from core.price_db import DEFAULT_DB, _connect
+
+_TRAILING_U_RE = re.compile(r"[уУ]$")
+_FRACTIONAL_LOAD_RE = re.compile(r"(-\d+)\.\d+([иИуУ]?)$")
+
+
+def strip_trailing_u_suffix(mark: str) -> str:
+    """Срез хвостовой «у»/«У» для lookup цены и GUID (D11)."""
+    return _TRAILING_U_RE.sub("", (mark or "").strip())
 
 PilePriceRow = Tuple[str, str, float]
 
@@ -213,24 +222,90 @@ def import_pile_prices_from_xlsx(
         conn.close()
 
 
+def _find_matching_marks(
+    conn: sqlite3.Connection,
+    mark: str,
+) -> List[str]:
+    key = normalize_pile_mark_key(mark)
+    if not key:
+        return []
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT mark FROM pile_prices")
+    return [
+        row[0]
+        for row in cur.fetchall()
+        if normalize_pile_mark_key(row[0]) == key
+    ]
+
+
+def _pile_price_lookup_candidates(mark: str) -> List[str]:
+    """Exact mark, then strip trailing у, then collapse load ``.\\d``."""
+    ordered: List[str] = []
+
+    def add(value: str) -> None:
+        text = (value or "").strip()
+        if text and text not in ordered:
+            ordered.append(text)
+
+    add(mark)
+    without_u = strip_trailing_u_suffix(mark)
+    add(without_u)
+    add(_FRACTIONAL_LOAD_RE.sub(r"\1\2", without_u))
+    add(_FRACTIONAL_LOAD_RE.sub(r"\1\2", mark))
+    return ordered
+
+
+def _price_for_mark(
+    conn: sqlite3.Connection,
+    mark: str,
+    concrete_grade: str,
+) -> Optional[float]:
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT price FROM pile_prices WHERE mark = ? AND concrete_grade = ?",
+        (mark, concrete_grade),
+    )
+    row = cur.fetchone()
+    if row:
+        return float(row[0])
+
+    prices = []
+    for stored_mark in _find_matching_marks(conn, mark):
+        cur.execute(
+            "SELECT price FROM pile_prices WHERE mark = ? AND concrete_grade = ?",
+            (stored_mark, concrete_grade),
+        )
+        found = cur.fetchone()
+        if found:
+            prices.append(float(found[0]))
+    unique = set(prices)
+    if len(unique) == 1:
+        return next(iter(unique))
+    return None
+
+
 def get_pile_price(
     mark: str,
     concrete_grade: str = "B25",
     db_path: str = DEFAULT_DB,
 ) -> Optional[float]:
-    """Возвращает цену сваи по точной марке и классу бетона."""
-    if not mark:
+    """Возвращает цену сваи по марке и классу бетона.
+
+    Порядок: точное совпадение → C↔С/пробелы → срез хвостовой ``у`` →
+    схлопнуть ``.\\d`` только у числа нагрузки. Суффикс ``и`` не срезается.
+    Несколько совпадений с разными ценами не угадываются.
+    """
+    queried = (mark or "").strip()
+    if not queried:
         return None
 
     init_pile_prices_schema(db_path)
     conn = _connect(db_path)
     try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT price FROM pile_prices WHERE mark = ? AND concrete_grade = ?",
-            (mark.strip(), concrete_grade),
-        )
-        row = cur.fetchone()
-        return float(row[0]) if row else None
+        for candidate in _pile_price_lookup_candidates(queried):
+            price = _price_for_mark(conn, candidate, concrete_grade)
+            if price is not None:
+                return price
+        return None
     finally:
         conn.close()

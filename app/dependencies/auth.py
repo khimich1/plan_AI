@@ -44,6 +44,9 @@ REQUIRE_LOGISTICS = require_roles("admin", "logistics")
 # Модуль ГСМ / учёт: бухгалтер + админ.
 REQUIRE_ACCOUNTING = require_roles("admin", "accountant")
 
+# Стол прайсов: экономист + админ.
+REQUIRE_PRICES = require_roles("admin", "economist")
+
 # Деструктивные dev-операции ГСМ.
 REQUIRE_ADMIN = require_roles("admin")
 

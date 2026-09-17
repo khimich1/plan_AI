@@ -6,14 +6,12 @@ import { CounterpartyAutocomplete } from "@/features/commercial-offer/components
 import type { CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
 
 const searchCounterparties = vi.fn();
-const createCounterparty = vi.fn();
 
 vi.mock("@/features/commercial-offer/api/counterpartiesApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/features/commercial-offer/api/counterpartiesApi")>();
   return {
     ...actual,
     searchCounterparties: (...args: unknown[]) => searchCounterparties(...args),
-    createCounterparty: (...args: unknown[]) => createCounterparty(...args),
   };
 });
 
@@ -55,7 +53,6 @@ const wrap = (ui: ReactNode) => {
 describe("CounterpartyAutocomplete", () => {
   beforeEach(() => {
     searchCounterparties.mockReset();
-    createCounterparty.mockReset();
   });
 
   afterEach(() => {
@@ -139,44 +136,15 @@ describe("CounterpartyAutocomplete", () => {
     expect(await screen.findByText("Ищем…")).toBeInTheDocument();
   });
 
-  it("shows add-counterparty action when search is empty", async () => {
+  it("shows empty search without add-counterparty action", async () => {
     searchCounterparties.mockResolvedValue({ items: [], count: 0 });
     wrap(<CounterpartyAutocomplete selected={null} onSelect={vi.fn()} />);
 
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "неттаких" } });
 
     expect(await screen.findByText("Не найдено среди клиентов")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Добавить контрагента/i })).toBeInTheDocument();
-  });
-
-  it("opens the new-counterparty dialog from the empty state", async () => {
-    searchCounterparties.mockResolvedValue({ items: [], count: 0 });
-    wrap(<CounterpartyAutocomplete selected={null} onSelect={vi.fn()} />);
-
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "неттаких" } });
-    fireEvent.click(await screen.findByRole("button", { name: /Добавить контрагента/i }));
-
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText(/Сначала заведите контрагента в 1С и скопируйте код/)).toBeInTheDocument();
-  });
-
-  it("keeps the dialog open on an INN-duplicate warning so the banner is visible", async () => {
-    searchCounterparties.mockResolvedValue({ items: [], count: 0 });
-    createCounterparty.mockResolvedValue({
-      item: ROMA_A,
-      warning: "Контрагент с таким ИНН уже есть",
-    });
-    const onSelect = vi.fn();
-    wrap(<CounterpartyAutocomplete selected={null} onSelect={onSelect} />);
-
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "неттаких" } });
-    fireEvent.click(await screen.findByRole("button", { name: /Добавить контрагента/i }));
-    fireEvent.change(screen.getByLabelText("Код 1С"), { target: { value: "00-00000001" } });
-    fireEvent.click(screen.getByRole("button", { name: "Добавить" }));
-
-    expect(await screen.findByText(/Контрагент с таким ИНН уже есть/)).toBeInTheDocument();
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(onSelect).toHaveBeenCalledWith(ROMA_A);
+    expect(screen.queryByRole("button", { name: /Добавить контрагента/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("selects the highlighted option with Enter and closes on Escape", async () => {

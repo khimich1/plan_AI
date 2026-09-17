@@ -34,6 +34,15 @@ def test_r3_strip_sht():
     assert result.normalized_lines == ["С90.30-11 189"]
 
 
+def test_repair_svai_prefix_keeps_u_suffix():
+    result = normalize_pile_order_text("Сваи 90.30-11у 189шт")
+    assert result.normalized_lines == ["С90.30-11у 189"]
+    parsed = parse_pile_line(result.normalized_lines[0])
+    assert parsed.parsed is True
+    assert parsed.mark == "С90.30-11у"
+    assert parsed.reinforced is True
+
+
 def test_r4_dash_and_whitespace_cleanup():
     result = normalize_pile_order_text("Сваи  90.30–11   189")
     assert result.normalized_lines == ["С90.30-11 189"]

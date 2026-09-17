@@ -83,7 +83,7 @@ class CreateOfferRequest(BaseModel):
     execution_terms_input: str = ""
     save_mode: Literal["work", "archive"] = "work"
     order_data: list[OfferOrderItem] = Field(min_length=1)
-    counterparty_id: int = Field(ge=1)
+    counterparty_id: int | None = Field(default=None, ge=1)
 
 
 class UpdateOfferDiscountRequest(BaseModel):

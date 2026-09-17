@@ -91,4 +91,30 @@ describe("NotificationBell", () => {
     fireEvent.click(screen.getByTestId("notification-bell"));
     expect(screen.getByText("Нет уведомлений")).toBeInTheDocument();
   });
+
+  it("renders kp_guid_missing text and navigates to /prices", () => {
+    const missing: NotificationItem = {
+      id: 21,
+      kind: "kp_guid_missing",
+      payload: {
+        kp_id: 12,
+        seq: 12,
+        marks: ["С70.35-9у"],
+        link: "/prices",
+      },
+      read_at: null,
+      created_at: "2026-09-17T12:00:00",
+    };
+    listState.data = { items: [missing], unread_count: 1 };
+    renderBell();
+
+    fireEvent.click(screen.getByTestId("notification-bell"));
+    expect(screen.getByTestId("notification-popover")).toHaveTextContent(
+      "КП №12: изделия без GUID — С70.35-9у",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /КП №12/ }));
+    expect(mockMutate).toHaveBeenCalledWith(21);
+    expect(mockNavigate).toHaveBeenCalledWith("/prices");
+  });
 });

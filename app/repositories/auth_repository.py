@@ -216,6 +216,25 @@ class AuthRepository:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def list_active_users_by_role(self, role: str) -> list[dict[str, Any]]:
+        self.init_schema()
+        wanted = role.strip()
+        if not wanted:
+            return []
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, username, role, manager_id, is_active, session_version, created_at
+                FROM app_users
+                WHERE role = ? AND is_active = 1
+                ORDER BY id
+                """,
+                (wanted,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_users_page(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
         return {
             "items": self.list_users(limit=limit, offset=offset),

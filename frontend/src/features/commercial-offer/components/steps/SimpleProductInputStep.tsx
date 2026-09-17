@@ -1,11 +1,13 @@
 import { useEffect, useState, type WheelEvent } from "react";
 
+import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
 import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type {
   CommercialDraftDetails,
   OcrCorrection,
   PlateInputMode,
+  PriceCatalogItem,
   SimpleKpProductType,
 } from "@/features/commercial-offer/types/commercialOffer";
 import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
@@ -31,6 +33,7 @@ import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { StepLayout } from "@/shared/ui/StepLayout";
+import { getErrorMessage } from "@/shared/lib/apiError";
 
 type SimpleProductInputStepProps = {
   productType: SimpleKpProductType;
@@ -74,6 +77,9 @@ type SimpleProductInputStepProps = {
   onLineGradeChange?: (lineIndex: number, grade: string) => void;
   onReset: () => void;
   lineRowHandlers?: LineRowHandlers;
+  onSetOneoffPrice?: (lineId: string, unitPrice: number | null) => void | Promise<void>;
+  oneoffError?: { lineId: string; message: string } | null;
+  oneoffBusyLineId?: string | null;
 };
 
 const IMAGE_ZOOM_MIN = 0.5;
@@ -149,9 +155,17 @@ export const SimpleProductInputStep = ({
   onLineGradeChange,
   onReset,
   lineRowHandlers,
+  onSetOneoffPrice,
+  oneoffError = null,
+  oneoffBusyLineId = null,
 }: SimpleProductInputStepProps) => {
   const [showSourceInput, setShowSourceInput] = useState(false);
   const [imageZoom, setImageZoom] = useState(1);
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogRequested, setCatalogRequested] = useState(false);
+  const [catalogItems, setCatalogItems] = useState<PriceCatalogItem[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const [sourceGate, setSourceGate] = useState<SourceSubmitGate>({
     sourceText: "",
     canSubmit: true,
@@ -171,6 +185,38 @@ export const SimpleProductInputStep = ({
   useEffect(() => {
     setImageZoom(1);
   }, [recognizedImageUrl]);
+
+  useEffect(() => {
+    if (!catalogRequested) {
+      return;
+    }
+    let cancelled = false;
+    setCatalogLoading(true);
+    commercialOfferApi
+      .getPriceCatalog({ productType, q: catalogQuery })
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setCatalogItems(result.items);
+        setCatalogError(null);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setCatalogError(getErrorMessage(error));
+        setCatalogItems([]);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCatalogLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogRequested, catalogQuery, productType]);
 
   const hasImage = pages.length > 0;
   const activePage = pages.find((page) => page.id === activePageId);
@@ -471,6 +517,17 @@ export const SimpleProductInputStep = ({
                 onApplyGradeToAll={onApplyGradeToAll}
                 onLineGradeChange={onLineGradeChange}
                 lineRowHandlers={lineRowHandlers}
+                catalogItems={catalogItems}
+                catalogQuery={catalogQuery}
+                onCatalogQueryChange={(value) => {
+                  setCatalogRequested(true);
+                  setCatalogQuery(value);
+                }}
+                catalogLoading={catalogLoading}
+                catalogError={catalogError}
+                onSetOneoffPrice={onSetOneoffPrice}
+                oneoffError={oneoffError}
+                oneoffBusyLineId={oneoffBusyLineId}
               />
             </>
           )}

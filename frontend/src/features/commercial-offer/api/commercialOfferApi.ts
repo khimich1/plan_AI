@@ -15,6 +15,9 @@ import type {
   UnpricedPlateAction,
   WidePlateAction,
   OcrCorrection,
+  PriceCatalogResponse,
+  SimpleKpProductType,
+  GuidCheckResponse,
 } from "@/features/commercial-offer/types/commercialOffer";
 
 export type CommercialOcrPageResult = {
@@ -112,6 +115,16 @@ const createAiMultipartPayload = ({ instruction, image }: ApplyAiPlatesPayload) 
 
 export const commercialOfferApi = {
   getManagers: () => httpClient.get<ManagersResponse>("/api/v1/managers"),
+
+  getPriceCatalog: (payload: { productType: SimpleKpProductType; q?: string }) => {
+    const params = new URLSearchParams({ product_type: payload.productType });
+    if (payload.q) {
+      params.set("q", payload.q);
+    }
+    return httpClient.get<PriceCatalogResponse>(
+      `/api/v1/commercial/price-catalog?${params.toString()}`,
+    );
+  },
 
   parseSource: (
     payload: { text: string; productType: ProductType },
@@ -267,7 +280,7 @@ export const commercialOfferApi = {
   patchDraftLine: (
     draftId: string,
     lineId: string,
-    payload: { qty?: number; source_text?: string },
+    payload: { qty?: number; source_text?: string; unit_price?: number | null },
   ) =>
     httpClient.patch<CommercialDraftDetails>(
       `/api/v1/commercial/drafts/${draftId}/lines/${lineId}`,
@@ -288,4 +301,7 @@ export const commercialOfferApi = {
       }),
       { "Content-Type": "application/json" },
     ),
+
+  checkGuids: (draftId: string) =>
+    httpClient.get<GuidCheckResponse>(`/api/v1/commercial/drafts/${draftId}/guid-check`),
 };

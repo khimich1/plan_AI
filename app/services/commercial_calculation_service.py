@@ -124,10 +124,9 @@ class CommercialCalculationService:
             return False
 
     def _client_ready(self, metadata: dict[str, Any]) -> bool:
-        # Archive resume keeps sticky header; create-path needs a catalog pick.
-        if metadata.get("resume_kp_id") is not None:
-            return bool(str(metadata.get("client_name") or "").strip())
-        return self.has_counterparty_id(metadata)
+        if self.has_counterparty_id(metadata):
+            return True
+        return bool(str(metadata.get("client_name") or "").strip())
 
     def _metadata_errors(self, metadata: dict[str, Any]) -> list[str]:
         errors: list[str] = []

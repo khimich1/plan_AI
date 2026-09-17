@@ -42,6 +42,10 @@ from app.security.offer_access import (
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
 from app.services.promise_service import PromiseGateError, PromiseService
+from app.services.counterparties_service import (
+    CounterpartiesService,
+    CounterpartyValidationError,
+)
 from core.production.promise_buckets import OccupancyUnavailableError
 from core.delivery_schedule_check import BatchItemInput
 from core.plate_order_context import PlateOrderContext, run_in_order_context
@@ -218,6 +222,35 @@ class ArchiveService:
             )
         return self.get_details(kp_id, user=user)
 
+    def bind_counterparty(
+        self, kp_id: int, counterparty_id: int, *, user: dict
+    ) -> ArchiveOfferDetails:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_write_access(user, raw)
+        if raw.get("status") != "в архиве":
+            raise ArchiveValidationError(
+                "Привязать контрагента можно только у КП в статусе «в архиве»"
+            )
+        try:
+            row = CounterpartiesService(
+                db_path=self.repository.db_path
+            ).require_active_client(counterparty_id)
+        except CounterpartyValidationError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        if not self.repository.update_counterparty(
+            kp_id,
+            counterparty_id=int(row["id"]),
+            customer_name=str(row["name"]),
+            customer_inn=row.get("inn"),
+            customer_kpp=row.get("kpp"),
+        ):
+            raise ArchiveNotFoundError(
+                f"Не удалось привязать контрагента. КП №{kp_id} не найдено."
+            )
+        return self.get_details(kp_id, user=user)
+
     def delete_offer(self, kp_id: int, *, user: dict) -> None:
         raw = self.repository.get_by_id(kp_id)
         if not raw:
@@ -236,6 +269,12 @@ class ArchiveService:
             raise ArchiveValidationError(
                 "Перевести в производство можно только КП из раздела «в архиве»"
             )
+        try:
+            CounterpartiesService(db_path=self.repository.db_path).require_active_client(
+                raw.get("counterparty_id")
+            )
+        except CounterpartyValidationError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
 
         execution_terms = self._parse_execution_terms(terms_input)
         try:
@@ -487,6 +526,16 @@ class ArchiveService:
                 derived.append(key)
         return derived
 
+    @staticmethod
+    def _optional_counterparty_id(raw: object) -> int | None:
+        if raw is None or raw == "":
+            return None
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 1 else None
+
     def _to_list_item(self, raw: dict) -> ArchiveOfferListItem:
         kp_id = int(raw.get("kp_id") or 0)
         status = raw.get("status") or None
@@ -529,6 +578,7 @@ class ArchiveService:
             shipped_progress=shipped_progress,
             product_type=str(raw.get("product_type") or "plates"),
             product_types=self._resolve_product_types(raw),
+            counterparty_id=self._optional_counterparty_id(raw.get("counterparty_id")),
         )
 
     def _shipped_progress(self, kp_id: int) -> dict[str, int] | None:
@@ -617,6 +667,7 @@ class ArchiveService:
             customer_name=raw.get("customer_name"),
             customer_inn=raw.get("customer_inn"),
             customer_kpp=raw.get("customer_kpp"),
+            counterparty_id=self._optional_counterparty_id(raw.get("counterparty_id")),
             manager_name=raw.get("manager_name"),
             status=raw.get("status"),
             execution_terms=raw.get("execution_terms") or None,

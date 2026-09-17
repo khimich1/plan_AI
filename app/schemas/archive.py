@@ -48,6 +48,7 @@ class ArchiveOfferListItem(BaseModel):
         default_factory=list,
         description="Типы номенклатуры в КП для бейджей (Q3: N badges; mixed → concrete types).",
     )
+    counterparty_id: int | None = None
 
 
 class ArchivePileItem(BaseModel):
@@ -177,6 +178,7 @@ class ArchiveOfferDetails(BaseModel):
     customer_name: str | None = None
     customer_inn: str | None = None
     customer_kpp: str | None = None
+    counterparty_id: int | None = None
     manager_name: str | None = None
     status: str | None = None
     execution_terms: str | None = None
@@ -211,6 +213,10 @@ class ArchiveOfferDetails(BaseModel):
     fbs: list[ArchiveFbsItem] = Field(default_factory=list)
     completion_percentage: float | None = None
     readiness: KpReadinessSummary | None = None
+
+
+class BindCounterpartyRequest(BaseModel):
+    counterparty_id: int = Field(ge=1)
 
 
 class UpdateDiscountRequest(BaseModel):

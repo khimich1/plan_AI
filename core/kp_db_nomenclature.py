@@ -24,6 +24,47 @@ def _extract_length_dm_val(name: str) -> Optional[float]:
         return None
 
 
+def _fetch_plate_row(pb_cur: sqlite3.Cursor, where_sql: str, param: str):
+    pb_cur.execute(
+        'SELECT "Уникальный идентификатор (Номенклатура)", "Товар" '
+        f"FROM prays_plity WHERE {where_sql} "
+        'ORDER BY "Уникальный идентификатор (Номенклатура)"',  # name dupes: smallest 1C GUID
+        (param,),
+    )
+    return pb_cur.fetchone()
+
+
+def _count_plate_guids(pb_cur: sqlite3.Cursor, where_sql: str, param: str) -> int:
+    pb_cur.execute(
+        'SELECT COUNT(DISTINCT "Уникальный идентификатор (Номенклатура)") '
+        f"FROM prays_plity WHERE {where_sql}",
+        (param,),
+    )
+    row = pb_cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def count_nomenclature_by_plate_name(
+    plate_name: str,
+    pb_cur: sqlite3.Cursor,
+) -> int:
+    """Число различных GUID в prays_plity по тому же пути, что lookup (exact/variant).
+
+    count > 1 — дубль 1С: без plate_guid_choice резолвер должен вернуть missing.
+    """
+    n = _count_plate_guids(pb_cur, '"Товар" = ? COLLATE NOCASE', plate_name)
+    if n:
+        return n
+
+    from core.config_and_data import plate_name_to_prays_variants
+
+    for prays_variant in plate_name_to_prays_variants(plate_name):
+        n = _count_plate_guids(pb_cur, '"Товар" = ? COLLATE NOCASE', prays_variant)
+        if n:
+            return n
+    return 0
+
+
 def lookup_nomenclature_by_plate_name(
     plate_name: str,
     pb_cur: sqlite3.Cursor,
@@ -33,35 +74,20 @@ def lookup_nomenclature_by_plate_name(
     Возвращает (canonical_name, nomenclature_id, match_type).
     match_type: "exact" | "like" | None (не найдено).
     """
-    pb_cur.execute(
-        'SELECT "Уникальный идентификатор (Номенклатура)", "Товар" '
-        'FROM prays_plity WHERE "Товар" = ? COLLATE NOCASE',
-        (plate_name,),
-    )
-    row = pb_cur.fetchone()
+    row = _fetch_plate_row(pb_cur, '"Товар" = ? COLLATE NOCASE', plate_name)
     if row:
         return row[1], row[0], "exact"
 
     from core.config_and_data import plate_name_to_prays_variants
 
     for prays_variant in plate_name_to_prays_variants(plate_name):
-        pb_cur.execute(
-            'SELECT "Уникальный идентификатор (Номенклатура)", "Товар" '
-            'FROM prays_plity WHERE "Товар" = ? COLLATE NOCASE',
-            (prays_variant,),
-        )
-        row = pb_cur.fetchone()
+        row = _fetch_plate_row(pb_cur, '"Товар" = ? COLLATE NOCASE', prays_variant)
         if row:
             return row[1], row[0], "exact_prays_variant"
 
     req_len_val = _extract_length_dm_val(plate_name)
     normalized = plate_name.replace("Плиты ", "").replace("Плита ", "")
-    pb_cur.execute(
-        'SELECT "Уникальный идентификатор (Номенклатура)", "Товар" '
-        'FROM prays_plity WHERE "Товар" LIKE ?',
-        (f"%{normalized}%",),
-    )
-    row = pb_cur.fetchone()
+    row = _fetch_plate_row(pb_cur, '"Товар" LIKE ?', f"%{normalized}%")
     if row:
         can_len_val = _extract_length_dm_val(row[1])
         if req_len_val is not None and can_len_val is not None:
@@ -146,6 +172,7 @@ def enrich_order_data_with_nomenclature(order_data: List[Dict]) -> List[Dict]:
 
 
 __all__ = [
+    "count_nomenclature_by_plate_name",
     "enrich_order_data_with_nomenclature",
     "fill_plate_nomenclature_cache",
     "lookup_nomenclature_by_plate_name",

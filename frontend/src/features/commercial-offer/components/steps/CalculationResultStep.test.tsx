@@ -5,8 +5,19 @@ import { CalculationResultStep } from "@/features/commercial-offer/components/st
 import type {
   CommercialDraftDetails,
   CommercialDraftMetadata,
+  GuidCheckMissingItem,
   ProductType,
 } from "@/features/commercial-offer/types/commercialOffer";
+
+const guidCheckState: { missing: GuidCheckMissingItem[] } = { missing: [] };
+
+vi.mock("@/features/commercial-offer/hooks/useGuidCheckQuery", () => ({
+  useGuidCheckQuery: () => ({
+    data: { missing: guidCheckState.missing },
+    isError: false,
+    isLoading: false,
+  }),
+}));
 
 /**
  * MNA-501 RED tests — Result step: «Тип» column, append CTA, undo/delete, trip cost gate.
@@ -149,6 +160,7 @@ function renderResultStep(
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  guidCheckState.missing = [];
 });
 
 describe("CalculationResultStep back navigation", () => {
@@ -894,5 +906,69 @@ describe("CalculationResultStep tracks estimate", () => {
 
     expect(screen.queryByTestId("result-tracks-estimate")).not.toBeInTheDocument();
     expect(screen.queryByText(/дорожек/)).not.toBeInTheDocument();
+  });
+});
+
+describe("CalculationResultStep oneoff label", () => {
+  it("shows договорная on oneoff lines and has no Прайс button", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln_oneoff",
+            product_type: "piles",
+            name: "C110.30-6",
+            mark: "C110.30-6",
+            concrete_grade: "B25",
+            qty: 2,
+            unit_price: 27585.43,
+            price_source: "oneoff",
+          },
+          {
+            line_id: "ln_catalog",
+            product_type: "piles",
+            name: "С110.30-9",
+            mark: "С110.30-9",
+            concrete_grade: "B25",
+            qty: 1,
+            unit_price: 27000,
+          },
+        ],
+        metadata: {
+          ...baseMetadata(),
+          product_type: "piles",
+        },
+      }),
+      {},
+      { draftProductType: "piles", isSimpleKpDraft: true },
+    );
+
+    expect(screen.getByText("договорная")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Прайс" })).not.toBeInTheDocument();
+  });
+});
+
+describe("CalculationResultStep GUID warning", () => {
+  it("shows warning Alert with marks when guid-check has holes", () => {
+    guidCheckState.missing = [
+      {
+        product_kind: "pile",
+        mark: "С70.35-9у",
+        reason: "нет GUID 1С",
+        action_hint: "заведите карточку в 1С и загрузите отчёт",
+      },
+    ];
+    renderResultStep(makeDraft());
+    const alert = screen.getByTestId("guid-missing-alert");
+    expect(alert).toHaveTextContent("Счёт в 1С не уйдёт");
+    expect(alert).toHaveTextContent("экономист будет уведомлён при сохранении в архив");
+    expect(alert).toHaveTextContent("С70.35-9у");
+    expect(screen.getByRole("button", { name: "В архив" })).toBeEnabled();
+  });
+
+  it("hides GUID Alert when there are no missing marks", () => {
+    guidCheckState.missing = [];
+    renderResultStep(makeDraft());
+    expect(screen.queryByTestId("guid-missing-alert")).not.toBeInTheDocument();
   });
 });

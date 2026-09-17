@@ -4,13 +4,14 @@ import {
   searchCounterparties,
   type CounterpartyShort,
 } from "@/features/commercial-offer/api/counterpartiesApi";
-import { NewCounterpartyDialog } from "@/features/commercial-offer/components/NewCounterpartyDialog";
 import { useDebouncedValue } from "@/shared/lib/useDebouncedValue";
 import { Input } from "@/shared/ui/Field";
 
 type Props = {
   selected: CounterpartyShort | null;
   onSelect: (item: CounterpartyShort | null) => void;
+  onTextChange?: (value: string) => void;
+  initialName?: string;
   placeholder?: string;
   disabled?: boolean;
 };
@@ -40,15 +41,16 @@ export const resolveCounterpartyMatch = (
 export const CounterpartyAutocomplete = ({
   selected,
   onSelect,
+  onTextChange,
+  initialName = "",
   placeholder = "Начните вводить название или ИНН",
   disabled = false,
 }: Props) => {
   const listId = useId();
   const optionIdPrefix = useId();
-  const [text, setText] = useState(selected?.name ?? "");
+  const [text, setText] = useState(selected?.name ?? initialName);
   const [open, setOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(0);
-  const [dialogOpen, setDialogOpen] = useState(false);
   const debounced = useDebouncedValue(text.trim());
   const canSearch = debounced.length >= 2;
 
@@ -61,7 +63,9 @@ export const CounterpartyAutocomplete = ({
   const items = query.data?.items ?? EMPTY_ITEMS;
 
   useEffect(() => {
-    setText(selected?.name ?? "");
+    if (selected) {
+      setText(selected.name);
+    }
   }, [selected?.id, selected?.name]);
 
   useEffect(() => {
@@ -84,6 +88,7 @@ export const CounterpartyAutocomplete = ({
 
   const handleChange = (value: string) => {
     setText(value);
+    onTextChange?.(value);
     setOpen(true);
     if (!value.trim()) {
       if (selected) {
@@ -106,6 +111,7 @@ export const CounterpartyAutocomplete = ({
   const handleSelect = (item: CounterpartyShort) => {
     setText(item.name);
     onSelect(item);
+    onTextChange?.(item.name);
     setOpen(false);
   };
 
@@ -216,39 +222,8 @@ export const CounterpartyAutocomplete = ({
               </li>
             );
           })}
-          {items.length === 0 && !query.isFetching && (
-            <li role="presentation" style={{ padding: "0.35rem 0.9rem 0.65rem" }}>
-              <button
-                type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  setDialogOpen(true);
-                  setOpen(false);
-                }}
-                style={{
-                  border: "none",
-                  background: "none",
-                  color: "#175cd3",
-                  cursor: "pointer",
-                  padding: 0,
-                  font: "inherit",
-                  fontWeight: 600,
-                }}
-              >
-                Добавить контрагента
-              </button>
-            </li>
-          )}
         </ul>
       )}
-      <NewCounterpartyDialog
-        open={dialogOpen}
-        initialName={text.trim()}
-        onClose={() => setDialogOpen(false)}
-        onCreated={(item) => {
-          handleSelect(item);
-        }}
-      />
     </div>
   );
 };

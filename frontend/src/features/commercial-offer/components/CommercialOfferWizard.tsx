@@ -685,7 +685,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const handleClientSubmit = async (payload: {
     managerId: number;
     clientName: string;
-    counterpartyId: number;
+    counterpartyId: number | null;
     counterpartyCode1c: string;
     counterpartyInn: string | null;
     counterpartyKpp: string | null;
@@ -1024,6 +1024,24 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
   };
 
+  const handleSetOneoffPrice = async (lineId: string, unitPrice: number | null) => {
+    if (!state.draftId) {
+      return;
+    }
+    setLineRowError(null);
+    setStepError(null);
+    try {
+      const draft = await patchDraftLineMutation.mutateAsync({
+        draftId: state.draftId,
+        lineId,
+        payload: { unit_price: unitPrice },
+      });
+      dispatch({ type: "hydrate-draft", payload: draft });
+    } catch (error) {
+      setLineRowError({ lineId, message: getErrorMessage(error) });
+    }
+  };
+
   const handleDeleteLine = async (lineId: string) => {
     if (!state.draftId || !currentDraft) {
       return;
@@ -1211,6 +1229,8 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         }
         onReset={handleCreateNewOffer}
         lineRowHandlers={lineRowHandlers}
+        onSetOneoffPrice={(lineId, unitPrice) => void handleSetOneoffPrice(lineId, unitPrice)}
+        oneoffError={lineRowError}
       />
     ) : state.currentStep === "plates" ? (
       <PlateInputStep

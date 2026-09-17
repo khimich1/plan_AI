@@ -12,9 +12,15 @@ from core.pile_price_db import GRADE_CODES, grade_code_from_value
 DEFAULT_CONCRETE_GRADE = "B25"
 
 _PILE_MARK_RE = re.compile(
-    r"^([СC]\s*[\d.,]+(?:-[\d.,]+(?:[иИ])?)?)",
+    r"^([СC]\s*[\d.,]+(?:-[\d.,]+(?:[иИуУ])?)?)",
     re.IGNORECASE | re.UNICODE,
 )
+_REINFORCED_MARK_RE = re.compile(r"-\d+(?:[.,]\d+)?[уУ]$")
+
+
+def is_reinforced_pile_mark(mark: str) -> bool:
+    """Хвостовая «у» после нагрузки — тот же срез, что lint D11."""
+    return bool(_REINFORCED_MARK_RE.search((mark or "").strip()))
 
 
 @dataclass
@@ -23,6 +29,7 @@ class PileLineParseResult:
     mark: str = ""
     concrete_grade: str | None = None
     qty: int = 1
+    reinforced: bool = False
     reason_code: str = ""
     reason_text: str = ""
 
@@ -112,6 +119,7 @@ def parse_pile_line(
         mark=mark,
         concrete_grade=grade,
         qty=qty,
+        reinforced=is_reinforced_pile_mark(mark),
     )
 
 

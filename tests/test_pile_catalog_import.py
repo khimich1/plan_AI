@@ -67,6 +67,8 @@ def test_parse_pile_mark(mark, expected_length, expected_section) -> None:
         ("С120.35", "С120.35"),
         ("C14-40T4", "C14-40T4"),
         ("C9-35T6", "C9-35T6"),
+        ("С110.30-9у", "С110.30"),
+        ("С110.30-9.1у", "С110.30"),
     ],
 )
 def test_strip_pile_load_suffix(mark, expected) -> None:
@@ -250,6 +252,9 @@ def test_parse_real_xlsx_44_marks_if_present() -> None:
         ("С14-40Т4", (14.0, 400)),
         ("C9-35T6", (9.0, 350)),
         ("C18-40T8", (18.0, 400)),
+        ("C 14.35-T7", (14.0, 350)),
+        ("C14.35-T7", (14.0, 350)),
+        ("C 14.35", (None, None)),
         ("С140.40", (None, None)),
         ("мусор", (None, None)),
     ],
