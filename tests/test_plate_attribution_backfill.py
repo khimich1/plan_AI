@@ -16,12 +16,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core.plate_attribution import (  # noqa: E402
     backfill_assignment_identity,
     backfill_track_items_identity,
+    reconcile_track_items_to_orders,
 )
 
 
 def _order(kp_id: int, plate_name: str, length: float, width_mm: int,
-           load_code: int = 8, qty: int = 1) -> dict:
-    return {
+           load_code: int = 8, qty: int = 1,
+           concrete_grade: str | None = None) -> dict:
+    row = {
         "kp_id": kp_id,
         "plate_name": plate_name,
         "length": length,
@@ -29,6 +31,9 @@ def _order(kp_id: int, plate_name: str, length: float, width_mm: int,
         "load_code": load_code,
         "qty": qty,
     }
+    if concrete_grade is not None:
+        row["concrete_grade"] = concrete_grade
+    return row
 
 
 def _assignment(length: float, width_mm: int, load_code: int = 8,
@@ -446,3 +451,201 @@ class TestBackfillTrackItemsSharedScenarios:
 
         assert backfilled == 0
         assert sec.get("kp_id") is None
+
+
+class TestBackfillConcreteGradeOnSkipPaths:
+    """PLI-003: skip-пути добивают марку у items с готовой identity."""
+
+    def test_fallback_item_with_identity_gets_grade_from_order(self):
+        orders = [_order(101, "Плиты ПБ 60-12-8п", 6.0, 1200, 8, qty=1,
+                         concrete_grade="М500")]
+        item = _solid_item(6.0, 1.2, 8, kp_id=101, plate_name="Плиты ПБ 60-12-8п")
+        assert item.get("concrete_grade") is None
+        tracks = [_track([item], label="FALLBACK")]
+
+        backfilled = backfill_track_items_identity(tracks, orders)
+
+        assert backfilled == 0
+        assert item["kp_id"] == 101
+        assert item["concrete_grade"] == "М500"
+
+    def test_rescue_item_with_identity_gets_grade_from_order(self):
+        orders = [_order(1100, "X", 6.0, 1200, 8, qty=1, concrete_grade="М500")]
+        item = _solid_item(6.0, 1.2, 8, kp_id=1100, plate_name="X")
+        rescue_track = _track([item], label="РЕСКЬЮ")
+
+        backfilled = backfill_track_items_identity([rescue_track], orders)
+
+        assert backfilled == 0
+        assert item["kp_id"] == 1100
+        assert item["concrete_grade"] == "М500"
+
+    def test_existing_grade_is_not_overwritten(self):
+        orders = [_order(303, "Плиты ПБ 60-12-8п", 6.0, 1200, 8, qty=1,
+                         concrete_grade="М400")]
+        item = _solid_item(6.0, 1.2, 8, kp_id=303, plate_name="Плиты ПБ 60-12-8п")
+        item["concrete_grade"] = "М500"
+
+        backfill_track_items_identity([_track([item])], orders)
+
+        assert item["concrete_grade"] == "М500"
+
+    def test_slot_exhausted_item_without_identity_gets_grade_via_backfill(self):
+        orders = [_order(401, "Плиты ПБ 50-12-8п", 5.0, 1200, 8, qty=1,
+                         concrete_grade="М500")]
+        item = _solid_item(5.0, 1.2, 8, kp_id=None, plate_name=None)
+
+        backfilled = backfill_track_items_identity([_track([item])], orders)
+
+        assert backfilled == 1
+        assert item["kp_id"] == 401
+        assert item["identity_match_type"] == "backfilled"
+        assert item["concrete_grade"] == "М500"
+
+
+# =============================================================================
+# PLI-009: unit_id-матчинг + reconciliation (кейс КП#4/#5)
+# =============================================================================
+
+_KP45_NAME = "ПБ 20,6-7,2-8п"
+_KP45_LEN = 2.06
+_KP45_W_M = 0.72
+_KP45_W_MM = 720
+
+
+def _kp45_orders() -> list[dict]:
+    return [
+        _order(4, _KP45_NAME, _KP45_LEN, _KP45_W_MM, 8, qty=3),
+        _order(5, _KP45_NAME, _KP45_LEN, _KP45_W_MM, 8, qty=1),
+    ]
+
+
+def _kp45_assignment(unit_id: str, kp_id: int) -> dict:
+    return {
+        "length": _KP45_LEN,
+        "width": _KP45_W_MM,
+        "load_code": 8,
+        "source": "primary",
+        "kp_id": kp_id,
+        "plate_name": _KP45_NAME,
+        "unit_id": unit_id,
+    }
+
+
+class TestUnitIdMatchingKp4Kp5:
+    """Живой кейс: заказ 3+1, одинаковая геометрия, ошибочная атрибуция 2/2."""
+
+    def test_unit_id_overrides_wrong_geometry_split(self):
+        orders = _kp45_orders()
+        assignments = [
+            _kp45_assignment("prim-1", 4),
+            _kp45_assignment("prim-2", 4),
+            _kp45_assignment("prim-3", 4),
+            _kp45_assignment("prim-4", 5),
+        ]
+        items = [
+            {**_solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+             "unit_id": "prim-1"},
+            {**_solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+             "unit_id": "prim-2"},
+            {**_solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=5, plate_name=_KP45_NAME),
+             "unit_id": "prim-3"},
+            {**_solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=5, plate_name=_KP45_NAME),
+             "unit_id": "prim-4"},
+        ]
+
+        backfilled = backfill_track_items_identity(
+            [_track(items)], orders, plate_assignments=assignments
+        )
+
+        by_kp = {4: 0, 5: 0}
+        for item in items:
+            by_kp[int(item["kp_id"])] += 1
+        assert by_kp == {4: 3, 5: 1}
+        assert items[2]["kp_id"] == 4
+        assert items[2]["identity_match_type"] == "unit_id"
+        assert backfilled >= 1
+
+    def test_correct_split_is_noop(self):
+        orders = _kp45_orders()
+        assignments = [
+            _kp45_assignment("prim-1", 4),
+            _kp45_assignment("prim-2", 4),
+            _kp45_assignment("prim-3", 4),
+            _kp45_assignment("prim-4", 5),
+        ]
+        items = [
+            {**_solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+             "unit_id": "prim-1"},
+            {**_solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+             "unit_id": "prim-2"},
+            {**_solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+             "unit_id": "prim-3"},
+            {**_solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=5, plate_name=_KP45_NAME),
+             "unit_id": "prim-4"},
+        ]
+
+        backfilled = backfill_track_items_identity(
+            [_track(items)], orders, plate_assignments=assignments
+        )
+
+        assert backfilled == 0
+        by_kp = {4: 0, 5: 0}
+        for item in items:
+            by_kp[int(item["kp_id"])] += 1
+        assert by_kp == {4: 3, 5: 1}
+
+    def test_geometry_fallback_when_unit_id_missing(self):
+        orders = _kp45_orders()
+        items = [
+            _solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=None, plate_name=None)
+            for _ in range(4)
+        ]
+
+        backfilled = backfill_track_items_identity([_track(items)], orders)
+
+        assert backfilled == 4
+        by_kp = {4: 0, 5: 0}
+        for item in items:
+            by_kp[int(item["kp_id"])] += 1
+        assert by_kp[4] + by_kp[5] == 4
+
+
+class TestReconcileTrackItemsToOrders:
+    def test_moves_extra_item_from_kp5_to_kp4(self, caplog):
+        import logging
+
+        orders = _kp45_orders()
+        items = [
+            _solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+            _solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+            _solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=5, plate_name=_KP45_NAME),
+            _solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=5, plate_name=_KP45_NAME),
+        ]
+
+        with caplog.at_level(logging.INFO, logger="core.plate_attribution"):
+            moved = reconcile_track_items_to_orders([_track(items)], orders)
+
+        assert moved == 1
+        by_kp = {4: 0, 5: 0}
+        for item in items:
+            by_kp[int(item["kp_id"])] += 1
+        assert by_kp == {4: 3, 5: 1}
+        assert any("Реатрибуция" in rec.getMessage() for rec in caplog.records)
+
+    def test_noop_when_counts_already_match(self, caplog):
+        import logging
+
+        orders = _kp45_orders()
+        items = [
+            _solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+            _solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+            _solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=4, plate_name=_KP45_NAME),
+            _solid_item(_KP45_LEN, _KP45_W_M, 8, kp_id=5, plate_name=_KP45_NAME),
+        ]
+
+        with caplog.at_level(logging.INFO, logger="core.plate_attribution"):
+            moved = reconcile_track_items_to_orders([_track(items)], orders)
+
+        assert moved == 0
+        assert not any("Реатрибуция" in rec.getMessage() for rec in caplog.records)

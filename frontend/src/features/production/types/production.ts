@@ -1,3 +1,15 @@
+export interface PlanIntegrityItem {
+  kind: string;
+  message: string;
+}
+
+export interface PlanIntegrityReport {
+  orphans: number;
+  surplus: number;
+  no_grade: number;
+  items: PlanIntegrityItem[];
+}
+
 export interface PlanMetaSummary {
   id: string;
   name: string;
@@ -9,6 +21,7 @@ export interface PlanMetaSummary {
   completed_days?: number[];
   /** Optimistic-lock version from SQLite production_plans. */
   version?: number;
+  integrity?: PlanIntegrityReport;
   [key: string]: unknown;
 }
 
@@ -45,6 +58,8 @@ export interface DayPlateInfo {
   load_code: number | null;
   /** Позиция из снимка после списания (остаётся в списке дня). */
   write_off_completed?: boolean;
+  /** Марка бетона; «—» для legacy-планов без марки. */
+  concrete_grade?: string;
 }
 
 export interface DayTrackDetail {
@@ -232,6 +247,7 @@ export interface BuildPlanSummary {
   total_days: number;
   selected_plates_count: number;
   kp_count: number;
+  integrity?: PlanIntegrityReport;
 }
 
 export interface BuildPlanResponse {
@@ -249,6 +265,7 @@ export interface DeletePlanResponse {
 export type PlanDetailResponse = Record<string, unknown> & {
   id: string;
   version: number;
+  integrity?: PlanIntegrityReport;
 };
 
 export interface RemoveTrackResponse {

@@ -107,6 +107,175 @@ class TestVerifyCoverageSemantics:
         assert cov["demand_total"] == 2
         assert cov["covered_total"] == 2
 
+    def test_surplus_outside_demand_keys_fails_ok(self) -> None:
+        demand = {(6.0, 1200, 8): 1}
+        primary = [
+            {"assignment_key": (6.0, 1200, 8)},
+            {"assignment_key": (5.5, 1200, 8)},
+        ]
+        cov = verify_coverage(demand, primary, [])
+        assert cov["ok"] is False
+        assert cov["missing"] == {}
+        assert cov["surplus"][(5.5, 1200, 8)] == 1
+
+    def test_concrete_grade_is_not_part_of_coverage_key(self) -> None:
+        """R5: марка не входит в ключ coverage — два КП, одна геометрия, разные марки."""
+        demand = {(6.0, 1200, 8): 2}
+        primary = [
+            {"assignment_key": (6.0, 1200, 8), "concrete_grade": "М400", "kp_id": 4},
+            {"assignment_key": (6.0, 1200, 8), "concrete_grade": "М500", "kp_id": 5},
+        ]
+        cov = verify_coverage(demand, primary, [])
+        assert cov["ok"] is True
+        assert cov["surplus"] == {}
+        assert cov["missing"] == {}
+
+
+class TestNormDemandKeyUnification:
+    def test_matches_canonical_plate_key(self) -> None:
+        from core.config_and_data import canonical_plate_key
+        from core.optimization.optimize_2d.state import norm_demand_key
+
+        samples = [
+            (6.0, 1200, 8),
+            (6.0, 1200, 800),
+            (5.7, 530, 1200),
+            (5.700001, 1200.0, 12.5),
+        ]
+        for key in samples:
+            assert norm_demand_key(key) == canonical_plate_key(*key)
+
+
+class TestFinalizeCoverageReport:
+    def test_slot_exhausted_counted_and_opt_ok_unchanged(self) -> None:
+        from core.optimization.optimize_2d.finalize import run_two_d_phase_finalize
+        from core.optimization.result_contract import OPT_STATUS_KEY
+        from core.plate_audit import PlateAudit
+
+        key = (6.0, 1200, 8)
+        demand = {key: 2}
+        result = {
+            "primary_cuts": [
+                {
+                    "assignment_key": key,
+                    "lengths": [6.0],
+                    "width": 1200,
+                    "rest": 0,
+                    "load_code": 8,
+                    "primary_instance_id": "prim-1",
+                },
+                {
+                    "assignment_key": key,
+                    "lengths": [6.0],
+                    "width": 1200,
+                    "rest": 0,
+                    "load_code": 8,
+                    "primary_instance_id": "prim-2",
+                },
+            ],
+            "secondary_cuts": [],
+            "total_plates": 2,
+            "plate_assignments": [],
+            "rests_created": [],
+            "rests_used": [],
+        }
+        slot_lists = {
+            key: [
+                {
+                    "kp_id": 1,
+                    "plate_name": "ПБ 60-12-8п",
+                    "load_code": 8,
+                    "concrete_grade": "М400",
+                }
+            ]
+        }
+        out = run_two_d_phase_finalize(
+            demand_2d=demand,
+            plate_width=1200,
+            slot_lists=slot_lists,
+            slot_cursors={key: 0},
+            no_sources_keys=None,
+            solver_status="Optimal",
+            audit=PlateAudit(
+                [{"length": 6.0, "width": 1200, "load_code": 8, "qty": 2}]
+            ),
+            result=result,
+            n_solid_primary_plates=2,
+            n_cut_primary_plates=0,
+            next_primary_instance_id=3,
+        )
+        summary = out["_coverage_summary"]
+        assert summary["ok"] is True
+        assert summary["slot_exhausted"] == 1
+        assert out[OPT_STATUS_KEY] == "ok"
+
+    def test_artificial_surplus_does_not_change_opt_ok(self, caplog) -> None:
+        from core.optimization.optimize_2d.finalize import run_two_d_phase_finalize
+        from core.optimization.result_contract import OPT_STATUS_KEY
+        from core.plate_audit import PlateAudit
+
+        key = (6.0, 1200, 8)
+        extra = (5.5, 1200, 8)
+        demand = {key: 1}
+        result = {
+            "primary_cuts": [
+                {
+                    "assignment_key": key,
+                    "lengths": [6.0],
+                    "width": 1200,
+                    "rest": 0,
+                    "load_code": 8,
+                    "primary_instance_id": "prim-1",
+                },
+                {
+                    "assignment_key": extra,
+                    "lengths": [5.5],
+                    "width": 1200,
+                    "rest": 0,
+                    "load_code": 8,
+                    "primary_instance_id": "prim-2",
+                },
+            ],
+            "secondary_cuts": [],
+            "total_plates": 2,
+            "plate_assignments": [],
+            "rests_created": [],
+            "rests_used": [],
+        }
+        slot_lists = {
+            key: [
+                {
+                    "kp_id": 1,
+                    "plate_name": "ПБ 60-12-8п",
+                    "load_code": 8,
+                    "concrete_grade": "М400",
+                }
+            ]
+        }
+        with caplog.at_level("ERROR"):
+            out = run_two_d_phase_finalize(
+                demand_2d=demand,
+                plate_width=1200,
+                slot_lists=slot_lists,
+                slot_cursors={key: 0},
+                no_sources_keys=None,
+                solver_status="Optimal",
+                audit=PlateAudit(
+                    [{"length": 6.0, "width": 1200, "load_code": 8, "qty": 1}]
+                ),
+                result=result,
+                n_solid_primary_plates=2,
+                n_cut_primary_plates=0,
+                next_primary_instance_id=3,
+            )
+        summary = out["_coverage_summary"]
+        assert summary["ok"] is False
+        assert summary["surplus"][extra] == 1
+        assert extra in summary["surplus"]
+        assert out[OPT_STATUS_KEY] == "ok"
+        joined = " ".join(rec.getMessage() for rec in caplog.records)
+        assert "surplus" in joined
+
 
 class TestOptimizeWithCascadingEmptyPublicApi:
     def test_empty_inputs_yield_structured_error(self, caplog) -> None:

@@ -15,9 +15,11 @@ from core.optimization import optimize_with_cascading_longitudinal_cuts
 from core.optimization.layout_runtime_snapshot import build_layout_runtime_snapshot_from_plate_order_context
 from core.optimization.result_contract import is_optimization_success
 from core.plan_commit import PlanCommitError, commit_plan_plates
+from core.plan_integrity import INTEGRITY_KEY, build_integrity_report
 from core.plate_attribution import (
     backfill_assignment_identity,
     backfill_track_items_identity,
+    reconcile_track_items_to_orders,
 )
 from core.plate_order_context import PlateOrderContext
 from core.production.capacity import validate_fill_targets
@@ -204,12 +206,19 @@ def optimize(
     backfilled_items = backfill_track_items_identity(
         all_tracks_list,
         orders_2d,
+        plate_assignments=optimization_result.get("plate_assignments") or [],
     )
     if backfilled_items:
         logger.info(
             "[CORE-PLAN] Восстановлена identity у %s track items "
             "(root + secondary_cuts)",
             backfilled_items,
+        )
+    reconciled = reconcile_track_items_to_orders(all_tracks_list, orders_2d)
+    if reconciled:
+        logger.info(
+            "[CORE-PLAN] Reconciliation: реатрибутировано %s items",
+            reconciled,
         )
 
     try:
@@ -341,6 +350,8 @@ def persist(
         )
         raise PlanBuildError(str(exc)) from exc
 
+    plan[INTEGRITY_KEY] = build_integrity_report(plan)
+
     try:
         if stats.get("is_new_plan"):
             repo.create(plan)
@@ -377,6 +388,7 @@ def persist(
             int(p.get("qty", 0) or 0) for p in load_result.selected_plates
         ),
         "kp_count": len(load_result.kp_list),
+        INTEGRITY_KEY: safe_plan.get(INTEGRITY_KEY) or build_integrity_report(safe_plan),
     }
 
     logger.info(

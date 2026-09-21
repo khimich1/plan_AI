@@ -106,6 +106,11 @@ def test_list_metadata_from_sqlite(tmp_path: Path) -> None:
     assert plan_b_meta["name"] == "Plan B"
     assert plan_b_meta["total_days"] == 1
     assert plan_b_meta["total_tracks"] == 1
+    integrity = plan_b_meta["integrity"]
+    assert integrity["orphans"] == 0
+    assert integrity["surplus"] == 0
+    assert integrity["no_grade"] == 0
+    assert integrity["items"] == []
 
 
 def test_get_active_and_set_active(tmp_path: Path) -> None:

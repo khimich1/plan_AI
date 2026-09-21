@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 
 from core.config_and_data import canonical_plate_key
+
+logger = logging.getLogger(__name__)
 
 
 def verify_coverage(
@@ -23,10 +26,11 @@ def verify_coverage(
             "covered_total": int,
             "missing": {(L, W, lc): int},     # дефицит по ключам
             "surplus": {(L, W, lc): int},     # перепроизводство по ключам
-            "ok": bool                          # True, если нет дефицита
+            "ok": bool                          # True, если нет дефицита и нет surplus
         }
     Все ключи приведены через canonical_plate_key, так что 800/8 и
     дробные длины не дают ложного несоответствия.
+    Surplus считается по объединению ключей покрытия и спроса.
     """
     demand_norm: Counter = Counter()
     for key, qty in (demand_2d or {}).items():
@@ -45,17 +49,26 @@ def verify_coverage(
 
     missing: dict = {}
     surplus: dict = {}
-    for key, need in demand_norm.items():
+    for key in set(demand_norm) | set(coverage):
+        need = demand_norm.get(key, 0)
         have = coverage.get(key, 0)
         if have < need:
             missing[key] = need - have
         elif have > need:
             surplus[key] = have - need
 
+    ok = not missing and not surplus
+    if not ok:
+        logger.error(
+            "[COVERAGE] покрытие не сходится: missing=%s surplus=%s",
+            dict(missing),
+            dict(surplus),
+        )
+
     return {
         "demand_total": int(sum(demand_norm.values())),
         "covered_total": int(sum(coverage.values())),
         "missing": missing,
         "surplus": surplus,
-        "ok": not missing,
+        "ok": ok,
     }

@@ -78,6 +78,12 @@ def test_get_plans(
     assert response.status_code == 200
     payload = response.json()
     assert any(item["id"] == plan_id for item in payload["plans"])
+    meta = next(item for item in payload["plans"] if item["id"] == plan_id)
+    integrity = meta["integrity"]
+    assert isinstance(integrity["orphans"], int)
+    assert isinstance(integrity["surplus"], int)
+    assert isinstance(integrity["no_grade"], int)
+    assert isinstance(integrity["items"], list)
 
 
 def test_get_plan_by_id(
@@ -96,6 +102,11 @@ def test_get_plan_by_id(
     assert payload["id"] == plan_id
     assert payload["version"] >= 1
     assert DATE_KEY in payload.get("days", {})
+    integrity = payload["integrity"]
+    assert isinstance(integrity["orphans"], int)
+    assert isinstance(integrity["surplus"], int)
+    assert isinstance(integrity["no_grade"], int)
+    assert isinstance(integrity["items"], list)
 
 
 def test_post_plans_build(

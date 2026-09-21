@@ -286,6 +286,18 @@ def run_two_d_phase_finalize(
             }
         )
 
+    _slot_exhausted = len(_empty_primary_keys) + len(_empty_secondary_keys)
+    _coverage_summary["slot_exhausted"] = _slot_exhausted
+    _coverage_summary["slot_exhausted_primary"] = len(_empty_primary_keys)
+    _coverage_summary["slot_exhausted_secondary"] = len(_empty_secondary_keys)
+    if _slot_exhausted:
+        _cov_logger.warning(
+            "[OPT_2D] [COVERAGE] slot_exhausted=%d (primary=%d, secondary=%d)",
+            _slot_exhausted,
+            len(_empty_primary_keys),
+            len(_empty_secondary_keys),
+        )
+
     print(f"[OPT_2D] OK! Готово! Использовано {result['total_plates']} плит")
     print(f"[OPT_2D] Создано {len(result['plate_assignments'])} готовых плит")
     print(f"[OPT_2D] Остатков использовано вторично: {len(result['rests_used'])}")
