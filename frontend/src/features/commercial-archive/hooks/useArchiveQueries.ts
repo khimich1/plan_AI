@@ -104,6 +104,29 @@ export const useBindCounterpartyMutation = () => {
   });
 };
 
+export const useCreateAndBindCounterpartyMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      kpId,
+      name,
+      code_1c,
+      inn,
+      kpp,
+    }: {
+      kpId: number;
+      name: string;
+      code_1c: string;
+      inn?: string | null;
+      kpp?: string | null;
+    }) => archiveApi.createAndBindCounterparty(kpId, { name, code_1c, inn, kpp }),
+    onSuccess: (offer) => {
+      queryClient.setQueryData(archiveKeys.detail(offer.kp_id), offer);
+      queryClient.invalidateQueries({ queryKey: archiveKeys.all });
+    },
+  });
+};
+
 export const useUpdateLogisticsCostMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({

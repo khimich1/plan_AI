@@ -5,7 +5,7 @@ import {
   useGuidDuplicatesQuery,
   useResolveDuplicateMutation,
 } from "@/features/nomenclature/hooks/useNomenclatureQueries";
-import { productKindLabel, type DuplicateTask } from "@/features/nomenclature/types/nomenclature";
+import { formatKpIdsLabel, productKindLabel, type DuplicateTask } from "@/features/nomenclature/types/nomenclature";
 import { ApiError, getErrorMessage } from "@/shared/lib/apiError";
 
 const formatPrice = (value: number | null): string => {
@@ -20,6 +20,7 @@ const DuplicateCard = ({ item }: { item: DuplicateTask }) => {
   const [chosen, setChosen] = useState(item.candidates[0]?.guid ?? "");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const kpLabel = formatKpIdsLabel(item.kp_ids);
 
   const onRemember = async () => {
     if (!chosen) {
@@ -56,6 +57,7 @@ const DuplicateCard = ({ item }: { item: DuplicateTask }) => {
     >
       <div style={{ fontWeight: 600 }}>
         {productKindLabel(item.product_kind)} · {item.key}
+        {kpLabel ? ` — ${kpLabel}` : ""}
       </div>
       <fieldset style={{ border: "none", margin: 0, padding: 0, display: "grid", gap: "0.35rem" }}>
         <legend style={{ fontSize: "0.9rem", color: "#475467", padding: 0 }}>Кандидаты</legend>

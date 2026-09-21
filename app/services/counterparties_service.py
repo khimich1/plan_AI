@@ -61,6 +61,36 @@ class CounterpartiesService:
             raise CounterpartyValidationError("Контрагент не отмечен как клиент в 1С")
         return row
 
+    def resolve_active_client_for_bind(
+        self,
+        *,
+        name: str,
+        code_1c: str,
+        inn: str | None = None,
+        kpp: str | None = None,
+    ) -> dict[str, Any]:
+        """Найти активного клиента по ``code_1c`` или завести ручную карточку.
+
+        Не использует ``create()``: повтор кода активного клиента — это bind,
+        а не 409. Имя существующей карточки не перезаписываем.
+        """
+        code = (code_1c or "").strip()
+        trimmed_name = (name or "").strip()
+        if not code or not trimmed_name:
+            raise ValueError("Наименование и код 1С обязательны")
+        existing = self.repo.get_by_code_1c(code)
+        if existing is not None:
+            return self.require_active_client(int(existing["id"]))
+
+        return self.repo.insert(
+            code_1c=code,
+            name=trimmed_name,
+            inn=(inn or "").strip() or None,
+            kpp=(kpp or "").strip() or None,
+            is_client=True,
+            source="manual",
+        )
+
     def create(
         self,
         *,

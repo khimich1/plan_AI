@@ -12,6 +12,7 @@ import pytest
 from app.repositories.auth_repository import AuthRepository
 from app.repositories.promise_repository import PromiseRepository
 from app.services.kp_guid_notify import NOTIFICATION_KIND, notify_kp_guid_missing
+from core.guid_demand import list_open
 from core.nomenclature_guid import ensure_schema, upsert
 from tests.helpers import kp_db_fixtures as fx
 
@@ -175,6 +176,35 @@ def test_no_economist_logs_warning(tmp_path: Path, caplog: pytest.LogCaptureFixt
         )
     assert created == 0
     assert any("экономист" in rec.message.lower() for rec in caplog.records)
+    conn = sqlite3.connect(pb)
+    try:
+        rows = list_open(conn)
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0].mark == _PILE_MARK
+    assert list(rows[0].kp_ids) == [1]
+
+
+def test_archive_without_holes_does_not_write_demand(tmp_path: Path) -> None:
+    plita = fx.make_iso_db(tmp_path)
+    pb = tmp_path / "pb.db"
+    _init_pb(pb)
+    _seed_ready_pile(pb)
+
+    created = notify_kp_guid_missing(
+        kp_id=3,
+        seq=3,
+        order_data=_order_ready(),
+        pb_db_path=str(pb),
+        plita_db_path=plita,
+    )
+    assert created == 0
+    conn = sqlite3.connect(pb)
+    try:
+        assert list_open(conn) == []
+    finally:
+        conn.close()
 
 
 def test_repeat_archive_notifies_only_new_mark(tmp_path: Path) -> None:
@@ -212,3 +242,10 @@ def test_repeat_archive_notifies_only_new_mark(tmp_path: Path) -> None:
     rows = repo.list_notifications(user_id=int(user["id"]), kind=NOTIFICATION_KIND)
     marks = [json.loads(row["payload_json"])["marks"][0] for row in rows]
     assert sorted(marks) == ["С30.30-3", _PILE_MARK]
+
+    conn = sqlite3.connect(pb)
+    try:
+        demand = {(row.mark, tuple(row.kp_ids)) for row in list_open(conn)}
+    finally:
+        conn.close()
+    assert demand == {(_PILE_MARK, (9,)), ("С30.30-3", (9,))}

@@ -272,6 +272,83 @@ def test_bind_counterparty_validation(
     assert "не найден" in response.json()["detail"]
 
 
+def test_create_and_bind_counterparty_ok(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.create_and_bind_counterparty.return_value = _fake_details(
+        customer_inn="7701000001",
+        customer_kpp="770101001",
+        counterparty_id=11,
+    )
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/counterparty",
+        json={
+            "name": "ООО Бармалей",
+            "code_1c": "00-BARM",
+            "inn": "7701000001",
+            "kpp": "770101001",
+        },
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["counterparty_id"] == 11
+    assert payload["customer_inn"] == "7701000001"
+    fake_service.create_and_bind_counterparty.assert_called_once_with(
+        42,
+        name="ООО Бармалей",
+        code_1c="00-BARM",
+        inn="7701000001",
+        kpp="770101001",
+        user=TESTER_USER,
+    )
+
+
+def test_create_and_bind_counterparty_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/commercial/archive/42/counterparty",
+        json={"name": "ООО Бармалей", "code_1c": "00-BARM"},
+    )
+    assert response.status_code == 401
+
+
+def test_create_and_bind_counterparty_empty_fields_are_422(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    response = client.post(
+        "/api/v1/commercial/archive/42/counterparty",
+        json={"name": "", "code_1c": ""},
+        cookies=auth_cookie,
+    )
+    assert response.status_code == 422
+    fake_service.create_and_bind_counterparty.assert_not_called()
+
+
+def test_create_and_bind_counterparty_validation(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    fake_service.create_and_bind_counterparty.side_effect = ArchiveValidationError(
+        "Контрагент не отмечен как клиент в 1С"
+    )
+    response = client.post(
+        "/api/v1/commercial/archive/42/counterparty",
+        json={"name": "ПОСТАВЩИК", "code_1c": "00-sup"},
+        cookies=auth_cookie,
+    )
+    assert response.status_code == 400
+    assert "не отмечен как клиент" in response.json()["detail"]
+
+
 def test_update_discount_validation(
     client: TestClient,
     auth_cookie: dict[str, str],

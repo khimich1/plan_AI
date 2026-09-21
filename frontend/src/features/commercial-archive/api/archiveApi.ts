@@ -51,6 +51,21 @@ export const archiveApi = {
       { "Content-Type": "application/json" },
     ),
 
+  createAndBindCounterparty: (
+    kpId: number,
+    payload: { name: string; code_1c: string; inn?: string | null; kpp?: string | null },
+  ) =>
+    httpClient.post<ArchiveOfferDetails>(
+      `${BASE}/${kpId}/counterparty`,
+      JSON.stringify({
+        name: payload.name,
+        code_1c: payload.code_1c,
+        inn: payload.inn,
+        kpp: payload.kpp,
+      }),
+      { "Content-Type": "application/json" },
+    ),
+
   updateLogisticsCost: (
     kpId: number,
     payload: {

@@ -17,6 +17,7 @@ import {
   useUpdateDiscountMutation,
   useUpdateLogisticsCostMutation,
   useBindCounterpartyMutation,
+  useCreateAndBindCounterpartyMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import {
   holdBadgeLabel,
@@ -131,10 +132,15 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [resumePending, setResumePending] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [bindSelected, setBindSelected] = useState<CounterpartyShort | null>(null);
+  const [bindName, setBindName] = useState("");
+  const [bindCode1c, setBindCode1c] = useState("");
+  const [bindInn, setBindInn] = useState("");
+  const [bindKpp, setBindKpp] = useState("");
 
   const discountMutation = useUpdateDiscountMutation();
   const logisticsMutation = useUpdateLogisticsCostMutation();
   const bindMutation = useBindCounterpartyMutation();
+  const createBindMutation = useCreateAndBindCounterpartyMutation();
   const schemaMutation = useArchiveDocumentMutation("schema");
   const financePending = discountMutation.isPending || logisticsMutation.isPending;
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -142,6 +148,10 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const offer = query.data;
   useEffect(() => {
     setBindSelected(null);
+    setBindName(offer?.customer_name ?? "");
+    setBindCode1c("");
+    setBindInn("");
+    setBindKpp("");
   }, [offer?.kp_id, offer?.counterparty_id]);
   const holdQuery = usePromiseHoldQuery(
     open && offer?.status === "в архиве" ? offer.kp_id : null,
@@ -433,6 +443,10 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     offer?.fbs_lm_delivery_ready !== false &&
     hasFbsLmItems;
   const fbsLmPendingMarks = offer?.fbs_lm_delivery_enabled ? (offer.fbs_lm_pending_marks ?? []) : [];
+  const canBindExisting = Boolean(bindSelected);
+  const canCreate =
+    !bindSelected && bindName.trim().length > 0 && bindCode1c.trim().length > 0;
+  const bindPending = bindMutation.isPending || createBindMutation.isPending;
 
   return (
     <Modal
@@ -532,6 +546,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                         selected={bindSelected}
                         initialName={offer.customer_name ?? ""}
                         onSelect={setBindSelected}
+                        onTextChange={setBindName}
                         placeholder="Найдите клиента из 1С"
                       />
                     </FieldWrapper>
@@ -539,26 +554,67 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                       <div style={{ color: "#475467", fontSize: "0.9rem" }}>
                         {formatCounterpartyRequisites(bindSelected)}
                       </div>
-                    ) : null}
+                    ) : (
+                      <>
+                        <FieldWrapper label="Код 1С">
+                          <Input
+                            value={bindCode1c}
+                            onChange={(event) => setBindCode1c(event.target.value)}
+                            placeholder="Код из карточки 1С"
+                            data-testid="bind-counterparty-code-1c"
+                          />
+                        </FieldWrapper>
+                        <FieldWrapper label="ИНН">
+                          <Input
+                            value={bindInn}
+                            onChange={(event) => setBindInn(event.target.value)}
+                            placeholder="Необязательно"
+                            data-testid="bind-counterparty-inn"
+                          />
+                        </FieldWrapper>
+                        <FieldWrapper label="КПП">
+                          <Input
+                            value={bindKpp}
+                            onChange={(event) => setBindKpp(event.target.value)}
+                            placeholder="Необязательно"
+                            data-testid="bind-counterparty-kpp"
+                          />
+                        </FieldWrapper>
+                      </>
+                    )}
                     <Button
                       type="button"
                       variant="secondary"
-                      disabled={!bindSelected || bindMutation.isPending}
+                      disabled={(!canBindExisting && !canCreate) || bindPending}
                       data-testid="bind-counterparty-submit"
                       onClick={() => {
-                        if (!bindSelected) {
+                        if (bindSelected) {
+                          void bindMutation.mutateAsync({
+                            kpId: offer.kp_id,
+                            counterpartyId: bindSelected.id,
+                          });
                           return;
                         }
-                        void bindMutation.mutateAsync({
+                        const name = bindName.trim();
+                        const code = bindCode1c.trim();
+                        if (!name || !code) {
+                          return;
+                        }
+                        void createBindMutation.mutateAsync({
                           kpId: offer.kp_id,
-                          counterpartyId: bindSelected.id,
+                          name,
+                          code_1c: code,
+                          inn: bindInn.trim() || null,
+                          kpp: bindKpp.trim() || null,
                         });
                       }}
                     >
-                      {bindMutation.isPending ? "Привязываем…" : "Занести контрагента"}
+                      {bindPending ? "Привязываем…" : "Занести контрагента"}
                     </Button>
-                    {bindMutation.isError && (
-                      <Alert tone="error">{getErrorMessage(bindMutation.error)}</Alert>
+                    {(bindMutation.isError || createBindMutation.isError) && (
+                      <Alert tone="error">
+                        {getErrorMessage(bindMutation.error ?? createBindMutation.error)}
+                      </Alert>
                     )}
                   </div>
                 )}

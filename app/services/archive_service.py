@@ -251,6 +251,46 @@ class ArchiveService:
             )
         return self.get_details(kp_id, user=user)
 
+    def create_and_bind_counterparty(
+        self,
+        kp_id: int,
+        *,
+        name: str,
+        code_1c: str,
+        inn: str | None = None,
+        kpp: str | None = None,
+        user: dict,
+    ) -> ArchiveOfferDetails:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_write_access(user, raw)
+        if raw.get("status") != "в архиве":
+            raise ArchiveValidationError(
+                "Привязать контрагента можно только у КП в статусе «в архиве»"
+            )
+        try:
+            row = CounterpartiesService(
+                db_path=self.repository.db_path
+            ).resolve_active_client_for_bind(
+                name=name, code_1c=code_1c, inn=inn, kpp=kpp
+            )
+        except CounterpartyValidationError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        except ValueError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        if not self.repository.update_counterparty(
+            kp_id,
+            counterparty_id=int(row["id"]),
+            customer_name=str(row["name"]),
+            customer_inn=row.get("inn"),
+            customer_kpp=row.get("kpp"),
+        ):
+            raise ArchiveNotFoundError(
+                f"Не удалось привязать контрагента. КП №{kp_id} не найдено."
+            )
+        return self.get_details(kp_id, user=user)
+
     def delete_offer(self, kp_id: int, *, user: dict) -> None:
         raw = self.repository.get_by_id(kp_id)
         if not raw:

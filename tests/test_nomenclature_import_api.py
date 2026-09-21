@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from core.guid_demand import list_open, record_guid_demand
+from core.guid_gate import HINT_CREATE, MissingItem, OrderLine, REASON_MISSING
 from core.nomenclature_guid import ensure_schema, upsert
 from core.pricelist_1c_parser import PricelistRow
 from tests.helpers.auth_fixtures import patch_auth_users
@@ -181,3 +183,55 @@ def test_mixed_filename_with_product_kind_query_ok(client, mock_parse) -> None:
     body = response.json()
     assert body["new_guids_count"] == 1
     assert body["product_kind"] == "pile"
+
+
+def test_import_closes_matching_demand_keeps_neighbor(
+    client, import_env: Path, mock_parse
+) -> None:
+    from app.services.nomenclature_queue_service import NomenclatureQueueService
+
+    neighbor = "С70.35-9"
+    conn = sqlite3.connect(import_env)
+    try:
+        upsert(conn, "pile", neighbor, match_status="missing")
+        record_guid_demand(
+            conn,
+            12,
+            [
+                MissingItem(
+                    line=OrderLine("pile", MARK),
+                    reason=REASON_MISSING,
+                    action_hint=HINT_CREATE,
+                )
+            ],
+        )
+        record_guid_demand(
+            conn,
+            13,
+            [
+                MissingItem(
+                    line=OrderLine("pile", neighbor),
+                    reason=REASON_MISSING,
+                    action_hint=HINT_CREATE,
+                )
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    response = _upload(client, filename=PILE_FILENAME)
+    assert response.status_code == 200, response.text
+
+    conn = sqlite3.connect(import_env)
+    try:
+        opened = {row.mark: list(row.kp_ids) for row in list_open(conn)}
+    finally:
+        conn.close()
+    assert MARK not in opened
+    assert opened[neighbor] == [13]
+
+    tasks = NomenclatureQueueService(import_env).list_tasks()
+    marks = {item.mark for item in tasks.to_create_1c}
+    assert MARK not in marks
+    assert neighbor in marks

@@ -6,6 +6,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.counterparties import (
+    COUNTERPARTY_CODE_1C_MAX_LENGTH,
+    COUNTERPARTY_INN_MAX_LENGTH,
+    COUNTERPARTY_KPP_MAX_LENGTH,
+    COUNTERPARTY_NAME_MAX_LENGTH,
+)
 from app.schemas.sgp import SgpProgress
 from core.production.capacity import TRACKS_PER_DAY_HARD_CAP
 
@@ -217,6 +223,13 @@ class ArchiveOfferDetails(BaseModel):
 
 class BindCounterpartyRequest(BaseModel):
     counterparty_id: int = Field(ge=1)
+
+
+class CreateAndBindCounterpartyRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=COUNTERPARTY_NAME_MAX_LENGTH)
+    code_1c: str = Field(min_length=1, max_length=COUNTERPARTY_CODE_1C_MAX_LENGTH)
+    inn: str | None = Field(default=None, max_length=COUNTERPARTY_INN_MAX_LENGTH)
+    kpp: str | None = Field(default=None, max_length=COUNTERPARTY_KPP_MAX_LENGTH)
 
 
 class UpdateDiscountRequest(BaseModel):

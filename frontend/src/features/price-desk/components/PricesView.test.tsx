@@ -160,6 +160,22 @@ describe("PricesView", () => {
     render(<PricesView />);
     expect(screen.getByText("задач нет")).toBeInTheDocument();
     expect(screen.getByText("дублей нет")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Завести в 1С" })).not.toBeInTheDocument();
+  });
+
+  it("renders КП numbers on a create-1c demand row", () => {
+    tasksState.to_create_1c = [
+      {
+        product_kind: "pile",
+        mark: "С70.35-9у",
+        hint: "заведите карточку «у» в 1С и загрузите отчёт",
+        field: "guid_1c_u",
+        kp_ids: [12, 18],
+      },
+    ];
+    render(<PricesView />);
+    expect(screen.getByText(/КП №12, №18/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Завести в 1С" })).toBeInTheDocument();
   });
 
   it("submits inline price and closes the 💰 task", async () => {
@@ -190,10 +206,12 @@ describe("PricesView", () => {
         { guid: "bbb-222", name: "Сваи С40.30-6 А", price: 1000 },
         { guid: "ccc-333", name: "Сваи С40.30-6 Б", price: 1000 },
       ],
+      kp_ids: [12],
     };
     tasksState.duplicates = [dup];
     mockResolveDuplicate.mockRejectedValue(new ApiError("кандидат исчез", 409));
     render(<PricesView />);
+    expect(screen.getByText(/КП №12/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: /Сваи С40.30-6 Б/ }));
     fireEvent.click(screen.getByRole("button", { name: "Запомнить выбор" }));
     expect(await screen.findByText("кандидат исчез, задача открыта")).toBeInTheDocument();

@@ -165,10 +165,15 @@ def _payload_without_id(*, save_mode: str = "archive") -> CreateOfferRequest:
 
 
 def _patch_dbs(monkeypatch: pytest.MonkeyPatch, plita: str, pb: Path) -> None:
+    import core.db_config as db_config
+
     monkeypatch.setenv("APP_SECRET_KEY", VALID_APP_SECRET_KEY)
     monkeypatch.setenv("PB_DB_PATH", str(pb))
     monkeypatch.setenv("PLITA_DB_PATH", plita)
     get_settings.cache_clear()
+    # PB_DB_PATH is bound at import time in core.db_config; env + cache_clear
+    # do not update it. kp_persistence_service imports it at call time.
+    monkeypatch.setattr(db_config, "PB_DB_PATH", str(pb))
 
 
 def _init_pb_missing_pile(pb: Path) -> None:

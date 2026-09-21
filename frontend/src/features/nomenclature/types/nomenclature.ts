@@ -72,6 +72,7 @@ export type Create1cTask = {
   mark: string;
   hint: string;
   field?: string;
+  kp_ids?: number[];
 };
 
 export type PriceTask = {
@@ -92,6 +93,7 @@ export type DuplicateTask = {
   key: string;
   product_kind: string;
   candidates: DuplicateCandidate[];
+  kp_ids?: number[];
 };
 
 export type GuidTasksResponse = {
@@ -123,4 +125,11 @@ export const productKindLabel = (kind: string): string => {
     return "Плиты";
   }
   return kind;
+};
+
+export const formatKpIdsLabel = (kpIds?: number[]): string => {
+  if (!kpIds?.length) {
+    return "";
+  }
+  return `КП ${kpIds.map((id) => `№${id}`).join(", ")}`;
 };

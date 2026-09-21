@@ -5,7 +5,7 @@ import {
   useGuidTasksQuery,
   useResolvePriceMutation,
 } from "@/features/nomenclature/hooks/useNomenclatureQueries";
-import { productKindLabel } from "@/features/nomenclature/types/nomenclature";
+import { formatKpIdsLabel, productKindLabel } from "@/features/nomenclature/types/nomenclature";
 import { getErrorMessage } from "@/shared/lib/apiError";
 
 export const TasksSection = () => {
@@ -54,11 +54,15 @@ export const TasksSection = () => {
         <div>
           <h3 style={{ margin: "0 0 0.45rem", fontSize: "0.95rem" }}>Завести в 1С</h3>
           <ul style={{ margin: 0, paddingLeft: "1.15rem", display: "grid", gap: "0.35rem" }}>
-            {toCreate.map((item) => (
-              <li key={`${item.product_kind}-${item.mark}-${item.field ?? "guid_1c"}`}>
-                {productKindLabel(item.product_kind)} · {item.mark} — {item.hint}
-              </li>
-            ))}
+            {toCreate.map((item) => {
+              const kpLabel = formatKpIdsLabel(item.kp_ids);
+              return (
+                <li key={`${item.product_kind}-${item.mark}-${item.field ?? "guid_1c"}`}>
+                  {productKindLabel(item.product_kind)} · {item.mark} — {item.hint}
+                  {kpLabel ? ` — ${kpLabel}` : ""}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}
