@@ -3,17 +3,40 @@
 
 from __future__ import annotations
 
-import math
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 
 from pulp import value
 
 from core.domain.plate_order import normalize_load_code
-from core.optimization.geometry import _canonical_length
 from core.optimization.ilp_model import _residual_phys_key
 from core.optimization.optimize_2d.state import TwoDPhaseAState
 from core.optimization.secondary_batches import _batch_sizes_for_secondary_z_sec
+
+logger = logging.getLogger(__name__)
+
+_QTY_EPS = 1e-6
+
+
+def round_cut_qty(raw, *, context: str = "") -> int:
+    """Целое qty из значения солвера: ``int(round(x))`` с допуском ``1e-6``.
+
+    Дробная часть сверх eps → warning. При ``LpInteger`` целое не меняется.
+    """
+    try:
+        value_f = float(raw or 0)
+    except (TypeError, ValueError):
+        value_f = 0.0
+    rounded = int(round(value_f))
+    if abs(value_f - rounded) > _QTY_EPS:
+        logger.warning(
+            "[OPT_2D] Дробное qty=%s (context=%s) округлено до %d",
+            value_f,
+            context or "—",
+            rounded,
+        )
+    return rounded
 
 
 @dataclass
@@ -59,7 +82,7 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
 
     for (opt_id, dk), zv in z_prim.items():
         raw_val = value(zv) or 0
-        qty = math.ceil(raw_val - 1e-6) if raw_val > 1e-6 else 0
+        qty = round_cut_qty(raw_val, context=f"z_prim[{opt_id}]")
         if qty <= 0:
             continue
         opt = primary_options_by_id[opt_id]
@@ -116,7 +139,7 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
 
     rests_used: list = []
     for opt in secondary_options:
-        apps = int(round(value(x_sec[opt["id"]]) or 0))
+        apps = round_cut_qty(value(x_sec[opt["id"]]) or 0, context=f"x_sec[{opt['id']}]")
         for _ in range(apps):
             rests_used.append(
                 {
@@ -137,7 +160,7 @@ def extract_two_d_phase_b(phase_state: TwoDPhaseAState) -> TwoDPhaseBResult:
 
     for (opt_id, dk), zv in z_sec.items():
         raw_val = value(zv) or 0
-        qty = int(round(raw_val))
+        qty = round_cut_qty(raw_val, context=f"z_sec[{opt_id}]")
         if qty <= 0:
             continue
         opt = secondary_options_by_id[opt_id]

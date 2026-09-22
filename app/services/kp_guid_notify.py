@@ -13,6 +13,7 @@ from app.core.constants import DEFAULT_ECONOMIST_ROLE
 from app.repositories.auth_repository import AuthRepository
 from app.repositories.promise_repository import PromiseRepository
 from app.schemas.notifications import KIND_KP_GUID_MISSING
+from core.guid_demand import record_guid_demand
 from core.guid_gate import check_invoice_guids, order_lines_from_order_data
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,9 @@ def notify_kp_guid_missing(
     conn = sqlite3.connect(pb_db_path)
     try:
         report = check_invoice_guids(lines, conn)
+        if report.missing:
+            record_guid_demand(conn, int(kp_id), report.missing)
+            conn.commit()
     finally:
         conn.close()
 

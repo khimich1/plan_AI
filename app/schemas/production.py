@@ -139,6 +139,18 @@ class DeletePlanResponse(BaseModel):
     deleted: bool
 
 
+class PlanIntegrityItem(BaseModel):
+    kind: str
+    message: str
+
+
+class PlanIntegrityReport(BaseModel):
+    orphans: int = 0
+    surplus: int = 0
+    no_grade: int = 0
+    items: list[PlanIntegrityItem] = Field(default_factory=list)
+
+
 class PlanMetaSummary(BaseModel):
     id: str
     name: str
@@ -148,6 +160,7 @@ class PlanMetaSummary(BaseModel):
     tracks_count: int | None = None
     total_tracks: int | None = None
     version: int | None = None
+    integrity: PlanIntegrityReport | None = None
 
 
 class PlansListResponse(BaseModel):
@@ -266,6 +279,7 @@ class BuildPlanSummary(BaseModel):
     total_days: int
     selected_plates_count: int
     kp_count: int
+    integrity: PlanIntegrityReport | None = None
 
 
 class BuildPlanResponse(BaseModel):
@@ -294,6 +308,10 @@ class DayPlateInfo(BaseModel):
     write_off_completed: bool = Field(
         default=False,
         description="Позиция показана из снимка после списания (completed_plates / журнал).",
+    )
+    concrete_grade: str = Field(
+        default="—",
+        description="Марка бетона; «—» для legacy-планов без марки.",
     )
 
 

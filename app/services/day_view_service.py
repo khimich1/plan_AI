@@ -189,7 +189,7 @@ def aggregate_plates_for_track_from_db(
                 "is_secondary": bool(is_secondary),
                 "kp_plate_id": int(plate_id),
                 "write_off_completed": bool(row.get("is_completed_snapshot")),
-                "concrete_grade": row.get("concrete_grade") or "",
+                "concrete_grade": row.get("concrete_grade") or "—",
             }
         )
 
@@ -412,14 +412,13 @@ def aggregate_plates_for_track(track: dict, lookup) -> list[dict[str, Any]]:
         if kp_id is None and is_rescue and parent_item is not None:
             kp_id = parent_item.get("kp_id")
 
-        concrete_grade = (
-            str(info.get("concrete_grade") or "").strip()
-            or (
-                str(parent_item.get("concrete_grade") or "").strip()
-                if is_rescue and parent_item
-                else ""
-            )
+        grade_from_lookup = str(info.get("concrete_grade") or "").strip()
+        grade_from_item = (
+            str(parent_item.get("concrete_grade") or "").strip()
+            if is_rescue and parent_item
+            else ""
         )
+        concrete_grade = grade_from_lookup or grade_from_item or "—"
 
         # P2: ключ агрегации использует canonical(plate_name) — «Плиты ПБ 45-12-6п»
         # и «ПБ 45-12-6п» считаются одной плитой и больше не дублируются.

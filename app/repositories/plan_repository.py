@@ -12,6 +12,7 @@ from app.planning.plan_storage import count_day_tracks
 from app.repositories.plan_errors import PlanVersionConflict
 from core.kp_db_common import _connect
 from core.kp_db_schema import ensure_schema
+from core.plan_integrity import build_integrity_report
 from core.production.dto import FilterMethod, PLATE_STATUS_IN_PRODUCTION
 from core.serialization import strip_plate_audit_from_plan
 
@@ -71,6 +72,7 @@ class PlanRepository:
         }
         if version is not None:
             entry["version"] = version
+        entry["integrity"] = build_integrity_report(payload)
         return entry
 
     def list_all_plans(self) -> list[dict[str, Any]]:

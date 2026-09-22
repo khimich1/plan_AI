@@ -14,7 +14,9 @@ from core.duplicate_candidates import (
     list_candidates,
     upsert_candidates,
 )
-from core.guid_gate import OrderLine, check_invoice_guids
+from core.guid_demand import list_open, record_guid_demand
+from core.guid_gate import HINT_CHOOSE, MissingItem, OrderLine, REASON_AMBIGUOUS, REASON_DUP
+from core.guid_gate import check_invoice_guids
 from core.nomenclature_guid import ensure_schema as ensure_guid
 from core.nomenclature_guid import get_guid_for_invoice, upsert
 from core.plate_guid_choice import ensure_schema as ensure_choice
@@ -50,6 +52,22 @@ def _service(tmp_path: Path) -> tuple[NomenclatureQueueService, Path]:
             "pile",
             "С50.30-8",
             [(GUID_A, "Сваи С 50.30-8", 1000.0), (GUID_B, "Сваи С 50.30-8", 1100.0)],
+        )
+        record_guid_demand(
+            conn,
+            12,
+            [
+                MissingItem(
+                    line=OrderLine("pile", "С50.30-8"),
+                    reason=REASON_AMBIGUOUS,
+                    action_hint=HINT_CHOOSE,
+                ),
+                MissingItem(
+                    line=OrderLine("plate", "ЛВ60.12-4"),
+                    reason=REASON_DUP,
+                    action_hint=HINT_CHOOSE,
+                ),
+            ],
         )
         conn.commit()
     finally:
@@ -120,3 +138,47 @@ def test_missing_candidate_returns_409(tmp_path: Path) -> None:
     still_open = service.list_tasks()
     keys = {item.key for item in still_open.duplicates if item.scope == "nonplate"}
     assert "С50.30-8" in keys
+    conn = sqlite3.connect(_db)
+    try:
+        demand_marks = {row.mark for row in list_open(conn)}
+    finally:
+        conn.close()
+    assert "С50.30-8" in demand_marks
+    assert "ЛВ60.12-4" in demand_marks
+
+
+def test_resolve_nonplate_closes_demand_keeps_neighbor(tmp_path: Path) -> None:
+    service, db = _service(tmp_path)
+    service.resolve_duplicate(
+        scope="nonplate",
+        key="С50.30-8",
+        chosen_guid=GUID_B,
+        note="по решению бухгалтерии",
+        decided_by="economist",
+        product_kind="pile",
+    )
+    conn = sqlite3.connect(db)
+    try:
+        opened = {(row.product_kind, row.mark) for row in list_open(conn)}
+    finally:
+        conn.close()
+    assert ("pile", "С50.30-8") not in opened
+    assert ("plate", "ЛВ60.12-4") in opened
+
+
+def test_resolve_plate_closes_demand(tmp_path: Path) -> None:
+    service, db = _service(tmp_path)
+    service.resolve_duplicate(
+        scope="plate",
+        key="ЛВ60.12-4",
+        chosen_guid=GUID_A,
+        note="бухгалтерия",
+        decided_by="economist",
+    )
+    conn = sqlite3.connect(db)
+    try:
+        opened = {(row.product_kind, row.mark) for row in list_open(conn)}
+    finally:
+        conn.close()
+    assert ("plate", "ЛВ60.12-4") not in opened
+    assert ("pile", "С50.30-8") in opened

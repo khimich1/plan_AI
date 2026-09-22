@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from core.guid_demand import record_guid_demand
+from core.guid_gate import HINT_CHOOSE, HINT_CREATE, HINT_CREATE_U, MissingItem, OrderLine
+from core.guid_gate import REASON_AMBIGUOUS, REASON_DUP, REASON_MISSING, REASON_MISSING_U
 from core.nomenclature_guid import ensure_schema, upsert
 from tests.helpers.auth_fixtures import patch_auth_users
 from tests.helpers.csrf import CsrfAwareTestClient
@@ -82,13 +85,73 @@ def test_tasks_economist_ok_manager_forbidden(client) -> None:
     assert "to_create_1c" in body
     assert "to_price" in body
     assert "duplicates" in body
-    assert any(item["mark"] == "С30.30-3" for item in body["to_create_1c"])
+    assert body["to_create_1c"] == []
+    assert body["duplicates"] == []
 
     forbidden = client.get(
         "/api/v1/nomenclature/tasks",
         cookies=session_cookie(3, "manager", "manager_a"),
     )
     assert forbidden.status_code == 403
+
+
+def test_tasks_list_open_demand_with_kp_ids(client, env: Path) -> None:
+    conn = sqlite3.connect(env)
+    try:
+        record_guid_demand(
+            conn,
+            12,
+            [
+                MissingItem(
+                    line=OrderLine("pile", "С70.35-9у"),
+                    reason=REASON_MISSING_U,
+                    action_hint=HINT_CREATE_U,
+                )
+            ],
+        )
+        record_guid_demand(
+            conn,
+            8,
+            [
+                MissingItem(
+                    line=OrderLine("pile", "С99.99-1"),
+                    reason=REASON_MISSING,
+                    action_hint=HINT_CREATE,
+                )
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    body = client.get("/api/v1/nomenclature/tasks", cookies=_econ()).json()
+    by_mark = {item["mark"]: item for item in body["to_create_1c"]}
+    assert "С30.30-3" not in by_mark
+    assert by_mark["С70.35-9у"]["kp_ids"] == [12]
+    assert by_mark["С70.35-9у"]["field"] == "guid_1c_u"
+    assert by_mark["С99.99-1"]["kp_ids"] == [8]
+
+
+def test_open_duplicate_without_candidates_is_hidden(client, env: Path) -> None:
+    conn = sqlite3.connect(env)
+    try:
+        record_guid_demand(
+            conn,
+            4,
+            [
+                MissingItem(
+                    line=OrderLine("pile", "С50.30-8"),
+                    reason=REASON_AMBIGUOUS,
+                    action_hint=HINT_CHOOSE,
+                )
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    body = client.get("/api/v1/nomenclature/tasks", cookies=_econ()).json()
+    assert body["duplicates"] == []
 
 
 def _econ() -> dict[str, str]:
@@ -172,8 +235,82 @@ def test_tasks_with_prays_plity_dupes_without_choice_table(client, env: Path) ->
     response = client.get("/api/v1/nomenclature/tasks", cookies=_econ())
     assert response.status_code == 200, response.text
     dups = [item for item in response.json()["duplicates"] if item["scope"] == "plate"]
-    assert dups
+    assert dups == []
+
+
+def test_tasks_show_plate_dup_only_with_demand(client, env: Path) -> None:
+    guid_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    guid_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    conn = sqlite3.connect(env)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE prays_plity (
+                "Уникальный идентификатор (Номенклатура)" TEXT,
+                "Товар" TEXT
+            )
+            """
+        )
+        conn.execute("INSERT INTO prays_plity VALUES (?, ?)", (guid_a, "ПБ 60-12-8"))
+        conn.execute("INSERT INTO prays_plity VALUES (?, ?)", (guid_b, "ПБ 60-12-8"))
+        record_guid_demand(
+            conn,
+            18,
+            [
+                MissingItem(
+                    line=OrderLine("plate", "ПБ 60-12-8"),
+                    reason=REASON_DUP,
+                    action_hint=HINT_CHOOSE,
+                )
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    response = client.get("/api/v1/nomenclature/tasks", cookies=_econ())
+    assert response.status_code == 200, response.text
+    dups = [item for item in response.json()["duplicates"] if item["scope"] == "plate"]
+    assert len(dups) == 1
     assert dups[0]["key"] == "ПБ 60-12-8"
+    assert len(dups[0]["candidates"]) == 2
+    assert dups[0]["kp_ids"] == [18]
+
+
+def test_pile_u_demand_joins_candidates_by_stripped_mark(client, env: Path) -> None:
+    from core.duplicate_candidates import upsert_candidates
+
+    guid_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    guid_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    conn = sqlite3.connect(env)
+    try:
+        upsert(conn, "pile", "С70.35-9", match_status="ambiguous")
+        upsert_candidates(
+            conn,
+            "pile",
+            "С70.35-9",
+            [(guid_a, "Сваи С 70.35-9", 1000.0), (guid_b, "Сваи С 70.35-9", 1100.0)],
+        )
+        record_guid_demand(
+            conn,
+            12,
+            [
+                MissingItem(
+                    line=OrderLine("pile", "С70.35-9у"),
+                    reason=REASON_AMBIGUOUS,
+                    action_hint=HINT_CHOOSE,
+                )
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    response = client.get("/api/v1/nomenclature/tasks", cookies=_econ())
+    assert response.status_code == 200, response.text
+    dups = [item for item in response.json()["duplicates"] if item["key"] == "С70.35-9"]
+    assert len(dups) == 1
+    assert dups[0]["kp_ids"] == [12]
     assert len(dups[0]["candidates"]) == 2
 
 
@@ -191,6 +328,17 @@ def test_resolve_duplicate_gone_guid_is_409(client, env: Path) -> None:
             "pile",
             "С50.30-8",
             [(guid_a, "Сваи С 50.30-8", 1000.0), (guid_b, "Сваи С 50.30-8", 1100.0)],
+        )
+        record_guid_demand(
+            conn,
+            12,
+            [
+                MissingItem(
+                    line=OrderLine("pile", "С50.30-8"),
+                    reason=REASON_AMBIGUOUS,
+                    action_hint=HINT_CHOOSE,
+                )
+            ],
         )
         conn.commit()
     finally:

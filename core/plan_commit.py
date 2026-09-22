@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from typing import Any, Iterable
 from core import kp_db_plates, plate_name as _plate_name
 from core.domain.plate_order import normalize_load_code
 from core.kp_db_common import _connect
+from core.plate_attribution import reconcile_track_items_to_orders
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,119 @@ class PlanCommitError(RuntimeError):
     ``mark_plates_as_planned`` вернул расхождение ожидаемого и фактического
     количества. При такой ошибке изменения в БД откатываются автоматически.
     """
+
+
+_GATE_ENV = "PLAN_COMMIT_GATE"
+_GATE_DEFAULT = "observe"
+_GATE_MODES = frozenset({"off", "observe", "enforce"})
+
+
+def _plan_commit_gate_mode() -> str:
+    raw = (os.environ.get(_GATE_ENV) or _GATE_DEFAULT).strip().lower()
+    if raw in _GATE_MODES:
+        return raw
+    logger.warning("[PLAN_GATE] Неизвестный режим %r, используем observe", raw)
+    return _GATE_DEFAULT
+
+
+def _null_day_planned_rows(db_path: str, plan_id: str) -> list[tuple]:
+    conn = _connect(db_path)
+    try:
+        cur = conn.execute(
+            "SELECT id, kp_id, plate_name FROM kp_plates "
+            "WHERE plan_id = ? AND status = 'в плане' AND day_number IS NULL",
+            (plan_id,),
+        )
+        return list(cur.fetchall())
+    finally:
+        conn.close()
+
+
+def _verify_plan_integrity(
+    *,
+    tracks_by_day: dict[str, list[dict[str, Any]]] | None,
+    rescue_leftovers: dict,
+    db_path: str,
+    plan_id: str,
+) -> list[str]:
+    """Сверка item→pool, NULL-день, rescue-leftovers. pool→item не дублируем."""
+    problems: list[str] = []
+    for _date_key, day_tracks in (tracks_by_day or {}).items():
+        for track in day_tracks or []:
+            day_number = int(track.get("production_day") or 0) or int(
+                track.get("day_number") or 0
+            )
+            for physical in _iter_physical_items(track.get("items")):
+                if day_number <= 0:
+                    problems.append(
+                        "NULL-день: item КП #%s %s unit_id=%s"
+                        % (
+                            physical.get("kp_id"),
+                            physical.get("plate_name"),
+                            physical.get("unit_id"),
+                        )
+                    )
+                if physical.get("kp_id") and physical.get("plate_name"):
+                    if not physical.get("kp_plate_id"):
+                        problems.append(
+                            "призрак: item без kp_plate_id "
+                            "(КП #%s, %s, unit_id=%s)"
+                            % (
+                                physical.get("kp_id"),
+                                physical.get("plate_name"),
+                                physical.get("unit_id"),
+                            )
+                        )
+    for row in _null_day_planned_rows(db_path, plan_id):
+        problems.append(
+            "сирота: kp_plates.id=%s КП #%s %s с day_number=NULL"
+            % (row[0], row[1], row[2])
+        )
+    if rescue_leftovers:
+        problems.append("rescue-leftovers: %s" % (rescue_leftovers,))
+    return problems
+
+
+def _run_plan_commit_gate(
+    *,
+    tracks_by_day: dict[str, list[dict[str, Any]]] | None,
+    rescue_leftovers: dict,
+    db_path: str,
+    plan_id: str,
+) -> None:
+    mode = _plan_commit_gate_mode()
+    if mode == "off":
+        return
+    if tracks_by_day is None:
+        logger.info(
+            "[PLAN_GATE] legacy: tracks_by_day отсутствует, проверка пропущена"
+        )
+        return
+    problems = _verify_plan_integrity(
+        tracks_by_day=tracks_by_day,
+        rescue_leftovers=rescue_leftovers,
+        db_path=db_path,
+        plan_id=plan_id,
+    )
+    if not problems:
+        logger.info("[PLAN_GATE] расхождений нет")
+        return
+    logger.warning("[PLAN_GATE] %d расхождений: %s", len(problems), problems)
+    if mode != "enforce":
+        return
+    try:
+        kp_db_plates.return_plan_plates_to_production(plan_id, db_path)
+    except Exception:
+        logger.exception(
+            "[PLAN_COMMIT] Ошибка при откате плит для плана %s",
+            plan_id,
+        )
+    raise PlanCommitError(
+        "План не сохранён: обнаружены расхождения целостности. "
+        + "; ".join(problems)
+        + " Что исправить: сверить атрибуцию плит с заказами по unit_id, "
+        "не оставлять плиты без kp_plate_id и без дня производства."
+    )
 
 
 @dataclass
@@ -513,6 +628,19 @@ def commit_plan_plates(
             rescue_leftovers,
         )
 
+    if tracks_by_day:
+        _reconcile_flat: list[dict[str, Any]] = []
+        for _day_tracks in tracks_by_day.values():
+            _reconcile_flat.extend(_day_tracks or [])
+        _reconciled = reconcile_track_items_to_orders(_reconcile_flat, orders_2d)
+    else:
+        _reconciled = reconcile_track_items_to_orders(all_tracks_list or [], orders_2d)
+    if _reconciled:
+        logger.info(
+            "[PLAN_COMMIT] Reconciliation: реатрибутировано %s items",
+            _reconciled,
+        )
+
     result = CommitResult(lost_plates=lost_plates)
     marked_any = False
 
@@ -741,6 +869,13 @@ def commit_plan_plates(
             raise PlanCommitError(
                 "После привязки kp_plate_id остались непокрытые слоты пула (orphan)."
             )
+
+    _run_plan_commit_gate(
+        tracks_by_day=tracks_by_day,
+        rescue_leftovers=rescue_leftovers,
+        db_path=db_path,
+        plan_id=plan_id,
+    )
 
     logger.info(
         "[PLAN_COMMIT] План %s: помечено %s плит, пропущено %s",

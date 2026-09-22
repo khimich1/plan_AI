@@ -26,6 +26,7 @@ from app.schemas.archive import (
     ArchiveSearchResponse,
     ArchiveSection,
     BindCounterpartyRequest,
+    CreateAndBindCounterpartyRequest,
     CapacitySnapshotResponse,
     KpReadinessPositionsResponse,
     MoveToProductionRequest,
@@ -275,6 +276,36 @@ def bind_archive_counterparty(
         raise_bad_request_client_error(
             exc,
             where="archive.bind_counterparty",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+
+
+@router.post("/{kp_id}/counterparty", response_model=ArchiveOfferDetails)
+def create_and_bind_archive_counterparty(
+    kp_id: int,
+    payload: CreateAndBindCounterpartyRequest,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> ArchiveOfferDetails:
+    try:
+        return service.create_and_bind_counterparty(
+            kp_id,
+            name=payload.name,
+            code_1c=payload.code_1c,
+            inn=payload.inn,
+            kpp=payload.kpp,
+            user=user,
+        )
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.create_and_bind_counterparty",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.create_and_bind_counterparty",
             detail=str(exc) or MSG_VALIDATION,
         )
 

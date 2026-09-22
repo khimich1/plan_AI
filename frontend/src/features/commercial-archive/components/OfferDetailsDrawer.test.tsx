@@ -8,7 +8,7 @@ const mockUsePromiseHoldQuery = vi.fn(() => ({ data: null, isPending: false, isE
 const mockResume = vi.fn();
 const mockNavigate = vi.fn();
 const mockDispatch = vi.fn();
-const { mockBindMutateAsync, mockBindMutation } = vi.hoisted(() => {
+const { mockBindMutateAsync, mockBindMutation, mockCreateMutateAsync, mockCreateMutation } = vi.hoisted(() => {
   const mockBindMutateAsync = vi.fn();
   const mockBindMutation = vi.fn(() => ({
     mutateAsync: mockBindMutateAsync,
@@ -16,7 +16,14 @@ const { mockBindMutateAsync, mockBindMutation } = vi.hoisted(() => {
     isError: false,
     error: null,
   }));
-  return { mockBindMutateAsync, mockBindMutation };
+  const mockCreateMutateAsync = vi.fn();
+  const mockCreateMutation = vi.fn(() => ({
+    mutateAsync: mockCreateMutateAsync,
+    isPending: false,
+    isError: false,
+    error: null,
+  }));
+  return { mockBindMutateAsync, mockBindMutation, mockCreateMutateAsync, mockCreateMutation };
 });
 
 vi.mock("react-router", async () => {
@@ -40,6 +47,7 @@ vi.mock("@/features/commercial-archive/hooks/useArchiveQueries", () => ({
   useUpdateDiscountMutation: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
   useUpdateLogisticsCostMutation: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
   useBindCounterpartyMutation: () => mockBindMutation(),
+  useCreateAndBindCounterpartyMutation: () => mockCreateMutation(),
 }));
 
 vi.mock("@/features/commercial-offer/components/CounterpartyAutocomplete", () => ({
@@ -789,7 +797,65 @@ describe("OfferDetailsDrawer counterparty requisites", () => {
     await waitFor(() => {
       expect(mockBindMutateAsync).toHaveBeenCalledWith({ kpId: 42, counterpartyId: 7 });
     });
+    expect(mockCreateMutateAsync).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: /добавить/i })).not.toBeInTheDocument();
+  });
+
+  it("disables the bind button without a pick and without a 1C code", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, { counterparty_id: null }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("bind-counterparty-submit")).toBeDisabled();
+    expect(screen.getByTestId("bind-counterparty-code-1c")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /добавить/i })).not.toBeInTheDocument();
+  });
+
+  it("POSTs create-and-bind when a 1C code is entered without a pick", async () => {
+    mockCreateMutateAsync.mockResolvedValue(
+      makeOffer("в архиве", null, {
+        counterparty_id: 11,
+        customer_name: "ООО Тест",
+      }),
+    );
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, { counterparty_id: null }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByTestId("bind-counterparty-code-1c"), {
+      target: { value: "00-BARM" },
+    });
+    fireEvent.change(screen.getByTestId("bind-counterparty-inn"), {
+      target: { value: "7701000001" },
+    });
+    fireEvent.change(screen.getByTestId("bind-counterparty-kpp"), {
+      target: { value: "770101001" },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bind-counterparty-submit")).toBeEnabled();
+    });
+    fireEvent.click(screen.getByTestId("bind-counterparty-submit"));
+
+    await waitFor(() => {
+      expect(mockCreateMutateAsync).toHaveBeenCalledWith({
+        kpId: 42,
+        name: "ООО Тест",
+        code_1c: "00-BARM",
+        inn: "7701000001",
+        kpp: "770101001",
+      });
+    });
+    expect(mockBindMutateAsync).not.toHaveBeenCalled();
   });
 });
 

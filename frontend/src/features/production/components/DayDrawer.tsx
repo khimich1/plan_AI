@@ -423,6 +423,7 @@ export const DayDrawer = ({
                       <thead>
                         <tr>
                           <th>Плита</th>
+                          <th>Марка</th>
                           <th>Размер</th>
                           <th>Заказчик</th>
                           <th>Срок КП</th>
@@ -468,6 +469,7 @@ export const DayDrawer = ({
                                   </div>
                                 ) : null}
                               </td>
+                              <td>{plate.concrete_grade || "—"}</td>
                               <td>
                                 {formatLengthM(plate.length_m)} м ×{" "}
                                 {plate.width_mm} мм

@@ -11,6 +11,7 @@ import {
   usePlanSgpExportMutation,
   usePlansListQuery,
 } from "@/features/production/hooks/useProductionQueries";
+import { PlanHealthBadge } from "@/features/production/components/PlanHealthBadge";
 import type { PlanMetaSummary } from "@/features/production/types/production";
 
 type Props = {
@@ -80,9 +81,10 @@ export const PlansList = ({ onOpenPlanCalendar }: Props) => {
               }}
             >
               <div>
-                <div style={{ fontWeight: 700, display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <div style={{ fontWeight: 700, display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                   {isActive && <span title="Активный план">⭐</span>}
                   <span>{plan.name || plan.id}</span>
+                  <PlanHealthBadge report={plan.integrity} />
                 </div>
                 <div style={{ color: "#475467", fontSize: "0.9rem", marginTop: "0.25rem" }}>
                   Начало: <strong>{formatRu(plan.start_date)}</strong> · Дней: {plan.total_days ?? "?"} · Дорожек: {plan.total_tracks ?? "?"}

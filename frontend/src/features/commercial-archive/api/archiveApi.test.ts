@@ -77,3 +77,28 @@ describe("archiveApi bindCounterparty", () => {
     );
   });
 });
+
+describe("archiveApi createAndBindCounterparty", () => {
+  it("POSTs /counterparty with name and code_1c", async () => {
+    mockPost.mockResolvedValue({ kp_id: 42, counterparty_id: 11 });
+
+    await archiveApi.createAndBindCounterparty(42, {
+      name: "ООО Бармалей",
+      code_1c: "00-BARM",
+      inn: "7701000001",
+      kpp: "770101001",
+    });
+
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/v1/commercial/archive/42/counterparty",
+      JSON.stringify({
+        name: "ООО Бармалей",
+        code_1c: "00-BARM",
+        inn: "7701000001",
+        kpp: "770101001",
+      }),
+      { "Content-Type": "application/json" },
+    );
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+});

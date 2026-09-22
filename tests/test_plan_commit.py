@@ -216,7 +216,7 @@ def test_commit_plan_plates_raises_on_leftovers(tmp_db):
         ],
     }
 
-    with pytest.raises(PlanCommitError):
+    with pytest.raises(PlanCommitError, match="не сопоставленные с заказами"):
         commit_plan_plates(
             plan_id="plan_leftover",
             orders_2d=orders,
@@ -725,3 +725,186 @@ def test_commit_plan_plates_consumes_entered_and_overdues_missed(tmp_db):
     leftover = _fetch_status(tmp_db, 2, "B")
     assert leftover == [("в производстве", 1, None)]
     assert date.fromisoformat(week).weekday() == 0
+
+
+def _gate_tracks(items: list[dict], *, day: int = 1) -> dict:
+    return {
+        "2026-05-01": [
+            {"production_day": day, "items": items},
+        ]
+    }
+
+
+def test_plan_gate_off_is_silent_with_ghost(tmp_db, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("PLAN_COMMIT_GATE", "off")
+    _seed_kp_plate(tmp_db, kp_id=1, plate_name="A", qty=1)
+    orders = [{"kp_id": 1, "plate_name": "A", "qty": 1, "load_code": 8}]
+    items = [
+        {"length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+         "kp_id": 1, "plate_name": "A"},
+        {"length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+         "kp_id": 1, "plate_name": "A"},
+    ]
+    with caplog.at_level(logging.INFO):
+        result = commit_plan_plates(
+            plan_id="plan_gate_off",
+            orders_2d=orders,
+            optimization_result={
+                "plate_assignments": [
+                    {"source": "primary", "kp_id": 1, "plate_name": "A"},
+                ],
+            },
+            all_tracks_list=[],
+            db_path=tmp_db,
+            tracks_by_day=_gate_tracks(items),
+        )
+    assert result.plates_marked == 1
+    assert not any("[PLAN_GATE]" in rec.getMessage() for rec in caplog.records)
+
+
+def test_plan_gate_observe_logs_ghost_and_commits(tmp_db, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("PLAN_COMMIT_GATE", "observe")
+    _seed_kp_plate(tmp_db, kp_id=1, plate_name="A", qty=1)
+    orders = [{"kp_id": 1, "plate_name": "A", "qty": 1, "load_code": 8}]
+    items = [
+        {"length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+         "kp_id": 1, "plate_name": "A"},
+        {"length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+         "kp_id": 1, "plate_name": "A"},
+    ]
+    with caplog.at_level(logging.WARNING, logger="core.plan_commit"):
+        result = commit_plan_plates(
+            plan_id="plan_gate_observe",
+            orders_2d=orders,
+            optimization_result={
+                "plate_assignments": [
+                    {"source": "primary", "kp_id": 1, "plate_name": "A"},
+                ],
+            },
+            all_tracks_list=[],
+            db_path=tmp_db,
+            tracks_by_day=_gate_tracks(items),
+        )
+    assert result.plates_marked == 1
+    joined = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "[PLAN_GATE]" in joined
+    assert "призрак" in joined.lower() or "kp_plate_id" in joined
+    rows = _fetch_status(tmp_db, 1, "A")
+    assert rows[0][0] == "в плане"
+
+
+def test_plan_gate_enforce_rolls_back_ghost(tmp_db, monkeypatch):
+    monkeypatch.setenv("PLAN_COMMIT_GATE", "enforce")
+    _seed_kp_plate(tmp_db, kp_id=1, plate_name="A", qty=1)
+    orders = [{"kp_id": 1, "plate_name": "A", "qty": 1, "load_code": 8}]
+    items = [
+        {"length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+         "kp_id": 1, "plate_name": "A"},
+        {"length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+         "kp_id": 1, "plate_name": "A"},
+    ]
+    with pytest.raises(PlanCommitError, match="План не сохранён"):
+        commit_plan_plates(
+            plan_id="plan_gate_enforce",
+            orders_2d=orders,
+            optimization_result={
+                "plate_assignments": [
+                    {"source": "primary", "kp_id": 1, "plate_name": "A"},
+                ],
+            },
+            all_tracks_list=[],
+            db_path=tmp_db,
+            tracks_by_day=_gate_tracks(items),
+        )
+    statuses = _fetch_status(tmp_db, 1, "A")
+    assert all(status == "в производстве" for status, _qty, _plan in statuses)
+    assert all(plan_id is None for _status, _qty, plan_id in statuses)
+
+
+def test_plan_gate_observe_detects_null_day(tmp_db, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("PLAN_COMMIT_GATE", "observe")
+    _seed_kp_plate(tmp_db, kp_id=1, plate_name="A", qty=2)
+    orders = [{"kp_id": 1, "plate_name": "A", "qty": 2, "load_code": 8}]
+    items = [
+        {"length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+         "kp_id": 1, "plate_name": "A"},
+    ]
+    with caplog.at_level(logging.WARNING, logger="core.plan_commit"):
+        commit_plan_plates(
+            plan_id="plan_gate_null_day",
+            orders_2d=orders,
+            optimization_result={
+                "plate_assignments": [
+                    {"source": "primary", "kp_id": 1, "plate_name": "A"},
+                    {"source": "primary", "kp_id": 1, "plate_name": "A"},
+                ],
+            },
+            all_tracks_list=[],
+            db_path=tmp_db,
+            tracks_by_day=_gate_tracks(items),
+        )
+    joined = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "[PLAN_GATE]" in joined
+    assert "NULL" in joined or "без дня" in joined or "сирот" in joined.lower()
+
+
+def test_plan_gate_legacy_tracks_none_skips(tmp_db, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("PLAN_COMMIT_GATE", "enforce")
+    _seed_kp_plate(tmp_db, kp_id=1, plate_name="ПБ 60-12-8п", qty=3)
+    orders = [{"kp_id": 1, "plate_name": "ПБ 60-12-8п", "qty": 3, "load_code": 8}]
+    with caplog.at_level(logging.INFO, logger="core.plan_commit"):
+        result = commit_plan_plates(
+            plan_id="plan_gate_legacy",
+            orders_2d=orders,
+            optimization_result={
+                "plate_assignments": [
+                    {"source": "primary", "kp_id": 1, "plate_name": "ПБ 60-12-8п"}
+                    for _ in range(3)
+                ],
+            },
+            all_tracks_list=[],
+            db_path=tmp_db,
+            tracks_by_day=None,
+        )
+    assert result.plates_marked == 3
+    joined = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "[PLAN_GATE]" in joined
+    assert "legacy" in joined.lower()
+
+
+def test_plan_gate_observe_includes_rescue_leftovers(tmp_db, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("PLAN_COMMIT_GATE", "observe")
+    _seed_kp_plate(tmp_db, kp_id=1, plate_name="A", qty=1)
+    orders = [{"kp_id": 1, "plate_name": "A", "qty": 1, "load_code": 8}]
+    items = [
+        {"length": 6.0, "mode": "solid", "width": 1.2, "load_code": 8,
+         "kp_id": 1, "plate_name": "A"},
+    ]
+    with caplog.at_level(logging.WARNING, logger="core.plan_commit"):
+        result = commit_plan_plates(
+            plan_id="plan_gate_rescue",
+            orders_2d=orders,
+            optimization_result={
+                "plate_assignments": [
+                    {"source": "primary", "kp_id": 1, "plate_name": "A"},
+                    {"source": "rescue", "kp_id": 1, "plate_name": "A"},
+                ],
+            },
+            all_tracks_list=[],
+            db_path=tmp_db,
+            tracks_by_day=_gate_tracks(items),
+        )
+    assert result.plates_marked == 1
+    joined = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "[PLAN_GATE]" in joined
+    assert "rescue" in joined.lower()

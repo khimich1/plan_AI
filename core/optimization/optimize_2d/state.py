@@ -6,20 +6,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from core.config_and_data import canonical_plate_key
 from core.optimization.geometry import GeometryConfig
 
 if TYPE_CHECKING:
     from core.optimization.ilp_model import TwoDCuttingILPArtifacts
 
 
-def norm_demand_key(k: tuple | list | None) -> tuple[float, int, int]:
-    """Normalize demand key so load_code 8 and 800 match."""
+def norm_demand_key(k: tuple | list | None) -> tuple:
+    """Normalize demand key identically to ``verify_coverage`` (canonical_plate_key)."""
     if not k or len(k) < 2:
         return (0, 0, 800)
-    lc = int(k[2]) if len(k) > 2 else 800
-    if lc in (8, 800):
-        lc = 8
-    return (round(float(k[0]), 2), int(k[1]), lc)
+    lc = k[2] if len(k) > 2 else 800
+    return canonical_plate_key(k[0], k[1], lc)
 
 
 @dataclass

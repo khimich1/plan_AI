@@ -35,6 +35,7 @@ from collections import defaultdict
 from typing import Any
 
 from core.config_and_data import canonical_plate_key, normalize_load_code
+from core.plate_name import canonical as canonical_plate_name
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,65 @@ def _pick_best_order(
     if best_order is None and candidates:
         best_order = candidates[0]
     return best_order
+
+
+def _index_assignments_by_unit_id(
+    plate_assignments: list[dict[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for assignment in plate_assignments or []:
+        uid = assignment.get("unit_id")
+        if uid is None or str(uid).strip() == "":
+            continue
+        index.setdefault(str(uid), assignment)
+    return index
+
+
+def _apply_unit_id_identity(
+    item: dict[str, Any],
+    by_unit_id: dict[str, dict[str, Any]],
+) -> bool | None:
+    """Проставляет identity из assignment с тем же ``unit_id``.
+
+    Returns:
+        None — unit_id нет или assignment без identity;
+        False — уже совпадало;
+        True — проставили или исправили.
+    """
+    uid = item.get("unit_id")
+    if uid is None or str(uid).strip() == "":
+        return None
+    assignment = by_unit_id.get(str(uid))
+    if not assignment:
+        return None
+    kp_id = assignment.get("kp_id")
+    plate_name = assignment.get("plate_name") or ""
+    if not kp_id or not plate_name:
+        return None
+    changed = item.get("kp_id") != kp_id or str(item.get("plate_name") or "") != str(
+        plate_name
+    )
+    item["kp_id"] = kp_id
+    item["plate_name"] = plate_name
+    grade = assignment.get("concrete_grade")
+    if grade is not None and str(grade).strip() and not _has_concrete_grade(item):
+        item["concrete_grade"] = grade
+    if changed:
+        item["identity_match_type"] = "unit_id"
+    return changed
+
+
+def _consume_identity(
+    item: dict[str, Any],
+    key: tuple | None,
+    consumed: ConsumedMap,
+) -> None:
+    if key is None:
+        return
+    kp_id = item.get("kp_id")
+    plate_name = item.get("plate_name")
+    if kp_id and plate_name:
+        consumed[key][(int(kp_id), str(plate_name))] += 1
 
 
 def backfill_assignment_identity(
@@ -303,11 +363,44 @@ def _attribute_one_item(
     return False
 
 
+def _has_concrete_grade(item: dict[str, Any]) -> bool:
+    raw = item.get("concrete_grade")
+    return raw is not None and str(raw).strip() != ""
+
+
+def _fill_concrete_grade_from_order(
+    item: dict[str, Any],
+    key: tuple | None,
+    orders_by_key: dict[tuple, list[dict[str, Any]]],
+) -> None:
+    """Добивает ``concrete_grade`` у item с готовой identity. Не перезаписывает."""
+    if _has_concrete_grade(item):
+        return
+    if not (item.get("kp_id") and item.get("plate_name")):
+        return
+    if key is None:
+        return
+    want_kp = int(item["kp_id"])
+    want_name = str(item["plate_name"])
+    for order in orders_by_key.get(key) or []:
+        if order.get("kp_id") is None:
+            continue
+        if int(order["kp_id"]) != want_kp:
+            continue
+        if str(order.get("plate_name") or "") != want_name:
+            continue
+        grade = order.get("concrete_grade")
+        if grade is not None and str(grade).strip():
+            item["concrete_grade"] = grade
+        return
+
+
 def backfill_track_items_identity(
     tracks_list: list[dict[str, Any]],
     orders_2d: list[dict[str, Any]],
     *,
     consumed: ConsumedMap | None = None,
+    plate_assignments: list[dict[str, Any]] | None = None,
 ) -> int:
     """Заполняет ``kp_id``/``plate_name`` у root-items треков и у вложенных
     ``secondary_cuts``, у которых identity отсутствует.
@@ -338,6 +431,9 @@ def backfill_track_items_identity(
             :func:`backfill_assignment_identity`). По умолчанию ``None`` —
             создаётся локальный. Шарить с backfill_assignment_identity
             НЕ нужно, см. примечание там.
+        plate_assignments: assignment-side плиты с ``unit_id``. Если item
+            несёт тот же ``unit_id``, берём ``kp_id`` оттуда (геометрия —
+            только fallback).
 
     Returns:
         Количество backfill-записей (root + secondary).
@@ -351,6 +447,8 @@ def backfill_track_items_identity(
 
     if consumed is None:
         consumed = _new_consumed()
+
+    by_unit_id = _index_assignments_by_unit_id(plate_assignments)
 
     backfilled = 0
 
@@ -368,6 +466,7 @@ def backfill_track_items_identity(
                         consumed[key][
                             (int(item["kp_id"]), str(item["plate_name"]))
                         ] += 1
+                    _fill_concrete_grade_from_order(item, key, orders_by_key)
             continue
 
         for item in track.get("items") or []:
@@ -376,11 +475,18 @@ def backfill_track_items_identity(
 
             root_key = _root_item_key(item)
 
-            if item.get("kp_id") and item.get("plate_name"):
+            unit_hit = _apply_unit_id_identity(item, by_unit_id)
+            if unit_hit is not None:
+                _consume_identity(item, root_key, consumed)
+                _fill_concrete_grade_from_order(item, root_key, orders_by_key)
+                if unit_hit:
+                    backfilled += 1
+            elif item.get("kp_id") and item.get("plate_name"):
                 if root_key is not None:
                     consumed[root_key][
                         (int(item["kp_id"]), str(item["plate_name"]))
                     ] += 1
+                _fill_concrete_grade_from_order(item, root_key, orders_by_key)
             elif root_key is not None:
                 if _attribute_one_item(item, [root_key], orders_by_key, consumed):
                     backfilled += 1
@@ -404,6 +510,14 @@ def backfill_track_items_identity(
                     sec["load_code"] = _ensure_load_code_on_secondary(
                         sec, item.get("load_code")
                     )
+
+                sec_unit_hit = _apply_unit_id_identity(sec, by_unit_id)
+                if sec_unit_hit is not None:
+                    sec_keys = _secondary_keys_priority(sec, parent_length)
+                    _consume_identity(sec, sec_keys[0] if sec_keys else None, consumed)
+                    if sec_unit_hit:
+                        backfilled += 1
+                    continue
 
                 if sec.get("kp_id") and sec.get("plate_name"):
                     sec_keys = _secondary_keys_priority(sec, parent_length)
@@ -441,8 +555,97 @@ def backfill_track_items_identity(
     return backfilled
 
 
+def _iter_track_physical_items(
+    tracks_list: list[dict[str, Any]] | None,
+):
+    for track in tracks_list or []:
+        if not isinstance(track, dict):
+            continue
+        if track.get("label") == "РЕСКЬЮ":
+            continue
+        for item in track.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            yield item
+            for sec in item.get("secondary_cuts") or []:
+                if isinstance(sec, dict):
+                    yield sec
+
+
+def reconcile_track_items_to_orders(
+    tracks_list: list[dict[str, Any]],
+    orders_2d: list[dict[str, Any]],
+) -> int:
+    """Вторая линия: Σ items по КП против заказанного для одного plate_name.
+
+    Лишние items одного КП переносятся на КП с дефицитом. Только одинаковое
+    каноническое имя плиты. Возвращает число реатрибуций.
+    """
+    ordered: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    order_meta: dict[tuple[str, int], dict[str, Any]] = {}
+    for order in orders_2d or []:
+        kp_id = order.get("kp_id")
+        name = order.get("plate_name") or ""
+        if kp_id is None or not name:
+            continue
+        canon = canonical_plate_name(name)
+        kid = int(kp_id)
+        ordered[canon][kid] += int(order.get("qty", 1) or 0)
+        order_meta[(canon, kid)] = order
+
+    items_by_name_kp: dict[str, dict[int, list[dict[str, Any]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for item in _iter_track_physical_items(tracks_list):
+        kp_id = item.get("kp_id")
+        name = item.get("plate_name") or ""
+        if kp_id is None or not name:
+            continue
+        items_by_name_kp[canonical_plate_name(name)][int(kp_id)].append(item)
+
+    moved = 0
+    for canon, ordered_kps in ordered.items():
+        actual_kps = items_by_name_kp.get(canon, {})
+        surplus: list[tuple[int, dict[str, Any]]] = []
+        deficit: dict[int, int] = {}
+        for kp in set(ordered_kps) | set(actual_kps):
+            need = int(ordered_kps.get(kp, 0))
+            have_items = actual_kps.get(kp, [])
+            have = len(have_items)
+            if have > need:
+                surplus.extend((kp, extra) for extra in have_items[need:])
+            elif have < need:
+                deficit[kp] = need - have
+
+        for old_kp, extra_item in surplus:
+            if not deficit:
+                break
+            dest_kp = next(iter(deficit))
+            meta = order_meta.get((canon, dest_kp), {})
+            dest_name = meta.get("plate_name") or extra_item.get("plate_name")
+            extra_item["kp_id"] = dest_kp
+            extra_item["plate_name"] = dest_name
+            extra_item["identity_match_type"] = "reconciled"
+            grade = meta.get("concrete_grade")
+            if grade is not None and str(grade).strip() and not _has_concrete_grade(extra_item):
+                extra_item["concrete_grade"] = grade
+            logger.info(
+                "[RECONCILE] Реатрибуция: %s unit_id=%s КП#%s → КП#%s",
+                dest_name,
+                extra_item.get("unit_id"),
+                old_kp,
+                dest_kp,
+            )
+            deficit[dest_kp] -= 1
+            if deficit[dest_kp] <= 0:
+                del deficit[dest_kp]
+            moved += 1
+    return moved
+
+
 __all__ = [
     "backfill_assignment_identity",
     "backfill_track_items_identity",
+    "reconcile_track_items_to_orders",
     "ConsumedMap",
 ]

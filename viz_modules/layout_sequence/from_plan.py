@@ -690,6 +690,7 @@ def _build_sequence_from_plan_impl(
                         "customer": customer,
                         "kp_date": kp_date,
                         "plate_name": plate_name_from_cut,
+                        "concrete_grade": cut.get("concrete_grade"),
                         "unit_id": parent_instance_id,
                         "layout_uid": str(parent_instance_id)
                         if parent_instance_id
@@ -757,6 +758,7 @@ def _build_sequence_from_plan_impl(
                             "customer": customer,
                             "kp_date": kp_date,
                             "plate_name": plate_name_from_cut,
+                            "concrete_grade": cut.get("concrete_grade"),
                             "plate_uid": plate_uid,
                             "unit_id": parent_instance_id,
                             "layout_uid": str(parent_instance_id)
@@ -960,6 +962,7 @@ def _build_sequence_from_plan_impl(
                             "customer": customer,
                             "kp_date": kp_date,
                             "plate_name": plate_name_from_cut,
+                            "concrete_grade": cut.get("concrete_grade"),
                             "plate_uid": plate_uid,
                             "unit_id": parent_instance_id,
                             "layout_uid": str(parent_instance_id)

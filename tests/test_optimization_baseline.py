@@ -89,12 +89,15 @@ def test_verify_coverage_detects_missing():
     assert cov["missing"][(6.0, 1200, 8)] == 3
 
 
-def test_verify_coverage_detects_surplus():
+def test_verify_coverage_detects_surplus(caplog):
     demand = {(6.0, 1200, 8): 1}
     primary = [{"assignment_key": (6.0, 1200, 8)}, {"assignment_key": (6.0, 1200, 8)}]
-    cov = verify_coverage(demand, primary, [])
-    assert cov["ok"] is True  # дефицита нет
+    with caplog.at_level("ERROR", logger="core.optimization.coverage_verify"):
+        cov = verify_coverage(demand, primary, [])
+    assert cov["ok"] is False
     assert cov["surplus"][(6.0, 1200, 8)] == 1
+    assert cov["missing"] == {}
+    assert any("surplus" in rec.getMessage() for rec in caplog.records)
 
 
 def test_verify_coverage_handles_load_code_normalization():

@@ -41,6 +41,7 @@ class Create1cTaskOut(BaseModel):
     mark: str
     hint: str
     field: str = "guid_1c"
+    kp_ids: list[int] = Field(default_factory=list)
 
 
 class PriceTaskOut(BaseModel):
@@ -61,6 +62,7 @@ class DuplicateTaskOut(BaseModel):
     key: str
     product_kind: str
     candidates: list[DuplicateCandidateOut] = Field(default_factory=list)
+    kp_ids: list[int] = Field(default_factory=list)
 
 
 class GuidTasksResponse(BaseModel):

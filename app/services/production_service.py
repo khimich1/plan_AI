@@ -28,6 +28,7 @@ from app.services.production_urgent_service import ProductionUrgentService
 from core.domain.enums import PlateStatus
 from core.execution_terms import parse_execution_terms_to_datetime
 from core.plate_order_context import PlateOrderContext
+from core.plan_integrity import INTEGRITY_KEY, build_integrity_report
 from core.plan_track_removal import TrackRemovalError
 from core.production.capacity import FUTURE_HORIZON_DAYS, calculate_capacity_deficit
 from core.work_calendar import is_working_day, load_extra_workdays, load_holidays
@@ -143,7 +144,9 @@ class ProductionService:
         record = self.plan_repository.get(plan_id)
         if not record:
             return None
-        return {**record["payload"], "version": record["version"]}
+        payload = {**record["payload"], "version": record["version"]}
+        payload[INTEGRITY_KEY] = build_integrity_report(payload)
+        return payload
 
     def activate_plan(self, plan_id: str) -> dict | None:
         if not self.plan_repository.set_active(plan_id):

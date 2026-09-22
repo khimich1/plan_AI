@@ -16,6 +16,7 @@ from app.schemas.nomenclature import (
     Import1cResponse,
     Unmatched1COut,
 )
+from core.guid_demand import sweep_guid_demand
 from core.nomenclature_guid import PRODUCT_KINDS, ensure_schema
 from core.nomenclature_sync import (
     AmbiguousMatch,
@@ -153,6 +154,8 @@ class NomenclatureImportService:
             except ValueError as exc:
                 raise NomenclatureImportError(_sync_error_message(exc)) from exc
             _fill_price_queue(conn, kind, report.unmatched_1c)
+            conn.commit()
+            sweep_guid_demand(conn)
             conn.commit()
         finally:
             conn.close()

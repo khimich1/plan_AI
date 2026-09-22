@@ -6,8 +6,11 @@ from pathlib import Path
 
 import pytest
 
+import sqlite3
+
 from app.services.counterparties_service import (
     CounterpartiesService,
+    CounterpartyValidationError,
     DuplicateCodeError,
 )
 from tests.helpers import kp_db_fixtures as fx
@@ -64,3 +67,80 @@ def test_create_normalizes_trim_and_is_immediately_searchable(
     items = svc.search("столица")
     assert len(items) == 1
     assert items[0]["id"] == created.item["id"]
+
+
+def _count(db_path: str) -> int:
+    with sqlite3.connect(db_path) as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM counterparties").fetchone()[0])
+
+
+def test_resolve_new_code_inserts_searchable_manual_client(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    row = svc.resolve_active_client_for_bind(
+        name="  БАРМАЛЕЙ ООО  ",
+        code_1c="  00-NEW  ",
+        inn="  7701000001  ",
+        kpp=" 770101001 ",
+    )
+    assert row["name"] == "БАРМАЛЕЙ ООО"
+    assert row["code_1c"] == "00-NEW"
+    assert row["inn"] == "7701000001"
+    assert row["kpp"] == "770101001"
+    assert row["source"] == "manual"
+    assert int(row["is_client"]) == 1
+    assert int(row["is_active"]) == 1
+    assert row.get("guid_1c") in (None, "")
+
+    items = svc.search("бармалей")
+    assert len(items) == 1
+    assert items[0]["id"] == row["id"]
+
+
+def test_resolve_duplicate_active_client_returns_same_id_without_rename(
+    tmp_path: Path,
+) -> None:
+    svc = _service(tmp_path)
+    first = svc.create(name="РОМАШКА", code_1c="00-00003431")
+    before = _count(svc.db_path)
+
+    row = svc.resolve_active_client_for_bind(
+        name="ДРУГОЕ ИМЯ",
+        code_1c=" 00-00003431 ",
+        inn="9900000000",
+    )
+    assert row["id"] == first.item["id"]
+    assert row["name"] == "РОМАШКА"
+    assert _count(svc.db_path) == before
+
+
+def test_resolve_supplier_or_inactive_raises_validation(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    supplier = svc.repo.insert(
+        code_1c="00-sup",
+        name="ПОСТАВЩИК ООО",
+        is_client=False,
+        source="import",
+    )
+    inactive = svc.repo.insert(
+        code_1c="00-off",
+        name="АРХИВ ООО",
+        is_client=True,
+        is_active=False,
+        source="import",
+    )
+
+    with pytest.raises(CounterpartyValidationError, match="не отмечен как клиент"):
+        svc.resolve_active_client_for_bind(name="X", code_1c="00-sup")
+    with pytest.raises(CounterpartyValidationError, match="не найден"):
+        svc.resolve_active_client_for_bind(name="X", code_1c="00-off")
+    assert svc.get_by_id(int(supplier["id"]))["name"] == "ПОСТАВЩИК ООО"
+    assert svc.get_by_id(int(inactive["id"]))["name"] == "АРХИВ ООО"
+
+
+def test_resolve_empty_name_or_code_raises_value_error(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    with pytest.raises(ValueError, match="обязательны"):
+        svc.resolve_active_client_for_bind(name="  ", code_1c="00-1")
+    with pytest.raises(ValueError, match="обязательны"):
+        svc.resolve_active_client_for_bind(name="Клиент", code_1c="  ")
+    assert _count(svc.db_path) == 0
