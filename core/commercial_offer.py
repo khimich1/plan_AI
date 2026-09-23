@@ -212,12 +212,14 @@ from core.commercial_pricing import (  # noqa: E402
     calculate_total_cost as _calculate_total_cost,
     format_phone,
     is_bridge_pile_order,
+    is_composite_pile_order,
     is_fbs_order,
     is_march_order,
     is_pile_order,
     is_step_order,
     kp_delivery_export_lines,
     lookup_bridge_pile_price,
+    lookup_composite_pile_price,
     lookup_fbs_price,
     lookup_march_price,
     lookup_pile_price,
@@ -296,6 +298,8 @@ def _resolve_line_unit_price(item: Dict, *, order_mode: str) -> float:
         return lookup_pile_price(mark, grade, db_path=DB_PATH)
     if pt in ("bridge_piles", "bridge_pile"):
         return lookup_bridge_pile_price(mark, grade, db_path=DB_PATH)
+    if pt in ("composite_piles", "composite_pile"):
+        return lookup_composite_pile_price(mark, grade, db_path=DB_PATH)
     if pt == "fbs":
         return lookup_fbs_price(mark, grade, db_path=DB_PATH)
     if pt in ("marches", "march"):
@@ -541,6 +545,7 @@ def generate_commercial_offer_pdf(
     unified = is_unified_commercial_document(order_data, append_batches=append_batches)
     pile_order = is_pile_order(order_data)
     bridge_pile_order = is_bridge_pile_order(order_data)
+    composite_pile_order = is_composite_pile_order(order_data)
     fbs_order = is_fbs_order(order_data)
     march_order = is_march_order(order_data)
     step_order = is_step_order(order_data)
@@ -600,7 +605,7 @@ def generate_commercial_offer_pdf(
             ])
             continue
 
-        if pile_order or bridge_pile_order or fbs_order or march_order:
+        if pile_order or bridge_pile_order or composite_pile_order or fbs_order or march_order:
             mark_raw = str(item.get('mark') or item.get('name') or '')
             grade_raw = str(item.get('concrete_grade') or 'B25')
             table_data.append([
@@ -650,7 +655,7 @@ def generate_commercial_offer_pdf(
         idx = str(len(table_data))
         if unified:
             table_data.append([idx, "", label, trips, price, amount])
-        elif pile_order or bridge_pile_order or fbs_order or march_order:
+        elif pile_order or bridge_pile_order or composite_pile_order or fbs_order or march_order:
             table_data.append([idx, label, "", trips, price, amount])
         elif step_order:
             table_data.append([idx, label, trips, price, amount])
@@ -673,7 +678,7 @@ def generate_commercial_offer_pdf(
             col_widths = [content_width * ratio for ratio in ratios]
         else:
             col_widths = [no_width, type_width, name_width, qty_width, price_width, sum_width]
-    elif pile_order or bridge_pile_order or fbs_order or march_order:
+    elif pile_order or bridge_pile_order or composite_pile_order or fbs_order or march_order:
         grade_width = 32 * mm
         fixed_total = no_width + grade_width + qty_width + price_width + sum_width
         name_width = content_width - fixed_total

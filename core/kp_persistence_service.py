@@ -15,6 +15,7 @@ _VALID_PRODUCT_TYPES = frozenset(
         "steps",
         "marches",
         "bridge_piles",
+        "composite_piles",
         "fbs",
     }
 )
@@ -24,6 +25,7 @@ _PRODUCT_KIND_TO_TYPE = {
     "step": "steps",
     "march": "marches",
     "bridge_pile": "bridge_piles",
+    "composite_pile": "composite_piles",
     "fbs": "fbs",
 }
 
@@ -33,6 +35,7 @@ _LINE_TABLE_BY_TYPE = {
     "steps": "kp_steps",
     "marches": "kp_marches",
     "bridge_piles": "kp_bridge_piles",
+    "composite_piles": "kp_composite_piles",
     "fbs": "kp_fbs",
 }
 
@@ -684,6 +687,29 @@ class KpPersistenceService:
             )
             return
 
+        if line_type == "composite_piles":
+            mark = str(item.get("mark") or item.get("name") or "").strip()
+            concrete_grade = str(item.get("concrete_grade") or "B25").strip()
+            cur.execute(
+                """
+                UPDATE kp_composite_piles SET
+                    position_number = ?, mark = ?, concrete_grade = ?,
+                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?
+                WHERE id = ?
+                """,
+                (
+                    position_number,
+                    mark,
+                    concrete_grade,
+                    qty,
+                    unit_price,
+                    discounted_price,
+                    line_id,
+                    row_id,
+                ),
+            )
+            return
+
         if line_type == "fbs":
             mark = str(item.get("mark") or item.get("name") or "").strip()
             concrete_grade = str(item.get("concrete_grade") or "B25").strip()
@@ -850,6 +876,29 @@ class KpPersistenceService:
             cur.execute(
                 """
                 INSERT INTO kp_bridge_piles (
+                    kp_id, position_number, mark, concrete_grade,
+                    qty, unit_price, discounted_price, line_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    kp_id,
+                    position_number,
+                    mark,
+                    concrete_grade,
+                    qty,
+                    unit_price,
+                    discounted_price,
+                    line_id,
+                ),
+            )
+            return
+
+        if line_type == "composite_piles":
+            mark = str(item.get("mark") or item.get("name") or "").strip()
+            concrete_grade = str(item.get("concrete_grade") or "B25").strip()
+            cur.execute(
+                """
+                INSERT INTO kp_composite_piles (
                     kp_id, position_number, mark, concrete_grade,
                     qty, unit_price, discounted_price, line_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)

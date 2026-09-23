@@ -13,7 +13,7 @@ export const plateSubmissionSchema = z
 export const clientConditionsSchema = z
   .object({
     clientName: z.string().trim().min(1, "Укажите имя клиента."),
-    counterpartyId: z.number().int().positive().nullable().optional(),
+    counterpartyId: z.number().int().positive().nullable(),
     conditionsMode: z.enum(["standard", "custom"]),
     deliveryConditions: z.string().trim(),
     paymentConditions: z.string().trim(),

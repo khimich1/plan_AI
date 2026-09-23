@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { clientConditionsSchema } from "@/features/commercial-offer/schemas/commercialOffer";
+import type { z } from "zod";
 import type { ConditionsMode, Manager } from "@/features/commercial-offer/types/commercialOffer";
 import type { CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
 import {
@@ -47,13 +48,7 @@ type ClientConditionsStepProps = {
   }) => void;
 };
 
-type ClientConditionsFormValues = {
-  clientName: string;
-  counterpartyId: number | null;
-  conditionsMode: ConditionsMode;
-  deliveryConditions: string;
-  paymentConditions: string;
-};
+type ClientConditionsFormValues = z.infer<typeof clientConditionsSchema>;
 
 const selectedFromDefaults = (values: ClientConditionsDefaultValues): CounterpartyShort | null => {
   if (values.counterpartyId == null || values.counterpartyId < 1) {

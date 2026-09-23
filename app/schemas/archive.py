@@ -18,8 +18,12 @@ from core.production.capacity import TRACKS_PER_DAY_HARD_CAP
 
 ArchiveSection = Literal["archived", "in_production", "completed"]
 ArchiveFileKind = Literal["pdf", "xlsx", "schema", "xlsx_delivery_in_unit"]
-ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs", "mixed"]
-ArchiveProductTypeFilter = Literal["all", "plates", "piles", "steps", "marches", "bridge_piles"]
+ProductType = Literal[
+    "plates", "piles", "steps", "marches", "bridge_piles", "composite_piles", "fbs", "mixed"
+]
+ArchiveProductTypeFilter = Literal[
+    "all", "plates", "piles", "steps", "marches", "bridge_piles", "composite_piles"
+]
 
 
 class ArchiveOfferListItem(BaseModel):
@@ -91,6 +95,14 @@ class ArchiveBridgePileItem(BaseModel):
     unit_price: float | None = None
     discounted_price: float | None = None
 
+
+class ArchiveCompositePileItem(BaseModel):
+    position_number: int | None = None
+    mark: str = ""
+    concrete_grade: str = ""
+    qty: int = 0
+    unit_price: float | None = None
+    discounted_price: float | None = None
 
 
 class ArchiveFbsItem(BaseModel):
@@ -216,6 +228,7 @@ class ArchiveOfferDetails(BaseModel):
     steps: list[ArchiveStepItem] = Field(default_factory=list)
     marches: list[ArchiveMarchItem] = Field(default_factory=list)
     bridge_piles: list[ArchiveBridgePileItem] = Field(default_factory=list)
+    composite_piles: list[ArchiveCompositePileItem] = Field(default_factory=list)
     fbs: list[ArchiveFbsItem] = Field(default_factory=list)
     completion_percentage: float | None = None
     readiness: KpReadinessSummary | None = None

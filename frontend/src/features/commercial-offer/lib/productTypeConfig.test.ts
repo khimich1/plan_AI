@@ -7,8 +7,22 @@ import {
 } from "@/features/commercial-offer/lib/productTypeConfig";
 import type { ProductType } from "@/features/commercial-offer/types/commercialOffer";
 
-const ALL_PRODUCT_TYPES: ProductType[] = ["plates", "piles", "steps", "marches", "bridge_piles", "fbs"];
-const REQUIRED_PLACEHOLDER_TYPES: ProductType[] = ["plates", "piles", "steps", "marches"];
+const ALL_PRODUCT_TYPES: ProductType[] = [
+  "plates",
+  "piles",
+  "steps",
+  "marches",
+  "bridge_piles",
+  "composite_piles",
+  "fbs",
+];
+const REQUIRED_PLACEHOLDER_TYPES: ProductType[] = [
+  "plates",
+  "piles",
+  "steps",
+  "marches",
+  "composite_piles",
+];
 const OPTIONAL_PLACEHOLDER_TYPES: ProductType[] = ["bridge_piles", "fbs"];
 const PILE_LEFTOVER_PLACEHOLDER = "С120.35-12 B25 5\nС120.35-13и 3";
 
@@ -26,6 +40,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.endpointSegment).toBe("steps");
     expect(PRODUCT_TYPE_CONFIG.marches.endpointSegment).toBe("marches");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.endpointSegment).toBe("bridge-piles");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.endpointSegment).toBe("composite-piles");
     expect(PRODUCT_TYPE_CONFIG.fbs.endpointSegment).toBe("fbs");
   });
 
@@ -41,6 +56,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.piles.supportsGrades).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.marches.supportsGrades).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.supportsGrades).toBe(true);
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.supportsGrades).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.fbs.supportsGrades).toBe(true);
   });
 
@@ -50,6 +66,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.isSimpleKp).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.marches.isSimpleKp).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.isSimpleKp).toBe(true);
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.isSimpleKp).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.fbs.isSimpleKp).toBe(true);
   });
 
@@ -59,6 +76,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.ingestAction).toBe("ingest_steps");
     expect(PRODUCT_TYPE_CONFIG.marches.ingestAction).toBe("ingest_marches");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.ingestAction).toBe("ingest_bridge_piles");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.ingestAction).toBe("ingest_composite_piles");
     expect(PRODUCT_TYPE_CONFIG.fbs.ingestAction).toBe("ingest_fbs");
   });
 
@@ -68,6 +86,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.batchesField).toBe("step_batches");
     expect(PRODUCT_TYPE_CONFIG.marches.batchesField).toBe("march_batches");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.batchesField).toBe("bridge_pile_batches");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.batchesField).toBe("composite_pile_batches");
     expect(PRODUCT_TYPE_CONFIG.fbs.batchesField).toBe("fbs_batches");
   });
 
@@ -82,6 +101,8 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.marches.labels.nounGenitivePlural).toBe("маршей");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.nounPlural).toBe("Мостовые сваи");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.nounGenitivePlural).toBe("мостовых свай");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.nounPlural).toBe("Составные сваи");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.nounGenitivePlural).toBe("составных свай");
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.nounPlural).toBe("ФБС");
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.nounGenitivePlural).toBe("ФБС");
   });
@@ -123,8 +144,10 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.marches.labels.placeholder).toBe("1ЛМ 27-11-14-4 B25 5\nЛМ 2,8 3");
     // Frozen from pb.db 2026-09-14 (first two priced marks, ORDER BY mark).
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.placeholder).toBe("C10-35B7 B25 2\nC10-35T1 B25 3");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.placeholder).toBe("С140.30-С 5\nС60.30-ВС.1 3");
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.placeholder).toBe("ФБС 12.4.3-Т B25 2\nФБС 12.4.6-Т B25 3");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.placeholder).not.toBe(PILE_LEFTOVER_PLACEHOLDER);
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.placeholder).not.toBe(PILE_LEFTOVER_PLACEHOLDER);
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.placeholder).not.toBe(PILE_LEFTOVER_PLACEHOLDER);
   });
 
@@ -144,6 +167,9 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.addMoreDescription).toBe(
       "Добавьте ещё мостовые сваи или перейдите к оформлению клиента.",
     );
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.addMoreDescription).toBe(
+      "Добавьте ещё составные сваи или перейдите к оформлению клиента.",
+    );
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.addMoreDescription).toBe(
       "Добавьте ещё ФБС или перейдите к оформлению клиента.",
     );
@@ -154,6 +180,9 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.previewEmptyMessage).toBe(
       "Список пуст — распознайте мостовые сваи.",
     );
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.previewEmptyMessage).toBe(
+      "Список пуст — распознайте составные сваи.",
+    );
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.previewEmptyMessage).toBe("Список пуст — распознайте ФБС.");
   });
 
@@ -163,6 +192,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.labels.aiPlaceholder).toBe("Например: убери строки с ЛС11");
     expect(PRODUCT_TYPE_CONFIG.marches.labels.aiPlaceholder).toBe("Например: убери строки с B15");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.aiPlaceholder).toBe("Например: убери строки с B15");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.aiPlaceholder).toBe("Например: убери строки с B15");
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.aiPlaceholder).toBe("Например: убери строки с B15");
   });
 
@@ -178,6 +208,9 @@ describe("PRODUCT_TYPE_CONFIG", () => {
         "Марка, класс бетона, количество и цена — как в документе.",
       );
     }
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.previewSubtitle).toBe(
+      "Марка секции, класс бетона, количество и цена — как в документе.",
+    );
   });
 
   it("keeps the exact preview unpriced alerts", () => {
@@ -192,6 +225,9 @@ describe("PRODUCT_TYPE_CONFIG", () => {
         "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
       );
     }
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.previewUnpricedMessage).toBe(
+      "Не все секции найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+    );
   });
 });
 

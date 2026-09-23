@@ -31,6 +31,7 @@ TYPE_CASES: list[tuple[str, str, str]] = [
     ("marches", "1ЛМ 27-11-14-4 2", "ПБ 78-12-8п 2"),
     ("bridge_piles", "С7-35Т5", "С120.35-12 2"),
     ("fbs", "ФБС 9.3.6-Т 2", "С120.35-12 2"),
+    ("composite_piles", "С60.30-ВС.1 3", "xyz-not-a-pile"),
 ]
 
 

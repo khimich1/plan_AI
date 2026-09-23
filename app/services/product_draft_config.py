@@ -12,6 +12,7 @@ from core.commercial_offer_xlsx import DB_PATH
 from core.fbs_price_db import list_available_grades as list_fbs_available_grades
 from core.ocr_gpt import (
     apply_bridge_piles_with_ai,
+    apply_composite_piles_with_ai,
     apply_fbs_with_ai,
     apply_marches_with_ai,
     apply_piles_with_ai,
@@ -67,6 +68,10 @@ def _preview_steps(wf: Any, text: str, *, plate_order_ctx: Any = None) -> Any:
 
 def _preview_bridge_piles(wf: Any, text: str, *, plate_order_ctx: Any = None) -> Any:
     return wf.bridge_pile_service.generate_preview(text, db_path=str(DB_PATH))
+
+
+def _preview_composite_piles(wf: Any, text: str, *, plate_order_ctx: Any = None) -> Any:
+    return wf.composite_pile_service.generate_preview(text, db_path=str(DB_PATH))
 
 
 def _preview_fbs(wf: Any, text: str, *, plate_order_ctx: Any = None) -> Any:
@@ -143,6 +148,16 @@ async def _ai_bridge_piles(current_text: str, instruction: str, image_path: str 
     return await _call_ai(
         apply_bridge_piles_with_ai,
         "current_bridge_piles_text",
+        current_text,
+        instruction,
+        image_path,
+    )
+
+
+async def _ai_composite_piles(current_text: str, instruction: str, image_path: str | None) -> Any:
+    return await _call_ai(
+        apply_composite_piles_with_ai,
+        "current_composite_piles_text",
         current_text,
         instruction,
         image_path,
@@ -283,6 +298,31 @@ SPECS: dict[str, ProductDraftSpec] = {
         build_metadata=_typed_metadata("build_bridge_pile_preview_metadata", "bridge_pile_batches"),
         apply_ai=_ai_bridge_piles,
         list_available_grades=_bridge_available_grades,
+    ),
+    "composite_piles": ProductDraftSpec(
+        product_type="composite_piles",
+        wizard_step=WizardStepId.composite_piles,
+        batches_key="composite_pile_batches",
+        type_mismatch_update="Черновик не является КП на составные сваи.",
+        type_mismatch_ai="ИИ-редактирование доступно только для КП на составные сваи.",
+        type_mismatch_grades="Черновик не является КП на составные сваи.",
+        invalid_mode_error="Некорректный режим обновления списка составных свай.",
+        ai_empty_error="ИИ не вернул распознанный список составных свай.",
+        grades_empty_error="Список составных свай пустой.",
+        has_grades=True,
+        needs_plate_ctx=False,
+        allow_empty_create=True,
+        empty_create_grade="B25",
+        use_preview_order=False,
+        update_reject_map=None,
+        ai_payload_style="compact",
+        grades_skip_unavailable=False,
+        generate_preview=_preview_composite_piles,
+        build_metadata=_typed_metadata(
+            "build_composite_pile_preview_metadata", "composite_pile_batches"
+        ),
+        apply_ai=_ai_composite_piles,
+        list_available_grades=None,
     ),
     "fbs": ProductDraftSpec(
         product_type="fbs",

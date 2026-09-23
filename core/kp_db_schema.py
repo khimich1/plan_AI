@@ -429,6 +429,25 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             'CREATE INDEX IF NOT EXISTS idx_kp_id_bridge_piles ON kp_bridge_piles(kp_id)'
         )
 
+        # Таблица kp_composite_piles — позиции КП на составные сваи
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_composite_piles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL,
+                line_id TEXT,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_id_composite_piles ON kp_composite_piles(kp_id)'
+        )
+
         # Таблица kp_fbs — позиции КП на ФБС (отдельно от kp_piles / kp_bridge_piles)
         cur.execute('''
             CREATE TABLE IF NOT EXISTS kp_fbs (
@@ -493,6 +512,7 @@ def _ensure_line_id_columns(cur: sqlite3.Cursor) -> None:
         "kp_steps",
         "kp_marches",
         "kp_bridge_piles",
+        "kp_composite_piles",
         "kp_fbs",
     )
     for table in line_tables:

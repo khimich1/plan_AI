@@ -282,6 +282,45 @@ async def call_gpt_for_bridge_piles(
 
 
 
+async def call_gpt_for_composite_piles(
+    *,
+    user_text: str,
+    client: Any,
+    image_base64: str | None = None,
+    mime_type: str | None = None,
+    max_tokens: int = 2500,
+) -> tuple[List[Dict[str, Any]], float]:
+    user_content: List[Dict[str, Any]] = [{"type": "text", "text": user_text}]
+    if image_base64 and mime_type:
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{image_base64}",
+                    "detail": "high",
+                },
+            }
+        )
+
+    from core.composite_pile_format_prompt import build_composite_pile_parser_system_prompt
+
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": build_composite_pile_parser_system_prompt()},
+            {"role": "user", "content": user_content},
+        ],
+        max_tokens=max_tokens,
+        temperature=0.0,
+    )
+
+    result_text = response.choices[0].message.content or ""
+    items = parse_gpt_response(result_text)
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    cost_usd = _estimate_cost_usd(tokens_used)
+    return items, cost_usd
+
+
 async def call_gpt_for_fbs(
     *,
     user_text: str,
@@ -423,6 +462,22 @@ class OpenAIProvider:
         max_tokens: int = 2500,
     ) -> tuple[List[Dict[str, Any]], float]:
         return await call_gpt_for_piles(
+            user_text=user_text,
+            client=self._get_client(),
+            image_base64=image_base64,
+            mime_type=mime_type,
+            max_tokens=max_tokens,
+        )
+
+    async def extract_composite_piles(
+        self,
+        *,
+        user_text: str,
+        image_base64: str | None = None,
+        mime_type: str | None = None,
+        max_tokens: int = 2500,
+    ) -> tuple[List[Dict[str, Any]], float]:
+        return await call_gpt_for_composite_piles(
             user_text=user_text,
             client=self._get_client(),
             image_base64=image_base64,

@@ -1,7 +1,23 @@
 export type ArchiveSection = "archived" | "in_production" | "completed";
 export type ArchiveFileKind = "pdf" | "xlsx" | "schema" | "xlsx_delivery_in_unit";
-export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "mixed";
-export type ArchiveProductTypeFilter = "all" | "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
+export type ProductType =
+  | "plates"
+  | "piles"
+  | "steps"
+  | "marches"
+  | "bridge_piles"
+  | "composite_piles"
+  | "fbs"
+  | "mixed";
+export type ArchiveProductTypeFilter =
+  | "all"
+  | "plates"
+  | "piles"
+  | "steps"
+  | "marches"
+  | "bridge_piles"
+  | "composite_piles"
+  | "fbs";
 
 export type ArchiveOfferListItem = {
   kp_id: number;
@@ -168,6 +184,7 @@ export type ArchiveOfferDetails = {
   steps?: ArchiveStepItem[];
   marches?: ArchiveMarchItem[];
   bridge_piles?: ArchiveBridgePileItem[];
+  composite_piles?: ArchiveBridgePileItem[];
   fbs?: ArchiveBridgePileItem[];
   completion_percentage: number | null;
   readiness?: KpReadinessSummary | null;

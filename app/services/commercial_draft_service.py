@@ -109,7 +109,15 @@ class CommercialDraftService:
             recognition_mode = "full_gpt"
 
         normalized_product_type = (product_type or "plates").strip().lower()
-        if normalized_product_type not in {"plates", "piles", "steps", "marches", "bridge_piles", "fbs"}:
+        if normalized_product_type not in {
+            "plates",
+            "piles",
+            "steps",
+            "marches",
+            "bridge_piles",
+            "composite_piles",
+            "fbs",
+        }:
             normalized_product_type = "plates"
 
         try:
@@ -457,6 +465,76 @@ class CommercialDraftService:
                 "last_source_filename": last_source_filename,
                 "current_step": WizardStepId.bridge_piles.value,
                 # Keep base_metadata.saved_offer (MNA-304/601 resume bind); do not clear.
+                "generated_files": [],
+                "current_save_mode": None,
+                "execution_terms": "",
+                **source_metadata_payload,
+            }
+        )
+        metadata.setdefault("manager_id", None)
+        metadata.setdefault("manager_name", "")
+        metadata.setdefault("manager_phone", "")
+        metadata.setdefault("manager_email", "")
+        metadata.setdefault("client_name", "")
+        metadata.setdefault("discount_percent", 0.0)
+        metadata.setdefault("conditions_mode", "standard")
+        metadata.setdefault("delivery_conditions", "")
+        metadata.setdefault("payment_conditions", "")
+        metadata.setdefault("logistics_cost", 0.0)
+        metadata.setdefault("pile_logistics_cost", 0.0)
+        metadata.setdefault("pile_trip_overrides", {})
+        metadata.setdefault("fbs_lm_delivery_enabled", True)
+        metadata.setdefault("default_concrete_grade", "B25")
+        if owner_user_id is not None:
+            metadata["owner_user_id"] = int(owner_user_id)
+        return metadata
+
+    def build_composite_pile_preview_metadata(
+        self,
+        *,
+        preview: Any,
+        base_metadata: dict[str, Any],
+        source_type: str,
+        original_text: str,
+        ocr_text: str,
+        input_text: str,
+        last_source_filename: str,
+        composite_pile_batches: list[dict[str, Any]],
+        source_metadata: dict[str, Any],
+        owner_user_id: int | None = None,
+    ) -> dict[str, Any]:
+        source_metadata_payload = dict(source_metadata)
+        ocr_warnings = list(source_metadata_payload.pop("ocr_warnings", []) or [])
+        warnings = list(preview.warnings)
+        for warning in ocr_warnings:
+            if warning not in warnings:
+                warnings.append(warning)
+
+        metadata = dict(base_metadata)
+        metadata.update(
+            {
+                "product_type": "composite_piles",
+                "source_type": source_type,
+                "original_text": original_text,
+                "ocr_text": ocr_text,
+                "input_text": input_text,
+                "accumulated_text": input_text,
+                "warnings": warnings,
+                "unparsed_lines": list(preview.unparsed_lines),
+                "normalized_text": preview.normalized_text,
+                "normalized_lines": list(preview.normalized_lines),
+                "wide_plate_lines": [],
+                "diagnostics": [],
+                "breakdown_tables": [],
+                "price_rows_count": len(preview.order_data),
+                "breakdown_tables_count": 0,
+                "total_sum": preview.total_sum,
+                "composite_pile_batches": composite_pile_batches,
+                "wide_plates_resolved": True,
+                "invalid_width_lines": [],
+                "invalid_widths_resolved": True,
+                "last_source_filename": last_source_filename,
+                "current_step": WizardStepId.composite_piles.value,
                 "generated_files": [],
                 "current_save_mode": None,
                 "execution_terms": "",

@@ -9,7 +9,6 @@ import pandas as pd
 import pytest
 
 from app.services.price_desk_service import (
-    MSG_COMPOSITE,
     MSG_NEED_SHA,
     MSG_NOT_PILE,
     MSG_SHA_MISMATCH,
@@ -46,6 +45,15 @@ def _write_pile_xlsx(path: Path) -> None:
     rows = [
         [None, "Наименование", 15, 20, 22.5, 25, "30 на граните"],
         [69, "С120.35-12", 11111.11, 22222.22, 33333.33, 44444.44, 55555.55],
+    ]
+    pd.DataFrame(rows).to_excel(path, sheet_name="Прайс", index=False, header=False)
+
+
+def _write_composite_pile_xlsx(path: Path) -> None:
+    rows = [
+        [None, "Наименование", 15, 20, 22.5, 25, "30 на граните"],
+        [1, "Сваи С 60.30-ВС.1", 100.0, 110.0, 120.0, 130.0, 140.0],
+        [2, "Сваи С 80.30-НС.1", 200.0, 210.0, 220.0, 230.0, 240.0],
     ]
     pd.DataFrame(rows).to_excel(path, sheet_name="Прайс", index=False, header=False)
 
@@ -108,11 +116,19 @@ def test_apply_without_sha_raises(tmp_path: Path) -> None:
         service.apply(b"abc", "Прайс ЛМ.xlsx", None)
 
 
-def test_composite_rejected(tmp_path: Path) -> None:
+def test_composite_pile_preview_and_apply(tmp_path: Path) -> None:
     db = tmp_path / "pb.db"
+    xlsx = tmp_path / "Прайс на составные сваи от 07.09.2026.xlsx"
+    _write_composite_pile_xlsx(xlsx)
     service = PriceDeskService(db_path=db)
-    with pytest.raises(PriceDeskError, match=MSG_COMPOSITE):
-        service.preview(b"not-empty", "Прайс на составные сваи от 07.09.2026.xlsx")
+    data = xlsx.read_bytes()
+    preview = service.preview(data, xlsx.name)
+    assert preview.product_kind == "composite_pile"
+    assert preview.parsed_rows == 10
+    assert _count(db, "composite_pile_prices") == 0
+    applied = service.apply(data, xlsx.name, file_sha256(data))
+    assert applied.product_kind == "composite_pile"
+    assert _count(db, "composite_pile_prices") == 10
 
 
 def test_pile_filename_with_fbs_marks_does_not_write_piles(tmp_path: Path) -> None:
@@ -153,5 +169,13 @@ def test_status_empty_groups(tmp_path: Path) -> None:
     db = tmp_path / "pb.db"
     status = PriceDeskService(db_path=db).status()
     kinds = [g.product_kind for g in status.groups]
-    assert kinds == ["plates", "fbs", "march", "step", "bridge_pile", "pile"]
+    assert kinds == [
+        "plates",
+        "fbs",
+        "march",
+        "step",
+        "bridge_pile",
+        "pile",
+        "composite_pile",
+    ]
     assert all(g.row_count == 0 for g in status.groups)

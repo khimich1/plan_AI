@@ -11,10 +11,12 @@ ERR_EMPTY_PILES = "Список свай пустой."
 ERR_EMPTY_STEPS = "Список ступеней пустой."
 ERR_EMPTY_MARCHES = "Список маршей пустой."
 ERR_EMPTY_BRIDGE_PILES = "Список мостовых свай пустой."
+ERR_EMPTY_COMPOSITE_PILES = "Список составных свай пустой."
 ERR_EMPTY_FBS = "Список ФБС пустой."
 ERR_WIDE_PLATES = "Сначала примите решение по позициям шире стандартной."
 ERR_INVALID_WIDTHS = "Нестандартная ширина: замените на заводской рез или исключите позицию."
 ERR_UNPRICED_PLATES = "Сначала примите решение по позициям без цены в прайсе."
+ERR_UNPARSED_LINES = "Есть неразобранные строки — исправьте список перед расчётом."
 ERR_NO_MANAGER = "Выберите менеджера."
 ERR_NO_CLIENT = "Укажите клиента."
 ERR_NO_DELIVERY = "Укажите условия поставки."
@@ -41,6 +43,10 @@ class CommercialCalculationService:
         return str(metadata.get("product_type", "plates") or "plates").lower() == "bridge_piles"
 
     @staticmethod
+    def is_composite_pile_draft(metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("product_type", "plates") or "plates").lower() == "composite_piles"
+
+    @staticmethod
     def is_fbs_draft(metadata: dict[str, Any]) -> bool:
         return str(metadata.get("product_type", "plates") or "plates").lower() == "fbs"
 
@@ -61,6 +67,7 @@ class CommercialCalculationService:
             or self.is_step_draft(metadata)
             or self.is_march_draft(metadata)
             or self.is_bridge_pile_draft(metadata)
+            or self.is_composite_pile_draft(metadata)
             or self.is_fbs_draft(metadata)
         )
 
@@ -155,12 +162,16 @@ class CommercialCalculationService:
                 errors.append(ERR_EMPTY_MARCHES)
             elif self.is_bridge_pile_draft(metadata):
                 errors.append(ERR_EMPTY_BRIDGE_PILES)
+            elif self.is_composite_pile_draft(metadata):
+                errors.append(ERR_EMPTY_COMPOSITE_PILES)
             elif self.is_fbs_draft(metadata):
                 errors.append(ERR_EMPTY_FBS)
             elif self.is_pile_draft(metadata):
                 errors.append(ERR_EMPTY_PILES)
             else:
                 errors.append(ERR_EMPTY_PLATES)
+        if self.is_composite_pile_draft(metadata) and (metadata.get("unparsed_lines") or []):
+            errors.append(ERR_UNPARSED_LINES)
         errors.extend(self._wide_plate_errors(metadata, order_data=order_data))
         errors.extend(self._invalid_width_errors(metadata, order_data=order_data))
         errors.extend(self._unpriced_plate_errors(metadata, order_data=order_data))

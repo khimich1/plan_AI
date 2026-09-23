@@ -82,6 +82,13 @@ const resolveBridgePileItems = (offer: ArchiveOfferDetails): ArchivePileItem[] =
   return [];
 };
 
+const resolveCompositePileItems = (offer: ArchiveOfferDetails): ArchivePileItem[] => {
+  if (offer.composite_piles && offer.composite_piles.length > 0) {
+    return offer.composite_piles;
+  }
+  return [];
+};
+
 const resolveFbsItems = (offer: ArchiveOfferDetails): ArchivePileItem[] => {
   if (offer.fbs && offer.fbs.length > 0) {
     return offer.fbs;
@@ -161,8 +168,15 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const isStepOffer = offer?.product_type === "steps";
   const isMarchOffer = offer?.product_type === "marches";
   const isBridgePileOffer = offer?.product_type === "bridge_piles";
+  const isCompositePileOffer = offer?.product_type === "composite_piles";
   const isFbsOffer = offer?.product_type === "fbs";
-  const isSimpleProductOffer = isPileOffer || isStepOffer || isMarchOffer || isBridgePileOffer || isFbsOffer;
+  const isSimpleProductOffer =
+    isPileOffer ||
+    isStepOffer ||
+    isMarchOffer ||
+    isBridgePileOffer ||
+    isCompositePileOffer ||
+    isFbsOffer;
   const showReadiness =
     !isSimpleProductOffer && (offer?.status === "в работе" || offer?.status === "На СГП");
   const canShowDeliverySchedule =
@@ -196,6 +210,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const stepItems = offer && isStepOffer ? resolveStepItems(offer) : [];
   const marchItems = offer && isMarchOffer ? resolveMarchItems(offer) : [];
   const bridgePileItems = offer && isBridgePileOffer ? resolveBridgePileItems(offer) : [];
+  const compositePileItems = offer && isCompositePileOffer ? resolveCompositePileItems(offer) : [];
   const fbsItems = offer && isFbsOffer ? resolveFbsItems(offer) : [];
   const allProductItems = offer
     ? isPileOffer
@@ -206,9 +221,11 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
           ? marchItems
           : isBridgePileOffer
             ? bridgePileItems
-            : isFbsOffer
-              ? fbsItems
-              : offer.plates
+            : isCompositePileOffer
+              ? compositePileItems
+              : isFbsOffer
+                ? fbsItems
+                : offer.plates
     : [];
   const baseProducts = baseProductsTotal(allProductItems as unknown as Array<Record<string, unknown>>);
   const deliveryTotal = offer?.delivery_service_total_rub ?? 0;
@@ -228,9 +245,11 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
         ? marchItems.length
         : isBridgePileOffer
           ? bridgePileItems.length
-          : isFbsOffer
-            ? fbsItems.length
-          : (offer?.plates.length ?? 0);
+          : isCompositePileOffer
+            ? compositePileItems.length
+            : isFbsOffer
+              ? fbsItems.length
+              : (offer?.plates.length ?? 0);
   const itemsToShow = offer
     ? showAllPlates
       ? isPileOffer
@@ -241,9 +260,11 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             ? marchItems
             : isBridgePileOffer
               ? bridgePileItems
-              : isFbsOffer
-                ? fbsItems
-                : offer.plates
+              : isCompositePileOffer
+                ? compositePileItems
+                : isFbsOffer
+                  ? fbsItems
+                  : offer.plates
       : isPileOffer
         ? pileItems.slice(0, PLATES_PREVIEW)
         : isStepOffer
@@ -252,9 +273,11 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             ? marchItems.slice(0, PLATES_PREVIEW)
             : isBridgePileOffer
               ? bridgePileItems.slice(0, PLATES_PREVIEW)
-              : isFbsOffer
-                ? fbsItems.slice(0, PLATES_PREVIEW)
-                : offer.plates.slice(0, PLATES_PREVIEW)
+              : isCompositePileOffer
+                ? compositePileItems.slice(0, PLATES_PREVIEW)
+                : isFbsOffer
+                  ? fbsItems.slice(0, PLATES_PREVIEW)
+                  : offer.plates.slice(0, PLATES_PREVIEW)
     : [];
 
   useEffect(() => {
@@ -1054,7 +1077,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   </tbody>
                 </table>
               </div>
-            ) : isPileOffer || isBridgePileOffer || isFbsOffer ? (
+            ) : isPileOffer || isBridgePileOffer || isCompositePileOffer || isFbsOffer ? (
               <div style={{ overflowX: "auto" }}>
                 <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.95rem" }}>
                   <thead>

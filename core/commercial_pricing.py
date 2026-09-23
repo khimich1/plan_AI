@@ -12,6 +12,7 @@ from core.cargo_delivery_pricing import (
 )
 from core.exceptions import PriceNotFoundError, UnpricedPlatesError
 from core.bridge_pile_price_db import get_bridge_pile_price
+from core.composite_pile_price_db import get_composite_pile_price
 from core.fbs_price_db import get_fbs_price
 from core.march_price_db import get_march_price, normalize_march_mark
 from core.pile_price_db import get_pile_price
@@ -131,6 +132,21 @@ def lookup_bridge_pile_price(
     return price
 
 
+def lookup_composite_pile_price(
+    mark: str,
+    concrete_grade: str,
+    *,
+    db_path: str,
+) -> float:
+    """Return composite-pile section unit price or raise ``PriceNotFoundError``."""
+    price = get_composite_pile_price(mark, concrete_grade, db_path)
+    if price is None:
+        raise PriceNotFoundError(
+            f"Секция составной сваи не найдена в прайсе: {mark}, {concrete_grade}"
+        )
+    return price
+
+
 def lookup_fbs_price(
     mark: str,
     concrete_grade: str,
@@ -203,6 +219,10 @@ def _is_bridge_pile_item(item: dict[str, Any]) -> bool:
     return str(item.get("product_kind", "") or "").lower() == "bridge_pile"
 
 
+def _is_composite_pile_item(item: dict[str, Any]) -> bool:
+    return str(item.get("product_kind", "") or "").lower() == "composite_pile"
+
+
 def _is_fbs_item(item: dict[str, Any]) -> bool:
     return str(item.get("product_kind", "") or "").lower() == "fbs"
 
@@ -227,6 +247,11 @@ def is_bridge_pile_order(order_data: list[dict[str, Any]]) -> bool:
     return bool(order_data) and all(_is_bridge_pile_item(item) for item in order_data)
 
 
+def is_composite_pile_order(order_data: list[dict[str, Any]]) -> bool:
+    """True when every line is a composite-pile section (empty list → False)."""
+    return bool(order_data) and all(_is_composite_pile_item(item) for item in order_data)
+
+
 def is_fbs_order(order_data: list[dict[str, Any]]) -> bool:
     """True when every line is an FBS position (empty list → False)."""
     return bool(order_data) and all(_is_fbs_item(item) for item in order_data)
@@ -246,6 +271,13 @@ def position_label(item: dict[str, Any]) -> str:
         if mark:
             return f"{mark} ({grade})"
         return f"Мостовая свая ({grade})"
+
+    if _is_composite_pile_item(item):
+        mark = str(item.get("mark") or item.get("name") or "").strip()
+        grade = str(item.get("concrete_grade") or "B25").strip()
+        if mark:
+            return f"{mark} ({grade})"
+        return f"Составная свая ({grade})"
 
     if _is_fbs_item(item):
         mark = str(item.get("mark") or item.get("name") or "").strip()
@@ -293,6 +325,10 @@ def collect_unpriced_positions(
                 mark = str(item.get("mark") or item.get("name") or "").strip()
                 grade = str(item.get("concrete_grade") or "B25").strip()
                 lookup_bridge_pile_price(mark, grade, db_path=db_path)
+            elif _is_composite_pile_item(item):
+                mark = str(item.get("mark") or item.get("name") or "").strip()
+                grade = str(item.get("concrete_grade") or "B25").strip()
+                lookup_composite_pile_price(mark, grade, db_path=db_path)
             elif _is_fbs_item(item):
                 mark = str(item.get("mark") or item.get("name") or "").strip()
                 grade = str(item.get("concrete_grade") or "B25").strip()
@@ -385,6 +421,10 @@ def calculate_total_cost(
             mark = str(item.get("mark") or item.get("name") or "").strip()
             grade = str(item.get("concrete_grade") or "B25").strip()
             unit_price = lookup_bridge_pile_price(mark, grade, db_path=db_path)
+        elif _is_composite_pile_item(item):
+            mark = str(item.get("mark") or item.get("name") or "").strip()
+            grade = str(item.get("concrete_grade") or "B25").strip()
+            unit_price = lookup_composite_pile_price(mark, grade, db_path=db_path)
         elif _is_fbs_item(item):
             mark = str(item.get("mark") or item.get("name") or "").strip()
             grade = str(item.get("concrete_grade") or "B25").strip()

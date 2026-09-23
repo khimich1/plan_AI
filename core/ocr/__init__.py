@@ -27,6 +27,7 @@ from core.ocr.parsing import (
 from core.ocr.prompts import get_recognition_prompt, get_verification_prompt
 from core.ocr.recognition import (
     apply_bridge_piles_with_ai,
+    apply_composite_piles_with_ai,
     apply_fbs_with_ai,
     apply_marches_with_ai,
     apply_piles_with_ai,
@@ -47,6 +48,7 @@ from core.ocr.verify_policy import (
 
 __all__ = [
     "apply_bridge_piles_with_ai",
+    "apply_composite_piles_with_ai",
     "apply_fbs_with_ai",
     "apply_marches_with_ai",
     "apply_piles_with_ai",

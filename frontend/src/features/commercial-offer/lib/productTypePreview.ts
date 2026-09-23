@@ -8,6 +8,10 @@ import {
   buildBridgePilePreviewRows,
 } from "@/features/commercial-offer/lib/buildBridgePilePreviewRows";
 import {
+  buildCompositePileLinesFromOrderData,
+  buildCompositePilePreviewRows,
+} from "@/features/commercial-offer/lib/buildCompositePilePreviewRows";
+import {
   buildFbsLinesFromOrderData,
   buildFbsPreviewRows,
 } from "@/features/commercial-offer/lib/buildFbsPreviewRows";
@@ -89,6 +93,13 @@ const PRODUCT_TYPE_PREVIEW: Record<SimpleKpProductType, ProductTypePreview> = {
     isGradeCode: isBridgePileGradeCode,
     buildRows: buildBridgePilePreviewRows,
     buildLines: buildBridgePileLinesFromOrderData,
+  },
+  composite_piles: {
+    gradeCodes: PILE_GRADE_CODES,
+    formatGradeLabel: formatPileGradeLabel,
+    isGradeCode: isPileGradeCode,
+    buildRows: buildCompositePilePreviewRows,
+    buildLines: buildCompositePileLinesFromOrderData,
   },
   fbs: {
     gradeCodes: FBS_GRADE_CODES,

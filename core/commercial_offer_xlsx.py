@@ -94,6 +94,7 @@ from core.commercial_pricing import (  # noqa: E402
     calculate_total_cost as _calculate_total_cost,
     format_phone,
     is_bridge_pile_order,
+    is_composite_pile_order,
     is_fbs_order,
     is_march_order,
     is_pile_order,
@@ -266,6 +267,7 @@ def generate_commercial_offer_xlsx(
     unified = is_unified_commercial_document(order_data, append_batches=append_batches)
     pile_order = is_pile_order(order_data)
     bridge_pile_order = is_bridge_pile_order(order_data)
+    composite_pile_order = is_composite_pile_order(order_data)
     fbs_order = is_fbs_order(order_data)
     march_order = is_march_order(order_data)
     step_order = is_step_order(order_data)
@@ -311,7 +313,7 @@ def generate_commercial_offer_xlsx(
             })
             continue
 
-        if pile_order or bridge_pile_order or fbs_order or march_order:
+        if pile_order or bridge_pile_order or composite_pile_order or fbs_order or march_order:
             table_data.append({
                 '№': idx,
                 'Наименование': str(item.get('mark') or item.get('name') or ''),
@@ -632,7 +634,7 @@ def generate_commercial_offer_xlsx(
             worksheet.column_dimensions['F'].width = 18
         else:
             worksheet.column_dimensions['B'].width = 45
-            if pile_order or bridge_pile_order or fbs_order or march_order:
+            if pile_order or bridge_pile_order or composite_pile_order or fbs_order or march_order:
                 worksheet.column_dimensions['C'].width = 14
                 worksheet.column_dimensions['D'].width = 8
                 worksheet.column_dimensions['E'].width = 15

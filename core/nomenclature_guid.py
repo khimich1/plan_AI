@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Iterator, Optional
 
 PRODUCT_KINDS = frozenset(
-    {"pile", "bridge_pile", "fbs", "stair_flight", "stair_step"}
+    {"pile", "bridge_pile", "composite_pile", "fbs", "stair_flight", "stair_step"}
 )
 MATCH_STATUSES = frozenset({"auto", "manual", "ambiguous", "missing"})
 

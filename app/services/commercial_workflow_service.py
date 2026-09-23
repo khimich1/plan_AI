@@ -12,6 +12,7 @@ from app.services.commercial_draft_service import CommercialDraftService
 from app.services.commercial_draft_service import _safe_ocr_temp_suffix  # noqa: F401 — tests import from this module
 from app.services.commercial_export_service import CommercialExportService
 from app.services.commercial_bridge_pile_service import CommercialBridgePileService
+from app.services.commercial_composite_pile_service import CommercialCompositePileService
 from app.services.commercial_fbs_service import CommercialFbsService
 from app.services.commercial_march_service import CommercialMarchService
 from app.services.commercial_pile_service import CommercialPileService
@@ -52,6 +53,7 @@ class CommercialWorkflowService:
         self.pile_service = CommercialPileService()
         self.march_service = CommercialMarchService()
         self.bridge_pile_service = CommercialBridgePileService()
+        self.composite_pile_service = CommercialCompositePileService()
         self.fbs_service = CommercialFbsService()
         self.step_service_product = CommercialStepService()
         self.export_service = CommercialExportService(draft_store=self.draft_store)
@@ -381,6 +383,52 @@ class CommercialWorkflowService:
         return self.product_draft_handler.update_grades(
             draft_id,
             product_type="bridge_piles",
+            concrete_grade=concrete_grade,
+        )
+
+    async def update_draft_composite_piles(
+        self,
+        draft_id: str,
+        *,
+        mode: str,
+        text: str | None,
+        image_bytes: bytes | None,
+        image_filename: str | None,
+    ) -> dict[str, Any]:
+        return await self.product_draft_handler.update(
+            draft_id,
+            product_type="composite_piles",
+            mode=mode,
+            text=text,
+            image_bytes=image_bytes,
+            image_filename=image_filename,
+        )
+
+    async def apply_ai_composite_piles_instruction(
+        self,
+        draft_id: str,
+        *,
+        instruction: str,
+        image_bytes: bytes | None,
+        image_filename: str | None,
+    ) -> dict[str, Any]:
+        return await self.product_draft_handler.apply_ai(
+            draft_id,
+            product_type="composite_piles",
+            instruction=instruction,
+            image_bytes=image_bytes,
+            image_filename=image_filename,
+        )
+
+    def update_draft_composite_pile_grades(
+        self,
+        draft_id: str,
+        *,
+        concrete_grade: str,
+    ) -> dict[str, Any]:
+        return self.product_draft_handler.update_grades(
+            draft_id,
+            product_type="composite_piles",
             concrete_grade=concrete_grade,
         )
 

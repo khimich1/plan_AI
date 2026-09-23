@@ -9,6 +9,7 @@ Backward-compatibility shim for core.ocr package.
 from core.ocr import (
     _validate_plate_item,
     apply_bridge_piles_with_ai,
+    apply_composite_piles_with_ai,
     apply_fbs_with_ai,
     apply_marches_with_ai,
     apply_piles_with_ai,
@@ -53,6 +54,7 @@ __all__ = [
     "_require_openai_client",
     "_validate_plate_item",
     "apply_bridge_piles_with_ai",
+    "apply_composite_piles_with_ai",
     "apply_fbs_with_ai",
     "apply_marches_with_ai",
     "apply_piles_with_ai",

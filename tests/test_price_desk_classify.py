@@ -15,7 +15,7 @@ from core.price_desk_classify import (
 @pytest.mark.parametrize(
     ("filename", "kind"),
     [
-        ("Прайс на составные сваи от 07.09.2026.xlsx", "composite"),
+        ("Прайс на составные сваи от 07.09.2026.xlsx", "composite_pile"),
         ("Расчет новых цен на ПБ 17.08.2026.xls", "plates"),
         ("расчёт новых цен на пб 01.01.2026.xls", "plates"),
         ("Расчет чего угодно ПБ.xls", "plates"),
@@ -33,7 +33,7 @@ def test_classify_seven_anchors(filename: str, kind: str) -> None:
 def test_composite_wins_over_pile_substring() -> None:
     assert (
         classify_price_filename("Прайс на составные и цельные сваи.xlsx")
-        == "composite"
+        == "composite_pile"
     )
 
 

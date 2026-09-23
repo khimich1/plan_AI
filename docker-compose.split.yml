@@ -21,10 +21,13 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
+    env_file:
+      - .env
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
       UVICORN_WORKERS: "1"
+      APP_SECRET_KEY: ${APP_SECRET_KEY}
       PB_DB_PATH: /data/pb.db
       PLITA_DB_PATH: /data/plita.db
       DRAFTS_DIR: /data/drafts
@@ -62,6 +65,9 @@ services:
       - "443:443"
     volumes:
       - /etc/ssl/zavodstart.ru:/etc/nginx/ssl:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot
+      - ./frontend/nginx.himych.conf:/etc/nginx/conf.d/himych.conf:ro
     depends_on:
       - backend
 

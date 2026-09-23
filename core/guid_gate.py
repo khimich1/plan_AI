@@ -34,6 +34,7 @@ _PLATE_KINDS = frozenset({"plate", "plates", "plity", "плита", "плиты"
 _KIND_ALIASES = {
     "piles": "pile",
     "bridge_piles": "bridge_pile",
+    "composite_piles": "composite_pile",
     "steps": "stair_step",
     "marches": "stair_flight",
     "stair_flights": "stair_flight",
@@ -220,6 +221,7 @@ _PRODUCT_TYPE_TO_KIND = {
     "plates": "plate",
     "piles": "pile",
     "bridge_piles": "bridge_pile",
+    "composite_piles": "composite_pile",
     "fbs": "fbs",
     "marches": "stair_flight",
     "steps": "stair_step",

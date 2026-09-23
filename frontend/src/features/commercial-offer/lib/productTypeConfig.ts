@@ -5,7 +5,14 @@ import type {
 } from "@/features/commercial-offer/types/commercialOffer";
 
 /** URL segment of the per-product draft endpoints (note: bridge_piles → "bridge-piles"). */
-export type ProductEndpointSegment = "plates" | "piles" | "steps" | "marches" | "bridge-piles" | "fbs";
+export type ProductEndpointSegment =
+  | "plates"
+  | "piles"
+  | "steps"
+  | "marches"
+  | "bridge-piles"
+  | "composite-piles"
+  | "fbs";
 
 /** metadata.* field holding the product's source batches. */
 export type DraftBatchesField =
@@ -14,6 +21,7 @@ export type DraftBatchesField =
   | "step_batches"
   | "march_batches"
   | "bridge_pile_batches"
+  | "composite_pile_batches"
   | "fbs_batches";
 
 export type ProductTypeLabels = {
@@ -196,6 +204,34 @@ export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
       previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
       previewUnpricedMessage:
         "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+    },
+  },
+  composite_piles: {
+    productType: "composite_piles",
+    inputStep: "composite_piles",
+    endpointSegment: "composite-piles",
+    batchesField: "composite_pile_batches",
+    supportsGrades: true,
+    isSimpleKp: true,
+    ingestAction: "ingest_composite_piles",
+    labels: {
+      nounPlural: "Составные сваи",
+      nounGenitivePlural: "составных свай",
+      stepTitle: "Шаг 1. Составные сваи",
+      listLabel: "Список составных свай",
+      reviewListTitle: "Список составных свай для расчёта",
+      placeholder: "С140.30-С 5\nС60.30-ВС.1 3",
+      aiPlaceholder: "Например: убери строки с B15",
+      emptySubtitle: "Вставьте текст списка составных свай или загрузите фото таблицы.",
+      aiHint: "Редкий сценарий: опишите, что сделать со списком составных свай.",
+      addMoreDescription: "Добавьте ещё составные сваи или перейдите к оформлению клиента.",
+      initialDescription: "Загрузите фото или вставьте список составных свай для расчёта.",
+      previewChangedMessage:
+        "Изменён список составных свай — нажмите «Список верен» для пересчёта состава.",
+      previewEmptyMessage: "Список пуст — распознайте составные сваи.",
+      previewSubtitle: "Марка секции, класс бетона, количество и цена — как в документе.",
+      previewUnpricedMessage:
+        "Не все секции найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
     },
   },
   fbs: {

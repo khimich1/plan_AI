@@ -9,12 +9,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from core.bridge_pile_line_parser import parse_bridge_pile_line
+from core.composite_pile_line_parser import expand_order_line
 from core.fbs_line_parser import parse_fbs_line
 from core.line_prepare import prepare_source_line
 from core.march_line_parser import parse_march_line
 from core.pile_line_parser import parse_pile_line
 from core.plate_line_parser import parse_line
 from core.plate_validation import validate_plate_values
+from core.price_db import DEFAULT_DB
 from core.step_line_parser import parse_step_line
 
 
@@ -58,7 +60,19 @@ _GENERIC_LINTERS: dict[str, Callable[[str], tuple[bool, str | None]]] = {
 }
 
 
-def lint_source_lines(text: str, product_type: str) -> list[LineLint]:
+def _lint_composite_pile_line(raw: str, *, db_path: str) -> tuple[bool, str | None]:
+    result = expand_order_line(raw, db_path=db_path)
+    if result.parsed:
+        return True, None
+    return False, result.reason_text or "строка не распознана"
+
+
+def lint_source_lines(
+    text: str,
+    product_type: str,
+    *,
+    db_path: str = DEFAULT_DB,
+) -> list[LineLint]:
     """Lint each physical ``\\n`` line. Blank / whitespace-only lines are ok."""
     physical_lines = text.split("\n")
     results: list[LineLint] = []
@@ -69,6 +83,8 @@ def lint_source_lines(text: str, product_type: str) -> list[LineLint]:
         prepared = prepare_source_line(raw, product_type)
         if product_type == "plates":
             ok, reason = _lint_plate_line(prepared)
+        elif product_type == "composite_piles":
+            ok, reason = _lint_composite_pile_line(prepared, db_path=db_path)
         else:
             linter = _GENERIC_LINTERS.get(product_type)
             if linter is None:

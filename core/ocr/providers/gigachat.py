@@ -14,6 +14,7 @@ from core.config.settings import Settings, get_settings
 from core.ocr.parsing import parse_gpt_response, parse_verify_response
 from core.ocr.prompts import get_verification_prompt
 from core.bridge_pile_format_prompt import build_bridge_pile_parser_system_prompt
+from core.composite_pile_format_prompt import build_composite_pile_parser_system_prompt
 from core.fbs_format_prompt import build_fbs_parser_system_prompt
 from core.march_format_prompt import build_march_parser_system_prompt
 from core.pile_format_prompt import build_pile_parser_system_prompt
@@ -207,6 +208,24 @@ def _sync_extract_bridge_piles(
     )
 
 
+def _sync_extract_composite_piles(
+    *,
+    client: "GigaChat",
+    user_text: str,
+    image_base64: str | None,
+    mime_type: str | None,
+    max_tokens: int,
+) -> tuple[List[Dict[str, Any]], float]:
+    return _sync_extract(
+        client=client,
+        system_prompt=build_composite_pile_parser_system_prompt(),
+        user_text=user_text,
+        image_base64=image_base64,
+        mime_type=mime_type,
+        max_tokens=max_tokens,
+    )
+
+
 def _sync_extract_fbs(
     *,
     client: "GigaChat",
@@ -371,6 +390,22 @@ class GigaChatProvider:
     ) -> tuple[List[Dict[str, Any]], float]:
         return await self._extract(
             _sync_extract_bridge_piles,
+            user_text=user_text,
+            image_base64=image_base64,
+            mime_type=mime_type,
+            max_tokens=max_tokens,
+        )
+
+    async def extract_composite_piles(
+        self,
+        *,
+        user_text: str,
+        image_base64: str | None = None,
+        mime_type: str | None = None,
+        max_tokens: int = 2500,
+    ) -> tuple[List[Dict[str, Any]], float]:
+        return await self._extract(
+            _sync_extract_composite_piles,
             user_text=user_text,
             image_base64=image_base64,
             mime_type=mime_type,

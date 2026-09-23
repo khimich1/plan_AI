@@ -31,6 +31,9 @@ const productTypeBadge = (productType: ProductType | undefined): string => {
   if (productType === "bridge_piles") {
     return "Мостовые сваи";
   }
+  if (productType === "composite_piles") {
+    return "Составные сваи";
+  }
   if (productType === "fbs") {
     return "ФБС";
   }
@@ -49,6 +52,9 @@ const productTypeBadgeStyle = (productType: ProductType | undefined): { backgrou
   }
   if (productType === "bridge_piles") {
     return { background: "#f0f9ff", color: "#026aa2" };
+  }
+  if (productType === "composite_piles") {
+    return { background: "#fdf2fa", color: "#c11574" };
   }
   if (productType === "fbs") {
     return { background: "#eef4ff", color: "#3538cd" };

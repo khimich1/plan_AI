@@ -15,6 +15,7 @@ _KP_LINE_TABLES: tuple[tuple[str, str], ...] = (
     ("steps", "kp_steps"),
     ("marches", "kp_marches"),
     ("bridge_piles", "kp_bridge_piles"),
+    ("composite_piles", "kp_composite_piles"),
     ("fbs", "kp_fbs"),
 )
 
@@ -112,6 +113,9 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
         elif product_type == "bridge_piles":
             kp_data.update(_empty_typed_arrays())
             kp_data["bridge_piles"] = _fetch_typed_rows(cur, "kp_bridge_piles", kp_id)
+        elif product_type == "composite_piles":
+            kp_data.update(_empty_typed_arrays())
+            kp_data["composite_piles"] = _fetch_typed_rows(cur, "kp_composite_piles", kp_id)
         elif product_type == "fbs":
             kp_data.update(_empty_typed_arrays())
             kp_data["fbs"] = _fetch_typed_rows(cur, "kp_fbs", kp_id)

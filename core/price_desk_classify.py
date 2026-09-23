@@ -7,7 +7,7 @@ import re
 from typing import Literal
 
 ProductKind = Literal[
-    "composite",
+    "composite_pile",
     "plates",
     "fbs",
     "step",
@@ -34,7 +34,7 @@ def classify_price_filename(filename: str) -> ProductKind:
     """Return product kind. First matching anchor wins. Raises ClassifyError if none."""
     name = _normalize_filename(filename)
     if "составн" in name:
-        return "composite"
+        return "composite_pile"
     if "расчет новых цен на пб" in name or ("расчет" in name and "пб" in name):
         return "plates"
     if "фбс" in name:

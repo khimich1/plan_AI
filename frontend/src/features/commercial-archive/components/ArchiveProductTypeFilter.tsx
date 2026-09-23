@@ -12,6 +12,7 @@ const OPTIONS: { value: ArchiveProductTypeFilter; label: string }[] = [
   { value: "steps", label: "Ступени" },
   { value: "marches", label: "Марши" },
   { value: "bridge_piles", label: "Мостовые сваи" },
+  { value: "composite_piles", label: "Составные сваи" },
   { value: "fbs", label: "ФБС" },
 ];
 

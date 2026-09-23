@@ -6,7 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-PriceDeskKind = Literal["plates", "fbs", "march", "step", "bridge_pile", "pile"]
+PriceDeskKind = Literal[
+    "plates", "fbs", "march", "step", "bridge_pile", "pile", "composite_pile"
+]
 
 STATUS_KINDS: tuple[PriceDeskKind, ...] = (
     "plates",
@@ -15,6 +17,7 @@ STATUS_KINDS: tuple[PriceDeskKind, ...] = (
     "step",
     "bridge_pile",
     "pile",
+    "composite_pile",
 )
 
 

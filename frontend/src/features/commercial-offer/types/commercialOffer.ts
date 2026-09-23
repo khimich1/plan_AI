@@ -1,4 +1,11 @@
-export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
+export type ProductType =
+  | "plates"
+  | "piles"
+  | "steps"
+  | "marches"
+  | "bridge_piles"
+  | "composite_piles"
+  | "fbs";
 
 /** Simple KP flow (no plate resolve gates): everything except plates. Mirrors ProductTypeConfig.isSimpleKp. */
 export type SimpleKpProductType = Exclude<ProductType, "plates">;
@@ -13,7 +20,16 @@ export type PriceCatalogResponse = {
   items: PriceCatalogItem[];
 };
 
-export type WizardStepId = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "client" | "result";
+export type WizardStepId =
+  | "plates"
+  | "piles"
+  | "steps"
+  | "marches"
+  | "bridge_piles"
+  | "composite_piles"
+  | "fbs"
+  | "client"
+  | "result";
 
 /** Legacy step ids from older drafts (localStorage / server metadata). */
 export type LegacyWizardStepId = "wide-plates" | "manager";
@@ -26,6 +42,7 @@ export type WizardNextRequiredAction =
   | "ingest_steps"
   | "ingest_marches"
   | "ingest_bridge_piles"
+  | "ingest_composite_piles"
   | "ingest_fbs"
   | "resolve_wide_plates"
   | "resolve_invalid_widths"
@@ -148,6 +165,8 @@ export type MarchBatch = PlateBatch;
 
 export type BridgePileBatch = PlateBatch;
 
+export type CompositePileBatch = PlateBatch;
+
 export type FbsBatch = PlateBatch;
 
 export type PileOrderLine = {
@@ -258,6 +277,7 @@ export type CommercialDraftMetadata = {
   step_batches?: StepBatch[];
   march_batches?: MarchBatch[];
   bridge_pile_batches?: BridgePileBatch[];
+  composite_pile_batches?: CompositePileBatch[];
   fbs_batches?: FbsBatch[];
   default_concrete_grade?: string;
   wide_plates_resolved: boolean;

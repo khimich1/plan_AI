@@ -77,6 +77,27 @@ def order_data_from_kp_bridge_piles(kp_info: dict[str, Any]) -> list[dict[str, A
     return result
 
 
+def order_data_from_kp_composite_piles(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build composite-pile order_data from kp_info['composite_piles']."""
+    items = kp_info.get("composite_piles") or []
+    discount = float(kp_info.get("discount_percent") or 0)
+    result: list[dict[str, Any]] = []
+    for item in items:
+        unit_price = _restore_unit_price(item, discount)
+        mark = str(item.get("mark") or "").strip()
+        result.append(
+            {
+                "product_kind": "composite_pile",
+                "product_type": "composite_piles",
+                "name": mark,
+                "mark": mark,
+                "concrete_grade": str(item.get("concrete_grade") or "B25").strip(),
+                "qty": int(item.get("qty") or 0),
+                "unit_price": unit_price,
+            }
+        )
+    return result
+
 
 def order_data_from_kp_fbs(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
     """Build FBS order_data from kp_info['fbs']."""
@@ -154,6 +175,7 @@ _MIXED_ORDER_BUILDERS: tuple[tuple[str, Any], ...] = (
     ("steps", order_data_from_kp_steps),
     ("marches", order_data_from_kp_marches),
     ("bridge_piles", order_data_from_kp_bridge_piles),
+    ("composite_piles", order_data_from_kp_composite_piles),
     ("fbs", order_data_from_kp_fbs),
 )
 
@@ -200,6 +222,8 @@ def order_data_from_kp_info(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
         return order_data_from_kp_piles(kp_info)
     if product_type == "bridge_piles" or kp_info.get("bridge_piles"):
         return order_data_from_kp_bridge_piles(kp_info)
+    if product_type == "composite_piles" or kp_info.get("composite_piles"):
+        return order_data_from_kp_composite_piles(kp_info)
     if product_type == "fbs" or kp_info.get("fbs"):
         return order_data_from_kp_fbs(kp_info)
     if product_type == "marches" or kp_info.get("marches"):

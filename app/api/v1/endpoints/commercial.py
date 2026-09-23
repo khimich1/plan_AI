@@ -22,6 +22,7 @@ from app.dependencies.plate_context import get_plate_order_context
 from app.dependencies.services import get_commercial_service, get_commercial_workflow_service
 from app.schemas.commercial import (
     CommercialAppendStartRequest, CommercialBridgePileGradesUpdateRequest,
+    CommercialCompositePileGradesUpdateRequest,
     CommercialCreateFromFormResponse, CommercialDraftBreakdownResponse,
     CommercialDraftDetailsResponse, CommercialDraftMetaUpdateRequest,
     CommercialFbsGradesUpdateRequest, CommercialGenerateFilesRequest,
@@ -305,6 +306,29 @@ def update_draft_bridge_pile_grades(
     workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialDraftDetailsResponse:
     return _run_product_grades(draft_id, payload.concrete_grade, workflow.update_draft_bridge_pile_grades, "update_draft_bridge_pile_grades")
+
+@router.patch("/drafts/{draft_id}/composite-piles", response_model=CommercialDraftDetailsResponse)
+async def update_commercial_draft_composite_piles(
+    body: _ProductUpdateForm = Depends(), draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    return await _run_product_update(draft_id, user, body, workflow.update_draft_composite_piles, "update_commercial_draft_composite_piles")
+
+@router.post("/drafts/{draft_id}/composite-piles/ai", response_model=CommercialDraftDetailsResponse)
+async def apply_ai_composite_piles_to_draft(
+    body: _ProductAiForm = Depends(), draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    return await _run_product_ai(draft_id, user, body, workflow.apply_ai_composite_piles_instruction, "apply_ai_composite_piles_to_draft")
+
+@router.patch("/drafts/{draft_id}/composite-piles/grades", response_model=CommercialDraftDetailsResponse)
+def update_draft_composite_pile_grades(
+    payload: CommercialCompositePileGradesUpdateRequest, draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    return _run_product_grades(draft_id, payload.concrete_grade, workflow.update_draft_composite_pile_grades, "update_draft_composite_pile_grades")
 
 @router.patch("/drafts/{draft_id}/fbs", response_model=CommercialDraftDetailsResponse)
 async def update_commercial_draft_fbs(
