@@ -88,6 +88,88 @@ def test_save_pile_kp_persists_kp_piles(db_path: str) -> None:
         assert row["qty"] == 2
 
 
+def test_saved_pile_concrete_spec_roundtrips_into_order_data(db_path: str) -> None:
+    from core.kp.offers_read import get_kp_by_id
+    from core.kp_order_data import order_data_from_kp_piles
+
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "01.01.2026",
+        [
+            _pile_order_item(
+                line_id="pile-1",
+                frost_resistance="F200",
+                waterproofness="W8",
+                concrete_aggregate="granite",
+                concrete_spec_source="table",
+            )
+        ],
+        customer_name="Pile Spec",
+        product_type="piles",
+        status="в архиве",
+        db_path=db_path,
+    )
+    kp = get_kp_by_id(kp_id, db_path)
+    [row] = order_data_from_kp_piles(kp)
+    assert row["frost_resistance"] == "F200"
+    assert row["waterproofness"] == "W8"
+    assert row["concrete_aggregate"] == "granite"
+    assert row["concrete_spec_source"] == "table"
+
+    KpPersistenceService.update_kp_from_order_data(
+        kp_id,
+        [
+            _pile_order_item(
+                line_id="pile-1",
+                frost_resistance="F200",
+                waterproofness="W6",
+                concrete_aggregate="ordinary",
+                concrete_spec_source="table",
+            )
+        ],
+        product_type="piles",
+        db_path=db_path,
+    )
+    updated = order_data_from_kp_piles(get_kp_by_id(kp_id, db_path))
+    assert updated[0]["waterproofness"] == "W6"
+    assert updated[0]["concrete_aggregate"] == "ordinary"
+
+
+def test_saved_pile_without_concrete_spec_stays_null(db_path: str) -> None:
+    from core.kp.offers_read import get_kp_by_id
+    from core.kp_order_data import order_data_from_kp_piles
+
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "01.01.2026",
+        [_pile_order_item(line_id="pile-old")],
+        customer_name="Old Pile",
+        product_type="piles",
+        status="в архиве",
+        db_path=db_path,
+    )
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT frost_resistance, waterproofness, concrete_aggregate, concrete_spec_source
+            FROM kp_piles WHERE kp_id = ?
+            """,
+            (kp_id,),
+        )
+        assert cur.fetchone() == (None, None, None, None)
+
+    KpPersistenceService.update_kp_from_order_data(
+        kp_id,
+        [_pile_order_item(line_id="pile-old", qty=3)],
+        product_type="piles",
+        db_path=db_path,
+    )
+    [row] = order_data_from_kp_piles(get_kp_by_id(kp_id, db_path))
+    assert row["qty"] == 3
+    assert row.get("frost_resistance") in (None, "")
+    assert row.get("waterproofness") in (None, "")
+    assert row.get("concrete_spec_source") in (None, "")
+
+
 def test_save_pile_kp_gets_next_kp_id_after_plates(db_path: str) -> None:
     first = KpPersistenceService.save_kp_to_db(
         "01.01.2026",

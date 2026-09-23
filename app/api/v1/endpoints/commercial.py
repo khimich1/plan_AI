@@ -29,7 +29,8 @@ from app.schemas.commercial import (
     CommercialOcrPageResponse, CommercialParseLine, CommercialParseRequest,
     CommercialPileGradesUpdateRequest,
     CommercialPreviewRequest, CommercialRestoreLinesRequest, CommercialSaveDraftRequest,
-    CommercialDraftLinePatchRequest, CommercialPriceCatalogResponse, CommercialSaveOfferResponse,
+    CommercialConcreteSpecPatchRequest, CommercialDraftLinePatchRequest,
+    CommercialPriceCatalogResponse, CommercialSaveOfferResponse,
     CommercialInvalidWidthsResolveRequest, CommercialUnpricedPlatesResolveRequest,
     CommercialWidePlatesResolveRequest,
     GuidCheckResponse,
@@ -496,6 +497,36 @@ def restore_draft_lines(
         ),
         not_found_detail="Строка не найдена.",
     ))
+
+
+@router.patch(
+    "/drafts/{draft_id}/lines/{line_id}/concrete-spec",
+    response_model=CommercialDraftDetailsResponse,
+)
+def patch_line_concrete_spec(
+    line_id: str,
+    payload: CommercialConcreteSpecPatchRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    try:
+        result = workflow.update_line_concrete_spec(
+            draft_id,
+            line_id,
+            concrete_spec_source=payload.concrete_spec_source,
+            concrete_aggregate=payload.concrete_aggregate,
+            frost_resistance=payload.frost_resistance,
+            waterproofness=payload.waterproofness,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Строка не найдена."
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return _details(result)
 
 
 @router.patch("/drafts/{draft_id}/lines/{line_id}", response_model=CommercialDraftDetailsResponse)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
+import type { ConcreteSpecPatch } from "@/features/commercial-offer/lib/concreteSpec";
 import { resolveDraftProductType, isSimpleKpProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
 import type { CommercialDraftDetails, InvalidWidthAction, ProductType, SaveMode, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
@@ -124,6 +125,22 @@ export const useCommercialOfferWizard = () => {
     }) => commercialOfferApi.updateGrades(draftId, productType, concreteGrade),
     onSuccess: (draft, variables) => {
       dispatch({ type: "hydrate-draft", payload: draft, refreshBatchText: true });
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
+  const updateConcreteSpecMutation = useMutation({
+    mutationFn: ({
+      draftId,
+      lineId,
+      payload,
+    }: {
+      draftId: string;
+      lineId: string;
+      payload: ConcreteSpecPatch;
+    }) => commercialOfferApi.updateConcreteSpec(draftId, lineId, payload),
+    onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
     },
@@ -338,6 +355,7 @@ export const useCommercialOfferWizard = () => {
     updateInputMutation,
     applyAiMutation,
     updateGradesMutation,
+    updateConcreteSpecMutation,
     resolveWidePlatesMutation,
     resolveUnpricedPlatesMutation,
     resolveInvalidWidthsMutation,

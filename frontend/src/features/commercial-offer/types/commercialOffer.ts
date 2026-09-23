@@ -162,6 +162,10 @@ export type PileOrderLine = {
   line_total?: number | null;
   product_kind?: "pile";
   sealed?: boolean;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type StepOrderLine = {
@@ -186,6 +190,10 @@ export type MarchOrderLine = {
   line_total?: number | null;
   product_kind?: "march";
   sealed?: boolean;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type CommercialGeneratedFile = {

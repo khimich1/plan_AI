@@ -4,6 +4,7 @@ import {
   isSealedOrderLine,
 } from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
+import { readConcreteSpec } from "@/features/commercial-offer/lib/concreteSpec";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export const buildMarchPreviewRows = (draft: CommercialDraftDetails): MarchOrderLine[] =>
@@ -24,6 +25,7 @@ export const buildMarchPreviewRows = (draft: CommercialDraftDetails): MarchOrder
       line_total: lineTotal,
       product_kind: "march",
       sealed: isSealedOrderLine(item),
+      ...readConcreteSpec(item),
     };
   });
 

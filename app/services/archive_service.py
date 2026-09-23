@@ -687,7 +687,11 @@ class ArchiveService:
         plate_delivery_total = float(totals.get("plate_delivery_total") or 0.0)
         pile_delivery_total = float(totals.get("pile_delivery_total") or 0.0)
         fbs_lm_delivery_total = float(totals.get("fbs_lm_delivery_total") or 0.0)
-        delivery_total = plate_delivery_total + pile_delivery_total + fbs_lm_delivery_total
+        delivery_total = (
+            plate_delivery_total
+            + pile_delivery_total
+            + fbs_lm_delivery_total
+        )
 
         readiness = None
         status = raw.get("status") or ""
@@ -757,6 +761,7 @@ class ArchiveService:
             qty=int(raw.get("qty") or 0),
             unit_price=_nullable_float(raw.get("unit_price")),
             discounted_price=_nullable_float(raw.get("discounted_price")),
+            **_concrete_spec_kwargs(raw),
         )
 
     @staticmethod
@@ -768,6 +773,7 @@ class ArchiveService:
             qty=int(raw.get("qty") or 0),
             unit_price=_nullable_float(raw.get("unit_price")),
             discounted_price=_nullable_float(raw.get("discounted_price")),
+            **_concrete_spec_kwargs(raw),
         )
 
     @staticmethod
@@ -779,6 +785,7 @@ class ArchiveService:
             qty=int(raw.get("qty") or 0),
             unit_price=_nullable_float(raw.get("unit_price")),
             discounted_price=_nullable_float(raw.get("discounted_price")),
+            **_concrete_spec_kwargs(raw),
         )
 
     @staticmethod
@@ -790,6 +797,7 @@ class ArchiveService:
             qty=int(raw.get("qty") or 0),
             unit_price=_nullable_float(raw.get("unit_price")),
             discounted_price=_nullable_float(raw.get("discounted_price")),
+            **_concrete_spec_kwargs(raw),
         )
 
     @staticmethod
@@ -817,6 +825,7 @@ class ArchiveService:
             unit_weight=_nullable_float(raw.get("unit_weight")),
             total_weight=_nullable_float(raw.get("total_weight")),
             status=raw.get("status") or None,
+            **_concrete_spec_kwargs(raw),
         )
 
     @staticmethod
@@ -960,6 +969,29 @@ class ArchiveService:
             return formatted
         except ValueError as exc:
             raise ArchiveValidationError(str(exc)) from exc
+
+
+def _concrete_spec_kwargs(raw: dict) -> dict[str, str | None]:
+    def text(key: str) -> str | None:
+        value = raw.get(key)
+        if value is None:
+            return None
+        stripped = str(value).strip()
+        return stripped or None
+
+    source = text("concrete_spec_source")
+    aggregate_raw = raw.get("concrete_aggregate")
+    if aggregate_raw is None:
+        aggregate = None
+    else:
+        aggregate_text = str(aggregate_raw)
+        aggregate = "" if source == "manual" and aggregate_text.strip() == "" else aggregate_text.strip() or None
+    return {
+        "frost_resistance": text("frost_resistance"),
+        "waterproofness": text("waterproofness"),
+        "concrete_aggregate": aggregate,
+        "concrete_spec_source": source,
+    }
 
 
 def _nullable_float(value: object) -> float | None:

@@ -32,7 +32,18 @@ def test_fresh_schema_has_product_type_and_kp_piles(tmp_path: Path) -> None:
             "qty",
             "unit_price",
             "discounted_price",
+            "frost_resistance",
+            "waterproofness",
+            "concrete_aggregate",
+            "concrete_spec_source",
         }
+        for name in (
+            "frost_resistance",
+            "waterproofness",
+            "concrete_aggregate",
+            "concrete_spec_source",
+        ):
+            assert pile_cols[name][3] == 0
 
         cur.execute(
             "INSERT INTO KP_offers (kp_id, creation_date) VALUES (1, '2026-07-30')"
@@ -102,6 +113,96 @@ def test_migrate_existing_db_adds_product_type_and_kp_piles(tmp_path: Path) -> N
             "SELECT name FROM sqlite_master WHERE type='table' AND name='kp_piles'"
         )
         assert cur.fetchone() is not None
+
+
+def test_migrate_existing_kp_piles_adds_nullable_concrete_spec(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "legacy-spec.db")
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE KP_offers (
+                kp_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                creation_date TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE kp_meta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL UNIQUE,
+                status TEXT DEFAULT 'в работе'
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE kp_piles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                concrete_grade TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE kp_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                position_number INTEGER NOT NULL,
+                mark TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discounted_price REAL NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            "INSERT INTO KP_offers (kp_id, creation_date) VALUES (1, '2026-01-01')"
+        )
+        cur.execute("INSERT INTO kp_meta (kp_id, status) VALUES (1, 'в архиве')")
+        cur.execute(
+            """
+            INSERT INTO kp_piles (
+                kp_id, position_number, mark, concrete_grade,
+                qty, unit_price, discounted_price
+            ) VALUES (1, 1, 'С120.35-12', 'B25', 2, 10, 10)
+            """
+        )
+        conn.commit()
+
+    kp_db_schema._schema_ready.clear()
+    kp_db_schema.ensure_schema(db_path)
+    kp_db_schema._schema_ready.clear()
+    kp_db_schema.ensure_schema(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(kp_piles)")
+        pile_cols = {row[1] for row in cur.fetchall()}
+        assert {
+            "frost_resistance",
+            "waterproofness",
+            "concrete_aggregate",
+            "concrete_spec_source",
+        } <= pile_cols
+        cur.execute(
+            """
+            SELECT frost_resistance, waterproofness, concrete_aggregate, concrete_spec_source
+            FROM kp_piles WHERE kp_id = 1
+            """
+        )
+        assert cur.fetchone() == (None, None, None, None)
+        cur.execute("PRAGMA table_info(kp_steps)")
+        step_cols = {row[1] for row in cur.fetchall()}
+        assert "frost_resistance" not in step_cols
+        assert "concrete_spec_source" not in step_cols
 
 
 def test_ensure_schema_idempotent_with_kp_piles(tmp_path: Path) -> None:

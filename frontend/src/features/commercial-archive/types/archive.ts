@@ -40,6 +40,10 @@ export type ArchivePlateItem = {
   unit_weight: number | null;
   total_weight: number | null;
   status: string | null;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type ArchivePileItem = {
@@ -49,6 +53,10 @@ export type ArchivePileItem = {
   qty: number;
   unit_price: number | null;
   discounted_price: number | null;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type ArchiveStepItem = {
@@ -66,6 +74,10 @@ export type ArchiveMarchItem = {
   qty: number;
   unit_price: number | null;
   discounted_price: number | null;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type ArchiveBridgePileItem = {
@@ -75,6 +87,10 @@ export type ArchiveBridgePileItem = {
   qty: number;
   unit_price: number | null;
   discounted_price: number | null;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type ArchiveOfferFinance = {

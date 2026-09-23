@@ -10,6 +10,12 @@ from app.domain.models.optimization_context import OptimizationContext
 from app.domain.models.plate_order import PlateOrder
 from app.services.commercial_draft_service import _safe_ocr_temp_suffix
 from app.services.product_draft_config import ProductDraftSpec, get_spec
+from core.concrete_spec import (
+    apply_line_specs,
+    build_concrete_spec_update,
+    prepare_plate_line,
+    suppress_unevidenced_plate_specs,
+)
 from core.plate_order_context import PlateOrderContext
 
 
@@ -59,7 +65,7 @@ class ProductDraftHandler:
             owner_user_id=owner_user_id,
             preview_for_wide=preview,
         )
-        order_data = self._id.stamp_order_data(preview.order_data, product_type=spec.product_type)
+        order_data = self._lines_with_specs(spec, preview.order_data, [])
         draft_id = self._save_preview(spec, preview, order_data, metadata)
         self._persist_wizard_after_write(spec, draft_id)
         return self._wf.get_draft_details(draft_id)
@@ -249,11 +255,7 @@ class ProductDraftHandler:
             mode="append",
             merged_cycle_text=True,
         )
-        new_type_lines = self._id.stamp_order_data(
-            preview.order_data,
-            product_type=spec.product_type,
-            previous_order_data=stamp_previous,
-        )
+        new_type_lines = self._lines_with_specs(spec, preview.order_data, stamp_previous)
         order_data = self._id.compose_order_data_for_product_update(
             previous_order_data=previous_order_data,
             new_type_lines=new_type_lines,
@@ -263,6 +265,62 @@ class ProductDraftHandler:
         )
         self._replace_preview(spec, draft_id, preview, order_data, next_metadata)
         self._persist_wizard_after_write(spec, draft_id)
+        return self._wf.get_draft_details(draft_id)
+
+    def update_line_concrete_spec(
+        self,
+        draft_id: str,
+        line_id: str,
+        *,
+        concrete_spec_source: str,
+        concrete_aggregate: str | None = None,
+        frost_resistance: str | None = None,
+        waterproofness: str | None = None,
+    ) -> dict[str, Any]:
+        """Меняет снимок F/W одной незапечатанной строки. Текст и прайс не трогает."""
+        target_id = (line_id or "").strip()
+        if not target_id:
+            raise FileNotFoundError("Строка не найдена.")
+        payload = self._wf._load_draft_or_raise(draft_id)
+        metadata = dict(payload.get("metadata") or {})
+        order_data = [
+            dict(line)
+            for line in list(payload.get("order_data") or [])
+            if isinstance(line, dict)
+        ]
+        index = next(
+            (
+                i
+                for i, line in enumerate(order_data)
+                if str(line.get("line_id") or "").strip() == target_id
+            ),
+            None,
+        )
+        if index is None:
+            raise FileNotFoundError("Строка не найдена.")
+        line = order_data[index]
+        if self._id.line_is_sealed(line):
+            raise ValueError("Запечатанную строку нельзя менять.")
+        product_type = self._id.line_product_type(line) or str(
+            metadata.get("product_type") or ""
+        ).strip().lower()
+        if product_type == "steps":
+            raise ValueError("Для ступеней пара бетона не задаётся.")
+        line.update(
+            build_concrete_spec_update(
+                concrete_grade=str(line.get("concrete_grade") or ""),
+                concrete_spec_source=concrete_spec_source,
+                concrete_aggregate=concrete_aggregate,
+                frost_resistance=frost_resistance,
+                waterproofness=waterproofness,
+            )
+        )
+        self._wf._persist_order_and_metadata(
+            draft_id,
+            payload=payload,
+            order_data=order_data,
+            metadata=metadata,
+        )
         return self._wf.get_draft_details(draft_id)
 
     def _create_empty(self, spec: ProductDraftSpec, owner_user_id: int) -> dict[str, Any]:
@@ -342,6 +400,24 @@ class ProductDraftHandler:
             kwargs["wide_plates_resolved"] = not bool(wide_src.parse_result.wide_plate_lines)
         return spec.build_metadata(self._wf.draft_service, **kwargs)
 
+    def _lines_with_specs(
+        self,
+        spec: ProductDraftSpec,
+        preview_order_data: list[Any],
+        previous: list[Any],
+    ) -> list[dict[str, Any]]:
+        stamped = self._id.stamp_order_data(
+            preview_order_data,
+            product_type=spec.product_type,
+            previous_order_data=previous or None,
+        )
+        if spec.product_type == "plates":
+            stamped = [prepare_plate_line(line) for line in stamped]
+        attached = apply_line_specs(list(previous or []), stamped)
+        if spec.product_type == "plates":
+            attached = suppress_unevidenced_plate_specs(list(previous or []), attached)
+        return attached
+
     def _compose_stamped(
         self,
         spec: ProductDraftSpec,
@@ -360,11 +436,7 @@ class ProductDraftHandler:
             mode=mode,
             merged_cycle_text=merged_cycle_text,
         )
-        new_type_lines = self._id.stamp_order_data(
-            preview_order_data,
-            product_type=spec.product_type,
-            previous_order_data=stamp_previous,
-        )
+        new_type_lines = self._lines_with_specs(spec, preview_order_data, stamp_previous)
         return self._id.compose_order_data_for_product_update(
             previous_order_data=previous_order_data,
             new_type_lines=new_type_lines,

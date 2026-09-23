@@ -154,7 +154,12 @@ function renderResultStep(
 
   render(<CalculationResultStep {...(props as ComponentProps<typeof CalculationResultStep>)} />);
 
-  return { onAddOtherNomenclature, onUndoLastBatch, onDeleteLine, onLogisticsCostSubmit };
+  return {
+    onAddOtherNomenclature,
+    onUndoLastBatch,
+    onDeleteLine,
+    onLogisticsCostSubmit,
+  };
 }
 
 afterEach(() => {
@@ -970,5 +975,94 @@ describe("CalculationResultStep GUID warning", () => {
     guidCheckState.missing = [];
     renderResultStep(makeDraft());
     expect(screen.queryByTestId("guid-missing-alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("CalculationResultStep concrete spec", () => {
+  it("shows the saved pile pair and a dash for an empty snapshot", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln1",
+            product_type: "piles",
+            name: "С110.35-12",
+            mark: "С110.35-12",
+            concrete_grade: "B25",
+            qty: 2,
+            unit_price: 1000,
+            frost_resistance: "F200",
+            waterproofness: "W8",
+            concrete_aggregate: "granite",
+            concrete_spec_source: "table",
+          },
+          {
+            line_id: "ln2",
+            product_type: "piles",
+            name: "С80.30",
+            mark: "С80.30",
+            concrete_grade: "B25",
+            qty: 1,
+            unit_price: 1000,
+          },
+        ],
+        metadata: { ...baseMetadata(), product_type: "piles" },
+      }),
+    );
+
+    const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+    expect(headers.indexOf("F / W")).toBe(headers.indexOf("Класс") + 1);
+    expect(screen.getByText("F200 · W8")).toBeInTheDocument();
+    const emptyRow = screen.getByText("С80.30").closest("tr");
+    expect(emptyRow).not.toBeNull();
+    expect(within(emptyRow as HTMLElement).getByText("—")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /F \/ W/ })).not.toBeInTheDocument();
+  });
+
+  it("shows a plate pair without a concrete grade column", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln-plate",
+            product_type: "plates",
+            name: "Плиты ПБ 78-12-8п",
+            qty: 1,
+            unit_price: 1000,
+            weight: 500,
+            concrete_grade: "М500",
+            frost_resistance: "F300",
+            waterproofness: "W12",
+            concrete_aggregate: "granite",
+            concrete_spec_source: "table",
+          },
+        ],
+        metadata: { ...baseMetadata(), product_type: "plates" },
+      }),
+    );
+
+    expect(screen.getByRole("columnheader", { name: "F / W" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Класс" })).not.toBeInTheDocument();
+    expect(screen.getByText("F300 · W12")).toBeInTheDocument();
+  });
+
+  it("does not add the column for steps", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "ln-step",
+            product_type: "steps",
+            name: "ЛС11",
+            mark: "ЛС11",
+            qty: 2,
+            unit_price: 1000,
+          },
+        ],
+        metadata: { ...baseMetadata(), product_type: "steps" },
+      }),
+    );
+
+    expect(screen.queryByRole("columnheader", { name: "F / W" })).not.toBeInTheDocument();
   });
 });

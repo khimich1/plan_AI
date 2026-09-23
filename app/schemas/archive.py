@@ -64,6 +64,10 @@ class ArchivePileItem(BaseModel):
     qty: int = 0
     unit_price: float | None = None
     discounted_price: float | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 class ArchiveStepItem(BaseModel):
@@ -81,6 +85,10 @@ class ArchiveMarchItem(BaseModel):
     qty: int = 0
     unit_price: float | None = None
     discounted_price: float | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 class ArchiveBridgePileItem(BaseModel):
@@ -90,6 +98,10 @@ class ArchiveBridgePileItem(BaseModel):
     qty: int = 0
     unit_price: float | None = None
     discounted_price: float | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 
@@ -100,6 +112,10 @@ class ArchiveFbsItem(BaseModel):
     qty: int = 0
     unit_price: float | None = None
     discounted_price: float | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 class ArchivePlateItem(BaseModel):
@@ -115,6 +131,10 @@ class ArchivePlateItem(BaseModel):
     unit_weight: float | None = None
     total_weight: float | None = None
     status: str | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 class ArchiveOfferFinance(BaseModel):

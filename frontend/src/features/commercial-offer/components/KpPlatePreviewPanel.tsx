@@ -6,6 +6,8 @@ import { formatOfferNumber } from "@/features/commercial-offer/lib/formatOfferNu
 import type { LineRowHandlers } from "@/features/commercial-offer/lib/lineRowHandlers";
 import { LineActionsCell, LineActionsHeader } from "@/features/commercial-offer/components/LineRowActions";
 import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
+import { ConcreteSpecCell } from "@/features/commercial-offer/components/ConcreteSpecCell";
+import { specFromPreviewRow, type ConcreteSpecPatch } from "@/features/commercial-offer/lib/concreteSpec";
 import { Alert } from "@/shared/ui/Alert";
 import { Card } from "@/shared/ui/Card";
 
@@ -13,12 +15,18 @@ type KpPlatePreviewPanelProps = {
   draft: CommercialDraftDetails;
   normalizedText: string;
   lineRowHandlers?: LineRowHandlers;
+  onConcreteSpecChange?: (lineId: string, patch: ConcreteSpecPatch) => void;
 };
 
 const flagLabel = (flag: "wide_direct" | "wide_split"): string =>
   flag === "wide_direct" ? "Шире стандартной" : "Разделена на стандартные позиции";
 
-export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: KpPlatePreviewPanelProps) => {
+export const KpPlatePreviewPanel = ({
+  draft,
+  normalizedText,
+  lineRowHandlers,
+  onConcreteSpecChange,
+}: KpPlatePreviewPanelProps) => {
   const labels = PRODUCT_TYPE_CONFIG.plates.labels;
   const rows = buildKpPreviewRows(draft);
   const wideLines = draft.metadata.wide_plate_lines ?? [];
@@ -124,6 +132,15 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: 
                     style={{
                       padding: "0.55rem 0.65rem",
                       borderBottom: "1px solid #e4e7ec",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    F / W
+                  </th>
+                  <th
+                    style={{
+                      padding: "0.55rem 0.65rem",
+                      borderBottom: "1px solid #e4e7ec",
                       width: "1%",
                       whiteSpace: "nowrap",
                     }}
@@ -178,6 +195,19 @@ export const KpPlatePreviewPanel = ({ draft, normalizedText, lineRowHandlers }: 
                             Нестандартная ширина — решение ниже
                           </div>
                         )}
+                      </td>
+                      <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7", verticalAlign: "top" }}>
+                        <ConcreteSpecCell
+                          grade={row.concrete_grade ?? ""}
+                          mark={row.name}
+                          spec={specFromPreviewRow(row)}
+                          sealed={row.sealed}
+                          onChange={
+                            onConcreteSpecChange && row.lineId
+                              ? (patch) => onConcreteSpecChange(row.lineId as string, patch)
+                              : undefined
+                          }
+                        />
                       </td>
                       <td
                         style={{

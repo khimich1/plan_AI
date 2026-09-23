@@ -212,3 +212,20 @@ def test_fbs_persist_mark_as_typed(tmp_path: Path) -> None:
         assert cur.fetchone()[0] == 0
         cur.execute("SELECT COUNT(*) FROM kp_bridge_piles WHERE kp_id = 1")
         assert cur.fetchone()[0] == 0
+
+
+def test_new_fbs_b25_gets_granite_frost_pair(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    response = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "fbs", "text": "ФБС 9.3.6-Т B25 2"},
+    )
+    assert response.status_code == 200, response.text
+    row = response.json()["order_data"][0]
+    assert row["concrete_grade"] == "B25"
+    assert row["frost_resistance"] == "F200"
+    assert row["waterproofness"] == "W8"
+    assert row["concrete_aggregate"] == "granite"
+    assert row["concrete_spec_source"] == "table"

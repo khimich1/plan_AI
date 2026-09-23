@@ -49,6 +49,10 @@ export type GradedPreviewRow = {
   unit_price: number | null;
   line_total?: number | null;
   sealed?: boolean;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type ProductTypePreview = {

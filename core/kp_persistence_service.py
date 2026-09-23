@@ -103,6 +103,25 @@ def _line_id_value(item: dict[str, Any]) -> str | None:
     return text or None
 
 
+_CONCRETE_SPEC_KEYS = (
+    "frost_resistance",
+    "waterproofness",
+    "concrete_aggregate",
+    "concrete_spec_source",
+)
+
+
+def _concrete_spec_values(item: dict[str, Any]) -> tuple[str | None, str | None, str | None, str | None]:
+    """Отсутствие поля или NULL остаётся NULL. Пустая строка щебня сохраняется."""
+    stored: list[str | None] = []
+    for key in _CONCRETE_SPEC_KEYS:
+        if key not in item or item[key] is None:
+            stored.append(None)
+        else:
+            stored.append(str(item[key]))
+    return (stored[0], stored[1], stored[2], stored[3])
+
+
 class KpPersistenceService:
     """Persists a new commercial offer and its plate lines to SQLite."""
 
@@ -351,7 +370,10 @@ class KpPersistenceService:
                 execution_terms if execution_terms is not None else offer_row[7]
             )
             cur.execute(
-                "SELECT pile_trip_overrides_json, fbs_lm_delivery_enabled FROM kp_meta WHERE kp_id = ?",
+                """
+                SELECT pile_trip_overrides_json, fbs_lm_delivery_enabled
+                FROM kp_meta WHERE kp_id = ?
+                """,
                 (kp_id,),
             )
             meta_overrides_row = cur.fetchone()
@@ -645,7 +667,9 @@ class KpPersistenceService:
                 """
                 UPDATE kp_piles SET
                     position_number = ?, mark = ?, concrete_grade = ?,
-                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?
+                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?,
+                    frost_resistance = ?, waterproofness = ?,
+                    concrete_aggregate = ?, concrete_spec_source = ?
                 WHERE id = ?
                 """,
                 (
@@ -656,6 +680,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                     row_id,
                 ),
             )
@@ -668,7 +693,9 @@ class KpPersistenceService:
                 """
                 UPDATE kp_bridge_piles SET
                     position_number = ?, mark = ?, concrete_grade = ?,
-                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?
+                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?,
+                    frost_resistance = ?, waterproofness = ?,
+                    concrete_aggregate = ?, concrete_spec_source = ?
                 WHERE id = ?
                 """,
                 (
@@ -679,6 +706,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                     row_id,
                 ),
             )
@@ -691,7 +719,9 @@ class KpPersistenceService:
                 """
                 UPDATE kp_fbs SET
                     position_number = ?, mark = ?, concrete_grade = ?,
-                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?
+                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?,
+                    frost_resistance = ?, waterproofness = ?,
+                    concrete_aggregate = ?, concrete_spec_source = ?
                 WHERE id = ?
                 """,
                 (
@@ -702,6 +732,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                     row_id,
                 ),
             )
@@ -714,7 +745,9 @@ class KpPersistenceService:
                 """
                 UPDATE kp_marches SET
                     position_number = ?, mark = ?, concrete_grade = ?,
-                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?
+                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?,
+                    frost_resistance = ?, waterproofness = ?,
+                    concrete_aggregate = ?, concrete_spec_source = ?
                 WHERE id = ?
                 """,
                 (
@@ -725,6 +758,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                     row_id,
                 ),
             )
@@ -784,7 +818,11 @@ class KpPersistenceService:
                 length_dm_raw = ?,
                 nomenclature_id = ?,
                 concrete_grade = ?,
-                line_id = ?
+                line_id = ?,
+                frost_resistance = ?,
+                waterproofness = ?,
+                concrete_aggregate = ?,
+                concrete_spec_source = ?
             WHERE id = ?
             """,
             (
@@ -802,6 +840,7 @@ class KpPersistenceService:
                 nomenclature_id,
                 concrete_grade,
                 line_id,
+                *_concrete_spec_values(item),
                 row_id,
             ),
         )
@@ -828,8 +867,10 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_piles (
                     kp_id, position_number, mark, concrete_grade,
-                    qty, unit_price, discounted_price, line_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    qty, unit_price, discounted_price, line_id,
+                    frost_resistance, waterproofness,
+                    concrete_aggregate, concrete_spec_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -840,6 +881,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                 ),
             )
             return
@@ -851,8 +893,10 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_bridge_piles (
                     kp_id, position_number, mark, concrete_grade,
-                    qty, unit_price, discounted_price, line_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    qty, unit_price, discounted_price, line_id,
+                    frost_resistance, waterproofness,
+                    concrete_aggregate, concrete_spec_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -863,6 +907,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                 ),
             )
             return
@@ -874,8 +919,10 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_fbs (
                     kp_id, position_number, mark, concrete_grade,
-                    qty, unit_price, discounted_price, line_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    qty, unit_price, discounted_price, line_id,
+                    frost_resistance, waterproofness,
+                    concrete_aggregate, concrete_spec_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -886,6 +933,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                 ),
             )
             return
@@ -897,8 +945,10 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_marches (
                     kp_id, position_number, mark, concrete_grade,
-                    qty, unit_price, discounted_price, line_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    qty, unit_price, discounted_price, line_id,
+                    frost_resistance, waterproofness,
+                    concrete_aggregate, concrete_spec_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -909,6 +959,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                 ),
             )
             return
@@ -957,8 +1008,10 @@ class KpPersistenceService:
                 kp_id, position_number, plate_name,
                 length_m, width_m, load_class,
                 qty, unit_weight, total_weight, discounted_price, unit_price,
-                length_dm_raw, nomenclature_id, concrete_grade, line_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                length_dm_raw, nomenclature_id, concrete_grade, line_id,
+                frost_resistance, waterproofness,
+                concrete_aggregate, concrete_spec_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 kp_id,
@@ -976,5 +1029,6 @@ class KpPersistenceService:
                 nomenclature_id,
                 concrete_grade,
                 line_id,
+                *_concrete_spec_values(item),
             ),
         )

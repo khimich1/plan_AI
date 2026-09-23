@@ -4,6 +4,7 @@ import {
   isSealedOrderLine,
 } from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
+import { readConcreteSpec } from "@/features/commercial-offer/lib/concreteSpec";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export type KpPreviewFlag = "wide_direct" | "wide_split";
@@ -17,6 +18,11 @@ export type KpPreviewRow = {
   sourceLine?: string;
   sourceText: string;
   sealed: boolean;
+  concrete_grade: string | null;
+  frost_resistance: string | null;
+  waterproofness: string | null;
+  concrete_aggregate: string | null;
+  concrete_spec_source: string | null;
 };
 
 const WIDE_WIDTH_M = 1.2;
@@ -151,6 +157,11 @@ export const buildKpPreviewRows = (draft: CommercialDraftDetails): KpPreviewRow[
       sourceLine,
       sourceText: formatLineSourceText(item),
       sealed,
+      concrete_grade:
+        item.concrete_grade == null || String(item.concrete_grade).trim() === ""
+          ? null
+          : String(item.concrete_grade).trim(),
+      ...readConcreteSpec(item),
     };
   });
 };

@@ -9,7 +9,7 @@ import type {
 import { DownloadFilesSection } from "@/features/commercial-offer/components/DownloadFilesSection";
 import { SaveOfferSection } from "@/features/commercial-offer/components/SaveOfferSection";
 import { PlatePriceBreakdownModal } from "@/features/commercial-offer/components/PlatePriceBreakdownModal";
-import { findBreakdownTable } from "@/features/commercial-offer/lib/findBreakdownTable";
+import { formatFrostPair } from "@/features/commercial-offer/lib/concreteSpec";
 import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
 import {
   baseProductsTotal,
@@ -496,8 +496,8 @@ export const CalculationResultStep = ({
               {(isStepsProduct
                 ? ["№", "Марка", "Кол-во", "Цена", "Сумма"]
                 : isGradeSimpleDraft
-                  ? ["№", "Марка", "Класс", "Кол-во", "Цена", "Сумма"]
-                  : ["№", "Наименование", "Кол-во", "Ед.", "Вес(кг)", "Цена", "Сумма"]
+                  ? ["№", "Марка", "Класс", "F / W", "Кол-во", "Цена", "Сумма"]
+                  : ["№", "Наименование", "F / W", "Кол-во", "Ед.", "Вес(кг)", "Цена", "Сумма"]
               )
                 .flatMap((column, columnIndex) =>
                   columnIndex === 1 && showTypeColumn ? ["Тип", column] : [column],
@@ -565,6 +565,12 @@ export const CalculationResultStep = ({
                     {typeCell}
                     <td style={tdStyle}>{itemName}</td>
                     <td style={tdStyle}>{String(item.concrete_grade ?? "—")}</td>
+                    <td style={tdStyle}>
+                      {formatFrostPair(
+                        typeof item.frost_resistance === "string" ? item.frost_resistance : null,
+                        typeof item.waterproofness === "string" ? item.waterproofness : null,
+                      )}
+                    </td>
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
                     <td style={tdStyle}>
                       <div>
@@ -606,6 +612,12 @@ export const CalculationResultStep = ({
                       </button>
                     ) : (
                       plateName
+                    )}
+                  </td>
+                  <td style={tdStyle}>
+                    {formatFrostPair(
+                      typeof item.frost_resistance === "string" ? item.frost_resistance : null,
+                      typeof item.waterproofness === "string" ? item.waterproofness : null,
                     )}
                   </td>
                   <td style={tdStyle}>{String(item.qty ?? "")}</td>

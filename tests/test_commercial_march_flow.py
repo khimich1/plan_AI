@@ -434,3 +434,20 @@ def test_march_draft_rejects_plates_endpoint(
         data={"mode": "replace", "text": "ПБ 78-12-8п 1"},
     )
     assert response.status_code == 400, response.text
+
+
+def test_new_march_b25_gets_granite_frost_pair(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    response = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "marches", "text": "1ЛМ 27-11-14-4 B25 2"},
+    )
+    assert response.status_code == 200, response.text
+    row = response.json()["order_data"][0]
+    assert row["concrete_grade"] == "B25"
+    assert row["frost_resistance"] == "F200"
+    assert row["waterproofness"] == "W8"
+    assert row["concrete_aggregate"] == "granite"
+    assert row["concrete_spec_source"] == "table"

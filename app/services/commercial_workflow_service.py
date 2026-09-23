@@ -185,6 +185,25 @@ class CommercialWorkflowService:
         """Remove one order line and scrub its id from append_batches.line_ids."""
         return self.draft_lifecycle.delete_order_line(draft_id, line_id)
 
+    def update_line_concrete_spec(
+        self,
+        draft_id: str,
+        line_id: str,
+        *,
+        concrete_spec_source: str,
+        concrete_aggregate: str | None = None,
+        frost_resistance: str | None = None,
+        waterproofness: str | None = None,
+    ) -> dict[str, Any]:
+        return self.product_draft_handler.update_line_concrete_spec(
+            draft_id,
+            line_id,
+            concrete_spec_source=concrete_spec_source,
+            concrete_aggregate=concrete_aggregate,
+            frost_resistance=frost_resistance,
+            waterproofness=waterproofness,
+        )
+
     def patch_order_line(
         self,
         draft_id: str,

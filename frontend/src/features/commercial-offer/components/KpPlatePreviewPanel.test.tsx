@@ -1,7 +1,11 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { KpPlatePreviewPanel } from "@/features/commercial-offer/components/KpPlatePreviewPanel";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
+
+afterEach(() => {
+  cleanup();
+});
 
 const makeDraft = (overrides: Partial<CommercialDraftDetails["metadata"]> = {}): CommercialDraftDetails =>
   ({
@@ -140,5 +144,39 @@ describe("KpPlatePreviewPanel row icons", () => {
     expect(screen.getByText("Плиты ПБ 29-12-8п")).toBeInTheDocument();
     expect(screen.getByText("Плиты ПБ 78-0.3-8п")).toBeInTheDocument();
     expect(screen.getAllByText("Нестандартная ширина — решение ниже")).toHaveLength(1);
+  });
+});
+
+describe("KpPlatePreviewPanel concrete spec", () => {
+  it("shows F300 · W12 for an M500 plate and no concrete grade column", () => {
+    const draft = makeDraft();
+    draft.order_data = [
+      {
+        line_id: "ln-m500",
+        name: "Плиты ПБ 78-12-8п",
+        qty: 1,
+        unit_price: 1000,
+        concrete_grade: "М500",
+        frost_resistance: "F300",
+        waterproofness: "W12",
+        concrete_aggregate: "granite",
+        concrete_spec_source: "table",
+      },
+    ];
+    render(
+      <KpPlatePreviewPanel draft={draft} normalizedText="ПБ 78-12-8п 1" onConcreteSpecChange={vi.fn()} />,
+    );
+
+    expect(screen.getByText("F / W")).toBeInTheDocument();
+    expect(screen.queryByText("Класс")).not.toBeInTheDocument();
+    expect(screen.queryByText("Марка бетона")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("F / W Плиты ПБ 78-12-8п")).toHaveValue("granite");
+    expect(screen.getByRole("option", { name: "F300 · W12" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "F300 · W10" })).not.toBeInTheDocument();
+  });
+
+  it("shows a dash when the plate snapshot is empty", () => {
+    render(<KpPlatePreviewPanel draft={makeDraft()} normalizedText="ПБ 78-12-8п 2" />);
+    expect(screen.getByLabelText("F / W ПБ 78-12-8п")).toHaveTextContent("—");
   });
 });

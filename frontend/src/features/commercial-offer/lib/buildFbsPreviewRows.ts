@@ -4,6 +4,7 @@ import {
   isSealedOrderLine,
 } from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
+import { readConcreteSpec } from "@/features/commercial-offer/lib/concreteSpec";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export type FbsOrderLine = Omit<PileOrderLine, "product_kind"> & {
@@ -33,6 +34,7 @@ export const buildFbsPreviewRows = (draft: CommercialDraftDetails): FbsOrderLine
       line_total: lineTotal,
       product_kind: "fbs",
       sealed: isSealedOrderLine(item),
+      ...readConcreteSpec(item),
     };
   });
 

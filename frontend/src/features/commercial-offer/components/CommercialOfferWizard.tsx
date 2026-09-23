@@ -8,6 +8,7 @@ import { planApplyAiSessionSync } from "@/features/commercial-offer/lib/applyAiS
 import { getBatches, getCurrentBatchReviewText, mergeEditedBatchIntoFullText } from "@/features/commercial-offer/lib/batchReview";
 import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
 import { getProductTypePreview } from "@/features/commercial-offer/lib/productTypePreview";
+import type { ConcreteSpecPatch } from "@/features/commercial-offer/lib/concreteSpec";
 import {
   getProductInputStep,
   getWizardStepOrder,
@@ -70,6 +71,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     updateInputMutation,
     applyAiMutation,
     updateGradesMutation,
+    updateConcreteSpecMutation,
     resolveWidePlatesMutation,
     resolveUnpricedPlatesMutation,
     resolveInvalidWidthsMutation,
@@ -600,6 +602,22 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         text,
         image: null,
         mode: updateMode,
+      });
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
+  const handleConcreteSpecChange = async (lineId: string, patch: ConcreteSpecPatch) => {
+    if (!currentDraft?.draft_id || !lineId) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await updateConcreteSpecMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        lineId,
+        payload: patch,
       });
     } catch (error) {
       setStepError(getErrorMessage(error));
@@ -1227,6 +1245,9 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
             ? (lineIndex, grade) => void handleLineGradeChange(lineIndex, grade)
             : undefined
         }
+        onConcreteSpecChange={
+          productConfig.supportsGrades ? (lineId, patch) => void handleConcreteSpecChange(lineId, patch) : undefined
+        }
         onReset={handleCreateNewOffer}
         lineRowHandlers={lineRowHandlers}
         onSetOneoffPrice={(lineId, unitPrice) => void handleSetOneoffPrice(lineId, unitPrice)}
@@ -1286,6 +1307,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         }
         onApplyInvalidWidths={() => void handleApplyInvalidWidths()}
         onReset={handleCreateNewOffer}
+        onConcreteSpecChange={(lineId, patch) => void handleConcreteSpecChange(lineId, patch)}
         lineRowHandlers={lineRowHandlers}
       />
     ) : state.currentStep === "client" ? (

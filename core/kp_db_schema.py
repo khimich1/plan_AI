@@ -451,6 +451,7 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
         # MNA-301: line_id на всех kp_* line-таблицах (idempotent ALTER для legacy БД).
         # kp_plates уже мигрирована выше (try/except рядом с unit_price); остальные — здесь.
         _ensure_line_id_columns(cur)
+        _ensure_concrete_spec_columns(cur)
 
         # === МИГРАЦИЯ: Добавляем nomenclature_id ===
         if 'nomenclature_id' not in columns:
@@ -503,6 +504,32 @@ def _ensure_line_id_columns(cur: sqlite3.Cursor) -> None:
         print(f"[DB] Миграция: добавляем колонку line_id в {table}...")
         cur.execute(f"ALTER TABLE {table} ADD COLUMN line_id TEXT")
         print(f"[DB] ✅ Колонка line_id добавлена в {table}")
+
+
+def _ensure_concrete_spec_columns(cur: sqlite3.Cursor) -> None:
+    """Nullable F/W snapshot. kp_steps stays without these columns."""
+    tables = (
+        "kp_plates",
+        "kp_piles",
+        "kp_marches",
+        "kp_bridge_piles",
+        "kp_fbs",
+    )
+    columns_to_add = (
+        "frost_resistance",
+        "waterproofness",
+        "concrete_aggregate",
+        "concrete_spec_source",
+    )
+    for table in tables:
+        cur.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cur.fetchall()}
+        for column in columns_to_add:
+            if column in existing:
+                continue
+            print(f"[DB] Миграция: добавляем колонку {column} в {table}...")
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            print(f"[DB] ✅ Колонка {column} добавлена в {table}")
 
 
 def _init_counterparties_schema(cur: sqlite3.Cursor) -> None:
