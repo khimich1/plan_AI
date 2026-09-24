@@ -7,12 +7,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
+from core.pile_catalog import canonicalize_solid_pile_mark
 from core.pile_price_db import GRADE_CODES, grade_code_from_value
 
 DEFAULT_CONCRETE_GRADE = "B25"
 
 _PILE_MARK_RE = re.compile(
-    r"^([СC]\s*[\d.,]+(?:-[\d.,]+(?:[иИуУ])?)?)",
+    r"^([СC]\s*[\d.,]+(?:-[\d.,]+)?[иИуУ]?)",
     re.IGNORECASE | re.UNICODE,
 )
 _REINFORCED_MARK_RE = re.compile(r"-\d+(?:[.,]\d+)?[уУ]$")
@@ -37,7 +38,7 @@ class PileLineParseResult:
 def _normalize_mark(raw_mark: str) -> str:
     mark = (raw_mark or "").strip()
     mark = re.sub(r"^[СC]\s*", "С", mark, flags=re.IGNORECASE)
-    return mark
+    return canonicalize_solid_pile_mark(mark)
 
 
 def _parse_grade_and_qty(

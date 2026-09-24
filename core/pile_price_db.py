@@ -15,7 +15,7 @@ try:
 except Exception:
     pd = None
 
-from core.pile_catalog import normalize_pile_mark_key
+from core.pile_catalog import canonicalize_solid_pile_mark, normalize_pile_mark_key
 from core.price_db import DEFAULT_DB, _connect
 
 _TRAILING_U_RE = re.compile(r"[уУ]$")
@@ -248,10 +248,13 @@ def _pile_price_lookup_candidates(mark: str) -> List[str]:
             ordered.append(text)
 
     add(mark)
-    without_u = strip_trailing_u_suffix(mark)
-    add(without_u)
-    add(_FRACTIONAL_LOAD_RE.sub(r"\1\2", without_u))
-    add(_FRACTIONAL_LOAD_RE.sub(r"\1\2", mark))
+    canonical = canonicalize_solid_pile_mark(mark)
+    add(canonical)
+    for base in (mark, canonical):
+        without_u = strip_trailing_u_suffix(base)
+        add(without_u)
+        add(_FRACTIONAL_LOAD_RE.sub(r"\1\2", without_u))
+        add(_FRACTIONAL_LOAD_RE.sub(r"\1\2", base))
     return ordered
 
 
@@ -291,8 +294,9 @@ def get_pile_price(
 ) -> Optional[float]:
     """Возвращает цену сваи по марке и классу бетона.
 
-    Порядок: точное совпадение → C↔С/пробелы → срез хвостовой ``у`` →
-    схлопнуть ``.\\d`` только у числа нагрузки. Суффикс ``и`` не срезается.
+    Порядок: точное совпадение → точка перед нагрузкой как дефис (``С60.30.6`` →
+    ``С60.30-6``) → C↔С/пробелы → срез хвостовой ``у`` → схлопнуть ``.\\d``
+    только у числа нагрузки. Суффикс ``и`` не срезается.
     Несколько совпадений с разными ценами не угадываются.
     """
     queried = (mark or "").strip()
