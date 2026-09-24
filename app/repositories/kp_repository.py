@@ -52,6 +52,8 @@ class KpRepository:
         customer_inn: str | None = None,
         customer_kpp: str | None = None,
         fbs_lm_delivery_enabled: bool = False,
+        long_pile_delivery_enabled: bool = False,
+        long_pile_delivery: dict | None = None,
     ) -> int:
         return offers_write.save_kp_to_db(
             creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
@@ -74,6 +76,8 @@ class KpRepository:
             customer_inn=customer_inn,
             customer_kpp=customer_kpp,
             fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+            long_pile_delivery_enabled=long_pile_delivery_enabled,
+            long_pile_delivery=long_pile_delivery,
         )
 
     def update_offer_from_order_data(
@@ -93,6 +97,8 @@ class KpRepository:
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict | None = None,
         fbs_lm_delivery_enabled: bool | None = None,
+        long_pile_delivery_enabled: bool | None = None,
+        long_pile_delivery: dict | None = None,
     ) -> int:
         """Append/update existing KP by ``line_id`` (same ``kp_id``)."""
         return offers_write.update_kp_from_order_data(
@@ -111,6 +117,8 @@ class KpRepository:
             pile_logistics_cost=pile_logistics_cost,
             pile_trip_overrides=pile_trip_overrides,
             fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+            long_pile_delivery_enabled=long_pile_delivery_enabled,
+            long_pile_delivery=long_pile_delivery,
         )
 
     def list_offers_grouped(self, **list_filters) -> dict[str, list[dict]]:

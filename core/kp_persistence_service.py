@@ -6,7 +6,11 @@ from typing import Any, Dict, List, Optional
 
 from core.domain.enums import KpStatus, PlateStatus
 from core.kp_db_common import DEFAULT_DB, _connect
-from core.pile_trip_pricing import coerce_pile_trip_overrides, dumps_pile_trip_overrides
+from core.pile_trip_pricing import (
+    coerce_pile_trip_overrides,
+    dumps_long_pile_delivery,
+    dumps_pile_trip_overrides,
+)
 
 _VALID_PRODUCT_TYPES = frozenset(
     {
@@ -147,12 +151,18 @@ class KpPersistenceService:
         customer_inn: str | None = None,
         customer_kpp: str | None = None,
         fbs_lm_delivery_enabled: bool = False,
+        long_pile_delivery_enabled: bool = False,
+        long_pile_delivery: Any = None,
     ) -> int:
         trip_logistics = max(0.0, float(logistics_cost or 0.0))
         pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
-        from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+        from core.commercial_pricing import (
+            coerce_fbs_lm_delivery_enabled,
+            coerce_long_pile_delivery_enabled,
+        )
 
         fbs_lm_flag = coerce_fbs_lm_delivery_enabled(fbs_lm_delivery_enabled)
+        long_pile_flag = coerce_long_pile_delivery_enabled(long_pile_delivery_enabled)
         try:
             from core.commercial_pricing import calculate_total_cost
 
@@ -167,6 +177,8 @@ class KpPersistenceService:
                 pile_catalog_db_path=db_path,
                 fbs_lm_delivery_enabled=fbs_lm_flag,
                 weight_catalog_db_path=db_path,
+                long_pile_delivery_enabled=long_pile_flag,
+                long_pile_delivery=long_pile_delivery,
             )
             subtotal = totals["subtotal"]
             vat_amount = totals["vat_amount"]
@@ -255,8 +267,9 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_meta (
                     kp_id, status, owner_user_id, product_type,
-                    pile_trip_overrides_json, fbs_lm_delivery_enabled
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    pile_trip_overrides_json, fbs_lm_delivery_enabled,
+                    long_pile_delivery_enabled, long_pile_delivery_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -265,6 +278,8 @@ class KpPersistenceService:
                     meta_type,
                     dumps_pile_trip_overrides(pile_trip_overrides),
                     1 if fbs_lm_flag else 0,
+                    1 if long_pile_flag else 0,
+                    dumps_long_pile_delivery(long_pile_delivery),
                 ),
             )
             conn.commit()
@@ -289,6 +304,8 @@ class KpPersistenceService:
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict | None = None,
         fbs_lm_delivery_enabled: bool | None = None,
+        long_pile_delivery_enabled: bool | None = None,
+        long_pile_delivery: Any = None,
     ) -> int:
         """Sync existing KP lines by ``line_id`` (append/update; same ``kp_id``).
 
@@ -371,7 +388,8 @@ class KpPersistenceService:
             )
             cur.execute(
                 """
-                SELECT pile_trip_overrides_json, fbs_lm_delivery_enabled
+                SELECT pile_trip_overrides_json, fbs_lm_delivery_enabled,
+                       long_pile_delivery_enabled, long_pile_delivery_json
                 FROM kp_meta WHERE kp_id = ?
                 """,
                 (kp_id,),
@@ -385,7 +403,10 @@ class KpPersistenceService:
                 if pile_trip_overrides is not None
                 else existing_overrides
             )
-            from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+            from core.commercial_pricing import (
+                coerce_fbs_lm_delivery_enabled,
+                coerce_long_pile_delivery_enabled,
+            )
 
             existing_fbs_lm = coerce_fbs_lm_delivery_enabled(
                 meta_overrides_row[1] if meta_overrides_row else None
@@ -394,6 +415,18 @@ class KpPersistenceService:
                 coerce_fbs_lm_delivery_enabled(fbs_lm_delivery_enabled)
                 if fbs_lm_delivery_enabled is not None
                 else existing_fbs_lm
+            )
+            existing_long_pile = coerce_long_pile_delivery_enabled(
+                meta_overrides_row[2] if meta_overrides_row else None
+            )
+            resolved_long_pile = (
+                coerce_long_pile_delivery_enabled(long_pile_delivery_enabled)
+                if long_pile_delivery_enabled is not None
+                else existing_long_pile
+            )
+            existing_long_json = meta_overrides_row[3] if meta_overrides_row else None
+            resolved_long_json = (
+                existing_long_json if long_pile_delivery is None else long_pile_delivery
             )
 
             try:
@@ -410,6 +443,8 @@ class KpPersistenceService:
                     pile_catalog_db_path=db_path,
                     fbs_lm_delivery_enabled=resolved_fbs_lm,
                     weight_catalog_db_path=db_path,
+                    long_pile_delivery_enabled=resolved_long_pile,
+                    long_pile_delivery=resolved_long_json,
                 )
                 subtotal = totals["subtotal"]
                 vat_amount = totals["vat_amount"]
@@ -534,13 +569,16 @@ class KpPersistenceService:
             cur.execute(
                 """
                 UPDATE kp_meta
-                SET pile_trip_overrides_json = ?, product_type = ?, fbs_lm_delivery_enabled = ?
+                SET pile_trip_overrides_json = ?, product_type = ?, fbs_lm_delivery_enabled = ?,
+                    long_pile_delivery_enabled = ?, long_pile_delivery_json = ?
                 WHERE kp_id = ?
                 """,
                 (
                     dumps_pile_trip_overrides(resolved_overrides),
                     meta_type,
                     1 if resolved_fbs_lm else 0,
+                    1 if resolved_long_pile else 0,
+                    dumps_long_pile_delivery(resolved_long_json),
                     kp_id,
                 ),
             )

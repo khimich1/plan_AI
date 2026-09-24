@@ -620,6 +620,7 @@ class CommercialWorkflowService:
         logistics_cost: float | None = None,
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict[str, int] | None = None,
+        long_pile_delivery: dict | None = None,
         counterparty_id: int | None = None,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.update_draft_meta(
@@ -633,6 +634,7 @@ class CommercialWorkflowService:
             logistics_cost=logistics_cost,
             pile_logistics_cost=pile_logistics_cost,
             pile_trip_overrides=pile_trip_overrides,
+            long_pile_delivery=long_pile_delivery,
             counterparty_id=counterparty_id,
         )
 

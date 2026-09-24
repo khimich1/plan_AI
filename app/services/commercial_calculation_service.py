@@ -223,6 +223,8 @@ class CommercialCalculationService:
         pile_logistics_cost: float = 0.0,
         pile_trip_overrides: dict[str, int] | None = None,
         fbs_lm_delivery_enabled: bool = False,
+        long_pile_delivery_enabled: bool = False,
+        long_pile_delivery: dict | None = None,
     ) -> dict[str, Any]:
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
@@ -235,6 +237,8 @@ class CommercialCalculationService:
             pile_logistics_cost=pile_logistics_cost,
             pile_trip_overrides=coerce_pile_trip_overrides(pile_trip_overrides),
             fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+            long_pile_delivery_enabled=long_pile_delivery_enabled,
+            long_pile_delivery=long_pile_delivery,
         )
 
     def compute_totals_from_metadata(
@@ -244,7 +248,10 @@ class CommercialCalculationService:
         *,
         require_all_priced: bool = False,
     ) -> dict[str, Any]:
-        from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+        from core.commercial_pricing import (
+            coerce_fbs_lm_delivery_enabled,
+            coerce_long_pile_delivery_enabled,
+        )
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
         return self.compute_totals(
@@ -259,4 +266,8 @@ class CommercialCalculationService:
             fbs_lm_delivery_enabled=coerce_fbs_lm_delivery_enabled(
                 metadata.get("fbs_lm_delivery_enabled")
             ),
+            long_pile_delivery_enabled=coerce_long_pile_delivery_enabled(
+                metadata.get("long_pile_delivery_enabled")
+            ),
+            long_pile_delivery=metadata.get("long_pile_delivery"),
         )

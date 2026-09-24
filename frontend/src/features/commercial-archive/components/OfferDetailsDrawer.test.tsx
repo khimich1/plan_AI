@@ -1139,3 +1139,107 @@ describe("OfferDetailsDrawer concrete spec", () => {
     expect(screen.getByText("ЛС11")).toBeInTheDocument();
   });
 });
+
+function clickLogisticsOk() {
+  const input = screen.getByPlaceholderText("Стоимость одного рейса");
+  const label = input.closest("label");
+  if (!label) {
+    throw new Error("logistics field has no label");
+  }
+  fireEvent.click(within(label).getByRole("button", { name: "OK" }));
+}
+
+describe("OfferDetailsDrawer long pile delivery", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const lengthRow = (
+    lengthKey: number,
+    tripCost: number | null,
+    trips: number,
+  ) => ({
+    length_key: lengthKey,
+    trips,
+    trip_cost: tripCost,
+    pending_marks: [] as string[],
+    ready: tripCost !== null,
+    amount: tripCost === null ? 0 : tripCost * trips,
+    qty: 1,
+  });
+
+  function renderLongOffer(overrides: Partial<ArchiveOfferDetails> = {}) {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в работе", null, {
+        product_type: "piles",
+        piles: [
+          {
+            position_number: 1,
+            mark: "С140.35",
+            concrete_grade: "B25",
+            qty: 4,
+            unit_price: 1000,
+            discounted_price: 1000,
+          },
+        ],
+        logistics_cost: 0,
+        pile_logistics_cost: 1000,
+        long_pile_delivery_enabled: true,
+        long_pile_lengths: [lengthRow(140, 5000, 1), lengthRow(160, 7000, 2)],
+        long_pile_pending_marks: [],
+        ...overrides,
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+  }
+
+  it("does not render length tariffs when the flag is off", () => {
+    renderLongOffer({
+      long_pile_delivery_enabled: false,
+      long_pile_lengths: [lengthRow(140, 5000, 1)],
+    });
+
+    expect(screen.queryByLabelText("Тариф рейса 14,0 м")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Стоимость одного рейса")).toBeInTheDocument();
+  });
+
+  it("keeps the 16 m tariff when the 14 m tariff changes", () => {
+    mockLogisticsMutateAsync.mockResolvedValue(undefined);
+    renderLongOffer();
+
+    fireEvent.change(screen.getByLabelText("Тариф рейса 14,0 м"), { target: { value: "9000" } });
+    clickLogisticsOk();
+
+    expect(mockLogisticsMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kpId: 42,
+        longPileDelivery: {
+          "140": { trip_cost: 9000 },
+          "160": { trip_cost: 7000 },
+        },
+      }),
+    );
+  });
+
+  it("saves an explicit zero and does not wipe a tariff left empty", () => {
+    mockLogisticsMutateAsync.mockResolvedValue(undefined);
+    renderLongOffer();
+
+    fireEvent.change(screen.getByLabelText("Тариф рейса 14,0 м"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Тариф рейса 16,0 м"), { target: { value: "" } });
+    clickLogisticsOk();
+
+    expect(mockLogisticsMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        longPileDelivery: {
+          "140": { trip_cost: 0 },
+          "160": { trip_cost: 7000 },
+        },
+      }),
+    );
+  });
+});

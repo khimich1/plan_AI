@@ -861,6 +861,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   const handlePileDeliverySubmit = async (payload: {
     pileLogisticsCost?: number;
     pileTripOverrides?: Record<string, number>;
+    longPileDelivery?: Record<string, { trip_cost: number }>;
   }) => {
     if (!currentDraft?.draft_id) {
       return;
@@ -871,6 +872,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         draftId: currentDraft.draft_id,
         pileLogisticsCost: payload.pileLogisticsCost,
         pileTripOverrides: payload.pileTripOverrides,
+        longPileDelivery: payload.longPileDelivery,
       });
       const calculated = await calculateMutation.mutateAsync(currentDraft.draft_id);
       dispatch({ type: "hydrate-draft", payload: calculated });

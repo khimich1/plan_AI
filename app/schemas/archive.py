@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -225,6 +225,10 @@ class ArchiveOfferDetails(BaseModel):
     fbs_lm_delivery_ready: bool = True
     fbs_lm_pending_marks: list[str] = Field(default_factory=list)
     fbs_lm_delivery_enabled: bool = False
+    long_pile_delivery_enabled: bool = False
+    long_pile_delivery_total: float = 0.0
+    long_pile_lengths: list[dict] = Field(default_factory=list)
+    long_pile_pending_marks: list[str] = Field(default_factory=list)
     total_cargo_weight_kg: float = Field(default=0.0, description="Суммарная масса по строкам через resolve_kp_line_weight_kg (как PDF/XLSX).")
     delivery_service_total_rub: float = Field(
         default=0.0,
@@ -260,6 +264,7 @@ class UpdateLogisticsCostRequest(BaseModel):
     logistics_cost: float = Field(ge=0, description="Новая стоимость одного рейса плит.")
     pile_logistics_cost: float | None = Field(default=None, ge=0)
     pile_trip_overrides: dict[str, int] | None = None
+    long_pile_delivery: dict[str, Any] | None = None
 
 
 class MoveToProductionRequest(BaseModel):

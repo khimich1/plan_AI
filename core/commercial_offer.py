@@ -235,6 +235,8 @@ def calculate_total_cost(
     pile_catalog_db_path: str | None = None,
     fbs_lm_delivery_enabled: bool = False,
     weight_catalog_db_path: str | None = None,
+    long_pile_delivery_enabled: bool = False,
+    long_pile_delivery: dict | None = None,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
@@ -246,6 +248,8 @@ def calculate_total_cost(
         pile_catalog_db_path=pile_catalog_db_path,
         fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
         weight_catalog_db_path=weight_catalog_db_path,
+        long_pile_delivery_enabled=long_pile_delivery_enabled,
+        long_pile_delivery=long_pile_delivery,
     )
 
 
@@ -337,6 +341,8 @@ def generate_commercial_offer_pdf(
     pile_catalog_db_path: Optional[str] = None,
     fbs_lm_delivery_enabled: bool = False,
     weight_catalog_db_path: Optional[str] = None,
+    long_pile_delivery_enabled: bool = False,
+    long_pile_delivery: Optional[Dict] = None,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -559,6 +565,8 @@ def generate_commercial_offer_pdf(
         pile_catalog_db_path=pile_catalog_db_path,
         fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
         weight_catalog_db_path=weight_catalog_db_path,
+        long_pile_delivery_enabled=long_pile_delivery_enabled,
+        long_pile_delivery=long_pile_delivery,
     )
     total_weight = 0.0
 

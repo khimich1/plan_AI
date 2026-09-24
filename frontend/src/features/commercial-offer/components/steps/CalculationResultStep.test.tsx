@@ -28,6 +28,11 @@ type ResultStepAppendHandlers = {
   onAddOtherNomenclature?: () => void;
   onUndoLastBatch?: () => Promise<void> | void;
   onDeleteLine?: (lineId: string) => Promise<void> | void;
+  onPileDeliverySubmit?: (payload: {
+    pileLogisticsCost?: number;
+    pileTripOverrides?: Record<string, number>;
+    longPileDelivery?: Record<string, { trip_cost: number }>;
+  }) => Promise<void>;
 };
 
 const baseWizardState = {
@@ -125,6 +130,7 @@ function renderResultStep(
   const onAddOtherNomenclature = handlers.onAddOtherNomenclature ?? vi.fn();
   const onUndoLastBatch = handlers.onUndoLastBatch ?? vi.fn();
   const onDeleteLine = handlers.onDeleteLine ?? vi.fn();
+  const onPileDeliverySubmit = handlers.onPileDeliverySubmit ?? vi.fn(async () => undefined);
   const onLogisticsCostSubmit = vi.fn(async () => undefined);
   const { breakdownTables = [], isBreakdownLoading = false, ...flags } = stepFlags;
 
@@ -149,6 +155,7 @@ function renderResultStep(
     onAddOtherNomenclature,
     onUndoLastBatch,
     onDeleteLine,
+    onPileDeliverySubmit,
     ...flags,
   };
 
@@ -159,6 +166,7 @@ function renderResultStep(
     onUndoLastBatch,
     onDeleteLine,
     onLogisticsCostSubmit,
+    onPileDeliverySubmit,
   };
 }
 
@@ -1064,5 +1072,136 @@ describe("CalculationResultStep concrete spec", () => {
     );
 
     expect(screen.queryByRole("columnheader", { name: "F / W" })).not.toBeInTheDocument();
+  });
+});
+
+describe("CalculationResultStep long pile delivery", () => {
+  const pileLine = (mark: string, qty: number) => ({
+    line_id: mark,
+    product_type: "piles" as const,
+    name: mark,
+    mark,
+    qty,
+    unit_price: 1000,
+  });
+
+  it("does not show length tariffs when every pile is 13 m or shorter", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [pileLine("С100.35", 6)],
+        metadata: { ...baseMetadata(), product_type: "piles" },
+        totals: { pile_trips: 1, pile_delivery_ready: true, long_pile_lengths: [] },
+      }),
+    );
+
+    expect(screen.queryByText(/Тариф рейса/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Применить тарифы" })).not.toBeInTheDocument();
+  });
+
+  it("shows the 15 m tariff and trip count without a truck question", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [pileLine("С150.35", 5)],
+        metadata: { ...baseMetadata(), product_type: "piles", long_pile_delivery_enabled: true },
+        totals: {
+          pile_trips: 0,
+          pile_delivery_ready: true,
+          long_pile_lengths: [
+            {
+              length_key: 150,
+              trips: 2,
+              trip_cost: null,
+              pending_marks: [],
+              ready: false,
+              amount: 0,
+              qty: 5,
+            },
+          ],
+          long_pile_pending_marks: [],
+        },
+      }),
+    );
+
+    expect(screen.getByLabelText("Тариф рейса 15,0 м")).toBeInTheDocument();
+    expect(screen.getByText("Рейсов 15,0 м: 2")).toBeInTheDocument();
+    expect(screen.queryByText(/Сколько машин нужно/)).not.toBeInTheDocument();
+  });
+
+  it("asks for trucks on С160.35-12 and writes N into pile_trip_overrides", async () => {
+    const onPileDeliverySubmit = vi.fn(async () => undefined);
+    renderResultStep(
+      makeDraft({
+        order_data: [pileLine("С160.35-12", 4)],
+        metadata: { ...baseMetadata(), product_type: "piles", long_pile_delivery_enabled: true },
+        totals: {
+          long_pile_lengths: [
+            {
+              length_key: 160,
+              trips: 0,
+              trip_cost: null,
+              pending_marks: ["С160.35-12"],
+              ready: false,
+              amount: 0,
+              qty: 4,
+            },
+          ],
+          long_pile_pending_marks: ["С160.35-12"],
+        },
+      }),
+      { onPileDeliverySubmit },
+    );
+
+    expect(
+      screen.getByText("Для С160.35-12 (4 шт.) нет нормы загрузки в справочнике. Сколько машин нужно?"),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Машин, шт."), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Применить число машин" }));
+
+    expect(onPileDeliverySubmit).toHaveBeenCalledWith({
+      pileTripOverrides: { "С160.35-12": 2 },
+    });
+  });
+
+  it("omits an empty length tariff so the filled neighbor is not replaced by zero", () => {
+    const onPileDeliverySubmit = vi.fn(async () => undefined);
+    renderResultStep(
+      makeDraft({
+        order_data: [pileLine("С140.35", 4), pileLine("С160.35", 2)],
+        metadata: { ...baseMetadata(), product_type: "piles", long_pile_delivery_enabled: true },
+        totals: {
+          long_pile_lengths: [
+            {
+              length_key: 140,
+              trips: 1,
+              trip_cost: null,
+              pending_marks: [],
+              ready: false,
+              amount: 0,
+              qty: 4,
+            },
+            {
+              length_key: 160,
+              trips: 1,
+              trip_cost: null,
+              pending_marks: [],
+              ready: false,
+              amount: 0,
+              qty: 2,
+            },
+          ],
+        },
+      }),
+      { onPileDeliverySubmit },
+    );
+
+    fireEvent.change(screen.getByLabelText("Тариф рейса 14,0 м"), { target: { value: "5000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Применить тарифы" }));
+
+    expect(onPileDeliverySubmit).toHaveBeenCalledWith({
+      longPileDelivery: { "140": { trip_cost: 5000 } },
+    });
+    const payload = onPileDeliverySubmit.mock.calls[0][0].longPileDelivery ?? {};
+    expect(payload["160"]).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain('"trip_cost":0');
   });
 });

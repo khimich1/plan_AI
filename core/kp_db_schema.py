@@ -354,6 +354,18 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             )
             print("[DB] ✅ Колонка fbs_lm_delivery_enabled добавлена в kp_meta")
 
+        if "long_pile_delivery_enabled" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку long_pile_delivery_enabled в kp_meta...")
+            cur.execute(
+                "ALTER TABLE kp_meta ADD COLUMN long_pile_delivery_enabled INTEGER DEFAULT 0"
+            )
+            print("[DB] ✅ Колонка long_pile_delivery_enabled добавлена в kp_meta")
+
+        if "long_pile_delivery_json" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку long_pile_delivery_json в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN long_pile_delivery_json TEXT")
+            print("[DB] ✅ Колонка long_pile_delivery_json добавлена в kp_meta")
+
         # Таблица kp_piles — позиции КП на сваи (отдельно от kp_plates)
         cur.execute('''
             CREATE TABLE IF NOT EXISTS kp_piles (

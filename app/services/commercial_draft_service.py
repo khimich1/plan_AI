@@ -264,6 +264,8 @@ class CommercialDraftService:
         metadata.setdefault("pile_logistics_cost", 0.0)
         metadata.setdefault("pile_trip_overrides", {})
         metadata.setdefault("fbs_lm_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery", {})
         if owner_user_id is not None:
             metadata["owner_user_id"] = int(owner_user_id)
         return metadata
@@ -334,6 +336,8 @@ class CommercialDraftService:
         metadata.setdefault("pile_logistics_cost", 0.0)
         metadata.setdefault("pile_trip_overrides", {})
         metadata.setdefault("fbs_lm_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery", {})
         metadata.setdefault("default_concrete_grade", "B25")
         if owner_user_id is not None:
             metadata["owner_user_id"] = int(owner_user_id)
@@ -405,6 +409,8 @@ class CommercialDraftService:
         metadata.setdefault("pile_logistics_cost", 0.0)
         metadata.setdefault("pile_trip_overrides", {})
         metadata.setdefault("fbs_lm_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery", {})
         metadata.setdefault("default_concrete_grade", "B25")
         if owner_user_id is not None:
             metadata["owner_user_id"] = int(owner_user_id)
@@ -476,6 +482,8 @@ class CommercialDraftService:
         metadata.setdefault("pile_logistics_cost", 0.0)
         metadata.setdefault("pile_trip_overrides", {})
         metadata.setdefault("fbs_lm_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery", {})
         metadata.setdefault("default_concrete_grade", "B25")
         if owner_user_id is not None:
             metadata["owner_user_id"] = int(owner_user_id)
@@ -547,6 +555,8 @@ class CommercialDraftService:
         metadata.setdefault("pile_logistics_cost", 0.0)
         metadata.setdefault("pile_trip_overrides", {})
         metadata.setdefault("fbs_lm_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery", {})
         metadata.setdefault("default_concrete_grade", "B25")
         if owner_user_id is not None:
             metadata["owner_user_id"] = int(owner_user_id)
@@ -618,6 +628,8 @@ class CommercialDraftService:
         metadata.setdefault("pile_logistics_cost", 0.0)
         metadata.setdefault("pile_trip_overrides", {})
         metadata.setdefault("fbs_lm_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery_enabled", True)
+        metadata.setdefault("long_pile_delivery", {})
         if owner_user_id is not None:
             metadata["owner_user_id"] = int(owner_user_id)
         return metadata

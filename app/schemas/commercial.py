@@ -276,6 +276,8 @@ class CommercialDraftMetadata(BaseModel):
     logistics_cost: float = 0.0
     pile_logistics_cost: float = 0.0
     pile_trip_overrides: dict[str, int] = Field(default_factory=dict)
+    long_pile_delivery_enabled: bool = False
+    long_pile_delivery: dict[str, Any] = Field(default_factory=dict)
     ocr_recognition_mode: str = ""
     ocr_cost_usd: float = 0.0
     ocr_cost_rub: float = 0.0
@@ -336,6 +338,7 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
     logistics_cost: float | None = None
     pile_logistics_cost: float | None = None
     pile_trip_overrides: dict[str, int] | None = None
+    long_pile_delivery: dict[str, Any] | None = None
     counterparty_id: int | None = None
 
 

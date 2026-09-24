@@ -25,6 +25,15 @@ VAT_RATE = 0.22
 
 def coerce_fbs_lm_delivery_enabled(raw: Any) -> bool:
     """Флаг котла ФБС/ЛС/ЛМ: True только при явной отметке; None/0/пусто → False."""
+    return _coerce_delivery_flag(raw)
+
+
+def coerce_long_pile_delivery_enabled(raw: Any) -> bool:
+    """Флаг длинных свай: True только при явной отметке; None/0/пусто → False."""
+    return _coerce_delivery_flag(raw)
+
+
+def _coerce_delivery_flag(raw: Any) -> bool:
     if isinstance(raw, bool):
         return raw
     if raw is None:
@@ -57,21 +66,63 @@ def _resolve_weight_catalog_db_path(explicit: str | None, fallback_db_path: str)
     return _resolve_plita_catalog_db_path(explicit, fallback_db_path)
 
 
+def _pile_catalog_lookup(catalog_db_path: str):
+    from core.pile_catalog import load_pile_catalog, resolve_catalog_for_mark
+
+    entries = load_pile_catalog(catalog_db_path)
+    return lambda mark: resolve_catalog_for_mark(mark, entries)
+
+
 def _compute_pile_delivery_breakdown(
     order_data: list[dict[str, Any]],
     *,
     overrides: dict[str, int] | None,
     catalog_db_path: str,
 ):
-    from core.pile_catalog import load_pile_catalog, resolve_catalog_for_mark
     from core.pile_trip_pricing import compute_pile_trips
 
-    entries = load_pile_catalog(catalog_db_path)
     return compute_pile_trips(
         order_data,
         overrides,
-        lambda mark: resolve_catalog_for_mark(mark, entries),
+        _pile_catalog_lookup(catalog_db_path),
     )
+
+
+def _long_pile_quote_rows(
+    order_data: list[dict[str, Any]],
+    *,
+    overrides: dict[str, int] | None,
+    catalog_db_path: str,
+    tariffs: Any,
+) -> tuple[Any, list[dict[str, Any]], list[str], float]:
+    from core.pile_trip_pricing import compute_long_pile_groups, quote_long_pile_lengths
+
+    split = compute_long_pile_groups(
+        order_data,
+        overrides,
+        _pile_catalog_lookup(catalog_db_path),
+    )
+    quotes = quote_long_pile_lengths(split, tariffs)
+    rows: list[dict[str, Any]] = []
+    pending: list[str] = []
+    total = 0.0
+    for quote in quotes:
+        if quote.pending_marks:
+            pending.extend(quote.pending_marks)
+        if quote.ready:
+            total += quote.amount
+        rows.append(
+            {
+                "length_key": quote.length_key,
+                "trips": quote.trips,
+                "trip_cost": quote.trip_cost,
+                "pending_marks": list(quote.pending_marks),
+                "ready": quote.ready,
+                "amount": quote.amount,
+                "qty": quote.qty,
+            }
+        )
+    return split.short, rows, pending, round(total, 2)
 
 
 def lookup_pile_price(
@@ -351,6 +402,8 @@ def calculate_total_cost(
     pile_catalog_db_path: str | None = None,
     fbs_lm_delivery_enabled: bool = False,
     weight_catalog_db_path: str | None = None,
+    long_pile_delivery_enabled: bool = False,
+    long_pile_delivery: Any = None,
 ) -> dict[str, Any]:
     """
     Рассчитывает общую стоимость заказа.
@@ -416,11 +469,25 @@ def calculate_total_cost(
 
     pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
     catalog_path = _resolve_pile_catalog_db_path(pile_catalog_db_path, db_path)
-    pile_breakdown = _compute_pile_delivery_breakdown(
-        order_data,
-        overrides=pile_trip_overrides,
-        catalog_db_path=catalog_path,
-    )
+    long_enabled = coerce_long_pile_delivery_enabled(long_pile_delivery_enabled)
+    long_pile_lengths: list[dict[str, Any]] = []
+    long_pile_pending_marks: list[str] = []
+    long_pile_delivery_total = 0.0
+    if long_enabled:
+        pile_breakdown, long_pile_lengths, long_pile_pending_marks, long_pile_delivery_total = (
+            _long_pile_quote_rows(
+                order_data,
+                overrides=pile_trip_overrides,
+                catalog_db_path=catalog_path,
+                tariffs=long_pile_delivery,
+            )
+        )
+    else:
+        pile_breakdown = _compute_pile_delivery_breakdown(
+            order_data,
+            overrides=pile_trip_overrides,
+            catalog_db_path=catalog_path,
+        )
     pile_delivery_total = (
         round(pile_trip * pile_breakdown.total_trips, 2) if pile_breakdown.ready else 0.0
     )
@@ -443,7 +510,12 @@ def calculate_total_cost(
         fbs_lm_delivery_total = (
             round(trip_cost * fbs_lm_breakdown.trips, 2) if fbs_lm_breakdown.ready else 0.0
         )
-    delivery_total = plate_delivery_total + pile_delivery_total + fbs_lm_delivery_total
+    delivery_total = (
+        plate_delivery_total
+        + pile_delivery_total
+        + fbs_lm_delivery_total
+        + long_pile_delivery_total
+    )
     vat_amount = round(plates_total_with_vat * VAT_RATE, 2)
     total_with_vat = round(plates_total_with_vat + delivery_total, 2)
     subtotal = round(total_with_vat - vat_amount, 2)
@@ -465,7 +537,37 @@ def calculate_total_cost(
         "fbs_lm_trips": fbs_lm_trips,
         "fbs_lm_delivery_ready": fbs_lm_delivery_ready,
         "fbs_lm_pending_marks": fbs_lm_pending_marks,
+        "long_pile_delivery_enabled": long_enabled,
+        "long_pile_delivery_total": long_pile_delivery_total,
+        "long_pile_lengths": long_pile_lengths,
+        "long_pile_pending_marks": long_pile_pending_marks,
     }
+
+
+def _long_pile_export_rows(totals: Mapping[str, Any]) -> list[dict[str, Any]]:
+    from core.pile_trip_pricing import format_long_pile_delivery_label
+
+    rows: list[dict[str, Any]] = []
+    raw_rows = totals.get("long_pile_lengths") or []
+    if not isinstance(raw_rows, list):
+        return rows
+    for row in raw_rows:
+        if not isinstance(row, Mapping):
+            continue
+        amount = float(row.get("amount") or 0.0)
+        if not row.get("ready") or amount <= 0:
+            continue
+        length_key = int(row.get("length_key") or 0)
+        trip_cost = row.get("trip_cost")
+        rows.append(
+            {
+                "label": format_long_pile_delivery_label(length_key),
+                "trips": int(row.get("trips") or 0),
+                "unit_price": max(0.0, float(trip_cost or 0.0)),
+                "amount": amount,
+            }
+        )
+    return rows
 
 
 def kp_delivery_export_lines(
@@ -474,23 +576,32 @@ def kp_delivery_export_lines(
     plate_trip_cost: float,
     pile_trip_cost: float,
 ) -> list[dict[str, Any]]:
-    """Строки доставки для PDF/XLSX: плиты, сваи и/или ФБС/ЛС/ЛМ."""
+    """Строки доставки для PDF/XLSX: плиты, сваи, длинные сваи и/или ФБС/ЛС/ЛМ."""
     plate_amount = float(totals.get("plate_delivery_total") or 0.0)
     pile_amount = float(totals.get("pile_delivery_total") or 0.0)
     fbs_amount = float(totals.get("fbs_lm_delivery_total") or 0.0)
     pile_ready = bool(totals.get("pile_delivery_ready", True))
     fbs_ready = bool(totals.get("fbs_lm_delivery_ready", True))
+    long_rows = _long_pile_export_rows(totals)
     show_pile = pile_ready and pile_amount > 0
     show_plate = plate_amount > 0
     show_fbs = fbs_ready and fbs_amount > 0
+    show_long = bool(long_rows)
     plate_label = (
-        "Доставка плит" if (show_pile or show_fbs) else "Услуга по доставке грузов"
+        "Доставка плит"
+        if (show_pile or show_fbs or show_long)
+        else "Услуга по доставке грузов"
     )
     fbs_label = (
         "Доставка ФБС/ЛС/ЛМ"
-        if (show_plate or show_pile)
+        if (show_plate or show_pile or show_long)
         else "Услуга по доставке грузов"
     )
+    long_enabled = bool(totals.get("long_pile_delivery_enabled"))
+    if long_enabled and not (show_plate or show_fbs or show_long):
+        pile_label = "Услуга по доставке грузов"
+    else:
+        pile_label = "Доставка свай"
     lines: list[dict[str, Any]] = []
     if show_plate:
         lines.append(
@@ -504,12 +615,13 @@ def kp_delivery_export_lines(
     if show_pile:
         lines.append(
             {
-                "label": "Доставка свай",
+                "label": pile_label,
                 "trips": int(totals.get("pile_trips") or 0),
                 "unit_price": max(0.0, float(pile_trip_cost or 0.0)),
                 "amount": pile_amount,
             }
         )
+    lines.extend(long_rows)
     if show_fbs:
         lines.append(
             {

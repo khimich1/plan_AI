@@ -17,10 +17,16 @@ from app.schemas.commercial import WizardStepId
 from app.services.commercial_order_identity import APPEND_PRODUCT_TYPES
 from app.services.counterparties_service import CounterpartiesService
 from app.services.product_draft_config import SPECS
-from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+from core.commercial_pricing import (
+    coerce_fbs_lm_delivery_enabled,
+    coerce_long_pile_delivery_enabled,
+)
 from core.kp import offers_write
 from core.kp_order_data import order_data_from_kp_info
-from core.pile_trip_pricing import coerce_pile_trip_overrides
+from core.pile_trip_pricing import (
+    coerce_pile_trip_overrides,
+    long_pile_delivery_for_metadata,
+)
 from core.plate_order_context import PlateOrderContext
 
 _PRODUCT_TYPE_TO_WIZARD_STEP = {key: spec.wizard_step for key, spec in SPECS.items()}
@@ -560,6 +566,7 @@ class CommercialDraftLifecycle:
         logistics_cost: float | None = None,
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict[str, int] | None = None,
+        long_pile_delivery: dict | None = None,
         counterparty_id: int | None = None,
     ) -> dict[str, Any]:
         payload_before = self._wf._load_draft_or_raise(draft_id)
@@ -604,6 +611,8 @@ class CommercialDraftLifecycle:
             from core.pile_trip_pricing import coerce_pile_trip_overrides
 
             updates["pile_trip_overrides"] = coerce_pile_trip_overrides(pile_trip_overrides)
+        if long_pile_delivery is not None:
+            updates["long_pile_delivery"] = long_pile_delivery_for_metadata(long_pile_delivery)
         if counterparty_id is not None:
             row = CounterpartiesService(
                 db_path=self._wf.kp_repository.db_path
@@ -621,6 +630,7 @@ class CommercialDraftLifecycle:
             "logistics_cost",
             "pile_logistics_cost",
             "pile_trip_overrides",
+            "long_pile_delivery",
         }
         if updates:
             if prev_step == WizardStepId.result and set(updates.keys()).issubset(financial_keys):
@@ -842,6 +852,12 @@ class CommercialDraftLifecycle:
             "fbs_lm_delivery_enabled": coerce_fbs_lm_delivery_enabled(
                 kp_raw.get("fbs_lm_delivery_enabled")
             ),
+            "long_pile_delivery_enabled": coerce_long_pile_delivery_enabled(
+                kp_raw.get("long_pile_delivery_enabled")
+            ),
+            "long_pile_delivery": long_pile_delivery_for_metadata(
+                kp_raw.get("long_pile_delivery_json")
+            ),
             "delivery_conditions": delivery,
             "payment_conditions": payment,
             "conditions_mode": conditions_mode,
@@ -927,6 +943,10 @@ class CommercialDraftLifecycle:
         fbs_lm_delivery_enabled = coerce_fbs_lm_delivery_enabled(
             metadata.get("fbs_lm_delivery_enabled")
         )
+        long_pile_delivery_enabled = coerce_long_pile_delivery_enabled(
+            metadata.get("long_pile_delivery_enabled")
+        )
+        long_pile_delivery = metadata.get("long_pile_delivery")
         delivery_conditions = str(metadata.get("delivery_conditions", "") or "")
         payment_conditions = str(metadata.get("payment_conditions", "") or "")
         product_type = str(metadata.get("product_type", "plates") or "plates")
@@ -960,6 +980,8 @@ class CommercialDraftLifecycle:
                 pile_logistics_cost=pile_logistics_cost,
                 pile_trip_overrides=pile_trip_overrides,
                 fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+                long_pile_delivery_enabled=long_pile_delivery_enabled,
+                long_pile_delivery=long_pile_delivery,
                 delivery_conditions=delivery_conditions,
                 payment_conditions=payment_conditions,
                 execution_terms=execution_terms,
@@ -996,6 +1018,8 @@ class CommercialDraftLifecycle:
                 pile_logistics_cost=pile_logistics_cost,
                 pile_trip_overrides=pile_trip_overrides,
                 fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+                long_pile_delivery_enabled=long_pile_delivery_enabled,
+                long_pile_delivery=long_pile_delivery,
                 delivery_conditions=delivery_conditions,
                 payment_conditions=payment_conditions,
                 execution_terms=execution_terms,

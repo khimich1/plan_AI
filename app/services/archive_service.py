@@ -204,6 +204,7 @@ class ArchiveService:
         user: dict,
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict | None = None,
+        long_pile_delivery: dict | None = None,
     ) -> ArchiveOfferDetails:
         """Обновляет тарифы рейсов и суммы заказа (без авто-PDF)."""
         raw = self.repository.get_by_id(kp_id)
@@ -211,11 +212,16 @@ class ArchiveService:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         assert_offer_write_access(user, raw)
         trip = max(0.0, float(logistics_cost or 0.0))
+        logistics_kwargs: dict = {
+            "pile_logistics_cost": pile_logistics_cost,
+            "pile_trip_overrides": pile_trip_overrides,
+        }
+        if long_pile_delivery is not None:
+            logistics_kwargs["long_pile_delivery"] = long_pile_delivery
         if not self.repository.update_logistics_cost(
             kp_id,
             trip,
-            pile_logistics_cost=pile_logistics_cost,
-            pile_trip_overrides=pile_trip_overrides,
+            **logistics_kwargs,
         ):
             raise ArchiveNotFoundError(
                 f"Не удалось обновить стоимость рейса. КП №{kp_id} не найдено или пустое."
@@ -407,6 +413,13 @@ class ArchiveService:
         fbs_lm_delivery_enabled = coerce_fbs_lm_delivery_enabled(
             raw.get("fbs_lm_delivery_enabled")
         )
+        from core.commercial_pricing import coerce_long_pile_delivery_enabled
+        from core.pile_trip_pricing import coerce_long_pile_delivery
+
+        long_pile_delivery_enabled = coerce_long_pile_delivery_enabled(
+            raw.get("long_pile_delivery_enabled")
+        )
+        long_pile_delivery = coerce_long_pile_delivery(raw.get("long_pile_delivery_json"))
         append_batches = raw.get("append_batches")
 
         if kind == "pdf":
@@ -430,6 +443,8 @@ class ArchiveService:
                 pile_catalog_db_path=self.repository.db_path,
                 fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                 weight_catalog_db_path=self.repository.db_path,
+                long_pile_delivery_enabled=long_pile_delivery_enabled,
+                long_pile_delivery=long_pile_delivery,
             )
             filename = f"КП_{kp_id}.pdf"
         elif kind in {"xlsx", "xlsx_delivery_in_unit"}:
@@ -454,6 +469,8 @@ class ArchiveService:
                 embed_delivery_in_unit_price=(kind == "xlsx_delivery_in_unit"),
                 fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                 weight_catalog_db_path=self.repository.db_path,
+                long_pile_delivery_enabled=long_pile_delivery_enabled,
+                long_pile_delivery=long_pile_delivery,
             )
             filename = (
                 f"КП_{kp_id}_с_доставкой_в_цене.xlsx"
@@ -662,10 +679,17 @@ class ArchiveService:
         order_data = order_data_from_kp_info(raw)
         logistics_cost = max(0.0, float(raw.get("logistics_cost") or 0.0))
         pile_logistics_cost = max(0.0, float(raw.get("pile_logistics_cost") or 0.0))
-        from core.commercial_pricing import calculate_total_cost, coerce_fbs_lm_delivery_enabled
+        from core.commercial_pricing import (
+            calculate_total_cost,
+            coerce_fbs_lm_delivery_enabled,
+            coerce_long_pile_delivery_enabled,
+        )
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
         fbs_lm_enabled = coerce_fbs_lm_delivery_enabled(raw.get("fbs_lm_delivery_enabled"))
+        long_pile_enabled = coerce_long_pile_delivery_enabled(
+            raw.get("long_pile_delivery_enabled")
+        )
         totals = calculate_total_cost(
             order_data,
             float(raw.get("discount_percent") or 0.0),
@@ -679,6 +703,8 @@ class ArchiveService:
             pile_catalog_db_path=self.repository.db_path,
             fbs_lm_delivery_enabled=fbs_lm_enabled,
             weight_catalog_db_path=self.repository.db_path,
+            long_pile_delivery_enabled=long_pile_enabled,
+            long_pile_delivery=raw.get("long_pile_delivery_json"),
         )
         # Delivery / cargo for archive details: plates 18600 + piles hybrid + ФБС/ЛС/ЛМ.
         total_cargo_weight_kg = float(
@@ -687,10 +713,12 @@ class ArchiveService:
         plate_delivery_total = float(totals.get("plate_delivery_total") or 0.0)
         pile_delivery_total = float(totals.get("pile_delivery_total") or 0.0)
         fbs_lm_delivery_total = float(totals.get("fbs_lm_delivery_total") or 0.0)
+        long_pile_delivery_total = float(totals.get("long_pile_delivery_total") or 0.0)
         delivery_total = (
             plate_delivery_total
             + pile_delivery_total
             + fbs_lm_delivery_total
+            + long_pile_delivery_total
         )
 
         readiness = None
@@ -739,6 +767,10 @@ class ArchiveService:
             fbs_lm_delivery_ready=bool(totals.get("fbs_lm_delivery_ready", True)),
             fbs_lm_pending_marks=list(totals.get("fbs_lm_pending_marks") or []),
             fbs_lm_delivery_enabled=fbs_lm_enabled,
+            long_pile_delivery_enabled=long_pile_enabled,
+            long_pile_delivery_total=long_pile_delivery_total,
+            long_pile_lengths=list(totals.get("long_pile_lengths") or []),
+            long_pile_pending_marks=list(totals.get("long_pile_pending_marks") or []),
             total_cargo_weight_kg=total_cargo_weight_kg,
             delivery_service_total_rub=delivery_total,
             product_type=product_type,

@@ -219,6 +219,7 @@ export const useCommercialOfferWizard = () => {
       logisticsCost,
       pileLogisticsCost,
       pileTripOverrides,
+      longPileDelivery,
     }: {
       draftId: string;
       managerId?: number | null;
@@ -231,6 +232,7 @@ export const useCommercialOfferWizard = () => {
       logisticsCost?: number;
       pileLogisticsCost?: number;
       pileTripOverrides?: Record<string, number>;
+      longPileDelivery?: Record<string, { trip_cost: number }>;
     }) =>
       commercialOfferApi.updateDraftMeta(draftId, {
         managerId,
@@ -243,6 +245,7 @@ export const useCommercialOfferWizard = () => {
         logisticsCost,
         pileLogisticsCost,
         pileTripOverrides,
+        longPileDelivery,
       }),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);

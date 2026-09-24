@@ -330,6 +330,8 @@ class ProductDraftHandler:
             "current_step": spec.wizard_step.value,
             "wide_plates_resolved": True,
             "fbs_lm_delivery_enabled": True,
+            "long_pile_delivery_enabled": True,
+            "long_pile_delivery": {},
         }
         if spec.empty_create_grade is not None:
             metadata["default_concrete_grade"] = spec.empty_create_grade
