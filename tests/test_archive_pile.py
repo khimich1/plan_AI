@@ -502,3 +502,41 @@ def test_archive_generate_xlsx_passes_append_batches_for_same_type_multi(
         "ArchiveService.generate_document must pass append_batches into XLSX generator"
     )
     assert call_kwargs["append_batches"] == batches
+
+
+def test_archive_items_keep_concrete_spec_snapshot() -> None:
+    pile = ArchiveService._pile_item(
+        {
+            "mark": "С110.35-12",
+            "concrete_grade": "B25",
+            "qty": 2,
+            "frost_resistance": "F200",
+            "waterproofness": "W8",
+            "concrete_aggregate": "granite",
+            "concrete_spec_source": "table",
+        }
+    )
+    assert pile.frost_resistance == "F200"
+    assert pile.waterproofness == "W8"
+    assert pile.concrete_aggregate == "granite"
+    assert pile.concrete_spec_source == "table"
+
+    empty = ArchiveService._pile_item({"mark": "С80.30", "concrete_grade": "B25", "qty": 1})
+    assert empty.frost_resistance is None
+    assert empty.waterproofness is None
+
+    plate = ArchiveService._plate_item(
+        {
+            "plate_name": "Плиты ПБ 78-12-8п",
+            "qty": 1,
+            "frost_resistance": "F300",
+            "waterproofness": "W12",
+            "concrete_aggregate": "granite",
+            "concrete_spec_source": "table",
+        }
+    )
+    assert plate.frost_resistance == "F300"
+    assert plate.waterproofness == "W12"
+
+    step = ArchiveService._step_item({"mark": "ЛС11", "qty": 1})
+    assert not hasattr(step, "frost_resistance")

@@ -421,3 +421,31 @@ def test_bridge_tender_trips_pending_c18_then_override_save_archive_patch(
     assert body["pile_trips"] == 47
     assert body["pile_logistics_cost"] == pytest.approx(2000.0)
     assert body["pile_delivery_total"] == pytest.approx(94000.0)
+
+
+def test_new_bridge_pile_grades_get_table_frost_pair(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    b25 = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "bridge_piles", "text": "C8-35В4 B25 2"},
+    )
+    assert b25.status_code == 200, b25.text
+    row = b25.json()["order_data"][0]
+    assert row["frost_resistance"] == "F200"
+    assert row["waterproofness"] == "W8"
+    assert row["concrete_aggregate"] == "granite"
+    assert row["concrete_spec_source"] == "table"
+
+    b30 = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "bridge_piles", "text": "C13-40T3 B30 1"},
+    )
+    assert b30.status_code == 200, b30.text
+    row30 = b30.json()["order_data"][0]
+    assert row30["concrete_grade"] == "B30"
+    assert row30["frost_resistance"] == "F300"
+    assert row30["waterproofness"] == "W10"
+    assert row30["concrete_aggregate"] == "granite"
+    assert row30["concrete_spec_source"] == "table"

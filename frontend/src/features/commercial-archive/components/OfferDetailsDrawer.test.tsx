@@ -1,7 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OfferDetailsDrawer } from "@/features/commercial-archive/components/OfferDetailsDrawer";
 import type { ArchiveOfferDetails, KpReadinessSummary } from "@/features/commercial-archive/types/archive";
+
+const { mockLogisticsMutateAsync } = vi.hoisted(() => ({
+  mockLogisticsMutateAsync: vi.fn(),
+}));
 
 const mockUseArchiveOfferQuery = vi.fn();
 const mockUsePromiseHoldQuery = vi.fn(() => ({ data: null, isPending: false, isError: false }));
@@ -45,7 +49,12 @@ vi.mock("@/features/commercial-archive/hooks/useArchiveQueries", () => ({
   useArchiveOfferQuery: (...args: unknown[]) => mockUseArchiveOfferQuery(...args),
   useArchiveDocumentMutation: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useUpdateDiscountMutation: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
-  useUpdateLogisticsCostMutation: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
+  useUpdateLogisticsCostMutation: () => ({
+    mutateAsync: mockLogisticsMutateAsync,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
   useBindCounterpartyMutation: () => mockBindMutation(),
   useCreateAndBindCounterpartyMutation: () => mockCreateMutation(),
 }));
@@ -1035,5 +1044,234 @@ describe("OfferDetailsDrawer FBS/LM delivery boiler", () => {
     expect(screen.queryByText("Рейсов ФБС/ЛС/ЛМ")).not.toBeInTheDocument();
     expect(screen.queryByText(/Нет веса в справочнике/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "XLSX (доставка в цене)" })).toBeDisabled();
+  });
+});
+
+describe("OfferDetailsDrawer concrete spec", () => {
+  beforeEach(() => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("shows a saved pile pair and a dash for an empty snapshot", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        product_type: "piles",
+        piles: [
+          {
+            position_number: 1,
+            mark: "С110.35-12",
+            concrete_grade: "B25",
+            qty: 2,
+            unit_price: 1000,
+            discounted_price: 1000,
+            frost_resistance: "F200",
+            waterproofness: "W8",
+            concrete_aggregate: "granite",
+            concrete_spec_source: "table",
+          },
+          {
+            position_number: 2,
+            mark: "С80.30",
+            concrete_grade: "B25",
+            qty: 1,
+            unit_price: 500,
+            discounted_price: 500,
+            frost_resistance: null,
+            waterproofness: null,
+            concrete_aggregate: null,
+            concrete_spec_source: null,
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+    expect(headers.indexOf("F / W")).toBe(headers.indexOf("Класс") + 1);
+    expect(screen.getByText("F200 · W8")).toBeInTheDocument();
+    const emptyRow = screen.getByText("С80.30").closest("tr");
+    expect(emptyRow).not.toBeNull();
+    expect(within(emptyRow as HTMLElement).getByText("—")).toBeInTheDocument();
+  });
+
+  it("shows a saved plate pair and no concrete grade column", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        product_type: "plates",
+        plates: [
+          {
+            id: 1,
+            position_number: 1,
+            plate_name: "Плиты ПБ 78-12-8п",
+            length_m: 7.8,
+            width_m: 1.2,
+            load_class: 800,
+            qty: 1,
+            unit_price: 1000,
+            discounted_price: 1000,
+            unit_weight: 500,
+            total_weight: 500,
+            status: null,
+            concrete_grade: "М500",
+            frost_resistance: "F300",
+            waterproofness: "W12",
+            concrete_aggregate: "granite",
+            concrete_spec_source: "table",
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByRole("columnheader", { name: "F / W" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Класс" })).not.toBeInTheDocument();
+    expect(screen.getByText("F300 · W12")).toBeInTheDocument();
+  });
+
+  it("does not add the column for steps", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        product_type: "steps",
+        steps: [
+          {
+            position_number: 1,
+            mark: "ЛС11",
+            qty: 2,
+            unit_price: 1000,
+            discounted_price: 1000,
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("columnheader", { name: "F / W" })).not.toBeInTheDocument();
+    expect(screen.getByText("ЛС11")).toBeInTheDocument();
+  });
+});
+
+function clickLogisticsOk() {
+  const input = screen.getByPlaceholderText("Стоимость одного рейса");
+  const label = input.closest("label");
+  if (!label) {
+    throw new Error("logistics field has no label");
+  }
+  fireEvent.click(within(label).getByRole("button", { name: "OK" }));
+}
+
+describe("OfferDetailsDrawer long pile delivery", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const lengthRow = (
+    lengthKey: number,
+    tripCost: number | null,
+    trips: number,
+  ) => ({
+    length_key: lengthKey,
+    trips,
+    trip_cost: tripCost,
+    pending_marks: [] as string[],
+    ready: tripCost !== null,
+    amount: tripCost === null ? 0 : tripCost * trips,
+    qty: 1,
+  });
+
+  function renderLongOffer(overrides: Partial<ArchiveOfferDetails> = {}) {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в работе", null, {
+        product_type: "piles",
+        piles: [
+          {
+            position_number: 1,
+            mark: "С140.35",
+            concrete_grade: "B25",
+            qty: 4,
+            unit_price: 1000,
+            discounted_price: 1000,
+          },
+        ],
+        logistics_cost: 0,
+        pile_logistics_cost: 1000,
+        long_pile_delivery_enabled: true,
+        long_pile_lengths: [lengthRow(140, 5000, 1), lengthRow(160, 7000, 2)],
+        long_pile_pending_marks: [],
+        ...overrides,
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+  }
+
+  it("does not render length tariffs when the flag is off", () => {
+    renderLongOffer({
+      long_pile_delivery_enabled: false,
+      long_pile_lengths: [lengthRow(140, 5000, 1)],
+    });
+
+    expect(screen.queryByLabelText("Тариф рейса 14,0 м")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Стоимость одного рейса")).toBeInTheDocument();
+  });
+
+  it("keeps the 16 m tariff when the 14 m tariff changes", () => {
+    mockLogisticsMutateAsync.mockResolvedValue(undefined);
+    renderLongOffer();
+
+    fireEvent.change(screen.getByLabelText("Тариф рейса 14,0 м"), { target: { value: "9000" } });
+    clickLogisticsOk();
+
+    expect(mockLogisticsMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kpId: 42,
+        longPileDelivery: {
+          "140": { trip_cost: 9000 },
+          "160": { trip_cost: 7000 },
+        },
+      }),
+    );
+  });
+
+  it("saves an explicit zero and does not wipe a tariff left empty", () => {
+    mockLogisticsMutateAsync.mockResolvedValue(undefined);
+    renderLongOffer();
+
+    fireEvent.change(screen.getByLabelText("Тариф рейса 14,0 м"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Тариф рейса 16,0 м"), { target: { value: "" } });
+    clickLogisticsOk();
+
+    expect(mockLogisticsMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        longPileDelivery: {
+          "140": { trip_cost: 0 },
+          "160": { trip_cost: 7000 },
+        },
+      }),
+    );
   });
 });

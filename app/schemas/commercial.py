@@ -3,7 +3,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+
+from core.concrete_spec import GOST_FROST_RESISTANCE, GOST_WATERPROOFNESS
 
 CommercialFileKind = Literal["pdf", "xlsx", "breakdown", "schema"]
 CommercialSourceType = Literal["text", "image", "ai"]
@@ -278,6 +280,8 @@ class CommercialDraftMetadata(BaseModel):
     logistics_cost: float = 0.0
     pile_logistics_cost: float = 0.0
     pile_trip_overrides: dict[str, int] = Field(default_factory=dict)
+    long_pile_delivery_enabled: bool = False
+    long_pile_delivery: dict[str, Any] = Field(default_factory=dict)
     ocr_recognition_mode: str = ""
     ocr_cost_usd: float = 0.0
     ocr_cost_rub: float = 0.0
@@ -338,6 +342,7 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
     logistics_cost: float | None = None
     pile_logistics_cost: float | None = None
     pile_trip_overrides: dict[str, int] | None = None
+    long_pile_delivery: dict[str, Any] | None = None
     counterparty_id: int | None = None
 
 
@@ -414,6 +419,29 @@ class CommercialCompositePileGradesUpdateRequest(BaseModel):
 
 class CommercialFbsGradesUpdateRequest(BaseModel):
     concrete_grade: str = Field(min_length=2)
+
+
+class CommercialConcreteSpecPatchRequest(BaseModel):
+    """Смена пары F/W. Для table сервер сам ставит марки; manual — только ГОСТ."""
+
+    concrete_spec_source: Literal["table", "manual"]
+    concrete_aggregate: Literal["granite", "ordinary"] | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+
+    @model_validator(mode="after")
+    def _gost_or_aggregate(self) -> CommercialConcreteSpecPatchRequest:
+        if self.concrete_spec_source == "manual":
+            frost = (self.frost_resistance or "").strip()
+            water = (self.waterproofness or "").strip()
+            if frost not in GOST_FROST_RESISTANCE or water not in GOST_WATERPROOFNESS:
+                raise ValueError(
+                    "Марка морозостойкости или водонепроницаемости вне списка ГОСТ."
+                )
+            return self
+        if self.concrete_aggregate not in {"granite", "ordinary"}:
+            raise ValueError("Укажите щебень таблицы: granite или ordinary.")
+        return self
 
 
 class CommercialPriceCatalogItem(BaseModel):

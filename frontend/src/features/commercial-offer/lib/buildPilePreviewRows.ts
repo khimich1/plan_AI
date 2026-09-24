@@ -4,6 +4,7 @@ import {
   isSealedOrderLine,
 } from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
+import { readConcreteSpec } from "@/features/commercial-offer/lib/concreteSpec";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export const buildPilePreviewRows = (draft: CommercialDraftDetails): PileOrderLine[] =>
@@ -24,6 +25,7 @@ export const buildPilePreviewRows = (draft: CommercialDraftDetails): PileOrderLi
       line_total: lineTotal,
       product_kind: "pile",
       sealed: isSealedOrderLine(item),
+      ...readConcreteSpec(item),
     };
   });
 

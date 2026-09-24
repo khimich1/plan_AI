@@ -28,6 +28,10 @@ def test_fresh_schema_has_kp_steps(tmp_path: Path) -> None:
             "discounted_price",
         }
         assert "concrete_grade" not in step_cols
+        assert "frost_resistance" not in step_cols
+        assert "waterproofness" not in step_cols
+        assert "concrete_aggregate" not in step_cols
+        assert "concrete_spec_source" not in step_cols
 
         cur.execute(
             "INSERT INTO KP_offers (kp_id, creation_date) VALUES (1, '2026-08-05')"

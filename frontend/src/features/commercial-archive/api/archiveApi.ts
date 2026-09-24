@@ -72,6 +72,7 @@ export const archiveApi = {
       logisticsCost: number;
       pileLogisticsCost?: number;
       pileTripOverrides?: Record<string, number>;
+      longPileDelivery?: Record<string, { trip_cost: number }>;
     },
   ) =>
     httpClient.patch<ArchiveOfferDetails>(
@@ -80,6 +81,7 @@ export const archiveApi = {
         logistics_cost: payload.logisticsCost,
         pile_logistics_cost: payload.pileLogisticsCost,
         pile_trip_overrides: payload.pileTripOverrides,
+        long_pile_delivery: payload.longPileDelivery,
       }),
       { "Content-Type": "application/json" },
     ),

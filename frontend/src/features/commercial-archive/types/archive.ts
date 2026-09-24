@@ -56,6 +56,10 @@ export type ArchivePlateItem = {
   unit_weight: number | null;
   total_weight: number | null;
   status: string | null;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type ArchivePileItem = {
@@ -65,6 +69,10 @@ export type ArchivePileItem = {
   qty: number;
   unit_price: number | null;
   discounted_price: number | null;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type ArchiveStepItem = {
@@ -82,6 +90,10 @@ export type ArchiveMarchItem = {
   qty: number;
   unit_price: number | null;
   discounted_price: number | null;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type ArchiveBridgePileItem = {
@@ -91,6 +103,10 @@ export type ArchiveBridgePileItem = {
   qty: number;
   unit_price: number | null;
   discounted_price: number | null;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type ArchiveOfferFinance = {
@@ -174,6 +190,18 @@ export type ArchiveOfferDetails = {
   fbs_lm_delivery_ready?: boolean;
   fbs_lm_pending_marks?: string[];
   fbs_lm_delivery_enabled?: boolean;
+  long_pile_delivery_enabled?: boolean;
+  long_pile_delivery_total?: number;
+  long_pile_lengths?: Array<{
+    length_key: number;
+    trips: number;
+    trip_cost: number | null;
+    pending_marks: string[];
+    ready: boolean;
+    amount: number;
+    qty: number;
+  }>;
+  long_pile_pending_marks?: string[];
   /** Масса груза (кг) по тем же правилам, что PDF/XLSX (resolve_kp_line_weight_kg на бэкенде). */
   total_cargo_weight_kg: number;
   /** Строка «Услуга по доставке грузов» = logistics_cost × число рейсов. */

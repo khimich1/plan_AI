@@ -13,6 +13,8 @@ import { commonMarkSearchPrefix } from "@/features/commercial-offer/lib/commonMa
 import { LineActionsCell, LineActionsHeader } from "@/features/commercial-offer/components/LineRowActions";
 import { LineUndoToast } from "@/features/commercial-offer/components/LineUndoToast";
 import { PriceCatalogDrawer } from "@/features/commercial-offer/components/PriceCatalogDrawer";
+import { ConcreteSpecCell } from "@/features/commercial-offer/components/ConcreteSpecCell";
+import { specFromPreviewRow, type ConcreteSpecPatch } from "@/features/commercial-offer/lib/concreteSpec";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -36,6 +38,7 @@ type KpGradedPreviewPanelProps = {
   isUpdatingGrades?: boolean;
   onApplyGradeToAll?: (grade: string) => void;
   onLineGradeChange?: (lineIndex: number, grade: string) => void;
+  onConcreteSpecChange?: (lineId: string, patch: ConcreteSpecPatch) => void;
   lineRowHandlers?: LineRowHandlers;
   catalogItems?: PriceCatalogItem[];
   catalogQuery?: string;
@@ -54,6 +57,7 @@ export const KpGradedPreviewPanel = ({
   isUpdatingGrades = false,
   onApplyGradeToAll,
   onLineGradeChange,
+  onConcreteSpecChange,
   lineRowHandlers,
   catalogItems = [],
   catalogQuery,
@@ -212,7 +216,7 @@ export const KpGradedPreviewPanel = ({
               <thead>
                 <tr style={{ textAlign: "left", color: "#475467", background: "#f2f4f7" }}>
                   {(supportsGrades
-                    ? ["№", "Марка", "Класс", "Кол-во", "Цена", "Сумма"]
+                    ? ["№", "Марка", "Класс", "F / W", "Кол-во", "Цена", "Сумма"]
                     : ["№", "Марка", "Кол-во", "Цена", "Сумма"]
                   ).map((column) => (
                     <th key={column} style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #e4e7ec" }}>
@@ -263,6 +267,21 @@ export const KpGradedPreviewPanel = ({
                           ) : (
                             preview.formatGradeLabel(row.concrete_grade)
                           )}
+                        </td>
+                      )}
+                      {supportsGrades && (
+                        <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7" }}>
+                          <ConcreteSpecCell
+                            grade={row.concrete_grade}
+                            mark={row.mark}
+                            spec={specFromPreviewRow(row)}
+                            sealed={Boolean(row.sealed)}
+                            onChange={
+                              onConcreteSpecChange && row.lineId
+                                ? (patch) => onConcreteSpecChange(row.lineId as string, patch)
+                                : undefined
+                            }
+                          />
                         </td>
                       )}
                       <td style={{ padding: "0.55rem 0.65rem", borderBottom: "1px solid #f2f4f7" }}>{row.qty}</td>

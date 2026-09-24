@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 """Сверка выгрузки 1С «Прайс-лист» с таблицей nomenclature_guid.
 
-Направление матчинга: строки выгрузки → уже существующие марки в
-nomenclature_guid. Новые марки из 1С не создаются (это unmatched_1c).
-Плиты в эту таблицу не пишутся.
+Строки выгрузки сопоставляются с марками справочника. Если строки ещё
+нет, единственный GUID пишется на марку из прайса этой группы или из
+открытого guid_demand (guid_1c / guid_1c_u). Прайс не меняется. Имя вне
+прайса и вне спроса остаётся unmatched_1c. Несколько GUID или несколько
+марок на одно имя — без записи GUID. Плиты в эту таблицу не пишутся.
 
 Правило смены GUID: unique match при status=auto может обновить GUID,
 если в файле ровно один GUID на нормализованное имя. status=manual
@@ -30,10 +32,21 @@ from core.nomenclature_guid import (
     iter_by_state,
     upsert,
 )
+from core.pile_line_parser import is_reinforced_pile_mark
+from core.pile_price_db import strip_trailing_u_suffix
 from core.pricelist_1c_parser import PricelistRow
 
 FIELD_PLAIN = "guid_1c"
 FIELD_U = "guid_1c_u"
+
+_PRICE_TABLE_BY_KIND = {
+    "pile": "pile_prices",
+    "bridge_pile": "bridge_pile_prices",
+    "fbs": "fbs_prices",
+    "stair_flight": "march_prices",
+    "stair_step": "step_prices",
+}
+_DEMAND_OPEN = "open"
 
 _PLATE_ALIASES = frozenset({"plate", "plates", "plity", "плита", "плиты"})
 
@@ -210,6 +223,7 @@ def sync_pricelist(
 
     Caller owns commit. Строки таблицы не удаляются. Плиты и неизвестный
     kind не вставляются. partial=True (отбор 1С) — не заполняет disappeared.
+    Прайс-таблицы только читаются.
     """
     ensure_schema(conn)
     incoming = [row for row in rows if row.guid and row.name]
@@ -219,6 +233,7 @@ def sync_pricelist(
 
     db_rows = _rows_for_kind(conn, kind)
     index = _build_name_index(kind, db_rows)
+    admission = _index_marks(kind, _admission_marks(conn, kind))
     grouped = _group_by_normalized_name(incoming)
 
     plans: dict[str, _MarkPlan] = defaultdict(_MarkPlan)
@@ -228,7 +243,7 @@ def sync_pricelist(
 
     for norm_name, group in grouped.items():
         guids = tuple(sorted({item.guid.strip().lower() for item in group}))
-        targets = index.get(norm_name, [])
+        targets = index.get(norm_name) or admission.get(norm_name, [])
         sample = group[0]
         if len(guids) > 1:
             _record_ambiguous(
@@ -265,10 +280,9 @@ def sync_pricelist(
     ambiguous: list[AmbiguousMatch] = list(ambiguous_unmatched)
     unchanged = 0
 
-    for db_row in db_rows:
-        plan = plans.get(db_row.mark)
-        if plan is None:
-            continue
+    rows_by_mark = {row.mark: row for row in db_rows}
+    for mark, plan in plans.items():
+        db_row = rows_by_mark.get(mark) or _placeholder_row(kind, mark)
         writes, amb, n_unchanged = _apply_mark(
             conn,
             db_row,
@@ -383,16 +397,102 @@ def _build_name_index(
     kind: str,
     db_rows: Sequence[NomenclatureGuidRow],
 ) -> dict[str, list[tuple[str, str]]]:
+    return _index_marks(kind, (row.mark for row in db_rows))
+
+
+def _index_marks(
+    kind: str,
+    marks: Iterable[str],
+) -> dict[str, list[tuple[str, str]]]:
     index: dict[str, list[tuple[str, str]]] = defaultdict(list)
     seen: dict[str, set[tuple[str, str]]] = defaultdict(set)
-    for row in db_rows:
-        for candidate, field_name in _candidates_for_mark(kind, row.mark):
-            key = (row.mark, field_name)
+    for mark in marks:
+        text = str(mark or "")
+        if not text.strip():
+            continue
+        for candidate, field_name in _candidates_for_mark(kind, text):
+            key = (text, field_name)
             if key in seen[candidate]:
                 continue
             seen[candidate].add(key)
             index[candidate].append(key)
     return index
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    found = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    return found is not None
+
+
+def _price_marks(conn: sqlite3.Connection, kind: str) -> list[str]:
+    table = _PRICE_TABLE_BY_KIND.get(kind)
+    if table is None or not _table_exists(conn, table):
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for (raw,) in conn.execute(f"SELECT DISTINCT mark FROM {table}"):
+        text = str(raw or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        found.append(text)
+    return found
+
+
+def _demand_catalog_mark(kind: str, mark: str) -> str:
+    """Марка справочника для спроса: у сваи «у» GUID живёт на марке без суффикса."""
+    if kind != "pile" or not is_reinforced_pile_mark(mark):
+        return mark
+    stripped = strip_trailing_u_suffix(mark).strip()
+    return stripped or mark
+
+
+def _open_demand_marks(conn: sqlite3.Connection, kind: str) -> list[str]:
+    if not _table_exists(conn, "guid_demand"):
+        return []
+    rows = conn.execute(
+        """
+        SELECT DISTINCT mark FROM guid_demand
+        WHERE product_kind = ? AND state = ? AND field IN (?, ?)
+        """,
+        (kind, _DEMAND_OPEN, FIELD_PLAIN, FIELD_U),
+    )
+    found: list[str] = []
+    seen: set[str] = set()
+    for (raw,) in rows:
+        text = _demand_catalog_mark(kind, str(raw or "").strip())
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        found.append(text)
+    return found
+
+
+def _admission_marks(conn: sqlite3.Connection, kind: str) -> list[str]:
+    marks = _price_marks(conn, kind)
+    seen = set(marks)
+    for mark in _open_demand_marks(conn, kind):
+        if mark in seen:
+            continue
+        seen.add(mark)
+        marks.append(mark)
+    return marks
+
+
+def _placeholder_row(kind: str, mark: str) -> NomenclatureGuidRow:
+    """Пустая марка: _apply_mark создаст строку справочника, прайс не трогает."""
+    return NomenclatureGuidRow(
+        product_kind=kind,
+        mark=mark,
+        guid_1c=None,
+        guid_1c_u=None,
+        match_status="missing",
+        match_note=None,
+        updated_at="",
+    )
 
 
 def _candidates_for_mark(kind: str, mark: str) -> list[tuple[str, str]]:

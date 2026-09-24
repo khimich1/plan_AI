@@ -49,6 +49,7 @@ type UpdateDraftMetaPayload = {
   logisticsCost?: number;
   pileLogisticsCost?: number;
   pileTripOverrides?: Record<string, number>;
+  longPileDelivery?: Record<string, { trip_cost: number }>;
 };
 
 type WidePlateDecisionPayload = {
@@ -228,6 +229,7 @@ export const commercialOfferApi = {
         logistics_cost: payload.logisticsCost,
         pile_logistics_cost: payload.pileLogisticsCost,
         pile_trip_overrides: payload.pileTripOverrides,
+        long_pile_delivery: payload.longPileDelivery,
       }),
       { "Content-Type": "application/json" },
     ),
@@ -276,6 +278,19 @@ export const commercialOfferApi = {
 
   deleteDraftLine: (draftId: string, lineId: string) =>
     httpClient.delete<CommercialDraftDetails>(`/api/v1/commercial/drafts/${draftId}/lines/${lineId}`),
+
+  updateConcreteSpec: (
+    draftId: string,
+    lineId: string,
+    payload:
+      | { concrete_spec_source: "table"; concrete_aggregate: "granite" | "ordinary" }
+      | { concrete_spec_source: "manual"; frost_resistance: string; waterproofness: string },
+  ) =>
+    httpClient.patch<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/lines/${lineId}/concrete-spec`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
 
   patchDraftLine: (
     draftId: string,

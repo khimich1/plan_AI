@@ -4,6 +4,7 @@ import {
   isSealedOrderLine,
 } from "@/features/commercial-offer/lib/currentCycleOrderData";
 import { formatLineSourceText } from "@/features/commercial-offer/lib/formatLineSourceText";
+import { readConcreteSpec } from "@/features/commercial-offer/lib/concreteSpec";
 import { toNumber } from "@/features/commercial-offer/lib/formatOfferNumbers";
 
 export type BridgePileOrderLine = Omit<PileOrderLine, "product_kind"> & {
@@ -33,6 +34,7 @@ export const buildBridgePilePreviewRows = (draft: CommercialDraftDetails): Bridg
       line_total: lineTotal,
       product_kind: "bridge_pile",
       sealed: isSealedOrderLine(item),
+      ...readConcreteSpec(item),
     };
   });
 

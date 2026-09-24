@@ -135,16 +135,19 @@ export const useUpdateLogisticsCostMutation = () => {
       logisticsCost,
       pileLogisticsCost,
       pileTripOverrides,
+      longPileDelivery,
     }: {
       kpId: number;
       logisticsCost: number;
       pileLogisticsCost?: number;
       pileTripOverrides?: Record<string, number>;
+      longPileDelivery?: Record<string, { trip_cost: number }>;
     }) =>
       archiveApi.updateLogisticsCost(kpId, {
         logisticsCost,
         pileLogisticsCost,
         pileTripOverrides,
+        longPileDelivery,
       }),
     onSuccess: (offer) => {
       queryClient.setQueryData(archiveKeys.detail(offer.kp_id), offer);

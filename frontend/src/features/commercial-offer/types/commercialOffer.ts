@@ -181,6 +181,10 @@ export type PileOrderLine = {
   line_total?: number | null;
   product_kind?: "pile";
   sealed?: boolean;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type StepOrderLine = {
@@ -205,6 +209,10 @@ export type MarchOrderLine = {
   line_total?: number | null;
   product_kind?: "march";
   sealed?: boolean;
+  frost_resistance?: string | null;
+  waterproofness?: string | null;
+  concrete_aggregate?: string | null;
+  concrete_spec_source?: string | null;
 };
 
 export type CommercialGeneratedFile = {
@@ -292,6 +300,8 @@ export type CommercialDraftMetadata = {
   logistics_cost: number;
   pile_logistics_cost?: number;
   pile_trip_overrides?: Record<string, number>;
+  long_pile_delivery_enabled?: boolean;
+  long_pile_delivery?: Record<string, { trip_cost: number }>;
   ocr_method?: string;
   ocr_verify_applied?: boolean;
   ocr_verify_failed?: boolean;
@@ -311,6 +321,16 @@ export type BreakdownTable = {
 export type BreakdownResponse = {
   draft_id: string;
   items: BreakdownTable[];
+};
+
+export type LongPileLengthQuote = {
+  length_key: number;
+  trips: number;
+  trip_cost: number | null;
+  pending_marks: string[];
+  ready: boolean;
+  amount: number;
+  qty: number;
 };
 
 export type CommercialDraftDetails = {
@@ -341,6 +361,10 @@ export type CommercialDraftDetails = {
     fbs_lm_trips?: number;
     fbs_lm_delivery_ready?: boolean;
     fbs_lm_pending_marks?: string[];
+    long_pile_delivery_enabled?: boolean;
+    long_pile_delivery_total?: number;
+    long_pile_lengths?: LongPileLengthQuote[];
+    long_pile_pending_marks?: string[];
   };
   offer_identity: CommercialOfferIdentity;
 };

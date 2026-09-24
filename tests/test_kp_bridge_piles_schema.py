@@ -27,6 +27,10 @@ def test_fresh_schema_has_kp_bridge_piles(tmp_path: Path) -> None:
             "qty",
             "unit_price",
             "discounted_price",
+            "frost_resistance",
+            "waterproofness",
+            "concrete_aggregate",
+            "concrete_spec_source",
         }
 
         cur.execute(

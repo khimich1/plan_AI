@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
+import type { ConcreteSpecPatch } from "@/features/commercial-offer/lib/concreteSpec";
 import { resolveDraftProductType, isSimpleKpProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
 import type { CommercialDraftDetails, InvalidWidthAction, ProductType, SaveMode, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
@@ -129,6 +130,22 @@ export const useCommercialOfferWizard = () => {
     },
   });
 
+  const updateConcreteSpecMutation = useMutation({
+    mutationFn: ({
+      draftId,
+      lineId,
+      payload,
+    }: {
+      draftId: string;
+      lineId: string;
+      payload: ConcreteSpecPatch;
+    }) => commercialOfferApi.updateConcreteSpec(draftId, lineId, payload),
+    onSuccess: (draft, variables) => {
+      setDraftCache(variables.draftId, draft);
+      invalidateDraft(variables.draftId);
+    },
+  });
+
   const resolveWidePlatesMutation = useMutation({
     mutationFn: ({
       draftId,
@@ -202,6 +219,7 @@ export const useCommercialOfferWizard = () => {
       logisticsCost,
       pileLogisticsCost,
       pileTripOverrides,
+      longPileDelivery,
     }: {
       draftId: string;
       managerId?: number | null;
@@ -214,6 +232,7 @@ export const useCommercialOfferWizard = () => {
       logisticsCost?: number;
       pileLogisticsCost?: number;
       pileTripOverrides?: Record<string, number>;
+      longPileDelivery?: Record<string, { trip_cost: number }>;
     }) =>
       commercialOfferApi.updateDraftMeta(draftId, {
         managerId,
@@ -226,6 +245,7 @@ export const useCommercialOfferWizard = () => {
         logisticsCost,
         pileLogisticsCost,
         pileTripOverrides,
+        longPileDelivery,
       }),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);
@@ -338,6 +358,7 @@ export const useCommercialOfferWizard = () => {
     updateInputMutation,
     applyAiMutation,
     updateGradesMutation,
+    updateConcreteSpecMutation,
     resolveWidePlatesMutation,
     resolveUnpricedPlatesMutation,
     resolveInvalidWidthsMutation,

@@ -44,6 +44,8 @@ def save_kp_to_db(
     customer_inn: str | None = None,
     customer_kpp: str | None = None,
     fbs_lm_delivery_enabled: bool = False,
+    long_pile_delivery_enabled: bool = False,
+    long_pile_delivery: dict | None = None,
 ) -> int:
     """Сохраняет КП в базу.
 
@@ -72,6 +74,8 @@ def save_kp_to_db(
         customer_inn=customer_inn,
         customer_kpp=customer_kpp,
         fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+        long_pile_delivery_enabled=long_pile_delivery_enabled,
+        long_pile_delivery=long_pile_delivery,
     )
 
 
@@ -91,6 +95,8 @@ def update_kp_from_order_data(
     pile_logistics_cost: float | None = None,
     pile_trip_overrides: dict | None = None,
     fbs_lm_delivery_enabled: bool | None = None,
+    long_pile_delivery_enabled: bool | None = None,
+    long_pile_delivery: dict | None = None,
 ) -> int:
     """Обновляет существующее КП (sync по line_id). Тот же ``kp_id``.
 
@@ -114,6 +120,8 @@ def update_kp_from_order_data(
         pile_logistics_cost=pile_logistics_cost,
         pile_trip_overrides=pile_trip_overrides,
         fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
+        long_pile_delivery_enabled=long_pile_delivery_enabled,
+        long_pile_delivery=long_pile_delivery,
     )
 
 
@@ -226,7 +234,9 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
                 }
             )
 
-        totals = calculate_total_cost(order_data, new_discount, logistics_cost=logistics_saved)
+        totals = calculate_total_cost(
+            order_data, new_discount, logistics_cost=logistics_saved, kp_id=kp_id
+        )
         subtotal = totals["subtotal"]
         vat_amount = totals["vat_amount"]
         total_amount = totals["total_with_vat"]
@@ -281,6 +291,7 @@ def update_kp_logistics_cost(
     *,
     pile_logistics_cost: float | None = None,
     pile_trip_overrides: dict | None = None,
+    long_pile_delivery: dict | None = None,
 ) -> bool:
     """
     Обновляет тариф(ы) рейса и пересчитывает суммы KP_offers.
@@ -288,10 +299,18 @@ def update_kp_logistics_cost(
     """
     trip = max(0.0, float(logistics_cost or 0.0))
     try:
-        from core.commercial_pricing import calculate_total_cost, coerce_fbs_lm_delivery_enabled
+        from core.commercial_pricing import (
+            calculate_total_cost,
+            coerce_fbs_lm_delivery_enabled,
+            coerce_long_pile_delivery_enabled,
+        )
         from core.kp.offers_read import get_kp_by_id
         from core.kp_order_data import order_data_from_kp_info
-        from core.pile_trip_pricing import coerce_pile_trip_overrides, dumps_pile_trip_overrides
+        from core.pile_trip_pricing import (
+            coerce_pile_trip_overrides,
+            dumps_long_pile_delivery,
+            dumps_pile_trip_overrides,
+        )
     except ImportError:
         return False
 
@@ -315,6 +334,11 @@ def update_kp_logistics_cost(
         if pile_trip_overrides is not None
         else existing_overrides
     )
+    resolved_long_pile = (
+        kp_info.get("long_pile_delivery_json")
+        if long_pile_delivery is None
+        else long_pile_delivery
+    )
 
     totals = calculate_total_cost(
         order_data,
@@ -329,6 +353,11 @@ def update_kp_logistics_cost(
             kp_info.get("fbs_lm_delivery_enabled")
         ),
         weight_catalog_db_path=db_path,
+        long_pile_delivery_enabled=coerce_long_pile_delivery_enabled(
+            kp_info.get("long_pile_delivery_enabled")
+        ),
+        long_pile_delivery=resolved_long_pile,
+        kp_id=kp_id,
     )
 
     conn = _connect(db_path)
@@ -352,8 +381,16 @@ def update_kp_logistics_cost(
             ),
         )
         cur.execute(
-            "UPDATE kp_meta SET pile_trip_overrides_json = ? WHERE kp_id = ?",
-            (dumps_pile_trip_overrides(resolved_overrides), kp_id),
+            """
+            UPDATE kp_meta
+            SET pile_trip_overrides_json = ?, long_pile_delivery_json = ?
+            WHERE kp_id = ?
+            """,
+            (
+                dumps_pile_trip_overrides(resolved_overrides),
+                dumps_long_pile_delivery(resolved_long_pile),
+                kp_id,
+            ),
         )
         conn.commit()
         return True

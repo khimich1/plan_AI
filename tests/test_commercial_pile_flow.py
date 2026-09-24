@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -177,6 +178,415 @@ def _mock_manager_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
         return None
 
     monkeypatch.setattr(ManagerRepository, "get_manager", fake_get_manager)
+
+
+def _listed_pile_price(mark: str, concrete_grade: str) -> float:
+    from app.services.product_draft_config import DB_PATH
+    from core.commercial_pricing import lookup_pile_price
+
+    return lookup_pile_price(mark, concrete_grade, db_path=str(DB_PATH))
+
+
+def _draft_payload_path(draft_id: str) -> Path:
+    from app.core.settings import get_settings
+
+    return Path(get_settings().drafts_dir) / f"{draft_id}.json"
+
+
+def _set_line_specs(draft_id: str, specs_by_index: dict[int, dict[str, object]]) -> list[str]:
+    path = _draft_payload_path(draft_id)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    line_ids: list[str] = []
+    for index, line in enumerate(payload["order_data"]):
+        line_ids.append(str(line["line_id"]))
+        extra = specs_by_index.get(index)
+        if extra:
+            line.update(extra)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return line_ids
+
+
+def test_new_pile_list_gets_granite_b25_spec(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    response = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "piles", "text": "С110.35-12 B25 2"},
+    )
+    assert response.status_code == 200, response.text
+    row = response.json()["order_data"][0]
+    assert row["concrete_grade"] == "B25"
+    assert row["qty"] == 2
+    assert row["frost_resistance"] == "F200"
+    assert row["waterproofness"] == "W8"
+    assert row["concrete_aggregate"] == "granite"
+    assert row["concrete_spec_source"] == "table"
+
+
+def test_ordinary_pile_recalculates_on_grade_update_and_keeps_line_id(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "piles", "text": "С120.35-12 B25 2"},
+    )
+    assert create.status_code == 200, create.text
+    draft_id = create.json()["draft_id"]
+    price_before = create.json()["order_data"][0]["unit_price"]
+    [line_id] = _set_line_specs(
+        draft_id,
+        {
+            0: {
+                "frost_resistance": "F200",
+                "waterproofness": "W6",
+                "concrete_aggregate": "ordinary",
+                "concrete_spec_source": "table",
+            }
+        },
+    )
+
+    response = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/piles/grades",
+        json={"concrete_grade": "B22_5"},
+    )
+    assert response.status_code == 200, response.text
+    row = response.json()["order_data"][0]
+    assert row["line_id"] == line_id
+    assert row["concrete_grade"] == "B22_5"
+    assert row["frost_resistance"] == "F200"
+    assert row["waterproofness"] == "W4"
+    assert row["concrete_aggregate"] == "ordinary"
+    assert row["concrete_spec_source"] == "table"
+    assert price_before == pytest.approx(_listed_pile_price("С120.35-12", "B25"))
+    assert row["unit_price"] == pytest.approx(_listed_pile_price("С120.35-12", "B22_5"))
+
+
+def test_manual_pile_pair_survives_text_replace(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "piles", "text": "С120.35-12 B25 2"},
+    )
+    assert create.status_code == 200, create.text
+    draft_id = create.json()["draft_id"]
+    [line_id] = _set_line_specs(
+        draft_id,
+        {
+            0: {
+                "frost_resistance": "F150",
+                "waterproofness": "W4",
+                "concrete_aggregate": "",
+                "concrete_spec_source": "manual",
+            }
+        },
+    )
+
+    response = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/piles",
+        data={"mode": "replace", "text": "С120.35-12 B20 2"},
+    )
+    assert response.status_code == 200, response.text
+    row = response.json()["order_data"][0]
+    assert row["line_id"] == line_id
+    assert row["concrete_grade"] == "B20"
+    assert row["frost_resistance"] == "F150"
+    assert row["waterproofness"] == "W4"
+    assert row["concrete_spec_source"] == "manual"
+    assert row["unit_price"] == pytest.approx(_listed_pile_price("С120.35-12", "B20"))
+
+
+def test_empty_pile_snapshot_stays_empty_after_grade_update(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "piles", "text": "С120.35-12 B25 2"},
+    )
+    assert create.status_code == 200, create.text
+    draft_id = create.json()["draft_id"]
+    [line_id] = _set_line_specs(
+        draft_id,
+        {
+            0: {
+                "frost_resistance": None,
+                "waterproofness": None,
+                "concrete_aggregate": None,
+                "concrete_spec_source": None,
+            }
+        },
+    )
+
+    response = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/piles/grades",
+        json={"concrete_grade": "B20"},
+    )
+    assert response.status_code == 200, response.text
+    row = response.json()["order_data"][0]
+    assert row["line_id"] == line_id
+    assert row.get("frost_resistance") in (None, "")
+    assert row.get("waterproofness") in (None, "")
+    assert row.get("concrete_aggregate") in (None, "")
+    assert row.get("concrete_spec_source") in (None, "")
+
+
+def test_grade_rebuild_keeps_spec_on_the_same_mark_not_by_index(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "piles", "text": "С120.35-12 B25 2\nС120.35-13и B25 1"},
+    )
+    assert create.status_code == 200, create.text
+    draft_id = create.json()["draft_id"]
+    id_a, id_b = _set_line_specs(
+        draft_id,
+        {
+            0: {
+                "frost_resistance": "F200",
+                "waterproofness": "W6",
+                "concrete_aggregate": "ordinary",
+                "concrete_spec_source": "table",
+            },
+            1: {
+                "frost_resistance": "F150",
+                "waterproofness": "W4",
+                "concrete_aggregate": "",
+                "concrete_spec_source": "manual",
+            },
+        },
+    )
+
+    response = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/piles",
+        data={"mode": "replace", "text": "С120.35-13и B25 1\nС120.35-12 B22.5 2"},
+    )
+    assert response.status_code == 200, response.text
+    by_mark = {row["mark"]: row for row in response.json()["order_data"]}
+    changed = by_mark["С120.35-12"]
+    untouched = by_mark["С120.35-13и"]
+    assert changed["line_id"] == id_a
+    assert changed["concrete_grade"] == "B22_5"
+    assert changed["frost_resistance"] == "F200"
+    assert changed["waterproofness"] == "W4"
+    assert changed["concrete_aggregate"] == "ordinary"
+    assert changed["concrete_spec_source"] == "table"
+    assert untouched["line_id"] == id_b
+    assert untouched["frost_resistance"] == "F150"
+    assert untouched["waterproofness"] == "W4"
+    assert untouched["concrete_spec_source"] == "manual"
+
+
+def test_patch_ordinary_b25_keeps_unit_price_and_input_text(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "piles", "text": "С120.35-12 B25 2"},
+    )
+    assert create.status_code == 200, create.text
+    body = create.json()
+    draft_id = body["draft_id"]
+    row = body["order_data"][0]
+    line_id = row["line_id"]
+    price = row["unit_price"]
+    input_text = body["metadata"]["input_text"]
+
+    response = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/{line_id}/concrete-spec",
+        json={"concrete_spec_source": "table", "concrete_aggregate": "ordinary"},
+    )
+    assert response.status_code == 200, response.text
+    updated = response.json()
+    line = updated["order_data"][0]
+    assert line["line_id"] == line_id
+    assert line["concrete_grade"] == "B25"
+    assert line["frost_resistance"] == "F200"
+    assert line["waterproofness"] == "W6"
+    assert line["concrete_aggregate"] == "ordinary"
+    assert line["concrete_spec_source"] == "table"
+    assert line["unit_price"] == price
+    assert updated["metadata"]["input_text"] == input_text
+
+
+def test_patch_manual_pair_stores_gost_marks_and_empty_aggregate(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "piles", "text": "С120.35-12 B25 2"},
+    )
+    assert create.status_code == 200, create.text
+    body = create.json()
+    draft_id = body["draft_id"]
+    line_id = body["order_data"][0]["line_id"]
+    price = body["order_data"][0]["unit_price"]
+
+    response = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/{line_id}/concrete-spec",
+        json={
+            "concrete_spec_source": "manual",
+            "frost_resistance": "F150",
+            "waterproofness": "W4",
+        },
+    )
+    assert response.status_code == 200, response.text
+    line = response.json()["order_data"][0]
+    assert line["frost_resistance"] == "F150"
+    assert line["waterproofness"] == "W4"
+    assert line["concrete_aggregate"] in ("", None)
+    assert line["concrete_spec_source"] == "manual"
+    assert line["unit_price"] == price
+    assert line["concrete_grade"] == "B25"
+
+
+def test_patch_manual_pair_rejects_marks_outside_gost(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "piles", "text": "С120.35-12 B25 2"},
+    )
+    assert create.status_code == 200, create.text
+    body = create.json()
+    draft_id = body["draft_id"]
+    before = body["order_data"][0]
+    line_id = before["line_id"]
+
+    response = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/{line_id}/concrete-spec",
+        json={
+            "concrete_spec_source": "manual",
+            "frost_resistance": "F999",
+            "waterproofness": "W4",
+        },
+    )
+    assert response.status_code == 422, response.text
+    fresh = client.get(f"/api/v1/commercial/drafts/{draft_id}")
+    assert fresh.status_code == 200, fresh.text
+    line = fresh.json()["order_data"][0]
+    assert line["frost_resistance"] == before["frost_resistance"]
+    assert line["waterproofness"] == before["waterproofness"]
+    assert line["concrete_spec_source"] == before["concrete_spec_source"]
+    assert line["unit_price"] == before["unit_price"]
+
+
+def test_patch_concrete_spec_leaves_sealed_line_and_unknown_line_id(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "piles", "text": "С120.35-12 B25 2"},
+    )
+    assert create.status_code == 200, create.text
+    body = create.json()
+    draft_id = body["draft_id"]
+    line_id = body["order_data"][0]["line_id"]
+    _set_line_specs(draft_id, {0: {"append_batch_id": "batch-sealed"}})
+
+    sealed = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/{line_id}/concrete-spec",
+        json={"concrete_spec_source": "table", "concrete_aggregate": "ordinary"},
+    )
+    assert sealed.status_code == 422, sealed.text
+    fresh = client.get(f"/api/v1/commercial/drafts/{draft_id}")
+    line = fresh.json()["order_data"][0]
+    assert line["waterproofness"] != "W6"
+    assert line.get("concrete_aggregate") != "ordinary"
+
+    missing = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/missing-line/concrete-spec",
+        json={"concrete_spec_source": "table", "concrete_aggregate": "granite"},
+    )
+    assert missing.status_code == 404, missing.text
+    again = client.get(f"/api/v1/commercial/drafts/{draft_id}")
+    assert again.json()["order_data"][0]["line_id"] == line_id
+    assert again.json()["order_data"][0].get("concrete_aggregate") != "ordinary"
+
+
+def test_patch_concrete_spec_does_not_serve_steps(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    create = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "steps", "text": "ЛС11 2"},
+    )
+    assert create.status_code == 200, create.text
+    body = create.json()
+    draft_id = body["draft_id"]
+    line = body["order_data"][0]
+    response = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/{line['line_id']}/concrete-spec",
+        json={"concrete_spec_source": "table", "concrete_aggregate": "granite"},
+    )
+    assert response.status_code == 422, response.text
+    fresh = client.get(f"/api/v1/commercial/drafts/{draft_id}")
+    stored = fresh.json()["order_data"][0]
+    assert stored.get("frost_resistance") in (None, "")
+    assert stored.get("waterproofness") in (None, "")
+    assert stored.get("concrete_spec_source") in (None, "")
+
+
+def test_new_plate_grades_get_table_frost_pair_without_inventing_old_rows(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+) -> None:
+    m500 = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "plates", "text": "ПБ 78-12-8п 1"},
+    )
+    assert m500.status_code == 200, m500.text
+    row = m500.json()["order_data"][0]
+    assert row["concrete_grade"] == "М500"
+    assert row["frost_resistance"] == "F300"
+    assert row["waterproofness"] == "W12"
+    assert row["concrete_aggregate"] == "granite"
+    assert row["concrete_spec_source"] == "table"
+
+    m400 = client.post(
+        "/api/v1/commercial/drafts",
+        data={"product_type": "plates", "text": "ПБ 54-12-8п 1"},
+    )
+    assert m400.status_code == 200, m400.text
+    short = m400.json()["order_data"][0]
+    assert short["concrete_grade"] == "М400"
+    assert short["frost_resistance"] == "F300"
+    assert short["waterproofness"] == "W10"
+    assert short["concrete_spec_source"] == "table"
+
+    draft_id = m500.json()["draft_id"]
+    [line_id] = _set_line_specs(
+        draft_id,
+        {
+            0: {
+                "frost_resistance": None,
+                "waterproofness": None,
+                "concrete_aggregate": None,
+                "concrete_spec_source": None,
+            }
+        },
+    )
+    replaced = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/plates",
+        data={"mode": "replace", "text": "ПБ 78-12-8п 1"},
+    )
+    assert replaced.status_code == 200, replaced.text
+    again = replaced.json()["order_data"][0]
+    assert again["line_id"] == line_id
+    assert again["concrete_grade"] == "М500"
+    assert again.get("frost_resistance") in (None, "")
+    assert again.get("waterproofness") in (None, "")
+    assert again.get("concrete_spec_source") in (None, "")
 
 
 def test_update_pile_grades_bulk(

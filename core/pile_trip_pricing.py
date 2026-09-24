@@ -14,10 +14,16 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from core.pile_catalog import PileCatalogEntry, normalize_pile_mark_key
+from core.pile_catalog import (
+    PileCatalogEntry,
+    normalize_pile_mark_key,
+    parse_bridge_pile_geometry,
+    parse_pile_mark,
+)
 
 PILE_REMAINDER_TRUCK_CAPACITY_KG: float = 19800.0
 PILE_TRIP_PRODUCT_TYPES = frozenset({"piles", "bridge_piles"})
+LONG_PILE_LENGTH_M_MIN: float = 13.0
 
 CatalogLookup = Callable[[str], Optional[PileCatalogEntry]]
 
@@ -181,3 +187,204 @@ def compute_pile_trips(
         pending_marks=pending_marks,
         total_trips=total_trips,
     )
+
+
+@dataclass(frozen=True)
+class LongPileLengthGroup:
+    """Рейсы одной длины > 13 м. Pending не затирает trips соседних длин."""
+
+    length_key: int
+    full_trips: int
+    remainder_kg: float
+    remainder_trips: int
+    override_trips: int
+    pending_marks: tuple[str, ...]
+    trips: int
+    qty: int
+
+    @property
+    def ready(self) -> bool:
+        return not self.pending_marks
+
+
+@dataclass(frozen=True)
+class LongPileSplit:
+    short: PileTripBreakdown
+    lengths: tuple[LongPileLengthGroup, ...]
+
+
+def _length_m_for_mark(mark: str, entry: Optional[PileCatalogEntry]) -> float | None:
+    if entry is not None and entry.length_m is not None:
+        return float(entry.length_m)
+    length_m, _section = parse_bridge_pile_geometry(mark)
+    if length_m is None:
+        length_m, _section = parse_pile_mark(mark)
+    return length_m
+
+
+def _is_long_pile_length(length_m: float | None) -> bool:
+    return length_m is not None and length_m > LONG_PILE_LENGTH_M_MIN
+
+
+def _length_key(length_m: float) -> int:
+    return int(round(length_m * 10))
+
+
+def compute_long_pile_groups(
+    lines: Sequence[Mapping[str, Any]],
+    overrides: Mapping[str, int] | None,
+    catalog_lookup: CatalogLookup,
+) -> LongPileSplit:
+    """Короткий котёл (≤ 13 м) и группы длиннее 13 м. Остатки групп не смешиваются."""
+    short_lines: list[Mapping[str, Any]] = []
+    grouped: dict[int, list[Mapping[str, Any]]] = defaultdict(list)
+
+    for item in lines:
+        if _line_product_type(item) not in PILE_TRIP_PRODUCT_TYPES:
+            continue
+        mark = _line_mark(item)
+        qty = _line_qty(item)
+        if not mark or qty <= 0:
+            continue
+        entry = catalog_lookup(mark)
+        length_m = _length_m_for_mark(mark, entry)
+        if _is_long_pile_length(length_m):
+            assert length_m is not None
+            grouped[_length_key(length_m)].append(item)
+        else:
+            short_lines.append(item)
+
+    short = compute_pile_trips(short_lines, overrides, catalog_lookup)
+    lengths: list[LongPileLengthGroup] = []
+    for length_key in sorted(grouped):
+        bucket = grouped[length_key]
+        breakdown = compute_pile_trips(bucket, overrides, catalog_lookup)
+        qty = sum(_line_qty(item) for item in bucket)
+        lengths.append(
+            LongPileLengthGroup(
+                length_key=length_key,
+                full_trips=breakdown.full_trips,
+                remainder_kg=breakdown.remainder_kg,
+                remainder_trips=breakdown.remainder_trips,
+                override_trips=breakdown.override_trips,
+                pending_marks=breakdown.pending_marks,
+                trips=breakdown.total_trips,
+                qty=qty,
+            )
+        )
+    return LongPileSplit(short=short, lengths=tuple(lengths))
+
+
+@dataclass(frozen=True)
+class LongPileLengthQuote:
+    """Деньги одной длины. Пустой тариф — None, явный 0 — цена введена."""
+
+    length_key: int
+    trips: int
+    trip_cost: float | None
+    pending_marks: tuple[str, ...]
+    amount: float
+    qty: int
+
+    @property
+    def ready(self) -> bool:
+        return self.trip_cost is not None and not self.pending_marks
+
+
+def _trip_cost_from_value(value: Any) -> float | None:
+    if isinstance(value, Mapping):
+        if "trip_cost" not in value:
+            return None
+        value = value.get("trip_cost")
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        cost = float(value)
+    except (TypeError, ValueError):
+        return None
+    if cost < 0 or math.isnan(cost) or math.isinf(cost):
+        return None
+    return cost
+
+
+def coerce_long_pile_delivery(raw: Any) -> dict[int, float]:
+    """Тарифы длин из dict/JSON. Пустой ввод не пишется. Явный 0 сохраняется."""
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return {}
+        import json
+
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(raw, Mapping):
+        return {}
+    out: dict[int, float] = {}
+    for key, value in raw.items():
+        try:
+            length_key = int(str(key).strip())
+        except (TypeError, ValueError):
+            continue
+        if length_key <= 0:
+            continue
+        cost = _trip_cost_from_value(value)
+        if cost is None:
+            continue
+        out[length_key] = cost
+    return out
+
+
+def dumps_long_pile_delivery(raw: Any) -> str | None:
+    data = coerce_long_pile_delivery(raw)
+    if not data:
+        return None
+    import json
+
+    return json.dumps(long_pile_delivery_for_metadata(data), ensure_ascii=False)
+
+
+def long_pile_delivery_for_metadata(raw: Any) -> dict[str, dict[str, float]]:
+    """Тарифы для metadata/API: только введённые цены, ключ — строка length_key."""
+    data = coerce_long_pile_delivery(raw)
+    return {
+        str(length_key): {"trip_cost": data[length_key]}
+        for length_key in sorted(data)
+    }
+
+
+def quote_long_pile_lengths(
+    split: LongPileSplit,
+    tariffs: Any,
+) -> tuple[LongPileLengthQuote, ...]:
+    costs = coerce_long_pile_delivery(tariffs)
+    quotes: list[LongPileLengthQuote] = []
+    for group in split.lengths:
+        trip_cost = costs[group.length_key] if group.length_key in costs else None
+        amount = (
+            round(float(trip_cost) * group.trips, 2)
+            if trip_cost is not None and group.ready
+            else 0.0
+        )
+        quotes.append(
+            LongPileLengthQuote(
+                length_key=group.length_key,
+                trips=group.trips,
+                trip_cost=trip_cost,
+                pending_marks=group.pending_marks,
+                amount=amount,
+                qty=group.qty,
+            )
+        )
+    return tuple(quotes)
+
+
+def format_long_pile_delivery_label(length_key: int) -> str:
+    """140 → «Доставка свай 14,0 м», 138 → «Доставка свай 13,8 м»."""
+    meters = f"{int(length_key) / 10:.1f}".replace(".", ",")
+    return f"Доставка свай {meters} м"

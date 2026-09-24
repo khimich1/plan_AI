@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -68,6 +68,10 @@ class ArchivePileItem(BaseModel):
     qty: int = 0
     unit_price: float | None = None
     discounted_price: float | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 class ArchiveStepItem(BaseModel):
@@ -85,6 +89,10 @@ class ArchiveMarchItem(BaseModel):
     qty: int = 0
     unit_price: float | None = None
     discounted_price: float | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 class ArchiveBridgePileItem(BaseModel):
@@ -94,6 +102,10 @@ class ArchiveBridgePileItem(BaseModel):
     qty: int = 0
     unit_price: float | None = None
     discounted_price: float | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 class ArchiveCompositePileItem(BaseModel):
@@ -112,6 +124,10 @@ class ArchiveFbsItem(BaseModel):
     qty: int = 0
     unit_price: float | None = None
     discounted_price: float | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 class ArchivePlateItem(BaseModel):
@@ -127,6 +143,10 @@ class ArchivePlateItem(BaseModel):
     unit_weight: float | None = None
     total_weight: float | None = None
     status: str | None = None
+    frost_resistance: str | None = None
+    waterproofness: str | None = None
+    concrete_aggregate: str | None = None
+    concrete_spec_source: str | None = None
 
 
 class ArchiveOfferFinance(BaseModel):
@@ -217,6 +237,10 @@ class ArchiveOfferDetails(BaseModel):
     fbs_lm_delivery_ready: bool = True
     fbs_lm_pending_marks: list[str] = Field(default_factory=list)
     fbs_lm_delivery_enabled: bool = False
+    long_pile_delivery_enabled: bool = False
+    long_pile_delivery_total: float = 0.0
+    long_pile_lengths: list[dict] = Field(default_factory=list)
+    long_pile_pending_marks: list[str] = Field(default_factory=list)
     total_cargo_weight_kg: float = Field(default=0.0, description="Суммарная масса по строкам через resolve_kp_line_weight_kg (как PDF/XLSX).")
     delivery_service_total_rub: float = Field(
         default=0.0,
@@ -253,6 +277,7 @@ class UpdateLogisticsCostRequest(BaseModel):
     logistics_cost: float = Field(ge=0, description="Новая стоимость одного рейса плит.")
     pile_logistics_cost: float | None = Field(default=None, ge=0)
     pile_trip_overrides: dict[str, int] | None = None
+    long_pile_delivery: dict[str, Any] | None = None
 
 
 class MoveToProductionRequest(BaseModel):

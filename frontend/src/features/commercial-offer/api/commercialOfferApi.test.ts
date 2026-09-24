@@ -235,6 +235,24 @@ describe("commercialOfferApi.updateGrades", () => {
   });
 });
 
+describe("commercialOfferApi.updateConcreteSpec", () => {
+  it("PATCHes the line concrete-spec endpoint without rebuilding the list", async () => {
+    mockPatch.mockResolvedValue(draftStub);
+
+    const result = await commercialOfferApi.updateConcreteSpec("draft-1", "line-1", {
+      concrete_spec_source: "table",
+      concrete_aggregate: "ordinary",
+    });
+
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/api/v1/commercial/drafts/draft-1/lines/line-1/concrete-spec",
+      JSON.stringify({ concrete_spec_source: "table", concrete_aggregate: "ordinary" }),
+      JSON_HEADERS,
+    );
+    expect(result).toEqual(draftStub);
+  });
+});
+
 describe("commercialOfferApi.checkGuids", () => {
   it("GETs /drafts/{id}/guid-check", async () => {
     const response = {

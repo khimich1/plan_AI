@@ -439,3 +439,133 @@ describe("KpGradedPreviewPanel price catalog and oneoff", () => {
     expect(screen.queryByText(/Не все марки найдены в прайсе/)).not.toBeInTheDocument();
   });
 });
+
+describe("KpGradedPreviewPanel concrete spec column", () => {
+  it("shows the saved B25 pair and sends ordinary to the patch callback", () => {
+    const onConcreteSpecChange = vi.fn();
+    const draft = basePileDraft([
+      {
+        line_id: "ln-b25",
+        product_type: "piles",
+        mark: "С110.35-12",
+        name: "Свая С110.35-12",
+        qty: 2,
+        unit_price: 1000,
+        concrete_grade: "B25",
+        frost_resistance: "F200",
+        waterproofness: "W8",
+        concrete_aggregate: "granite",
+        concrete_spec_source: "table",
+      },
+    ]);
+    const view = render(
+      <KpGradedPreviewPanel
+        productType="piles"
+        draft={draft}
+        normalizedText=""
+        onConcreteSpecChange={onConcreteSpecChange}
+      />,
+    );
+
+    const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+    expect(headers.indexOf("F / W")).toBe(headers.indexOf("Класс") + 1);
+    const spec = screen.getByLabelText("F / W С110.35-12");
+    expect(spec).toHaveValue("granite");
+    expect(screen.getByRole("option", { name: "F200 · W8" })).toBeInTheDocument();
+
+    fireEvent.change(spec, { target: { value: "ordinary" } });
+    expect(onConcreteSpecChange).toHaveBeenCalledWith("ln-b25", {
+      concrete_spec_source: "table",
+      concrete_aggregate: "ordinary",
+    });
+
+    draft.order_data[0] = {
+      ...draft.order_data[0],
+      waterproofness: "W6",
+      concrete_aggregate: "ordinary",
+    };
+    view.rerender(
+      <KpGradedPreviewPanel
+        productType="piles"
+        draft={{ ...draft, order_data: [...draft.order_data] }}
+        normalizedText=""
+        onConcreteSpecChange={onConcreteSpecChange}
+      />,
+    );
+    expect(screen.getByLabelText("F / W С110.35-12")).toHaveValue("ordinary");
+    expect(screen.getByRole("option", { name: "F200 · W6" })).toBeInTheDocument();
+  });
+
+  it("shows a manual pair from the draft and does not replace it with the table pair", () => {
+    render(
+      <KpGradedPreviewPanel
+        productType="piles"
+        draft={basePileDraft([
+          {
+            line_id: "ln-manual",
+            product_type: "piles",
+            mark: "С110.35-12",
+            name: "Свая С110.35-12",
+            qty: 2,
+            unit_price: 1000,
+            concrete_grade: "B20",
+            frost_resistance: "F150",
+            waterproofness: "W4",
+            concrete_aggregate: "",
+            concrete_spec_source: "manual",
+          },
+        ])}
+        normalizedText=""
+        onConcreteSpecChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("F / W С110.35-12")).toHaveValue("saved");
+    expect(screen.getByRole("option", { name: "F150 · W4" })).toBeInTheDocument();
+    expect(screen.getByText("не по таблице")).toBeInTheDocument();
+  });
+
+  it("shows a dash for an empty snapshot and text for a sealed line", () => {
+    render(
+      <KpGradedPreviewPanel
+        productType="piles"
+        draft={basePileDraft([
+          {
+            line_id: "ln-empty",
+            product_type: "piles",
+            mark: "С80.30",
+            name: "Свая С80.30",
+            qty: 1,
+            unit_price: 1000,
+            concrete_grade: "B25",
+          },
+          {
+            line_id: "ln-sealed",
+            product_type: "piles",
+            append_batch_id: "b1",
+            mark: "С60.30",
+            name: "Свая С60.30",
+            qty: 1,
+            unit_price: 1000,
+            concrete_grade: "B25",
+            frost_resistance: "F200",
+            waterproofness: "W8",
+            concrete_aggregate: "granite",
+            concrete_spec_source: "table",
+          },
+        ])}
+        normalizedText=""
+        onConcreteSpecChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("F / W С80.30")).toHaveTextContent("—");
+    expect(screen.queryByRole("combobox", { name: "F / W С60.30" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("F / W С60.30")).toHaveTextContent("F200 · W8");
+  });
+
+  it("does not add the column for steps", () => {
+    render(<KpGradedPreviewPanel productType="steps" draft={makeStepDraft()} normalizedText="ЛС11 10" />);
+    expect(screen.queryByText("F / W")).not.toBeInTheDocument();
+  });
+});

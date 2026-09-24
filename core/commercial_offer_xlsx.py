@@ -7,6 +7,7 @@
 
 import io
 import logging
+from decimal import Decimal
 from typing import Any, List, Dict, Optional
 
 try:
@@ -93,6 +94,8 @@ from core.commercial_pricing import (  # noqa: E402
     VAT_RATE,
     calculate_total_cost as _calculate_total_cost,
     format_phone,
+    uses_per_line_included_vat,
+    vat_included_from_line_sums,
     is_bridge_pile_order,
     is_composite_pile_order,
     is_fbs_order,
@@ -122,6 +125,9 @@ def calculate_total_cost(
     pile_catalog_db_path: str | None = None,
     fbs_lm_delivery_enabled: bool = False,
     weight_catalog_db_path: str | None = None,
+    long_pile_delivery_enabled: bool = False,
+    long_pile_delivery: dict | None = None,
+    kp_id: int | None = None,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
@@ -133,6 +139,9 @@ def calculate_total_cost(
         pile_catalog_db_path=pile_catalog_db_path,
         fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
         weight_catalog_db_path=weight_catalog_db_path,
+        long_pile_delivery_enabled=long_pile_delivery_enabled,
+        long_pile_delivery=long_pile_delivery,
+        kp_id=kp_id,
     )
 
 
@@ -191,6 +200,8 @@ def generate_commercial_offer_xlsx(
     embed_delivery_in_unit_price: bool = False,
     fbs_lm_delivery_enabled: bool = False,
     weight_catalog_db_path: Optional[str] = None,
+    long_pile_delivery_enabled: bool = False,
+    long_pile_delivery: Optional[Dict] = None,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате XLSX с расчётными формулами
@@ -358,6 +369,9 @@ def generate_commercial_offer_xlsx(
         pile_catalog_db_path=pile_catalog_db_path,
         fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
         weight_catalog_db_path=weight_catalog_db_path,
+        long_pile_delivery_enabled=long_pile_delivery_enabled,
+        long_pile_delivery=long_pile_delivery,
+        kp_id=kp_db_id,
     )
     if unified:
         plates_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
@@ -568,9 +582,21 @@ def generate_commercial_offer_xlsx(
         worksheet[f'A{vat_row}'] = "в том числе НДС (22%)"
         worksheet[f'A{vat_row}'].font = summary_font
         worksheet[f'A{vat_row}'].alignment = left_align
-        worksheet[f'{sum_letter}{vat_row}'] = (
-            f"=SUM({sum_letter}{first_data_row}:{sum_letter}{last_plate_row})*{VAT_RATE}"
-        )
+        if uses_per_line_included_vat(kp_db_id):
+            if embed_delivery_in_unit_price and embedded_result is not None:
+                embedded_sums = [
+                    Decimal(str(line.line_sum)) for line in embedded_result.lines
+                ]
+                vat_cell_value: float | str = float(
+                    vat_included_from_line_sums(embedded_sums)
+                )
+            else:
+                vat_cell_value = float(totals["vat_amount"])
+        else:
+            vat_cell_value = (
+                f"=SUM({sum_letter}{first_data_row}:{sum_letter}{last_plate_row})*{VAT_RATE}"
+            )
+        worksheet[f'{sum_letter}{vat_row}'] = vat_cell_value
         worksheet[f'{sum_letter}{vat_row}'].font = summary_font
         worksheet[f'{sum_letter}{vat_row}'].number_format = '#,##0.00'
         worksheet[f'{sum_letter}{vat_row}'].alignment = right_align

@@ -9,7 +9,7 @@ import type {
 import { DownloadFilesSection } from "@/features/commercial-offer/components/DownloadFilesSection";
 import { SaveOfferSection } from "@/features/commercial-offer/components/SaveOfferSection";
 import { PlatePriceBreakdownModal } from "@/features/commercial-offer/components/PlatePriceBreakdownModal";
-import { findBreakdownTable } from "@/features/commercial-offer/lib/findBreakdownTable";
+import { formatFrostPair } from "@/features/commercial-offer/lib/concreteSpec";
 import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
 import {
   baseProductsTotal,
@@ -39,6 +39,12 @@ import { estimateFromLengthM } from "@/features/production/lib/productionEstimat
 import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { StepLayout } from "@/shared/ui/StepLayout";
 import { useGuidCheckQuery } from "@/features/commercial-offer/hooks/useGuidCheckQuery";
+import {
+  collectLongPileTariffs,
+  formatLongPileMeters,
+  uniqueMarks,
+} from "@/features/commercial-offer/lib/longPileDelivery";
+import type { LongPileLengthQuote } from "@/features/commercial-offer/types/commercialOffer";
 
 /** Default factory knob; days are approximate until archive quote. Tracks ignore this. */
 const DEFAULT_TRACKS_PER_DAY = 3;
@@ -110,6 +116,7 @@ type CalculationResultStepProps = {
   onPileDeliverySubmit?: (payload: {
     pileLogisticsCost?: number;
     pileTripOverrides?: Record<string, number>;
+    longPileDelivery?: Record<string, { trip_cost: number }>;
   }) => Promise<void>;
   onAddOtherNomenclature?: () => void;
   onUndoLastBatch?: () => Promise<void> | void;
@@ -153,6 +160,8 @@ export const CalculationResultStep = ({
     String(draft.metadata.pile_logistics_cost ?? 0),
   );
   const [pileOverrideDrafts, setPileOverrideDrafts] = useState<Record<string, string>>({});
+  const [longTariffDrafts, setLongTariffDrafts] = useState<Record<string, string>>({});
+  const [longTariffError, setLongTariffError] = useState<string | null>(null);
   const [logisticsError, setLogisticsError] = useState<string | null>(null);
   const [pileLogisticsError, setPileLogisticsError] = useState<string | null>(null);
   const [discountError, setDiscountError] = useState<string | null>(null);
@@ -209,9 +218,14 @@ export const CalculationResultStep = ({
   });
   const mixedDelivery = hasPlateLines && hasPileLines;
   const tripCostDisabled = !hasPlateLines && !hasPileLines && !hasFbsLmLines;
-  const pendingPileMarks = (draft.totals.pile_trip_pending_marks ?? []).filter(
-    (mark): mark is string => typeof mark === "string" && mark.length > 0,
+  const longPileLengths: LongPileLengthQuote[] = (draft.totals.long_pile_lengths ?? []).filter(
+    (row): row is LongPileLengthQuote =>
+      Boolean(row) && typeof row.length_key === "number" && Number.isFinite(row.length_key),
   );
+  const pendingPileMarks = uniqueMarks([
+    ...(draft.totals.pile_trip_pending_marks ?? []),
+    ...(draft.totals.long_pile_pending_marks ?? []),
+  ]);
   const pendingFbsLmMarks = (draft.totals.fbs_lm_pending_marks ?? []).filter(
     (mark): mark is string => typeof mark === "string" && mark.length > 0,
   );
@@ -265,6 +279,23 @@ export const CalculationResultStep = ({
     }
     setPileOverrideDrafts(next);
   }, [draft.metadata.pile_trip_overrides, pendingPileMarks.join("|")]);
+
+  const longTariffSeed = longPileLengths
+    .map((row) => `${row.length_key}:${row.trip_cost ?? ""}`)
+    .join("|");
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    const saved = draft.metadata.long_pile_delivery ?? {};
+    for (const row of longPileLengths) {
+      const key = String(row.length_key);
+      const fromMeta = saved[key]?.trip_cost;
+      const cost = fromMeta ?? row.trip_cost;
+      next[key] = cost === null || cost === undefined ? "" : String(cost).replace(".", ",");
+    }
+    setLongTariffDrafts(next);
+    setLongTariffError(null);
+  }, [longTariffSeed, draft.metadata.long_pile_delivery]);
 
   const restoreDiscountDrafts = () => {
     setDiscountDraft(String(savedDiscountPercent));
@@ -395,6 +426,16 @@ export const CalculationResultStep = ({
     await onPileDeliverySubmit?.({ pileTripOverrides: merged });
   };
 
+  const handleApplyLongTariffs = async () => {
+    const collected = collectLongPileTariffs(longPileLengths, longTariffDrafts);
+    if (!collected.ok) {
+      setLongTariffError(collected.error);
+      return;
+    }
+    setLongTariffError(null);
+    await onPileDeliverySubmit?.({ longPileDelivery: collected.tariffs });
+  };
+
   const totalWithVat = formatTotalsMoney(serverTotalWithVat);
   const readinessWarnings = filterCompositionWarnings(draft.metadata.warnings);
 
@@ -496,8 +537,8 @@ export const CalculationResultStep = ({
               {(isStepsProduct
                 ? ["№", "Марка", "Кол-во", "Цена", "Сумма"]
                 : isGradeSimpleDraft
-                  ? ["№", "Марка", "Класс", "Кол-во", "Цена", "Сумма"]
-                  : ["№", "Наименование", "Кол-во", "Ед.", "Вес(кг)", "Цена", "Сумма"]
+                  ? ["№", "Марка", "Класс", "F / W", "Кол-во", "Цена", "Сумма"]
+                  : ["№", "Наименование", "F / W", "Кол-во", "Ед.", "Вес(кг)", "Цена", "Сумма"]
               )
                 .flatMap((column, columnIndex) =>
                   columnIndex === 1 && showTypeColumn ? ["Тип", column] : [column],
@@ -565,6 +606,12 @@ export const CalculationResultStep = ({
                     {typeCell}
                     <td style={tdStyle}>{itemName}</td>
                     <td style={tdStyle}>{String(item.concrete_grade ?? "—")}</td>
+                    <td style={tdStyle}>
+                      {formatFrostPair(
+                        typeof item.frost_resistance === "string" ? item.frost_resistance : null,
+                        typeof item.waterproofness === "string" ? item.waterproofness : null,
+                      )}
+                    </td>
                     <td style={tdStyle}>{String(item.qty ?? "")}</td>
                     <td style={tdStyle}>
                       <div>
@@ -606,6 +653,12 @@ export const CalculationResultStep = ({
                       </button>
                     ) : (
                       plateName
+                    )}
+                  </td>
+                  <td style={tdStyle}>
+                    {formatFrostPair(
+                      typeof item.frost_resistance === "string" ? item.frost_resistance : null,
+                      typeof item.waterproofness === "string" ? item.waterproofness : null,
                     )}
                   </td>
                   <td style={tdStyle}>{String(item.qty ?? "")}</td>
@@ -753,6 +806,39 @@ export const CalculationResultStep = ({
                   }}
                 />
               </FieldWrapper>
+            </div>
+          )}
+          {longPileLengths.length > 0 && (
+            <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc", display: "grid", gap: "0.75rem" }}>
+              {longPileLengths.map((row) => {
+                const meters = formatLongPileMeters(row.length_key);
+                const key = String(row.length_key);
+                const lengthPending = (row.pending_marks ?? []).length > 0;
+                return (
+                  <div key={key} style={{ display: "grid", gap: "0.35rem" }}>
+                    <FieldWrapper label={`Тариф рейса ${meters}`} error={null}>
+                      <Input
+                        value={longTariffDrafts[key] ?? ""}
+                        onChange={(event) =>
+                          setLongTariffDrafts((prev) => ({ ...prev, [key]: event.target.value }))
+                        }
+                        inputMode="decimal"
+                        placeholder="Стоимость рейса"
+                      />
+                    </FieldWrapper>
+                    {!lengthPending && <div>Рейсов {meters}: {row.trips}</div>}
+                  </div>
+                );
+              })}
+              {longTariffError && <div style={{ color: "#b42318" }}>{longTariffError}</div>}
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void handleApplyLongTariffs()}
+                disabled={isUpdatingDiscount}
+              >
+                Применить тарифы
+              </Button>
             </div>
           )}
           {pendingFbsLmMarks.length > 0 && (

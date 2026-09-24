@@ -1,6 +1,7 @@
 import { useEffect, useState, type WheelEvent } from "react";
 
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import type { ConcreteSpecPatch } from "@/features/commercial-offer/lib/concreteSpec";
 import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type {
   CommercialDraftDetails,
@@ -98,6 +99,7 @@ type PlateInputStepProps = {
   ) => void;
   onApplyInvalidWidths?: () => void;
   onReset: () => void;
+  onConcreteSpecChange?: (lineId: string, patch: ConcreteSpecPatch) => void;
   lineRowHandlers?: LineRowHandlers;
 };
 
@@ -184,6 +186,7 @@ export const PlateInputStep = ({
   onInvalidWidthDecisionChange,
   onApplyInvalidWidths,
   onReset,
+  onConcreteSpecChange,
   lineRowHandlers,
 }: PlateInputStepProps) => {
   const [showSourceInput, setShowSourceInput] = useState(false);
@@ -611,6 +614,7 @@ export const PlateInputStep = ({
                 draft={draft}
                 normalizedText={normalizedText}
                 lineRowHandlers={lineRowHandlers}
+                onConcreteSpecChange={onConcreteSpecChange}
               />
             </>
           )}

@@ -2,6 +2,7 @@ import { useEffect, useState, type WheelEvent } from "react";
 
 import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
 import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import type { ConcreteSpecPatch } from "@/features/commercial-offer/lib/concreteSpec";
 import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type {
   CommercialDraftDetails,
@@ -75,6 +76,7 @@ type SimpleProductInputStepProps = {
   onFinishInput: () => void;
   onApplyGradeToAll?: (grade: string) => void;
   onLineGradeChange?: (lineIndex: number, grade: string) => void;
+  onConcreteSpecChange?: (lineId: string, patch: ConcreteSpecPatch) => void;
   onReset: () => void;
   lineRowHandlers?: LineRowHandlers;
   onSetOneoffPrice?: (lineId: string, unitPrice: number | null) => void | Promise<void>;
@@ -153,6 +155,7 @@ export const SimpleProductInputStep = ({
   onFinishInput,
   onApplyGradeToAll,
   onLineGradeChange,
+  onConcreteSpecChange,
   onReset,
   lineRowHandlers,
   onSetOneoffPrice,
@@ -516,6 +519,7 @@ export const SimpleProductInputStep = ({
                 isUpdatingGrades={isUpdatingGrades}
                 onApplyGradeToAll={onApplyGradeToAll}
                 onLineGradeChange={onLineGradeChange}
+                onConcreteSpecChange={onConcreteSpecChange}
                 lineRowHandlers={lineRowHandlers}
                 catalogItems={catalogItems}
                 catalogQuery={catalogQuery}

@@ -199,11 +199,24 @@ def _apply_length_prays_variant(name: str) -> str:
     return re.sub(r'((?:Плиты\s+)?П[БК]\s+)(\d+)(?=-)', r'\1\2,0', name, count=1)
 
 
+def _collapse_trailing_decimal_zeros(name: str) -> str:
+    """75,10 → 75,1; 67,80 → 67,8; 40,00 → 40. 59,81 не меняется."""
+
+    def repl(match: re.Match) -> str:
+        whole = match.group(1)
+        frac = match.group(2).rstrip("0")
+        if not frac:
+            return whole
+        return f"{whole},{frac}"
+
+    return re.sub(r"(\d+),(\d+)", repl, name)
+
+
 def plate_name_to_prays_variants(name: str) -> List[str]:
     """Возвращает список вариантов имени плиты для поиска в prays_plity.
 
     При отсутствии точного совпадения lookup пробует каждый вариант по очереди.
-    Порядок: только ширина, только длина, оба (ширина + длина).
+    Порядок: схлопнутые хвостовые нули, ширина, длина, оба (ширина + длина).
     """
     result: List[str] = []
     seen: set = set()
@@ -213,14 +226,19 @@ def plate_name_to_prays_variants(name: str) -> List[str]:
             seen.add(v)
             result.append(v)
 
-    width_fixed = _apply_width_prays_variant(name)
-    add(width_fixed)
+    seeds = [name]
+    collapsed = _collapse_trailing_decimal_zeros(name)
+    if collapsed != name:
+        seeds.append(collapsed)
 
-    length_fixed = _apply_length_prays_variant(name)
-    add(length_fixed)
-
-    both = _apply_length_prays_variant(width_fixed)
-    add(both)
+    for seed in seeds:
+        if seed != name:
+            add(seed)
+        width_fixed = _apply_width_prays_variant(seed)
+        add(width_fixed)
+        length_fixed = _apply_length_prays_variant(seed)
+        add(length_fixed)
+        add(_apply_length_prays_variant(width_fixed))
 
     return result
 

@@ -6,7 +6,11 @@ from typing import Any, Dict, List, Optional
 
 from core.domain.enums import KpStatus, PlateStatus
 from core.kp_db_common import DEFAULT_DB, _connect
-from core.pile_trip_pricing import coerce_pile_trip_overrides, dumps_pile_trip_overrides
+from core.pile_trip_pricing import (
+    coerce_pile_trip_overrides,
+    dumps_long_pile_delivery,
+    dumps_pile_trip_overrides,
+)
 
 _VALID_PRODUCT_TYPES = frozenset(
     {
@@ -106,6 +110,25 @@ def _line_id_value(item: dict[str, Any]) -> str | None:
     return text or None
 
 
+_CONCRETE_SPEC_KEYS = (
+    "frost_resistance",
+    "waterproofness",
+    "concrete_aggregate",
+    "concrete_spec_source",
+)
+
+
+def _concrete_spec_values(item: dict[str, Any]) -> tuple[str | None, str | None, str | None, str | None]:
+    """Отсутствие поля или NULL остаётся NULL. Пустая строка щебня сохраняется."""
+    stored: list[str | None] = []
+    for key in _CONCRETE_SPEC_KEYS:
+        if key not in item or item[key] is None:
+            stored.append(None)
+        else:
+            stored.append(str(item[key]))
+    return (stored[0], stored[1], stored[2], stored[3])
+
+
 class KpPersistenceService:
     """Persists a new commercial offer and its plate lines to SQLite."""
 
@@ -131,12 +154,18 @@ class KpPersistenceService:
         customer_inn: str | None = None,
         customer_kpp: str | None = None,
         fbs_lm_delivery_enabled: bool = False,
+        long_pile_delivery_enabled: bool = False,
+        long_pile_delivery: Any = None,
     ) -> int:
         trip_logistics = max(0.0, float(logistics_cost or 0.0))
         pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
-        from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+        from core.commercial_pricing import (
+            coerce_fbs_lm_delivery_enabled,
+            coerce_long_pile_delivery_enabled,
+        )
 
         fbs_lm_flag = coerce_fbs_lm_delivery_enabled(fbs_lm_delivery_enabled)
+        long_pile_flag = coerce_long_pile_delivery_enabled(long_pile_delivery_enabled)
         try:
             from core.commercial_pricing import calculate_total_cost
 
@@ -151,6 +180,9 @@ class KpPersistenceService:
                 pile_catalog_db_path=db_path,
                 fbs_lm_delivery_enabled=fbs_lm_flag,
                 weight_catalog_db_path=db_path,
+                long_pile_delivery_enabled=long_pile_flag,
+                long_pile_delivery=long_pile_delivery,
+                kp_id=None,
             )
             subtotal = totals["subtotal"]
             vat_amount = totals["vat_amount"]
@@ -207,6 +239,39 @@ class KpPersistenceService:
                 ),
             )
             kp_id = cur.lastrowid
+            from core.commercial_pricing import VAT_PER_LINE_FROM_KP_ID
+
+            if kp_id is not None and int(kp_id) < VAT_PER_LINE_FROM_KP_ID:
+                from core.commercial_pricing import calculate_total_cost
+
+                totals = calculate_total_cost(
+                    order_data,
+                    discount_percent,
+                    logistics_cost=trip_logistics,
+                    db_path=db_path,
+                    require_all_priced=False,
+                    pile_logistics_cost=pile_trip,
+                    pile_trip_overrides=coerce_pile_trip_overrides(pile_trip_overrides),
+                    pile_catalog_db_path=db_path,
+                    fbs_lm_delivery_enabled=fbs_lm_flag,
+                    weight_catalog_db_path=db_path,
+                    long_pile_delivery_enabled=long_pile_flag,
+                    long_pile_delivery=long_pile_delivery,
+                    kp_id=int(kp_id),
+                )
+                cur.execute(
+                    """
+                    UPDATE KP_offers
+                    SET subtotal = ?, vat_amount = ?, total_amount = ?
+                    WHERE kp_id = ?
+                    """,
+                    (
+                        totals["subtotal"],
+                        totals["vat_amount"],
+                        totals["total_with_vat"],
+                        kp_id,
+                    ),
+                )
 
             for idx, (item, line_type) in enumerate(
                 zip(order_data, line_types), start=1
@@ -239,8 +304,9 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_meta (
                     kp_id, status, owner_user_id, product_type,
-                    pile_trip_overrides_json, fbs_lm_delivery_enabled
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    pile_trip_overrides_json, fbs_lm_delivery_enabled,
+                    long_pile_delivery_enabled, long_pile_delivery_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -249,6 +315,8 @@ class KpPersistenceService:
                     meta_type,
                     dumps_pile_trip_overrides(pile_trip_overrides),
                     1 if fbs_lm_flag else 0,
+                    1 if long_pile_flag else 0,
+                    dumps_long_pile_delivery(long_pile_delivery),
                 ),
             )
             conn.commit()
@@ -273,6 +341,8 @@ class KpPersistenceService:
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict | None = None,
         fbs_lm_delivery_enabled: bool | None = None,
+        long_pile_delivery_enabled: bool | None = None,
+        long_pile_delivery: Any = None,
     ) -> int:
         """Sync existing KP lines by ``line_id`` (append/update; same ``kp_id``).
 
@@ -354,7 +424,11 @@ class KpPersistenceService:
                 execution_terms if execution_terms is not None else offer_row[7]
             )
             cur.execute(
-                "SELECT pile_trip_overrides_json, fbs_lm_delivery_enabled FROM kp_meta WHERE kp_id = ?",
+                """
+                SELECT pile_trip_overrides_json, fbs_lm_delivery_enabled,
+                       long_pile_delivery_enabled, long_pile_delivery_json
+                FROM kp_meta WHERE kp_id = ?
+                """,
                 (kp_id,),
             )
             meta_overrides_row = cur.fetchone()
@@ -366,7 +440,10 @@ class KpPersistenceService:
                 if pile_trip_overrides is not None
                 else existing_overrides
             )
-            from core.commercial_pricing import coerce_fbs_lm_delivery_enabled
+            from core.commercial_pricing import (
+                coerce_fbs_lm_delivery_enabled,
+                coerce_long_pile_delivery_enabled,
+            )
 
             existing_fbs_lm = coerce_fbs_lm_delivery_enabled(
                 meta_overrides_row[1] if meta_overrides_row else None
@@ -375,6 +452,18 @@ class KpPersistenceService:
                 coerce_fbs_lm_delivery_enabled(fbs_lm_delivery_enabled)
                 if fbs_lm_delivery_enabled is not None
                 else existing_fbs_lm
+            )
+            existing_long_pile = coerce_long_pile_delivery_enabled(
+                meta_overrides_row[2] if meta_overrides_row else None
+            )
+            resolved_long_pile = (
+                coerce_long_pile_delivery_enabled(long_pile_delivery_enabled)
+                if long_pile_delivery_enabled is not None
+                else existing_long_pile
+            )
+            existing_long_json = meta_overrides_row[3] if meta_overrides_row else None
+            resolved_long_json = (
+                existing_long_json if long_pile_delivery is None else long_pile_delivery
             )
 
             try:
@@ -391,6 +480,9 @@ class KpPersistenceService:
                     pile_catalog_db_path=db_path,
                     fbs_lm_delivery_enabled=resolved_fbs_lm,
                     weight_catalog_db_path=db_path,
+                    long_pile_delivery_enabled=resolved_long_pile,
+                    long_pile_delivery=resolved_long_json,
+                    kp_id=kp_id,
                 )
                 subtotal = totals["subtotal"]
                 vat_amount = totals["vat_amount"]
@@ -515,13 +607,16 @@ class KpPersistenceService:
             cur.execute(
                 """
                 UPDATE kp_meta
-                SET pile_trip_overrides_json = ?, product_type = ?, fbs_lm_delivery_enabled = ?
+                SET pile_trip_overrides_json = ?, product_type = ?, fbs_lm_delivery_enabled = ?,
+                    long_pile_delivery_enabled = ?, long_pile_delivery_json = ?
                 WHERE kp_id = ?
                 """,
                 (
                     dumps_pile_trip_overrides(resolved_overrides),
                     meta_type,
                     1 if resolved_fbs_lm else 0,
+                    1 if resolved_long_pile else 0,
+                    dumps_long_pile_delivery(resolved_long_json),
                     kp_id,
                 ),
             )
@@ -648,7 +743,9 @@ class KpPersistenceService:
                 """
                 UPDATE kp_piles SET
                     position_number = ?, mark = ?, concrete_grade = ?,
-                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?
+                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?,
+                    frost_resistance = ?, waterproofness = ?,
+                    concrete_aggregate = ?, concrete_spec_source = ?
                 WHERE id = ?
                 """,
                 (
@@ -659,6 +756,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                     row_id,
                 ),
             )
@@ -671,7 +769,9 @@ class KpPersistenceService:
                 """
                 UPDATE kp_bridge_piles SET
                     position_number = ?, mark = ?, concrete_grade = ?,
-                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?
+                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?,
+                    frost_resistance = ?, waterproofness = ?,
+                    concrete_aggregate = ?, concrete_spec_source = ?
                 WHERE id = ?
                 """,
                 (
@@ -682,6 +782,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                     row_id,
                 ),
             )
@@ -717,7 +818,9 @@ class KpPersistenceService:
                 """
                 UPDATE kp_fbs SET
                     position_number = ?, mark = ?, concrete_grade = ?,
-                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?
+                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?,
+                    frost_resistance = ?, waterproofness = ?,
+                    concrete_aggregate = ?, concrete_spec_source = ?
                 WHERE id = ?
                 """,
                 (
@@ -728,6 +831,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                     row_id,
                 ),
             )
@@ -740,7 +844,9 @@ class KpPersistenceService:
                 """
                 UPDATE kp_marches SET
                     position_number = ?, mark = ?, concrete_grade = ?,
-                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?
+                    qty = ?, unit_price = ?, discounted_price = ?, line_id = ?,
+                    frost_resistance = ?, waterproofness = ?,
+                    concrete_aggregate = ?, concrete_spec_source = ?
                 WHERE id = ?
                 """,
                 (
@@ -751,6 +857,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                     row_id,
                 ),
             )
@@ -810,7 +917,11 @@ class KpPersistenceService:
                 length_dm_raw = ?,
                 nomenclature_id = ?,
                 concrete_grade = ?,
-                line_id = ?
+                line_id = ?,
+                frost_resistance = ?,
+                waterproofness = ?,
+                concrete_aggregate = ?,
+                concrete_spec_source = ?
             WHERE id = ?
             """,
             (
@@ -828,6 +939,7 @@ class KpPersistenceService:
                 nomenclature_id,
                 concrete_grade,
                 line_id,
+                *_concrete_spec_values(item),
                 row_id,
             ),
         )
@@ -854,8 +966,10 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_piles (
                     kp_id, position_number, mark, concrete_grade,
-                    qty, unit_price, discounted_price, line_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    qty, unit_price, discounted_price, line_id,
+                    frost_resistance, waterproofness,
+                    concrete_aggregate, concrete_spec_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -866,6 +980,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                 ),
             )
             return
@@ -877,8 +992,10 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_bridge_piles (
                     kp_id, position_number, mark, concrete_grade,
-                    qty, unit_price, discounted_price, line_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    qty, unit_price, discounted_price, line_id,
+                    frost_resistance, waterproofness,
+                    concrete_aggregate, concrete_spec_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -889,6 +1006,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                 ),
             )
             return
@@ -923,8 +1041,10 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_fbs (
                     kp_id, position_number, mark, concrete_grade,
-                    qty, unit_price, discounted_price, line_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    qty, unit_price, discounted_price, line_id,
+                    frost_resistance, waterproofness,
+                    concrete_aggregate, concrete_spec_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -935,6 +1055,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                 ),
             )
             return
@@ -946,8 +1067,10 @@ class KpPersistenceService:
                 """
                 INSERT INTO kp_marches (
                     kp_id, position_number, mark, concrete_grade,
-                    qty, unit_price, discounted_price, line_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    qty, unit_price, discounted_price, line_id,
+                    frost_resistance, waterproofness,
+                    concrete_aggregate, concrete_spec_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -958,6 +1081,7 @@ class KpPersistenceService:
                     unit_price,
                     discounted_price,
                     line_id,
+                    *_concrete_spec_values(item),
                 ),
             )
             return
@@ -1006,8 +1130,10 @@ class KpPersistenceService:
                 kp_id, position_number, plate_name,
                 length_m, width_m, load_class,
                 qty, unit_weight, total_weight, discounted_price, unit_price,
-                length_dm_raw, nomenclature_id, concrete_grade, line_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                length_dm_raw, nomenclature_id, concrete_grade, line_id,
+                frost_resistance, waterproofness,
+                concrete_aggregate, concrete_spec_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 kp_id,
@@ -1025,5 +1151,6 @@ class KpPersistenceService:
                 nomenclature_id,
                 concrete_grade,
                 line_id,
+                *_concrete_spec_values(item),
             ),
         )

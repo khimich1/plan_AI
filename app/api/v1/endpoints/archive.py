@@ -318,12 +318,17 @@ def update_archive_logistics_cost(
     service: ArchiveService = Depends(get_archive_service),
 ) -> ArchiveOfferDetails:
     try:
+        logistics_kwargs: dict = {
+            "pile_logistics_cost": payload.pile_logistics_cost,
+            "pile_trip_overrides": payload.pile_trip_overrides,
+        }
+        if payload.long_pile_delivery is not None:
+            logistics_kwargs["long_pile_delivery"] = payload.long_pile_delivery
         return service.update_logistics_cost(
             kp_id,
             payload.logistics_cost,
             user=user,
-            pile_logistics_cost=payload.pile_logistics_cost,
-            pile_trip_overrides=payload.pile_trip_overrides,
+            **logistics_kwargs,
         )
     except ArchiveNotFoundError as exc:
         raise_not_found_client_error(

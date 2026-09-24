@@ -3,6 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 
+def _concrete_spec_fields(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "frost_resistance": row.get("frost_resistance"),
+        "waterproofness": row.get("waterproofness"),
+        "concrete_aggregate": row.get("concrete_aggregate"),
+        "concrete_spec_source": row.get("concrete_spec_source"),
+    }
+
+
 def _restore_unit_price(plate: dict[str, Any], discount: float) -> float:
     unit_price = plate.get("unit_price")
     if unit_price is not None and isinstance(unit_price, (int, float)) and unit_price > 0:
@@ -30,6 +39,7 @@ def order_data_from_kp_piles(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
                 "concrete_grade": str(pile.get("concrete_grade") or "B25").strip(),
                 "qty": int(pile.get("qty") or 0),
                 "unit_price": unit_price,
+                **_concrete_spec_fields(pile),
             }
         )
     return result
@@ -51,6 +61,7 @@ def order_data_from_kp_marches(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
                 "concrete_grade": str(march.get("concrete_grade") or "B25").strip(),
                 "qty": int(march.get("qty") or 0),
                 "unit_price": unit_price,
+                **_concrete_spec_fields(march),
             }
         )
     return result
@@ -72,6 +83,7 @@ def order_data_from_kp_bridge_piles(kp_info: dict[str, Any]) -> list[dict[str, A
                 "concrete_grade": str(item.get("concrete_grade") or "B25").strip(),
                 "qty": int(item.get("qty") or 0),
                 "unit_price": unit_price,
+                **_concrete_spec_fields(item),
             }
         )
     return result
@@ -115,6 +127,7 @@ def order_data_from_kp_fbs(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
                 "concrete_grade": str(item.get("concrete_grade") or "B25").strip(),
                 "qty": int(item.get("qty") or 0),
                 "unit_price": unit_price,
+                **_concrete_spec_fields(item),
             }
         )
     return result
@@ -164,6 +177,7 @@ def order_data_from_kp_plates(kp_info: dict[str, Any]) -> list[dict[str, Any]]:
                 "load_class": plate.get("load_class") or 800,
                 "unit_price": unit_price,
                 "weight": weight or 0,
+                **_concrete_spec_fields(plate),
             }
         )
     return result

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { guidCheckKeys } from "@/features/commercial-offer/hooks/useGuidCheckQuery";
 import { nomenclatureApi } from "@/features/nomenclature/api/nomenclatureApi";
 import type { GuidTasksResponse, NomenclatureProductKind } from "@/features/nomenclature/types/nomenclature";
 
@@ -20,6 +21,7 @@ export const useImport1cMutation = () => {
     }) => nomenclatureApi.import1c(file, productKind),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: nomenclatureKeys.all });
+      void queryClient.invalidateQueries({ queryKey: guidCheckKeys.all });
     },
   });
 };

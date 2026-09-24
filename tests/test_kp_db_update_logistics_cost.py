@@ -53,7 +53,7 @@ def test_update_kp_logistics_cost_totals_match_calculate_total_cost(iso_db: str)
     )
     assert kp_db.update_kp_logistics_cost(kp_id, 125.55, iso_db) is True
 
-    expected = calculate_total_cost(order_data, 0.0, logistics_cost=125.55)
+    expected = calculate_total_cost(order_data, 0.0, logistics_cost=125.55, kp_id=kp_id)
     lg, sub, vat, total = _offer_financial_row(iso_db, kp_id)
     assert lg == pytest.approx(125.55)
     assert sub == pytest.approx(expected["subtotal"])
@@ -82,7 +82,7 @@ def test_update_kp_logistics_cost_with_discount_keeps_pdf_xlsx_formula(iso_db: s
     trip = 2000.5
     assert kp_db.update_kp_logistics_cost(kp_id, trip, iso_db) is True
 
-    expected = calculate_total_cost(order_data, 15.0, logistics_cost=trip)
+    expected = calculate_total_cost(order_data, 15.0, logistics_cost=trip, kp_id=kp_id)
     lg, sub, vat, total = _offer_financial_row(iso_db, kp_id)
     assert lg == pytest.approx(trip)
     assert sub == pytest.approx(expected["subtotal"])
@@ -104,7 +104,7 @@ def test_update_kp_logistics_cost_clamps_negative_and_matches_zero_trip_formula(
     )
     assert kp_db.update_kp_logistics_cost(kp_id, -99.0, iso_db) is True
 
-    expected = calculate_total_cost(order_data, 0.0, logistics_cost=0.0)
+    expected = calculate_total_cost(order_data, 0.0, logistics_cost=0.0, kp_id=kp_id)
     lg, sub, vat, total = _offer_financial_row(iso_db, kp_id)
     assert lg == pytest.approx(0.0)
     assert sub == pytest.approx(expected["subtotal"])

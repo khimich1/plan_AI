@@ -5,6 +5,7 @@ import { Button } from "@/shared/ui/Button";
 import { Spinner } from "@/shared/ui/Spinner";
 import { Alert } from "@/shared/ui/Alert";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
+import { formatFrostPair } from "@/features/commercial-offer/lib/concreteSpec";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
 import {
   CounterpartyAutocomplete,
@@ -27,6 +28,11 @@ import {
 import {
   cargoDeliveryTripsCount,
 } from "@/features/commercial-offer/utils/cargoDeliveryPricing";
+import {
+  collectLongPileTariffs,
+  formatLongPileMeters,
+  uniqueMarks,
+} from "@/features/commercial-offer/lib/longPileDelivery";
 import { formatMoney, statusEmoji } from "@/features/commercial-archive/lib/format";
 import type { ArchiveOfferDetails, ArchiveMarchItem, ArchivePileItem, ArchiveStepItem } from "@/features/commercial-archive/types/archive";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
@@ -131,6 +137,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [logisticsDraft, setLogisticsDraft] = useState("");
   const [pileLogisticsDraft, setPileLogisticsDraft] = useState("");
   const [pileOverrideDrafts, setPileOverrideDrafts] = useState<Record<string, string>>({});
+  const [longTariffDrafts, setLongTariffDrafts] = useState<Record<string, string>>({});
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [targetSumError, setTargetSumError] = useState<string | null>(null);
   const [logisticsError, setLogisticsError] = useState<string | null>(null);
@@ -287,17 +294,34 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       setLogisticsDraft(String(offer.logistics_cost ?? 0).replace(".", ","));
       setPileLogisticsDraft(String(offer.pile_logistics_cost ?? 0).replace(".", ","));
       const nextOverrides: Record<string, string> = {};
-      for (const mark of offer.pile_trip_pending_marks ?? []) {
+      for (const mark of pileQuestionMarks(offer)) {
         const saved = offer.pile_trip_overrides?.[mark];
         nextOverrides[mark] = saved === undefined ? "" : String(saved);
       }
       setPileOverrideDrafts(nextOverrides);
+      const nextTariffs: Record<string, string> = {};
+      if (offer.long_pile_delivery_enabled) {
+        for (const row of offer.long_pile_lengths ?? []) {
+          const cost = row.trip_cost;
+          nextTariffs[String(row.length_key)] =
+            cost === null || cost === undefined ? "" : String(cost).replace(".", ",");
+        }
+      }
+      setLongTariffDrafts(nextTariffs);
       setDiscountError(null);
       setTargetSumError(null);
       setLogisticsError(null);
       setResumeError(null);
     }
-  }, [offer?.kp_id, offer?.finance.discount_percent, offer?.logistics_cost, offer?.pile_logistics_cost, offer?.delivery_service_total_rub, savedTargetSum]);
+  }, [
+    offer,
+    offer?.kp_id,
+    offer?.finance.discount_percent,
+    offer?.logistics_cost,
+    offer?.pile_logistics_cost,
+    offer?.delivery_service_total_rub,
+    savedTargetSum,
+  ]);
 
   const restoreDiscountDrafts = () => {
     if (!offer) {
@@ -438,7 +462,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       pileLogisticsCost = pileParsed;
     }
     const overrides: Record<string, number> = { ...(offer.pile_trip_overrides ?? {}) };
-    for (const mark of offer.pile_trip_pending_marks ?? []) {
+    for (const mark of pileQuestionMarks(offer)) {
       const n = parseNumberField(pileOverrideDrafts[mark] ?? "");
       if (n === null || n < 0 || !Number.isInteger(n)) {
         setLogisticsError("Число машин должно быть целым числом не меньше 0.");
@@ -446,17 +470,28 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       }
       overrides[mark] = n;
     }
+    let longPileDelivery: Record<string, { trip_cost: number }> | undefined;
+    if (offer.long_pile_delivery_enabled) {
+      const collected = collectLongPileTariffs(offer.long_pile_lengths ?? [], longTariffDrafts);
+      if (!collected.ok) {
+        setLogisticsError(collected.error);
+        return;
+      }
+      longPileDelivery = collected.tariffs;
+    }
     setLogisticsError(null);
     await logisticsMutation.mutateAsync({
       kpId: offer.kp_id,
       logisticsCost: hasPlateItems ? parsed : offer.logistics_cost ?? 0,
       pileLogisticsCost,
       pileTripOverrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+      longPileDelivery,
     });
     setLogisticsDraft(String(parsed).replace(".", ","));
   };
 
   const clientTrips = offer ? cargoDeliveryTripsCount(Math.max(0, offer.total_cargo_weight_kg ?? 0)) : 0;
+  const tripCountHint = clientTrips > 0 ? ` (${tripsRussianLabel(clientTrips)})` : "";
   const hasPileItems = (offer?.piles?.length ?? 0) > 0 || (offer?.bridge_piles?.length ?? 0) > 0;
   const hasPlateItems = (offer?.plates?.length ?? 0) > 0;
   const hasFbsLmItems =
@@ -759,7 +794,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   >
                     <span style={{ color: "#475467", fontWeight: 500 }}>
                       Услуга по доставке грузов
-                      {clientTrips > 0 ? ` (${tripsRussianLabel(clientTrips)})` : ""}
+                      {tripCountHint}
                     </span>
                     <strong style={{ fontVariantNumeric: "tabular-nums" }}>
                       {formatMoney(offer.delivery_service_total_rub)}
@@ -870,7 +905,28 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   <FinanceCard label="Рейсов ФБС/ЛС/ЛМ" value={String(offer.fbs_lm_trips ?? 0)} />
                 )}
                 {fbsLmPendingMarks.length > 0 && <FbsLmPendingMarks marks={fbsLmPendingMarks} />}
-                {(offer.pile_trip_pending_marks ?? []).map((mark) => (
+                {offer.long_pile_delivery_enabled &&
+                  (offer.long_pile_lengths ?? []).map((row) => {
+                    const meters = formatLongPileMeters(row.length_key);
+                    const key = String(row.length_key);
+                    const lengthPending = (row.pending_marks ?? []).length > 0;
+                    return (
+                      <div key={key} style={{ display: "grid", gap: "0.35rem" }}>
+                        <FieldWrapper label={`Тариф рейса ${meters}`} error={null}>
+                          <Input
+                            value={longTariffDrafts[key] ?? ""}
+                            onChange={(event) =>
+                              setLongTariffDrafts((prev) => ({ ...prev, [key]: event.target.value }))
+                            }
+                            inputMode="decimal"
+                            placeholder="Стоимость рейса"
+                          />
+                        </FieldWrapper>
+                        {!lengthPending && <div>Рейсов {meters}: {row.trips}</div>}
+                      </div>
+                    );
+                  })}
+                {pileQuestionMarks(offer).map((mark) => (
                   <FieldWrapper
                     key={mark}
                     label={`Для ${mark} нет нормы загрузки в справочнике. Сколько машин нужно?`}
@@ -901,7 +957,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 >
                   <span style={{ color: "#475467", fontWeight: 500 }}>
                     Услуга по доставке грузов
-                    {clientTrips > 0 ? ` (${tripsRussianLabel(clientTrips)})` : ""}
+                    {tripCountHint}
                   </span>
                   <strong style={{ fontVariantNumeric: "tabular-nums" }}>{formatMoney(offer.delivery_service_total_rub)}</strong>
                 </div>
@@ -1058,6 +1114,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                       <th style={{ padding: "0.5rem 0.75rem" }}>№</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Марка</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Класс</th>
+                      <th style={{ padding: "0.5rem 0.75rem" }}>F / W</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Кол-во</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Цена</th>
                     </tr>
@@ -1068,6 +1125,9 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                         <td style={{ padding: "0.5rem 0.75rem" }}>{march.position_number ?? index + 1}</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{march.mark || "—"}</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{march.concrete_grade || "—"}</td>
+                        <td style={{ padding: "0.5rem 0.75rem" }}>
+                          {formatFrostPair(march.frost_resistance, march.waterproofness)}
+                        </td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{march.qty} шт</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>
                           {formatLinePrice(march.discounted_price, march.unit_price)}
@@ -1085,6 +1145,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                       <th style={{ padding: "0.5rem 0.75rem" }}>№</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Марка</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Класс</th>
+                      <th style={{ padding: "0.5rem 0.75rem" }}>F / W</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Кол-во</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Цена</th>
                     </tr>
@@ -1095,6 +1156,9 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                         <td style={{ padding: "0.5rem 0.75rem" }}>{pile.position_number ?? index + 1}</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{pile.mark || "—"}</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{pile.concrete_grade || "—"}</td>
+                        <td style={{ padding: "0.5rem 0.75rem" }}>
+                          {formatFrostPair(pile.frost_resistance, pile.waterproofness)}
+                        </td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{pile.qty} шт</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>
                           {formatLinePrice(pile.discounted_price, pile.unit_price)}
@@ -1111,6 +1175,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                     <tr style={{ textAlign: "left", color: "#475467", background: "#f2f4f7" }}>
                       <th style={{ padding: "0.5rem 0.75rem" }}>№</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Наименование</th>
+                      <th style={{ padding: "0.5rem 0.75rem" }}>F / W</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Кол-во</th>
                       <th style={{ padding: "0.5rem 0.75rem" }}>Цена</th>
                     </tr>
@@ -1120,6 +1185,9 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                       <tr key={`${plate.plate_name}-${index}`} style={{ borderTop: "1px solid #e4e7ec" }}>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{plate.position_number ?? index + 1}</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{plate.plate_name || "—"}</td>
+                        <td style={{ padding: "0.5rem 0.75rem" }}>
+                          {formatFrostPair(plate.frost_resistance, plate.waterproofness)}
+                        </td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>{plate.qty} шт</td>
                         <td style={{ padding: "0.5rem 0.75rem" }}>
                           {formatLinePrice(plate.discounted_price, plate.unit_price)}
@@ -1268,6 +1336,14 @@ const FinanceCard = ({ label, value, accent }: { label: string; value: string; a
     <div style={{ fontWeight: 700, color: accent ? "#1d4ed8" : "#101828", marginTop: "0.25rem" }}>{value}</div>
   </div>
 );
+
+function pileQuestionMarks(offer: ArchiveOfferDetails): string[] {
+  const marks = [...(offer.pile_trip_pending_marks ?? [])];
+  if (offer.long_pile_delivery_enabled) {
+    marks.push(...(offer.long_pile_pending_marks ?? []));
+  }
+  return uniqueMarks(marks);
+}
 
 const parseNumberField = (raw: string): number | null => {
   const normalized = raw.trim().replace(/\s+/g, "").replace(",", ".");
