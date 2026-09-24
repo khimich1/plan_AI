@@ -21,6 +21,20 @@ ERR_NO_DELIVERY = "Укажите условия поставки."
 ERR_NO_PAYMENT = "Укажите условия оплаты."
 
 
+def _kp_id_from_offer_metadata(metadata: dict[str, Any]) -> int | None:
+    """Сохранённый номер, если визард уже привязан к КП. До первого сохранения — None."""
+    saved = metadata.get("saved_offer") or {}
+    raw = saved.get("kp_id") if isinstance(saved, dict) else None
+    if raw is None:
+        raw = metadata.get("resume_kp_id")
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 class CommercialCalculationService:
     """Totals and prerequisite validation for commercial draft calculation."""
 
@@ -225,6 +239,7 @@ class CommercialCalculationService:
         fbs_lm_delivery_enabled: bool = False,
         long_pile_delivery_enabled: bool = False,
         long_pile_delivery: dict | None = None,
+        kp_id: int | None = None,
     ) -> dict[str, Any]:
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
@@ -239,6 +254,7 @@ class CommercialCalculationService:
             fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
             long_pile_delivery_enabled=long_pile_delivery_enabled,
             long_pile_delivery=long_pile_delivery,
+            kp_id=kp_id,
         )
 
     def compute_totals_from_metadata(
@@ -270,4 +286,5 @@ class CommercialCalculationService:
                 metadata.get("long_pile_delivery_enabled")
             ),
             long_pile_delivery=metadata.get("long_pile_delivery"),
+            kp_id=_kp_id_from_offer_metadata(metadata),
         )

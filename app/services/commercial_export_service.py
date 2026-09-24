@@ -126,6 +126,7 @@ class CommercialExportService:
                     fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                     long_pile_delivery_enabled=long_pile_delivery_enabled,
                     long_pile_delivery=long_pile_delivery,
+                    kp_db_id=_resolved_kp_id(metadata),
                 )
                 files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, output_path)
             elif file_type == "xlsx":
@@ -149,6 +150,7 @@ class CommercialExportService:
                     fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                     long_pile_delivery_enabled=long_pile_delivery_enabled,
                     long_pile_delivery=long_pile_delivery,
+                    kp_db_id=_resolved_kp_id(metadata),
                 )
                 files_by_kind[file_type] = self.build_generated_file(draft_id, file_type, output_path)
             elif file_type == "breakdown":

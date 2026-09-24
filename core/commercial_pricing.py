@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Mapping
 
 from core.cargo_delivery_pricing import (
@@ -21,6 +22,32 @@ from core.step_price_db import get_step_price, normalize_step_mark
 _log = logging.getLogger(__name__)
 
 VAT_RATE = 0.22
+# max(KP_offers.kp_id) в plita.db на момент включения формулы был 26.
+VAT_PER_LINE_FROM_KP_ID = 27
+_KOPECK = Decimal("0.01")
+_VAT_INCLUDED_RATE = Decimal(22) / Decimal(122)
+
+
+def _quantize_rub(amount: Decimal | float | int | str) -> Decimal:
+    if isinstance(amount, Decimal):
+        value = amount
+    else:
+        value = Decimal(str(amount))
+    return value.quantize(_KOPECK, rounding=ROUND_HALF_UP)
+
+
+def vat_included_from_line_sums(line_sums_rub: list[Decimal]) -> Decimal:
+    """НДС «в том числе 22%»: round(сумма × 22/122) по строке, не сумма × 0,22."""
+    total = Decimal("0.00")
+    for amount in line_sums_rub:
+        line = _quantize_rub(amount)
+        total += (line * _VAT_INCLUDED_RATE).quantize(_KOPECK, rounding=ROUND_HALF_UP)
+    return total
+
+
+def uses_per_line_included_vat(kp_id: int | None) -> bool:
+    """Новая формула для id начиная с порога и для расчёта ещё без номера."""
+    return kp_id is None or kp_id >= VAT_PER_LINE_FROM_KP_ID
 
 
 def coerce_fbs_lm_delivery_enabled(raw: Any) -> bool:
@@ -404,14 +431,18 @@ def calculate_total_cost(
     weight_catalog_db_path: str | None = None,
     long_pile_delivery_enabled: bool = False,
     long_pile_delivery: Any = None,
+    kp_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Рассчитывает общую стоимость заказа.
 
     unit_price в позициях считается уже с НДС. Скидка применяется к сумме плит.
-    НДС для отображения: сумма плит после скидки * VAT_RATE.
     Итого к оплате: сумма плит после скидки + услуга по доставке грузов
-    (стоимость рейса × ceil(масса заказа кг / 18600); в базу НДС по плитам не входит).
+    (стоимость рейса × ceil(масса заказа кг / 18600)).
+
+    НДС: для kp_id ниже VAT_PER_LINE_FROM_KP_ID — плиты после скидки × VAT_RATE,
+    доставка в базу не входит. Для нового id и расчёта без номера — НДС по
+    напечатанным строкам (изделия и доставка), round(сумма × 22/122) на строку.
 
     subtotal = total_with_vat - vat_amount (согласованная разбивка для документов и архива).
     """
@@ -419,6 +450,7 @@ def calculate_total_cost(
         ensure_order_priced(order_data, db_path=db_path)
     total_qty = 0
     plates_total_with_vat = 0.0
+    product_line_sums: list[Decimal] = []
     dp = float(discount_percent or 0.0)
     dp = min(max(dp, 0.0), 100.0)
     discount_factor = 1.0 - dp / 100.0
@@ -462,6 +494,7 @@ def calculate_total_cost(
 
         total_qty += qty
         plates_total_with_vat += item_cost
+        product_line_sums.append(_quantize_rub(item_cost))
 
     trip_cost = max(0.0, float(logistics_cost or 0.0))
     cargo_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
@@ -516,11 +549,31 @@ def calculate_total_cost(
         + fbs_lm_delivery_total
         + long_pile_delivery_total
     )
-    vat_amount = round(plates_total_with_vat * VAT_RATE, 2)
     total_with_vat = round(plates_total_with_vat + delivery_total, 2)
-    subtotal = round(total_with_vat - vat_amount, 2)
-
     plate_trips = cargo_delivery_trips_count(cargo_kg)
+    if uses_per_line_included_vat(kp_id):
+        delivery_lines = kp_delivery_export_lines(
+            {
+                "plate_delivery_total": plate_delivery_total,
+                "pile_delivery_total": pile_delivery_total,
+                "fbs_lm_delivery_total": fbs_lm_delivery_total,
+                "pile_delivery_ready": pile_breakdown.ready,
+                "fbs_lm_delivery_ready": fbs_lm_delivery_ready,
+                "long_pile_lengths": long_pile_lengths,
+                "long_pile_delivery_enabled": long_enabled,
+                "plate_trips": plate_trips,
+                "pile_trips": pile_breakdown.total_trips,
+                "fbs_lm_trips": fbs_lm_trips,
+            },
+            plate_trip_cost=trip_cost,
+            pile_trip_cost=pile_trip,
+        )
+        line_sums = list(product_line_sums)
+        line_sums.extend(_quantize_rub(line["amount"]) for line in delivery_lines)
+        vat_amount = float(vat_included_from_line_sums(line_sums))
+    else:
+        vat_amount = round(plates_total_with_vat * VAT_RATE, 2)
+    subtotal = round(total_with_vat - vat_amount, 2)
     return {
         "total_qty": total_qty,
         "subtotal": subtotal,

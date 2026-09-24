@@ -705,6 +705,7 @@ class ArchiveService:
             weight_catalog_db_path=self.repository.db_path,
             long_pile_delivery_enabled=long_pile_enabled,
             long_pile_delivery=raw.get("long_pile_delivery_json"),
+            kp_id=kp_id,
         )
         # Delivery / cargo for archive details: plates 18600 + piles hybrid + ФБС/ЛС/ЛМ.
         total_cargo_weight_kg = float(

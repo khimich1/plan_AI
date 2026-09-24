@@ -234,7 +234,9 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
                 }
             )
 
-        totals = calculate_total_cost(order_data, new_discount, logistics_cost=logistics_saved)
+        totals = calculate_total_cost(
+            order_data, new_discount, logistics_cost=logistics_saved, kp_id=kp_id
+        )
         subtotal = totals["subtotal"]
         vat_amount = totals["vat_amount"]
         total_amount = totals["total_with_vat"]
@@ -355,6 +357,7 @@ def update_kp_logistics_cost(
             kp_info.get("long_pile_delivery_enabled")
         ),
         long_pile_delivery=resolved_long_pile,
+        kp_id=kp_id,
     )
 
     conn = _connect(db_path)

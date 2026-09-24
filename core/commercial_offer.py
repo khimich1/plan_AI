@@ -237,6 +237,7 @@ def calculate_total_cost(
     weight_catalog_db_path: str | None = None,
     long_pile_delivery_enabled: bool = False,
     long_pile_delivery: dict | None = None,
+    kp_id: int | None = None,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
@@ -250,6 +251,7 @@ def calculate_total_cost(
         weight_catalog_db_path=weight_catalog_db_path,
         long_pile_delivery_enabled=long_pile_delivery_enabled,
         long_pile_delivery=long_pile_delivery,
+        kp_id=kp_id,
     )
 
 
@@ -567,6 +569,7 @@ def generate_commercial_offer_pdf(
         weight_catalog_db_path=weight_catalog_db_path,
         long_pile_delivery_enabled=long_pile_delivery_enabled,
         long_pile_delivery=long_pile_delivery,
+        kp_id=kp_db_id,
     )
     total_weight = 0.0
 

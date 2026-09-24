@@ -71,6 +71,27 @@ def test_plate_name_to_prays_variants_dedup_and_order() -> None:
 
 
 @pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Плиты ПБ 75,10-12-8п", "Плиты ПБ 75,1-12-8п"),
+        ("Плиты ПБ 67,80-12-8п", "Плиты ПБ 67,8-12-8п"),
+        ("Плиты ПБ 64,80-5,3-8п", "Плиты ПБ 64,8-5,3-8п"),
+        ("Плиты ПБ 61,80-5,3-10п", "Плиты ПБ 61,8-5,3-10п"),
+        ("Плиты ПБ 59,81-12-8п", None),
+    ],
+)
+def test_plate_name_to_prays_variants_strips_trailing_decimal_zeros(
+    name: str, expected: str | None
+) -> None:
+    variants = plate_name_to_prays_variants(name)
+    if expected is None:
+        assert name not in variants
+        assert all("59,8-" not in item for item in variants)
+        return
+    assert expected in variants
+
+
+@pytest.mark.parametrize(
     ("plate_name", "expected_raw"),
     [
         ("Плиты ПБ 59,8-12-8п", "59,8"),

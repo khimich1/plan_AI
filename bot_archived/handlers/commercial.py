@@ -2048,7 +2048,7 @@ async def receive_execution_terms(message: Message, state: FSMContext):
         else:
             # Fallback: если не удалось получить из БД, используем ту же функцию расчета
             from core.commercial_offer_xlsx import calculate_total_cost
-            totals = calculate_total_cost(order_data, discount_percent)
+            totals = calculate_total_cost(order_data, discount_percent, kp_id=kp_id)
             total_amount = totals['total_with_vat']
         
         await message.answer(
@@ -2189,7 +2189,7 @@ async def callback_save_kp_to_archive(callback: CallbackQuery, state: FSMContext
         else:
             # Fallback: рассчитываем вручную
             from core.commercial_offer_xlsx import calculate_total_cost
-            totals = calculate_total_cost(order_data, discount_percent)
+            totals = calculate_total_cost(order_data, discount_percent, kp_id=kp_id)
             total_amount = totals['total_with_vat']
         
         await callback.message.answer(

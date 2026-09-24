@@ -100,6 +100,22 @@ def test_lookup_prays_width_variant(tmp_path) -> None:
     assert match_type == "exact_prays_variant"
 
 
+def test_lookup_trailing_decimal_zero_matches_catalog_mark(tmp_path) -> None:
+    """75,10 в заказе — та же плита, что 75,1 в prays_plity."""
+    db_path = str(tmp_path / "pb.db")
+    canonical = "Плиты ПБ 75,1-12-8п"
+    _make_prays_db(db_path, [("NOM-751", canonical)])
+
+    with sqlite3.connect(db_path) as conn:
+        name, nom_id, match_type = nom.lookup_nomenclature_by_plate_name(
+            "Плиты ПБ 75,10-12-8п", conn.cursor()
+        )
+
+    assert name == canonical
+    assert nom_id == "NOM-751"
+    assert match_type == "exact_prays_variant"
+
+
 def test_lookup_prays_length_variant_bridges_40_and_40_0(tmp_path) -> None:
     """Целая длина 40 в марке сопоставляется со справочником 40,0 через prays variant."""
     db_path = str(tmp_path / "pb.db")

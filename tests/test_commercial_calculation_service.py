@@ -163,7 +163,7 @@ def test_compute_totals_plates_only_delivery_unchanged() -> None:
     )
 
     assert totals["total_with_vat"] == 650.0 + expected_delivery
-    assert totals["vat_amount"] == 143.0
+    assert totals["vat_amount"] == 135.24
 
 
 def test_compute_totals_mixed_delivery_from_plates_kg_only() -> None:
@@ -203,7 +203,7 @@ def test_compute_totals_mixed_delivery_from_plates_kg_only() -> None:
 
     assert expected_delivery == 100.0
     assert totals["total_with_vat"] == products + expected_delivery
-    assert totals["vat_amount"] == round(products * 0.22, 2)
+    assert totals["vat_amount"] == 225.4
 
 
 def test_compute_totals_piles_only_delivery_zero_despite_logistics_cost() -> None:
@@ -227,7 +227,7 @@ def test_compute_totals_piles_only_delivery_zero_despite_logistics_cost() -> Non
     )
 
     assert totals["total_with_vat"] == 500.0
-    assert totals["vat_amount"] == 110.0
+    assert totals["vat_amount"] == 90.16
 
 
 # --- MNA-202: mixed discount + calculate validation (per-line / has-any-plates) ---
@@ -353,7 +353,7 @@ def test_compute_totals_mixed_discount_applies_to_plates_and_piles() -> None:
     )
 
     assert totals["total_with_vat"] == pytest.approx(expected_products)
-    assert totals["vat_amount"] == pytest.approx(round(expected_products * 0.22, 2))
+    assert totals["vat_amount"] == pytest.approx(649.18)
 
     plates_only = _SERVICE.compute_totals(
         [order_data[0]],

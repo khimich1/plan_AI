@@ -125,8 +125,8 @@ def test_calculate_total_cost_single_trip_when_under_truck_capacity() -> None:
     ]
     totals = calculate_total_cost_xlsx(order_data, discount_percent=0, logistics_cost=100.0)
     assert totals["total_with_vat"] == 750.0  # 650 плиты + 100 доставка
-    assert totals["vat_amount"] == 143.0
-    assert totals["subtotal"] == 607.0
+    assert totals["vat_amount"] == 135.24
+    assert totals["subtotal"] == 614.76
 
 
 def test_calculate_total_cost_applies_discount_only_to_products() -> None:
@@ -143,10 +143,11 @@ def test_calculate_total_cost_applies_discount_only_to_products() -> None:
     totals = calculate_total_cost_xlsx(order_data, discount_percent=50, logistics_cost=100.0)
 
     assert totals["total_qty"] == 1
-    # Цены с НДС: плиты 122*0.5=61 + доставка 100×1 рейс = 161; НДС 22% только от плит: 61*0.22=13.42
+    # Цены с НДС: плиты 122*0.5=61 + доставка 100×1 рейс = 161.
+    # Без kp_id НДС по строкам × 22/122, включая доставку.
     assert totals["total_with_vat"] == 161.0
-    assert totals["vat_amount"] == 13.42
-    assert totals["subtotal"] == 147.58
+    assert totals["vat_amount"] == 29.03
+    assert totals["subtotal"] == 131.97
 
 
 def test_calculate_total_cost_scales_delivery_by_cargo_trips() -> None:
@@ -162,8 +163,8 @@ def test_calculate_total_cost_scales_delivery_by_cargo_trips() -> None:
     ]
     totals = calculate_total_cost_xlsx(order_data, discount_percent=0, logistics_cost=100.0)
     assert totals["total_with_vat"] == 860.0  # 660 плиты + 200 доставка
-    assert totals["vat_amount"] == 145.2
-    assert totals["subtotal"] == 714.8
+    assert totals["vat_amount"] == 155.09
+    assert totals["subtotal"] == 704.91
 
 
 def test_calculate_total_cost_ignores_negative_logistics_cost() -> None:
@@ -178,8 +179,8 @@ def test_calculate_total_cost_ignores_negative_logistics_cost() -> None:
     totals = calculate_total_cost_xlsx(order_data, discount_percent=0, logistics_cost=-500.0)
 
     assert totals["total_with_vat"] == 122.0
-    assert totals["vat_amount"] == 26.84
-    assert totals["subtotal"] == 95.16
+    assert totals["vat_amount"] == 22.0
+    assert totals["subtotal"] == 100.0
 
 
 def test_pdf_and_xlsx_calculate_total_cost_agree_for_sample_orders() -> None:
@@ -248,8 +249,8 @@ def test_calculate_total_cost_plates_only_delivery_unchanged() -> None:
     totals = calculate_total_cost_xlsx(order_data, discount_percent=0, logistics_cost=trip)
 
     assert totals["total_with_vat"] == 650.0 + expected_delivery
-    assert totals["vat_amount"] == 143.0
-    assert totals["subtotal"] == round(650.0 + expected_delivery - 143.0, 2)
+    assert totals["vat_amount"] == 135.24
+    assert totals["subtotal"] == round(650.0 + expected_delivery - totals["vat_amount"], 2)
 
 
 def test_calculate_total_cost_mixed_delivery_from_plates_kg_only() -> None:
@@ -288,7 +289,7 @@ def test_calculate_total_cost_mixed_delivery_from_plates_kg_only() -> None:
 
     assert expected_delivery == 100.0
     assert totals["total_with_vat"] == products + expected_delivery
-    assert totals["vat_amount"] == round(products * 0.22, 2)
+    assert totals["vat_amount"] == 225.4
     assert totals["subtotal"] == round(products + expected_delivery - totals["vat_amount"], 2)
     # Не суммировать вес свай в доставку.
     assert totals["total_with_vat"] != products + delivery_service_charge_rub(trip, all_kg)
@@ -314,7 +315,7 @@ def test_calculate_total_cost_piles_only_delivery_zero_despite_logistics_cost() 
 
     products = 500.0
     assert totals["total_with_vat"] == products
-    assert totals["vat_amount"] == round(products * 0.22, 2)
+    assert totals["vat_amount"] == 90.16
     assert totals["subtotal"] == round(products - totals["vat_amount"], 2)
 
 

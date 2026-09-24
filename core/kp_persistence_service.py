@@ -179,6 +179,7 @@ class KpPersistenceService:
                 weight_catalog_db_path=db_path,
                 long_pile_delivery_enabled=long_pile_flag,
                 long_pile_delivery=long_pile_delivery,
+                kp_id=None,
             )
             subtotal = totals["subtotal"]
             vat_amount = totals["vat_amount"]
@@ -235,6 +236,39 @@ class KpPersistenceService:
                 ),
             )
             kp_id = cur.lastrowid
+            from core.commercial_pricing import VAT_PER_LINE_FROM_KP_ID
+
+            if kp_id is not None and int(kp_id) < VAT_PER_LINE_FROM_KP_ID:
+                from core.commercial_pricing import calculate_total_cost
+
+                totals = calculate_total_cost(
+                    order_data,
+                    discount_percent,
+                    logistics_cost=trip_logistics,
+                    db_path=db_path,
+                    require_all_priced=False,
+                    pile_logistics_cost=pile_trip,
+                    pile_trip_overrides=coerce_pile_trip_overrides(pile_trip_overrides),
+                    pile_catalog_db_path=db_path,
+                    fbs_lm_delivery_enabled=fbs_lm_flag,
+                    weight_catalog_db_path=db_path,
+                    long_pile_delivery_enabled=long_pile_flag,
+                    long_pile_delivery=long_pile_delivery,
+                    kp_id=int(kp_id),
+                )
+                cur.execute(
+                    """
+                    UPDATE KP_offers
+                    SET subtotal = ?, vat_amount = ?, total_amount = ?
+                    WHERE kp_id = ?
+                    """,
+                    (
+                        totals["subtotal"],
+                        totals["vat_amount"],
+                        totals["total_with_vat"],
+                        kp_id,
+                    ),
+                )
 
             for idx, (item, line_type) in enumerate(
                 zip(order_data, line_types), start=1
@@ -445,6 +479,7 @@ class KpPersistenceService:
                     weight_catalog_db_path=db_path,
                     long_pile_delivery_enabled=resolved_long_pile,
                     long_pile_delivery=resolved_long_json,
+                    kp_id=kp_id,
                 )
                 subtotal = totals["subtotal"]
                 vat_amount = totals["vat_amount"]
