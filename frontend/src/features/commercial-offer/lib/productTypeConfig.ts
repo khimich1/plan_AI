@@ -57,6 +57,14 @@ export type ProductTypeLabels = {
   previewUnpricedMessage: string;
 };
 
+/** Per-product format hint: explanation + sample (= labels.placeholder). */
+export type ProductFormatHint = {
+  /** Состав строки этого типа. Без образца. */
+  explanation: string;
+  /** Строки образца. Равно labels.placeholder. */
+  sample: string;
+};
+
 export type ProductTypeConfig = {
   productType: ProductType;
   /** Wizard input step of the product (currently identical to productType). */
@@ -69,199 +77,241 @@ export type ProductTypeConfig = {
   isSimpleKp: boolean;
   ingestAction: WizardNextRequiredAction;
   labels: ProductTypeLabels;
+  formatHint: ProductFormatHint;
 };
 
+/** Shared shell for the format hint (all 7 product types). */
+export const FORMAT_HINT_SHARED =
+  "Одна позиция — одна строка. Количество — число в конце строки. Шапку, цены и адрес из письма не копируйте.";
+
+const withFormatHint = (
+  config: Omit<ProductTypeConfig, "formatHint">,
+  explanation: string,
+): ProductTypeConfig => ({
+  ...config,
+  formatHint: {
+    explanation,
+    sample: config.labels.placeholder,
+  },
+});
+
 export const PRODUCT_TYPE_CONFIG: Record<ProductType, ProductTypeConfig> = {
-  plates: {
-    productType: "plates",
-    inputStep: "plates",
-    endpointSegment: "plates",
-    batchesField: "plate_batches",
-    supportsGrades: false,
-    isSimpleKp: false,
-    ingestAction: "ingest_plates",
-    labels: {
-      nounPlural: "Плиты",
-      nounGenitivePlural: "плит",
-      stepTitle: "Шаг 1. Плиты",
-      listLabel: "Список плит",
-      reviewListTitle: "Список плит для расчёта",
-      placeholder: "ПБ 78-12-8п 2\n71-12-8 3\nПБ 66-12-8п 4",
-      aiPlaceholder: "Например: убери строки с 6п",
-      emptySubtitle: "Вставьте текст списка плит или загрузите фото таблицы.",
-      aiHint: "Редкий сценарий: опишите, что сделать со списком плит.",
-      addMoreDescription: "Добавьте ещё плиты или перейдите к оформлению клиента.",
-      initialDescription: "Загрузите фото или вставьте список плит для расчёта.",
-      previewChangedMessage: "Изменён список плит — нажмите «Список верен» для пересчёта состава.",
-      previewEmptyMessage: "Список пуст — распознайте плиты.",
-      previewSubtitle: "Наименование, количество и цена — как в документе. Скидка и доставка учитываются позже.",
-      previewUnpricedMessage: "Не все плиты найдены в прайсе — исправьте список перед переходом к клиенту.",
+  plates: withFormatHint(
+    {
+      productType: "plates",
+      inputStep: "plates",
+      endpointSegment: "plates",
+      batchesField: "plate_batches",
+      supportsGrades: false,
+      isSimpleKp: false,
+      ingestAction: "ingest_plates",
+      labels: {
+        nounPlural: "Плиты",
+        nounGenitivePlural: "плит",
+        stepTitle: "Шаг 1. Плиты",
+        listLabel: "Список плит",
+        reviewListTitle: "Список плит для расчёта",
+        placeholder: "ПБ 78-12-8п 2\n71-12-8 3\nПБ 66-12-8п 4",
+        aiPlaceholder: "Например: убери строки с 6п",
+        emptySubtitle: "Вставьте текст списка плит или загрузите фото таблицы.",
+        aiHint: "Редкий сценарий: опишите, что сделать со списком плит.",
+        addMoreDescription: "Добавьте ещё плиты или перейдите к оформлению клиента.",
+        initialDescription: "Загрузите фото или вставьте список плит для расчёта.",
+        previewChangedMessage: "Изменён список плит — нажмите «Список верен» для пересчёта состава.",
+        previewEmptyMessage: "Список пуст — распознайте плиты.",
+        previewSubtitle:
+          "Наименование, количество и цена — как в документе. Скидка и доставка учитываются позже.",
+        previewUnpricedMessage:
+          "Не все плиты найдены в прайсе — исправьте список перед переходом к клиенту.",
+      },
     },
-  },
-  piles: {
-    productType: "piles",
-    inputStep: "piles",
-    endpointSegment: "piles",
-    batchesField: "pile_batches",
-    supportsGrades: true,
-    isSimpleKp: true,
-    ingestAction: "ingest_piles",
-    labels: {
-      nounPlural: "Сваи",
-      nounGenitivePlural: "свай",
-      stepTitle: "Шаг 1. Сваи",
-      listLabel: "Список свай",
-      reviewListTitle: "Список свай для расчёта",
-      placeholder: "С120.35-12 B25 5\nС120.35-13и 3",
-      aiPlaceholder: "Например: убери строки с B15",
-      emptySubtitle: "Вставьте текст списка свай или загрузите фото таблицы.",
-      aiHint: "Редкий сценарий: опишите, что сделать со списком свай.",
-      addMoreDescription: "Добавьте ещё сваи или перейдите к оформлению клиента.",
-      initialDescription: "Загрузите фото или вставьте список свай для расчёта.",
-      previewChangedMessage: "Изменён список свай — нажмите «Список верен» для пересчёта состава.",
-      previewEmptyMessage: "Список пуст — распознайте сваи.",
-      previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
-      previewUnpricedMessage:
-        "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+    "Марка, затем количество штук. Нагрузка входит в марку (`8п`).",
+  ),
+  piles: withFormatHint(
+    {
+      productType: "piles",
+      inputStep: "piles",
+      endpointSegment: "piles",
+      batchesField: "pile_batches",
+      supportsGrades: true,
+      isSimpleKp: true,
+      ingestAction: "ingest_piles",
+      labels: {
+        nounPlural: "Сваи",
+        nounGenitivePlural: "свай",
+        stepTitle: "Шаг 1. Сваи",
+        listLabel: "Список свай",
+        reviewListTitle: "Список свай для расчёта",
+        placeholder: "С120.35-12 B25 5\nС120.35-13и 3",
+        aiPlaceholder: "Например: убери строки с B15",
+        emptySubtitle: "Вставьте текст списка свай или загрузите фото таблицы.",
+        aiHint: "Редкий сценарий: опишите, что сделать со списком свай.",
+        addMoreDescription: "Добавьте ещё сваи или перейдите к оформлению клиента.",
+        initialDescription: "Загрузите фото или вставьте список свай для расчёта.",
+        previewChangedMessage: "Изменён список свай — нажмите «Список верен» для пересчёта состава.",
+        previewEmptyMessage: "Список пуст — распознайте сваи.",
+        previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
+        previewUnpricedMessage:
+          "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+      },
     },
-  },
-  steps: {
-    productType: "steps",
-    inputStep: "steps",
-    endpointSegment: "steps",
-    batchesField: "step_batches",
-    supportsGrades: false,
-    isSimpleKp: true,
-    ingestAction: "ingest_steps",
-    labels: {
-      nounPlural: "Ступени",
-      nounGenitivePlural: "ступеней",
-      stepTitle: "Шаг 1. Ступени",
-      listLabel: "Список ступеней",
-      reviewListTitle: "Список ступеней для расчёта",
-      placeholder: "ЛС11 10\nЛС14-1лев 5\nЛС11-Б-1 2",
-      aiPlaceholder: "Например: убери строки с ЛС11",
-      emptySubtitle: "Вставьте текст списка ступеней или загрузите фото таблицы.",
-      aiHint: "Редкий сценарий: опишите, что сделать со списком ступеней.",
-      addMoreDescription: "Добавьте ещё ступени или перейдите к оформлению клиента.",
-      initialDescription: "Загрузите фото или вставьте список ступеней для расчёта.",
-      previewChangedMessage: "Изменён список ступеней — нажмите «Список верен» для пересчёта состава.",
-      previewEmptyMessage: "Список пуст — распознайте ступени.",
-      previewSubtitle: "Марка, количество и цена — как в документе.",
-      previewUnpricedMessage: "Не все марки найдены в прайсе — исправьте список перед переходом к клиенту.",
+    "Марка, класс бетона, количество. Класс можно не писать — как во второй строке.",
+  ),
+  steps: withFormatHint(
+    {
+      productType: "steps",
+      inputStep: "steps",
+      endpointSegment: "steps",
+      batchesField: "step_batches",
+      supportsGrades: false,
+      isSimpleKp: true,
+      ingestAction: "ingest_steps",
+      labels: {
+        nounPlural: "Ступени",
+        nounGenitivePlural: "ступеней",
+        stepTitle: "Шаг 1. Ступени",
+        listLabel: "Список ступеней",
+        reviewListTitle: "Список ступеней для расчёта",
+        placeholder: "ЛС11 10\nЛС14-1лев 5\nЛС11-Б-1 2",
+        aiPlaceholder: "Например: убери строки с ЛС11",
+        emptySubtitle: "Вставьте текст списка ступеней или загрузите фото таблицы.",
+        aiHint: "Редкий сценарий: опишите, что сделать со списком ступеней.",
+        addMoreDescription: "Добавьте ещё ступени или перейдите к оформлению клиента.",
+        initialDescription: "Загрузите фото или вставьте список ступеней для расчёта.",
+        previewChangedMessage:
+          "Изменён список ступеней — нажмите «Список верен» для пересчёта состава.",
+        previewEmptyMessage: "Список пуст — распознайте ступени.",
+        previewSubtitle: "Марка, количество и цена — как в документе.",
+        previewUnpricedMessage:
+          "Не все марки найдены в прайсе — исправьте список перед переходом к клиенту.",
+      },
     },
-  },
-  marches: {
-    productType: "marches",
-    inputStep: "marches",
-    endpointSegment: "marches",
-    batchesField: "march_batches",
-    supportsGrades: true,
-    isSimpleKp: true,
-    ingestAction: "ingest_marches",
-    labels: {
-      nounPlural: "Марши",
-      nounGenitivePlural: "маршей",
-      stepTitle: "Шаг 1. Марши",
-      listLabel: "Список маршей",
-      reviewListTitle: "Список маршей для расчёта",
-      placeholder: "1ЛМ 27-11-14-4 B25 5\nЛМ 2,8 3",
-      aiPlaceholder: "Например: убери строки с B15",
-      emptySubtitle: "Вставьте текст списка маршей или загрузите фото таблицы.",
-      aiHint: "Редкий сценарий: опишите, что сделать со списком маршей.",
-      addMoreDescription: "Добавьте ещё марши или перейдите к оформлению клиента.",
-      initialDescription: "Загрузите фото или вставьте список маршей для расчёта.",
-      previewChangedMessage: "Изменён список маршей — нажмите «Список верен» для пересчёта состава.",
-      previewEmptyMessage: "Список пуст — распознайте марши.",
-      previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
-      previewUnpricedMessage:
-        "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+    "Марка, затем количество. Класса бетона в строке нет.",
+  ),
+  marches: withFormatHint(
+    {
+      productType: "marches",
+      inputStep: "marches",
+      endpointSegment: "marches",
+      batchesField: "march_batches",
+      supportsGrades: true,
+      isSimpleKp: true,
+      ingestAction: "ingest_marches",
+      labels: {
+        nounPlural: "Марши",
+        nounGenitivePlural: "маршей",
+        stepTitle: "Шаг 1. Марши",
+        listLabel: "Список маршей",
+        reviewListTitle: "Список маршей для расчёта",
+        placeholder: "1ЛМ 27-11-14-4 B25 5\nЛМ 2,8 3",
+        aiPlaceholder: "Например: убери строки с B15",
+        emptySubtitle: "Вставьте текст списка маршей или загрузите фото таблицы.",
+        aiHint: "Редкий сценарий: опишите, что сделать со списком маршей.",
+        addMoreDescription: "Добавьте ещё марши или перейдите к оформлению клиента.",
+        initialDescription: "Загрузите фото или вставьте список маршей для расчёта.",
+        previewChangedMessage: "Изменён список маршей — нажмите «Список верен» для пересчёта состава.",
+        previewEmptyMessage: "Список пуст — распознайте марши.",
+        previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
+        previewUnpricedMessage:
+          "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+      },
     },
-  },
-  bridge_piles: {
-    productType: "bridge_piles",
-    inputStep: "bridge_piles",
-    endpointSegment: "bridge-piles",
-    batchesField: "bridge_pile_batches",
-    supportsGrades: true,
-    isSimpleKp: true,
-    ingestAction: "ingest_bridge_piles",
-    labels: {
-      nounPlural: "Мостовые сваи",
-      nounGenitivePlural: "мостовых свай",
-      stepTitle: "Шаг 1. Мостовые сваи",
-      listLabel: "Список мостовых свай",
-      reviewListTitle: "Список мостовых свай для расчёта",
-      // Frozen from pb.db 2026-09-14 (first two priced marks, ORDER BY mark).
-      placeholder: "C10-35B7 B25 2\nC10-35T1 B25 3",
-      aiPlaceholder: "Например: убери строки с B15",
-      emptySubtitle: "Вставьте текст списка мостовых свай или загрузите фото таблицы.",
-      aiHint: "Редкий сценарий: опишите, что сделать со списком мостовых свай.",
-      addMoreDescription: "Добавьте ещё мостовые сваи или перейдите к оформлению клиента.",
-      initialDescription: "Загрузите фото или вставьте список мостовых свай для расчёта.",
-      previewChangedMessage: "Изменён список мостовых свай — нажмите «Список верен» для пересчёта состава.",
-      previewEmptyMessage: "Список пуст — распознайте мостовые сваи.",
-      previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
-      previewUnpricedMessage:
-        "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+    "Марка, класс бетона, количество. Класс можно не писать — как во второй строке.",
+  ),
+  bridge_piles: withFormatHint(
+    {
+      productType: "bridge_piles",
+      inputStep: "bridge_piles",
+      endpointSegment: "bridge-piles",
+      batchesField: "bridge_pile_batches",
+      supportsGrades: true,
+      isSimpleKp: true,
+      ingestAction: "ingest_bridge_piles",
+      labels: {
+        nounPlural: "Мостовые сваи",
+        nounGenitivePlural: "мостовых свай",
+        stepTitle: "Шаг 1. Мостовые сваи",
+        listLabel: "Список мостовых свай",
+        reviewListTitle: "Список мостовых свай для расчёта",
+        // Frozen from pb.db 2026-09-14 (first two priced marks, ORDER BY mark).
+        placeholder: "C10-35B7 B25 2\nC10-35T1 B25 3",
+        aiPlaceholder: "Например: убери строки с B15",
+        emptySubtitle: "Вставьте текст списка мостовых свай или загрузите фото таблицы.",
+        aiHint: "Редкий сценарий: опишите, что сделать со списком мостовых свай.",
+        addMoreDescription: "Добавьте ещё мостовые сваи или перейдите к оформлению клиента.",
+        initialDescription: "Загрузите фото или вставьте список мостовых свай для расчёта.",
+        previewChangedMessage:
+          "Изменён список мостовых свай — нажмите «Список верен» для пересчёта состава.",
+        previewEmptyMessage: "Список пуст — распознайте мостовые сваи.",
+        previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
+        previewUnpricedMessage:
+          "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+      },
     },
-  },
-  composite_piles: {
-    productType: "composite_piles",
-    inputStep: "composite_piles",
-    endpointSegment: "composite-piles",
-    batchesField: "composite_pile_batches",
-    supportsGrades: true,
-    isSimpleKp: true,
-    ingestAction: "ingest_composite_piles",
-    labels: {
-      nounPlural: "Составные сваи",
-      nounGenitivePlural: "составных свай",
-      stepTitle: "Шаг 1. Составные сваи",
-      listLabel: "Список составных свай",
-      reviewListTitle: "Список составных свай для расчёта",
-      placeholder: "С140.30-С 5\nС60.30-ВС.1 3",
-      aiPlaceholder: "Например: убери строки с B15",
-      emptySubtitle: "Вставьте текст списка составных свай или загрузите фото таблицы.",
-      aiHint: "Редкий сценарий: опишите, что сделать со списком составных свай.",
-      addMoreDescription: "Добавьте ещё составные сваи или перейдите к оформлению клиента.",
-      initialDescription: "Загрузите фото или вставьте список составных свай для расчёта.",
-      previewChangedMessage:
-        "Изменён список составных свай — нажмите «Список верен» для пересчёта состава.",
-      previewEmptyMessage: "Список пуст — распознайте составные сваи.",
-      previewSubtitle: "Марка секции, класс бетона, количество и цена — как в документе.",
-      previewUnpricedMessage:
-        "Не все секции найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+    "Марка, класс бетона, количество.",
+  ),
+  composite_piles: withFormatHint(
+    {
+      productType: "composite_piles",
+      inputStep: "composite_piles",
+      endpointSegment: "composite-piles",
+      batchesField: "composite_pile_batches",
+      supportsGrades: true,
+      isSimpleKp: true,
+      ingestAction: "ingest_composite_piles",
+      labels: {
+        nounPlural: "Составные сваи",
+        nounGenitivePlural: "составных свай",
+        stepTitle: "Шаг 1. Составные сваи",
+        listLabel: "Список составных свай",
+        reviewListTitle: "Список составных свай для расчёта",
+        placeholder: "С140.30-С 5\nС60.30-ВС.1 3",
+        aiPlaceholder: "Например: убери строки с B15",
+        emptySubtitle: "Вставьте текст списка составных свай или загрузите фото таблицы.",
+        aiHint: "Редкий сценарий: опишите, что сделать со списком составных свай.",
+        addMoreDescription: "Добавьте ещё составные сваи или перейдите к оформлению клиента.",
+        initialDescription: "Загрузите фото или вставьте список составных свай для расчёта.",
+        previewChangedMessage:
+          "Изменён список составных свай — нажмите «Список верен» для пересчёта состава.",
+        previewEmptyMessage: "Список пуст — распознайте составные сваи.",
+        previewSubtitle: "Марка секции, класс бетона, количество и цена — как в документе.",
+        previewUnpricedMessage:
+          "Не все секции найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+      },
     },
-  },
-  fbs: {
-    productType: "fbs",
-    inputStep: "fbs",
-    endpointSegment: "fbs",
-    batchesField: "fbs_batches",
-    supportsGrades: true,
-    isSimpleKp: true,
-    ingestAction: "ingest_fbs",
-    labels: {
-      nounPlural: "ФБС",
-      nounGenitivePlural: "ФБС",
-      stepTitle: "Шаг 1. ФБС",
-      listLabel: "Список ФБС",
-      reviewListTitle: "Список ФБС для расчёта",
-      // Frozen from pb.db 2026-09-14 (first two priced marks, ORDER BY mark).
-      placeholder: "ФБС 12.4.3-Т B25 2\nФБС 12.4.6-Т B25 3",
-      aiPlaceholder: "Например: убери строки с B15",
-      emptySubtitle: "Вставьте текст списка ФБС или загрузите фото таблицы.",
-      aiHint: "Редкий сценарий: опишите, что сделать со списком ФБС.",
-      addMoreDescription: "Добавьте ещё ФБС или перейдите к оформлению клиента.",
-      initialDescription: "Загрузите фото или вставьте список ФБС для расчёта.",
-      previewChangedMessage: "Изменён список ФБС — нажмите «Список верен» для пересчёта состава.",
-      previewEmptyMessage: "Список пуст — распознайте ФБС.",
-      previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
-      previewUnpricedMessage:
-        "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+    "Марка секции, затем количество. Класс бетона, если он есть в заявке, стоит перед количеством.",
+  ),
+  fbs: withFormatHint(
+    {
+      productType: "fbs",
+      inputStep: "fbs",
+      endpointSegment: "fbs",
+      batchesField: "fbs_batches",
+      supportsGrades: true,
+      isSimpleKp: true,
+      ingestAction: "ingest_fbs",
+      labels: {
+        nounPlural: "ФБС",
+        nounGenitivePlural: "ФБС",
+        stepTitle: "Шаг 1. ФБС",
+        listLabel: "Список ФБС",
+        reviewListTitle: "Список ФБС для расчёта",
+        // Frozen from pb.db 2026-09-14 (first two priced marks, ORDER BY mark).
+        placeholder: "ФБС 12.4.3-Т B25 2\nФБС 12.4.6-Т B25 3",
+        aiPlaceholder: "Например: убери строки с B15",
+        emptySubtitle: "Вставьте текст списка ФБС или загрузите фото таблицы.",
+        aiHint: "Редкий сценарий: опишите, что сделать со списком ФБС.",
+        addMoreDescription: "Добавьте ещё ФБС или перейдите к оформлению клиента.",
+        initialDescription: "Загрузите фото или вставьте список ФБС для расчёта.",
+        previewChangedMessage: "Изменён список ФБС — нажмите «Список верен» для пересчёта состава.",
+        previewEmptyMessage: "Список пуст — распознайте ФБС.",
+        previewSubtitle: "Марка, класс бетона, количество и цена — как в документе.",
+        previewUnpricedMessage:
+          "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+      },
     },
-  },
+    "Марка, класс бетона, количество.",
+  ),
 };
 
 /**

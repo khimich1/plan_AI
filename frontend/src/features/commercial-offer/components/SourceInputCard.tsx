@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type ClipboardEvent } from "react";
 
 import { AiInstructionBlock } from "@/features/commercial-offer/components/AiInstructionBlock";
+import { FormatHint } from "@/features/commercial-offer/components/FormatHint";
 import { OcrWaitBanner } from "@/features/commercial-offer/components/OcrWaitBanner";
 import { PlateListEditor } from "@/features/commercial-offer/components/PlateListEditor";
 import { SourceImageGallery } from "@/features/commercial-offer/components/SourceImageGallery";
@@ -10,6 +11,7 @@ import {
   isWaitingForFirstOcrReady,
   type PageSource,
 } from "@/features/commercial-offer/lib/multiPageSource";
+import { getProductTypeConfig } from "@/features/commercial-offer/lib/productTypeConfig";
 import type { PlateInputMode, ProductType } from "@/features/commercial-offer/types/commercialOffer";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
@@ -130,6 +132,7 @@ export const SourceInputCard = ({
         ? SOURCE_LINT_ERROR_TITLE
         : SOURCE_LINT_RED_TITLE;
   const highlights = useMemo(() => lintLinesToUnparsedHighlights(lint.lines), [lint.lines]);
+  const { formatHint } = getProductTypeConfig(productType);
 
   useEffect(() => {
     onSubmitGateChange?.({
@@ -184,6 +187,7 @@ export const SourceInputCard = ({
     >
       <div style={{ display: "grid", gap: "1rem" }} onPaste={handlePaste}>
         <FieldWrapper label={listLabel}>
+          <FormatHint explanation={formatHint.explanation} sample={formatHint.sample} />
           <PlateListEditor
             value={sourceText}
             onChange={onTextChange}

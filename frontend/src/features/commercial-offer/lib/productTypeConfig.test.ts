@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  FORMAT_HINT_SHARED,
   getProductTypeConfig,
   INGEST_REQUIRED_MESSAGE,
   PRODUCT_TYPE_CONFIG,
@@ -25,6 +26,18 @@ const REQUIRED_PLACEHOLDER_TYPES: ProductType[] = [
 ];
 const OPTIONAL_PLACEHOLDER_TYPES: ProductType[] = ["bridge_piles", "fbs"];
 const PILE_LEFTOVER_PLACEHOLDER = "С120.35-12 B25 5\nС120.35-13и 3";
+
+/** Accepted copy from ai_docs/specs/kp-format-hint.md «Тексты». */
+const FORMAT_HINT_EXPLANATIONS: Record<ProductType, string> = {
+  plates: "Марка, затем количество штук. Нагрузка входит в марку (`8п`).",
+  piles: "Марка, класс бетона, количество. Класс можно не писать — как во второй строке.",
+  steps: "Марка, затем количество. Класса бетона в строке нет.",
+  marches: "Марка, класс бетона, количество. Класс можно не писать — как во второй строке.",
+  bridge_piles: "Марка, класс бетона, количество.",
+  composite_piles:
+    "Марка секции, затем количество. Класс бетона, если он есть в заявке, стоит перед количеством.",
+  fbs: "Марка, класс бетона, количество.",
+};
 
 describe("PRODUCT_TYPE_CONFIG", () => {
   it("covers every ProductType exactly once", () => {
@@ -228,6 +241,27 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.previewUnpricedMessage).toBe(
       "Не все секции найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
     );
+  });
+
+  it("exposes the shared format-hint shell string", () => {
+    expect(FORMAT_HINT_SHARED).toBe(
+      "Одна позиция — одна строка. Количество — число в конце строки. Шапку, цены и адрес из письма не копируйте.",
+    );
+  });
+
+  it("gives every product a non-empty formatHint.explanation from the accepted texts", () => {
+    for (const type of ALL_PRODUCT_TYPES) {
+      const { explanation } = PRODUCT_TYPE_CONFIG[type].formatHint;
+      expect(explanation.length, type).toBeGreaterThan(0);
+      expect(explanation, type).toBe(FORMAT_HINT_EXPLANATIONS[type]);
+    }
+  });
+
+  it("uses labels.placeholder as formatHint.sample for every product", () => {
+    for (const type of ALL_PRODUCT_TYPES) {
+      const { labels, formatHint } = PRODUCT_TYPE_CONFIG[type];
+      expect(formatHint.sample, type).toBe(labels.placeholder);
+    }
   });
 });
 
