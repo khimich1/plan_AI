@@ -10,6 +10,13 @@ import type {
   ProductionEstimate,
 } from "@/features/commercial-archive/types/archive";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
+import type {
+  SupplyContract,
+  SupplyContractCreatePayload,
+  SupplyContractParseResult,
+  SupplyContractPatchPayload,
+  SupplyContractRegistryRow,
+} from "@/features/commercial-archive/types/supplyContract";
 
 const BASE = "/api/v1/commercial/archive";
 
@@ -117,4 +124,65 @@ export const archiveApi = {
 
   resume: (kpId: number) =>
     httpClient.post<CommercialDraftDetails>(`${BASE}/${kpId}/resume`),
+
+  getSupplyContract: (kpId: number) =>
+    httpClient.get<SupplyContract | null>(`${BASE}/${kpId}/supply-contract`),
+
+  createSupplyContract: (kpId: number, payload: SupplyContractCreatePayload) =>
+    httpClient.post<SupplyContract>(
+      `${BASE}/${kpId}/supply-contract`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
+
+  parseSupplyContract: (kpId: number, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return httpClient.post<SupplyContractParseResult>(`${BASE}/${kpId}/supply-contract/parse`, body);
+  },
+
+  downloadSupplyContract: (kpId: number) =>
+    httpClient.download(`${BASE}/${kpId}/supply-contract/document`, `dogovor-${kpId}.docx`),
+
+  listSupplyContracts: () =>
+    httpClient.get<SupplyContractRegistryRow[]>(`${BASE}/supply-contracts`),
+
+  patchSupplyContract: (contractId: number, payload: SupplyContractPatchPayload) => {
+    if (payload.file) {
+      const body = new FormData();
+      if (payload.status) {
+        body.append("status", payload.status);
+      }
+      if (payload.scan_note !== undefined) {
+        body.append("scan_note", payload.scan_note ?? "");
+      }
+      if (payload.contract_date) {
+        body.append("contract_date", payload.contract_date);
+      }
+      body.append("file", payload.file);
+      return httpClient.patch<SupplyContract>(`${BASE}/supply-contracts/${contractId}`, body);
+    }
+    const json: Record<string, string> = {};
+    if (payload.status) {
+      json.status = payload.status;
+    }
+    if (payload.scan_note !== undefined) {
+      json.scan_note = payload.scan_note ?? "";
+    }
+    if (payload.contract_date) {
+      json.contract_date = payload.contract_date;
+    }
+    return httpClient.patch<SupplyContract>(
+      `${BASE}/supply-contracts/${contractId}`,
+      JSON.stringify(json),
+      { "Content-Type": "application/json" },
+    );
+  },
+
+  replaceSupplyContract: (contractId: number, payload: SupplyContractCreatePayload) =>
+    httpClient.post<SupplyContract>(
+      `${BASE}/supply-contracts/${contractId}/replace`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
 };

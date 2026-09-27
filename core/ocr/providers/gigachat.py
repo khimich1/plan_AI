@@ -262,6 +262,72 @@ def _sync_verify_plates(
     return verify_result, _estimate_cost_rub(tokens_used)
 
 
+def _parse_json_object(text: str) -> Dict[str, Any]:
+    """Сырой JSON-объект из ответа модели, без парсера марок."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        payload = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _sync_complete_text_json(
+    *,
+    client: "GigaChat",
+    user_text: str,
+    max_tokens: int,
+) -> tuple[Dict[str, Any], float]:
+    """Текстовый чат без вложения. Картинка не загружается."""
+    response = client.chat(
+        Chat(
+            messages=[
+                Messages(
+                    role=MessagesRole.USER,
+                    content=user_text,
+                ),
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    )
+    result_text = response.choices[0].message.content or "{}"
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    return _parse_json_object(result_text), _estimate_cost_rub(tokens_used)
+
+
+def _sync_complete_vision_json(
+    *,
+    client: "GigaChat",
+    user_text: str,
+    image_base64: str,
+    mime_type: str,
+    max_tokens: int,
+) -> tuple[Dict[str, Any], float]:
+    """Зрение → сырой JSON (карточка договора и т.п.), без parse_gpt_response."""
+    image_bytes = base64.b64decode(image_base64)
+    uploaded = client.upload_file((_upload_filename(mime_type), image_bytes))
+    response = client.chat(
+        Chat(
+            messages=[
+                Messages(
+                    role=MessagesRole.USER,
+                    content=user_text,
+                    attachments=[uploaded.id_],
+                ),
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    )
+    result_text = response.choices[0].message.content or "{}"
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    return _parse_json_object(result_text), _estimate_cost_rub(tokens_used)
+
+
 class GigaChatProvider:
     """GigaChat Vision implementation of OcrProvider."""
 
@@ -406,4 +472,34 @@ class GigaChatProvider:
             image_base64=image_base64,
             mime_type=mime_type,
             draft_plates=draft_plates,
+        )
+
+    async def complete_text_json(
+        self,
+        *,
+        user_text: str,
+        max_tokens: int = 2000,
+    ) -> tuple[Dict[str, Any], float]:
+        return await asyncio.to_thread(
+            _sync_complete_text_json,
+            client=self._get_client(),
+            user_text=user_text,
+            max_tokens=max_tokens,
+        )
+
+    async def complete_vision_json(
+        self,
+        *,
+        user_text: str,
+        image_base64: str,
+        mime_type: str,
+        max_tokens: int = 2000,
+    ) -> tuple[Dict[str, Any], float]:
+        return await asyncio.to_thread(
+            _sync_complete_vision_json,
+            client=self._get_client(),
+            user_text=user_text,
+            image_base64=image_base64,
+            mime_type=mime_type,
+            max_tokens=max_tokens,
         )

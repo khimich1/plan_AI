@@ -5,12 +5,14 @@ import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.endpoints.health import build_health_payload
 from app.schemas.health import HealthResponse
 from app.api.v1.router import router as api_v1_router
+from app.core.http_errors import handle_request_validation
 from app.core.settings import get_settings
 from app.repositories.auth_repository import AuthRepository
 from app.security.login_rate_limit import (
@@ -82,6 +84,8 @@ def create_app() -> FastAPI:
 
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(CsrfMiddleware)
+
+    app.add_exception_handler(RequestValidationError, handle_request_validation)
 
     @app.exception_handler(DraftStoreLockTimeout)
     async def _draft_store_lock_handler(

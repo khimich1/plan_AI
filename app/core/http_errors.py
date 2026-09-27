@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 from typing import NoReturn
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.schemas.errors import ApiErrorBody, ERROR_CODE_UNPRICED_PLATES
 
@@ -195,6 +198,36 @@ def raise_track_removal_client_error(
 ) -> NoReturn:
     detail = _TRACK_REMOVAL_CLIENT_MESSAGES.get(code or "", MSG_TRACK_REMOVAL_FAILED)
     raise_client_error(exc, status_code=status_code, detail=detail, where=where)
+
+
+def format_validation_errors(exc: RequestValidationError) -> str:
+    """Поле, текст проверки и короткое отклонённое значение. Тело запроса целиком не пишется."""
+    parts = []
+    for err in exc.errors():
+        loc = ".".join(str(item) for item in err.get("loc", ())) or "?"
+        msg = str(err.get("msg") or "")
+        parts.append(f"{loc}: {msg} (input={_short_validation_input(err.get('input'))})")
+    return " | ".join(parts) if parts else "empty"
+
+
+def _short_validation_input(raw: object) -> str:
+    if raw is None:
+        return "null"
+    text = raw if isinstance(raw, str) else repr(raw)
+    text = " ".join(text.split())
+    if len(text) > 80:
+        text = text[:77] + "..."
+    return repr(text)
+
+
+async def handle_request_validation(request: Request, exc: RequestValidationError) -> JSONResponse:
+    _log.warning(
+        "request validation %s %s: %s",
+        request.method,
+        request.url.path,
+        format_validation_errors(exc),
+    )
+    return await request_validation_exception_handler(request, exc)
 
 
 def raise_unpriced_plates_error(exc: BaseException, *, where: str) -> NoReturn:

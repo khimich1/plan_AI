@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+
 from core.plate_format_prompt import build_plate_parser_system_prompt
 
 OCR_USER_PROMPT = (
@@ -67,3 +69,131 @@ def get_verification_prompt(draft_json: str) -> str:
 
 Если черновик полностью верен — plates совпадают, corrections = [].
 Верни ТОЛЬКО JSON, без текста до и после."""
+
+
+CONTRACT_CARD_EXTRACT_PROMPT = """Прочитай карточку организации на изображении и верни реквизиты покупателя.
+
+Это не таблица железобетонных плит и не марки изделий. Не выдумывай поля, которых нет на изображении.
+
+Верни ТОЛЬКО JSON-объект:
+{
+  "legal_form": "ooo|ao|ip|kfh|person",
+  "full_name": "",
+  "short_name": "",
+  "signatory_position": "",
+  "signatory_name": "",
+  "signatory_verb": "действующего|действующей",
+  "authority_basis": "устав|доверенность",
+  "poa_number": "",
+  "poa_date": "",
+  "inn": "",
+  "kpp": "",
+  "ogrn": "",
+  "legal_address": "",
+  "postal_address": "",
+  "phone": "",
+  "email": "",
+  "bank_name": "",
+  "account": "",
+  "corr_account": "",
+  "bik": "",
+  "edo_operator": "",
+  "edo_id": ""
+}
+
+Пустое поле — пустая строка. Цифры ИНН, КПП, ОГРН, БИК и счетов пиши без пробелов.
+
+Шапка «ИНН КПП ОГРН» обязательна, даже если ОГРН нет в таблице.
+Счёт и корсчёт копируй по цифрам, повторы 0 и 7 не сжимай.
+Ячейку «БИК … в банке» раздели на БИК и название банка.
+"""
+
+
+def get_contract_card_reread_prompt(field_names: list[str]) -> str:
+    """Повтор только по полям, которые контроль не принял."""
+    listed = ", ".join(field_names)
+    return (
+        "На изображении карточка контрагента. "
+        f"Прочитай заново только эти поля: {listed}. "
+        "Верни ТОЛЬКО JSON-объект с этими ключами. "
+        "Цифры копируй как на изображении, повторы 0 и 7 не сжимай. "
+        "Если запрошены и БИК, и банк, раздели ячейку «БИК в банке» на два значения."
+    )
+
+
+def get_contract_card_holes_prompt(
+    *,
+    holes: list[str],
+    frozen: dict[str, str],
+    card_text: str,
+) -> str:
+    """Текстовый добор только по дырам. Картинки в этом промпте нет."""
+    keys = ", ".join(holes)
+    frozen_json = json.dumps(frozen, ensure_ascii=False)
+    banks = ""
+    if "banks" in holes:
+        banks = (
+            "Ключ banks — список связок, а не один БИК. "
+            "Каждая связка: bank_name, account, corr_account, bik.\n"
+        )
+    return (
+        "Заполни по тексту карточки только запрошенные поля. "
+        "Не выдумывай того, чего нет в тексте. "
+        "Цифры копируй как в тексте, повторы 0 и 7 не сжимай.\n"
+        f"{banks}"
+        f"Нужны только эти ключи: {keys}.\n"
+        f"Замороженные поля не меняй: {frozen_json}.\n"
+        "Верни ТОЛЬКО JSON-объект с запрошенными ключами.\n\n"
+        f"Текст карточки:\n{card_text}"
+    )
+
+
+def get_contract_card_verify_prompt(draft_json: str) -> str:
+    """Сверка реквизитов карточки, не марок плит."""
+    return f"""Ты сверяешь карточку организации с черновиком реквизитов покупателя.
+
+На изображении — карточка контрагента, не таблица плит и не марки изделий.
+Ниже — результат первого чтения (может содержать ошибки):
+
+{draft_json}
+
+Верни исправленные поля. Подменяй значение только если на изображении видно другое.
+Если черновик верен — corrections пустой, fields совпадают с черновиком.
+Если изображение не прочиталось — верни пустые fields и пустые corrections.
+
+Формат ответа — ТОЛЬКО JSON:
+{{
+  "fields": {{
+    "legal_form": "",
+    "full_name": "",
+    "short_name": "",
+    "signatory_position": "",
+    "signatory_name": "",
+    "signatory_verb": "",
+    "authority_basis": "",
+    "poa_number": "",
+    "poa_date": "",
+    "inn": "",
+    "kpp": "",
+    "ogrn": "",
+    "legal_address": "",
+    "postal_address": "",
+    "phone": "",
+    "email": "",
+    "bank_name": "",
+    "account": "",
+    "corr_account": "",
+    "bik": "",
+    "edo_operator": "",
+    "edo_id": ""
+  }},
+  "corrections": [
+    {{
+      "field": "inn",
+      "before": "",
+      "after": "",
+      "reason": ""
+    }}
+  ]
+}}
+"""

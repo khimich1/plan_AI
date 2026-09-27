@@ -43,6 +43,7 @@ import { downloadFile } from "@/shared/lib/downloadFile";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
 import { MoveToProductionDialog } from "./MoveToProductionDialog";
+import { SupplyContractArchiveButton, SupplyContractDrawer } from "./SupplyContractDrawer";
 import { KpReadinessBlock } from "./KpReadinessBlock";
 import { HighDiscountConfirmDialog } from "@/features/commercial-offer/components/HighDiscountConfirmDialog";
 import {
@@ -151,6 +152,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const schemaMutation = useArchiveDocumentMutation("schema");
   const financePending = discountMutation.isPending || logisticsMutation.isPending;
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [contractOpen, setContractOpen] = useState(false);
 
   const offer = query.data;
   useEffect(() => {
@@ -1216,6 +1218,12 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               </Button>
             )}
             {offer.status === "в архиве" && (
+              <SupplyContractArchiveButton
+                counterpartyId={offer.counterparty_id}
+                onClick={() => setContractOpen(true)}
+              />
+            )}
+            {offer.status === "в архиве" && (
               isSimpleProductOffer ? (
                 <Button variant="secondary" disabled title="скоро">
                   🏭 В производство
@@ -1261,6 +1269,15 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             onClose={() => setMoveOpen(false)}
             kpId={offer.kp_id}
             initialExecutionTerms={offer.execution_terms}
+          />
+          <SupplyContractDrawer
+            open={contractOpen}
+            onClose={() => setContractOpen(false)}
+            kpId={offer.kp_id}
+            counterpartyId={offer.counterparty_id ?? null}
+            customerName={offer.customer_name}
+            customerInn={offer.customer_inn}
+            customerKpp={offer.customer_kpp}
           />
           <HighDiscountConfirmDialog
             open={pendingDiscountPercent !== null}

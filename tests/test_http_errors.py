@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import logging
+from typing import Literal
+
 import pytest
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, Field
 
 from app.core.http_errors import (
     MSG_ARCHIVE_NOT_FOUND,
     MSG_DESTRUCTIVE_DB_BLOCKED,
+    handle_request_validation,
     raise_destructive_db_blocked_error,
     raise_not_found_client_error,
     raise_structured_error,
@@ -142,3 +148,28 @@ def test_raise_track_removal_client_error_maps_known_code() -> None:
     assert exc_info.value.status_code == 409
     assert "заверш" in str(exc_info.value.detail).lower()
     assert "secret" not in str(exc_info.value.detail).lower()
+
+
+class _ValidationProbe(BaseModel):
+    signatory_name: str = Field(min_length=1)
+    signatory_verb: Literal["действующего", "действующей"]
+
+
+def test_request_validation_log_names_rejected_field(caplog: pytest.LogCaptureFixture) -> None:
+    app = FastAPI()
+    app.add_exception_handler(RequestValidationError, handle_request_validation)
+
+    @app.post("/sample")
+    def _sample(payload: _ValidationProbe) -> dict:
+        return {"ok": True}
+
+    with caplog.at_level(logging.WARNING, logger="app.api.commercial"):
+        response = TestClient(app).post(
+            "/sample",
+            json={"signatory_name": "", "signatory_verb": "действует"},
+        )
+
+    assert response.status_code == 422
+    assert "signatory_name" in caplog.text
+    assert "signatory_verb" in caplog.text
+    assert "действует" in caplog.text

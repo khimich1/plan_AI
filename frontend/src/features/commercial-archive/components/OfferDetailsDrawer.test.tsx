@@ -146,6 +146,26 @@ vi.mock("@/features/commercial-archive/components/MoveToProductionDialog", () =>
   MoveToProductionDialog: () => null,
 }));
 
+vi.mock("@/features/commercial-archive/components/SupplyContractDrawer", () => ({
+  SupplyContractDrawer: () => null,
+  SupplyContractArchiveButton: ({
+    counterpartyId,
+    onClick,
+  }: {
+    counterpartyId?: number | null;
+    onClick: () => void;
+  }) => (
+    <button
+      type="button"
+      disabled={counterpartyId == null}
+      title={counterpartyId == null ? "Сначала занесите контрагента из 1С" : undefined}
+      onClick={onClick}
+    >
+      Договор
+    </button>
+  ),
+}));
+
 function makeReadiness(): KpReadinessSummary {
   return {
     completion_percentage: 72,

@@ -387,6 +387,71 @@ async def verify_plates_with_gpt_vision(
     return verify_result, cost_usd
 
 
+def _parse_json_object(text: str) -> Dict[str, Any]:
+    """Сырой JSON-объект из ответа модели, без парсера марок."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        payload = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+async def call_gpt_for_text_json(
+    *,
+    user_text: str,
+    client: Any,
+    max_tokens: int = 2000,
+) -> tuple[Dict[str, Any], float]:
+    """Текстовый чат без картинки."""
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": user_text}],
+        max_tokens=max_tokens,
+        temperature=0.0,
+    )
+    text = response.choices[0].message.content or "{}"
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    return _parse_json_object(text), _estimate_cost_usd(tokens_used)
+
+
+async def call_gpt_for_vision_json(
+    *,
+    user_text: str,
+    client: Any,
+    image_base64: str,
+    mime_type: str,
+    max_tokens: int = 2000,
+) -> tuple[Dict[str, Any], float]:
+    """Зрение → сырой JSON (карточка договора и т.п.), без parse_gpt_response."""
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_text},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{image_base64}",
+                            "detail": "high",
+                        },
+                    },
+                ],
+            }
+        ],
+        max_tokens=max_tokens,
+        temperature=0.0,
+    )
+    text = response.choices[0].message.content or "{}"
+    tokens_used = response.usage.total_tokens if response.usage else 0
+    return _parse_json_object(text), _estimate_cost_usd(tokens_used)
+
+
 class OpenAIProvider:
     """GPT-4o Vision implementation of OcrProvider."""
 
@@ -506,4 +571,32 @@ class OpenAIProvider:
             mime_type=mime_type,
             draft_plates=draft_plates,
             client=self._get_client(),
+        )
+
+    async def complete_text_json(
+        self,
+        *,
+        user_text: str,
+        max_tokens: int = 2000,
+    ) -> tuple[Dict[str, Any], float]:
+        return await call_gpt_for_text_json(
+            user_text=user_text,
+            client=self._get_client(),
+            max_tokens=max_tokens,
+        )
+
+    async def complete_vision_json(
+        self,
+        *,
+        user_text: str,
+        image_base64: str,
+        mime_type: str,
+        max_tokens: int = 2000,
+    ) -> tuple[Dict[str, Any], float]:
+        return await call_gpt_for_vision_json(
+            user_text=user_text,
+            client=self._get_client(),
+            image_base64=image_base64,
+            mime_type=mime_type,
+            max_tokens=max_tokens,
         )

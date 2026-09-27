@@ -488,6 +488,8 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
 
         _init_counterparties_schema(cur)
 
+        _init_supply_contract_schema(cur)
+
         conn.commit()
     finally:
         conn.close()
@@ -582,6 +584,81 @@ def _init_counterparties_schema(cur: sqlite3.Cursor) -> None:
         "INTEGER REFERENCES counterparties(id)",
         "ALTER TABLE KP_offers ADD COLUMN customer_inn TEXT",
         "ALTER TABLE KP_offers ADD COLUMN customer_kpp TEXT",
+    ):
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+
+def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
+    """Договор поставки на контрагента. КП хранит только место под ответ 1С.
+
+    Один действующий договор на ``counterparty_id``: частичный уникальный
+    индекс не включает «отмена не будем работать» и строки без связи.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supply_contract (
+            id INTEGER PRIMARY KEY,
+            counterparty_id INTEGER NULL REFERENCES counterparties(id),
+            imported_name TEXT,
+            number TEXT NOT NULL UNIQUE,
+            contract_date TEXT NOT NULL,
+            manager_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'нет',
+            scan_note TEXT,
+            scan_path TEXT,
+            legal_form TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            short_name TEXT NOT NULL,
+            signatory_position TEXT,
+            signatory_name TEXT NOT NULL,
+            signatory_verb TEXT NOT NULL,
+            authority_basis TEXT NOT NULL,
+            poa_number TEXT,
+            poa_date TEXT,
+            inn TEXT NOT NULL,
+            kpp TEXT,
+            ogrn TEXT NOT NULL,
+            legal_address TEXT NOT NULL,
+            postal_address TEXT,
+            phone TEXT,
+            email TEXT NOT NULL,
+            bank_name TEXT NOT NULL,
+            account TEXT NOT NULL,
+            corr_account TEXT NOT NULL,
+            bik TEXT NOT NULL,
+            edo_operator TEXT,
+            edo_id TEXT,
+            created_at TEXT NOT NULL,
+            created_by_user_id INTEGER NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supply_contract_event (
+            id INTEGER PRIMARY KEY,
+            contract_id INTEGER NOT NULL REFERENCES supply_contract(id),
+            field TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_supply_contract_one_active
+        ON supply_contract(counterparty_id)
+        WHERE status != 'отмена не будем работать' AND counterparty_id IS NOT NULL
+        """
+    )
+    for sql in (
+        "ALTER TABLE KP_offers ADD COLUMN order_number_1c TEXT",
+        "ALTER TABLE KP_offers ADD COLUMN order_status_1c TEXT",
     ):
         try:
             cur.execute(sql)
