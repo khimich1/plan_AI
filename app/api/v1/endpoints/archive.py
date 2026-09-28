@@ -3,15 +3,18 @@ from __future__ import annotations
 import logging
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response
 
 from app.dependencies.auth import require_roles
 from app.dependencies.plate_context import get_plate_order_context
-from app.dependencies.services import get_archive_service
+from app.dependencies.services import get_archive_service, get_supply_contract_service
 from app.core.http_errors import (
     MSG_ARCHIVE_NOT_FOUND,
+    MSG_UNPROCESSABLE,
     MSG_VALIDATION,
+    is_ai_provider_error,
+    raise_ai_provider_unavailable_error,
     raise_bad_request_client_error,
     raise_client_error,
     raise_not_found_client_error,
@@ -39,11 +42,27 @@ from app.schemas.archive import (
     UpdateLogisticsCostRequest,
 )
 from app.schemas.commercial import CommercialDraftDetailsResponse
+from app.schemas.supply_contract import (
+    SupplyContractCreate,
+    SupplyContractImportRow,
+    SupplyContractLinkRequest,
+    SupplyContractOut,
+    SupplyContractParseOut,
+    SupplyContractPatch,
+    SupplyContractRegistryItem,
+)
+from app.services.commercial_upload_validation import read_upload_file_capped
 from app.services.archive_service import (
     ArchiveError,
     ArchiveNotFoundError,
     ArchiveService,
     ArchiveValidationError,
+)
+from app.services.supply_contract_service import (
+    SupplyContractFieldError,
+    SupplyContractNotFoundError,
+    SupplyContractService,
+    SupplyContractValidationError,
 )
 from app.services.promise_service import (
     PromiseHoldForbiddenError,
@@ -135,6 +154,148 @@ async def download_current_plan_gantt(
         filename=path.name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+async def _read_supply_contract_patch(request: Request) -> tuple[SupplyContractPatch, bytes | None, str]:
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        raw: dict[str, str] = {}
+        for key in ("status", "scan_note", "contract_date"):
+            value = form.get(key)
+            if isinstance(value, str):
+                raw[key] = value
+        upload = form.get("file")
+        data: bytes | None = None
+        filename = ""
+        if upload is not None and hasattr(upload, "read"):
+            data = await read_upload_file_capped(upload)
+            filename = str(getattr(upload, "filename", "") or "")
+        return SupplyContractPatch.model_validate(raw), data or None, filename
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        payload = {}
+    return SupplyContractPatch.model_validate(payload), None, ""
+
+
+@router.post("/supply-contracts/import", response_model=list[SupplyContractImportRow])
+async def import_archive_supply_contracts(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_roles("admin")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> list[dict]:
+    data = await read_upload_file_capped(file)
+    try:
+        return service.import_lawyer_sheet(data, user=user)
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.import_supply_contracts",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+
+
+@router.post("/supply-contracts/{contract_id}/link", response_model=SupplyContractOut)
+def link_archive_supply_contract(
+    contract_id: int,
+    payload: SupplyContractLinkRequest,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    try:
+        return service.link_imported_contract(
+            contract_id,
+            payload.counterparty_id,
+            user=user,
+        )
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.link_supply_contract",
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.link_supply_contract",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+
+
+@router.get("/supply-contracts", response_model=list[SupplyContractRegistryItem])
+def list_archive_supply_contracts(
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> list[dict]:
+    return service.list_registry(user=user)
+
+
+@router.patch("/supply-contracts/{contract_id}", response_model=SupplyContractOut)
+async def patch_archive_supply_contract(
+    contract_id: int,
+    request: Request,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    fields, scan_bytes, scan_filename = await _read_supply_contract_patch(request)
+    try:
+        return service.update_contract(
+            contract_id,
+            user=user,
+            status=fields.status,
+            scan_note=fields.scan_note,
+            scan_note_set="scan_note" in fields.model_fields_set,
+            contract_date=fields.contract_date,
+            scan_bytes=scan_bytes,
+            scan_filename=scan_filename,
+        )
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.patch_supply_contract",
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.patch_supply_contract",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except SupplyContractFieldError as exc:
+        raise_unprocessable_client_error(
+            exc,
+            where="archive.patch_supply_contract",
+            detail=str(exc) or MSG_UNPROCESSABLE,
+        )
+
+
+@router.post("/supply-contracts/{contract_id}/replace", response_model=SupplyContractOut)
+def replace_archive_supply_contract(
+    contract_id: int,
+    payload: SupplyContractCreate,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    try:
+        return service.replace_contract(contract_id, payload, user=user)
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.replace_supply_contract",
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.replace_supply_contract",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except SupplyContractFieldError as exc:
+        raise_unprocessable_client_error(
+            exc,
+            where="archive.replace_supply_contract",
+            detail=str(exc) or MSG_UNPROCESSABLE,
+        )
 
 
 @router.get("/{kp_id}/readiness/positions", response_model=KpReadinessPositionsResponse)
@@ -255,6 +416,117 @@ def update_archive_discount(
             where="archive.download_archive_document",
             detail=MSG_VALIDATION,
         )
+
+
+@router.get("/{kp_id}/supply-contract", response_model=SupplyContractOut | None)
+def get_archive_supply_contract(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> SupplyContractOut | None:
+    try:
+        return service.get_for_kp(kp_id, user=user)
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_supply_contract",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.get_supply_contract",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+
+
+@router.post("/{kp_id}/supply-contract", response_model=SupplyContractOut)
+def create_archive_supply_contract(
+    kp_id: int,
+    payload: SupplyContractCreate,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    try:
+        return service.create_for_kp(kp_id, payload, user=user)
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.create_supply_contract",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.create_supply_contract",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except SupplyContractFieldError as exc:
+        raise_unprocessable_client_error(
+            exc,
+            where="archive.create_supply_contract",
+            detail=str(exc) or MSG_UNPROCESSABLE,
+        )
+
+
+@router.get("/{kp_id}/supply-contract/document")
+def download_archive_supply_contract(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> Response:
+    try:
+        payload, filename = service.document_for_kp(kp_id, user=user)
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.download_supply_contract",
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.download_supply_contract",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/{kp_id}/supply-contract/parse", response_model=SupplyContractParseOut)
+async def parse_archive_supply_contract(
+    kp_id: int,
+    file: UploadFile = File(...),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    data = await read_upload_file_capped(file)
+    try:
+        return await service.parse_for_kp(
+            kp_id,
+            data,
+            filename=file.filename or "",
+            user=user,
+        )
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.parse_supply_contract",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.parse_supply_contract",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except Exception as exc:
+        if is_ai_provider_error(exc):
+            raise_ai_provider_unavailable_error(exc, where="archive.parse_supply_contract")
+        raise_unexpected_server_error(exc, where="archive.parse_supply_contract")
 
 
 @router.patch("/{kp_id}/counterparty", response_model=ArchiveOfferDetails)

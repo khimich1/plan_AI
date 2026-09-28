@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from tests.helpers.csrf import CsrfAwareTestClient
 
 from app.api.v1.endpoints.archive import get_promise_service
-from app.dependencies.services import get_archive_service
+from app.dependencies.services import get_archive_service, get_supply_contract_service
 from app.core.settings import get_settings
 from app.main import create_app
 from app.repositories.auth_repository import AuthRepository
@@ -51,10 +51,16 @@ def fake_promise_service() -> MagicMock:
 
 
 @pytest.fixture()
+def fake_supply_service() -> MagicMock:
+    return MagicMock()
+
+
+@pytest.fixture()
 def client(
     monkeypatch: pytest.MonkeyPatch,
     fake_service: MagicMock,
     fake_promise_service: MagicMock,
+    fake_supply_service: MagicMock,
 ) -> TestClient:
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
     get_settings.cache_clear()
@@ -75,6 +81,7 @@ def client(
     app = create_app()
     app.dependency_overrides[get_archive_service] = lambda: fake_service
     app.dependency_overrides[get_promise_service] = lambda: fake_promise_service
+    app.dependency_overrides[get_supply_contract_service] = lambda: fake_supply_service
     return CsrfAwareTestClient(app)
 
 
@@ -1878,4 +1885,239 @@ def test_promise_tracks_per_day_forbidden_for_accountant(
         cookies=cookie,
     )
     assert response.status_code == 403
+
+
+_SUPPLY_BODY = {
+    "legal_form": "ooo",
+    "full_name": "Ромашка",
+    "short_name": "Ромашка",
+    "signatory_position": "Генерального директора",
+    "signatory_name": "Иванов Иван",
+    "authority_basis": "устав",
+    "inn": "760401001",
+    "kpp": "760401001",
+    "ogrn": "1027600000001",
+    "legal_address": "Ярославль",
+    "email": "is-ag@mail.ru",
+    "bank_name": "Промсвязьбанк",
+    "account": "40702810000000000001",
+    "corr_account": "30101810000000000760",
+    "bik": "044525555",
+    "contract_date": "2026-09-25",
+}
+
+_SUPPLY_ROW = {
+    "id": 4,
+    "counterparty_id": 7,
+    "number": "1028/09/26",
+    "contract_date": "2026-09-25",
+    "manager_name": "Иван Иванов",
+    "status": "нет",
+    "legal_form": "ooo",
+    "full_name": "Ромашка",
+    "short_name": "Ромашка",
+    "signatory_position": "Генерального директора",
+    "signatory_name": "Иванов Иван",
+    "signatory_verb": "действующего",
+    "authority_basis": "устав",
+    "inn": "760401001",
+    "kpp": "760401001",
+    "ogrn": "1027600000001",
+    "legal_address": "Ярославль",
+    "email": "is-ag@mail.ru",
+    "bank_name": "Промсвязьбанк",
+    "account": "40702810000000000001",
+    "corr_account": "30101810000000000760",
+    "bik": "044525555",
+}
+
+
+def test_supply_contract_requires_auth(client: TestClient) -> None:
+    response = client.get("/api/v1/commercial/archive/42/supply-contract")
+    assert response.status_code == 401
+    response = client.post(
+        "/api/v1/commercial/archive/42/supply-contract",
+        json=_SUPPLY_BODY,
+    )
+    assert response.status_code == 401
+
+
+def test_supply_contract_without_counterparty_is_400(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    from app.services.supply_contract_service import SupplyContractValidationError
+
+    fake_supply_service.create_for_kp.side_effect = SupplyContractValidationError(
+        "Сначала занесите контрагента из 1С"
+    )
+    response = client.post(
+        "/api/v1/commercial/archive/42/supply-contract",
+        cookies=auth_cookie,
+        json=_SUPPLY_BODY,
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Сначала занесите контрагента из 1С"
+
+
+def test_supply_contract_rejects_offer_outside_archive(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    from app.services.supply_contract_service import SupplyContractValidationError
+
+    fake_supply_service.create_for_kp.side_effect = SupplyContractValidationError(
+        "Договор можно оформить только у КП в статусе «в архиве»"
+    )
+    response = client.post(
+        "/api/v1/commercial/archive/42/supply-contract",
+        cookies=auth_cookie,
+        json=_SUPPLY_BODY,
+    )
+    assert response.status_code == 400
+    assert "в архиве" in response.json()["detail"]
+
+
+def test_supply_contract_post_returns_existing_number(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    fake_supply_service.create_for_kp.return_value = _SUPPLY_ROW
+    response = client.post(
+        "/api/v1/commercial/archive/42/supply-contract",
+        cookies=auth_cookie,
+        json=_SUPPLY_BODY,
+    )
+    assert response.status_code == 200
+    assert response.json()["number"] == "1028/09/26"
+    fake_supply_service.create_for_kp.assert_called_once()
+    assert fake_supply_service.create_for_kp.call_args.args[0] == 42
+    assert fake_supply_service.create_for_kp.call_args.kwargs["user"] == TESTER_USER
+
+
+def test_supply_contract_get_empty(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    fake_supply_service.get_for_kp.return_value = None
+    response = client.get(
+        "/api/v1/commercial/archive/42/supply-contract",
+        cookies=auth_cookie,
+    )
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_supply_contract_ooo_without_kpp_is_422(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    from app.services.supply_contract_service import SupplyContractFieldError
+
+    fake_supply_service.create_for_kp.side_effect = SupplyContractFieldError(
+        "Для ООО и АО укажите КПП"
+    )
+    response = client.post(
+        "/api/v1/commercial/archive/42/supply-contract",
+        cookies=auth_cookie,
+        json=_SUPPLY_BODY,
+    )
+    assert response.status_code == 422
+    assert "КПП" in response.json()["detail"]
+
+
+def test_supply_contract_registry_requires_auth(client: TestClient) -> None:
+    response = client.get("/api/v1/commercial/archive/supply-contracts")
+    assert response.status_code == 401
+    response = client.patch(
+        "/api/v1/commercial/archive/supply-contracts/4",
+        json={"status": "подписан по ЭДО"},
+    )
+    assert response.status_code == 401
+
+
+def test_supply_contract_registry_returns_columns(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    fake_supply_service.list_registry.return_value = [
+        {
+            "id": 4,
+            "number": "1028/09/26",
+            "contract_date": "2026-09-25",
+            "counterparty_name": "РОМАШКА ООО",
+            "counterparty_id": 7,
+            "manager_name": "Иван Иванов",
+            "status": "нет",
+            "scan_note": "получен скан",
+            "has_scan": True,
+            "scan_path": "/secret/scan.pdf",
+        }
+    ]
+    response = client.get(
+        "/api/v1/commercial/archive/supply-contracts",
+        cookies=auth_cookie,
+    )
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["number"] == "1028/09/26"
+    assert row["counterparty_name"] == "РОМАШКА ООО"
+    assert row["manager_name"] == "Иван Иванов"
+    assert row["status"] == "нет"
+    assert row["scan_note"] == "получен скан"
+    assert row["has_scan"] is True
+    assert "scan_path" not in row
+
+
+def test_supply_contract_registry_patch_status(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    fake_supply_service.update_contract.return_value = {
+        **_SUPPLY_ROW,
+        "status": "подписан по ЭДО",
+        "has_scan": True,
+        "scan_path": "/secret/scan.pdf",
+    }
+    response = client.patch(
+        "/api/v1/commercial/archive/supply-contracts/4",
+        cookies=auth_cookie,
+        json={"status": "подписан по ЭДО"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "подписан по ЭДО"
+    assert body["number"] == "1028/09/26"
+    assert body["has_scan"] is True
+    assert "scan_path" not in body
+    fake_supply_service.update_contract.assert_called_once()
+    assert fake_supply_service.update_contract.call_args.kwargs["status"] == "подписан по ЭДО"
+    assert fake_supply_service.update_contract.call_args.kwargs["user"] == TESTER_USER
+
+
+def test_supply_contract_replace_without_cancel_is_russian_400(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    from app.services.supply_contract_service import SupplyContractValidationError
+
+    fake_supply_service.replace_contract.side_effect = SupplyContractValidationError(
+        "У контрагента уже есть договор 1028/09/26"
+    )
+    response = client.post(
+        "/api/v1/commercial/archive/supply-contracts/4/replace",
+        cookies=auth_cookie,
+        json=_SUPPLY_BODY,
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "У контрагента уже есть договор 1028/09/26"
+
 

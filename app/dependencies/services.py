@@ -16,7 +16,9 @@ from app.dependencies.auth import get_auth_repository
 from app.repositories.auth_repository import AuthRepository
 from app.services.admin_service import AdminService
 from app.services.auth_service import AuthService
+from app.core.settings import get_settings
 from app.services.archive_service import ArchiveService
+from app.services.supply_contract_service import SupplyContractService
 from app.services.commercial_calculation_service import CommercialCalculationService
 from app.services.commercial_service import CommercialService
 from app.services.commercial_wizard_step_service import CommercialWizardStepService
@@ -113,6 +115,10 @@ def get_admin_service() -> AdminService:
 
 def get_archive_service() -> ArchiveService:
     return ArchiveService()
+
+
+def get_supply_contract_service() -> SupplyContractService:
+    return SupplyContractService(db_path=str(get_settings().plita_db_path))
 
 
 def get_nomenclature_import_service() -> NomenclatureImportService:

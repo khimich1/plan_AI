@@ -15,10 +15,11 @@ KP (конструктор КП): [2026-09-04-kp-audit.md](./2026-09-04-kp-audit
 Архив + производство: [2026-09-04-archive-production-audit.md](./2026-09-04-archive-production-audit.md).
 DS (график поставки): [2026-09-21-delivery-schedule-audit.md](./2026-09-21-delivery-schedule-audit.md).
 Прогон 2 (--full): [2026-09-21-full-audit.md](./2026-09-21-full-audit.md).
+Договор поставки (архив): [2026-09-27-supply-contract-audit.md](./2026-09-27-supply-contract-audit.md).
 Форензик целостности плана (A24–A26): [идея](../../ideas/целостность-плана-производства.md) — логи + `plita.db`, 2026-09-21.
 GSM High с [2026-08-26-gsm-audit.md](./2026-08-26-gsm-audit.md) перенумерованы (там были свои A1…, конфликт с этим реестром) — колонка Legacy.
 
-Последнее обновление: 2026-09-21 (прогон 2 — --full registry sweep; см. также DS 2026-09-21; +A24–A26 форензик целостности плана).
+Последнее обновление: 2026-09-27 (аудит supply-contract — [2026-09-27-supply-contract-audit.md](./2026-09-27-supply-contract-audit.md); ранее 2026-09-21 прогон 2 — --full; DS 2026-09-21; +A24–A26 форензик целостности плана).
 
 | ID | Scope | Sev | Status | P | Summary | Evidence / notes | Last seen | Legacy |
 |----|-------|-----|--------|---|---------|------------------|-----------|--------|
@@ -28,11 +29,11 @@ GSM High с [2026-08-26-gsm-audit.md](./2026-08-26-gsm-audit.md) перенум�
 | A4 | kp | High | open | P1 | Толстый API-слой: `commercial.py` разобран; remainder `production.py` (698 строк, 26 routes) | `production.py` wc=698; `build_plan_from_filters` :104–180; day-documents :434–521 bypass ProductionService; SGP CRUD :535–608 | 2026-09-21 | |
 | A5 | kp | High | open | P1 | Сервисы обходят repository, raw SQL | `sgp_service.py:78–89` (cur.execute + f-string WHERE), `delivery_schedule_service.py:494–500`, `kp_readiness_service.py:49–114`; нет *sgp* / *delivery* / *readiness* repos | 2026-09-21 | |
 | A6 | layout | High | open | P1 | Planning импортирует visualization / matplotlib at load | `core/production/planning.py:39–44`, `core/visualization/__init__.py:16–18` (`matplotlib.use('Agg')` at import) | 2026-09-21 | |
-| A7 | platform | High | open | P1 | Неполный DI в FastAPI (фабрики без constructor injection) | `app/dependencies/services.py:45–185` `return Service()` vs `get_auth_service` :188–191 с Depends | 2026-09-21 | |
+| A7 | platform | High | open | P1 | Неполный DI в FastAPI (фабрики без constructor injection) | `app/dependencies/services.py:45–185` `return Service()` vs `get_auth_service` :188–191 с Depends; **supply-contract**: `:120–121` `get_supply_contract_service`, `supply_contract_service.py:78–81`, `:297–308` | 2026-09-27 | |
 | A8 | layout | Medium | open | — | Параллельные подсистемы планирования | `planning.py`, `plan_manager.py`, `plan_distribution*` | 2026-08-28 | |
 | A9 | platform | Medium | open | — | Пустые app-сервисы-реэкспорты | `kp_persistence_service.py`, `rest_matching_service.py` | 2026-08-28 | |
 | A10 | bot | Medium | open | — | Legacy-пути бота в persistence планов | `plan_storage.py`; не живой продукт | 2026-08-28 | |
-| A11 | kp | Medium | open | — | ArchiveService god-orchestrator | `archive_service.py` **985** строк (было 868), 30 methods; lazy-coupling :124–146 CommercialWorkflowService, :491–494 SgpService, :588–592 KpReadinessService | 2026-09-21 | |
+| A11 | kp | Medium | open | — | ArchiveService god-orchestrator | `archive_service.py` **985** строк (было 868), 30 methods; lazy-coupling :124–146 CommercialWorkflowService, :491–494 SgpService, :588–592 KpReadinessService. **2026-09-27**: supply-contract не влит в ArchiveService; длину не перемерили | 2026-09-21 | |
 | A12 | kp | Medium | open | — | Frontend god-hook мастера КП | `useCommercialOfferWizard.ts` **358** строк (было 517), **18** useMutation (было 28) — **partial progress** | 2026-09-21 | |
 | A13 | — | — | — | — | **дырка** в нумерации 2026-08-28 — не занимать | | | |
 | A14 | layout | Low | open | — | Монолит `core/visualization`, matplotlib `use('Agg')` at import | `core/visualization/__init__.py` | 2026-08-28 | |
@@ -48,15 +49,16 @@ GSM High с [2026-08-26-gsm-audit.md](./2026-08-26-gsm-audit.md) перенум�
 | A24 | layout | High | open | P1 | `concrete_grade` теряется в пайплайне планирования | Точка потери: `viz_modules/layout_sequence/from_plan.py:676,747,944` (копируют `kp_id`/`plate_name`, не `concrete_grade`; cut несёт марку — `finalize.py:208`); skip-пути `core/plate_attribution.py:378–383` + rescue-ветка `:361–370`; legacy-фолбэк `day_view_service.py:415–421`; live: 0/558 root items с маркой vs 35/35 secondary в `plan_20260904_124248` | 2026-09-21 | |
 | A25 | layout | Critical | open | P0 | Сироты/призраки: двойная атрибуция одной геометрии к разным КП (assignment-side vs track-side, нешаренные consumed) | Источник: `core/plate_attribution.py:111–114` (два взгляда, разные правила выбора); фикс-канал: unit_id (`finalize.py:224–226` ↔ `from_plan.py:693–694`). Кейс `plan_20260904_124248`: «ПБ 20,6-7,2-8п» заказано КП#4=3+КП#5=1, атрибуция 2/2 → сирота `kp_plates.id=197` + призрак КП#5 (3-й трек 2026-09-14). Симптом: `plan_commit.py:614–641` (pro-rated), `:650` (pool guard), `:703–708` (silent continue), `:711–743` (orphan-rollback мимо NULL-day) | 2026-09-21 | |
 | A26 | layout | High | open | P1 | Слепота детекции surplus: coverage игнорирует пере-покрытие (ILP невиновен — доказано) | `core/optimization/coverage_verify.py:60` (`ok = not missing`, результат только в лог); итерация только по ключам спроса; рассинхрон нормализации ключей с post-correction. ILP не может перепроизводить: `ilp_model.py:261` (`==`), все vars `LpInteger`; живых surplus не найдено (4=4). `extract_cuts.py:61–62/:119/:140` ceil/round — латентный дефект. Surplus с identity уже роняет коммит (`plan_commit.py:494–502`); молчаливый канал — rescue-leftovers `:504–514` | 2026-09-21 | |
+| A27 | kp | Medium | open | — | `update_contract_date` пишет в БД в обход `_assert_writer` (supply-contract) | `supply_contract_service.py:315–334` vs `_assert_writer` `:336–337`; HTTP-роута нет; тест happy-path only `tests/test_supply_contract.py:340–369` | 2026-09-27 | |
 | S1 | kp | High | by-design | — | Менеджер видит чужие КП — общий архив (не IDOR для fix) | `offer_access.py:26–32`; ADR offer-access-policy.md; тесты authorization | 2026-09-21 | |
 | S2 | platform | High | resolved | — | CVE Starlette/FastAPI | fastapi 0.141.1, starlette 1.6.0; pip-audit clean | 2026-09-21 | |
 | S3 | platform | High | open | P1 | Rate limiting in-process (см. A2) | `login_rate_limit.py:84–85`; OCR rate limit `commercial_upload_validation.py:23–45`, `:141–142`; partial: `main.py:46–50` single-instance | 2026-09-21 | |
 | S4 | platform | High | resolved | — | npm audit high | high=0; 4 moderate (vitest/uuid/exceljs) отложены | 2026-09-21 | |
-| S5 | kp | Medium | open | — | OCR шлёт изображения во внешние LLM | `OCR_EXTERNAL_ENABLED=true`: `openai.py:355–367`, `pipeline.py:50–53`, `commercial_upload_validation.py:60–66`, `commercial.py:113–115`, `:132–134`, `:229`; `tests/test_commercial_ocr_policy.py` | 2026-09-21 | |
+| S5 | kp | High | open | P1 | OCR / vision во внешние LLM; supply-contract parse обходит `ensure_external_ocr_enabled` и rate limit | Коммерческий OCR при `OCR_EXTERNAL_ENABLED=true`: `openai.py:355–367`, `pipeline.py:50–53`, `commercial_upload_validation.py:60–66`, `commercial.py:113–115`, `:132–134`, `:229`. **supply-contract**: `archive.py:499–513`, `supply_contract_service.py:262–274`, `:283–295`, `:297–310`, `:469–503`; vision `core/supply_contract_card_ocr.py:93–105` (до 2 вызовов) — гейт `:60–66`, `:141–142` не вызывается; при `OCR_EXTERNAL_ENABLED=false` коммерческий parse блокируется, supply-contract — нет | 2026-09-27 | |
 | S6 | platform | Medium | open | — | SQLite без шифрования at rest | локальный завод | 2026-09-21 | |
 | S7 | auth | Medium | open | — | CSP Report-Only + unsafe-inline | `security_headers.py:11–36` | 2026-09-21 | |
-| S8 | platform | Medium | open | — | Утечка деталей ошибок в HTTP | `production.py` (~10), `archive.py` (~10), `delivery_schedule.py` (~8), `gsm.py` (~7), `commercial.py` (~6); пример `production.py:138–141`, `archive.py:276–279` — `str(exc)` | 2026-09-21 | |
-| S9 | auth | Medium | open | — | CSRF парсит multipart до проверки токена | `csrf.py:42–47`; `httpClient.ts:130–132`; DS XLSX upload | 2026-09-21 | |
+| S8 | platform | Medium | open | — | Утечка деталей ошибок в HTTP | `production.py` (~10), `archive.py` (~10), `delivery_schedule.py` (~8), `gsm.py` (~7), `commercial.py` (~6); пример `production.py:138–141`, `archive.py:276–279` — `str(exc)`. **supply-contract** в `archive.py`: `:190–194`, `:217–221`, `:258–268`, `:287–297`, `:435–468`, `:486–490`, `:520–524`; parse `:526–529` | 2026-09-27 | |
+| S9 | auth | Medium | open | — | CSRF парсит multipart до проверки токена | `csrf.py:36–47`; `httpClient.ts:130–132`; DS XLSX upload; **supply-contract** upload/parse `archive.py:159–174`, `:181–187`, `:499–506` | 2026-09-27 | |
 | S10 | auth | Medium | open | — | Сессия 12ч без refresh-ротации | `settings.py:63–65` session_ttl_seconds=43200; `session.py:14–20`, `:29–41` | 2026-09-21 | |
 | S11 | auth | Low | by-design | — | CSRF-cookie не HttpOnly (double-submit) | ожидаемо для паттерна | 2026-09-21 | |
 | S12 | auth | Low | open | — | Password policy messages на английском | auth schemas | 2026-09-21 | |
@@ -64,7 +66,7 @@ GSM High с [2026-08-26-gsm-audit.md](./2026-08-26-gsm-audit.md) перенум�
 | S14 | bot | Low | open | — | Legacy bot auth bypass при `BOT_AUTH_ENABLED=false` | `bot_archived/`; не живой контур | 2026-08-28 | |
 | S15 | kp | Low | open | — | Draft в sessionStorage (XSS-вектор черновика) | `draftStorage.ts:3`, `:18–22` | 2026-09-21 | |
 | S16 | gsm | High | open | P1 | Импорт без лимита файлов (DoS); per-file 50MB есть | `gsm.py:171–181` — loop `for upload in files:` без `len(files)` cap; per-file 50MB: `settings.py:145–146` | 2026-09-21 | gsm-audit S2 |
-| S17 | kp | Medium | open | — | XLSX import: no magic bytes / no row cap | POST `/import`; `core/delivery_schedule_xlsx.py` parse без сигнатуры ZIP и лимита строк/листов | 2026-09-21 | |
+| S17 | kp | Medium | open | — | XLSX import: no magic bytes / no row cap | DS: POST `/import`; `core/delivery_schedule_xlsx.py` parse без сигнатуры ZIP и лимита строк/листов. **supply-contract**: импорт листа юриста `supply_contract_import.py:35–60`; размер файла — `read_upload_file_capped` `archive.py:187` | 2026-09-27 | |
 | S18 | kp | Medium | open | — | Formula injection в генерируемом XLSX | `core/delivery_schedule_xlsx.py` export — значения с `=`, `+`, `-`, `@` | 2026-09-21 | |
 | S19 | kp | Medium | open | — | Unbounded PUT batches/items/name | `app/schemas/delivery_schedule.py` — нет `max_length` / `max_items` на PUT payload | 2026-09-21 | |
 | Q1 | kp | High | resolved | — | Шесть копий product-type pipeline | `product_draft_config.py` + `product_draft_handler.py` | 2026-09-21 | |
@@ -75,7 +77,7 @@ GSM High с [2026-08-26-gsm-audit.md](./2026-08-26-gsm-audit.md) перенум�
 | Q6 | layout | Medium | open | — | Две реализации `get_global_calendar_info` | `plan_calendar.py:70` vs `plan_distribution_service.py:135`; callers `delivery_schedule_service.py:603`, `archive_service.py:903`; R2 fallback vs `plan_storage` MAX_TRACKS | 2026-09-21 | |
 | Q7 | kp | Medium | open | — | Product-type duplication на фронте | partial: `productTypeConfig`; `commercialOfferApi.ts:156–173`, wizard `:76–130`, `CalculationResultStep.tsx:48–204` | 2026-09-21 | |
 | Q8 | kp | Medium | open | — | God-hook `useCreatePlanWizardState` | wc=997; `eslint-disable` :256, :368 | 2026-09-21 | |
-| Q9 | kp | Medium | open | — | God-component `OfferDetailsDrawer` | **1276** строк (было 1091); DS wiring не корневая причина | 2026-09-21 | |
+| Q9 | kp | Medium | open | — | God-component `OfferDetailsDrawer` | **1369** строк (было 1276, 1091); supply-contract кнопка/встраивание `:1220–1225`, `:1273–1281`; форма в `SupplyContractDrawer.tsx` (601) — размер не снят | 2026-09-27 | |
 | Q10 | kp | Medium | open | — | Слабая типизация production API | 9 routes без `response_model`: `production.py:87,95,220,266,321,385,525,611,619` | 2026-09-21 | |
 | Q11 | kp | Medium | open | — | preview: `Any` / `dict[str, Any]` | `commercial_draft_service.py:192,274,345,416,487,558`; `schemas/commercial.py:311–319` | 2026-09-21 | |
 | Q12 | kp | Medium | open | — | ArchiveService скрывает частичные сбои | `archive_service.py:590–603,659,701` swallow; `move_to_production` re-raise `:326–332` | 2026-09-21 | |
@@ -96,6 +98,14 @@ GSM High с [2026-08-26-gsm-audit.md](./2026-08-26-gsm-audit.md) перенум�
 | Q28 | kp | Medium | open | — | Три дублирующих SELECT из `kp_plates` | `delivery_schedule_service.py:496–500,682–686,703–707` | 2026-09-21 | |
 | Q29 | kp | Medium | open | — | Нет service-тестов import_draft happy-path + GET red | gaps в `test_delivery_schedule_*` | 2026-09-21 | |
 | Q30 | kp | Medium | open | — | Unmatched reasons на английском в UI | `delivery_schedule_xlsx.py:65–68`; `DeliveryScheduleEditor.tsx:160–161` | 2026-09-21 | |
+| Q31 | kp | Medium | open | — | Форма договора: «доверенность» без `poa_number` / `poa_date` (supply-contract) | `SupplyContractDrawer.tsx:494–503`; BE `supply_contract_service.py:372–374` | 2026-09-27 | |
+| Q32 | kp | Medium | open | — | Мёртвый verify-путь OCR карточки договора | `core/supply_contract_card_ocr.py:54–69`, `:258–259`; `supply_contract_service.py:409–410`; `core/ocr/prompts.py:122` | 2026-09-27 | |
+| Q33 | kp | Medium | open | — | Дубли `extract_contract_fields` / `reread_contract_fields` | `supply_contract_service.py:477–503` | 2026-09-27 | |
+| Q34 | kp | Medium | open | — | God-component `SupplyContractDrawer` (~601 LOC) | modal + OCR preview + форма + вложенный реестр | 2026-09-27 | |
+| Q35 | kp | Medium | open | — | FE `SupplyContract` слабее `SupplyContractOut` | `types/supplyContract.ts:15–29` vs `schemas/supply_contract.py:99–131`; `status: string` | 2026-09-27 | |
+| Q36 | kp | Medium | open | — | Формат даты договора: ISO в drawer vs DD.MM.YYYY в реестре | `SupplyContractDrawer.tsx:279`; `SupplyContractRegistry.tsx:21–27`, `:88` | 2026-09-27 | |
+| Q37 | kp | Medium | open | — | Нет теста отказа non-writer для `update_contract_date` | `tests/test_supply_contract.py:340–369` только ADMIN happy path; пара A27 | 2026-09-27 | |
+| Q38 | kp | Medium | open | — | Enum статусов/скана договора в трёх местах | `core/supply_contract.py:11–18`; `schemas/supply_contract.py:13–20`; `types/supplyContract.ts:1–11` | 2026-09-27 | |
 
 ## Счётчики (прогон 2 — --full, 2026-09-21)
 
@@ -108,8 +118,18 @@ GSM High с [2026-08-26-gsm-audit.md](./2026-08-26-gsm-audit.md) перенум�
 | auth | 0 | 0 |
 | **все open Critical/High** | **2 P0** | **15 P1** (A4, A5, A6, A7, S3, A16–A20, S16, Q19, Q20, A22, A23) |
 
+*После [supply-contract 2026-09-27](./2026-09-27-supply-contract-audit.md): S5 Medium→High P1 → глобально **2 P0 / 16 P1** (+S5); scope **kp** **0 P0 / 5 P1** (A4, A5, A22, A23, S5).*
+
+### Счётчики (supply-contract, 2026-09-27)
+
+| Метрика | Значение |
+|---------|----------|
+| Закрыто в скоупе | 0 |
+| Open P0 / P1 в скоупе | **0 / 2** (A7 platform, S5 kp) |
+| Новые ID | A27, Q31–Q38 (Medium) |
+
 A18 = gsm LibreOffice+DoS (старые gsm A3+S1). Не плодить второй ID.
 A21 (Medium), Q21 (Low) — не входят в P1.
-Q26 не занят (пропущен); следующий Q — **Q31**.
+Q26 не занят (пропущен).
 
-Следующий свободный ID: **A24**, **S20**, **Q31**.
+Следующий свободный ID: **A28**, **S20**, **Q39**.

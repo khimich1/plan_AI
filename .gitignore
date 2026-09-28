@@ -100,3 +100,4 @@ agent-skills-main/
 
 #json files
 .app_data/drafts/
+.app_data/supply-contract-scans/

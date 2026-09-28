@@ -12,6 +12,12 @@ import type {
   ProductionEstimate,
 } from "@/features/commercial-archive/types/archive";
 import { saveBlobAs } from "@/shared/lib/downloadFile";
+import type {
+  SupplyContract,
+  SupplyContractCreatePayload,
+  SupplyContractPatchPayload,
+  SupplyContractRegistryRow,
+} from "@/features/commercial-archive/types/supplyContract";
 
 export const archiveKeys = {
   all: ["archive"] as const,
@@ -27,6 +33,8 @@ export const archiveKeys = {
       state?.kind === "number" ? state.value : state?.kind === "customer" ? state.value : null,
     ] as const,
   estimate: (kpId: number) => ["archive", "estimate", kpId] as const,
+  supplyContract: (kpId: number) => ["archive", "supply-contract", kpId] as const,
+  supplyRegistry: () => ["archive", "supply-contracts"] as const,
 };
 
 export const useArchiveListQuery = (
@@ -178,6 +186,71 @@ export const useMoveToProductionMutation = () => {
     },
   });
 };
+
+export const useSupplyContractQuery = (kpId: number | null, enabled: boolean) =>
+  useQuery<SupplyContract | null>({
+    queryKey: archiveKeys.supplyContract(kpId ?? -1),
+    queryFn: () => archiveApi.getSupplyContract(kpId as number),
+    enabled: enabled && kpId !== null,
+  });
+
+export const useSupplyContractRegistryQuery = (enabled: boolean) =>
+  useQuery<SupplyContractRegistryRow[]>({
+    queryKey: archiveKeys.supplyRegistry(),
+    queryFn: () => archiveApi.listSupplyContracts(),
+    enabled,
+  });
+
+export const useCreateSupplyContractMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kpId, payload }: { kpId: number; payload: SupplyContractCreatePayload }) =>
+      archiveApi.createSupplyContract(kpId, payload),
+    onSuccess: (contract, { kpId }) => {
+      queryClient.setQueryData(archiveKeys.supplyContract(kpId), contract);
+      queryClient.invalidateQueries({ queryKey: archiveKeys.supplyRegistry() });
+    },
+  });
+};
+
+export const useParseSupplyContractMutation = () =>
+  useMutation({
+    mutationFn: ({ kpId, file }: { kpId: number; file: File }) =>
+      archiveApi.parseSupplyContract(kpId, file),
+  });
+
+export const usePatchSupplyContractMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ contractId, payload }: { contractId: number; payload: SupplyContractPatchPayload }) =>
+      archiveApi.patchSupplyContract(contractId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: archiveKeys.supplyRegistry() });
+      queryClient.invalidateQueries({ queryKey: ["archive", "supply-contract"] });
+    },
+  });
+};
+
+export const useReplaceSupplyContractMutation = (kpId: number) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ contractId, payload }: { contractId: number; payload: SupplyContractCreatePayload }) =>
+      archiveApi.replaceSupplyContract(contractId, payload),
+    onSuccess: (contract) => {
+      queryClient.setQueryData(archiveKeys.supplyContract(kpId), contract);
+      queryClient.invalidateQueries({ queryKey: archiveKeys.supplyRegistry() });
+    },
+  });
+};
+
+export const useDownloadSupplyContractMutation = () =>
+  useMutation({
+    mutationFn: async (kpId: number) => {
+      const result = await archiveApi.downloadSupplyContract(kpId);
+      saveBlobAs(result.blob, result.filename);
+      return result;
+    },
+  });
 
 export const useArchiveDocumentMutation = (kind: ArchiveFileKind) =>
   useMutation({
