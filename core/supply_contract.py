@@ -27,6 +27,8 @@ MSG_BIND_COUNTERPARTY = "Сначала занесите контрагента 
 MSG_NOT_ARCHIVED = "Договор можно оформить только у КП в статусе «в архиве»"
 MSG_NO_ACTIVE_CONTRACT = "Нет действующего договора поставки. Документ не собран."
 KP_DOCUMENT = "КоммерческоеПредложение"
+INVOICE_DOCUMENT = "Счёт на оплату"
+STAMP_DOCUMENTS = frozenset({KP_DOCUMENT, INVOICE_DOCUMENT})
 
 
 class MissingSupplyContractError(Exception):
@@ -147,9 +149,9 @@ def attach_contract_number(
     Нет договора — ошибка, документ не возвращается. Живой отправки нет.
     """
     number = _active_contract_number(counterparty_id, active_contract)
-    if document.get("Документ") != KP_DOCUMENT:
+    if document.get("Документ") not in STAMP_DOCUMENTS:
         raise MissingSupplyContractError(
-            "Ожидался документ «КоммерческоеПредложение»"
+            "Ожидался документ «КоммерческоеПредложение» или «Счёт на оплату»"
         )
     return _stamp_header(document, number)
 

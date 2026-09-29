@@ -99,6 +99,19 @@ def test_commit_move_to_production_fails_when_freeze_returns_none(
     assert st["ordered_qty"] is None
 
 
+def _mark_ready_for_production(db_path: str, kp_id: int) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE kp_meta SET status = ?, paid_at = ? WHERE kp_id = ?",
+            ("на согласовании", "2026-09-28T10:00:00", kp_id),
+        )
+        conn.execute(
+            "UPDATE KP_offers SET order_number_1c = ? WHERE kp_id = ?",
+            ("ЯР-1", kp_id),
+        )
+        conn.commit()
+
+
 def _seed_archived_with_plates(db_path: str, kp_id: int, qty: int = 4) -> None:
     seed_kp_offer(db_path, kp_id, status="в архиве")
     seed_plate(
@@ -125,6 +138,7 @@ def test_archive_service_move_to_production_freezes_m(tmp_path) -> None:
 
     db_path = make_iso_db(tmp_path)
     _seed_archived_with_plates(db_path, 20, qty=4)
+    _mark_ready_for_production(db_path, 20)
     service = ArchiveService(
         repository=KpArchiveRepository(db_path=db_path),
         outputs_dir=tmp_path / "out",
@@ -146,6 +160,7 @@ def test_archive_service_move_to_production_rolls_back_on_freeze_fail(
 
     db_path = make_iso_db(tmp_path)
     _seed_archived_with_plates(db_path, 21, qty=2)
+    _mark_ready_for_production(db_path, 21)
     before = _state(db_path, 21)
     monkeypatch.setattr(
         "core.kp_db_plates_completion.freeze_ordered_qty_if_needed",
@@ -160,7 +175,7 @@ def test_archive_service_move_to_production_rolls_back_on_freeze_fail(
         service.move_to_production(21, "15.10.2026", user={"id": 1, "role": "admin"})
 
     after = _state(db_path, 21)
-    assert after["status"] == before["status"] == "в архиве"
+    assert after["status"] == before["status"] == "на согласовании"
     assert after["execution_terms"] == before["execution_terms"]
     assert after["ordered_qty"] is None
 
@@ -353,6 +368,7 @@ def test_archive_service_move_to_production_writes_promise(tmp_path) -> None:
 
     db_path = make_iso_db(tmp_path)
     _seed_archived_with_plates(db_path, 50, qty=4)
+    _mark_ready_for_production(db_path, 50)
     service = ArchiveService(
         repository=KpArchiveRepository(db_path=db_path),
         outputs_dir=tmp_path / "out",
@@ -413,6 +429,7 @@ def test_archive_service_rejects_early_date_with_earliest(tmp_path) -> None:
 
     db_path = make_iso_db(tmp_path)
     _seed_archived_with_plates(db_path, 52, qty=4)
+    _mark_ready_for_production(db_path, 52)
     service = ArchiveService(
         repository=KpArchiveRepository(db_path=db_path),
         outputs_dir=tmp_path / "out",
@@ -427,7 +444,7 @@ def test_archive_service_rejects_early_date_with_earliest(tmp_path) -> None:
     with pytest.raises(ArchiveValidationError, match="04.09.2026"):
         service.move_to_production(52, "03.09.2026", user={"id": 1, "role": "admin"})
 
-    assert _state(db_path, 52)["status"] == "в архиве"
+    assert _state(db_path, 52)["status"] == "на согласовании"
     assert _promise_rows(db_path, 52) == []
 
 

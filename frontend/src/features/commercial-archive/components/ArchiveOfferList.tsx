@@ -87,6 +87,7 @@ const rowStyle: React.CSSProperties = {
 const trailingMeta = (section: ArchiveSection, item: ArchiveOfferListItem): string => {
   switch (section) {
     case "archived":
+    case "on_approval":
       return `${item.discount_percent}%`;
     case "in_production":
       return item.execution_terms ? `⏰ ${item.execution_terms}` : "без срока";

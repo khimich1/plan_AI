@@ -32,6 +32,8 @@ from app.schemas.archive import (
     CreateAndBindCounterpartyRequest,
     CapacitySnapshotResponse,
     KpReadinessPositionsResponse,
+    ArchivePaymentRequest,
+    InvoiceExportRequest,
     MoveToProductionRequest,
     PromiseHoldResponse,
     PromiseQuoteResponse,
@@ -631,6 +633,81 @@ def delete_archive_offer(
             detail=MSG_ARCHIVE_NOT_FOUND,
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{kp_id}/invoice-export", response_model=ArchiveOfferDetails)
+def export_archive_invoice(
+    kp_id: int,
+    payload: InvoiceExportRequest | None = None,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> ArchiveOfferDetails:
+    try:
+        warehouse = None if payload is None else payload.warehouse
+        return service.export_invoice(kp_id, user=user, warehouse=warehouse)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.export_invoice",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.export_invoice",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except ArchiveError as exc:
+        raise_unexpected_server_error(exc, where="archive.export_invoice")
+
+
+@router.post("/{kp_id}/invoice-correction", response_model=ArchiveOfferDetails)
+def export_archive_invoice_correction(
+    kp_id: int,
+    payload: InvoiceExportRequest | None = None,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> ArchiveOfferDetails:
+    try:
+        warehouse = None if payload is None else payload.warehouse
+        return service.export_invoice_correction(kp_id, user=user, warehouse=warehouse)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.export_invoice_correction",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.export_invoice_correction",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except ArchiveError as exc:
+        raise_unexpected_server_error(exc, where="archive.export_invoice_correction")
+
+
+@router.post("/{kp_id}/payment", response_model=ArchiveOfferDetails)
+def set_archive_payment(
+    kp_id: int,
+    payload: ArchivePaymentRequest,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> ArchiveOfferDetails:
+    try:
+        return service.set_payment(kp_id, paid=payload.paid, user=user)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.set_payment",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.set_payment",
+            detail=str(exc) or MSG_VALIDATION,
+        )
 
 
 @router.post("/{kp_id}/move-to-production", response_model=ArchiveOfferDetails)

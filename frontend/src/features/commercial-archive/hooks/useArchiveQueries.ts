@@ -252,6 +252,42 @@ export const useDownloadSupplyContractMutation = () =>
     },
   });
 
+export const useExportInvoiceMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kpId, warehouse }: { kpId: number; warehouse: string }) =>
+      archiveApi.exportInvoice(kpId, warehouse),
+    onSuccess: (offer) => {
+      queryClient.setQueryData(archiveKeys.detail(offer.kp_id), offer);
+      queryClient.invalidateQueries({ queryKey: archiveKeys.all });
+    },
+  });
+};
+
+export const useExportInvoiceCorrectionMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kpId, warehouse }: { kpId: number; warehouse?: string }) =>
+      archiveApi.exportInvoiceCorrection(kpId, warehouse),
+    onSuccess: (offer) => {
+      queryClient.setQueryData(archiveKeys.detail(offer.kp_id), offer);
+      queryClient.invalidateQueries({ queryKey: archiveKeys.all });
+    },
+  });
+};
+
+export const useSetArchivePaymentMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kpId, paid }: { kpId: number; paid: boolean }) =>
+      archiveApi.setPayment(kpId, paid),
+    onSuccess: (offer) => {
+      queryClient.setQueryData(archiveKeys.detail(offer.kp_id), offer);
+      queryClient.invalidateQueries({ queryKey: archiveKeys.all });
+    },
+  });
+};
+
 export const useArchiveDocumentMutation = (kind: ArchiveFileKind) =>
   useMutation({
     mutationKey: ["archive", "document", kind],

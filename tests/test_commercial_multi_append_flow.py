@@ -590,6 +590,42 @@ def test_sc6_resume_blocked_when_status_not_archived(
     assert resume.status_code in (400, 409), resume.text
 
 
+def test_sc6_resume_on_approval_keeps_status(
+    flow_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Дополнение из «на согласовании» не возвращает статус «в архиве»."""
+    _mock_manager_lookup(monkeypatch)
+    draft_id, _plates = _create_plates_result_draft(flow_client, monkeypatch)
+    kp_id = _save_draft_kp_archive(flow_client, draft_id)
+    with sqlite3.connect(str(_plita_db_path())) as conn:
+        conn.execute(
+            "UPDATE kp_meta SET status = ? WHERE kp_id = ?",
+            ("на согласовании", kp_id),
+        )
+        conn.commit()
+
+    resume = flow_client.post(f"/api/v1/commercial/archive/{kp_id}/resume")
+    assert resume.status_code == 200, resume.text
+    resumed = resume.json()
+    assert resumed["saved_offer"]["status"] == "на согласовании"
+    resume_draft_id = resumed["draft_id"]
+
+    save2 = flow_client.post(
+        f"/api/v1/commercial/drafts/{resume_draft_id}/save",
+        json={"mode": "archive", "execution_terms_input": "14 дней"},
+    )
+    assert save2.status_code == 200, save2.text
+    assert save2.json()["saved_offer"]["status"] == "на согласовании"
+    with sqlite3.connect(str(_plita_db_path())) as conn:
+        row = conn.execute(
+            "SELECT status FROM kp_meta WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchone()
+    assert row is not None
+    assert str(row[0]) == "на согласовании"
+
+
 # --- SC-7: archive multi badges -----------------------------------------------
 
 

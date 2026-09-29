@@ -192,11 +192,23 @@ def test_bind_then_move_to_production(tmp_path: Path) -> None:
     seeded = _seed_clients(db)
     kp_id = _save_archived(db)
     service = _service(db, tmp_path)
-    with pytest.raises(ArchiveValidationError, match="не найден"):
+    with pytest.raises(ArchiveValidationError, match="на согласовании"):
         service.move_to_production(kp_id, "15.10.2026", user=ADMIN)
     assert _snapshot(db, kp_id)[4] == "в архиве"
 
     service.bind_counterparty(kp_id, int(seeded["client"]["id"]), user=ADMIN)
+    with pytest.raises(ArchiveValidationError, match="на согласовании"):
+        service.move_to_production(kp_id, "15.10.2026", user=ADMIN)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE kp_meta SET status = ?, paid_at = ? WHERE kp_id = ?",
+            ("на согласовании", "2026-09-28T10:00:00", kp_id),
+        )
+        conn.execute(
+            "UPDATE KP_offers SET order_number_1c = ? WHERE kp_id = ?",
+            ("ЯР-1", kp_id),
+        )
+        conn.commit()
     details = service.move_to_production(kp_id, "15.10.2026", user=ADMIN)
     assert details.status == "в работе"
     assert _snapshot(db, kp_id)[4] == "в работе"
@@ -314,6 +326,16 @@ def test_create_and_bind_then_move_to_production(tmp_path: Path) -> None:
     service.create_and_bind_counterparty(
         kp_id, name="ООО Бармалей", code_1c="00-BARM", user=ADMIN
     )
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE kp_meta SET status = ?, paid_at = ? WHERE kp_id = ?",
+            ("на согласовании", "2026-09-28T10:00:00", kp_id),
+        )
+        conn.execute(
+            "UPDATE KP_offers SET order_number_1c = ? WHERE kp_id = ?",
+            ("ЯР-1", kp_id),
+        )
+        conn.commit()
     details = service.move_to_production(kp_id, "15.10.2026", user=ADMIN)
     assert details.status == "в работе"
     assert details.counterparty_id is not None

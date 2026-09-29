@@ -389,6 +389,32 @@ def test_cancelled_number_is_skipped_for_the_next_client(tmp_path: Path) -> None
     assert created["number"] == "1028/09/26"
 
 
+def test_supply_contract_read_on_approval_status_returns_number(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path, "approval-read.db")
+    with _connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        client_id = _seed_counterparty(conn)
+        _seed_offer(conn, kp_id=1, counterparty_id=client_id)
+    service = _service(db_path)
+    created = service.create_for_kp(1, _buyer(), user=ADMIN)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE kp_meta SET status = ? WHERE kp_id = 1",
+            ("на согласовании",),
+        )
+        conn.commit()
+
+    visible = service.get_for_kp(1, user=ADMIN)
+    payload, filename = service.document_for_kp(1, user=ADMIN)
+
+    assert visible is not None
+    assert visible["number"] == created["number"]
+    assert payload.startswith(b"PK")
+    assert created["number"].replace("/", "-") in filename
+    with pytest.raises(SupplyContractValidationError, match="в архиве"):
+        service.create_for_kp(1, _buyer(), user=ADMIN)
+
+
 def test_missing_counterparty_and_non_archive_are_russian_errors(tmp_path: Path) -> None:
     db_path = _fresh_db(tmp_path, "gates.db")
     with _connect(db_path) as conn:
@@ -553,6 +579,24 @@ def _kp_document() -> dict:
         "Контрагент": {"Наименование": "РОМАШКА ООО", "ИНН": "7701000001"},
         "Товары": [{"Номенклатура": "Плиты ПБ", "Количество": 2}],
     }
+
+
+def test_stamp_accepts_invoice_and_commercial_offer_document_names() -> None:
+    from core.supply_contract import KP_DOCUMENT, attach_contract_number as stamp
+
+    contract = {"counterparty_id": 7, "status": "нет", "number": "0001/09/26"}
+    for document_name in ("Счёт на оплату", KP_DOCUMENT):
+        source = {
+            "Документ": document_name,
+            "Контрагент": {"Наименование": "РОМАШКА ООО"},
+            "Товары": [{"Номенклатура": "Плиты ПБ", "Количество": 2}],
+        }
+        stamped = stamp(source, 7, contract)
+        keys = list(stamped)
+        assert stamped["НомерДоговора"] == "0001/09/26"
+        assert keys.index("НомерДоговора") == keys.index("Контрагент") + 1
+        assert stamped["Документ"] == document_name
+        assert "НомерДоговора" not in source
 
 
 def test_json_header_puts_active_number_beside_counterparty(tmp_path: Path) -> None:

@@ -36,6 +36,10 @@ describe("sectionFromStatus", () => {
   it("maps в архиве to archived", () => {
     expect(sectionFromStatus({ ...baseItem, status: "в архиве" })).toBe("archived");
   });
+
+  it("maps на согласовании to on_approval", () => {
+    expect(sectionFromStatus({ ...baseItem, status: "на согласовании" })).toBe("on_approval");
+  });
 });
 
 describe("filterByProductType MNA-602 — contains-type", () => {

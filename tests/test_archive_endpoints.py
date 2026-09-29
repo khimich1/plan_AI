@@ -127,6 +127,39 @@ def _fake_details(
     )
 
 
+def test_list_on_approval_section_is_accepted(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.list_offers.return_value = [
+        ArchiveOfferListItem(
+            kp_id=7,
+            creation_date="01.03.2026",
+            customer_name="ООО Тест",
+            manager_name="Иван",
+            discount_percent=0,
+            subtotal=1,
+            vat_amount=1,
+            total_amount=1,
+            status="на согласовании",
+        )
+    ]
+
+    response = client.get(
+        "/api/v1/commercial/archive?section=on_approval",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.json()[0]["status"] == "на согласовании"
+    fake_service.list_offers.assert_called_once_with(
+        "on_approval",
+        product_type="all",
+        user=TESTER_USER,
+    )
+
+
 def test_list_requires_auth(client: TestClient) -> None:
     response = client.get("/api/v1/commercial/archive?section=archived")
     assert response.status_code == 401
@@ -488,6 +521,107 @@ def test_delete_ok(
 
     assert response.status_code == 204
     fake_service.delete_offer.assert_called_once_with(42, user=TESTER_USER)
+
+
+def test_invoice_export_returns_card(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.export_invoice.return_value = _fake_details(status="на согласовании")
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/invoice-export",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "на согласовании"
+    fake_service.export_invoice.assert_called_once_with(
+        42, user=TESTER_USER, warehouse=None
+    )
+
+
+def test_invoice_export_passes_warehouse(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.export_invoice.return_value = _fake_details(status="на согласовании")
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/invoice-export",
+        json={"warehouse": "Склад Готовой Продукции"},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200, response.text
+    fake_service.export_invoice.assert_called_once_with(
+        42, user=TESTER_USER, warehouse="Склад Готовой Продукции"
+    )
+
+
+def test_invoice_correction_passes_warehouse_when_present(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.export_invoice_correction.return_value = _fake_details(
+        status="на согласовании"
+    )
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/invoice-correction",
+        json={"warehouse": "БСУ склад"},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200, response.text
+    fake_service.export_invoice_correction.assert_called_once_with(
+        42, user=TESTER_USER, warehouse="БСУ склад"
+    )
+
+
+def test_invoice_export_validation_error_is_russian(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    fake_service.export_invoice.side_effect = ArchiveValidationError(
+        "Нет действующего договора поставки"
+    )
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/invoice-export",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Нет действующего договора поставки"
+
+
+def test_payment_unmark_validation_is_russian(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    fake_service.set_payment.side_effect = ArchiveValidationError(
+        "Снять оплату можно только в статусе «на согласовании»"
+    )
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/payment",
+        cookies=auth_cookie,
+        json={"paid": False},
+    )
+
+    assert response.status_code == 400
+    assert "на согласовании" in response.json()["detail"]
+    fake_service.set_payment.assert_called_once_with(42, paid=False, user=TESTER_USER)
 
 
 def test_move_to_production_ok(

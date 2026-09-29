@@ -16,7 +16,7 @@ from app.schemas.sgp import SgpProgress
 from core.production.capacity import TRACKS_PER_DAY_HARD_CAP
 
 
-ArchiveSection = Literal["archived", "in_production", "completed"]
+ArchiveSection = Literal["archived", "on_approval", "in_production", "completed"]
 ArchiveFileKind = Literal["pdf", "xlsx", "schema", "xlsx_delivery_in_unit"]
 ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs", "mixed"]
 ArchiveProductTypeFilter = Literal["all", "plates", "piles", "steps", "marches", "bridge_piles"]
@@ -243,6 +243,11 @@ class ArchiveOfferDetails(BaseModel):
     fbs: list[ArchiveFbsItem] = Field(default_factory=list)
     completion_percentage: float | None = None
     readiness: KpReadinessSummary | None = None
+    order_number_1c: str | None = None
+    paid_at: str | None = None
+    correction_pending: bool = False
+    invoice_export_block: str | None = None
+    invoice_warehouse: str | None = None
 
 
 class BindCounterpartyRequest(BaseModel):
@@ -269,6 +274,14 @@ class UpdateLogisticsCostRequest(BaseModel):
 
 class MoveToProductionRequest(BaseModel):
     execution_terms: str = Field(min_length=1, max_length=128)
+
+
+class ArchivePaymentRequest(BaseModel):
+    paid: bool
+
+
+class InvoiceExportRequest(BaseModel):
+    warehouse: str | None = None
 
 
 class CapacityDayInfo(BaseModel):

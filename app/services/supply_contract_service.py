@@ -85,7 +85,7 @@ class SupplyContractService:
         self.scans_dir = scans_dir or _SCANS_DIR
 
     def get_for_kp(self, kp_id: int, *, user: dict) -> dict[str, Any] | None:
-        raw = self._offer_for_write(kp_id, user)
+        raw = self._offer_for_read(kp_id, user)
         counterparty_id = raw.get("counterparty_id")
         if not counterparty_id:
             raise SupplyContractValidationError(MSG_BIND_COUNTERPARTY)
@@ -372,13 +372,23 @@ class SupplyContractService:
         previous = current.get("scan_path")
         return str(stored), str(previous) if previous else None
 
+    def _offer_for_read(self, kp_id: int, user: dict) -> dict[str, Any]:
+        raw = self._load_offer(kp_id, user)
+        if raw.get("status") not in {"в архиве", "на согласовании"}:
+            raise SupplyContractValidationError(MSG_NOT_ARCHIVED)
+        return raw
+
     def _offer_for_write(self, kp_id: int, user: dict) -> dict[str, Any]:
+        raw = self._load_offer(kp_id, user)
+        if raw.get("status") != "в архиве":
+            raise SupplyContractValidationError(MSG_NOT_ARCHIVED)
+        return raw
+
+    def _load_offer(self, kp_id: int, user: dict) -> dict[str, Any]:
         raw = self.offers.get_by_id(kp_id)
         if not raw:
             raise SupplyContractNotFoundError(f"КП №{kp_id} не найдено")
         assert_offer_write_access(user, raw)
-        if raw.get("status") != "в архиве":
-            raise SupplyContractValidationError(MSG_NOT_ARCHIVED)
         return raw
 
     def _validated_fields(self, payload: SupplyContractCreate) -> dict[str, Any]:

@@ -5,7 +5,7 @@ from typing import Literal
 from app.core.settings import get_settings
 from core.kp import offers_read
 
-ArchiveSection = Literal["archived", "in_production", "completed"]
+ArchiveSection = Literal["archived", "on_approval", "in_production", "completed"]
 
 
 class KpOffersRepository:

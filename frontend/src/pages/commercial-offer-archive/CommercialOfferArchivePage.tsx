@@ -22,7 +22,12 @@ import type {
 } from "@/features/commercial-archive/types/archive";
 import { getErrorMessage } from "@/shared/lib/apiError";
 
-const VALID_SECTIONS: readonly ArchiveSection[] = ["archived", "in_production", "completed"];
+const VALID_SECTIONS: readonly ArchiveSection[] = [
+  "archived",
+  "on_approval",
+  "in_production",
+  "completed",
+];
 
 /** Concrete types for contains-type filter (never the literal "mixed" token). */
 export const concreteProductTypes = (item: ArchiveOfferListItem): ProductType[] => {
@@ -64,6 +69,8 @@ export const sectionFromStatus = (item: ArchiveOfferListItem): ArchiveSection =>
   switch (item.status) {
     case "в архиве":
       return "archived";
+    case "на согласовании":
+      return "on_approval";
     case "в работе":
       return "in_production";
     case "На СГП":

@@ -14,7 +14,10 @@ from openpyxl import load_workbook
 
 from core.commercial_offer_xlsx import calculate_total_cost, generate_commercial_offer_xlsx
 from core.commercial_pricing import VAT_RATE
-from core.embed_delivery_in_unit_price import embed_delivery_in_unit_prices
+from core.embed_delivery_in_unit_price import (
+    allocate_line_delivery_kopecks,
+    embed_delivery_in_unit_prices,
+)
 
 
 def _embed(**kwargs):
@@ -146,6 +149,87 @@ def test_legacy_missing_type_counts_as_plates() -> None:
 
     assert result.embedded_plate is True
     assert result.lines[0].line_sum == 140.0
+
+
+def _line_kopecks(**kwargs: Any) -> list[int]:
+    return allocate_line_delivery_kopecks(**kwargs)
+
+
+def test_embed_line_delivery_kopecks_sum_to_each_boiler() -> None:
+    """Each boiler's kopecks land only on its own lines, extras on the first pieces."""
+    kopecks = _line_kopecks(
+        qty_by_index=[2, 1, 1, 2, 1, 2, 1],
+        product_type_by_index=[
+            "plates",
+            "piles",
+            "bridge_piles",
+            "fbs",
+            "piles",
+            "piles",
+            "steps",
+        ],
+        length_key_by_index=[None, None, None, None, 140, 150, None],
+        plate_delivery_total=10.0,
+        pile_delivery_total=7.0,
+        fbs_delivery_total=3.01,
+        long_pile_delivery_by_length={140: 5.0, 150: 1.0, 160: 9.0},
+    )
+
+    plate = kopecks[0]
+    regular_piles = kopecks[1] + kopecks[2]
+    fbs_pool = kopecks[3] + kopecks[6]
+    assert plate == 1000
+    assert regular_piles == 700
+    assert fbs_pool == 301
+    assert kopecks[4] == 500
+    assert kopecks[5] == 100
+    assert sum(kopecks) == 1000 + 700 + 301 + 500 + 100
+
+
+def test_embed_fbs_does_not_take_plate_kopecks() -> None:
+    kopecks = _line_kopecks(
+        qty_by_index=[2, 4],
+        product_type_by_index=["plates", "fbs"],
+        plate_delivery_total=20.0,
+        pile_delivery_total=70.0,
+        fbs_delivery_total=3.0,
+    )
+
+    assert kopecks == [2000, 300]
+
+
+def test_embed_long_pile_length_does_not_cross() -> None:
+    kopecks = _line_kopecks(
+        qty_by_index=[1, 3, 2],
+        product_type_by_index=["piles", "piles", "bridge_piles"],
+        length_key_by_index=[140, 150, None],
+        plate_delivery_total=0.0,
+        pile_delivery_total=8.0,
+        fbs_delivery_total=0.0,
+        long_pile_delivery_by_length={140: 4.0, 150: 6.0},
+    )
+
+    assert kopecks[0] == 400
+    assert kopecks[1] == 600
+    assert kopecks[2] == 800
+
+
+def test_embed_line_delivery_remainder_on_first_pieces() -> None:
+    """100.01 ₽ over qty 3 puts the extra kopecks on the first pieces."""
+    kopecks = _line_kopecks(
+        qty_by_index=[2, 1],
+        product_type_by_index=["plates", "plates"],
+        plate_delivery_total=100.01,
+    )
+
+    assert kopecks == [6668, 3333]
+    assert sum(kopecks) == 10001
+
+
+def test_embed_line_delivery_has_no_discount_argument() -> None:
+    params = inspect.signature(allocate_line_delivery_kopecks).parameters
+    assert "discount_percent" not in params
+    assert "unit_price_by_index" not in params
 
 
 # --- Task 3/4: XLSX generator flag -------------------------------------------

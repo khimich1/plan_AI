@@ -450,6 +450,64 @@ def update_kp_status(
             conn.close()
 
 
+def commit_invoice_snapshot(
+    kp_id: int,
+    snapshot_hash: str,
+    db_path: str = DEFAULT_DB,
+    *,
+    status: str | None = None,
+    warehouse: str | None = None,
+) -> None:
+    """Пишет хеш снимка и, если задан, статус. Одна транзакция после файла."""
+    conn = _connect(db_path)
+    try:
+        cur = conn.cursor()
+        if warehouse is None:
+            cur.execute(
+                "UPDATE KP_offers SET invoice_snapshot_hash = ? WHERE kp_id = ?",
+                (snapshot_hash, kp_id),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE KP_offers
+                SET invoice_snapshot_hash = ?, invoice_warehouse = ?
+                WHERE kp_id = ?
+                """,
+                (snapshot_hash, warehouse, kp_id),
+            )
+        if cur.rowcount == 0:
+            raise ValueError("kp_missing")
+        if status is not None and not update_kp_status(
+            kp_id, status, db_path, _external_conn=conn
+        ):
+            raise ValueError("status_missing")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def set_kp_paid_at(
+    kp_id: int,
+    paid_at: str | None,
+    db_path: str = DEFAULT_DB,
+) -> bool:
+    conn = _connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE kp_meta SET paid_at = ? WHERE kp_id = ?",
+            (paid_at, kp_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def save_xlsx_file(kp_id: int, xlsx_file_path: str, db_path: str = DEFAULT_DB) -> bool:
     """
     Сохраняет файл XLSX в базу данных (обновляет или создаёт запись).

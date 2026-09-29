@@ -1,4 +1,4 @@
-export type ArchiveSection = "archived" | "in_production" | "completed";
+export type ArchiveSection = "archived" | "on_approval" | "in_production" | "completed";
 export type ArchiveFileKind = "pdf" | "xlsx" | "schema" | "xlsx_delivery_in_unit";
 export type ProductType = "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs" | "mixed";
 export type ArchiveProductTypeFilter = "all" | "plates" | "piles" | "steps" | "marches" | "bridge_piles" | "fbs";
@@ -199,6 +199,11 @@ export type ArchiveOfferDetails = {
   fbs?: ArchiveBridgePileItem[];
   completion_percentage: number | null;
   readiness?: KpReadinessSummary | null;
+  order_number_1c?: string | null;
+  paid_at?: string | null;
+  correction_pending?: boolean;
+  invoice_export_block?: string | null;
+  invoice_warehouse?: string | null;
 };
 
 export type ArchiveSearchState =

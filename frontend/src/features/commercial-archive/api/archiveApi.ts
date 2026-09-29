@@ -102,6 +102,27 @@ export const archiveApi = {
       { "Content-Type": "application/json" },
     ),
 
+  exportInvoice: (kpId: number, warehouse: string) =>
+    httpClient.post<ArchiveOfferDetails>(
+      `${BASE}/${kpId}/invoice-export`,
+      JSON.stringify({ warehouse }),
+      { "Content-Type": "application/json" },
+    ),
+
+  exportInvoiceCorrection: (kpId: number, warehouse?: string) =>
+    httpClient.post<ArchiveOfferDetails>(
+      `${BASE}/${kpId}/invoice-correction`,
+      warehouse ? JSON.stringify({ warehouse }) : undefined,
+      warehouse ? { "Content-Type": "application/json" } : undefined,
+    ),
+
+  setPayment: (kpId: number, paid: boolean) =>
+    httpClient.post<ArchiveOfferDetails>(
+      `${BASE}/${kpId}/payment`,
+      JSON.stringify({ paid }),
+      { "Content-Type": "application/json" },
+    ),
+
   getProductionEstimate: (kpId: number) =>
     httpClient.get<ProductionEstimate>(`${BASE}/${kpId}/production-estimate`),
 

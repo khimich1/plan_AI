@@ -7,6 +7,7 @@ type Props = {
 
 const OPTIONS: { value: ArchiveSection; label: string; emoji: string }[] = [
   { value: "archived", label: "В архиве", emoji: "📦" },
+  { value: "on_approval", label: "На согласовании", emoji: "📝" },
   { value: "in_production", label: "В производстве", emoji: "🏭" },
   { value: "completed", label: "Выполненные", emoji: "✅" },
 ];
