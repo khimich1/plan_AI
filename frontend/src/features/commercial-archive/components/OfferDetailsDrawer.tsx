@@ -19,6 +19,12 @@ import {
   useUpdateLogisticsCostMutation,
   useBindCounterpartyMutation,
   useCreateAndBindCounterpartyMutation,
+  useExportInvoiceMutation,
+  useExportInvoiceCorrectionMutation,
+  useSetArchivePaymentMutation,
+  useSpecificationQuery,
+  useSaveSpecificationMutation,
+  useDownloadSpecificationMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import {
   holdBadgeLabel,
@@ -34,7 +40,17 @@ import {
   uniqueMarks,
 } from "@/features/commercial-offer/lib/longPileDelivery";
 import { formatMoney, statusEmoji } from "@/features/commercial-archive/lib/format";
-import type { ArchiveOfferDetails, ArchiveMarchItem, ArchivePileItem, ArchiveStepItem } from "@/features/commercial-archive/types/archive";
+import {
+  SpecificationPanel,
+  specificationPanelKey,
+} from "@/features/commercial-archive/components/SpecificationPanel";
+import type {
+  ArchiveOfferDetails,
+  ArchiveMarchItem,
+  ArchivePileItem,
+  ArchiveStepItem,
+  SpecificationChoicePayload,
+} from "@/features/commercial-archive/types/archive";
 import { useWizardDraftStore } from "@/features/commercial-offer/store/wizardDraftStore";
 import { DeliveryScheduleDialog } from "@/features/delivery-schedule/components/DeliveryScheduleDialog";
 import { useDeliveryScheduleQuery } from "@/features/delivery-schedule/hooks/useDeliveryScheduleQueries";
@@ -56,7 +72,169 @@ import {
 
 const DELIVERY_SCHEDULE_EDITABLE_STATUSES = new Set(["в работе", "На СГП"]);
 /** График поставки недоступен в секции «В архиве» — только после перевода в производство. */
-const DELIVERY_SCHEDULE_HIDDEN_STATUSES = new Set(["в архиве"]);
+const DELIVERY_SCHEDULE_HIDDEN_STATUSES = new Set(["в архиве", "на согласовании"]);
+const CONSTRUCTOR_STATUSES = new Set(["в архиве", "на согласовании"]);
+const DISABLED_ACTION_STYLE = {
+  background: "#98a2b3",
+  border: "1px solid #98a2b3",
+  color: "#ffffff",
+};
+
+const INVOICE_WAREHOUSES = [
+  "Склад Готовой Продукции",
+  "Склад покупных товаров (для перепродажи)",
+  "БСУ склад",
+  "Сырье склад производства",
+  "Полуфабрикаты склад производства",
+] as const;
+
+function hasText(value: string | null | undefined): boolean {
+  return Boolean(value?.trim());
+}
+
+const STALE_SPECIFICATION_TITLE =
+  "Условия оплаты в спецификации устарели: откройте спецификацию и сохраните их снова";
+
+function productionGateTitle(offer: ArchiveOfferDetails, simpleProduct: boolean): string | undefined {
+  const hasNumber = hasText(offer.order_number_1c);
+  const paid = hasText(offer.paid_at);
+  if (simpleProduct && hasNumber && paid) {
+    return "скоро";
+  }
+  if (!hasNumber) {
+    return "нужен номер счёта";
+  }
+  if (!paid) {
+    return "после оплаты";
+  }
+  if (simpleProduct) {
+    return "скоро";
+  }
+  if (!offer.specification_saved) {
+    return "сначала спецификация";
+  }
+  if (offer.specification_stale_custom) {
+    return STALE_SPECIFICATION_TITLE;
+  }
+  return undefined;
+}
+
+function OrderPhaseHeader({
+  offer,
+  simpleProduct,
+  busy,
+  onSend,
+  onCorrect,
+  onPay,
+  onProduce,
+  onOpenSpecification,
+}: {
+  offer: ArchiveOfferDetails;
+  simpleProduct: boolean;
+  busy: boolean;
+  onSend: () => void;
+  onCorrect: () => void;
+  onPay: (paid: boolean) => void;
+  onProduce: () => void;
+  onOpenSpecification: () => void;
+}) {
+  const status = offer.status;
+  if (status !== "в архиве" && status !== "на согласовании") {
+    return null;
+  }
+  const hasNumber = hasText(offer.order_number_1c);
+  const paid = hasText(offer.paid_at);
+  const exportBlock =
+    status === "в архиве"
+      ? offer.counterparty_id == null
+        ? "Сначала занесите контрагента"
+        : offer.invoice_export_block?.trim() || null
+      : null;
+  const canProduce =
+    status === "на согласовании" &&
+    hasNumber &&
+    paid &&
+    !simpleProduct &&
+    Boolean(offer.specification_saved) &&
+    !offer.specification_stale_custom;
+  const phaseLine =
+    status === "в архиве"
+      ? exportBlock
+        ? null
+        : "КП · ещё не в 1С"
+      : hasNumber
+        ? `Счёт ${offer.order_number_1c}`
+        : "Счёт · номер ещё не пришёл из 1С";
+  const hint =
+    status === "на согласовании" && !hasNumber && offer.correction_pending
+      ? "Исправление отправится, когда номер будет известен"
+      : null;
+  const quiet =
+    status === "на согласовании" && hasNumber && !offer.correction_pending
+      ? "В 1С ушло без правок"
+      : null;
+  const productionTitle = productionGateTitle(offer, simpleProduct);
+
+  return (
+    <div data-testid="order-phase" style={{ display: "grid", gap: "0.45rem", marginTop: "0.75rem" }}>
+      {phaseLine && <div style={{ fontWeight: 600 }}>{phaseLine}</div>}
+      {hasText(offer.invoice_warehouse) && (
+        <div data-testid="invoice-warehouse">Склад: {offer.invoice_warehouse}</div>
+      )}
+      {quiet && <div style={{ color: "#667085", fontSize: "0.9rem" }}>{quiet}</div>}
+      {hint && <div style={{ color: "#475467" }}>{hint}</div>}
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+        {status === "в архиве" && (
+          <Button
+            variant="primary"
+            disabled={busy || Boolean(exportBlock)}
+            title={exportBlock ?? undefined}
+            style={exportBlock ? DISABLED_ACTION_STYLE : undefined}
+            onClick={() => {
+              if (busy || exportBlock) {
+                return;
+              }
+              onSend();
+            }}
+          >
+            Отправить в 1С
+          </Button>
+        )}
+        {status === "на согласовании" && offer.correction_pending && hasNumber && (
+          <Button
+            variant={canProduce ? "secondary" : "primary"}
+            disabled={busy}
+            onClick={onCorrect}
+          >
+            Отправить исправление
+          </Button>
+        )}
+        {status === "на согласовании" && (
+          <Button
+            variant={canProduce ? "primary" : "secondary"}
+            disabled={busy || !canProduce}
+            title={productionTitle}
+            style={canProduce ? undefined : DISABLED_ACTION_STYLE}
+            onClick={onProduce}
+          >
+            В производство
+          </Button>
+        )}
+        {status === "на согласовании" && (
+          <Button variant="secondary" disabled={busy} onClick={() => onPay(!paid)}>
+            {paid ? "Снять оплату" : "Оплачен"}
+          </Button>
+        )}
+        {status === "на согласовании" && (
+          <Button type="button" variant="secondary" disabled={busy} onClick={onOpenSpecification}>
+            Спецификация
+          </Button>
+        )}
+      </div>
+      {exportBlock && <div style={{ color: "#667085", fontSize: "0.9rem" }}>{exportBlock}</div>}
+    </div>
+  );
+}
 
 type Props = {
   open: boolean;
@@ -156,10 +334,34 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const logisticsMutation = useUpdateLogisticsCostMutation();
   const bindMutation = useBindCounterpartyMutation();
   const createBindMutation = useCreateAndBindCounterpartyMutation();
+  const exportInvoiceMutation = useExportInvoiceMutation();
+  const correctionMutation = useExportInvoiceCorrectionMutation();
+  const paymentMutation = useSetArchivePaymentMutation();
   const schemaMutation = useArchiveDocumentMutation("schema");
+  const [specOpen, setSpecOpen] = useState(false);
+  const [specError, setSpecError] = useState<string | null>(null);
+  const specQuery = useSpecificationQuery(specOpen && kpId !== null ? kpId : null);
+  const saveSpec = useSaveSpecificationMutation();
+  const downloadSpec = useDownloadSpecificationMutation();
+  const saveSpecificationChoice = async (
+    targetKpId: number,
+    choice: SpecificationChoicePayload,
+    downloadAfterSave: boolean,
+  ) => {
+    setSpecError(null);
+    try {
+      await saveSpec.mutateAsync({ kpId: targetKpId, choice });
+      if (downloadAfterSave) {
+        await downloadSpec.mutateAsync(targetKpId);
+      }
+    } catch (error) {
+      setSpecError(getErrorMessage(error));
+    }
+  };
   const financePending = discountMutation.isPending || logisticsMutation.isPending;
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [contractOpen, setContractOpen] = useState(false);
+  const [warehousePick, setWarehousePick] = useState<null | "create" | "correction">(null);
 
   const offer = query.data;
   useEffect(() => {
@@ -168,6 +370,8 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     setBindCode1c("");
     setBindInn("");
     setBindKpp("");
+    setSpecOpen(false);
+    setSpecError(null);
   }, [offer?.kp_id, offer?.counterparty_id]);
   const holdQuery = usePromiseHoldQuery(
     open && offer?.status === "в архиве" ? offer.kp_id : null,
@@ -186,6 +390,9 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     isBridgePileOffer ||
     isCompositePileOffer ||
     isFbsOffer;
+  const canEditInConstructor = offer?.status != null && CONSTRUCTOR_STATUSES.has(offer.status);
+  const phaseBusy =
+    exportInvoiceMutation.isPending || correctionMutation.isPending || paymentMutation.isPending;
   const showReadiness =
     !isSimpleProductOffer && (offer?.status === "в работе" || offer?.status === "На СГП");
   const canShowDeliverySchedule =
@@ -511,7 +718,13 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={() => {
+        if (warehousePick !== null) {
+          setWarehousePick(null);
+          return;
+        }
+        onClose();
+      }}
       title={
         offer ? (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
@@ -599,7 +812,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                     ИНН {offer.customer_inn || "—"} / КПП {offer.customer_kpp || "—"}
                   </div>
                 )}
-                {offer.status === "в архиве" && (
+                {offer.status === "в архиве" && offer.counterparty_id == null && (
                   <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.75rem", minWidth: 240 }}>
                     <FieldWrapper label="Занести контрагента">
                       <CounterpartyAutocomplete
@@ -700,7 +913,88 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 </div>
               )}
             </div>
+            <OrderPhaseHeader
+              offer={offer}
+              simpleProduct={isSimpleProductOffer}
+              busy={phaseBusy}
+              onSend={() => setWarehousePick("create")}
+              onCorrect={() => {
+                if (hasText(offer.invoice_warehouse)) {
+                  void correctionMutation.mutateAsync({ kpId: offer.kp_id });
+                  return;
+                }
+                setWarehousePick("correction");
+              }}
+              onPay={(paid) => {
+                void paymentMutation.mutateAsync({ kpId: offer.kp_id, paid });
+              }}
+              onProduce={() => setMoveOpen(true)}
+              onOpenSpecification={() => {
+                setSpecError(null);
+                setSpecOpen((open) => !open);
+              }}
+            />
+            {specOpen && offer.status === "на согласовании" && specQuery.isPending && <Spinner />}
+            {specOpen && offer.status === "на согласовании" && specQuery.isError && (
+              <Alert tone="error">{getErrorMessage(specQuery.error)}</Alert>
+            )}
+            {specOpen && offer.status === "на согласовании" && specQuery.data && (
+              <SpecificationPanel
+                key={specificationPanelKey(specQuery.data)}
+                view={specQuery.data}
+                busy={saveSpec.isPending || downloadSpec.isPending}
+                error={specError}
+                onSave={(choice) => saveSpecificationChoice(offer.kp_id, choice, false)}
+                onDownload={(choice) => saveSpecificationChoice(offer.kp_id, choice, true)}
+              />
+            )}
+            <Modal
+              open={warehousePick !== null}
+              onClose={() => setWarehousePick(null)}
+              title="Склад"
+            >
+              <div style={{ display: "grid", gap: "0.5rem" }}>
+                {INVOICE_WAREHOUSES.map((name) => (
+                  <Button
+                    key={name}
+                    type="button"
+                    variant="secondary"
+                    fullWidth
+                    disabled={phaseBusy}
+                    onClick={() => {
+                      const mode = warehousePick;
+                      const kpId = offer.kp_id;
+                      setWarehousePick(null);
+                      if (mode === "create") {
+                        void exportInvoiceMutation.mutateAsync({ kpId, warehouse: name });
+                        return;
+                      }
+                      if (mode === "correction") {
+                        void correctionMutation.mutateAsync({ kpId, warehouse: name });
+                      }
+                    }}
+                  >
+                    {name}
+                  </Button>
+                ))}
+                <Button type="button" variant="ghost" fullWidth onClick={() => setWarehousePick(null)}>
+                  Отмена
+                </Button>
+              </div>
+            </Modal>
           </section>
+
+          {(exportInvoiceMutation.isError ||
+            correctionMutation.isError ||
+            paymentMutation.isError) && (
+            <Alert tone="error">
+              {getErrorMessage(
+                exportInvoiceMutation.error ??
+                  correctionMutation.error ??
+                  paymentMutation.error,
+              )}
+            </Alert>
+          )}
 
           {showReadiness && offer.readiness && (
             <KpReadinessBlock kpId={offer.kp_id} readiness={offer.readiness} />
@@ -726,7 +1020,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               }}
             >
               <h3 style={{ margin: 0, fontSize: "1rem" }}>Итоги</h3>
-              {offer.status === "в архиве" && (
+              {canEditInConstructor && (
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   <Button
                     variant="primary"
@@ -749,7 +1043,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 </div>
               )}
             </div>
-            {offer.status === "в архиве" ? (
+            {canEditInConstructor ? (
               <div
                 style={{
                   display: "grid",
@@ -1202,7 +1496,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             )}
           </section>
 
-          <section style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          <section aria-label="Документы" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "pdf"))}>📄 PDF</Button>
             <Button onClick={() => downloadFile(archiveApi.buildDocumentUrl(offer.kp_id, "xlsx"))}>📊 XLSX</Button>
             <Button
@@ -1218,6 +1512,20 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
             >
               XLSX (доставка в цене)
             </Button>
+            {offer.specification_saved && (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={downloadSpec.isPending}
+                onClick={() => {
+                  void downloadSpec.mutateAsync(offer.kp_id).catch((error: unknown) => {
+                    setSpecError(getErrorMessage(error));
+                  });
+                }}
+              >
+                Скачать спецификацию
+              </Button>
+            )}
             {!isSimpleProductOffer && (
               <Button
                 variant="secondary"
@@ -1227,49 +1535,30 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 {schemaMutation.isPending ? "Формируем…" : "📐 Схема"}
               </Button>
             )}
-            {canShowDeliverySchedule && (
-              <Button
-                variant="secondary"
-                title={
-                  canEditDeliverySchedule
-                    ? "Редактирование графика поставки"
-                    : "Просмотр графика поставки"
-                }
-                onClick={() => setScheduleOpen(true)}
-              >
-                График поставки
-              </Button>
-            )}
-            {offer.status === "в архиве" && (
+            {canEditInConstructor && (
               <SupplyContractArchiveButton
                 counterpartyId={offer.counterparty_id}
                 onClick={() => setContractOpen(true)}
               />
             )}
-            {offer.status === "в архиве" && (
-              isSimpleProductOffer ? (
-                <Button variant="secondary" disabled title="скоро">
-                  🏭 В производство
-                </Button>
-              ) : (
-                <Button
-                  variant="secondary"
-                  disabled={offer.counterparty_id == null}
-                  title={
-                    offer.counterparty_id == null
-                      ? "Сначала занесите контрагента из 1С"
-                      : undefined
-                  }
-                  onClick={() => setMoveOpen(true)}
-                >
-                  🏭 В производство
-                </Button>
-              )
-            )}
-            <Button variant="danger" onClick={() => setDeleteOpen(true)}>
-              Удалить КП
-            </Button>
           </section>
+          {specError && !specOpen && <Alert tone="error">{specError}</Alert>}
+          {canShowDeliverySchedule && (
+            <Button
+              variant="secondary"
+              title={
+                canEditDeliverySchedule
+                  ? "Редактирование графика поставки"
+                  : "Просмотр графика поставки"
+              }
+              onClick={() => setScheduleOpen(true)}
+            >
+              График поставки
+            </Button>
+          )}
+          <Button variant="danger" onClick={() => setDeleteOpen(true)}>
+            Удалить КП
+          </Button>
 
           {schemaMutation.isError && (
             <Alert tone="error">{getErrorMessage(schemaMutation.error)}</Alert>

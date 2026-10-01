@@ -9,12 +9,19 @@ from dataclasses import dataclass
 
 PLATE_POOL = frozenset({"plates"})
 PILE_POOL = frozenset({"piles", "bridge_piles"})
+FBS_POOL = frozenset({"fbs", "steps", "marches"})
 
 _KIND_ALIASES = {
     "pile": "piles",
     "bridge_pile": "bridge_piles",
     "step": "steps",
     "march": "marches",
+}
+_LINE_DELIVERY_ALIASES = {
+    **_KIND_ALIASES,
+    "plate": "plates",
+    "stair_step": "steps",
+    "stair_flight": "marches",
 }
 
 
@@ -77,6 +84,112 @@ def _allocate_pool_delivery(
         remaining_extra -= extras_on_line
         allocated[i] = qty * per_piece_k + extras_on_line
     return allocated
+
+
+def _line_delivery_type(raw: str) -> str:
+    key = str(raw or "").strip().lower()
+    if not key:
+        return "plates"
+    return _LINE_DELIVERY_ALIASES.get(key, key)
+
+
+def _positive_length_key(raw: int | None) -> int | None:
+    if raw is None:
+        return None
+    try:
+        key = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return key if key > 0 else None
+
+
+def _add_kopecks(allocated: list[int], pool: dict[int, int]) -> None:
+    for index, kopecks in pool.items():
+        allocated[index] += kopecks
+
+
+def allocate_line_delivery_kopecks(
+    *,
+    qty_by_index: list[int],
+    product_type_by_index: list[str],
+    plate_delivery_total: float = 0.0,
+    pile_delivery_total: float = 0.0,
+    fbs_delivery_total: float = 0.0,
+    long_pile_delivery_by_length: dict[int, float] | None = None,
+    length_key_by_index: list[int | None] | None = None,
+) -> list[int]:
+    """Delivery kopecks per line. Discount is not an input.
+
+    Pools do not mix: plates, short piles with bridge piles, FBS/steps/marches,
+    and each long-pile length. The extra kopeck goes to the first pieces.
+    """
+    count = len(qty_by_index)
+    if len(product_type_by_index) != count:
+        raise ValueError("qty and product_type lists must be the same length")
+    length_keys = list(length_key_by_index) if length_key_by_index is not None else [None] * count
+    if len(length_keys) != count:
+        raise ValueError("length_key list must match qty")
+
+    qtys = [max(0, int(qty)) for qty in qty_by_index]
+    types = [_line_delivery_type(raw) for raw in product_type_by_index]
+    long_keys = [
+        _positive_length_key(length_keys[index]) if types[index] in PILE_POOL else None
+        for index in range(count)
+    ]
+    allocated = [0] * count
+    _add_kopecks(
+        allocated,
+        _allocate_pool_delivery(
+            indices=_pool_line_indices(types, qtys, PLATE_POOL),
+            qtys=qtys,
+            delivery_kopecks=_to_kopecks(plate_delivery_total),
+        ),
+    )
+    short_pile_indices = [
+        index
+        for index in _pool_line_indices(types, qtys, PILE_POOL)
+        if long_keys[index] is None
+    ]
+    _add_kopecks(
+        allocated,
+        _allocate_pool_delivery(
+            indices=short_pile_indices,
+            qtys=qtys,
+            delivery_kopecks=_to_kopecks(pile_delivery_total),
+        ),
+    )
+    _add_kopecks(
+        allocated,
+        _allocate_pool_delivery(
+            indices=_pool_line_indices(types, qtys, FBS_POOL),
+            qtys=qtys,
+            delivery_kopecks=_to_kopecks(fbs_delivery_total),
+        ),
+    )
+    _add_long_pile_kopecks(allocated, qtys, long_keys, long_pile_delivery_by_length or {})
+    return allocated
+
+
+def _add_long_pile_kopecks(
+    allocated: list[int],
+    qtys: list[int],
+    long_keys: list[int | None],
+    totals: dict[int, float],
+) -> None:
+    by_length: dict[int, list[int]] = {}
+    for index, key in enumerate(long_keys):
+        if key is None or qtys[index] <= 0:
+            continue
+        by_length.setdefault(key, []).append(index)
+    for key, indices in by_length.items():
+        _add_kopecks(
+            allocated,
+            _allocate_pool_delivery(
+                indices=indices,
+                qtys=qtys,
+                delivery_kopecks=_to_kopecks(float(totals.get(key, 0.0) or 0.0)),
+            ),
+        )
 
 
 def embed_delivery_in_unit_prices(

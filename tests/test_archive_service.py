@@ -316,7 +316,7 @@ def test_update_logistics_cost_calls_repository_and_returns_details(tmp_path: Pa
 
 def test_move_to_production_requires_active_client(tmp_path: Path) -> None:
     repository = MagicMock()
-    repository.get_by_id.return_value = _make_raw(status="в архиве", counterparty_id=None)
+    repository.get_by_id.return_value = _approval_raw(counterparty_id=None)
     service = _make_service(repository, tmp_path)
 
     with pytest.raises(ArchiveValidationError, match="не найден"):
@@ -333,13 +333,89 @@ def test_move_to_production_requires_archived_status(tmp_path: Path) -> None:
         service.move_to_production(42, "5 дней", user=ADMIN)
 
 
+def _approval_raw(**overrides: Any) -> dict:
+    base = _make_raw(
+        status="на согласовании",
+        paid_at="2026-09-28T10:00:00",
+        order_number_1c="ЯР-1",
+        specification_json=(
+            '{"payment":"prepay_100","term":"by_date","term_date":"2026-10-01",'
+            '"delivery":"pickup","spec_date":"2026-09-18","composition_hash":"x"}'
+        ),
+    )
+    base.update(overrides)
+    return base
+
+
+def test_move_to_production_refuses_archive_status(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.return_value = _approval_raw(
+        status="в архиве",
+        paid_at="2026-09-28T10:00:00",
+        order_number_1c="ЯР-1",
+    )
+    service = _make_service(repository, tmp_path)
+
+    with pytest.raises(ArchiveValidationError, match="на согласовании"):
+        service.move_to_production(42, "5 дней", user=ADMIN)
+
+
+def test_payment_without_number_does_not_move_to_production(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.return_value = _approval_raw(order_number_1c=None)
+    service = _make_service(repository, tmp_path)
+
+    with pytest.raises(ArchiveValidationError, match="номер"):
+        service.move_to_production(42, "5 дней", user=ADMIN)
+
+
+def test_number_without_payment_does_not_move_to_production(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.return_value = _approval_raw(paid_at=None)
+    service = _make_service(repository, tmp_path)
+
+    with pytest.raises(ArchiveValidationError, match="оплат"):
+        service.move_to_production(42, "5 дней", user=ADMIN)
+
+
+def test_set_payment_marks_and_clears_only_on_approval(tmp_path: Path) -> None:
+    repository = MagicMock()
+    raw = _approval_raw(paid_at=None, order_number_1c=None)
+    repository.get_by_id.return_value = raw
+
+    def _set(_kp_id: int, paid_at: str | None) -> bool:
+        raw["paid_at"] = paid_at
+        return True
+
+    repository.set_paid_at.side_effect = _set
+    service = _make_service(repository, tmp_path)
+
+    marked = service.set_payment(42, paid=True, user=ADMIN)
+    assert marked.paid_at
+    cleared = service.set_payment(42, paid=False, user=ADMIN)
+    assert cleared.paid_at is None
+
+
+def test_set_payment_unmark_refuses_outside_approval(tmp_path: Path) -> None:
+    repository = MagicMock()
+    repository.get_by_id.return_value = _make_raw(
+        status="в работе",
+        paid_at="2026-09-28T10:00:00",
+    )
+    service = _make_service(repository, tmp_path)
+
+    with pytest.raises(ArchiveValidationError, match="на согласовании"):
+        service.set_payment(42, paid=False, user=ADMIN)
+    repository.set_paid_at.assert_not_called()
+
+
 def test_move_to_production_happy_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository = MagicMock()
     repository.db_path = str(tmp_path / "plita.db")
     repository.get_by_id.side_effect = [
-        _make_raw(status="в архиве"),
+        _approval_raw(),
         _make_raw(status="в работе", execution_terms="01.04.2026"),
     ]
     commit = MagicMock(return_value=2)
@@ -369,7 +445,7 @@ def test_move_to_production_blocks_before_promised_date(
 
     repository = MagicMock()
     repository.db_path = str(tmp_path / "plita.db")
-    repository.get_by_id.return_value = _make_raw(status="в архиве")
+    repository.get_by_id.return_value = _approval_raw()
     commit = MagicMock(return_value=2)
     monkeypatch.setattr(
         "core.kp.offers_write.commit_move_to_production", commit
@@ -393,7 +469,7 @@ def test_move_to_production_normalizes_iso_date(
     repository = MagicMock()
     repository.db_path = str(tmp_path / "plita.db")
     repository.get_by_id.side_effect = [
-        _make_raw(status="в архиве"),
+        _approval_raw(),
         _make_raw(status="в работе", execution_terms="05.06.2026"),
     ]
     commit = MagicMock(return_value=1)
@@ -418,7 +494,7 @@ def test_move_to_production_normalizes_ddmmyyyy(
     repository = MagicMock()
     repository.db_path = str(tmp_path / "plita.db")
     repository.get_by_id.side_effect = [
-        _make_raw(status="в архиве"),
+        _approval_raw(),
         _make_raw(status="в работе", execution_terms="05.06.2026"),
     ]
     commit = MagicMock(return_value=1)
@@ -454,7 +530,7 @@ def test_move_to_production_normalizes_five_days(
     repository = MagicMock()
     repository.db_path = str(tmp_path / "plita.db")
     repository.get_by_id.side_effect = [
-        _make_raw(status="в архиве"),
+        _approval_raw(),
         _make_raw(status="в работе", execution_terms="05.06.2026"),
     ]
     commit = MagicMock(return_value=1)
@@ -480,7 +556,7 @@ def test_move_to_production_raises_archive_error_on_commit_failure(
 
     repository = MagicMock()
     repository.db_path = str(tmp_path / "plita.db")
-    repository.get_by_id.return_value = _make_raw(status="в архиве")
+    repository.get_by_id.return_value = _approval_raw()
     monkeypatch.setattr(
         "core.kp.offers_write.commit_move_to_production",
         MagicMock(side_effect=RuntimeError("boom")),
@@ -900,3 +976,99 @@ def test_list_offers_mixed_from_db_exposes_product_types(
 
     assert set(item.product_types) == {"plates", "piles"}
     assert len(item.product_types) == 2
+
+
+def test_schema_invoice_warehouse_empty_reads_as_absent(tmp_path: Path) -> None:
+    import sqlite3
+
+    from app.repositories.kp_archive_repository import KpArchiveRepository
+    from core.kp_db_schema import init_schema
+
+    db_path = str(tmp_path / "plita.db")
+    init_schema(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO KP_offers (
+                kp_id, creation_date, customer_name, discount_percent,
+                subtotal, vat_amount, total_amount
+            ) VALUES (7, '01.03.2026', 'ООО Тест', 0, 1, 0, 1)
+            """
+        )
+        conn.execute(
+            "INSERT INTO kp_meta (kp_id, status, owner_user_id) VALUES (7, 'в архиве', 1)"
+        )
+        conn.commit()
+    init_schema(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT invoice_warehouse FROM KP_offers WHERE kp_id = 7"
+        ).fetchone()
+        still_there = conn.execute("SELECT kp_id FROM KP_offers WHERE kp_id = 7").fetchone()
+    assert row[0] in (None, "")
+    assert still_there is not None
+
+    raw = KpArchiveRepository(db_path=db_path).get_by_id(7)
+    assert raw is not None
+    assert not str(raw.get("invoice_warehouse") or "").strip()
+
+    service = ArchiveService(
+        repository=KpArchiveRepository(db_path=db_path),
+        outputs_dir=tmp_path / "out",
+    )
+    details = service.get_details(7, user=ADMIN)
+    assert details.invoice_warehouse is None
+
+
+def test_schema_paid_at_and_invoice_snapshot_hash_survives_repeat(tmp_path: Path) -> None:
+    import sqlite3
+
+    from core.kp_db_schema import _init_schema_impl
+
+    db_path = str(tmp_path / "plita.db")
+    _init_schema_impl(db_path)
+    _init_schema_impl(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        meta_cols = {row[1] for row in conn.execute("PRAGMA table_info(kp_meta)")}
+        offer_cols = {row[1] for row in conn.execute("PRAGMA table_info(KP_offers)")}
+    assert "paid_at" in meta_cols
+    assert "invoice_snapshot_hash" in offer_cols
+
+
+def test_on_approval_section_keeps_other_statuses_in_place(tmp_path: Path) -> None:
+    from core.kp.offers_read import get_all_kp_list
+    from core.kp_db_schema import init_schema
+    from core.kp_persistence_service import KpPersistenceService
+
+    db_path = str(tmp_path / "plita.db")
+    init_schema(db_path)
+    line = {
+        "line_id": "ln_plate_1",
+        "product_type": "plates",
+        "name": "ПБ 60-12-8п",
+        "length_m": 6.0,
+        "width_m": 1.2,
+        "load_class": 800,
+        "qty": 1,
+        "unit_price": 1000.0,
+    }
+    ids = {
+        status: KpPersistenceService.save_kp_to_db(
+            "12.08.2026",
+            [{**line, "line_id": f"ln_{status}"}],
+            customer_name=status,
+            status=status,
+            db_path=db_path,
+        )
+        for status in ("в архиве", "на согласовании", "в работе", "На СГП", "выполнено")
+    }
+
+    grouped = get_all_kp_list(db_path)
+
+    assert {row["kp_id"] for row in grouped["archived"]} == {ids["в архиве"]}
+    assert {row["kp_id"] for row in grouped["on_approval"]} == {ids["на согласовании"]}
+    assert {row["kp_id"] for row in grouped["in_production"]} == {ids["в работе"], ids["На СГП"]}
+    assert {row["kp_id"] for row in grouped["completed"]} == {ids["выполнено"]}
+    assert all(row["status"] == "на согласовании" for row in grouped["on_approval"])

@@ -8,6 +8,8 @@ import type {
   ArchiveSection,
   KpReadinessPositionsResponse,
   ProductionEstimate,
+  SpecificationChoicePayload,
+  SpecificationView,
 } from "@/features/commercial-archive/types/archive";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import type {
@@ -30,6 +32,19 @@ export const archiveApi = {
   },
 
   getById: (kpId: number) => httpClient.get<ArchiveOfferDetails>(`${BASE}/${kpId}`),
+
+  getSpecification: (kpId: number) =>
+    httpClient.get<SpecificationView>(`${BASE}/${kpId}/specification`),
+
+  saveSpecification: (kpId: number, choice: SpecificationChoicePayload) =>
+    httpClient.put<SpecificationView>(
+      `${BASE}/${kpId}/specification`,
+      JSON.stringify(choice),
+      { "Content-Type": "application/json" },
+    ),
+
+  downloadSpecification: (kpId: number) =>
+    httpClient.download(`${BASE}/${kpId}/specification/file`, `Спецификация КП ${kpId}.xlsx`),
 
   getReadinessPositions: (kpId: number) =>
     httpClient.get<KpReadinessPositionsResponse>(`${BASE}/${kpId}/readiness/positions`),
@@ -102,6 +117,27 @@ export const archiveApi = {
       { "Content-Type": "application/json" },
     ),
 
+  exportInvoice: (kpId: number, warehouse: string) =>
+    httpClient.post<ArchiveOfferDetails>(
+      `${BASE}/${kpId}/invoice-export`,
+      JSON.stringify({ warehouse }),
+      { "Content-Type": "application/json" },
+    ),
+
+  exportInvoiceCorrection: (kpId: number, warehouse?: string) =>
+    httpClient.post<ArchiveOfferDetails>(
+      `${BASE}/${kpId}/invoice-correction`,
+      warehouse ? JSON.stringify({ warehouse }) : undefined,
+      warehouse ? { "Content-Type": "application/json" } : undefined,
+    ),
+
+  setPayment: (kpId: number, paid: boolean) =>
+    httpClient.post<ArchiveOfferDetails>(
+      `${BASE}/${kpId}/payment`,
+      JSON.stringify({ paid }),
+      { "Content-Type": "application/json" },
+    ),
+
   getProductionEstimate: (kpId: number) =>
     httpClient.get<ProductionEstimate>(`${BASE}/${kpId}/production-estimate`),
 
@@ -141,8 +177,17 @@ export const archiveApi = {
     return httpClient.post<SupplyContractParseResult>(`${BASE}/${kpId}/supply-contract/parse`, body);
   },
 
-  downloadSupplyContract: (kpId: number) =>
-    httpClient.download(`${BASE}/${kpId}/supply-contract/document`, `dogovor-${kpId}.docx`),
+  downloadSupplyContract: (kpId: number, format: "docx" | "pdf" = "docx") =>
+    httpClient.download(
+      `${BASE}/${kpId}/supply-contract/document${format === "pdf" ? "?format=pdf" : ""}`,
+      format === "pdf" ? `dogovor-${kpId}.pdf` : `dogovor-${kpId}.docx`,
+    ),
+
+  downloadEdoAgreement: (kpId: number, format: "docx" | "pdf" = "docx") =>
+    httpClient.download(
+      `${BASE}/${kpId}/supply-contract/edo-agreement${format === "pdf" ? "?format=pdf" : ""}`,
+      format === "pdf" ? `soglashenie-edo-${kpId}.pdf` : `soglashenie-edo-${kpId}.docx`,
+    ),
 
   listSupplyContracts: () =>
     httpClient.get<SupplyContractRegistryRow[]>(`${BASE}/supply-contracts`),

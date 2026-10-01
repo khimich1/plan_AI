@@ -127,6 +127,39 @@ def _fake_details(
     )
 
 
+def test_list_on_approval_section_is_accepted(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.list_offers.return_value = [
+        ArchiveOfferListItem(
+            kp_id=7,
+            creation_date="01.03.2026",
+            customer_name="ООО Тест",
+            manager_name="Иван",
+            discount_percent=0,
+            subtotal=1,
+            vat_amount=1,
+            total_amount=1,
+            status="на согласовании",
+        )
+    ]
+
+    response = client.get(
+        "/api/v1/commercial/archive?section=on_approval",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.json()[0]["status"] == "на согласовании"
+    fake_service.list_offers.assert_called_once_with(
+        "on_approval",
+        product_type="all",
+        user=TESTER_USER,
+    )
+
+
 def test_list_requires_auth(client: TestClient) -> None:
     response = client.get("/api/v1/commercial/archive?section=archived")
     assert response.status_code == 401
@@ -488,6 +521,107 @@ def test_delete_ok(
 
     assert response.status_code == 204
     fake_service.delete_offer.assert_called_once_with(42, user=TESTER_USER)
+
+
+def test_invoice_export_returns_card(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.export_invoice.return_value = _fake_details(status="на согласовании")
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/invoice-export",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "на согласовании"
+    fake_service.export_invoice.assert_called_once_with(
+        42, user=TESTER_USER, warehouse=None
+    )
+
+
+def test_invoice_export_passes_warehouse(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.export_invoice.return_value = _fake_details(status="на согласовании")
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/invoice-export",
+        json={"warehouse": "Склад Готовой Продукции"},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200, response.text
+    fake_service.export_invoice.assert_called_once_with(
+        42, user=TESTER_USER, warehouse="Склад Готовой Продукции"
+    )
+
+
+def test_invoice_correction_passes_warehouse_when_present(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    fake_service.export_invoice_correction.return_value = _fake_details(
+        status="на согласовании"
+    )
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/invoice-correction",
+        json={"warehouse": "БСУ склад"},
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200, response.text
+    fake_service.export_invoice_correction.assert_called_once_with(
+        42, user=TESTER_USER, warehouse="БСУ склад"
+    )
+
+
+def test_invoice_export_validation_error_is_russian(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    fake_service.export_invoice.side_effect = ArchiveValidationError(
+        "Нет действующего договора поставки"
+    )
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/invoice-export",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Нет действующего договора поставки"
+
+
+def test_payment_unmark_validation_is_russian(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    fake_service.set_payment.side_effect = ArchiveValidationError(
+        "Снять оплату можно только в статусе «на согласовании»"
+    )
+
+    response = client.post(
+        "/api/v1/commercial/archive/42/payment",
+        cookies=auth_cookie,
+        json={"paid": False},
+    )
+
+    assert response.status_code == 400
+    assert "на согласовании" in response.json()["detail"]
+    fake_service.set_payment.assert_called_once_with(42, paid=False, user=TESTER_USER)
 
 
 def test_move_to_production_ok(
@@ -2119,5 +2253,370 @@ def test_supply_contract_replace_without_cancel_is_russian_400(
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "У контрагента уже есть договор 1028/09/26"
+
+
+def test_get_specification_endpoint(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.schemas.archive import SpecificationChoiceOut, SpecificationView
+
+    fake_service.get_specification.return_value = SpecificationView(
+        saved=False,
+        stale_custom=False,
+        has_piles=False,
+        payment_paragraph="1 000,00 (одна тысяча рублей) — предварительная оплата в размере 100%.",
+        choice=SpecificationChoiceOut(payment="prepay_100", delivery="pickup"),
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/specification",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["saved"] is False
+    assert body["choice"]["payment"] == "prepay_100"
+    assert "1 000,00" in body["payment_paragraph"]
+    fake_service.get_specification.assert_called_once_with(42, user=TESTER_USER)
+
+
+def test_put_specification_validation_is_russian(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_service: MagicMock,
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    fake_service.save_specification.side_effect = ArchiveValidationError(
+        "Самовывоз нельзя сохранить: уберите доставку в конструкторе или выберите доставку на объект."
+    )
+
+    response = client.put(
+        "/api/v1/commercial/archive/42/specification",
+        cookies=auth_cookie,
+        json={
+            "payment": "prepay_100",
+            "term": "by_date",
+            "term_date": "2026-10-01",
+            "delivery": "pickup",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "уберите доставку" in response.json()["detail"]
+
+
+def test_supply_contract_document_without_format_stays_docx(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    fake_supply_service.document_for_kp.return_value = (
+        b"PK\x03\x04docx",
+        "dogovor-1028-09-26.docx",
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/supply-contract/document",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.content.startswith(b"PK")
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert 'filename="dogovor-1028-09-26.docx"' in response.headers["content-disposition"]
+    assert fake_supply_service.document_for_kp.call_args.kwargs["file_format"] == "docx"
+
+
+def test_supply_contract_pdf_returns_converter_bytes(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    fake_supply_service.document_for_kp.return_value = (
+        b"%PDF-1.4 mocked",
+        "dogovor-1028-09-26.pdf",
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/supply-contract/document?format=pdf",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.4 mocked"
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert 'filename="dogovor-1028-09-26.pdf"' in response.headers["content-disposition"]
+    assert not response.content.startswith(b"PK")
+    assert fake_supply_service.document_for_kp.call_args.kwargs["file_format"] == "pdf"
+
+
+def test_supply_contract_pdf_missing_soffice_is_503_not_docx(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    from app.services.supply_contract_service import SupplyContractPdfError
+
+    fake_supply_service.document_for_kp.side_effect = SupplyContractPdfError(
+        "Не удалось собрать PDF. На сервере недоступен LibreOffice."
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/supply-contract/document?format=pdf",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Не удалось собрать PDF. На сервере недоступен LibreOffice."
+    assert response.headers["content-type"].startswith("application/json")
+    assert not response.content.startswith(b"PK")
+
+
+def test_edo_agreement_pdf_uses_specified_filename(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    fake_supply_service.edo_agreement_for_kp.return_value = (
+        b"%PDF-1.4 agreement",
+        "soglashenie-edo-1028-09-26.pdf",
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/supply-contract/edo-agreement?format=pdf",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.4 agreement"
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert 'filename="soglashenie-edo-1028-09-26.pdf"' in response.headers["content-disposition"]
+    assert fake_supply_service.edo_agreement_for_kp.call_args.kwargs["file_format"] == "pdf"
+
+
+def test_edo_agreement_import_shell_is_400_without_a_file(
+    client: TestClient,
+    auth_cookie: dict[str, str],
+    fake_supply_service: MagicMock,
+) -> None:
+    from app.services.supply_contract_service import SupplyContractValidationError
+
+    fake_supply_service.edo_agreement_for_kp.side_effect = SupplyContractValidationError(
+        "В договоре не хватает реквизитов покупателя для соглашения об ЭДО"
+    )
+
+    response = client.get(
+        "/api/v1/commercial/archive/42/supply-contract/edo-agreement",
+        cookies=auth_cookie,
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "В договоре не хватает реквизитов покупателя для соглашения об ЭДО"
+    )
+    assert response.headers["content-type"].startswith("application/json")
+    assert not response.content.startswith(b"PK")
+
+
+def test_supply_contract_pdf_converter_missing_soffice(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.supply_contract_service import SupplyContractPdfError, convert_docx_to_pdf
+
+    monkeypatch.setattr(
+        "app.services.supply_contract_service.shutil.which",
+        lambda _name: None,
+    )
+
+    with pytest.raises(SupplyContractPdfError, match="LibreOffice"):
+        convert_docx_to_pdf(b"PK")
+
+
+def test_supply_contract_pdf_converter_returns_mocked_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    from app.services.supply_contract_service import convert_docx_to_pdf
+
+    def fake_run(cmd, timeout, capture_output, check):
+        assert timeout == 60
+        assert "--convert-to" in cmd
+        assert "pdf" in cmd
+        outdir = Path(cmd[cmd.index("--outdir") + 1])
+        (outdir / "document.pdf").write_bytes(b"%PDF-1.4 mocked")
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(
+        "app.services.supply_contract_service.shutil.which",
+        lambda name: "/usr/bin/soffice" if name == "soffice" else None,
+    )
+    monkeypatch.setattr("app.services.supply_contract_service.subprocess.run", fake_run)
+
+    assert convert_docx_to_pdf(b"PK") == b"%PDF-1.4 mocked"
+
+
+_EDO_URL = "/api/v1/commercial/archive/1/supply-contract/edo-agreement"
+_LIBREOFFICE_DETAIL = "Не удалось собрать PDF. На сервере недоступен LibreOffice."
+_CONVERTER_PDF = b"%PDF-1.4 agreement"
+
+
+def _db_with_contract_1028(tmp_path: Path) -> str:
+    import sqlite3
+
+    from core.kp_db_common import _connect
+    from core.supply_contract import CANCELLED_STATUS
+    from tests.test_supply_contract import (
+        ADMIN,
+        _buyer,
+        _fresh_db,
+        _insert_contract,
+        _seed_counterparty,
+        _seed_offer,
+        _service,
+    )
+
+    db_path = _fresh_db(tmp_path, "edo-http.db")
+    with _connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        old_id = _seed_counterparty(conn, "00-old")
+        client_id = _seed_counterparty(conn, "00-new")
+        _insert_contract(
+            conn,
+            counterparty_id=old_id,
+            number="1027/09/26",
+            status=CANCELLED_STATUS,
+        )
+        _seed_offer(conn, kp_id=1, counterparty_id=client_id)
+    created = _service(db_path).create_for_kp(1, _buyer(okved="  "), user=ADMIN)
+    assert created["number"] == "1028/09/26"
+    assert created["okved"] is None
+    return db_path
+
+
+def _edo_client(db_path: str, monkeypatch: pytest.MonkeyPatch) -> CsrfAwareTestClient:
+    from app.services.supply_contract_service import SupplyContractService
+
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
+    get_settings.cache_clear()
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": 1,
+                "username": "admin",
+                "role": "admin",
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+                "session_version": 0,
+            }
+        ],
+    )
+    app = create_app()
+    app.dependency_overrides[get_supply_contract_service] = lambda: SupplyContractService(
+        db_path=db_path
+    )
+    return CsrfAwareTestClient(app)
+
+
+def _admin_cookie() -> dict[str, str]:
+    return {
+        "app_session": create_session_token(
+            {"id": 1, "username": "admin", "role": "admin"},
+            ttl_seconds=300,
+        )
+    }
+
+
+def _block_soffice(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("soffice must not run")
+
+    monkeypatch.setattr(
+        "app.services.supply_contract_service.shutil.which",
+        lambda _name: None,
+    )
+    monkeypatch.setattr("app.services.supply_contract_service.subprocess.run", fail_run)
+
+
+def _stub_soffice(monkeypatch: pytest.MonkeyPatch, pdf: bytes) -> None:
+    import subprocess
+
+    def fake_run(cmd, timeout, capture_output, check):
+        outdir = Path(cmd[cmd.index("--outdir") + 1])
+        (outdir / "document.pdf").write_bytes(pdf)
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(
+        "app.services.supply_contract_service.shutil.which",
+        lambda name: "/usr/bin/soffice" if name == "soffice" else None,
+    )
+    monkeypatch.setattr("app.services.supply_contract_service.subprocess.run", fake_run)
+
+
+def test_saved_contract_agreement_docx_omits_blank_okved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.test_edo_agreement_docx import _TEMPLATE, _docx_text
+
+    db_path = _db_with_contract_1028(tmp_path)
+    _block_soffice(monkeypatch)
+    client = _edo_client(db_path, monkeypatch)
+
+    response = client.get(_EDO_URL, cookies=_admin_cookie())
+
+    assert response.status_code == 200
+    text = _docx_text(response.content)
+    blank = _docx_text(_TEMPLATE.read_bytes())
+    assert response.content.startswith(b"PK")
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert 'filename="soglashenie-edo-1028-09-26.docx"' in response.headers["content-disposition"]
+    assert "is-ag@mail.ru" in text
+    assert "Ярославль" in text
+    assert "ОКВЭД 23.61" in text
+    assert text.count("ОКВЭД") == blank.count("ОКВЭД")
+    assert "{{" not in text
+
+
+def test_saved_contract_agreement_pdf_uses_converter_bytes_and_spec_filename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _db_with_contract_1028(tmp_path)
+    _stub_soffice(monkeypatch, _CONVERTER_PDF)
+    client = _edo_client(db_path, monkeypatch)
+
+    response = client.get(f"{_EDO_URL}?format=pdf", cookies=_admin_cookie())
+
+    assert response.status_code == 200
+    assert response.content == _CONVERTER_PDF
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert 'filename="soglashenie-edo-1028-09-26.pdf"' in response.headers["content-disposition"]
+    assert not response.content.startswith(b"PK")
+
+
+def test_saved_contract_agreement_pdf_without_soffice_is_503_not_docx(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _db_with_contract_1028(tmp_path)
+    _block_soffice(monkeypatch)
+    client = _edo_client(db_path, monkeypatch)
+
+    response = client.get(f"{_EDO_URL}?format=pdf", cookies=_admin_cookie())
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == _LIBREOFFICE_DETAIL
+    assert response.headers["content-type"].startswith("application/json")
+    assert not response.content.startswith(b"PK")
 
 

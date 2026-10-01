@@ -366,6 +366,11 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             cur.execute("ALTER TABLE kp_meta ADD COLUMN long_pile_delivery_json TEXT")
             print("[DB] ✅ Колонка long_pile_delivery_json добавлена в kp_meta")
 
+        if "paid_at" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку paid_at в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN paid_at TEXT")
+            print("[DB] ✅ Колонка paid_at добавлена в kp_meta")
+
         # Таблица kp_piles — позиции КП на сваи (отдельно от kp_plates)
         cur.execute('''
             CREATE TABLE IF NOT EXISTS kp_piles (
@@ -651,6 +656,7 @@ def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
             bik TEXT NOT NULL,
             edo_operator TEXT,
             edo_id TEXT,
+            okved TEXT,
             created_at TEXT NOT NULL,
             created_by_user_id INTEGER NOT NULL
         )
@@ -679,6 +685,10 @@ def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
     for sql in (
         "ALTER TABLE KP_offers ADD COLUMN order_number_1c TEXT",
         "ALTER TABLE KP_offers ADD COLUMN order_status_1c TEXT",
+        "ALTER TABLE KP_offers ADD COLUMN invoice_snapshot_hash TEXT",
+        "ALTER TABLE KP_offers ADD COLUMN invoice_warehouse TEXT",
+        "ALTER TABLE KP_offers ADD COLUMN specification_json TEXT",
+        "ALTER TABLE supply_contract ADD COLUMN okved TEXT",
     ):
         try:
             cur.execute(sql)

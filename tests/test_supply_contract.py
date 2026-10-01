@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from app.schemas.supply_contract import SupplyContractCreate
+from pydantic import ValidationError
+
+from app.schemas.supply_contract import SupplyContractCreate, SupplyContractPatch
 from app.services.supply_contract_service import (
     SupplyContractFieldError,
     SupplyContractService,
@@ -51,6 +53,7 @@ CONTRACT_COLS = {
     "bik",
     "edo_operator",
     "edo_id",
+    "okved",
     "created_at",
     "created_by_user_id",
 }
@@ -140,6 +143,22 @@ def test_schema_ensure_is_idempotent(tmp_path: Path) -> None:
     with _connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         assert _table_cols(conn, "supply_contract") == CONTRACT_COLS
+
+
+def test_schema_adds_okved_column_when_it_is_missing(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path, "alter-okved.db")
+    with _connect(db_path) as conn:
+        conn.execute("ALTER TABLE supply_contract DROP COLUMN okved")
+        assert "okved" not in _table_cols(conn, "supply_contract")
+    kp_db_schema._schema_ready.clear()
+    kp_db_schema.ensure_schema(db_path)
+    with _connect(db_path) as conn:
+        assert "okved" in _table_cols(conn, "supply_contract")
+
+
+def test_patch_does_not_accept_okved() -> None:
+    with pytest.raises(ValidationError):
+        SupplyContractPatch.model_validate({"okved": "23.61"})
 
 
 def test_schema_one_active_contract_per_counterparty(tmp_path: Path) -> None:
@@ -280,6 +299,28 @@ def test_create_stores_one_row_with_status_net(tmp_path: Path) -> None:
     assert events[0]["user_id"] == 7
 
 
+def test_okved_is_stored_and_blank_becomes_null(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path, "okved.db")
+    with _connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        first = _seed_counterparty(conn, "00-1")
+        second = _seed_counterparty(conn, "00-2")
+        third = _seed_counterparty(conn, "00-3")
+        _seed_offer(conn, kp_id=1, counterparty_id=first)
+        _seed_offer(conn, kp_id=2, counterparty_id=second)
+        _seed_offer(conn, kp_id=3, counterparty_id=third)
+    service = _service(db_path)
+
+    with_code = service.create_for_kp(1, _buyer(okved="23.61"), user=ADMIN)
+    without = service.create_for_kp(2, _buyer(), user=ADMIN)
+    blank = service.create_for_kp(3, _buyer(okved="  "), user=ADMIN)
+
+    assert with_code["okved"] == "23.61"
+    assert without["okved"] is None
+    assert blank["okved"] is None
+    assert service.get_for_kp(2, user=ADMIN)["okved"] is None
+
+
 def test_second_create_returns_same_number_without_new_seq(tmp_path: Path) -> None:
     db_path = _fresh_db(tmp_path, "repeat.db")
     with _connect(db_path) as conn:
@@ -387,6 +428,32 @@ def test_cancelled_number_is_skipped_for_the_next_client(tmp_path: Path) -> None
     created = service.create_for_kp(3, _buyer(), user=ADMIN)
 
     assert created["number"] == "1028/09/26"
+
+
+def test_supply_contract_read_on_approval_status_returns_number(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path, "approval-read.db")
+    with _connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        client_id = _seed_counterparty(conn)
+        _seed_offer(conn, kp_id=1, counterparty_id=client_id)
+    service = _service(db_path)
+    created = service.create_for_kp(1, _buyer(), user=ADMIN)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE kp_meta SET status = ? WHERE kp_id = 1",
+            ("на согласовании",),
+        )
+        conn.commit()
+
+    visible = service.get_for_kp(1, user=ADMIN)
+    payload, filename = service.document_for_kp(1, user=ADMIN)
+
+    assert visible is not None
+    assert visible["number"] == created["number"]
+    assert payload.startswith(b"PK")
+    assert created["number"].replace("/", "-") in filename
+    with pytest.raises(SupplyContractValidationError, match="в архиве"):
+        service.create_for_kp(1, _buyer(), user=ADMIN)
 
 
 def test_missing_counterparty_and_non_archive_are_russian_errors(tmp_path: Path) -> None:
@@ -555,6 +622,24 @@ def _kp_document() -> dict:
     }
 
 
+def test_stamp_accepts_invoice_and_commercial_offer_document_names() -> None:
+    from core.supply_contract import KP_DOCUMENT, attach_contract_number as stamp
+
+    contract = {"counterparty_id": 7, "status": "нет", "number": "0001/09/26"}
+    for document_name in ("Счёт на оплату", KP_DOCUMENT):
+        source = {
+            "Документ": document_name,
+            "Контрагент": {"Наименование": "РОМАШКА ООО"},
+            "Товары": [{"Номенклатура": "Плиты ПБ", "Количество": 2}],
+        }
+        stamped = stamp(source, 7, contract)
+        keys = list(stamped)
+        assert stamped["НомерДоговора"] == "0001/09/26"
+        assert keys.index("НомерДоговора") == keys.index("Контрагент") + 1
+        assert stamped["Документ"] == document_name
+        assert "НомерДоговора" not in source
+
+
 def test_json_header_puts_active_number_beside_counterparty(tmp_path: Path) -> None:
     db_path = _fresh_db(tmp_path, "json-header.db")
     with _connect(db_path) as conn:
@@ -589,3 +674,36 @@ def test_json_header_without_active_contract_raises(tmp_path: Path) -> None:
 
     assert "НомерДоговора" not in source
     assert source["Товары"][0] == {"Номенклатура": "Плиты ПБ", "Количество": 2}
+
+
+def test_edo_agreement_rejects_imported_shell_and_contract_docx_stays(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path, "edo-import.db")
+    with _connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        client_id = _seed_counterparty(conn)
+        _seed_offer(conn, kp_id=1, counterparty_id=client_id)
+    service = _service(db_path)
+    stored = service.repository.insert_imported(
+        [
+            {
+                "imported_name": "ООО Ромашка",
+                "number": "1027/09/26",
+                "contract_date": "2026-09-25",
+                "manager_name": "Пургина",
+                "status": "нет",
+                "scan_note": None,
+            }
+        ],
+        user_id=7,
+    )
+    service.link_imported_contract(int(stored[0]["id"]), client_id, user=ADMIN)
+
+    with pytest.raises(
+        SupplyContractValidationError,
+        match="В договоре не хватает реквизитов покупателя для соглашения об ЭДО",
+    ):
+        service.edo_agreement_for_kp(1, user=ADMIN)
+
+    payload, filename = service.document_for_kp(1, user=ADMIN)
+    assert filename == "dogovor-1027-09-26.docx"
+    assert payload[:2] == b"PK"

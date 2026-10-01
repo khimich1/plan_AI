@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import base64
 import re
-import zlib
 from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any
@@ -12,6 +10,7 @@ from zipfile import ZipFile
 
 from docx import Document
 from openpyxl import load_workbook
+from pdfminer.high_level import extract_text
 
 from core.supply_contract import normalize_digits, normalize_email
 
@@ -38,6 +37,7 @@ FIELD_NAMES = (
     "bik",
     "edo_operator",
     "edo_id",
+    "okved",
 )
 
 _DIGIT_LENGTHS = {
@@ -168,6 +168,10 @@ def parse_card_text(text: str) -> CardParseResult:
     fields["bank_name"] = _bank_name(source)
     fields["edo_operator"] = _labeled_line(source, r"оператор\s+эдо")
     fields["edo_id"] = _edo_id(source)
+    okved, okved_without_code = _primary_okved(source)
+    fields["okved"] = okved
+    if okved_without_code:
+        _mark_doubtful(doubtful, "okved")
     banks, bank_unpaired = _apply_bank_outcome(fields, source)
 
     for key, allowed in _DIGIT_LENGTHS.items():
@@ -205,9 +209,13 @@ def extract_docx_text(data: bytes) -> str:
 
 
 def extract_pdf_text(data: bytes) -> str:
-    """Текст текстового слоя PDF. Пустая строка — слой не найден."""
-    chunks = _pdf_text_chunks(data)
-    return "\n".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())
+    """Текст текстового слоя PDF. Пустая строка — слой не найден или файл не читается."""
+    if not data:
+        return ""
+    try:
+        return extract_text(BytesIO(data)) or ""
+    except Exception:
+        return ""
 
 
 def has_text_layer(text: str) -> bool:
@@ -422,12 +430,30 @@ def _line_is_label(line: str) -> bool:
     return bool(_LINE_IS_LABEL.match(line.strip()))
 
 
+_NEXT_LABEL = re.compile(
+    r"(?<![а-яёa-z])(?:"
+    r"инн|кпп|огрн(?:ип)?|бик(?:\s+банка)?|"
+    r"р\s*/\s*с|расч[её]тн\w*\s+сч[её]т|"
+    r"к\s*/\s*с|кор(?:респондентск\w*)?\s*сч[её]т"
+    r")(?![а-яёa-z])",
+    re.I,
+)
+
+
 def _rest_after_label(line: str, match: re.Match[str]) -> str:
     rest = re.sub(r"\([^)]*\)", " ", line[match.end() :])
     rest = rest.strip(" \t:.;,-–—")
     if rest.lower().replace("ё", "е") in _LABEL_TAILS:
         return ""
     return rest
+
+
+def _cut_at_next_label(rest: str) -> str:
+    """Хвост подписи кончается там, где на той же строке начинается следующая."""
+    match = _NEXT_LABEL.search(rest)
+    if match is None:
+        return rest
+    return rest[: match.start()].strip(" \t:.;,|-–—")
 
 
 def _labeled_value_strings(text: str, pattern: re.Pattern[str]) -> list[str]:
@@ -444,6 +470,8 @@ def _labeled_value_strings(text: str, pattern: re.Pattern[str]) -> list[str]:
         if not rest and index + 1 < len(lines) and not _line_is_label(lines[index + 1]):
             rest = lines[index + 1].strip()
             step = 2
+        if rest:
+            rest = _cut_at_next_label(rest)
         if rest:
             found.append(rest)
         index += step
@@ -815,62 +843,33 @@ def _edo_id(text: str) -> str | None:
     return match.group(1)
 
 
-def _pdf_text_chunks(data: bytes) -> list[str]:
-    streams = _pdf_streams(data)
-    chunks: list[str] = []
-    for stream in streams:
-        chunks.extend(_tj_strings(stream))
-    return chunks
+_OKVED_CODE_RE = re.compile(r"\d{2}(?:\.\d{1,2}){1,3}")
+_OKVED_LABEL_RE = re.compile(r"(?<![а-яёa-z])оквэд(?![а-яёa-z])", re.I)
+_OKVED_EXTRA_RE = re.compile(r"(?<![а-яёa-z])доп\s*\.", re.I)
 
 
-def _pdf_streams(data: bytes) -> list[bytes]:
-    streams: list[bytes] = []
-    for match in re.finditer(rb"stream\r?\n", data):
-        start = match.end()
-        end = data.find(b"endstream", start)
-        if end < 0:
-            continue
-        raw = data[start:end].rstrip(b"\r\n")
-        header = data[max(0, match.start() - 400) : match.start()]
-        try:
-            streams.append(_decode_pdf_stream(raw, header))
-        except (zlib.error, ValueError):
-            continue
-    return streams
+def okved_code_from_value(value: str | None) -> str | None:
+    """Первый код в уже выделенном значении. Хвост «Доп.» не читается."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    labeled = re.match(r"оквэд(?![а-яёa-z])\s*", text, re.I)
+    if labeled:
+        text = text[labeled.end() :]
+    extra = _OKVED_EXTRA_RE.search(text)
+    window = text[: extra.start()] if extra else text
+    found = _OKVED_CODE_RE.search(window)
+    if not found:
+        return None
+    return found.group(0)
 
 
-def _decode_pdf_stream(raw: bytes, header: bytes) -> bytes:
-    decoded = raw
-    if b"ASCII85Decode" in header:
-        payload = decoded.strip()
-        if payload.endswith(b"~>"):
-            payload = payload[:-2]
-        decoded = base64.a85decode(payload, adobe=False)
-    if b"FlateDecode" in header:
-        decoded = zlib.decompress(decoded)
-    return decoded
-
-
-def _tj_strings(stream: bytes) -> list[str]:
-    found: list[str] = []
-    for match in re.finditer(rb"\((?:\\.|[^\\)])*\)\s*Tj", stream):
-        found.append(_pdf_literal(match.group(0).rsplit(b"Tj", 1)[0]))
-    for block in re.finditer(rb"\[(.*?)\]\s*TJ", stream, re.S):
-        for piece in re.finditer(rb"\((?:\\.|[^\\)])*\)", block.group(1)):
-            found.append(_pdf_literal(piece.group(0)))
-    return found
-
-
-def _pdf_literal(token: bytes) -> str:
-    inner = token.strip()
-    if inner.startswith(b"(") and inner.endswith(b")"):
-        inner = inner[1:-1]
-    inner = (
-        inner.replace(b"\\n", b"\n")
-        .replace(b"\\r", b"\r")
-        .replace(b"\\t", b"\t")
-        .replace(b"\\(", b"(")
-        .replace(b"\\)", b")")
-        .replace(b"\\\\", b"\\")
-    )
-    return inner.decode("utf-8", errors="replace")
+def _primary_okved(text: str) -> tuple[str | None, bool]:
+    """Код и флаг «подпись есть, кода нет». Нет подписи — пусто и не сомнительно."""
+    label = _OKVED_LABEL_RE.search(text or "")
+    if not label:
+        return None, False
+    code = okved_code_from_value(text[label.end() :])
+    if not code:
+        return None, True
+    return code, False

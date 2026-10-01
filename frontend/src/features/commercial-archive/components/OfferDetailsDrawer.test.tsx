@@ -8,6 +8,17 @@ const { mockLogisticsMutateAsync } = vi.hoisted(() => ({
 }));
 
 const mockUseArchiveOfferQuery = vi.fn();
+const mockSpecificationQuery = vi.fn(() => ({
+  data: undefined,
+  isPending: false,
+  isError: false,
+  error: null,
+}));
+const mockSaveSpecification = vi.fn();
+const mockDownloadSpecification = vi.fn();
+const mockExportInvoice = vi.fn();
+const mockExportCorrection = vi.fn();
+const mockSetPayment = vi.fn();
 const mockUsePromiseHoldQuery = vi.fn(() => ({ data: null, isPending: false, isError: false }));
 const mockResume = vi.fn();
 const mockNavigate = vi.fn();
@@ -57,6 +68,37 @@ vi.mock("@/features/commercial-archive/hooks/useArchiveQueries", () => ({
   }),
   useBindCounterpartyMutation: () => mockBindMutation(),
   useCreateAndBindCounterpartyMutation: () => mockCreateMutation(),
+  useExportInvoiceMutation: () => ({
+    mutateAsync: mockExportInvoice,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useExportInvoiceCorrectionMutation: () => ({
+    mutateAsync: mockExportCorrection,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useSetArchivePaymentMutation: () => ({
+    mutateAsync: mockSetPayment,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useSpecificationQuery: (...args: unknown[]) => mockSpecificationQuery(...args),
+  useSaveSpecificationMutation: () => ({
+    mutateAsync: mockSaveSpecification,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useDownloadSpecificationMutation: () => ({
+    mutateAsync: mockDownloadSpecification,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
 }));
 
 vi.mock("@/features/commercial-offer/components/CounterpartyAutocomplete", () => ({
@@ -368,6 +410,18 @@ describe("OfferDetailsDrawer readiness visibility", () => {
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "График поставки" })).not.toBeInTheDocument();
   });
+
+  it("hides delivery schedule and readiness when status is на согласовании", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", makeReadiness()),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "График поставки" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("kp-readiness-block")).not.toBeInTheDocument();
+  });
 });
 
 describe("OfferDetailsDrawer pile offers", () => {
@@ -443,7 +497,7 @@ describe("OfferDetailsDrawer pile offers", () => {
     expect(screen.queryByRole("button", { name: /Схема/i })).not.toBeInTheDocument();
   });
 
-  it("disables move to production for archived pile offers", () => {
+  it("keeps production disabled for pile offers even after payment", () => {
     mockUseArchiveOfferQuery.mockReturnValue({
       data: makePileOffer("в архиве"),
       isPending: false,
@@ -451,8 +505,22 @@ describe("OfferDetailsDrawer pile offers", () => {
       error: null,
     });
 
-    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    const { unmount } = render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /В производство/i })).not.toBeInTheDocument();
+    unmount();
 
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: {
+        ...makePileOffer("на согласовании"),
+        paid_at: "2026-09-28T10:00:00",
+        order_number_1c: "ЯР-1",
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
     const moveButton = screen.getByRole("button", { name: /В производство/i });
     expect(moveButton).toBeDisabled();
     expect(moveButton).toHaveAttribute("title", "скоро");
@@ -476,6 +544,21 @@ describe("OfferDetailsDrawer archive constructor CTAs", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it("renders dual constructor CTAs when status is на согласовании", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "(+ Добавить)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Редактировать" })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Например, 5")).not.toBeInTheDocument();
   });
 
   it("renders dual constructor CTAs when status is в архиве", () => {
@@ -811,12 +894,13 @@ describe("OfferDetailsDrawer counterparty requisites", () => {
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
     expect(screen.getByTestId("no-1c-badge")).toHaveTextContent("нет 1С");
-    const moveButton = screen.getByRole("button", { name: /В производство/i });
-    expect(moveButton).toBeDisabled();
-    expect(moveButton).toHaveAttribute("title", "Сначала занесите контрагента из 1С");
+    expect(screen.queryByRole("button", { name: /В производство/i })).not.toBeInTheDocument();
+    const sendButton = screen.getByRole("button", { name: "Отправить в 1С" });
+    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("title", "Сначала занесите контрагента");
   });
 
-  it("keeps production enabled when counterparty_id is set", () => {
+  it("enables invoice send when counterparty_id is set", () => {
     mockUseArchiveOfferQuery.mockReturnValue({
       data: makeOffer("в архиве"),
       isPending: false,
@@ -827,8 +911,9 @@ describe("OfferDetailsDrawer counterparty requisites", () => {
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
     expect(screen.queryByTestId("no-1c-badge")).not.toBeInTheDocument();
-    const moveButton = screen.getByRole("button", { name: /В производство/i });
-    expect(moveButton).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /В производство/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Отправить в 1С" })).toBeEnabled();
+    expect(screen.getByText("КП · ещё не в 1С")).toBeInTheDocument();
   });
 
   it("binds a counterparty via PATCH and does not open a create dialog", async () => {
@@ -1293,5 +1378,360 @@ describe("OfferDetailsDrawer long pile delivery", () => {
         },
       }),
     );
+  });
+});
+
+describe("OfferDetailsDrawer order card shelves", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("keeps documents away from the send button and delete", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const documents = screen.getByRole("region", { name: "Документы" });
+    expect(within(documents).getByRole("button", { name: /PDF/ })).toBeInTheDocument();
+    expect(within(documents).getByRole("button", { name: /XLSX \(доставка в цене\)/ })).toBeInTheDocument();
+    expect(within(documents).getByRole("button", { name: "Договор" })).toBeInTheDocument();
+    expect(within(documents).queryByRole("button", { name: "Отправить в 1С" })).not.toBeInTheDocument();
+    expect(within(documents).queryByRole("button", { name: "Удалить КП" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Удалить КП" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("shows a waiting invoice header without a number field", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, { correction_pending: true }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Счёт · номер ещё не пришёл из 1С")).toBeInTheDocument();
+    expect(screen.getByText("Исправление отправится, когда номер будет известен")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    const moveButton = screen.getByRole("button", { name: /В производство/i });
+    expect(moveButton).toBeDisabled();
+    expect(moveButton).toHaveAttribute("title", "нужен номер счёта");
+    expect(screen.queryByRole("button", { name: "Отправить исправление" })).not.toBeInTheDocument();
+  });
+
+  it("asks for payment when the invoice number is already stored", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, { order_number_1c: "ЯР-15" }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Счёт ЯР-15")).toBeInTheDocument();
+    expect(screen.getByText("В 1С ушло без правок")).toBeInTheDocument();
+    const moveButton = screen.getByRole("button", { name: /В производство/i });
+    expect(moveButton).toBeDisabled();
+    expect(moveButton).toHaveAttribute("title", "после оплаты");
+  });
+
+  it("sends a correction and marks payment without a number field", () => {
+    mockExportCorrection.mockResolvedValue(undefined);
+    mockSetPayment.mockResolvedValue(undefined);
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, {
+        order_number_1c: "ЯР-15",
+        correction_pending: true,
+        invoice_warehouse: "Склад Готовой Продукции",
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.getByTestId("invoice-warehouse")).toHaveTextContent("Склад Готовой Продукции");
+    fireEvent.click(screen.getByRole("button", { name: "Отправить исправление" }));
+    expect(mockExportCorrection).toHaveBeenCalledWith({ kpId: 42 });
+    expect(screen.queryByRole("heading", { name: "Склад" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Оплачен" }));
+    expect(mockSetPayment).toHaveBeenCalledWith({ kpId: 42, paid: true });
+    expect(screen.getByRole("button", { name: /В производство/i })).toBeDisabled();
+  });
+
+  it("enables production only when the invoice is numbered and paid", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, {
+        order_number_1c: "ЯР-15",
+        paid_at: "2026-09-28T10:00:00",
+        specification_saved: true,
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: /В производство/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Снять оплату" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Договор" })).toBeInTheDocument();
+  });
+
+  it("keeps production grey until the specification is saved", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, {
+        order_number_1c: "ЯР-15",
+        paid_at: "2026-09-28T10:00:00",
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const moveButton = screen.getByRole("button", { name: /В производство/i });
+    expect(moveButton).toBeDisabled();
+    expect(moveButton).toHaveAttribute("title", "сначала спецификация");
+  });
+
+  it("asks to resave a stale custom specification before production", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, {
+        order_number_1c: "ЯР-15",
+        paid_at: "2026-09-28T10:00:00",
+        specification_saved: true,
+        specification_stale_custom: true,
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const moveButton = screen.getByRole("button", { name: /В производство/i });
+    expect(moveButton).toBeDisabled();
+    expect(moveButton).toHaveAttribute(
+      "title",
+      "Условия оплаты в спецификации устарели: откройте спецификацию и сохраните их снова",
+    );
+  });
+
+  it("opens the specification panel only while the order is on approval", () => {
+    mockSpecificationQuery.mockReturnValue({
+      data: {
+        saved: false,
+        stale_custom: false,
+        has_piles: false,
+        concrete_grade: null,
+        payment_paragraph: "1 000,00 (одна тысяча) рублей — предварительная оплата в размере 100%.",
+        term_paragraph: "",
+        delivery_paragraph: "",
+        spec_date: null,
+        choice: { payment: "prepay_100", term: null, delivery: null },
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, { order_number_1c: "ЯР-15" }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const { unmount } = render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Спецификация" }));
+    expect(screen.getByText(/предварительная оплата в размере 100%/)).toBeInTheDocument();
+    expect(document.querySelector("textarea")).toBeNull();
+    unmount();
+
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в работе", null, { specification_saved: true, order_number_1c: "ЯР-15" }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Спецификация" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "100% предоплата" })).not.toBeInTheDocument();
+  });
+
+  it("downloads a saved specification from the documents shelf without opening the editor", async () => {
+    mockDownloadSpecification.mockResolvedValue(undefined);
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в работе", null, { specification_saved: true }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Скачать спецификацию" }));
+
+    await waitFor(() => {
+      expect(mockDownloadSpecification).toHaveBeenCalledWith(42);
+    });
+    expect(mockSaveSpecification).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "100% предоплата" })).not.toBeInTheDocument();
+  });
+
+  it("saves the specification and then downloads the file", async () => {
+    mockSaveSpecification.mockResolvedValue({
+      saved: true,
+      stale_custom: false,
+      has_piles: false,
+      concrete_grade: null,
+      payment_paragraph: "1 000,00 (одна тысяча) рублей — предварительная оплата в размере 100%.",
+      term_paragraph: "Поставщик обязуется поставить товар не позднее 1 октября 2026 года.",
+      delivery_paragraph: "Самовывоз со склада готовой продукции.",
+      spec_date: "2026-09-18",
+      choice: {
+        payment: "prepay_100",
+        term: "by_date",
+        delivery: "pickup",
+        term_date: "2026-10-01",
+      },
+    });
+    mockDownloadSpecification.mockResolvedValue(undefined);
+    mockSpecificationQuery.mockReturnValue({
+      data: {
+        saved: true,
+        stale_custom: false,
+        has_piles: false,
+        concrete_grade: null,
+        payment_paragraph: "1 000,00 (одна тысяча) рублей — предварительная оплата в размере 100%.",
+        term_paragraph: "Поставщик обязуется поставить товар не позднее 1 октября 2026 года.",
+        delivery_paragraph: "Самовывоз со склада готовой продукции.",
+        spec_date: "2026-09-18",
+        choice: {
+          payment: "prepay_100",
+          term: "by_date",
+          delivery: "pickup",
+          term_date: "2026-10-01",
+        },
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Спецификация" }));
+    fireEvent.click(screen.getByRole("button", { name: "Скачать Excel" }));
+
+    await waitFor(() => {
+      expect(mockDownloadSpecification).toHaveBeenCalledWith(42);
+    });
+    expect(mockSaveSpecification).toHaveBeenCalled();
+    expect(mockSaveSpecification.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDownloadSpecification.mock.invocationCallOrder[0],
+    );
+  });
+});
+
+describe("OfferDetailsDrawer invoice warehouse", () => {
+  const warehouses = [
+    "Склад Готовой Продукции",
+    "Склад покупных товаров (для перепродажи)",
+    "БСУ склад",
+    "Сырье склад производства",
+    "Полуфабрикаты склад производства",
+  ];
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("does not open the warehouse list from a grey send button", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        invoice_export_block: "Нет действующего договора поставки",
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Отправить в 1С" }));
+
+    expect(screen.queryByRole("heading", { name: "Склад" })).not.toBeInTheDocument();
+    expect(mockExportInvoice).not.toHaveBeenCalled();
+  });
+
+  it("opens five warehouses and cancel does not send", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Отправить в 1С" }));
+
+    expect(screen.getByRole("heading", { name: "Склад" })).toBeInTheDocument();
+    for (const name of warehouses) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+
+    expect(mockExportInvoice).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Склад" })).not.toBeInTheDocument();
+  });
+
+  it("sends the chosen warehouse name", () => {
+    mockExportInvoice.mockResolvedValue(undefined);
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Отправить в 1С" }));
+    fireEvent.click(screen.getByRole("button", { name: "БСУ склад" }));
+
+    expect(mockExportInvoice).toHaveBeenCalledWith({ kpId: 42, warehouse: "БСУ склад" });
+  });
+
+  it("asks for a warehouse once when a correction has none stored", () => {
+    mockExportCorrection.mockResolvedValue(undefined);
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, {
+        order_number_1c: "ЯР-15",
+        correction_pending: true,
+        invoice_warehouse: null,
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Отправить исправление" }));
+    expect(mockExportCorrection).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Сырье склад производства" }));
+
+    expect(mockExportCorrection).toHaveBeenCalledWith({
+      kpId: 42,
+      warehouse: "Сырье склад производства",
+    });
   });
 });

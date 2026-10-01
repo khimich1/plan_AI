@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
+import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from app.core.settings import get_settings
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
@@ -28,6 +32,9 @@ from app.schemas.archive import (
     CapacityDayInfo,
     CapacitySnapshotResponse,
     KpReadinessPositionsResponse,
+    SpecificationChoiceIn,
+    SpecificationChoiceOut,
+    SpecificationView,
 )
 from app.repositories.plan_repository import PlanRepository
 from app.services.capacity_gate_service import (
@@ -43,9 +50,48 @@ from app.security.offer_access import (
 from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
 from app.services.promise_service import PromiseGateError, PromiseService
+from app.repositories.supply_contract_repository import SupplyContractRepository
 from app.services.counterparties_service import (
     CounterpartiesService,
     CounterpartyValidationError,
+)
+from core.guid_gate import InvoiceGuidBlockError, OrderLine, assert_invoice_guids
+from core.embed_delivery_in_unit_price import allocate_line_delivery_kopecks
+from core.invoice_export import (
+    INVOICE_WAREHOUSES,
+    InvoiceAction,
+    _line_payable,
+    build_invoice_document,
+    card_offer_from_kp,
+    invoice_snapshot_hash,
+)
+from core.specification_buyer import buyer_preamble_for_print
+from core.specification_text import (
+    SpecificationChoice,
+    SpecificationTextError,
+    choice_from_document,
+    render_specification,
+    specification_document,
+)
+from core.specification_xlsx import (
+    SpecificationHeader,
+    SpecificationPayableLine,
+    build_specification_xlsx,
+)
+from core.supply_contract import attach_contract_number
+
+STATUS_ARCHIVE = "в архиве"
+STATUS_ON_APPROVAL = "на согласовании"
+MSG_EXPORT_ONLY_ARCHIVE = "Отправить в 1С можно только из статуса «в архиве»"
+MSG_NEED_COUNTERPARTY = "Сначала занесите контрагента"
+MSG_NEED_CONTRACT = "Нет действующего договора поставки"
+MSG_SPEC_STATUS = "Сохранить спецификацию можно только в статусе «на согласовании»"
+MSG_SPEC_PICKUP = (
+    "Самовывоз нельзя сохранить: уберите доставку в конструкторе или выберите доставку на объект."
+)
+MSG_SPEC_REQUIRED = "Сначала сохраните спецификацию"
+MSG_SPEC_STALE = (
+    "Условия оплаты в спецификации устарели: откройте спецификацию и сохраните их снова"
 )
 from core.production.promise_buckets import OccupancyUnavailableError
 from core.delivery_schedule_check import BatchItemInput
@@ -76,6 +122,12 @@ class ArchiveValidationError(ArchiveError):
     """Ошибка валидации бизнес-правил (например, недопустимый статус)."""
 
 
+@dataclass(frozen=True)
+class SpecificationDownload:
+    content: bytes
+    filename: str
+
+
 class ArchiveService:
     """Бизнес-логика раздела «Архив» (аналог bot/handlers/archive.py)."""
 
@@ -86,9 +138,11 @@ class ArchiveService:
         optimization_service: OptimizationService | None = None,
         file_generation_service: FileGenerationService | None = None,
         promise_service: PromiseService | None = None,
+        export_dir: Path | None = None,
     ) -> None:
         settings = get_settings()
         self.repository = repository or KpArchiveRepository()
+        self.export_dir = export_dir
         self.outputs_dir = outputs_dir or settings.outputs_dir
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self.optimization_service = optimization_service or OptimizationService()
@@ -122,7 +176,7 @@ class ArchiveService:
         return self._to_details(raw)
 
     def resume_as_draft(self, kp_id: int, *, user: dict) -> dict:
-        """Hydrate a commercial draft from archive KP (status «в архиве» only)."""
+        """Hydrate a commercial draft from «в архиве» or «на согласовании»."""
         raw = self.repository.get_by_id(kp_id)
         if not raw:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
@@ -307,15 +361,514 @@ class ArchiveService:
         if not self.repository.delete(kp_id):
             raise ArchiveNotFoundError(f"КП №{kp_id} уже удалено или не существует")
 
+    def export_invoice(
+        self,
+        kp_id: int,
+        *,
+        user: dict,
+        warehouse: str | None = None,
+    ) -> ArchiveOfferDetails:
+        raw = self._offer_for_invoice_write(kp_id, user)
+        if raw.get("status") != STATUS_ARCHIVE:
+            raise ArchiveValidationError(MSG_EXPORT_ONLY_ARCHIVE)
+        offer, contract = self._invoice_offer(raw)
+        name = _require_invoice_warehouse(warehouse)
+        document, digest = self._build_stamped_invoice(
+            raw, offer, contract, action="create", warehouse=name
+        )
+        self._write_invoice_file(kp_id, "create", document)
+        try:
+            self.repository.commit_invoice_snapshot(
+                kp_id, digest, status=STATUS_ON_APPROVAL, warehouse=name
+            )
+        except Exception as exc:
+            logger.exception("invoice status commit failed for kp_id=%s", kp_id)
+            raise ArchiveError(f"Не удалось обновить статус КП №{kp_id}") from exc
+        return self.get_details(kp_id, user=user)
+
+    def export_invoice_correction(
+        self,
+        kp_id: int,
+        *,
+        user: dict,
+        warehouse: str | None = None,
+    ) -> ArchiveOfferDetails:
+        raw = self._offer_for_invoice_write(kp_id, user)
+        if raw.get("status") != STATUS_ON_APPROVAL:
+            raise ArchiveValidationError(
+                "Исправление можно отправить только из статуса «на согласовании»"
+            )
+        number = str(raw.get("order_number_1c") or "").strip()
+        if not number:
+            raise ArchiveValidationError("Нужен номер счёта")
+        current = invoice_snapshot_hash(card_offer_from_kp(raw))
+        if str(raw.get("invoice_snapshot_hash") or "") == current:
+            raise ArchiveValidationError("Состав не изменился")
+        offer, contract = self._invoice_offer(raw)
+        name = _warehouse_for_correction(raw, warehouse)
+        document, digest = self._build_stamped_invoice(
+            raw,
+            offer,
+            contract,
+            action="update",
+            warehouse=name,
+            order_number=number,
+        )
+        self._write_invoice_file(kp_id, "update", document)
+        try:
+            self.repository.commit_invoice_snapshot(kp_id, digest, warehouse=name)
+        except Exception as exc:
+            logger.exception("invoice correction commit failed for kp_id=%s", kp_id)
+            raise ArchiveError(f"Не удалось обновить снимок КП №{kp_id}") from exc
+        return self.get_details(kp_id, user=user)
+
+    def _build_stamped_invoice(
+        self,
+        raw: dict,
+        offer: dict,
+        contract: dict,
+        *,
+        action: InvoiceAction,
+        warehouse: str,
+        order_number: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        shares = self._invoice_delivery_kopecks(raw, offer)
+        document, digest = build_invoice_document(
+            offer,
+            action=action,
+            order_number=order_number,
+            warehouse=warehouse,
+            line_delivery_kopecks=shares,
+        )
+        stamped = attach_contract_number(
+            document,
+            int(raw["counterparty_id"]),
+            contract,
+        )
+        return stamped, digest
+
+    def _invoice_delivery_kopecks(self, raw: dict, offer: dict) -> list[int]:
+        totals = self._calculate_delivery_totals(raw)
+        reason = _unready_delivery_reason(totals)
+        if reason:
+            raise ArchiveValidationError(reason)
+        long_enabled = bool(totals.get("long_pile_delivery_enabled"))
+        lookup = self._pile_catalog_lookup() if long_enabled else None
+        qtys, types, length_keys = _allocation_rows(
+            raw, long_enabled=long_enabled, catalog_lookup=lookup
+        )
+        if len(qtys) != len(offer.get("lines") or []):
+            raise ArchiveValidationError("Не удалось разложить доставку по строкам счёта")
+        long_amounts = _ready_long_pile_amounts(totals)
+        kopecks = allocate_line_delivery_kopecks(
+            qty_by_index=qtys,
+            product_type_by_index=types,
+            plate_delivery_total=float(totals.get("plate_delivery_total") or 0.0),
+            pile_delivery_total=float(totals.get("pile_delivery_total") or 0.0),
+            fbs_delivery_total=float(totals.get("fbs_lm_delivery_total") or 0.0),
+            long_pile_delivery_by_length=long_amounts,
+            length_key_by_index=length_keys,
+        )
+        if sum(kopecks) != _expected_delivery_kopecks(totals, long_amounts):
+            raise ArchiveValidationError("Не удалось разложить доставку по строкам счёта")
+        return kopecks
+
+    def _calculate_delivery_totals(self, raw: dict) -> dict[str, Any]:
+        from core.commercial_pricing import (
+            calculate_total_cost,
+            coerce_fbs_lm_delivery_enabled,
+            coerce_long_pile_delivery_enabled,
+        )
+        from core.pile_trip_pricing import coerce_pile_trip_overrides
+
+        kp_id = raw.get("kp_id")
+        return calculate_total_cost(
+            order_data_from_kp_info(raw),
+            float(raw.get("discount_percent") or 0.0),
+            logistics_cost=max(0.0, float(raw.get("logistics_cost") or 0.0)),
+            db_path=self.repository.db_path,
+            require_all_priced=False,
+            pile_logistics_cost=max(0.0, float(raw.get("pile_logistics_cost") or 0.0)),
+            pile_trip_overrides=coerce_pile_trip_overrides(raw.get("pile_trip_overrides_json")),
+            pile_catalog_db_path=self.repository.db_path,
+            fbs_lm_delivery_enabled=coerce_fbs_lm_delivery_enabled(
+                raw.get("fbs_lm_delivery_enabled")
+            ),
+            weight_catalog_db_path=self.repository.db_path,
+            long_pile_delivery_enabled=coerce_long_pile_delivery_enabled(
+                raw.get("long_pile_delivery_enabled")
+            ),
+            long_pile_delivery=raw.get("long_pile_delivery_json"),
+            kp_id=int(kp_id) if kp_id is not None else None,
+        )
+
+    def _pile_catalog_lookup(self):
+        from core.pile_catalog import load_pile_catalog, resolve_catalog_for_mark
+
+        entries = load_pile_catalog(self.repository.db_path)
+        return lambda mark: resolve_catalog_for_mark(mark, entries)
+
+    def _offer_for_invoice_write(self, kp_id: int, user: dict) -> dict:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        assert_offer_write_access(user, raw)
+        return raw
+
+    def _invoice_offer(self, raw: dict) -> tuple[dict[str, Any], dict]:
+        counterparty_id = raw.get("counterparty_id")
+        if counterparty_id is None:
+            raise ArchiveValidationError(MSG_NEED_COUNTERPARTY)
+        try:
+            party = CounterpartiesService(
+                db_path=self.repository.db_path
+            ).require_active_client(counterparty_id)
+        except CounterpartyValidationError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        contract = SupplyContractRepository(
+            db_path=self.repository.db_path
+        ).get_active_by_counterparty(int(counterparty_id))
+        if contract is None:
+            raise ArchiveValidationError(MSG_NEED_CONTRACT)
+        offer = card_offer_from_kp(raw)
+        offer["counterparty"] = {
+            "name": party.get("name") or raw.get("customer_name"),
+            "code": party.get("code_1c"),
+            "guid": party.get("guid_1c"),
+            "inn": party.get("inn") or raw.get("customer_inn"),
+            "kpp": party.get("kpp") or raw.get("customer_kpp"),
+        }
+        order_lines = [
+            OrderLine(
+                str(line.get("product_kind") or "plate"),
+                str(line.get("name") or ""),
+                int(line.get("qty") or 1),
+            )
+            for line in offer["lines"]
+        ]
+        conn = self._open_guid_db()
+        try:
+            report = assert_invoice_guids(order_lines, conn)
+        except InvoiceGuidBlockError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        finally:
+            conn.close()
+        for line, ready in zip(offer["lines"], report.ready):
+            line["guid"] = ready.guid
+        return offer, contract
+
+    def _write_invoice_file(self, kp_id: int, action: str, document: dict) -> Path:
+        settings = get_settings()
+        directory = self.export_dir if self.export_dir is not None else Path(settings.exchange_export_dir)
+        prefix = "invoice_create" if action == "create" else "invoice_update"
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+            path = directory / f"{prefix}_{kp_id}_{stamp}.json"
+            path.write_text(
+                json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            raise ArchiveError("Не удалось записать файл счёта") from exc
+        return path
+
+    def _correction_pending(self, raw: dict) -> bool:
+        if raw.get("status") != STATUS_ON_APPROVAL:
+            return False
+        stored = str(raw.get("invoice_snapshot_hash") or "").strip()
+        if not stored:
+            return False
+        return invoice_snapshot_hash(card_offer_from_kp(raw)) != stored
+
+    def _invoice_export_block(self, raw: dict) -> str | None:
+        if raw.get("status") != STATUS_ARCHIVE:
+            return None
+        if raw.get("counterparty_id") is None:
+            return MSG_NEED_COUNTERPARTY
+        try:
+            contract = SupplyContractRepository(
+                db_path=self.repository.db_path
+            ).get_active_by_counterparty(int(raw["counterparty_id"]))
+        except Exception:
+            logger.exception("Не удалось прочитать договор для КП %s", raw.get("kp_id"))
+            return None
+        if contract is None:
+            return MSG_NEED_CONTRACT
+        try:
+            offer = card_offer_from_kp(raw)
+            order_lines = [
+                OrderLine(
+                    str(line.get("product_kind") or "plate"),
+                    str(line.get("name") or ""),
+                    int(line.get("qty") or 1),
+                )
+                for line in offer["lines"]
+                if str(line.get("name") or "").strip()
+            ]
+            if not order_lines:
+                return None
+            conn = self._open_guid_db()
+            try:
+                assert_invoice_guids(order_lines, conn)
+            finally:
+                conn.close()
+        except InvoiceGuidBlockError as exc:
+            return str(exc)
+        except Exception:
+            logger.exception("Не удалось проверить GUID для КП %s", raw.get("kp_id"))
+            return "Не удалось проверить GUID 1С"
+        return None
+
+    def _open_guid_db(self) -> sqlite3.Connection:
+        """Справочник GUID — pb.db. В тестах без этого файла остаётся база КП."""
+        pb_path = Path(get_settings().pb_db_path)
+        if pb_path.is_file():
+            return sqlite3.connect(pb_path)
+        return sqlite3.connect(self.repository.db_path)
+
+    def get_specification(self, kp_id: int, *, user: dict) -> SpecificationView:
+        raw = self._specification_offer(kp_id, user, write=False)
+        total, delivery_sum = self._specification_totals(raw)
+        document = _load_stored_specification(raw)
+        has_piles = _kp_has_piles(raw)
+        grade = _uniform_concrete_grade(raw)
+        if document is None:
+            choice = _suggested_choice(raw, delivery_sum)
+            payment, term, delivery = _suggestion_paragraphs(choice, total)
+            return SpecificationView(
+                saved=False,
+                stale_custom=False,
+                has_piles=has_piles,
+                concrete_grade=grade,
+                payment_paragraph=payment,
+                term_paragraph=term,
+                delivery_paragraph=delivery,
+                choice=choice,
+            )
+        try:
+            stored = choice_from_document(document)
+            paragraphs = render_specification(
+                stored, payable_total=total, has_piles=has_piles
+            )
+        except SpecificationTextError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        current = invoice_snapshot_hash(card_offer_from_kp(raw))
+        stale = stored.payment == "custom" and str(document.get("composition_hash") or "") != current
+        return SpecificationView(
+            saved=True,
+            stale_custom=stale,
+            has_piles=has_piles,
+            concrete_grade=grade,
+            payment_paragraph=paragraphs.payment,
+            term_paragraph=paragraphs.term,
+            delivery_paragraph=paragraphs.delivery,
+            spec_date=str(document.get("spec_date") or "") or None,
+            choice=_choice_out(document),
+        )
+
+    def save_specification(
+        self,
+        kp_id: int,
+        payload: SpecificationChoiceIn,
+        *,
+        user: dict,
+    ) -> SpecificationView:
+        raw = self._specification_offer(kp_id, user, write=True)
+        if raw.get("status") != STATUS_ON_APPROVAL:
+            raise ArchiveValidationError(MSG_SPEC_STATUS)
+        choice = _choice_from_payload(payload)
+        has_piles = _kp_has_piles(raw)
+        try:
+            render_specification(choice, payable_total=0, has_piles=has_piles)
+        except SpecificationTextError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        _total, delivery_sum = self._specification_totals(raw)
+        if choice.delivery == "pickup" and delivery_sum != 0:
+            raise ArchiveValidationError(MSG_SPEC_PICKUP)
+        existing = _load_stored_specification(raw)
+        spec_date = str((existing or {}).get("spec_date") or "").strip()
+        if not spec_date:
+            spec_date = self._spec_today()
+        document = specification_document(
+            choice,
+            spec_date=spec_date,
+            composition_hash=invoice_snapshot_hash(card_offer_from_kp(raw)),
+            has_piles=has_piles,
+        )
+        if not self.repository.set_specification_json(
+            kp_id, json.dumps(document, ensure_ascii=False)
+        ):
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        return self.get_specification(kp_id, user=user)
+
+    def download_specification(self, kp_id: int, *, user: dict) -> SpecificationDownload:
+        """Байты уже сохранённой спецификации. Строку не создаёт."""
+        raw = self._specification_offer(kp_id, user, write=False)
+        document = _load_stored_specification(raw)
+        if document is None:
+            raise ArchiveValidationError("Сначала сохраните спецификацию")
+        total, _delivery_sum = self._specification_totals(raw)
+        has_piles = _kp_has_piles(raw)
+        try:
+            stored = choice_from_document(document)
+            paragraphs = render_specification(
+                stored, payable_total=total, has_piles=has_piles
+            )
+            spec_date = date.fromisoformat(str(document.get("spec_date") or ""))
+        except (SpecificationTextError, ValueError) as exc:
+            raise ArchiveValidationError("Спецификация сохранена некорректно") from exc
+        number = str(raw.get("order_number_1c") or "").strip() or None
+        header = self._specification_header(
+            raw,
+            spec_date=spec_date,
+            invoice_number=number,
+            concrete_grade=_uniform_concrete_grade(raw),
+        )
+        content = build_specification_xlsx(
+            header, self._specification_lines(raw), paragraphs
+        )
+        return SpecificationDownload(
+            content=content,
+            filename=_specification_filename(kp_id, number),
+        )
+
+    def _specification_header(
+        self,
+        raw: dict,
+        *,
+        spec_date: date,
+        invoice_number: str | None,
+        concrete_grade: str | None,
+    ) -> SpecificationHeader:
+        counterparty_id = raw.get("counterparty_id")
+        if counterparty_id is None:
+            raise ArchiveValidationError(MSG_NEED_COUNTERPARTY)
+        contract = SupplyContractRepository(
+            db_path=self.repository.db_path
+        ).get_active_by_counterparty(int(counterparty_id))
+        if contract is None:
+            raise ArchiveValidationError(MSG_NEED_CONTRACT)
+        preamble = buyer_preamble_for_print(
+            legal_form=str(contract.get("legal_form") or ""),
+            full_name=str(contract.get("full_name") or ""),
+            signatory_name=str(contract.get("signatory_name") or ""),
+            authority_basis=str(contract.get("authority_basis") or "устав"),
+            signatory_position=contract.get("signatory_position"),
+            signatory_verb=str(contract.get("signatory_verb") or "действующего"),
+            poa_number=contract.get("poa_number"),
+            poa_date=contract.get("poa_date"),
+        )
+        return SpecificationHeader(
+            invoice_number=invoice_number,
+            spec_date=spec_date,
+            contract_number=str(contract.get("number") or "").strip(),
+            contract_date=_parse_contract_date(contract.get("contract_date")),
+            buyer_preamble=preamble,
+            buyer_short_name=str(contract.get("short_name") or ""),
+            buyer_inn=str(contract.get("inn") or ""),
+            buyer_kpp=str(contract.get("kpp") or ""),
+            buyer_signatory_position=str(contract.get("signatory_position") or ""),
+            buyer_signatory_short=_short_person_name(str(contract.get("signatory_name") or "")),
+            concrete_grade=concrete_grade,
+        )
+
+    def _specification_lines(self, raw: dict) -> list[SpecificationPayableLine]:
+        offer = card_offer_from_kp(raw)
+        shares = self._invoice_delivery_kopecks(raw, offer)
+        lines = [line for line in offer.get("lines") or [] if isinstance(line, dict)]
+        result: list[SpecificationPayableLine] = []
+        for line, kopecks in zip(lines, shares):
+            payable = _line_payable(offer, line, int(kopecks))
+            qty = line.get("qty")
+            count = int(qty) if isinstance(qty, int) and not isinstance(qty, bool) and qty > 0 else 0
+            if count < 1:
+                count = 1 if payable else 0
+            price = (
+                (payable / Decimal(count)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                if count
+                else payable
+            )
+            result.append(
+                SpecificationPayableLine(
+                    name=str(line.get("name") or ""),
+                    qty=count,
+                    price=price,
+                    amount=payable,
+                )
+            )
+        return result
+
+    def _specification_offer(self, kp_id: int, user: dict, *, write: bool) -> dict:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        if write:
+            assert_offer_write_access(user, raw)
+        else:
+            assert_offer_read_access(user, raw)
+        return raw
+
+    def _specification_totals(self, raw: dict) -> tuple[int, int]:
+        offer = card_offer_from_kp(raw)
+        shares = self._invoice_delivery_kopecks(raw, offer)
+        document, _digest = build_invoice_document(offer, line_delivery_kopecks=shares)
+        return _rub_kopecks(document.get("СуммаДокумента")), sum(int(item) for item in shares)
+
+    def _specification_flags(self, raw: dict) -> tuple[bool, bool]:
+        document = _load_stored_specification(raw)
+        if document is None:
+            return False, False
+        try:
+            stored = choice_from_document(document)
+            render_specification(
+                stored, payable_total=0, has_piles=_kp_has_piles(raw)
+            )
+        except SpecificationTextError:
+            return False, False
+        if stored.payment != "custom":
+            return True, False
+        current = invoice_snapshot_hash(card_offer_from_kp(raw))
+        return True, str(document.get("composition_hash") or "") != current
+
+    def _spec_today(self) -> str:
+        if self._today_override:
+            return self._today_override
+        return date.today().isoformat()
+
+    def set_payment(self, kp_id: int, *, paid: bool, user: dict) -> ArchiveOfferDetails:
+        raw = self._offer_for_invoice_write(kp_id, user)
+        if raw.get("status") != STATUS_ON_APPROVAL:
+            if paid:
+                raise ArchiveValidationError(
+                    "Отметить оплату можно только в статусе «на согласовании»"
+                )
+            raise ArchiveValidationError(
+                "Снять оплату можно только в статусе «на согласовании»"
+            )
+        stamp = datetime.now().isoformat(timespec="seconds") if paid else None
+        if not self.repository.set_paid_at(kp_id, stamp):
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        return self.get_details(kp_id, user=user)
+
     def move_to_production(self, kp_id: int, terms_input: str, *, user: dict) -> ArchiveOfferDetails:
         raw = self.repository.get_by_id(kp_id)
         if not raw:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         assert_offer_write_access(user, raw)
-        if raw.get("status") != "в архиве":
+        if raw.get("status") != STATUS_ON_APPROVAL:
             raise ArchiveValidationError(
-                "Перевести в производство можно только КП из раздела «в архиве»"
+                "Перевести в производство можно только из статуса «на согласовании»"
             )
+        if not str(raw.get("paid_at") or "").strip():
+            raise ArchiveValidationError("Сначала отметьте оплату")
+        if not str(raw.get("order_number_1c") or "").strip():
+            raise ArchiveValidationError("Нужен номер счёта")
+        saved_spec, stale_spec = self._specification_flags(raw)
+        if not saved_spec:
+            raise ArchiveValidationError(MSG_SPEC_REQUIRED)
+        if stale_spec:
+            raise ArchiveValidationError(MSG_SPEC_STALE)
         try:
             CounterpartiesService(db_path=self.repository.db_path).require_active_client(
                 raw.get("counterparty_id")
@@ -739,6 +1292,7 @@ class ArchiveService:
             except Exception:
                 logger.exception("Ошибка получения readiness для КП %s", kp_id)
 
+        saved_spec, stale_spec = self._specification_flags(raw)
         return ArchiveOfferDetails(
             kp_id=kp_id,
             creation_date=raw.get("creation_date"),
@@ -789,6 +1343,13 @@ class ArchiveService:
             fbs=fbs,
             completion_percentage=completion,
             readiness=readiness,
+            order_number_1c=(raw.get("order_number_1c") or None),
+            paid_at=raw.get("paid_at") or None,
+            correction_pending=self._correction_pending(raw),
+            invoice_export_block=self._invoice_export_block(raw),
+            invoice_warehouse=_stored_invoice_warehouse(raw.get("invoice_warehouse")),
+            specification_saved=saved_spec,
+            specification_stale_custom=stale_spec,
         )
 
     @staticmethod
@@ -1021,6 +1582,148 @@ class ArchiveService:
             raise ArchiveValidationError(str(exc)) from exc
 
 
+def _specification_filename(kp_id: int, invoice_number: str | None) -> str:
+    number = (invoice_number or "").strip()
+    if not number:
+        return f"Спецификация КП {kp_id}.xlsx"
+    safe = number.replace("/", "-").replace("\\", "-").replace("\x00", "")
+    return f"Спецификация по счету {safe}.xlsx"
+
+
+def _short_person_name(full_name: str) -> str:
+    parts = [part for part in full_name.split() if part]
+    if len(parts) < 2:
+        return full_name.strip()
+    initials = " ".join(f"{part[0]}." for part in parts[1:])
+    return f"{parts[0]} {initials}".strip()
+
+
+def _parse_contract_date(value: object) -> date:
+    text = str(value or "").strip()
+    if not text:
+        raise ArchiveValidationError("В договоре нет даты")
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(text, "%d.%m.%Y").date()
+    except ValueError as exc:
+        raise ArchiveValidationError("В договоре некорректная дата") from exc
+
+
+def _load_stored_specification(raw: dict) -> dict | None:
+    text = raw.get("specification_json")
+    if text is None or not str(text).strip():
+        return None
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(document, dict):
+        return None
+    return document
+
+
+def _choice_from_payload(payload: SpecificationChoiceIn) -> SpecificationChoice:
+    try:
+        return SpecificationChoice(
+            payment=payload.payment,
+            term=payload.term,
+            delivery=payload.delivery,
+            payment_date=_payload_date(payload.payment_date),
+            payment_days=payload.payment_days,
+            second_share_percent=payload.second_share_percent,
+            second_payment_date=_payload_date(payload.second_payment_date),
+            custom_text=payload.custom_text,
+            term_date=_payload_date(payload.term_date),
+            pile_count=payload.pile_count,
+            pile_unit=payload.pile_unit,
+            term_days=payload.term_days,
+            delivery_address=payload.delivery_address,
+        )
+    except SpecificationTextError as exc:
+        raise ArchiveValidationError(str(exc)) from exc
+
+
+def _payload_date(value: str | None) -> date | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError as exc:
+        raise ArchiveValidationError("Некорректная дата") from exc
+
+
+def _choice_out(document: dict) -> SpecificationChoiceOut:
+    return SpecificationChoiceOut(
+        payment=document.get("payment"),
+        term=document.get("term"),
+        delivery=document.get("delivery"),
+        payment_date=document.get("payment_date"),
+        payment_days=document.get("payment_days"),
+        second_share_percent=document.get("second_share_percent"),
+        second_payment_date=document.get("second_payment_date"),
+        custom_text=document.get("custom_text"),
+        term_date=document.get("term_date"),
+        pile_count=document.get("pile_count"),
+        pile_unit=document.get("pile_unit"),
+        term_days=document.get("term_days"),
+        delivery_address=document.get("delivery_address"),
+    )
+
+
+def _suggested_choice(raw: dict, delivery_kopecks: int) -> SpecificationChoiceOut:
+    payment = "prepay_100" if not str(raw.get("payment_conditions") or "").strip() else None
+    delivery = None
+    text = str(raw.get("delivery_conditions") or "")
+    if "самовывоз" in text.casefold() and delivery_kopecks == 0:
+        delivery = "pickup"
+    return SpecificationChoiceOut(payment=payment, delivery=delivery)
+
+
+def _suggestion_paragraphs(choice: SpecificationChoiceOut, total: int) -> tuple[str, str, str]:
+    if choice.payment != "prepay_100" and choice.delivery != "pickup":
+        return "", "", ""
+    rendered = render_specification(
+        SpecificationChoice(
+            payment="prepay_100",
+            term="by_date",
+            term_date=date(2000, 1, 1),
+            delivery="pickup",
+        ),
+        payable_total=total,
+        has_piles=False,
+    )
+    payment = rendered.payment if choice.payment == "prepay_100" else ""
+    delivery = rendered.delivery if choice.delivery == "pickup" else ""
+    return payment, "", delivery
+
+
+def _kp_has_piles(raw: dict) -> bool:
+    return any(isinstance(item, dict) for item in (raw.get("piles") or []))
+
+
+def _uniform_concrete_grade(raw: dict) -> str | None:
+    piles = [item for item in (raw.get("piles") or []) if isinstance(item, dict)]
+    if not piles:
+        return None
+    grades: list[str] = []
+    for pile in piles:
+        grade = str(pile.get("concrete_grade") or "").strip()
+        if not grade:
+            return None
+        grades.append(grade)
+    if len(set(grades)) != 1:
+        return None
+    return grades[0]
+
+
+def _rub_kopecks(amount: object) -> int:
+    value = Decimal(str(amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return int((value * Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def _concrete_spec_kwargs(raw: dict) -> dict[str, str | None]:
     def text(key: str) -> str | None:
         value = raw.get(key)
@@ -1042,6 +1745,145 @@ def _concrete_spec_kwargs(raw: dict) -> dict[str, str | None]:
         "concrete_aggregate": aggregate,
         "concrete_spec_source": source,
     }
+
+
+def _stored_invoice_warehouse(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _require_invoice_warehouse(raw: str | None) -> str:
+    name = str(raw or "").strip()
+    if not name:
+        raise ArchiveValidationError("Укажите склад")
+    if name not in INVOICE_WAREHOUSES:
+        raise ArchiveValidationError("Неизвестный склад")
+    return name
+
+
+def _warehouse_for_correction(raw: dict, requested: str | None) -> str:
+    stored = _stored_invoice_warehouse(raw.get("invoice_warehouse"))
+    if stored is None:
+        return _require_invoice_warehouse(requested)
+    if stored not in INVOICE_WAREHOUSES:
+        raise ArchiveValidationError("Неизвестный склад")
+    return stored
+
+
+_INVOICE_LINE_GROUPS = (
+    ("plates", "plate", False),
+    ("piles", "pile", True),
+    ("steps", "stair_step", False),
+    ("marches", "stair_flight", False),
+    ("bridge_piles", "bridge_pile", True),
+    ("fbs", "fbs", False),
+)
+
+
+def _allocation_rows(
+    raw: dict,
+    *,
+    long_enabled: bool,
+    catalog_lookup,
+) -> tuple[list[int], list[str], list[int | None]]:
+    qtys: list[int] = []
+    types: list[str] = []
+    keys: list[int | None] = []
+    for group, kind, is_pile in _INVOICE_LINE_GROUPS:
+        for item in raw.get(group) or []:
+            if not isinstance(item, dict):
+                continue
+            qtys.append(_non_negative_qty(item.get("qty")))
+            types.append(kind)
+            if is_pile and long_enabled and catalog_lookup is not None:
+                keys.append(_long_pile_length_key(item, catalog_lookup))
+            else:
+                keys.append(None)
+    return qtys, types, keys
+
+
+def _non_negative_qty(raw: object) -> int:
+    try:
+        return max(0, int(raw or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _long_pile_length_key(item: dict, catalog_lookup) -> int | None:
+    from core.pile_catalog import parse_bridge_pile_geometry, parse_pile_mark
+    from core.pile_trip_pricing import LONG_PILE_LENGTH_M_MIN
+
+    mark = str(item.get("mark") or item.get("name") or "").strip()
+    entry = catalog_lookup(mark) if mark else None
+    length_m = getattr(entry, "length_m", None) if entry is not None else None
+    if length_m is None and mark:
+        length_m, _section = parse_bridge_pile_geometry(mark)
+        if length_m is None:
+            length_m, _section = parse_pile_mark(mark)
+    if length_m is None or float(length_m) <= LONG_PILE_LENGTH_M_MIN:
+        return None
+    return int(round(float(length_m) * 10))
+
+
+def _ready_long_pile_amounts(totals: dict) -> dict[int, float]:
+    if not totals.get("long_pile_delivery_enabled"):
+        return {}
+    amounts: dict[int, float] = {}
+    for row in totals.get("long_pile_lengths") or []:
+        if not isinstance(row, dict) or not row.get("ready"):
+            continue
+        amount = float(row.get("amount") or 0.0)
+        if amount <= 0:
+            continue
+        amounts[int(row.get("length_key") or 0)] = amount
+    return amounts
+
+
+def _delivery_kopecks(amount: float) -> int:
+    return int(round(float(amount) * 100))
+
+
+def _expected_delivery_kopecks(totals: dict, long_amounts: dict[int, float]) -> int:
+    return (
+        _delivery_kopecks(float(totals.get("plate_delivery_total") or 0.0))
+        + _delivery_kopecks(float(totals.get("pile_delivery_total") or 0.0))
+        + _delivery_kopecks(float(totals.get("fbs_lm_delivery_total") or 0.0))
+        + sum(_delivery_kopecks(amount) for amount in long_amounts.values())
+    )
+
+
+def _unready_delivery_reason(totals: dict) -> str | None:
+    from core.pile_trip_pricing import format_long_pile_delivery_label
+
+    parts: list[str] = []
+    if not bool(totals.get("pile_delivery_ready", True)):
+        marks = _mark_list(totals.get("pile_trip_pending_marks"))
+        parts.append(f"Котёл доставки свай не готов: нет веса или тарифа у марок {marks}")
+    if not bool(totals.get("fbs_lm_delivery_ready", True)):
+        marks = _mark_list(totals.get("fbs_lm_pending_marks"))
+        parts.append(
+            "Котёл доставки ФБС, ступеней и маршей не готов: нет веса или тарифа у марок "
+            f"{marks}"
+        )
+    if totals.get("long_pile_delivery_enabled"):
+        for row in totals.get("long_pile_lengths") or []:
+            if not isinstance(row, dict) or row.get("ready"):
+                continue
+            label = format_long_pile_delivery_label(int(row.get("length_key") or 0))
+            marks = _mark_list(row.get("pending_marks"))
+            if marks:
+                parts.append(f"{label} не готова: нет веса или тарифа у марок {marks}")
+            else:
+                parts.append(f"{label} не готова: нет тарифа")
+    if not parts:
+        return None
+    return "Доставка не посчитана. " + "; ".join(parts)
+
+
+def _mark_list(raw: object) -> str:
+    if not isinstance(raw, (list, tuple)):
+        return ""
+    return ", ".join(str(mark) for mark in raw if str(mark).strip())
 
 
 def _nullable_float(value: object) -> float | None:

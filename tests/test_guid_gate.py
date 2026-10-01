@@ -223,6 +223,94 @@ def test_assert_blocks_u_suffix_without_guid_1c_u(conn: sqlite3.Connection) -> N
     assert "guid_1c_u" in caught.value.report.missing[0].reason.lower()
 
 
+def test_plate_load_12_alias_uses_single_12_5_card(conn: sqlite3.Connection) -> None:
+    _seed_unique_plate(conn, "Плиты ПБ 71-12-12,5п", OTHER_GUID)
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 71-12-12п")], conn)
+
+    assert report.missing == ()
+    assert len(report.ready) == 1
+    assert report.ready[0].guid == OTHER_GUID
+    assert report.ready[0].line.mark == "Плиты ПБ 71-12-12п"
+
+
+@pytest.mark.parametrize("mark", ["Плиты ПБ 71-12-12.5п", "Плиты ПБ 71-12-12,50п"])
+def test_plate_load_12_spellings_use_12_5_card(conn: sqlite3.Connection, mark: str) -> None:
+    _seed_unique_plate(conn, "Плиты ПБ 71-12-12,5п", OTHER_GUID)
+
+    report = check_invoice_guids([OrderLine("plate", mark)], conn)
+
+    assert report.missing == ()
+    assert report.ready[0].guid == OTHER_GUID
+    assert report.ready[0].line.mark == mark
+
+
+def test_plate_load_12_alias_keeps_width_variant(conn: sqlite3.Connection) -> None:
+    _seed_unique_plate(conn, "Плиты ПБ 55-7,0-12,5п", OTHER_GUID)
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 55-7-12п")], conn)
+
+    assert report.missing == ()
+    assert report.ready[0].guid == OTHER_GUID
+
+
+def test_plate_load_12_alias_duplicate_without_choice_is_missing(conn: sqlite3.Connection) -> None:
+    _seed_duplicate_plate(conn, "Плиты ПБ 71-12-12,5п")
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 71-12-12п")], conn)
+
+    assert report.ready == ()
+    assert len(report.missing) == 1
+    assert report.missing[0].line.mark == "Плиты ПБ 71-12-12п"
+    assert "дубль" in report.missing[0].reason.lower()
+
+
+def test_plate_load_12_alias_duplicate_uses_choice_on_catalog_name(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_duplicate_plate(conn, "Плиты ПБ 71-12-12,5п")
+    set_choice(
+        conn,
+        "Плиты ПБ 71-12-12,5п",
+        chosen_guid=PLATE_GUID_B,
+        chosen_name="Плиты ПБ 71-12-12,5п",
+    )
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 71-12-12п")], conn)
+
+    assert report.missing == ()
+    assert report.ready[0].guid == PLATE_GUID_B
+    assert report.ready[0].line.mark == "Плиты ПБ 71-12-12п"
+
+
+def test_plate_load_12_exact_card_wins_over_12_5(conn: sqlite3.Connection) -> None:
+    _seed_unique_plate(conn, "Плиты ПБ 71-12-12п", PLATE_GUID_A)
+    _seed_unique_plate(conn, "Плиты ПБ 71-12-12,5п", PLATE_GUID_B)
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 71-12-12п")], conn)
+
+    assert report.missing == ()
+    assert report.ready[0].guid == PLATE_GUID_A
+
+
+def test_plate_load_8_does_not_alias_to_12_5(conn: sqlite3.Connection) -> None:
+    _seed_unique_plate(conn, "Плиты ПБ 71-12-12,5п", OTHER_GUID)
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 71-12-8п")], conn)
+
+    assert report.ready == ()
+    assert "дубль" not in report.missing[0].reason.lower()
+
+
+def test_non_plate_load_12_does_not_alias(conn: sqlite3.Connection) -> None:
+    _seed_unique_plate(conn, "Плиты ПБ 71-12-12,5п", OTHER_GUID)
+
+    report = check_invoice_guids([OrderLine("pile", "С30.30-12")], conn)
+
+    assert report.ready == ()
+    assert report.missing[0].line.mark == "С30.30-12"
+
+
 def test_order_lines_from_draft_payload() -> None:
     from core.guid_gate import order_lines_from_order_data
 

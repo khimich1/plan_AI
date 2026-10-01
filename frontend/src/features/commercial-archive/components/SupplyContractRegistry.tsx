@@ -12,18 +12,11 @@ import {
   SUPPLY_CONTRACT_STATUSES,
   type SupplyContractRegistryRow,
 } from "@/features/commercial-archive/types/supplyContract";
+import { formatContractDate } from "@/features/commercial-archive/lib/formatContractDate";
 
 type Props = {
   open: boolean;
   onRequestNew: (row: SupplyContractRegistryRow) => void;
-};
-
-const formatContractDate = (iso: string): string => {
-  const [year, month, day] = iso.split("-");
-  if (!year || !month || !day) {
-    return iso;
-  }
-  return `${day}.${month}.${year}`;
 };
 
 export const SupplyContractRegistry = ({ open, onRequestNew }: Props) => {

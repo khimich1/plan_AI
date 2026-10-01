@@ -25,6 +25,8 @@ openlocationcode>=1.0.1
 
 # PDF и схемы раскладки
 reportlab>=4.0.0
+# Текстовый слой карточки договора: ToUnicode и Identity-H
+pdfminer.six>=20231228
 matplotlib>=3.5.0
 
 # ILP-раскрой (в образе должен быть CBC: см. coinor-cbc в Dockerfile)

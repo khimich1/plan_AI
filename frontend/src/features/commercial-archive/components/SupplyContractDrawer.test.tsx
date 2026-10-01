@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
+import { ApiError } from "@/shared/lib/apiError";
 import {
   SupplyContractArchiveButton,
   SupplyContractDrawer,
@@ -18,6 +19,7 @@ vi.mock("@/features/commercial-archive/api/archiveApi", () => ({
     createSupplyContract: vi.fn(),
     parseSupplyContract: vi.fn(),
     downloadSupplyContract: vi.fn(),
+    downloadEdoAgreement: vi.fn(),
     listSupplyContracts: vi.fn(),
     patchSupplyContract: vi.fn(),
     replaceSupplyContract: vi.fn(),
@@ -81,11 +83,44 @@ describe("SupplyContractDrawer", () => {
     );
 
     expect(await screen.findByText("Номер: 1028/09/26")).toBeInTheDocument();
-    expect(screen.getByText("Дата: 2026-09-25")).toBeInTheDocument();
+    expect(screen.getByText("Дата: 25.09.2026")).toBeInTheDocument();
     expect(screen.getByText("Статус: нет")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Скачать docx" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Договор Word" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Договор PDF" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Соглашение об ЭДО Word" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Соглашение об ЭДО PDF" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Скачать docx" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Подтвердить" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Файл карточки")).not.toBeInTheDocument();
+  });
+
+  it("shows a PDF download error in the drawer", async () => {
+    vi.mocked(archiveApi.getSupplyContract).mockResolvedValue(contract);
+    vi.mocked(archiveApi.listSupplyContracts).mockResolvedValue([]);
+    vi.mocked(archiveApi.downloadSupplyContract).mockRejectedValue(
+      new ApiError(
+        "Не удалось собрать PDF. На сервере недоступен LibreOffice.",
+        503,
+        "Не удалось собрать PDF. На сервере недоступен LibreOffice.",
+      ),
+    );
+
+    wrap(
+      <SupplyContractDrawer
+        open
+        onClose={vi.fn()}
+        kpId={42}
+        counterpartyId={15}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Договор PDF" }));
+
+    expect(
+      await screen.findByText("Не удалось собрать PDF. На сервере недоступен LibreOffice."),
+    ).toBeInTheDocument();
+    expect(archiveApi.downloadSupplyContract).toHaveBeenCalledWith(42, "pdf");
+    expect(archiveApi.downloadEdoAgreement).not.toHaveBeenCalled();
   });
 
   it("confirms an empty contract with POST and shows the issued number", async () => {
@@ -106,6 +141,7 @@ describe("SupplyContractDrawer", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Подтвердить" })).toBeInTheDocument();
+    expect(screen.getByLabelText("ОКВЭД")).not.toBeRequired();
     fireEvent.change(screen.getByLabelText("Полное наименование"), { target: { value: "Ромашка" } });
     fireEvent.change(screen.getByLabelText("ФИО подписанта"), { target: { value: "Иванов Иван" } });
     fireEvent.change(screen.getByLabelText("Должность"), { target: { value: "Директора" } });
@@ -121,7 +157,12 @@ describe("SupplyContractDrawer", () => {
     await waitFor(() => {
       expect(archiveApi.createSupplyContract).toHaveBeenCalledWith(
         42,
-        expect.objectContaining({ full_name: "Ромашка", inn: "760401001", short_name: "Ромашка" }),
+        expect.objectContaining({
+          full_name: "Ромашка",
+          inn: "760401001",
+          short_name: "Ромашка",
+          okved: null,
+        }),
       );
     });
     expect(await screen.findByText("Номер: 1028/09/26")).toBeInTheDocument();
@@ -261,6 +302,72 @@ describe("SupplyContractDrawer", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Основание")).toHaveValue("устав");
     });
+    expect(screen.queryByLabelText("Номер доверенности")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Дата доверенности")).not.toBeInTheDocument();
+  });
+
+  it("asks for the power of attorney number and date before confirm", async () => {
+    vi.mocked(archiveApi.getSupplyContract).mockResolvedValue(null);
+    vi.mocked(archiveApi.listSupplyContracts).mockResolvedValue([]);
+
+    wrap(<SupplyContractDrawer open onClose={vi.fn()} kpId={42} counterpartyId={15} />);
+
+    fireEvent.change(await screen.findByLabelText("Основание"), {
+      target: { value: "доверенность" },
+    });
+
+    const number = screen.getByLabelText("Номер доверенности");
+    const issued = screen.getByLabelText("Дата доверенности");
+    expect(issued).toHaveAttribute("type", "text");
+    expect(issued).toHaveAttribute("placeholder", "01.03.2026");
+    const confirm = screen.getByRole("button", { name: "Подтвердить" });
+    expect(confirm).toBeDisabled();
+
+    fireEvent.change(number, { target: { value: "  " } });
+    fireEvent.change(issued, { target: { value: "01.02.2024" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.submit(confirm.closest("form") as HTMLFormElement);
+    expect(archiveApi.createSupplyContract).not.toHaveBeenCalled();
+
+    fireEvent.change(number, { target: { value: "15" } });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+
+    await waitFor(() => {
+      expect(archiveApi.createSupplyContract).toHaveBeenCalledWith(
+        42,
+        expect.objectContaining({
+          authority_basis: "доверенность",
+          poa_number: "15",
+          poa_date: "01.02.2024",
+        }),
+      );
+    });
+  });
+
+  it("shows a recognized power of attorney in the fields", async () => {
+    vi.mocked(archiveApi.getSupplyContract).mockResolvedValue(null);
+    vi.mocked(archiveApi.listSupplyContracts).mockResolvedValue([]);
+    vi.mocked(archiveApi.parseSupplyContract).mockResolvedValue({
+      fields: {
+        authority_basis: "доверенность",
+        poa_number: "15",
+        poa_date: "01.02.2024",
+      },
+      accounts: [],
+      doubtful: [],
+      verify_failed: false,
+    });
+
+    wrap(<SupplyContractDrawer open onClose={vi.fn()} kpId={42} counterpartyId={15} />);
+
+    fireEvent.change(await screen.findByLabelText("Файл карточки"), {
+      target: { files: [new File(["card"], "card.png", { type: "image/png" })] },
+    });
+
+    expect(await screen.findByLabelText("Номер доверенности")).toHaveValue("15");
+    expect(screen.getByLabelText("Дата доверенности")).toHaveValue("01.02.2024");
+    expect(screen.getByRole("button", { name: "Подтвердить" })).toBeEnabled();
   });
 
   it("keeps the counterparty short name when parsing returns an empty short_name", async () => {

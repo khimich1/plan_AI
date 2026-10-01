@@ -45,6 +45,8 @@ _LINE_TABLE_BY_TYPE = {
 
 _STATUS_IN_WORK = KpStatus.IN_WORK.value
 _STATUS_ARCHIVED = KpStatus.ARCHIVED.value
+_STATUS_ON_APPROVAL = "на согласовании"
+_CONSTRUCTOR_STATUSES = frozenset({_STATUS_ARCHIVED, _STATUS_ON_APPROVAL})
 _PLATE_IN_PLAN = PlateStatus.IN_PLAN.value
 _PLATE_IN_PRODUCTION = PlateStatus.IN_PRODUCTION.value
 _PROTECTED_PLATE_STATUSES = frozenset({_PLATE_IN_PLAN, _PLATE_IN_PRODUCTION})
@@ -346,7 +348,7 @@ class KpPersistenceService:
     ) -> int:
         """Sync existing KP lines by ``line_id`` (append/update; same ``kp_id``).
 
-        Allowed only when ``kp_meta.status == «в архиве»``. Every incoming line
+        Allowed when ``kp_meta.status`` is «в архиве» or «на согласовании». Every incoming line
         must carry a non-empty ``line_id``. Matching ``line_id`` updates in place
         (preserves ``kp_plates.id`` and production fields); new ids INSERT;
         missing ids DELETE (plates «в плане» / «в производстве» or with
@@ -369,9 +371,9 @@ class KpPersistenceService:
             current_status = (
                 str(meta_row[0]) if meta_row and meta_row[0] is not None else _STATUS_IN_WORK
             )
-            if current_status != _STATUS_ARCHIVED:
+            if current_status not in _CONSTRUCTOR_STATUSES:
                 raise ValueError(
-                    "Обновление КП разрешено только в статусе «в архиве»."
+                    "Обновление КП разрешено только в статусе «в архиве» или «на согласовании»."
                 )
 
             cur.execute(

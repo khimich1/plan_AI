@@ -1,4 +1,4 @@
-export type ArchiveSection = "archived" | "in_production" | "completed";
+export type ArchiveSection = "archived" | "on_approval" | "in_production" | "completed";
 export type ArchiveFileKind = "pdf" | "xlsx" | "schema" | "xlsx_delivery_in_unit";
 export type ProductType =
   | "plates"
@@ -216,6 +216,68 @@ export type ArchiveOfferDetails = {
   fbs?: ArchiveBridgePileItem[];
   completion_percentage: number | null;
   readiness?: KpReadinessSummary | null;
+  order_number_1c?: string | null;
+  paid_at?: string | null;
+  correction_pending?: boolean;
+  invoice_export_block?: string | null;
+  invoice_warehouse?: string | null;
+  specification_saved?: boolean;
+  specification_stale_custom?: boolean;
+};
+
+export type SpecificationPaymentKind =
+  | "prepay_100"
+  | "split_50_50"
+  | "split_share"
+  | "deferral"
+  | "custom";
+
+export type SpecificationTermKind = "by_date" | "pile_rhythm" | "after_payment";
+
+export type SpecificationDeliveryKind = "pickup" | "site";
+
+export type SpecificationChoice = {
+  payment: SpecificationPaymentKind | null;
+  term: SpecificationTermKind | null;
+  delivery: SpecificationDeliveryKind | null;
+  payment_date?: string | null;
+  payment_days?: number | null;
+  second_share_percent?: number | null;
+  second_payment_date?: string | null;
+  custom_text?: string | null;
+  term_date?: string | null;
+  pile_count?: number | null;
+  pile_unit?: "week" | "day" | null;
+  term_days?: number | null;
+  delivery_address?: string | null;
+};
+
+export type SpecificationChoicePayload = {
+  payment: SpecificationPaymentKind;
+  term: SpecificationTermKind;
+  delivery: SpecificationDeliveryKind;
+  payment_date?: string | null;
+  payment_days?: number | null;
+  second_share_percent?: number | null;
+  second_payment_date?: string | null;
+  custom_text?: string | null;
+  term_date?: string | null;
+  pile_count?: number | null;
+  pile_unit?: "week" | "day" | null;
+  term_days?: number | null;
+  delivery_address?: string | null;
+};
+
+export type SpecificationView = {
+  saved: boolean;
+  stale_custom: boolean;
+  has_piles: boolean;
+  concrete_grade: string | null;
+  payment_paragraph: string;
+  term_paragraph: string;
+  delivery_paragraph: string;
+  spec_date: string | null;
+  choice: SpecificationChoice | null;
 };
 
 export type ArchiveSearchState =

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
+import subprocess
+import tempfile
 import uuid
 from datetime import date
 from pathlib import Path
@@ -43,12 +47,27 @@ from core.supply_contract_card_parse import (
     is_xlsx,
     parse_card_text,
 )
+from core.edo_agreement_docx import render_edo_agreement_docx
 from core.supply_contract_docx import render_supply_contract_docx
 
 MSG_UNSUPPORTED_CARD = "Неподдерживаемый формат файла. Допустимы DOCX, PDF, JPEG или PNG."
 MSG_NOT_A_CARD = "это не карточка контрагента"
 MSG_CONTRACT_MISSING = "Договор ещё не оформлен"
+MSG_EDO_REQUISITES = "В договоре не хватает реквизитов покупателя для соглашения об ЭДО"
+MSG_LIBREOFFICE = "Не удалось собрать PDF. На сервере недоступен LibreOffice."
 _CARD_REQUISITES = ("inn", "ogrn", "account", "bik")
+_EDO_REQUIRED = (
+    "legal_form",
+    "full_name",
+    "signatory_name",
+    "inn",
+    "ogrn",
+    "legal_address",
+    "email",
+)
+_PDF_TIMEOUT_SECONDS = 60
+_DOWNLOAD_FORMATS = frozenset({"docx", "pdf"})
+_log = logging.getLogger(__name__)
 
 
 class SupplyContractError(Exception):
@@ -65,6 +84,10 @@ class SupplyContractValidationError(SupplyContractError):
 
 class SupplyContractFieldError(SupplyContractError):
     """Поля покупателя не проходят правила вида."""
+
+
+class SupplyContractPdfError(SupplyContractError):
+    """Нет LibreOffice или конвертация docx в pdf не удалась."""
 
 
 class SupplyContractService:
@@ -85,7 +108,7 @@ class SupplyContractService:
         self.scans_dir = scans_dir or _SCANS_DIR
 
     def get_for_kp(self, kp_id: int, *, user: dict) -> dict[str, Any] | None:
-        raw = self._offer_for_write(kp_id, user)
+        raw = self._offer_for_read(kp_id, user)
         counterparty_id = raw.get("counterparty_id")
         if not counterparty_id:
             raise SupplyContractValidationError(MSG_BIND_COUNTERPARTY)
@@ -254,13 +277,32 @@ class SupplyContractService:
             raise SupplyContractValidationError(duplicate_contract_message(str(created["number"])))
         return _present(created)
 
-    def document_for_kp(self, kp_id: int, *, user: dict) -> tuple[bytes, str]:
+    def document_for_kp(
+        self,
+        kp_id: int,
+        *,
+        user: dict,
+        file_format: str = "docx",
+    ) -> tuple[bytes, str]:
         contract = self.get_for_kp(kp_id, user=user)
         if contract is None:
             raise SupplyContractNotFoundError(MSG_CONTRACT_MISSING)
         payload = render_supply_contract_docx(contract)
-        filename = f"dogovor-{str(contract['number']).replace('/', '-')}.docx"
-        return payload, filename
+        return _as_download(payload, str(contract["number"]), "dogovor", file_format)
+
+    def edo_agreement_for_kp(
+        self,
+        kp_id: int,
+        *,
+        user: dict,
+        file_format: str = "docx",
+    ) -> tuple[bytes, str]:
+        contract = self.get_for_kp(kp_id, user=user)
+        if contract is None:
+            raise SupplyContractNotFoundError(MSG_CONTRACT_MISSING)
+        _require_edo_buyer(contract)
+        payload = render_edo_agreement_docx(contract)
+        return _as_download(payload, str(contract["number"]), "soglashenie-edo", file_format)
 
     async def parse_for_kp(
         self,
@@ -372,13 +414,23 @@ class SupplyContractService:
         previous = current.get("scan_path")
         return str(stored), str(previous) if previous else None
 
+    def _offer_for_read(self, kp_id: int, user: dict) -> dict[str, Any]:
+        raw = self._load_offer(kp_id, user)
+        if raw.get("status") not in {"в архиве", "на согласовании"}:
+            raise SupplyContractValidationError(MSG_NOT_ARCHIVED)
+        return raw
+
     def _offer_for_write(self, kp_id: int, user: dict) -> dict[str, Any]:
+        raw = self._load_offer(kp_id, user)
+        if raw.get("status") != "в архиве":
+            raise SupplyContractValidationError(MSG_NOT_ARCHIVED)
+        return raw
+
+    def _load_offer(self, kp_id: int, user: dict) -> dict[str, Any]:
         raw = self.offers.get_by_id(kp_id)
         if not raw:
             raise SupplyContractNotFoundError(f"КП №{kp_id} не найдено")
         assert_offer_write_access(user, raw)
-        if raw.get("status") != "в архиве":
-            raise SupplyContractValidationError(MSG_NOT_ARCHIVED)
         return raw
 
     def _validated_fields(self, payload: SupplyContractCreate) -> dict[str, Any]:
@@ -422,7 +474,71 @@ class SupplyContractService:
             "bik": bik,
             "edo_operator": (payload.edo_operator or "").strip() or None,
             "edo_id": (payload.edo_id or "").strip() or None,
+            "okved": (payload.okved or "").strip() or None,
         }
+
+
+def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
+    """Конвертирует только что собранный docx. Это не GsmExportService."""
+    soffice = shutil.which("soffice")
+    if not soffice:
+        raise SupplyContractPdfError(MSG_LIBREOFFICE)
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        source = folder / "document.docx"
+        source.write_bytes(docx_bytes)
+        profile = folder / "profile"
+        profile.mkdir()
+        try:
+            completed = subprocess.run(
+                [
+                    soffice,
+                    "--headless",
+                    "--norestore",
+                    "--nolockcheck",
+                    f"-env:UserInstallation={profile.as_uri()}",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(folder),
+                    str(source),
+                ],
+                timeout=_PDF_TIMEOUT_SECONDS,
+                capture_output=True,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            _log.error("soffice не собрал pdf: %s", exc)
+            raise SupplyContractPdfError(MSG_LIBREOFFICE) from exc
+        pdf_path = folder / "document.pdf"
+        if completed.returncode != 0 or not pdf_path.is_file():
+            _log.error(
+                "soffice завершился с кодом %s: %s",
+                completed.returncode,
+                completed.stderr.decode("utf-8", errors="replace")[:500],
+            )
+            raise SupplyContractPdfError(MSG_LIBREOFFICE)
+        return pdf_path.read_bytes()
+
+
+def _as_download(
+    payload: bytes,
+    number: str,
+    stem: str,
+    file_format: str,
+) -> tuple[bytes, str]:
+    if file_format not in _DOWNLOAD_FORMATS:
+        raise SupplyContractValidationError("Укажите формат docx или pdf")
+    filename = f"{stem}-{number.replace('/', '-')}.{file_format}"
+    if file_format == "pdf":
+        payload = convert_docx_to_pdf(payload)
+    return payload, filename
+
+
+def _require_edo_buyer(contract: dict[str, Any]) -> None:
+    for key in _EDO_REQUIRED:
+        if not str(contract.get(key) or "").strip():
+            raise SupplyContractValidationError(MSG_EDO_REQUISITES)
 
 
 def already_exists_message(number: str) -> str:

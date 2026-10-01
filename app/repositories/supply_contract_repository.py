@@ -45,6 +45,7 @@ _INSERT_COLUMNS = (
     "bik",
     "edo_operator",
     "edo_id",
+    "okved",
     "created_at",
     "created_by_user_id",
 )

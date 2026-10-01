@@ -805,8 +805,10 @@ class CommercialDraftLifecycle:
             raise ValueError(f"КП №{kp_id} не найдено")
 
         status = str(kp_raw.get("status") or "").strip()
-        if status != "в архиве":
-            raise ValueError("Дополнить КП можно только в статусе «в архиве».")
+        if status not in {"в архиве", "на согласовании"}:
+            raise ValueError(
+                "Дополнить КП можно только в статусе «в архиве» или «на согласовании»."
+            )
 
         order_data = [
             dict(line)
@@ -966,9 +968,9 @@ class CommercialDraftLifecycle:
                 }
         if existing_kp_id is not None:
             existing_status = str(existing_saved.get("status", "") or "").strip()
-            if existing_status != "в архиве":
+            if existing_status not in {"в архиве", "на согласовании"}:
                 raise ValueError(
-                    "Дополнить КП можно только в статусе «в архиве»."
+                    "Дополнить КП можно только в статусе «в архиве» или «на согласовании»."
                 )
             kp_id = self._wf.kp_repository.update_offer_from_order_data(
                 int(existing_kp_id),

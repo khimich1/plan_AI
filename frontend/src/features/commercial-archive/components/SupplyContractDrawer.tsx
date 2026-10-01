@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import type { DragEvent, FormEvent, ReactNode, WheelEvent } from "react";
+import type { DragEvent, FormEvent, WheelEvent } from "react";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
-import { FieldWrapper, Input } from "@/shared/ui/Field";
+import { FieldWrapper } from "@/shared/ui/Field";
 import { Modal } from "@/shared/ui/Modal";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import {
   useCreateSupplyContractMutation,
+  useDownloadEdoAgreementMutation,
   useDownloadSupplyContractMutation,
   useParseSupplyContractMutation,
   useReplaceSupplyContractMutation,
@@ -19,6 +20,8 @@ import {
   type SupplyContractCreatePayload,
   type SupplyContractRegistryRow,
 } from "@/features/commercial-archive/types/supplyContract";
+import { formatContractDate } from "@/features/commercial-archive/lib/formatContractDate";
+import { poaFieldsReady, SupplyContractFields } from "./SupplyContractFields";
 import { SupplyContractRegistry } from "./SupplyContractRegistry";
 
 type Props = {
@@ -81,9 +84,6 @@ const acceptedField = (key: string, value: unknown) => {
   return allowed.includes(String(value));
 };
 
-const nameLooksDoubtful = (doubtful: Set<string>, key: "full_name" | "short_name", value: string) =>
-  doubtful.has(key) && value === "";
-
 const IMAGE_ZOOM_MIN = 0.5;
 const IMAGE_ZOOM_MAX = 3;
 const IMAGE_ZOOM_STEP = 0.25;
@@ -108,6 +108,8 @@ const emptyForm = (
   signatory_name: "",
   signatory_verb: "действующего",
   authority_basis: "устав",
+  poa_number: "",
+  poa_date: "",
   inn: customerInn ?? "",
   kpp: customerKpp ?? "",
   ogrn: "",
@@ -117,6 +119,7 @@ const emptyForm = (
   account: "",
   corr_account: "",
   bik: "",
+  okved: "",
 });
 
 export const SupplyContractArchiveButton = ({
@@ -154,7 +157,8 @@ export const SupplyContractDrawer = ({
   const createMutation = useCreateSupplyContractMutation();
   const replaceMutation = useReplaceSupplyContractMutation(kpId);
   const parseMutation = useParseSupplyContractMutation();
-  const downloadMutation = useDownloadSupplyContractMutation();
+  const contractDownload = useDownloadSupplyContractMutation();
+  const edoDownload = useDownloadEdoAgreementMutation();
   const [form, setForm] = useState<FormState>(() => emptyForm(customerName, customerInn, customerKpp));
   const [doubtful, setDoubtful] = useState<Set<string>>(new Set());
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
@@ -286,6 +290,19 @@ export const SupplyContractDrawer = ({
     }
   };
 
+  const downloadDocument = async (kind: "contract" | "edo", format: "docx" | "pdf") => {
+    setError(null);
+    try {
+      if (kind === "contract") {
+        await contractDownload.mutateAsync({ kpId, format });
+        return;
+      }
+      await edoDownload.mutateAsync({ kpId, format });
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  };
+
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragOver(false);
@@ -294,11 +311,15 @@ export const SupplyContractDrawer = ({
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!poaFieldsReady(form)) {
+      return;
+    }
     setError(null);
     const payload: SupplyContractCreatePayload = {
       ...form,
       kpp: form.kpp || null,
       signatory_position: form.signatory_position || null,
+      okved: form.okved?.trim() ? form.okved.trim() : null,
     };
     try {
       if (replacing) {
@@ -325,16 +346,48 @@ export const SupplyContractDrawer = ({
       {contract && !replacing && (
         <section aria-label="Действующий договор" style={{ display: "grid", gap: "0.5rem", marginBottom: "1rem" }}>
           <div>Номер: {contract.number}</div>
-          <div>Дата: {contract.contract_date}</div>
+          <div>Дата: {formatContractDate(contract.contract_date)}</div>
           <div>Статус: {contract.status}</div>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={downloadMutation.isPending}
-            onClick={() => downloadMutation.mutate(kpId)}
-          >
-            Скачать docx
-          </Button>
+          <div style={{ display: "grid", gap: "0.5rem" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+              <span style={{ fontWeight: 600, minWidth: "11rem" }}>Договор</span>
+              <Button
+                type="button"
+                variant="secondary"
+                aria-label="Договор Word"
+                onClick={() => void downloadDocument("contract", "docx")}
+              >
+                Word
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                aria-label="Договор PDF"
+                onClick={() => void downloadDocument("contract", "pdf")}
+              >
+                PDF
+              </Button>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+              <span style={{ fontWeight: 600, minWidth: "11rem" }}>Соглашение об ЭДО</span>
+              <Button
+                type="button"
+                variant="secondary"
+                aria-label="Соглашение об ЭДО Word"
+                onClick={() => void downloadDocument("edo", "docx")}
+              >
+                Word
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                aria-label="Соглашение об ЭДО PDF"
+                onClick={() => void downloadDocument("edo", "pdf")}
+              >
+                PDF
+              </Button>
+            </div>
+          </div>
         </section>
       )}
       {showCreateForm && (
@@ -516,140 +569,12 @@ export const SupplyContractDrawer = ({
                   ))}
                 </div>
               )}
-              <label style={{ display: "grid", gap: "0.45rem" }}>
-                <span style={{ fontWeight: 600 }}>Вид</span>
-                <select
-                  aria-label="Вид"
-                  value={form.legal_form}
-                  onChange={(event) => setField("legal_form", event.target.value)}
-                >
-                  <option value="ooo">ООО</option>
-                  <option value="ao">АО</option>
-                  <option value="ip">ИП</option>
-                  <option value="kfh">КФХ</option>
-                  <option value="person">физлицо</option>
-                </select>
-              </label>
-              <DoubtfulField
-                label="Полное наименование"
-                doubtful={nameLooksDoubtful(doubtful, "full_name", form.full_name)}
+              <SupplyContractFields form={form} doubtful={doubtful} onChange={setField} />
+              <Button
+                type="submit"
+                disabled={pending || !poaFieldsReady(form)}
+                title={poaFieldsReady(form) ? undefined : "Укажите номер и дату доверенности"}
               >
-                <Input
-                  aria-label="Полное наименование"
-                  value={form.full_name}
-                  onChange={(event) => setField("full_name", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField
-                label="Краткое наименование"
-                doubtful={nameLooksDoubtful(doubtful, "short_name", form.short_name)}
-              >
-                <Input
-                  aria-label="Краткое наименование"
-                  value={form.short_name}
-                  onChange={(event) => setField("short_name", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="Должность" doubtful={doubtful.has("signatory_position")}>
-                <Input
-                  aria-label="Должность"
-                  value={form.signatory_position ?? ""}
-                  onChange={(event) => setField("signatory_position", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="ФИО подписанта" doubtful={doubtful.has("signatory_name")}>
-                <Input
-                  aria-label="ФИО подписанта"
-                  value={form.signatory_name}
-                  onChange={(event) => setField("signatory_name", event.target.value)}
-                />
-              </DoubtfulField>
-              <label style={{ display: "grid", gap: "0.45rem" }}>
-                <span style={{ fontWeight: 600 }}>Род</span>
-                <select
-                  aria-label="Род"
-                  value={form.signatory_verb}
-                  onChange={(event) => setField("signatory_verb", event.target.value)}
-                >
-                  <option value="действующего">действующего</option>
-                  <option value="действующей">действующей</option>
-                </select>
-              </label>
-              <label style={{ display: "grid", gap: "0.45rem" }}>
-                <span style={{ fontWeight: 600 }}>Основание</span>
-                <select
-                  aria-label="Основание"
-                  value={form.authority_basis}
-                  onChange={(event) => setField("authority_basis", event.target.value)}
-                >
-                  <option value="устав">устав</option>
-                  <option value="доверенность">доверенность</option>
-                </select>
-              </label>
-              <DoubtfulField label="ИНН" doubtful={doubtful.has("inn")}>
-                <Input
-                  aria-label="ИНН"
-                  value={form.inn}
-                  onChange={(event) => setField("inn", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="КПП" doubtful={doubtful.has("kpp")}>
-                <Input
-                  aria-label="КПП"
-                  value={form.kpp ?? ""}
-                  onChange={(event) => setField("kpp", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="ОГРН" doubtful={doubtful.has("ogrn")}>
-                <Input
-                  aria-label="ОГРН"
-                  value={form.ogrn}
-                  onChange={(event) => setField("ogrn", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="Юридический адрес" doubtful={doubtful.has("legal_address")}>
-                <Input
-                  aria-label="Юридический адрес"
-                  value={form.legal_address}
-                  onChange={(event) => setField("legal_address", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="E-mail" doubtful={doubtful.has("email")}>
-                <Input
-                  aria-label="E-mail"
-                  value={form.email}
-                  onChange={(event) => setField("email", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="Банк" doubtful={doubtful.has("bank_name")}>
-                <Input
-                  aria-label="Банк"
-                  value={form.bank_name}
-                  onChange={(event) => setField("bank_name", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="Расчётный счёт" doubtful={doubtful.has("account")}>
-                <Input
-                  aria-label="Расчётный счёт"
-                  value={form.account}
-                  onChange={(event) => setField("account", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="Корсчёт" doubtful={doubtful.has("corr_account")}>
-                <Input
-                  aria-label="Корсчёт"
-                  value={form.corr_account}
-                  onChange={(event) => setField("corr_account", event.target.value)}
-                />
-              </DoubtfulField>
-              <DoubtfulField label="БИК" doubtful={doubtful.has("bik")}>
-                <Input
-                  aria-label="БИК"
-                  value={form.bik}
-                  onChange={(event) => setField("bik", event.target.value)}
-                />
-              </DoubtfulField>
-              <Button type="submit" disabled={pending}>
                 {pending ? "Сохраняем…" : "Подтвердить"}
               </Button>
             </div>
@@ -666,20 +591,3 @@ export const SupplyContractDrawer = ({
     </Modal>
   );
 };
-
-const DoubtfulField = ({
-  label,
-  doubtful,
-  children,
-}: {
-  label: string;
-  doubtful: boolean;
-  children: ReactNode;
-}) => (
-  <div
-    data-doubtful={doubtful ? "true" : undefined}
-    style={doubtful ? { outline: "2px solid #f5b942", background: "#fff8e8", borderRadius: 12 } : undefined}
-  >
-    <FieldWrapper label={label}>{children}</FieldWrapper>
-  </div>
-);
