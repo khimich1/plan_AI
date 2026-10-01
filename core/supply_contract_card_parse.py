@@ -37,6 +37,7 @@ FIELD_NAMES = (
     "bik",
     "edo_operator",
     "edo_id",
+    "okved",
 )
 
 _DIGIT_LENGTHS = {
@@ -167,6 +168,10 @@ def parse_card_text(text: str) -> CardParseResult:
     fields["bank_name"] = _bank_name(source)
     fields["edo_operator"] = _labeled_line(source, r"оператор\s+эдо")
     fields["edo_id"] = _edo_id(source)
+    okved, okved_without_code = _primary_okved(source)
+    fields["okved"] = okved
+    if okved_without_code:
+        _mark_doubtful(doubtful, "okved")
     banks, bank_unpaired = _apply_bank_outcome(fields, source)
 
     for key, allowed in _DIGIT_LENGTHS.items():
@@ -836,3 +841,35 @@ def _edo_id(text: str) -> str | None:
     if not match:
         return None
     return match.group(1)
+
+
+_OKVED_CODE_RE = re.compile(r"\d{2}(?:\.\d{1,2}){1,3}")
+_OKVED_LABEL_RE = re.compile(r"(?<![а-яёa-z])оквэд(?![а-яёa-z])", re.I)
+_OKVED_EXTRA_RE = re.compile(r"(?<![а-яёa-z])доп\s*\.", re.I)
+
+
+def okved_code_from_value(value: str | None) -> str | None:
+    """Первый код в уже выделенном значении. Хвост «Доп.» не читается."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    labeled = re.match(r"оквэд(?![а-яёa-z])\s*", text, re.I)
+    if labeled:
+        text = text[labeled.end() :]
+    extra = _OKVED_EXTRA_RE.search(text)
+    window = text[: extra.start()] if extra else text
+    found = _OKVED_CODE_RE.search(window)
+    if not found:
+        return None
+    return found.group(0)
+
+
+def _primary_okved(text: str) -> tuple[str | None, bool]:
+    """Код и флаг «подпись есть, кода нет». Нет подписи — пусто и не сомнительно."""
+    label = _OKVED_LABEL_RE.search(text or "")
+    if not label:
+        return None, False
+    code = okved_code_from_value(text[label.end() :])
+    if not code:
+        return None, True
+    return code, False

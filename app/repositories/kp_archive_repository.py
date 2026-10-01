@@ -101,6 +101,9 @@ class KpArchiveRepository:
     def set_paid_at(self, kp_id: int, paid_at: str | None) -> bool:
         return offers_write.set_kp_paid_at(kp_id, paid_at, self.db_path)
 
+    def set_specification_json(self, kp_id: int, specification_json: str | None) -> bool:
+        return offers_write.set_kp_specification_json(kp_id, specification_json, self.db_path)
+
     def update_execution_date(self, kp_id: int, execution_date: str) -> bool:
         return offers_write.update_kp_execution_date(kp_id, execution_date, self.db_path)
 

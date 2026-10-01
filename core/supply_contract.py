@@ -92,27 +92,33 @@ def _basis_phrase(
     return "Устава"
 
 
-def _party_phrase(legal_form: str, full_name: str, signatory_verb: str) -> str:
+def _party_phrase(
+    legal_form: str,
+    full_name: str,
+    signatory_verb: str,
+    party_title: str = "Покупатель",
+) -> str:
     name = full_name.strip()
+    titled = f"«{party_title}»"
     if legal_form == "ooo":
         return (
             f"Общество с ограниченной ответственностью «{name}», "
-            "именуемое в дальнейшем «Покупатель»"
+            f"именуемое в дальнейшем {titled}"
         )
     if legal_form == "ao":
         return (
             f"Акционерное общество «{name}», "
-            "именуемое в дальнейшем «Покупатель»"
+            f"именуемое в дальнейшем {titled}"
         )
     named = "именуемая" if signatory_verb == "действующей" else "именуемый"
     if legal_form == "ip":
-        return f"Индивидуальный предприниматель {name}, {named} в дальнейшем «Покупатель»"
+        return f"Индивидуальный предприниматель {name}, {named} в дальнейшем {titled}"
     if legal_form == "kfh":
         return (
             f"Крестьянское (фермерское) хозяйство «{name}», "
-            "именуемое в дальнейшем «Покупатель»"
+            f"именуемое в дальнейшем {titled}"
         )
-    return f"{name}, {named} в дальнейшем «Покупатель»"
+    return f"{name}, {named} в дальнейшем {titled}"
 
 
 def build_preamble(
@@ -125,10 +131,11 @@ def build_preamble(
     signatory_verb: str = DEFAULT_SIGNATORY_VERB,
     poa_number: str | None = None,
     poa_date: str | None = None,
+    party_title: str = "Покупатель",
 ) -> str:
     """Текст преамбулы. Род глагола берётся только из signatory_verb."""
     verb = signatory_verb or DEFAULT_SIGNATORY_VERB
-    party = _party_phrase(legal_form, full_name, verb)
+    party = _party_phrase(legal_form, full_name, verb, party_title)
     basis = _basis_phrase(authority_basis, poa_number=poa_number, poa_date=poa_date)
     if legal_form in LEGAL_FORMS_REQUIRING_POSITION:
         position = (signatory_position or "").strip()

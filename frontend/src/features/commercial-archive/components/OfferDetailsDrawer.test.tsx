@@ -8,6 +8,14 @@ const { mockLogisticsMutateAsync } = vi.hoisted(() => ({
 }));
 
 const mockUseArchiveOfferQuery = vi.fn();
+const mockSpecificationQuery = vi.fn(() => ({
+  data: undefined,
+  isPending: false,
+  isError: false,
+  error: null,
+}));
+const mockSaveSpecification = vi.fn();
+const mockDownloadSpecification = vi.fn();
 const mockExportInvoice = vi.fn();
 const mockExportCorrection = vi.fn();
 const mockSetPayment = vi.fn();
@@ -74,6 +82,19 @@ vi.mock("@/features/commercial-archive/hooks/useArchiveQueries", () => ({
   }),
   useSetArchivePaymentMutation: () => ({
     mutateAsync: mockSetPayment,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useSpecificationQuery: (...args: unknown[]) => mockSpecificationQuery(...args),
+  useSaveSpecificationMutation: () => ({
+    mutateAsync: mockSaveSpecification,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useDownloadSpecificationMutation: () => ({
+    mutateAsync: mockDownloadSpecification,
     isPending: false,
     isError: false,
     error: null,
@@ -1417,6 +1438,7 @@ describe("OfferDetailsDrawer order card shelves", () => {
       data: makeOffer("на согласовании", null, {
         order_number_1c: "ЯР-15",
         paid_at: "2026-09-28T10:00:00",
+        specification_saved: true,
       }),
       isPending: false,
       isError: false,
@@ -1427,6 +1449,165 @@ describe("OfferDetailsDrawer order card shelves", () => {
     expect(screen.getByRole("button", { name: /В производство/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Снять оплату" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Договор" })).toBeInTheDocument();
+  });
+
+  it("keeps production grey until the specification is saved", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, {
+        order_number_1c: "ЯР-15",
+        paid_at: "2026-09-28T10:00:00",
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const moveButton = screen.getByRole("button", { name: /В производство/i });
+    expect(moveButton).toBeDisabled();
+    expect(moveButton).toHaveAttribute("title", "сначала спецификация");
+  });
+
+  it("asks to resave a stale custom specification before production", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, {
+        order_number_1c: "ЯР-15",
+        paid_at: "2026-09-28T10:00:00",
+        specification_saved: true,
+        specification_stale_custom: true,
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    const moveButton = screen.getByRole("button", { name: /В производство/i });
+    expect(moveButton).toBeDisabled();
+    expect(moveButton).toHaveAttribute(
+      "title",
+      "Условия оплаты в спецификации устарели: откройте спецификацию и сохраните их снова",
+    );
+  });
+
+  it("opens the specification panel only while the order is on approval", () => {
+    mockSpecificationQuery.mockReturnValue({
+      data: {
+        saved: false,
+        stale_custom: false,
+        has_piles: false,
+        concrete_grade: null,
+        payment_paragraph: "1 000,00 (одна тысяча) рублей — предварительная оплата в размере 100%.",
+        term_paragraph: "",
+        delivery_paragraph: "",
+        spec_date: null,
+        choice: { payment: "prepay_100", term: null, delivery: null },
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании", null, { order_number_1c: "ЯР-15" }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const { unmount } = render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Спецификация" }));
+    expect(screen.getByText(/предварительная оплата в размере 100%/)).toBeInTheDocument();
+    expect(document.querySelector("textarea")).toBeNull();
+    unmount();
+
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в работе", null, { specification_saved: true, order_number_1c: "ЯР-15" }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Спецификация" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "100% предоплата" })).not.toBeInTheDocument();
+  });
+
+  it("downloads a saved specification from the documents shelf without opening the editor", async () => {
+    mockDownloadSpecification.mockResolvedValue(undefined);
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в работе", null, { specification_saved: true }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Скачать спецификацию" }));
+
+    await waitFor(() => {
+      expect(mockDownloadSpecification).toHaveBeenCalledWith(42);
+    });
+    expect(mockSaveSpecification).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "100% предоплата" })).not.toBeInTheDocument();
+  });
+
+  it("saves the specification and then downloads the file", async () => {
+    mockSaveSpecification.mockResolvedValue({
+      saved: true,
+      stale_custom: false,
+      has_piles: false,
+      concrete_grade: null,
+      payment_paragraph: "1 000,00 (одна тысяча) рублей — предварительная оплата в размере 100%.",
+      term_paragraph: "Поставщик обязуется поставить товар не позднее 1 октября 2026 года.",
+      delivery_paragraph: "Самовывоз со склада готовой продукции.",
+      spec_date: "2026-09-18",
+      choice: {
+        payment: "prepay_100",
+        term: "by_date",
+        delivery: "pickup",
+        term_date: "2026-10-01",
+      },
+    });
+    mockDownloadSpecification.mockResolvedValue(undefined);
+    mockSpecificationQuery.mockReturnValue({
+      data: {
+        saved: true,
+        stale_custom: false,
+        has_piles: false,
+        concrete_grade: null,
+        payment_paragraph: "1 000,00 (одна тысяча) рублей — предварительная оплата в размере 100%.",
+        term_paragraph: "Поставщик обязуется поставить товар не позднее 1 октября 2026 года.",
+        delivery_paragraph: "Самовывоз со склада готовой продукции.",
+        spec_date: "2026-09-18",
+        choice: {
+          payment: "prepay_100",
+          term: "by_date",
+          delivery: "pickup",
+          term_date: "2026-10-01",
+        },
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("на согласовании"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Спецификация" }));
+    fireEvent.click(screen.getByRole("button", { name: "Скачать Excel" }));
+
+    await waitFor(() => {
+      expect(mockDownloadSpecification).toHaveBeenCalledWith(42);
+    });
+    expect(mockSaveSpecification).toHaveBeenCalled();
+    expect(mockSaveSpecification.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDownloadSpecification.mock.invocationCallOrder[0],
+    );
   });
 });
 

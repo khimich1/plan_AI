@@ -79,6 +79,7 @@ def test_extract_prompt_requires_header_and_verbatim_digits() -> None:
     assert "ИНН КПП ОГРН" in prompt
     assert "не сжима" in prompt
     assert "БИК" in prompt
+    assert '"okved"' in prompt
 
 
 def test_retry_does_not_overwrite_an_accepted_inn() -> None:
@@ -87,11 +88,11 @@ def test_retry_does_not_overwrite_an_accepted_inn() -> None:
     class Provider:
         async def extract_contract_fields(self, **kwargs: object) -> tuple[dict, float]:
             calls.append("extract")
-            return {"inn": "7604010011", "email": "a@b.ru"}, 0.0
+            return {"inn": "7604010011", "email": "a@b.ru", "okved": "23.61"}, 0.0
 
         async def reread_contract_fields(self, **kwargs: object) -> tuple[dict, float]:
             calls.append(str(kwargs.get("user_text", "")))
-            return {"inn": "7707083893", "bik": "044525225"}, 0.0
+            return {"inn": "7707083893", "bik": "044525225", "okved": "52.29"}, 0.0
 
         async def verify_contract_fields(self, **kwargs: object) -> tuple[dict, float]:
             raise AssertionError("полный Verify по карточке не вызывается")
@@ -104,7 +105,9 @@ def test_retry_does_not_overwrite_an_accepted_inn() -> None:
     assert len(calls) == 2
     assert "inn" not in calls[1]
     assert "bik" in calls[1]
+    assert "okved" not in calls[1]
     assert "corrections" not in calls[1]
+    assert result.fields["okved"] == "23.61"
 
 
 def test_retry_is_skipped_when_every_digit_field_is_accepted() -> None:

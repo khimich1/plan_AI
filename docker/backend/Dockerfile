@@ -18,6 +18,7 @@ RUN apt-get update \
         coinor-cbc \
         fonts-dejavu-core \
         gosu \
+        libreoffice-writer-nogui \
     && rm -rf /var/lib/apt/lists/* \
     && adduser --disabled-password --gecos '' appuser
 

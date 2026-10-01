@@ -248,6 +248,8 @@ class ArchiveOfferDetails(BaseModel):
     correction_pending: bool = False
     invoice_export_block: str | None = None
     invoice_warehouse: str | None = None
+    specification_saved: bool = False
+    specification_stale_custom: bool = False
 
 
 class BindCounterpartyRequest(BaseModel):
@@ -278,6 +280,50 @@ class MoveToProductionRequest(BaseModel):
 
 class ArchivePaymentRequest(BaseModel):
     paid: bool
+
+
+class SpecificationChoiceIn(BaseModel):
+    payment: Literal["prepay_100", "split_50_50", "split_share", "deferral", "custom"]
+    term: Literal["by_date", "pile_rhythm", "after_payment"]
+    delivery: Literal["pickup", "site"]
+    payment_date: str | None = None
+    payment_days: int | None = None
+    second_share_percent: int | None = None
+    second_payment_date: str | None = None
+    custom_text: str | None = None
+    term_date: str | None = None
+    pile_count: int | None = None
+    pile_unit: Literal["week", "day"] | None = None
+    term_days: int | None = None
+    delivery_address: str | None = None
+
+
+class SpecificationChoiceOut(BaseModel):
+    payment: str | None = None
+    term: str | None = None
+    delivery: str | None = None
+    payment_date: str | None = None
+    payment_days: int | None = None
+    second_share_percent: int | None = None
+    second_payment_date: str | None = None
+    custom_text: str | None = None
+    term_date: str | None = None
+    pile_count: int | None = None
+    pile_unit: str | None = None
+    term_days: int | None = None
+    delivery_address: str | None = None
+
+
+class SpecificationView(BaseModel):
+    saved: bool
+    stale_custom: bool = False
+    has_piles: bool = False
+    concrete_grade: str | None = None
+    payment_paragraph: str = ""
+    term_paragraph: str = ""
+    delivery_paragraph: str = ""
+    spec_date: str | None = None
+    choice: SpecificationChoiceOut | None = None
 
 
 class InvoiceExportRequest(BaseModel):

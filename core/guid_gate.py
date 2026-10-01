@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Optional, Sequence
@@ -47,6 +48,10 @@ REASON_AMBIGUOUS = "неоднозначный GUID (дубль 1С)"
 HINT_CREATE = "заведите карточку в 1С и загрузите отчёт"
 HINT_CREATE_U = "заведите карточку «у» в 1С и загрузите отчёт"
 HINT_CHOOSE = "откройте «Прайсы и 1С» → Дубли GUID и запомните выбор"
+_LOAD_SUFFIX_RE = re.compile(
+    r"^(?P<body>.*-)(?P<load>\d+(?:[.,]\d+)?)п\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -119,7 +124,7 @@ def _lookup_plate(conn: sqlite3.Connection, plate_name: str) -> tuple[Optional[s
             matched_name = candidate
             break
     if count > 1:
-        return None, None, count
+        return None, matched_name, count
 
     canonical = None
     guid = None
@@ -135,17 +140,62 @@ def _lookup_plate(conn: sqlite3.Connection, plate_name: str) -> tuple[Optional[s
     return guid, canonical, count
 
 
+def _plate_load_12_alias(plate_name: str) -> Optional[str]:
+    """Хвост нагрузки 12 или 12,5 в любом написании → имя с хвостом «12,5п».
+
+    Уже «12,5п» и любая другая нагрузка возвращают None.
+    Спека: ai_docs/specs/plate-load-12-guid-alias.md
+    """
+    text = str(plate_name or "").strip()
+    match = _LOAD_SUFFIX_RE.match(text)
+    if not match:
+        return None
+    try:
+        value = float(match.group("load").replace(",", "."))
+    except ValueError:
+        return None
+    if abs(value - 12.0) > 1e-6 and abs(value - 12.5) > 1e-6:
+        return None
+    alias = f"{match.group('body')}12,5п"
+    if alias == text:
+        return None
+    return alias
+
+
+def _finish_plate_lookup(
+    line: OrderLine,
+    conn: sqlite3.Connection,
+    name: str,
+    *,
+    honor_catalog_choice: bool,
+) -> ReadyItem | MissingItem | None:
+    guid, canonical, count = _lookup_plate(conn, name)
+    if count > 1:
+        if honor_catalog_choice and canonical:
+            choice = get_choice(conn, canonical)
+            if choice is not None:
+                return ReadyItem(line=line, guid=choice.chosen_guid)
+        return MissingItem(line=line, reason=REASON_DUP, action_hint=HINT_CHOOSE)
+    if not guid:
+        return None
+    return ReadyItem(line=line, guid=str(guid))
+
+
 def _resolve_plate(line: OrderLine, conn: sqlite3.Connection) -> ReadyItem | MissingItem:
     choice = get_choice(conn, line.mark)
     if choice is not None:
         return ReadyItem(line=line, guid=choice.chosen_guid)
 
-    guid, _canonical, count = _lookup_plate(conn, line.mark)
-    if count > 1:
-        return MissingItem(line=line, reason=REASON_DUP, action_hint=HINT_CHOOSE)
-    if not guid:
-        return MissingItem(line=line, reason=REASON_MISSING, action_hint=HINT_CREATE)
-    return ReadyItem(line=line, guid=str(guid))
+    found = _finish_plate_lookup(line, conn, line.mark, honor_catalog_choice=False)
+    if found is not None:
+        return found
+
+    alias = _plate_load_12_alias(line.mark)
+    if alias is not None:
+        found = _finish_plate_lookup(line, conn, alias, honor_catalog_choice=True)
+        if found is not None:
+            return found
+    return MissingItem(line=line, reason=REASON_MISSING, action_hint=HINT_CREATE)
 
 
 def _resolve_non_plate(line: OrderLine, conn: sqlite3.Connection) -> ReadyItem | MissingItem:

@@ -75,6 +75,7 @@ def test_import_occupies_seq_and_does_not_link_by_name(tmp_path: Path) -> None:
     assert row["number"] == "1027/09/26"
     assert row["counterparty_id"] is None
     assert row["imported_name"] == "ООО Ромашка"
+    assert row["okved"] is None
     assert any(item["id"] == client_id for item in row["suggestions"])
     with _connect(db_path) as conn:
         conn.row_factory = sqlite3.Row

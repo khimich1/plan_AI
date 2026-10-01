@@ -205,8 +205,19 @@ def test_bind_then_move_to_production(tmp_path: Path) -> None:
             ("на согласовании", "2026-09-28T10:00:00", kp_id),
         )
         conn.execute(
-            "UPDATE KP_offers SET order_number_1c = ? WHERE kp_id = ?",
-            ("ЯР-1", kp_id),
+            """
+            UPDATE KP_offers
+            SET order_number_1c = ?, specification_json = ?
+            WHERE kp_id = ?
+            """,
+            (
+                "ЯР-1",
+                (
+                    '{"payment":"prepay_100","term":"by_date","term_date":"2026-10-01",'
+                    '"delivery":"pickup","spec_date":"2026-09-18","composition_hash":"x"}'
+                ),
+                kp_id,
+            ),
         )
         conn.commit()
     details = service.move_to_production(kp_id, "15.10.2026", user=ADMIN)
@@ -332,8 +343,19 @@ def test_create_and_bind_then_move_to_production(tmp_path: Path) -> None:
             ("на согласовании", "2026-09-28T10:00:00", kp_id),
         )
         conn.execute(
-            "UPDATE KP_offers SET order_number_1c = ? WHERE kp_id = ?",
-            ("ЯР-1", kp_id),
+            """
+            UPDATE KP_offers
+            SET order_number_1c = ?, specification_json = ?
+            WHERE kp_id = ?
+            """,
+            (
+                "ЯР-1",
+                (
+                    '{"payment":"prepay_100","term":"by_date","term_date":"2026-10-01",'
+                    '"delivery":"pickup","spec_date":"2026-09-18","composition_hash":"x"}'
+                ),
+                kp_id,
+            ),
         )
         conn.commit()
     details = service.move_to_production(kp_id, "15.10.2026", user=ADMIN)

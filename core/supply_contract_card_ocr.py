@@ -33,6 +33,7 @@ from core.supply_contract_card_parse import (
     card_holes,
     empty_fields,
     frozen_fields,
+    okved_code_from_value,
     parse_card_text,
 )
 
@@ -119,6 +120,9 @@ async def recognize_contract_card(
         parsed.fields[name] = controlled.get(name)
     for name, value in controlled.items():
         if name in _DIGIT_FIELDS or not value:
+            continue
+        if name == "okved":
+            parsed.fields["okved"] = okved_code_from_value(str(value))
             continue
         if name in _CHOICE_FIELDS:
             choice = _canonical_choice(name, str(value))
@@ -247,6 +251,7 @@ def _fields_as_text(fields: dict[str, Any]) -> str:
         "bank_name": "Банк",
         "signatory_name": "Директор",
         "signatory_position": "",
+        "okved": "ОКВЭД",
     }
     for key, label in labels.items():
         value = fields.get(key)

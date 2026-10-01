@@ -338,6 +338,10 @@ def _approval_raw(**overrides: Any) -> dict:
         status="на согласовании",
         paid_at="2026-09-28T10:00:00",
         order_number_1c="ЯР-1",
+        specification_json=(
+            '{"payment":"prepay_100","term":"by_date","term_date":"2026-10-01",'
+            '"delivery":"pickup","spec_date":"2026-09-18","composition_hash":"x"}'
+        ),
     )
     base.update(overrides)
     return base

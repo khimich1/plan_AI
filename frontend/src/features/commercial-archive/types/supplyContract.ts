@@ -26,6 +26,7 @@ export type SupplyContract = {
   short_name: string;
   signatory_name: string;
   email: string;
+  okved?: string | null;
 };
 
 export type SupplyContractRegistryRow = {
@@ -63,6 +64,7 @@ export type SupplyContractCreatePayload = {
   bik: string;
   edo_operator?: string | null;
   edo_id?: string | null;
+  okved?: string | null;
   contract_date?: string | null;
 };
 

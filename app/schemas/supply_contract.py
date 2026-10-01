@@ -45,6 +45,7 @@ class SupplyContractCreate(BaseModel):
     bik: str = Field(min_length=1)
     edo_operator: str | None = None
     edo_id: str | None = None
+    okved: str | None = None
     contract_date: date | None = None
 
 
@@ -75,6 +76,7 @@ class SupplyContractParsedFields(BaseModel):
     bik: str | None = None
     edo_operator: str | None = None
     edo_id: str | None = None
+    okved: str | None = None
 
 
 class SupplyContractBankOut(BaseModel):
@@ -140,6 +142,7 @@ class SupplyContractOut(BaseModel):
     bik: str
     edo_operator: str | None = None
     edo_id: str | None = None
+    okved: str | None = None
 
 
 class SupplyContractImportSuggestion(BaseModel):

@@ -17,13 +17,16 @@ export const downloadFile = (downloadUrl: string): void => {
 };
 
 export const saveBlobAs = (blob: Blob, filename: string): void => {
-  const url = URL.createObjectURL(blob);
+  const file =
+    blob.type === "application/pdf"
+      ? new Blob([blob], { type: "application/octet-stream" })
+      : blob;
+  const url = URL.createObjectURL(file);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
-  anchor.rel = "noopener";
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 };

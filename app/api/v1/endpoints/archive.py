@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response
@@ -35,6 +37,8 @@ from app.schemas.archive import (
     ArchivePaymentRequest,
     InvoiceExportRequest,
     MoveToProductionRequest,
+    SpecificationChoiceIn,
+    SpecificationView,
     PromiseHoldResponse,
     PromiseQuoteResponse,
     PromiseTracksPerDayRequest,
@@ -63,6 +67,7 @@ from app.services.archive_service import (
 from app.services.supply_contract_service import (
     SupplyContractFieldError,
     SupplyContractNotFoundError,
+    SupplyContractPdfError,
     SupplyContractService,
     SupplyContractValidationError,
 )
@@ -471,14 +476,32 @@ def create_archive_supply_contract(
         )
 
 
+_DOCX_MEDIA = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_PDF_MEDIA = "application/pdf"
+
+
+def _supply_document_response(payload: bytes, filename: str) -> Response:
+    media = _PDF_MEDIA if filename.lower().endswith(".pdf") else _DOCX_MEDIA
+    return Response(
+        content=payload,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/{kp_id}/supply-contract/document")
 def download_archive_supply_contract(
     kp_id: int,
+    file_format: Literal["docx", "pdf"] = Query(default="docx", alias="format"),
     user: dict = Depends(require_roles("admin", "manager")),
     service: SupplyContractService = Depends(get_supply_contract_service),
 ) -> Response:
     try:
-        payload, filename = service.document_for_kp(kp_id, user=user)
+        payload, filename = service.document_for_kp(
+            kp_id,
+            user=user,
+            file_format=file_format,
+        )
     except SupplyContractNotFoundError as exc:
         raise_not_found_client_error(
             exc,
@@ -491,11 +514,49 @@ def download_archive_supply_contract(
             where="archive.download_supply_contract",
             detail=str(exc) or MSG_VALIDATION,
         )
-    return Response(
-        content=payload,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    except SupplyContractPdfError as exc:
+        raise_client_error(
+            exc,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            where="archive.download_supply_contract",
+        )
+    return _supply_document_response(payload, filename)
+
+
+@router.get("/{kp_id}/supply-contract/edo-agreement")
+def download_archive_edo_agreement(
+    kp_id: int,
+    file_format: Literal["docx", "pdf"] = Query(default="docx", alias="format"),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> Response:
+    try:
+        payload, filename = service.edo_agreement_for_kp(
+            kp_id,
+            user=user,
+            file_format=file_format,
+        )
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.download_edo_agreement",
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.download_edo_agreement",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except SupplyContractPdfError as exc:
+        raise_client_error(
+            exc,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            where="archive.download_edo_agreement",
+        )
+    return _supply_document_response(payload, filename)
 
 
 @router.post("/{kp_id}/supply-contract/parse", response_model=SupplyContractParseOut)
@@ -685,6 +746,79 @@ def export_archive_invoice_correction(
         )
     except ArchiveError as exc:
         raise_unexpected_server_error(exc, where="archive.export_invoice_correction")
+
+
+@router.get("/{kp_id}/specification/file")
+def download_archive_specification(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> Response:
+    try:
+        downloaded = service.download_specification(kp_id, user=user)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.download_specification",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.download_specification",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    filename = quote(downloaded.filename)
+    return Response(
+        content=downloaded.content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@router.get("/{kp_id}/specification", response_model=SpecificationView)
+def get_archive_specification(
+    kp_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> SpecificationView:
+    try:
+        return service.get_specification(kp_id, user=user)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.get_specification",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.get_specification",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+
+
+@router.put("/{kp_id}/specification", response_model=SpecificationView)
+def put_archive_specification(
+    kp_id: int,
+    payload: SpecificationChoiceIn,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: ArchiveService = Depends(get_archive_service),
+) -> SpecificationView:
+    try:
+        return service.save_specification(kp_id, payload, user=user)
+    except ArchiveNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.save_specification",
+            detail=MSG_ARCHIVE_NOT_FOUND,
+        )
+    except ArchiveValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.save_specification",
+            detail=str(exc) or MSG_VALIDATION,
+        )
 
 
 @router.post("/{kp_id}/payment", response_model=ArchiveOfferDetails)

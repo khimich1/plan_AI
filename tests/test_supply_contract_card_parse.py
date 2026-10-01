@@ -14,7 +14,12 @@ from openpyxl import Workbook
 from app.services.supply_contract_service import SupplyContractService, SupplyContractValidationError
 from core import kp_db_schema
 from core.kp_db_common import _connect
-from core.supply_contract_card_parse import extract_pdf_text, parse_card_text
+from core.supply_contract_card_parse import (
+    _HOLE_FIELDS,
+    card_holes,
+    extract_pdf_text,
+    parse_card_text,
+)
 
 ADMIN = {"id": 7, "role": "admin", "username": "admin"}
 
@@ -504,4 +509,40 @@ def test_empty_docx_does_not_create_contract(tmp_path: Path) -> None:
         )
 
     assert _count(db_path) == 0
+
+
+_PSK_OKVED = """
+Полное наименование    Общество с ограниченной ответственностью «Промышленно-строительные конструкции»
+ИНН 7814192061
+ОКВЭД 23.61 Производство изделий из бетона для использования в строительстве
+Доп.: 52.29, 46.73, 49.4, 23.69, 23.70, 23.99, 25.11, 46.73.6
+"""
+
+
+def test_psk_card_keeps_only_the_primary_okved() -> None:
+    parsed = parse_card_text(_PSK_OKVED)
+
+    assert parsed.fields["okved"] == "23.61"
+    assert "52.29" not in (parsed.fields["okved"] or "")
+    assert "46.73" not in (parsed.fields["okved"] or "")
+    assert "Производство" not in (parsed.fields["okved"] or "")
+    assert "okved" not in parsed.doubtful
+    assert "okved" not in _HOLE_FIELDS
+    assert "okved" not in card_holes(parsed)
+
+
+def test_missing_okved_label_is_empty_and_not_doubtful() -> None:
+    parsed = parse_card_text("ИНН 7814192061\nОГРН 1157847095340\n")
+
+    assert parsed.fields["okved"] is None
+    assert "okved" not in parsed.doubtful
+    assert "okved" not in card_holes(parsed)
+
+
+def test_okved_label_without_code_is_doubtful() -> None:
+    parsed = parse_card_text("ОКВЭД\nПроизводство изделий из бетона\nДоп.: 52.29, 46.73\n")
+
+    assert parsed.fields["okved"] is None
+    assert "okved" in parsed.doubtful
+    assert "okved" not in card_holes(parsed)
 

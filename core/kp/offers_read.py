@@ -59,6 +59,22 @@ def _empty_typed_arrays() -> Dict[str, List]:
     return {key: [] for key, _ in _KP_LINE_TABLES}
 
 
+def get_specification_json(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[str]:
+    """JSON спецификации или None, если колонка пустая."""
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT specification_json FROM KP_offers WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row[0] is None:
+        return None
+    text = str(row[0]).strip()
+    return text or None
+
+
 def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
     """
     Получает информацию о КП по порядковому номеру.

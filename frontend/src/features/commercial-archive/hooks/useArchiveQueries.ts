@@ -10,6 +10,8 @@ import type {
   ArchiveSection,
   KpReadinessPositionsResponse,
   ProductionEstimate,
+  SpecificationChoicePayload,
+  SpecificationView,
 } from "@/features/commercial-archive/types/archive";
 import { saveBlobAs } from "@/shared/lib/downloadFile";
 import type {
@@ -24,6 +26,7 @@ export const archiveKeys = {
   list: (section: ArchiveSection, productType: ArchiveProductTypeFilter = "all") =>
     ["archive", "list", section, productType] as const,
   detail: (kpId: number) => ["archive", "offer", kpId] as const,
+  specification: (kpId: number) => ["archive", "specification", kpId] as const,
   readinessPositions: (kpId: number) => ["archive", "readiness-positions", kpId] as const,
   search: (state: ArchiveSearchState) =>
     [
@@ -52,6 +55,34 @@ export const useArchiveOfferQuery = (kpId: number | null) =>
     queryKey: archiveKeys.detail(kpId ?? -1),
     queryFn: () => archiveApi.getById(kpId as number),
     enabled: kpId !== null,
+  });
+
+export const useSpecificationQuery = (kpId: number | null) =>
+  useQuery<SpecificationView>({
+    queryKey: archiveKeys.specification(kpId ?? -1),
+    queryFn: () => archiveApi.getSpecification(kpId as number),
+    enabled: kpId !== null,
+  });
+
+export const useSaveSpecificationMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kpId, choice }: { kpId: number; choice: SpecificationChoicePayload }) =>
+      archiveApi.saveSpecification(kpId, choice),
+    onSuccess: (view, { kpId }) => {
+      queryClient.setQueryData(archiveKeys.specification(kpId), view);
+      queryClient.invalidateQueries({ queryKey: archiveKeys.detail(kpId) });
+    },
+  });
+};
+
+export const useDownloadSpecificationMutation = () =>
+  useMutation({
+    mutationFn: async (kpId: number) => {
+      const result = await archiveApi.downloadSpecification(kpId);
+      saveBlobAs(result.blob, result.filename);
+      return result;
+    },
   });
 
 export const useKpReadinessPositionsQuery = (
@@ -245,8 +276,17 @@ export const useReplaceSupplyContractMutation = (kpId: number) => {
 
 export const useDownloadSupplyContractMutation = () =>
   useMutation({
-    mutationFn: async (kpId: number) => {
-      const result = await archiveApi.downloadSupplyContract(kpId);
+    mutationFn: async ({ kpId, format }: { kpId: number; format: "docx" | "pdf" }) => {
+      const result = await archiveApi.downloadSupplyContract(kpId, format);
+      saveBlobAs(result.blob, result.filename);
+      return result;
+    },
+  });
+
+export const useDownloadEdoAgreementMutation = () =>
+  useMutation({
+    mutationFn: async ({ kpId, format }: { kpId: number; format: "docx" | "pdf" }) => {
+      const result = await archiveApi.downloadEdoAgreement(kpId, format);
       saveBlobAs(result.blob, result.filename);
       return result;
     },

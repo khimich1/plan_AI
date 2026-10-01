@@ -490,6 +490,25 @@ def commit_invoice_snapshot(
         conn.close()
 
 
+def set_kp_specification_json(
+    kp_id: int,
+    specification_json: str | None,
+    db_path: str = DEFAULT_DB,
+) -> bool:
+    """Заменяет документ спецификации. None очищает колонку."""
+    conn = _connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE KP_offers SET specification_json = ? WHERE kp_id = ?",
+            (specification_json, kp_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def set_kp_paid_at(
     kp_id: int,
     paid_at: str | None,

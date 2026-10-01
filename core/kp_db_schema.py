@@ -636,6 +636,7 @@ def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
             bik TEXT NOT NULL,
             edo_operator TEXT,
             edo_id TEXT,
+            okved TEXT,
             created_at TEXT NOT NULL,
             created_by_user_id INTEGER NOT NULL
         )
@@ -666,6 +667,8 @@ def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
         "ALTER TABLE KP_offers ADD COLUMN order_status_1c TEXT",
         "ALTER TABLE KP_offers ADD COLUMN invoice_snapshot_hash TEXT",
         "ALTER TABLE KP_offers ADD COLUMN invoice_warehouse TEXT",
+        "ALTER TABLE KP_offers ADD COLUMN specification_json TEXT",
+        "ALTER TABLE supply_contract ADD COLUMN okved TEXT",
     ):
         try:
             cur.execute(sql)

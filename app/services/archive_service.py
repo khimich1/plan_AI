@@ -6,7 +6,9 @@ import logging
 import os
 import shutil
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Literal
 
@@ -29,6 +31,9 @@ from app.schemas.archive import (
     CapacityDayInfo,
     CapacitySnapshotResponse,
     KpReadinessPositionsResponse,
+    SpecificationChoiceIn,
+    SpecificationChoiceOut,
+    SpecificationView,
 )
 from app.repositories.plan_repository import PlanRepository
 from app.services.capacity_gate_service import (
@@ -54,9 +59,23 @@ from core.embed_delivery_in_unit_price import allocate_line_delivery_kopecks
 from core.invoice_export import (
     INVOICE_WAREHOUSES,
     InvoiceAction,
+    _line_payable,
     build_invoice_document,
     card_offer_from_kp,
     invoice_snapshot_hash,
+)
+from core.specification_buyer import buyer_preamble_for_print
+from core.specification_text import (
+    SpecificationChoice,
+    SpecificationTextError,
+    choice_from_document,
+    render_specification,
+    specification_document,
+)
+from core.specification_xlsx import (
+    SpecificationHeader,
+    SpecificationPayableLine,
+    build_specification_xlsx,
 )
 from core.supply_contract import attach_contract_number
 
@@ -65,6 +84,14 @@ STATUS_ON_APPROVAL = "на согласовании"
 MSG_EXPORT_ONLY_ARCHIVE = "Отправить в 1С можно только из статуса «в архиве»"
 MSG_NEED_COUNTERPARTY = "Сначала занесите контрагента"
 MSG_NEED_CONTRACT = "Нет действующего договора поставки"
+MSG_SPEC_STATUS = "Сохранить спецификацию можно только в статусе «на согласовании»"
+MSG_SPEC_PICKUP = (
+    "Самовывоз нельзя сохранить: уберите доставку в конструкторе или выберите доставку на объект."
+)
+MSG_SPEC_REQUIRED = "Сначала сохраните спецификацию"
+MSG_SPEC_STALE = (
+    "Условия оплаты в спецификации устарели: откройте спецификацию и сохраните их снова"
+)
 from core.production.promise_buckets import OccupancyUnavailableError
 from core.delivery_schedule_check import BatchItemInput
 from core.plate_order_context import PlateOrderContext, run_in_order_context
@@ -92,6 +119,12 @@ class ArchiveNotFoundError(ArchiveError):
 
 class ArchiveValidationError(ArchiveError):
     """Ошибка валидации бизнес-правил (например, недопустимый статус)."""
+
+
+@dataclass(frozen=True)
+class SpecificationDownload:
+    content: bytes
+    filename: str
 
 
 class ArchiveService:
@@ -593,6 +626,215 @@ class ArchiveService:
             return sqlite3.connect(pb_path)
         return sqlite3.connect(self.repository.db_path)
 
+    def get_specification(self, kp_id: int, *, user: dict) -> SpecificationView:
+        raw = self._specification_offer(kp_id, user, write=False)
+        total, delivery_sum = self._specification_totals(raw)
+        document = _load_stored_specification(raw)
+        has_piles = _kp_has_piles(raw)
+        grade = _uniform_concrete_grade(raw)
+        if document is None:
+            choice = _suggested_choice(raw, delivery_sum)
+            payment, term, delivery = _suggestion_paragraphs(choice, total)
+            return SpecificationView(
+                saved=False,
+                stale_custom=False,
+                has_piles=has_piles,
+                concrete_grade=grade,
+                payment_paragraph=payment,
+                term_paragraph=term,
+                delivery_paragraph=delivery,
+                choice=choice,
+            )
+        try:
+            stored = choice_from_document(document)
+            paragraphs = render_specification(
+                stored, payable_total=total, has_piles=has_piles
+            )
+        except SpecificationTextError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        current = invoice_snapshot_hash(card_offer_from_kp(raw))
+        stale = stored.payment == "custom" and str(document.get("composition_hash") or "") != current
+        return SpecificationView(
+            saved=True,
+            stale_custom=stale,
+            has_piles=has_piles,
+            concrete_grade=grade,
+            payment_paragraph=paragraphs.payment,
+            term_paragraph=paragraphs.term,
+            delivery_paragraph=paragraphs.delivery,
+            spec_date=str(document.get("spec_date") or "") or None,
+            choice=_choice_out(document),
+        )
+
+    def save_specification(
+        self,
+        kp_id: int,
+        payload: SpecificationChoiceIn,
+        *,
+        user: dict,
+    ) -> SpecificationView:
+        raw = self._specification_offer(kp_id, user, write=True)
+        if raw.get("status") != STATUS_ON_APPROVAL:
+            raise ArchiveValidationError(MSG_SPEC_STATUS)
+        choice = _choice_from_payload(payload)
+        has_piles = _kp_has_piles(raw)
+        try:
+            render_specification(choice, payable_total=0, has_piles=has_piles)
+        except SpecificationTextError as exc:
+            raise ArchiveValidationError(str(exc)) from exc
+        _total, delivery_sum = self._specification_totals(raw)
+        if choice.delivery == "pickup" and delivery_sum != 0:
+            raise ArchiveValidationError(MSG_SPEC_PICKUP)
+        existing = _load_stored_specification(raw)
+        spec_date = str((existing or {}).get("spec_date") or "").strip()
+        if not spec_date:
+            spec_date = self._spec_today()
+        document = specification_document(
+            choice,
+            spec_date=spec_date,
+            composition_hash=invoice_snapshot_hash(card_offer_from_kp(raw)),
+            has_piles=has_piles,
+        )
+        if not self.repository.set_specification_json(
+            kp_id, json.dumps(document, ensure_ascii=False)
+        ):
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        return self.get_specification(kp_id, user=user)
+
+    def download_specification(self, kp_id: int, *, user: dict) -> SpecificationDownload:
+        """Байты уже сохранённой спецификации. Строку не создаёт."""
+        raw = self._specification_offer(kp_id, user, write=False)
+        document = _load_stored_specification(raw)
+        if document is None:
+            raise ArchiveValidationError("Сначала сохраните спецификацию")
+        total, _delivery_sum = self._specification_totals(raw)
+        has_piles = _kp_has_piles(raw)
+        try:
+            stored = choice_from_document(document)
+            paragraphs = render_specification(
+                stored, payable_total=total, has_piles=has_piles
+            )
+            spec_date = date.fromisoformat(str(document.get("spec_date") or ""))
+        except (SpecificationTextError, ValueError) as exc:
+            raise ArchiveValidationError("Спецификация сохранена некорректно") from exc
+        number = str(raw.get("order_number_1c") or "").strip() or None
+        header = self._specification_header(
+            raw,
+            spec_date=spec_date,
+            invoice_number=number,
+            concrete_grade=_uniform_concrete_grade(raw),
+        )
+        content = build_specification_xlsx(
+            header, self._specification_lines(raw), paragraphs
+        )
+        return SpecificationDownload(
+            content=content,
+            filename=_specification_filename(kp_id, number),
+        )
+
+    def _specification_header(
+        self,
+        raw: dict,
+        *,
+        spec_date: date,
+        invoice_number: str | None,
+        concrete_grade: str | None,
+    ) -> SpecificationHeader:
+        counterparty_id = raw.get("counterparty_id")
+        if counterparty_id is None:
+            raise ArchiveValidationError(MSG_NEED_COUNTERPARTY)
+        contract = SupplyContractRepository(
+            db_path=self.repository.db_path
+        ).get_active_by_counterparty(int(counterparty_id))
+        if contract is None:
+            raise ArchiveValidationError(MSG_NEED_CONTRACT)
+        preamble = buyer_preamble_for_print(
+            legal_form=str(contract.get("legal_form") or ""),
+            full_name=str(contract.get("full_name") or ""),
+            signatory_name=str(contract.get("signatory_name") or ""),
+            authority_basis=str(contract.get("authority_basis") or "устав"),
+            signatory_position=contract.get("signatory_position"),
+            signatory_verb=str(contract.get("signatory_verb") or "действующего"),
+            poa_number=contract.get("poa_number"),
+            poa_date=contract.get("poa_date"),
+        )
+        return SpecificationHeader(
+            invoice_number=invoice_number,
+            spec_date=spec_date,
+            contract_number=str(contract.get("number") or "").strip(),
+            contract_date=_parse_contract_date(contract.get("contract_date")),
+            buyer_preamble=preamble,
+            buyer_short_name=str(contract.get("short_name") or ""),
+            buyer_inn=str(contract.get("inn") or ""),
+            buyer_kpp=str(contract.get("kpp") or ""),
+            buyer_signatory_position=str(contract.get("signatory_position") or ""),
+            buyer_signatory_short=_short_person_name(str(contract.get("signatory_name") or "")),
+            concrete_grade=concrete_grade,
+        )
+
+    def _specification_lines(self, raw: dict) -> list[SpecificationPayableLine]:
+        offer = card_offer_from_kp(raw)
+        shares = self._invoice_delivery_kopecks(raw, offer)
+        lines = [line for line in offer.get("lines") or [] if isinstance(line, dict)]
+        result: list[SpecificationPayableLine] = []
+        for line, kopecks in zip(lines, shares):
+            payable = _line_payable(offer, line, int(kopecks))
+            qty = line.get("qty")
+            count = int(qty) if isinstance(qty, int) and not isinstance(qty, bool) and qty > 0 else 0
+            if count < 1:
+                count = 1 if payable else 0
+            price = (
+                (payable / Decimal(count)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                if count
+                else payable
+            )
+            result.append(
+                SpecificationPayableLine(
+                    name=str(line.get("name") or ""),
+                    qty=count,
+                    price=price,
+                    amount=payable,
+                )
+            )
+        return result
+
+    def _specification_offer(self, kp_id: int, user: dict, *, write: bool) -> dict:
+        raw = self.repository.get_by_id(kp_id)
+        if not raw:
+            raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
+        if write:
+            assert_offer_write_access(user, raw)
+        else:
+            assert_offer_read_access(user, raw)
+        return raw
+
+    def _specification_totals(self, raw: dict) -> tuple[int, int]:
+        offer = card_offer_from_kp(raw)
+        shares = self._invoice_delivery_kopecks(raw, offer)
+        document, _digest = build_invoice_document(offer, line_delivery_kopecks=shares)
+        return _rub_kopecks(document.get("СуммаДокумента")), sum(int(item) for item in shares)
+
+    def _specification_flags(self, raw: dict) -> tuple[bool, bool]:
+        document = _load_stored_specification(raw)
+        if document is None:
+            return False, False
+        try:
+            stored = choice_from_document(document)
+            render_specification(
+                stored, payable_total=0, has_piles=_kp_has_piles(raw)
+            )
+        except SpecificationTextError:
+            return False, False
+        if stored.payment != "custom":
+            return True, False
+        current = invoice_snapshot_hash(card_offer_from_kp(raw))
+        return True, str(document.get("composition_hash") or "") != current
+
+    def _spec_today(self) -> str:
+        if self._today_override:
+            return self._today_override
+        return date.today().isoformat()
+
     def set_payment(self, kp_id: int, *, paid: bool, user: dict) -> ArchiveOfferDetails:
         raw = self._offer_for_invoice_write(kp_id, user)
         if raw.get("status") != STATUS_ON_APPROVAL:
@@ -621,6 +863,11 @@ class ArchiveService:
             raise ArchiveValidationError("Сначала отметьте оплату")
         if not str(raw.get("order_number_1c") or "").strip():
             raise ArchiveValidationError("Нужен номер счёта")
+        saved_spec, stale_spec = self._specification_flags(raw)
+        if not saved_spec:
+            raise ArchiveValidationError(MSG_SPEC_REQUIRED)
+        if stale_spec:
+            raise ArchiveValidationError(MSG_SPEC_STALE)
         try:
             CounterpartiesService(db_path=self.repository.db_path).require_active_client(
                 raw.get("counterparty_id")
@@ -1040,6 +1287,7 @@ class ArchiveService:
             except Exception:
                 logger.exception("Ошибка получения readiness для КП %s", kp_id)
 
+        saved_spec, stale_spec = self._specification_flags(raw)
         return ArchiveOfferDetails(
             kp_id=kp_id,
             creation_date=raw.get("creation_date"),
@@ -1094,6 +1342,8 @@ class ArchiveService:
             correction_pending=self._correction_pending(raw),
             invoice_export_block=self._invoice_export_block(raw),
             invoice_warehouse=_stored_invoice_warehouse(raw.get("invoice_warehouse")),
+            specification_saved=saved_spec,
+            specification_stale_custom=stale_spec,
         )
 
     @staticmethod
@@ -1313,6 +1563,148 @@ class ArchiveService:
             return formatted
         except ValueError as exc:
             raise ArchiveValidationError(str(exc)) from exc
+
+
+def _specification_filename(kp_id: int, invoice_number: str | None) -> str:
+    number = (invoice_number or "").strip()
+    if not number:
+        return f"Спецификация КП {kp_id}.xlsx"
+    safe = number.replace("/", "-").replace("\\", "-").replace("\x00", "")
+    return f"Спецификация по счету {safe}.xlsx"
+
+
+def _short_person_name(full_name: str) -> str:
+    parts = [part for part in full_name.split() if part]
+    if len(parts) < 2:
+        return full_name.strip()
+    initials = " ".join(f"{part[0]}." for part in parts[1:])
+    return f"{parts[0]} {initials}".strip()
+
+
+def _parse_contract_date(value: object) -> date:
+    text = str(value or "").strip()
+    if not text:
+        raise ArchiveValidationError("В договоре нет даты")
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(text, "%d.%m.%Y").date()
+    except ValueError as exc:
+        raise ArchiveValidationError("В договоре некорректная дата") from exc
+
+
+def _load_stored_specification(raw: dict) -> dict | None:
+    text = raw.get("specification_json")
+    if text is None or not str(text).strip():
+        return None
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(document, dict):
+        return None
+    return document
+
+
+def _choice_from_payload(payload: SpecificationChoiceIn) -> SpecificationChoice:
+    try:
+        return SpecificationChoice(
+            payment=payload.payment,
+            term=payload.term,
+            delivery=payload.delivery,
+            payment_date=_payload_date(payload.payment_date),
+            payment_days=payload.payment_days,
+            second_share_percent=payload.second_share_percent,
+            second_payment_date=_payload_date(payload.second_payment_date),
+            custom_text=payload.custom_text,
+            term_date=_payload_date(payload.term_date),
+            pile_count=payload.pile_count,
+            pile_unit=payload.pile_unit,
+            term_days=payload.term_days,
+            delivery_address=payload.delivery_address,
+        )
+    except SpecificationTextError as exc:
+        raise ArchiveValidationError(str(exc)) from exc
+
+
+def _payload_date(value: str | None) -> date | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError as exc:
+        raise ArchiveValidationError("Некорректная дата") from exc
+
+
+def _choice_out(document: dict) -> SpecificationChoiceOut:
+    return SpecificationChoiceOut(
+        payment=document.get("payment"),
+        term=document.get("term"),
+        delivery=document.get("delivery"),
+        payment_date=document.get("payment_date"),
+        payment_days=document.get("payment_days"),
+        second_share_percent=document.get("second_share_percent"),
+        second_payment_date=document.get("second_payment_date"),
+        custom_text=document.get("custom_text"),
+        term_date=document.get("term_date"),
+        pile_count=document.get("pile_count"),
+        pile_unit=document.get("pile_unit"),
+        term_days=document.get("term_days"),
+        delivery_address=document.get("delivery_address"),
+    )
+
+
+def _suggested_choice(raw: dict, delivery_kopecks: int) -> SpecificationChoiceOut:
+    payment = "prepay_100" if not str(raw.get("payment_conditions") or "").strip() else None
+    delivery = None
+    text = str(raw.get("delivery_conditions") or "")
+    if "самовывоз" in text.casefold() and delivery_kopecks == 0:
+        delivery = "pickup"
+    return SpecificationChoiceOut(payment=payment, delivery=delivery)
+
+
+def _suggestion_paragraphs(choice: SpecificationChoiceOut, total: int) -> tuple[str, str, str]:
+    if choice.payment != "prepay_100" and choice.delivery != "pickup":
+        return "", "", ""
+    rendered = render_specification(
+        SpecificationChoice(
+            payment="prepay_100",
+            term="by_date",
+            term_date=date(2000, 1, 1),
+            delivery="pickup",
+        ),
+        payable_total=total,
+        has_piles=False,
+    )
+    payment = rendered.payment if choice.payment == "prepay_100" else ""
+    delivery = rendered.delivery if choice.delivery == "pickup" else ""
+    return payment, "", delivery
+
+
+def _kp_has_piles(raw: dict) -> bool:
+    return any(isinstance(item, dict) for item in (raw.get("piles") or []))
+
+
+def _uniform_concrete_grade(raw: dict) -> str | None:
+    piles = [item for item in (raw.get("piles") or []) if isinstance(item, dict)]
+    if not piles:
+        return None
+    grades: list[str] = []
+    for pile in piles:
+        grade = str(pile.get("concrete_grade") or "").strip()
+        if not grade:
+            return None
+        grades.append(grade)
+    if len(set(grades)) != 1:
+        return None
+    return grades[0]
+
+
+def _rub_kopecks(amount: object) -> int:
+    value = Decimal(str(amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return int((value * Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def _concrete_spec_kwargs(raw: dict) -> dict[str, str | None]:

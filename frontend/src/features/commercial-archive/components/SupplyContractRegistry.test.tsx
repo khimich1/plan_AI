@@ -67,6 +67,7 @@ describe("SupplyContractRegistry", () => {
     wrap(<SupplyContractRegistry open onRequestNew={vi.fn()} />);
 
     expect(await screen.findByText("1028/09/26")).toBeInTheDocument();
+    expect(screen.getByText("25.09.2026")).toBeInTheDocument();
     expect(screen.getByText("РОМАШКА ООО")).toBeInTheDocument();
     expect(screen.getByText("Иван Иванов")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Статус 1028/09/26"), {
