@@ -1,4 +1,4 @@
-"""Сборщик «Счёт на оплату» и первая выгрузка в папку обмена."""
+"""Сборщик «КоммерческоеПредложение» и выгрузка new_/delta_ в папку обмена."""
 
 from __future__ import annotations
 
@@ -55,6 +55,47 @@ def _offer(**overrides: object) -> dict:
 
 
 _WAREHOUSE = "Склад Готовой Продукции"
+_UID_ORDER = "9cfb5882-bd7e-11f1-9e1d-d8bbc1d1be1f"
+_UID_KP = "9cfb5881-bd7e-11f1-9e1d-d8bbc1d1be1f"
+_CREATE_KEYS = [
+    "Документ",
+    "НомерВПриложении",
+    "Дата",
+    "Организация",
+    "Клиент",
+    "Контрагент",
+    "КонтактноеЛицо",
+    "Валюта",
+    "ХозяйственнаяОперация",
+    "Налогообложение",
+    "ЦенаВключаетНДС",
+    "Статус",
+    "Комментарий",
+    "Менеджер",
+    "Автор",
+    "Самовывоз",
+    "ПроцентСкидки",
+    "СуммаСкидки",
+    "СуммаНДС",
+    "СуммаДокумента",
+    "Товары",
+]
+_LINE_KEYS = [
+    "Номенклатура",
+    "GUID",
+    "Характеристика",
+    "Количество",
+    "ЕдиницаИзмерения",
+    "ВидЦены",
+    "Цена",
+    "ПроцентСкидки",
+    "СуммаСкидки",
+    "Сумма",
+    "СтавкаНДС",
+    "СуммаНДС",
+    "СуммаСНДС",
+    "СуммаДоставки",
+]
 
 
 def _active_contract() -> dict:
@@ -65,43 +106,69 @@ def _active_contract() -> dict:
     }
 
 
-def test_invoice_document_name_event_and_contract_stamp() -> None:
+def test_invoice_document_name_and_contract_stamp() -> None:
     from core.invoice_export import build_invoice_document
 
     document, _digest = build_invoice_document(_offer(), action="create")
     stamped = attach_contract_number(document, 7, _active_contract())
 
-    assert stamped["Документ"] == "Счёт на оплату"
-    assert stamped["event"] == "invoice_export"
-    assert stamped["action"] == "create"
+    assert document["Документ"] == "КоммерческоеПредложение"
+    assert list(document) == _CREATE_KEYS
+    assert document["Статус"] == "в архиве"
+    assert "event" not in document
+    assert "action" not in document
+    assert "НомерЗаказа" not in document
+    assert "УИД_ЗК" not in document
+    assert "Номер_ЗК" not in document
+    assert "УИД_КП" not in document
     keys = list(stamped)
     assert keys.index("НомерДоговора") == keys.index("Контрагент") + 1
     assert stamped["НомерДоговора"] == "0001/09/26"
+    assert stamped["Документ"] == "КоммерческоеПредложение"
     assert "НомерДоговора" not in document
 
 
-def test_invoice_create_omits_order_number_and_update_requires_it() -> None:
+def test_invoice_create_omits_ids_and_update_requires_them() -> None:
     from core.invoice_export import InvoiceBuildError, build_invoice_document
 
     created, _digest = build_invoice_document(
         _offer(),
         action="create",
-        order_number="ЯР-0001467",
+        order_number="469",
+        uid_order=_UID_ORDER,
+        uid_kp=_UID_KP,
     )
+    assert "УИД_ЗК" not in created
+    assert "Номер_ЗК" not in created
+    assert "УИД_КП" not in created
     assert "НомерЗаказа" not in created
+    assert "event" not in created
+    assert "action" not in created
 
     with pytest.raises(InvoiceBuildError):
-        build_invoice_document(_offer(), action="update", order_number=None)
+        build_invoice_document(_offer(), action="update", order_number=None, uid_order=_UID_ORDER, uid_kp=_UID_KP)
     with pytest.raises(InvoiceBuildError):
-        build_invoice_document(_offer(), action="update", order_number="  ")
+        build_invoice_document(_offer(), action="update", order_number="  ", uid_order=_UID_ORDER, uid_kp=_UID_KP)
+    with pytest.raises(InvoiceBuildError):
+        build_invoice_document(_offer(), action="update", order_number="469", uid_order=None, uid_kp=_UID_KP)
+    with pytest.raises(InvoiceBuildError):
+        build_invoice_document(_offer(), action="update", order_number="469", uid_order=_UID_ORDER, uid_kp=" ")
 
     updated, _updated_digest = build_invoice_document(
         _offer(),
         action="update",
-        order_number="ЯР-0001467",
+        order_number="469",
+        uid_order=_UID_ORDER,
+        uid_kp=_UID_KP,
     )
-    assert updated["НомерЗаказа"] == "ЯР-0001467"
-    assert updated["action"] == "update"
+    assert list(updated)[:3] == ["УИД_ЗК", "Номер_ЗК", "УИД_КП"]
+    assert updated["УИД_ЗК"] == _UID_ORDER
+    assert updated["Номер_ЗК"] == "469"
+    assert updated["УИД_КП"] == _UID_KP
+    assert list(updated)[3:] == _CREATE_KEYS
+    assert "event" not in updated
+    assert "action" not in updated
+    assert "НомерЗаказа" not in updated
 
 
 def _payable(price: str, discount_percent: str, qty: int, delivery_rub: str = "0") -> Decimal:
@@ -114,30 +181,46 @@ def _included_vat(payable: Decimal) -> Decimal:
     return (payable * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _discount_rub(price: str, discount_percent: str, qty: int) -> Decimal:
+    amount = Decimal(price) * Decimal(qty) * Decimal(discount_percent) / Decimal(100)
+    return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 def test_invoice_header_totals_follow_lines_not_card_vat() -> None:
     from core.invoice_export import build_invoice_document
 
-    document, _digest = build_invoice_document(_offer(), action="create")
+    document, _digest = build_invoice_document(_offer(date="29.09.2026"), action="create")
     payable = _payable("15421", "13", 11)
+    vat = _included_vat(payable)
+    discount = _discount_rub("15421", "13", 11)
 
+    assert document["Дата"] == "2026-09-29"
+    assert document["Статус"] == "в архиве"
     assert document["ПроцентСкидки"] == 13.0
-    assert document["СуммаСкидки"] == 111.11
+    assert document["СуммаСкидки"] == float(discount)
     assert document["Самовывоз"] is True
     assert document["СуммаДокумента"] == float(payable)
-    assert document["СуммаНДС"] == float(_included_vat(payable))
+    assert document["СуммаНДС"] == float(vat)
     assert document["СуммаНДС"] != 1.23
     assert document["СуммаДокумента"] != 999.99
     line = document["Товары"][0]
+    assert list(line) == _LINE_KEYS
     assert line["Количество"] == 11
     assert line["Цена"] == 15421.0
     assert line["ПроцентСкидки"] == 13.0
+    assert line["Характеристика"] is None
+    assert line["ЕдиницаИзмерения"] == "шт"
+    assert line["ВидЦены"] == "Продажная"
+    assert line["СтавкаНДС"] == "22%"
     assert line["СуммаДоставки"] == 0.0
-    assert line["СуммаСкидки"] == 50.5
-    assert line["Сумма"] == 40.0
-    assert line["СуммаНДС"] == 7.77
-    assert line["СуммаСНДС"] == 47.77
+    assert line["СуммаСкидки"] == float(discount)
+    assert line["СуммаСНДС"] == float(payable)
+    assert line["СуммаНДС"] == float(vat)
+    assert line["Сумма"] == float(payable - vat)
     assert "Склад" not in line
     assert line["Номенклатура"] == "Плиты ПБ 45,4-12-8п"
+    iso, _iso_digest = build_invoice_document(_offer(date="2026-09-11"), action="create")
+    assert iso["Дата"] == "2026-09-11"
     assert document["НомерВПриложении"] == 22
     assert document["Контрагент"]["ИНН"] == "7604368921"
     assert document["Контрагент"]["Код"] == "00-00000884"
@@ -217,9 +300,13 @@ def test_invoice_delivery_share_is_not_discounted() -> None:
     assert document["Самовывоз"] is False
     assert document["Склад"] == "Склад Готовой Продукции"
     payable = _payable("23643", "10", 2, "1500")
+    vat = _included_vat(payable)
     assert payable == Decimal("44057.40")
+    assert goods[0]["СуммаСНДС"] == float(payable)
+    assert goods[0]["СуммаНДС"] == float(vat)
+    assert goods[0]["Сумма"] == float(payable - vat)
     assert document["СуммаДокумента"] == float(payable)
-    assert document["СуммаНДС"] == float(_included_vat(payable))
+    assert document["СуммаНДС"] == float(vat)
     assert document["СуммаНДС"] != 1.23
     assert digest == other_digest
 
@@ -245,6 +332,8 @@ def _seed_kp(
     with_counterparty: bool = True,
     qty: int = 2,
     order_number: str | None = None,
+    uid_order: str | None = None,
+    uid_kp: str | None = None,
     paid_at: str | None = None,
     snapshot: str | None = None,
 ) -> str:
@@ -273,14 +362,14 @@ def _seed_kp(
                 kp_id, creation_date, customer_name, manager_name,
                 discount_percent, subtotal, vat_amount, total_amount,
                 logistics_cost, counterparty_id, customer_inn, customer_kpp,
-                order_number_1c, invoice_snapshot_hash
+                order_number_1c, uid_order_1c, uid_kp_1c, invoice_snapshot_hash
             ) VALUES (
                 22, '11.09.2026', 'РОМАШКА ООО', 'Иван Иванов',
                 13, 10, 1.23, 999.99,
-                18600, ?, '7604368921', '760401001', ?, ?
+                18600, ?, '7604368921', '760401001', ?, ?, ?, ?
             )
             """,
-            (counterparty_id, order_number, snapshot),
+            (counterparty_id, order_number, uid_order, uid_kp, snapshot),
         )
         conn.execute(
             """
@@ -442,13 +531,21 @@ def test_invoice_export_writes_file_then_moves_status(
         22, user={"id": 1, "role": "admin"}, warehouse=_WAREHOUSE
     )
 
-    files = list(export_dir.glob("invoice_create_22_*.json"))
+    files = list(export_dir.glob("new_22_*.json"))
     assert len(files) == 1
+    assert list(export_dir.glob("invoice_create_*.json")) == []
     payload = json.loads(files[0].read_text(encoding="utf-8"))
-    assert payload["Документ"] == "Счёт на оплату"
-    assert payload["event"] == "invoice_export"
-    assert payload["action"] == "create"
+    assert payload["Документ"] == "КоммерческоеПредложение"
+    assert payload["Дата"] == "2026-09-11"
+    assert payload["Статус"] == "в архиве"
+    assert "event" not in payload
+    assert "action" not in payload
     assert "НомерЗаказа" not in payload
+    assert "УИД_ЗК" not in payload
+    assert "Номер_ЗК" not in payload
+    assert "УИД_КП" not in payload
+    assert "uid_order_1c" not in details.model_dump()
+    assert "uid_kp_1c" not in details.model_dump()
     payable = _payable("15421", "13", 2)
     assert payload["Склад"] == _WAREHOUSE
     assert payload["Самовывоз"] is True
@@ -486,7 +583,8 @@ def test_invoice_export_from_on_approval_does_not_write_another_create(
     with pytest.raises(ArchiveValidationError, match="в архиве"):
         service.export_invoice(22, user={"id": 1, "role": "admin"}, warehouse=_WAREHOUSE)
 
-    assert len(list(export_dir.glob("invoice_create_22_*.json"))) == 1
+    assert len(list(export_dir.glob("new_22_*.json"))) == 1
+    assert list(export_dir.glob("invoice_create_*.json")) == []
     assert _status(db_path) == "на согласовании"
 
 
@@ -520,11 +618,21 @@ def _patch_gates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.services.archive_service.assert_invoice_guids", _allow_guid)
 
 
-def _set_order_number(db_path: str, number: str) -> None:
+def _set_order_ids(
+    db_path: str,
+    number: str,
+    *,
+    uid_order: str | None = _UID_ORDER,
+    uid_kp: str | None = _UID_KP,
+) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "UPDATE KP_offers SET order_number_1c = ? WHERE kp_id = 22",
-            (number,),
+            """
+            UPDATE KP_offers
+            SET order_number_1c = ?, uid_order_1c = ?, uid_kp_1c = ?
+            WHERE kp_id = 22
+            """,
+            (number, uid_order, uid_kp),
         )
         conn.commit()
 
@@ -545,7 +653,7 @@ def test_invoice_correction_without_number_writes_no_file(
     _patch_gates(monkeypatch)
     service = _service(db_path, export_dir)
 
-    with pytest.raises(ArchiveValidationError, match="номер"):
+    with pytest.raises(ArchiveValidationError, match="номер заказа из 1С ещё не записан"):
         service.export_invoice_correction(22, user={"id": 1, "role": "admin"})
 
     assert not export_dir.exists() or list(export_dir.glob("*.json")) == []
@@ -563,13 +671,14 @@ def test_invoice_correction_same_snapshot_refuses(
     _patch_gates(monkeypatch)
     service = _service(db_path, export_dir)
     service.export_invoice(22, user={"id": 1, "role": "admin"}, warehouse=_WAREHOUSE)
-    _set_order_number(db_path, "ЯР-1")
+    _set_order_ids(db_path, "ЯР-1")
     stored = _snapshot(db_path)
 
     with pytest.raises(ArchiveValidationError, match="не изменил"):
         service.export_invoice_correction(22, user={"id": 1, "role": "admin"})
 
-    assert list(export_dir.glob("invoice_update_22_*.json")) == []
+    assert list(export_dir.glob("delta_22_*.json")) == []
+    assert list(export_dir.glob("invoice_update_*.json")) == []
     assert _status(db_path) == "на согласовании"
     assert _snapshot(db_path) == stored
 
@@ -582,7 +691,7 @@ def test_invoice_correction_changed_qty_writes_update_and_keeps_status(
     _patch_gates(monkeypatch)
     service = _service(db_path, export_dir)
     service.export_invoice(22, user={"id": 1, "role": "admin"}, warehouse=_WAREHOUSE)
-    _set_order_number(db_path, "ЯР-77")
+    _set_order_ids(db_path, "ЯР-77")
     _set_qty(db_path, 5)
     before = service.get_details(22, user={"id": 1, "role": "admin"})
     assert before.correction_pending is True
@@ -590,15 +699,24 @@ def test_invoice_correction_changed_qty_writes_update_and_keeps_status(
 
     details = service.export_invoice_correction(22, user={"id": 1, "role": "admin"})
 
-    files = list(export_dir.glob("invoice_update_22_*.json"))
+    files = list(export_dir.glob("delta_22_*.json"))
     assert len(files) == 1
+    assert list(export_dir.glob("invoice_update_*.json")) == []
     payload = json.loads(files[0].read_text(encoding="utf-8"))
-    assert payload["action"] == "update"
-    assert payload["НомерЗаказа"] == "ЯР-77"
+    assert list(payload)[:3] == ["УИД_ЗК", "Номер_ЗК", "УИД_КП"]
+    assert payload["УИД_ЗК"] == _UID_ORDER
+    assert payload["Номер_ЗК"] == "ЯР-77"
+    assert payload["УИД_КП"] == _UID_KP
+    assert "event" not in payload
+    assert "action" not in payload
+    assert "НомерЗаказа" not in payload
     assert payload["Склад"] == _WAREHOUSE
     assert "Самовывоз" in payload
     assert _warehouse(db_path) == _WAREHOUSE
-    assert payload["Документ"] == "Счёт на оплату"
+    assert payload["Документ"] == "КоммерческоеПредложение"
+    assert payload["Статус"] == "в архиве"
+    assert len(payload["Товары"]) == 1
+    assert payload["Товары"][0]["Количество"] == 5
     assert details.status == "на согласовании"
     assert details.correction_pending is False
     assert _status(db_path) == "на согласовании"
@@ -691,7 +809,7 @@ def test_invoice_export_delivery_share_is_after_discount(
     service.export_invoice(22, user={"id": 1, "role": "admin"}, warehouse=_WAREHOUSE)
 
     payload = json.loads(
-        next(export_dir.glob("invoice_create_22_*.json")).read_text(encoding="utf-8")
+        next(export_dir.glob("new_22_*.json")).read_text(encoding="utf-8")
     )
     goods = payload["Товары"]
     assert len(goods) == 1
@@ -715,6 +833,8 @@ def test_invoice_correction_empty_warehouse_without_body_writes_no_file(
         tmp_path,
         status="на согласовании",
         order_number="ЯР-3",
+        uid_order=_UID_ORDER,
+        uid_kp=_UID_KP,
         snapshot="stored-hash",
     )
     export_dir = tmp_path / "exchange"
@@ -737,6 +857,8 @@ def test_invoice_correction_empty_warehouse_saves_name_on_update(
         tmp_path,
         status="на согласовании",
         order_number="ЯР-3",
+        uid_order=_UID_ORDER,
+        uid_kp=_UID_KP,
         snapshot="stored-hash",
     )
     export_dir = tmp_path / "exchange"
@@ -747,11 +869,152 @@ def test_invoice_correction_empty_warehouse_saves_name_on_update(
         22, user={"id": 1, "role": "admin"}, warehouse="БСУ склад"
     )
 
-    files = list(export_dir.glob("invoice_update_22_*.json"))
+    files = list(export_dir.glob("delta_22_*.json"))
     assert len(files) == 1
+    assert list(export_dir.glob("invoice_update_*.json")) == []
     payload = json.loads(files[0].read_text(encoding="utf-8"))
-    assert payload["action"] == "update"
+    assert list(payload)[:3] == ["УИД_ЗК", "Номер_ЗК", "УИД_КП"]
+    assert "action" not in payload
     assert payload["Склад"] == "БСУ склад"
     assert "Самовывоз" in payload
     assert _warehouse(db_path) == "БСУ склад"
     assert _status(db_path) == "на согласовании"
+
+
+def test_invoice_correction_without_uid_writes_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    db_path = _seed_kp(
+        tmp_path,
+        status="на согласовании",
+        order_number="469",
+        snapshot="stored-hash",
+    )
+    export_dir = tmp_path / "exchange"
+    _patch_gates(monkeypatch)
+    service = _service(db_path, export_dir)
+
+    with pytest.raises(ArchiveValidationError, match="номер заказа из 1С ещё не записан"):
+        service.export_invoice_correction(22, user={"id": 1, "role": "admin"})
+
+    assert not export_dir.exists() or list(export_dir.glob("*.json")) == []
+    assert list(export_dir.glob("delta_*.json")) == []
+    assert _status(db_path) == "на согласовании"
+    assert _snapshot(db_path) == "stored-hash"
+
+
+def _offer_columns(db_path: str) -> set[str]:
+    with sqlite3.connect(db_path) as conn:
+        return {row[1] for row in conn.execute("PRAGMA table_info(KP_offers)")}
+
+
+def _order_ids(db_path: str, kp_id: int) -> tuple | None:
+    with sqlite3.connect(db_path) as conn:
+        return conn.execute(
+            """
+            SELECT order_number_1c, uid_order_1c, uid_kp_1c
+            FROM KP_offers WHERE kp_id = ?
+            """,
+            (kp_id,),
+        ).fetchone()
+
+
+def test_schema_adds_order_uid_columns_on_repeat(tmp_path: Path) -> None:
+    from core.kp_db_schema import _init_schema_impl
+
+    db_path = str(tmp_path / "plita.db")
+    _init_schema_impl(db_path)
+    _init_schema_impl(db_path)
+
+    columns = _offer_columns(db_path)
+    assert "uid_order_1c" in columns
+    assert "uid_kp_1c" in columns
+    assert "order_number_1c" in columns
+
+
+def test_schema_fills_empty_kp31_order_ids_and_repeat_is_noop(tmp_path: Path) -> None:
+    from core.kp_db_schema import _init_schema_impl, record_kp_order_ids
+
+    db_path = str(tmp_path / "plita.db")
+    _init_schema_impl(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO KP_offers (kp_id, creation_date) VALUES (31, '29.09.2026')"
+        )
+    assert _order_ids(db_path, 31) == (None, None, None)
+
+    _init_schema_impl(db_path)
+    assert _order_ids(db_path, 31) == ("469", _UID_ORDER, _UID_KP)
+
+    with sqlite3.connect(db_path) as conn:
+        record_kp_order_ids(
+            conn,
+            31,
+            order_number="469",
+            uid_order=_UID_ORDER,
+            uid_kp=_UID_KP,
+        )
+    _init_schema_impl(db_path)
+    assert _order_ids(db_path, 31) == ("469", _UID_ORDER, _UID_KP)
+
+
+def test_schema_order_ids_conflict_does_not_change_row(tmp_path: Path) -> None:
+    import os
+
+    from core import kp_db_schema
+
+    db_path = str(tmp_path / "plita.db")
+    kp_db_schema._init_schema_impl(db_path)
+    stored = ("111", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO KP_offers (
+                kp_id, creation_date, customer_name,
+                order_number_1c, uid_order_1c, uid_kp_1c
+            ) VALUES (31, '29.09.2026', 'ПТК', ?, ?, ?)
+            """,
+            stored,
+        )
+
+    with sqlite3.connect(db_path) as conn:
+        with pytest.raises(kp_db_schema.KpOrderIdConflictError):
+            kp_db_schema.record_kp_order_ids(
+                conn,
+                31,
+                order_number="469",
+                uid_order=_UID_ORDER,
+                uid_kp=_UID_KP,
+            )
+    assert _order_ids(db_path, 31) == stored
+
+    kp_db_schema._schema_ready.discard(os.path.abspath(db_path))
+    kp_db_schema.ensure_schema(db_path)
+    assert _order_ids(db_path, 31) == stored
+    with sqlite3.connect(db_path) as conn:
+        name = conn.execute(
+            "SELECT customer_name FROM KP_offers WHERE kp_id = 31"
+        ).fetchone()
+    assert name[0] == "ПТК"
+
+
+def test_schema_without_kp31_does_not_insert_order_ids(tmp_path: Path) -> None:
+    from core.kp_db_schema import _init_schema_impl, record_kp_order_ids
+
+    db_path = str(tmp_path / "plita.db")
+    _init_schema_impl(db_path)
+    with sqlite3.connect(db_path) as conn:
+        record_kp_order_ids(
+            conn,
+            31,
+            order_number="469",
+            uid_order=_UID_ORDER,
+            uid_kp=_UID_KP,
+        )
+        count = conn.execute("SELECT COUNT(*) FROM KP_offers WHERE kp_id = 31").fetchone()
+    _init_schema_impl(db_path)
+
+    assert count[0] == 0
+    assert _order_ids(db_path, 31) is None

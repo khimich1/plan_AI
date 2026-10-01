@@ -83,6 +83,7 @@ from core.supply_contract import attach_contract_number
 STATUS_ARCHIVE = "в архиве"
 STATUS_ON_APPROVAL = "на согласовании"
 MSG_EXPORT_ONLY_ARCHIVE = "Отправить в 1С можно только из статуса «в архиве»"
+MSG_ORDER_IDS_MISSING = "Исправление не отправляется: номер заказа из 1С ещё не записан"
 MSG_NEED_COUNTERPARTY = "Сначала занесите контрагента"
 MSG_NEED_CONTRACT = "Нет действующего договора поставки"
 MSG_SPEC_STATUS = "Сохранить спецификацию можно только в статусе «на согласовании»"
@@ -398,9 +399,10 @@ class ArchiveService:
             raise ArchiveValidationError(
                 "Исправление можно отправить только из статуса «на согласовании»"
             )
-        number = str(raw.get("order_number_1c") or "").strip()
-        if not number:
-            raise ArchiveValidationError("Нужен номер счёта")
+        ids = _invoice_order_ids(raw)
+        if ids is None:
+            raise ArchiveValidationError(MSG_ORDER_IDS_MISSING)
+        number, uid_order, uid_kp = ids
         current = invoice_snapshot_hash(card_offer_from_kp(raw))
         if str(raw.get("invoice_snapshot_hash") or "") == current:
             raise ArchiveValidationError("Состав не изменился")
@@ -413,6 +415,8 @@ class ArchiveService:
             action="update",
             warehouse=name,
             order_number=number,
+            uid_order=uid_order,
+            uid_kp=uid_kp,
         )
         self._write_invoice_file(kp_id, "update", document)
         try:
@@ -431,12 +435,16 @@ class ArchiveService:
         action: InvoiceAction,
         warehouse: str,
         order_number: str | None = None,
+        uid_order: str | None = None,
+        uid_kp: str | None = None,
     ) -> tuple[dict[str, Any], str]:
         shares = self._invoice_delivery_kopecks(raw, offer)
         document, digest = build_invoice_document(
             offer,
             action=action,
             order_number=order_number,
+            uid_order=uid_order,
+            uid_kp=uid_kp,
             warehouse=warehouse,
             line_delivery_kopecks=shares,
         )
@@ -560,7 +568,7 @@ class ArchiveService:
     def _write_invoice_file(self, kp_id: int, action: str, document: dict) -> Path:
         settings = get_settings()
         directory = self.export_dir if self.export_dir is not None else Path(settings.exchange_export_dir)
-        prefix = "invoice_create" if action == "create" else "invoice_update"
+        prefix = "new" if action == "create" else "delta"
         try:
             directory.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
@@ -1745,6 +1753,15 @@ def _concrete_spec_kwargs(raw: dict) -> dict[str, str | None]:
         "concrete_aggregate": aggregate,
         "concrete_spec_source": source,
     }
+
+
+def _invoice_order_ids(raw: dict) -> tuple[str, str, str] | None:
+    number = str(raw.get("order_number_1c") or "").strip()
+    uid_order = str(raw.get("uid_order_1c") or "").strip()
+    uid_kp = str(raw.get("uid_kp_1c") or "").strip()
+    if not number or not uid_order or not uid_kp:
+        return None
+    return number, uid_order, uid_kp
 
 
 def _stored_invoice_warehouse(value: object) -> str | None:

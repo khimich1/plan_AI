@@ -513,6 +513,7 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
         _init_counterparties_schema(cur)
 
         _init_supply_contract_schema(cur)
+        _remember_kp31_order_ids(conn)
 
         conn.commit()
     finally:
@@ -685,6 +686,8 @@ def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
     for sql in (
         "ALTER TABLE KP_offers ADD COLUMN order_number_1c TEXT",
         "ALTER TABLE KP_offers ADD COLUMN order_status_1c TEXT",
+        "ALTER TABLE KP_offers ADD COLUMN uid_order_1c TEXT",
+        "ALTER TABLE KP_offers ADD COLUMN uid_kp_1c TEXT",
         "ALTER TABLE KP_offers ADD COLUMN invoice_snapshot_hash TEXT",
         "ALTER TABLE KP_offers ADD COLUMN invoice_warehouse TEXT",
         "ALTER TABLE KP_offers ADD COLUMN specification_json TEXT",
@@ -1211,6 +1214,86 @@ def _migrate_completed_plates_for_sgp(cur: sqlite3.Cursor) -> None:
     )
     cur.execute("PRAGMA foreign_keys = ON")
     print("[DB] ✅ completed_plates мигрирована под СГП")
+
+class KpOrderIdConflictError(ValueError):
+    """Уже записанный номер или УИД отличается от нового. Строка не меняется."""
+
+
+_ORDER_ID_COLUMNS = ("order_number_1c", "uid_order_1c", "uid_kp_1c")
+_KP31_ORDER_IDS = (
+    "469",
+    "9cfb5882-bd7e-11f1-9e1d-d8bbc1d1be1f",
+    "9cfb5881-bd7e-11f1-9e1d-d8bbc1d1be1f",
+)
+
+
+def _clean_order_id(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def record_kp_order_ids(
+    conn: sqlite3.Connection,
+    kp_id: int,
+    *,
+    order_number: str,
+    uid_order: str,
+    uid_kp: str,
+) -> None:
+    """Заполняет пустые идентификаторы заказа.
+
+    Совпадение с уже лежащими значениями ничего не меняет. Отличие хотя бы
+    в одном непустом поле — отказ, строка остаётся как была. Нет строки КП —
+    запись не создаётся.
+    """
+    row = conn.execute(
+        f"SELECT {', '.join(_ORDER_ID_COLUMNS)} FROM KP_offers WHERE kp_id = ?",
+        (int(kp_id),),
+    ).fetchone()
+    if row is None:
+        return
+    incoming = (
+        _clean_order_id(order_number),
+        _clean_order_id(uid_order),
+        _clean_order_id(uid_kp),
+    )
+    stored = tuple(_clean_order_id(value) for value in row)
+    if any(old and old != new for old, new in zip(stored, incoming)):
+        raise KpOrderIdConflictError(
+            "Идентификаторы заказа из 1С уже записаны и отличаются"
+        )
+    updates = {
+        column: new
+        for column, old, new in zip(_ORDER_ID_COLUMNS, stored, incoming)
+        if not old and new
+    }
+    if not updates:
+        return
+    assignments = ", ".join(f"{column} = ?" for column in updates)
+    conn.execute(
+        f"UPDATE KP_offers SET {assignments} WHERE kp_id = ?",
+        (*updates.values(), int(kp_id)),
+    )
+
+
+def _remember_kp31_order_ids(conn: sqlite3.Connection) -> None:
+    """КП 31: пустые колонки получают номер и УИД из уже принятого ответа.
+
+    Отказ на уже заполненной строке не останавливает инициализацию схемы.
+    """
+    number, uid_order, uid_kp = _KP31_ORDER_IDS
+    try:
+        record_kp_order_ids(
+            conn,
+            31,
+            order_number=number,
+            uid_order=uid_order,
+            uid_kp=uid_kp,
+        )
+    except KpOrderIdConflictError:
+        print("[DB] КП 31: идентификаторы заказа уже записаны и отличаются, строка не изменена")
+
 
 def ensure_schema(db_path: str = DEFAULT_DB) -> None:
     """Idempotent schema initialization (once per absolute db path per process)."""
