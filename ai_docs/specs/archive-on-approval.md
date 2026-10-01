@@ -7,6 +7,7 @@
 > **Дата:** 2026-09-28  
 > **Связанные модули:** карточка архива (`OfferDetailsDrawer`), вкладки (`ArchiveSectionTabs`), перевод в производство (`move_to_production`), договор (`attach_contract_number`), ворота GUID (`assert_invoice_guids`), пример JSON `docs/specs/1c-kp-export-example.json`, ТЗ `docs/specs/1c-integration-tz-v2.md`.  
 > **Рядом, не это:** спецификация к заказу, sync-агент, разбор `invoice_ack`, поле ввода номера, график поставки, живой HTTP в 1С.
+> **Контракт файла с 2026-10-01:** имя «Счёт на оплату», ключи `event` / `action` / `НомерЗаказа` и имена `invoice_create_` / `invoice_update_` заменены спекой [`kp-1c-delta.md`](kp-1c-delta.md). Карточка, вкладки, оплата и ворота производства этой заменой не отменяются.
 
 ---
 

@@ -7,6 +7,7 @@
 > **Дата:** 2026-09-28  
 > **Связанные модули:** `OfferDetailsDrawer`, `core/invoice_export.py`, `app/services/archive_service.py`, `core/embed_delivery_in_unit_price.py`, `core/commercial_pricing.py`, спека [`archive-on-approval.md`](archive-on-approval.md).  
 > **Рядом, не это:** правка Excel «доставка в цене», живой HTTP в 1С, разбор обратного файла, наименование договора.
+> **Имена файлов с 2026-10-01:** `Склад`, `Самовывоз` и `СуммаДоставки` остаются. Имена `invoice_create_` / `invoice_update_` заменены на `new_` / `delta_` в [`kp-1c-delta.md`](kp-1c-delta.md).
 
 ---
 

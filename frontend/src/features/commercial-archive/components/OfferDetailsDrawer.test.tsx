@@ -1392,6 +1392,32 @@ describe("OfferDetailsDrawer order card shelves", () => {
     expect(screen.queryByRole("button", { name: "Отправить исправление" })).not.toBeInTheDocument();
   });
 
+  it("shows invoice 469 and does not render 1C uids", () => {
+    const uidOrder = "9cfb5882-bd7e-11f1-9e1d-d8bbc1d1be1f";
+    const uidKp = "9cfb5881-bd7e-11f1-9e1d-d8bbc1d1be1f";
+    const offer = {
+      ...makeOffer("на согласовании", null, {
+        order_number_1c: "469",
+        correction_pending: true,
+      }),
+      uid_order_1c: uidOrder,
+      uid_kp_1c: uidKp,
+    };
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: offer,
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Счёт 469")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Отправить исправление" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(uidOrder);
+    expect(document.body).not.toHaveTextContent(uidKp);
+  });
+
   it("asks for payment when the invoice number is already stored", () => {
     mockUseArchiveOfferQuery.mockReturnValue({
       data: makeOffer("на согласовании", null, { order_number_1c: "ЯР-15" }),
