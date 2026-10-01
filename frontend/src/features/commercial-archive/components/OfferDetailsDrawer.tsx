@@ -346,13 +346,13 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const saveSpecificationChoice = async (
     targetKpId: number,
     choice: SpecificationChoicePayload,
-    downloadAfterSave: boolean,
+    downloadFormat: "xlsx" | "pdf" | null,
   ) => {
     setSpecError(null);
     try {
       await saveSpec.mutateAsync({ kpId: targetKpId, choice });
-      if (downloadAfterSave) {
-        await downloadSpec.mutateAsync(targetKpId);
+      if (downloadFormat) {
+        await downloadSpec.mutateAsync({ kpId: targetKpId, format: downloadFormat });
       }
     } catch (error) {
       setSpecError(getErrorMessage(error));
@@ -944,8 +944,9 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 view={specQuery.data}
                 busy={saveSpec.isPending || downloadSpec.isPending}
                 error={specError}
-                onSave={(choice) => saveSpecificationChoice(offer.kp_id, choice, false)}
-                onDownload={(choice) => saveSpecificationChoice(offer.kp_id, choice, true)}
+                onSave={(choice) => saveSpecificationChoice(offer.kp_id, choice, null)}
+                onDownload={(choice) => saveSpecificationChoice(offer.kp_id, choice, "xlsx")}
+                onDownloadPdf={(choice) => saveSpecificationChoice(offer.kp_id, choice, "pdf")}
               />
             )}
             <Modal
@@ -1518,7 +1519,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                 variant="secondary"
                 disabled={downloadSpec.isPending}
                 onClick={() => {
-                  void downloadSpec.mutateAsync(offer.kp_id).catch((error: unknown) => {
+                  void downloadSpec.mutateAsync({ kpId: offer.kp_id, format: "xlsx" }).catch((error: unknown) => {
                     setSpecError(getErrorMessage(error));
                   });
                 }}

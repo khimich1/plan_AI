@@ -478,6 +478,7 @@ def create_archive_supply_contract(
 
 _DOCX_MEDIA = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _PDF_MEDIA = "application/pdf"
+_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _supply_document_response(payload: bytes, filename: str) -> Response:
@@ -751,11 +752,14 @@ def export_archive_invoice_correction(
 @router.get("/{kp_id}/specification/file")
 def download_archive_specification(
     kp_id: int,
+    file_format: Literal["xlsx", "pdf"] = Query(default="xlsx", alias="format"),
     user: dict = Depends(require_roles("admin", "manager")),
     service: ArchiveService = Depends(get_archive_service),
 ) -> Response:
     try:
-        downloaded = service.download_specification(kp_id, user=user)
+        downloaded = service.download_specification(
+            kp_id, user=user, file_format=file_format
+        )
     except ArchiveNotFoundError as exc:
         raise_not_found_client_error(
             exc,
@@ -768,10 +772,18 @@ def download_archive_specification(
             where="archive.download_specification",
             detail=str(exc) or MSG_VALIDATION,
         )
+    except SupplyContractPdfError as exc:
+        raise_client_error(
+            exc,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            where="archive.download_specification",
+        )
     filename = quote(downloaded.filename)
+    media = _PDF_MEDIA if file_format == "pdf" else _XLSX_MEDIA
     return Response(
         content=downloaded.content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type=media,
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
 

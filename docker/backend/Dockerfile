@@ -19,6 +19,7 @@ RUN apt-get update \
         fonts-dejavu-core \
         gosu \
         libreoffice-writer-nogui \
+        libreoffice-calc-nogui \
     && rm -rf /var/lib/apt/lists/* \
     && adduser --disabled-password --gecos '' appuser
 

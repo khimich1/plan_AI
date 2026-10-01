@@ -51,6 +51,7 @@ from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
 from app.services.promise_service import PromiseGateError, PromiseService
 from app.repositories.supply_contract_repository import SupplyContractRepository
+from app.services.supply_contract_service import convert_xlsx_to_pdf
 from app.services.counterparties_service import (
     CounterpartiesService,
     CounterpartyValidationError,
@@ -710,7 +711,13 @@ class ArchiveService:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         return self.get_specification(kp_id, user=user)
 
-    def download_specification(self, kp_id: int, *, user: dict) -> SpecificationDownload:
+    def download_specification(
+        self,
+        kp_id: int,
+        *,
+        user: dict,
+        file_format: Literal["xlsx", "pdf"] = "xlsx",
+    ) -> SpecificationDownload:
         """Байты уже сохранённой спецификации. Строку не создаёт."""
         raw = self._specification_offer(kp_id, user, write=False)
         document = _load_stored_specification(raw)
@@ -736,9 +743,13 @@ class ArchiveService:
         content = build_specification_xlsx(
             header, self._specification_lines(raw), paragraphs
         )
+        if file_format not in ("xlsx", "pdf"):
+            raise ArchiveValidationError("Укажите формат xlsx или pdf")
+        if file_format == "pdf":
+            content = convert_xlsx_to_pdf(content)
         return SpecificationDownload(
             content=content,
-            filename=_specification_filename(kp_id, number),
+            filename=_specification_filename(kp_id, number, extension=file_format),
         )
 
     def _specification_header(
@@ -1590,12 +1601,19 @@ class ArchiveService:
             raise ArchiveValidationError(str(exc)) from exc
 
 
-def _specification_filename(kp_id: int, invoice_number: str | None) -> str:
+def _specification_filename(
+    kp_id: int,
+    invoice_number: str | None,
+    *,
+    extension: str = "xlsx",
+) -> str:
     number = (invoice_number or "").strip()
     if not number:
-        return f"Спецификация КП {kp_id}.xlsx"
-    safe = number.replace("/", "-").replace("\\", "-").replace("\x00", "")
-    return f"Спецификация по счету {safe}.xlsx"
+        stem = f"Спецификация КП {kp_id}"
+    else:
+        safe = number.replace("/", "-").replace("\\", "-").replace("\x00", "")
+        stem = f"Спецификация по счету {safe}"
+    return f"{stem}.{extension}"
 
 
 def _short_person_name(full_name: str) -> str:

@@ -388,6 +388,86 @@ def test_specification_download_file_uses_saved_date_and_invoice_number(
     assert list(tmp_path.glob("*.xlsx")) == []
 
 
+def test_specification_pdf_converts_saved_xlsx_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.archive_service.SupplyContractRepository.get_active_by_counterparty",
+        _active_contract,
+    )
+    monkeypatch.setattr(
+        "app.services.archive_service.assert_invoice_guids",
+        _forbid_invoice_guids,
+    )
+    seen: dict[str, bytes] = {}
+
+    def fake_convert(xlsx_bytes: bytes) -> bytes:
+        seen["xlsx"] = xlsx_bytes
+        return b"%PDF-1.4 specification"
+
+    monkeypatch.setattr("app.services.archive_service.convert_xlsx_to_pdf", fake_convert)
+    db_path, kp_id = _seed_plate(tmp_path, counterparty_id=5, qty=2, unit_price=1000)
+    service = _service(db_path, tmp_path)
+    export_dir = tmp_path / "exchange"
+    service._today_override = "2026-09-18"
+    service.save_specification(kp_id, _choice(), user=ADMIN)
+
+    book = service.download_specification(kp_id, user=ADMIN)
+    pdf = service.download_specification(kp_id, user=ADMIN, file_format="pdf")
+
+    assert seen["xlsx"] == book.content
+    assert book.content.startswith(b"PK")
+    assert pdf.content == b"%PDF-1.4 specification"
+    assert pdf.filename == f"Спецификация КП {kp_id}.pdf"
+    assert not export_dir.exists()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE KP_offers SET order_number_1c = ? WHERE kp_id = ?",
+            ("ЯР-15", kp_id),
+        )
+    numbered = service.download_specification(kp_id, user=ADMIN, file_format="pdf")
+
+    assert numbered.filename == "Спецификация по счету ЯР-15.pdf"
+    assert numbered.content == b"%PDF-1.4 specification"
+    assert not export_dir.exists()
+    assert list(tmp_path.glob("*.pdf")) == []
+
+
+def test_unsaved_specification_pdf_does_not_create_a_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    monkeypatch.setattr(
+        "app.services.archive_service.SupplyContractRepository.get_active_by_counterparty",
+        _active_contract,
+    )
+    monkeypatch.setattr(
+        "app.services.archive_service.assert_invoice_guids",
+        _forbid_invoice_guids,
+    )
+    called = False
+
+    def fake_convert(_xlsx_bytes: bytes) -> bytes:
+        nonlocal called
+        called = True
+        return b"%PDF-1.4 specification"
+
+    monkeypatch.setattr("app.services.archive_service.convert_xlsx_to_pdf", fake_convert)
+    db_path, kp_id = _seed_plate(tmp_path, counterparty_id=5)
+    service = _service(db_path, tmp_path)
+
+    with pytest.raises(ArchiveValidationError, match="Сначала сохраните"):
+        service.download_specification(kp_id, user=ADMIN, file_format="pdf")
+
+    assert called is False
+    assert _stored(db_path, kp_id) is None
+    assert not (tmp_path / "exchange").exists()
+    assert list(tmp_path.glob("*.pdf")) == []
+    assert list(tmp_path.glob("*.xlsx")) == []
+
+
 _STALE = (
     "Условия оплаты в спецификации устарели: откройте спецификацию и сохраните их снова"
 )

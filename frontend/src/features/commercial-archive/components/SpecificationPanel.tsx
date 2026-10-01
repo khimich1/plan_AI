@@ -62,6 +62,7 @@ type Props = {
   error: string | null;
   onSave: (choice: SpecificationChoicePayload) => Promise<void>;
   onDownload: (choice: SpecificationChoicePayload) => Promise<void>;
+  onDownloadPdf: (choice: SpecificationChoicePayload) => Promise<void>;
 };
 
 const isPayment = (value: string | null | undefined): value is SpecificationPaymentKind =>
@@ -212,7 +213,7 @@ function DaysField({
   );
 }
 
-export function SpecificationPanel({ view, busy, error, onSave, onDownload }: Props) {
+export function SpecificationPanel({ view, busy, error, onSave, onDownload, onDownloadPdf }: Props) {
   const [draft, setDraft] = useState(() => draftFromChoice(view.choice));
   const [localError, setLocalError] = useState<string | null>(null);
   const shownError = localError ?? error;
@@ -440,6 +441,9 @@ export function SpecificationPanel({ view, busy, error, onSave, onDownload }: Pr
         </Button>
         <Button type="button" variant="secondary" disabled={busy} onClick={() => void submit(onDownload)}>
           Скачать Excel
+        </Button>
+        <Button type="button" variant="secondary" disabled={busy} onClick={() => void submit(onDownloadPdf)}>
+          Скачать PDF
         </Button>
       </div>
     </section>

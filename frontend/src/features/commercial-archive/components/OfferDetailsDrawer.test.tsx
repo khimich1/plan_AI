@@ -1603,7 +1603,7 @@ describe("OfferDetailsDrawer order card shelves", () => {
     fireEvent.click(screen.getByRole("button", { name: "Скачать спецификацию" }));
 
     await waitFor(() => {
-      expect(mockDownloadSpecification).toHaveBeenCalledWith(42);
+      expect(mockDownloadSpecification).toHaveBeenCalledWith({ kpId: 42, format: "xlsx" });
     });
     expect(mockSaveSpecification).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "100% предоплата" })).not.toBeInTheDocument();
@@ -1660,7 +1660,7 @@ describe("OfferDetailsDrawer order card shelves", () => {
     fireEvent.click(screen.getByRole("button", { name: "Скачать Excel" }));
 
     await waitFor(() => {
-      expect(mockDownloadSpecification).toHaveBeenCalledWith(42);
+      expect(mockDownloadSpecification).toHaveBeenCalledWith({ kpId: 42, format: "xlsx" });
     });
     expect(mockSaveSpecification).toHaveBeenCalled();
     expect(mockSaveSpecification.mock.invocationCallOrder[0]).toBeLessThan(
