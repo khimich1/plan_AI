@@ -195,6 +195,38 @@ def test_in_work_unparseable_terms_go_last(db_path: str) -> None:
 
 def test_default_list_kp_candidates_is_plan_scope(db_path: str) -> None:
     kp_id = _save_plate_kp(db_path, qty=2, customer="Open", terms="01.09.2026")
+    _set_all_plates_status(db_path, kp_id, "в производстве")
     assert _service(db_path).list_kp_candidates()["items"][0]["kp_id"] == kp_id
     _set_all_plates_status(db_path, kp_id, "в плане")
     assert _service(db_path).list_kp_candidates()["count"] == 0
+
+
+def test_get_all_plates_in_production_after_move_to_production(db_path: str) -> None:
+    """Shop list skips an archived plate with empty status and shows it after the button."""
+    from core.kp import offers_write
+    from core.kp_db_plates_queries import get_all_plates_in_production
+
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "01.03.2026",
+        [_plate_line(qty=4, line_id="ln_shop")],
+        customer_name="Shop Gate",
+        execution_terms="01.10.2026",
+        status="в архиве",
+        db_path=db_path,
+    )
+    with sqlite3.connect(db_path) as conn:
+        plates = conn.execute(
+            "SELECT status, plan_id FROM kp_plates WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchall()
+    assert plates == [(None, None)]
+    assert all(row["kp_id"] != kp_id for row in get_all_plates_in_production(db_path))
+
+    offers_write.commit_move_to_production(kp_id, "15.10.2026", db_path)
+
+    visible = [
+        row for row in get_all_plates_in_production(db_path) if row["kp_id"] == kp_id
+    ]
+    assert len(visible) == 1
+    assert visible[0]["plate_status"] == "в производстве"
+    assert int(visible[0]["qty"]) == 4
