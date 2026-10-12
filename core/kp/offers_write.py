@@ -826,6 +826,7 @@ def commit_move_to_production(
         ordered = freeze_ordered_qty_if_needed(conn.cursor(), kp_id)
         if ordered is None:
             raise ValueError("freeze_ordered_qty_failed")
+        _mark_empty_plates_in_production(conn, kp_id)
         if promise is not None:
             _write_move_promise(conn, kp_id, promise)
         conn.commit()
@@ -835,6 +836,20 @@ def commit_move_to_production(
         raise
     finally:
         conn.close()
+
+
+def _mark_empty_plates_in_production(conn: sqlite3.Connection, kp_id: int) -> None:
+    """Stamp unsigned, unplanned rows in the caller's transaction (no commit)."""
+    conn.execute(
+        """
+        UPDATE kp_plates
+        SET status = 'в производстве'
+        WHERE kp_id = ?
+          AND (status IS NULL OR TRIM(status) = '')
+          AND (plan_id IS NULL OR TRIM(plan_id) = '')
+        """,
+        (int(kp_id),),
+    )
 
 
 def _write_move_promise(

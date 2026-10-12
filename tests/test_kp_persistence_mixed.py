@@ -682,8 +682,84 @@ def test_offers_write_update_kp_from_order_data_delegates_same_kp_id(
     assert len(_rows(db_path, "kp_piles", kp_id)) == 1
 
 
+def test_save_kp_to_db_writes_plate_status_null(db_path: str) -> None:
+    """Commercial insert leaves plate status empty so the column DEFAULT does not apply."""
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_plate_line(line_id="ln_null")],
+        customer_name="Null Status",
+        product_type="plates",
+        status="в архиве",
+        db_path=db_path,
+    )
+
+    plates = _rows(db_path, "kp_plates", kp_id)
+    assert len(plates) == 1
+    assert plates[0]["status"] is None
+    assert plates[0]["plan_id"] in (None, "")
+
+
+def test_update_replaces_null_status_plate_and_keeps_neighbor(db_path: str) -> None:
+    """Replacing line_id of an unsigned plate commits the new mark and a sibling row."""
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_plate_line(line_id="ln_old", name="ПБ 60-12-8п")],
+        customer_name="Before Replace",
+        discount_percent=0,
+        product_type="plates",
+        status="в архиве",
+        db_path=db_path,
+    )
+    before = _rows(db_path, "kp_plates", kp_id)
+    assert before[0]["status"] is None
+
+    returned = KpPersistenceService.update_kp_from_order_data(
+        kp_id,
+        [
+            _plate_line(
+                line_id="ln_new",
+                name="ПБ 72-12-8п",
+                length_m=7.2,
+                length_dm_raw="72",
+                qty=2,
+            ),
+            _plate_line(
+                line_id="ln_extra",
+                name="ПБ 48-12-8п",
+                length_m=4.8,
+                length_dm_raw="48",
+                qty=3,
+            ),
+        ],
+        customer_name="After Replace",
+        discount_percent=10,
+        db_path=db_path,
+    )
+
+    assert returned == kp_id
+    assert _kp_status(db_path, kp_id) == "в архиве"
+    plates = _rows(db_path, "kp_plates", kp_id)
+    by_line = {row["line_id"]: row for row in plates}
+    assert set(by_line) == {"ln_new", "ln_extra"}
+    assert by_line["ln_new"]["plate_name"] == "ПБ 72-12-8п"
+    assert int(by_line["ln_new"]["qty"]) == 2
+    assert by_line["ln_extra"]["plate_name"] == "ПБ 48-12-8п"
+    assert int(by_line["ln_extra"]["qty"]) == 3
+    assert by_line["ln_new"]["status"] is None
+    assert by_line["ln_extra"]["status"] is None
+    assert by_line["ln_new"]["plan_id"] in (None, "")
+    assert by_line["ln_extra"]["plan_id"] in (None, "")
+    with sqlite3.connect(db_path) as conn:
+        header = conn.execute(
+            "SELECT customer_name, discount_percent FROM KP_offers WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchone()
+    assert header[0] == "After Replace"
+    assert float(header[1]) == pytest.approx(10.0)
+
+
 def test_update_rejects_delete_of_plate_in_production(db_path: str) -> None:
-    """Omitting a plate line_id with status «в производстве» → ValueError, row kept."""
+    """Explicit «в производстве» still blocks omitting that plate; the tx rolls back."""
     kp_id = KpPersistenceService.save_kp_to_db(
         "12.08.2026",
         [
@@ -698,12 +774,18 @@ def test_update_rejects_delete_of_plate_in_production(db_path: str) -> None:
     plates_before = _rows(db_path, "kp_plates", kp_id)
     assert len(plates_before) == 1
     plate_db_id = int(plates_before[0]["id"])
-    assert plates_before[0]["status"] == "в производстве"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE kp_plates SET status = ? WHERE id = ?",
+            ("в производстве", plate_db_id),
+        )
+        conn.commit()
 
     with pytest.raises(ValueError, match="в производстве"):
         KpPersistenceService.update_kp_from_order_data(
             kp_id,
             [_pile_line(line_id="ln_keep_pile")],
+            customer_name="Should Roll Back",
             db_path=db_path,
         )
 
@@ -713,6 +795,127 @@ def test_update_rejects_delete_of_plate_in_production(db_path: str) -> None:
     assert plates_after[0]["line_id"] == "ln_prod"
     assert plates_after[0]["status"] == "в производстве"
     assert len(_rows(db_path, "kp_piles", kp_id)) == 1
+    with sqlite3.connect(db_path) as conn:
+        customer = conn.execute(
+            "SELECT customer_name FROM KP_offers WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchone()
+    assert customer[0] == "Protect In Production"
+
+
+@pytest.mark.parametrize(
+    ("plate_status", "plan_id"),
+    [
+        ("в плане", None),
+        (None, "plan-42"),
+    ],
+)
+def test_update_rejects_delete_of_plate_in_plan_or_with_plan_id(
+    db_path: str,
+    plate_status: str | None,
+    plan_id: str | None,
+) -> None:
+    """«в плане» or a plan_id still blocks deletion; the whole update rolls back."""
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [
+            _plate_line(line_id="ln_locked"),
+            _pile_line(line_id="ln_keep_pile"),
+        ],
+        customer_name="Protect Planned",
+        product_type="mixed",
+        status="в архиве",
+        db_path=db_path,
+    )
+    plates_before = _rows(db_path, "kp_plates", kp_id)
+    plate_db_id = int(plates_before[0]["id"])
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE kp_plates SET status = ?, plan_id = ? WHERE id = ?",
+            (plate_status, plan_id, plate_db_id),
+        )
+        conn.commit()
+
+    with pytest.raises(ValueError, match="привязанную к плану"):
+        KpPersistenceService.update_kp_from_order_data(
+            kp_id,
+            [_pile_line(line_id="ln_keep_pile")],
+            customer_name="Should Roll Back",
+            db_path=db_path,
+        )
+
+    plates_after = _rows(db_path, "kp_plates", kp_id)
+    assert len(plates_after) == 1
+    assert int(plates_after[0]["id"]) == plate_db_id
+    assert plates_after[0]["line_id"] == "ln_locked"
+    assert plates_after[0]["status"] == plate_status
+    assert plates_after[0]["plan_id"] == plan_id
+    assert len(_rows(db_path, "kp_piles", kp_id)) == 1
+    with sqlite3.connect(db_path) as conn:
+        customer = conn.execute(
+            "SELECT customer_name FROM KP_offers WHERE kp_id = ?",
+            (kp_id,),
+        ).fetchone()
+    assert customer[0] == "Protect Planned"
+
+
+def test_schema_clears_false_in_production_without_plan(db_path: str) -> None:
+    """Startup cleanup nulls «в производстве» only for archive/approval plates without a plan."""
+    from core.kp_db_schema import _init_schema_impl
+
+    rows = [
+        # kp_id, meta status, plate status, plan_id, expect status cleared
+        (1, "в архиве", "в производстве", None, True),
+        (2, "на согласовании", "в производстве", "", True),
+        (3, "в архиве", "в производстве", "   ", True),
+        (4, "в работе", "в производстве", None, False),
+        (5, "в архиве", "в плане", None, False),
+        (6, "в архиве", "в производстве", "plan-1", False),
+        (7, "выполнено", "в производстве", None, False),
+        (8, "На СГП", "в производстве", None, False),
+        (9, "в архиве", None, None, True),
+    ]
+    with sqlite3.connect(db_path) as conn:
+        for kp_id, meta_status, plate_status, plan_id, _cleared in rows:
+            conn.execute(
+                "INSERT INTO KP_offers (kp_id, creation_date) VALUES (?, '01.01.2026')",
+                (kp_id,),
+            )
+            conn.execute(
+                "INSERT INTO kp_meta (kp_id, status) VALUES (?, ?)",
+                (kp_id, meta_status),
+            )
+            conn.execute(
+                """
+                INSERT INTO kp_plates (kp_id, plate_name, qty, status, plan_id)
+                VALUES (?, 'ПБ 60-12-8п', 1, ?, ?)
+                """,
+                (kp_id, plate_status, plan_id),
+            )
+        conn.commit()
+
+    def _plate_state(kp_id: int) -> tuple:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT status, plan_id FROM kp_plates WHERE kp_id = ?",
+                (kp_id,),
+            ).fetchone()
+        assert row is not None
+        return (row[0], row[1])
+
+    _init_schema_impl(db_path)
+
+    for kp_id, _meta, plate_status, plan_id, cleared in rows:
+        status, kept_plan = _plate_state(kp_id)
+        if cleared and plate_status == "в производстве":
+            assert status is None
+        else:
+            assert status == plate_status
+        assert kept_plan == plan_id
+
+    snapshot = [_plate_state(kp_id) for kp_id, *_rest in rows]
+    _init_schema_impl(db_path)
+    assert [_plate_state(kp_id) for kp_id, *_rest in rows] == snapshot
 
 
 def test_update_rejects_when_incoming_line_missing_line_id(db_path: str) -> None:

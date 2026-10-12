@@ -241,6 +241,21 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
         # Создаём индекс для plan_id (после того, как колонка точно существует)
         cur.execute('CREATE INDEX IF NOT EXISTS idx_plates_plan_id ON kp_plates(plan_id)')
 
+        # Ложная подпись «в производстве» у плит без плана, пока КП ещё у менеджера.
+        # Вне блока «колонки status ещё нет»: старый NULL → «в производстве» не повторяем.
+        cur.execute(
+            """
+            UPDATE kp_plates
+            SET status = NULL
+            WHERE status = 'в производстве'
+              AND (plan_id IS NULL OR TRIM(plan_id) = '')
+              AND kp_id IN (
+                  SELECT kp_id FROM kp_meta
+                  WHERE status IN ('в архиве', 'на согласовании')
+              )
+            """
+        )
+
         # P5: day_number — день производства, в который попала плита.
         # Записывается mark_plates_as_planned. Нужен, чтобы day_view мог читать
         # plates_info напрямую из БД и держать инвариант с complete_day.

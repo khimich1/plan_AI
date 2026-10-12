@@ -39,11 +39,7 @@ from core.march_price_db import (
     init_march_prices_schema,
     parse_march_price_rows_from_xlsx,
 )
-from core.pile_price_db import (
-    import_pile_prices_from_xlsx,
-    init_pile_prices_schema,
-    parse_pile_price_rows_from_xlsx,
-)
+from core.pile_price_db import init_pile_prices_schema
 from core.plate_nikita_parser import find_price_sheet_name, has_nikita_column, parse_plate_nikita_rows
 from core.price_db import import_plate_nikita_from_xlsx, init_schema, list_plate_prices, plate_prices_meta
 from core.price_desk_classify import (
@@ -65,7 +61,7 @@ MSG_NO_NIKITA = "это не прайс ПБ: нет колонки Никиты
 MSG_SHA_MISMATCH = "файл не тот, что в превью"
 MSG_NEED_SHA = "укажите file_sha256 с превью"
 MSG_EMPTY_ROWS = "не удалось прочитать цены с листа «Прайс»"
-MSG_NOT_PILE = "имя файла и содержимое не совпали: это не прайс цельных свай"
+MSG_PILE_CALCULATED = "цены цельных свай считаются на этом экране"
 MSG_EMPTY_FILE = "Пустой файл."
 MSG_NOT_EXCEL = "Нужен файл Excel (.xls или .xlsx)"
 
@@ -175,6 +171,10 @@ class PriceDeskService:
             kind = classify_price_filename(name)
         except ClassifyError as exc:
             raise PriceDeskError(str(exc) or MSG_UNKNOWN_KIND) from exc
+        if kind == "composite":
+            raise PriceDeskError(MSG_COMPOSITE)
+        if kind == "pile":
+            raise PriceDeskError(MSG_PILE_CALCULATED)
         product_kind = cast(PriceDeskKind, kind)
 
         db = self.db_path()
@@ -203,9 +203,7 @@ class PriceDeskService:
         elif kind == "bridge_pile":
             rows = parse_bridge_pile_price_rows_from_xlsx(path)
         elif kind == "pile":
-            rows = parse_pile_price_rows_from_xlsx(path)
-            if any("ФБС" in str(row[0]).upper() for row in rows):
-                raise PriceDeskError(MSG_NOT_PILE)
+            raise PriceDeskError(MSG_PILE_CALCULATED)
         elif kind == "composite_pile":
             try:
                 rows = parse_composite_pile_price_rows_from_xlsx(path)
@@ -259,7 +257,7 @@ class PriceDeskService:
         if kind == "bridge_pile":
             return import_bridge_pile_prices_from_xlsx(path, db)
         if kind == "pile":
-            return import_pile_prices_from_xlsx(path, db)
+            raise PriceDeskError(MSG_PILE_CALCULATED)
         if kind == "composite_pile":
             try:
                 return import_composite_pile_prices_from_xlsx(path, db)

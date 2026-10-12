@@ -487,3 +487,133 @@ def test_offers_service_rejects_early_date_with_earliest(tmp_path) -> None:
     assert "04.09.2026" in str(exc_info.value.detail)
     assert _state(db_path, 53)["status"] == "в архиве"
     assert _promise_rows(db_path, 53) == []
+
+
+def _plates(db_path: str, kp_id: int) -> list[tuple]:
+    with sqlite3.connect(db_path) as conn:
+        return conn.execute(
+            """
+            SELECT plate_name, status, plan_id
+            FROM kp_plates
+            WHERE kp_id = ?
+            ORDER BY id
+            """,
+            (kp_id,),
+        ).fetchall()
+
+
+def test_commit_move_to_production_marks_empty_unplanned_plates(tmp_path) -> None:
+    """Button stamps «в производстве» only on empty statuses without a plan id."""
+    db_path = make_iso_db(tmp_path)
+    seed_kp_offer(db_path, 70, status="в архиве")
+    seed_plate(
+        db_path,
+        kp_id=70,
+        plate_name="empty",
+        length_m=6.0,
+        width_m=1.2,
+        qty=1,
+        status="в производстве",
+        position_number=1,
+    )
+    seed_plate(
+        db_path,
+        kp_id=70,
+        plate_name="blank",
+        length_m=6.0,
+        width_m=1.2,
+        qty=1,
+        status="   ",
+        position_number=2,
+    )
+    seed_plate(
+        db_path,
+        kp_id=70,
+        plate_name="in-plan",
+        length_m=6.0,
+        width_m=1.2,
+        qty=1,
+        status="в плане",
+        position_number=3,
+    )
+    seed_plate(
+        db_path,
+        kp_id=70,
+        plate_name="has-plan",
+        length_m=6.0,
+        width_m=1.2,
+        qty=1,
+        status="в производстве",
+        plan_id="P-9",
+        position_number=4,
+    )
+    seed_plate(
+        db_path,
+        kp_id=70,
+        plate_name="blank-plan",
+        length_m=6.0,
+        width_m=1.2,
+        qty=1,
+        status="в производстве",
+        plan_id="  ",
+        position_number=5,
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE kp_plates
+            SET status = NULL
+            WHERE kp_id = ? AND plate_name IN ('empty', 'has-plan', 'blank-plan')
+            """,
+            (70,),
+        )
+        conn.commit()
+
+    ordered = offers_write.commit_move_to_production(70, "15.08.2026", db_path)
+
+    assert ordered == 5
+    assert _state(db_path, 70)["status"] == "в работе"
+    assert _plates(db_path, 70) == [
+        ("empty", "в производстве", None),
+        ("blank", "в производстве", None),
+        ("in-plan", "в плане", None),
+        ("has-plan", None, "P-9"),
+        ("blank-plan", "в производстве", "  "),
+    ]
+
+
+def test_commit_move_to_production_rolls_back_plate_status_stamp(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure before commit must not leave plates signed «в производстве»."""
+    db_path = make_iso_db(tmp_path)
+    seed_kp_offer(db_path, 71, status="на согласовании")
+    seed_plate(
+        db_path,
+        kp_id=71,
+        plate_name="empty",
+        length_m=6.0,
+        width_m=1.2,
+        qty=2,
+        status="в производстве",
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE kp_plates SET status = NULL WHERE kp_id = ?",
+            (71,),
+        )
+        conn.commit()
+
+    def boom(conn, kp_id, promise):
+        raise RuntimeError("promise write failed")
+
+    monkeypatch.setattr(offers_write, "_write_move_promise", boom)
+
+    with pytest.raises(RuntimeError, match="promise write failed"):
+        offers_write.commit_move_to_production(
+            71, "20.08.2026", db_path, promise=_payload()
+        )
+
+    assert _state(db_path, 71)["status"] == "на согласовании"
+    assert _state(db_path, 71)["ordered_qty"] is None
+    assert _plates(db_path, 71) == [("empty", None, None)]

@@ -16,6 +16,37 @@ const tasksState: GuidTasksResponse = {
   duplicates: [],
 };
 
+vi.mock("@/features/price-desk/hooks/usePileCostQueries", () => ({
+  usePileCostQuery: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    error: null,
+  }),
+  useSavePileCostInputsMutation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+    reset: vi.fn(),
+  }),
+  usePileCostPreviewMutation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+    reset: vi.fn(),
+  }),
+  usePileCostApplyMutation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+    reset: vi.fn(),
+  }),
+}));
+
 vi.mock("@/features/price-desk/hooks/usePriceDeskQueries", () => ({
   usePriceDeskStatusQuery: () => ({
     data: STATUS,
@@ -120,6 +151,9 @@ describe("PricesView", () => {
     expect(screen.getByText("2026-08-17")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Записать в программу" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Загрузка прайса завода" })).toBeInTheDocument();
+    const pile = screen.getByRole("region", { name: "Цельные сваи" });
+    const drop = screen.getByRole("button", { name: "Выбрать или перетащить файл Excel" });
+    expect(pile.compareDocumentPosition(drop) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Выгрузка из 1С" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Задачи по изделиям" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Дубли GUID" })).toBeInTheDocument();

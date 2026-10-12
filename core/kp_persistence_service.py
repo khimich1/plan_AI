@@ -1134,8 +1134,8 @@ class KpPersistenceService:
                 qty, unit_weight, total_weight, discounted_price, unit_price,
                 length_dm_raw, nomenclature_id, concrete_grade, line_id,
                 frost_resistance, waterproofness,
-                concrete_aggregate, concrete_spec_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                concrete_aggregate, concrete_spec_source, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
             """,
             (
                 kp_id,
