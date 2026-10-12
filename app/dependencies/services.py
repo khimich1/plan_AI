@@ -35,6 +35,7 @@ from app.services.gsm_transaction_service import GsmTransactionService
 from app.services.nomenclature_import_service import NomenclatureImportService
 from app.services.nomenclature_queue_service import NomenclatureQueueService
 from app.services.offers_service import OffersService
+from app.services.pile_cost_service import PileCostService
 from app.services.price_desk_service import PriceDeskService
 from app.services.production_capacity_service import ProductionCapacityService
 from app.services.production_planning_service import ProductionPlanningService
@@ -131,6 +132,10 @@ def get_nomenclature_queue_service() -> NomenclatureQueueService:
 
 def get_price_desk_service() -> PriceDeskService:
     return PriceDeskService()
+
+
+def get_pile_cost_service() -> PileCostService:
+    return PileCostService()
 
 
 def get_delivery_schedule_service() -> DeliveryScheduleService:

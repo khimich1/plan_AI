@@ -11,6 +11,7 @@ import { priceDeskKindLabel } from "@/features/price-desk/types/priceDesk";
 import { getErrorMessage } from "@/shared/lib/apiError";
 import { Import1cDialog } from "@/features/nomenclature/components/Import1cDialog";
 import { DuplicatesSection } from "@/features/price-desk/components/DuplicatesSection";
+import { PileCostPanel } from "@/features/price-desk/components/PileCostPanel";
 import { TasksSection } from "@/features/price-desk/components/TasksSection";
 
 const ACCEPT = ".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -143,6 +144,8 @@ export const PricesView = () => {
             </table>
           </div>
         </section>
+
+        <PileCostPanel />
 
         <section aria-label="Загрузка прайса завода" style={{ display: "grid", gap: "0.85rem" }}>
           <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Загрузка прайса завода</h2>
