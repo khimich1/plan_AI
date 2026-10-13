@@ -471,6 +471,139 @@ def test_comma_and_dot_decimal_length_parse_the_same():
     assert comma.load_code == pytest.approx(8.0, abs=1e-6)
 
 
+# ── DS-101: точка между длиной с запятой и шириной ─────────────────────────
+
+_COMMA_DOT_CANON_CASES = [
+    ("ПБ 35,3.10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 56,3.10,2-8 12", "ПБ 56,3-10,2-8 12"),
+    ("ПБ 60,5.10,2-8 2", "ПБ 60,5-10,2-8 2"),
+    ("ПБ 32,5.10,2-8 4", "ПБ 32,5-10,2-8 4"),
+    ("ПБ 56,3.10,2-10 4", "ПБ 56,3-10,2-10 4"),
+    ("ПБ 30,4.10,2-8 8", "ПБ 30,4-10,2-8 8"),
+    ("ПБ 30,4.10,2-10 6", "ПБ 30,4-10,2-10 6"),
+    ("ПБ 35,3.12-8 44", "ПБ 35,3-12-8 44"),
+    ("ПБ 35,3.10,2-8п 44", "ПБ 35,3-10,2-8п 44"),
+    ("пб35,3.10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПК 35,3.10,2-8 3", "ПК 35,3-10,2-8 3"),
+    ("ПБ 35,3 . 10,2 - 8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 35,3 10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 35,3 12-8 44", "ПБ 35,3-12-8 44"),
+    ("ПБ 35,3/10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 35,3*10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 35,3;10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 35,3:10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 35,3x10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 35,3×10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 35,3·10,2-8 44", "ПБ 35,3-10,2-8 44"),
+    ("ПБ 35,3_10,2-8 44", "ПБ 35,3-10,2-8 44"),
+]
+
+
+@pytest.mark.parametrize("raw, expected", _COMMA_DOT_CANON_CASES)
+def test_canonicalize_comma_length_dot_separator(raw, expected):
+    canon, warn = canonicalize_plate_line(raw)
+    _assert_eq(canon, expected, "точка между длиной и шириной → дефис")
+    assert warn == f"{raw!r} → {expected!r}"
+
+
+# ── DS-102: не менять смысл ────────────────────────────────────────────────
+
+def test_catalog_marks_keep_catalog_canonical_form():
+    canon, warn = canonicalize_plate_line("ПБ 59.12-8Вр1400-25")
+    _assert_eq(canon, "ПБ 59-12-8п", "каталог 59.12")
+    assert warn is not None
+
+    canon_narrow, warn_narrow = canonicalize_plate_line("ПБ56.05-10")
+    _assert_eq(canon_narrow, "ПБ 56-5,0-10п", "каталог 56.05")
+    assert warn_narrow is not None
+
+
+def test_dot_decimal_length_is_not_rewritten_as_catalog():
+    canon, warn = canonicalize_plate_line("ПБ 47.5-12-8п 2")
+    assert warn is None
+    assert "47.5" in canon or "47,5" in canon
+    assert "47-5,0" not in canon
+    parsed = parse_line(canon)
+    assert parsed.parsed
+    _assert_close(parsed.length_m, 4.75, 1e-3, "длина 47.5")
+    _assert_close(parsed.width_m, 1.2, 1e-3, "ширина 12")
+    _assert_close(parsed.load_code, 8.0, 1e-6, "нагрузка")
+    _assert_eq(parsed.qty, 2, "qty")
+
+
+def test_comma_decimal_length_with_hyphen_stays():
+    raw = "ПБ 47,5-12-8п 2"
+    canon, warn = canonicalize_plate_line(raw)
+    assert warn is None
+    parsed = parse_line(canon)
+    assert parsed.parsed
+    _assert_close(parsed.length_m, 4.75, 1e-3, "длина 47,5")
+    _assert_close(parsed.width_m, 1.2, 1e-3, "ширина")
+    _assert_close(parsed.load_code, 8.0, 1e-6, "нагрузка")
+    _assert_eq(parsed.qty, 2, "qty")
+
+
+def test_already_hyphenated_comma_length_unchanged():
+    raw = "ПБ 35,3-10,2-8 44"
+    canon, warn = canonicalize_plate_line(raw)
+    _assert_eq(canon, raw, "уже дефис")
+    assert warn is None
+
+
+def test_comma_between_length_and_width_is_not_a_separator():
+    raw = "ПБ 35,3,10,2-8 44"
+    canon, warn = canonicalize_plate_line(raw)
+    _assert_eq(canon, raw, "запятая не разделитель длины и ширины")
+    assert warn is None
+
+
+def test_two_dots_after_comma_length_are_not_rewritten():
+    """Две точки: разделитель неоднозначен, откат без warning."""
+    raw = "ПБ 35,3.10.2-8 44"
+    canon, warn = canonicalize_plate_line(raw)
+    _assert_eq(canon, raw, "две точки не переписываем")
+    assert warn is None
+
+
+def test_wxl_line_is_not_a_plate_mark_rewrite():
+    canon, warn = canonicalize_plate_line("1.2x3.39 — 2 шт")
+    assert warn is None
+    assert "1.2x3.39" in canon
+    assert "ПБ" not in canon.upper()
+
+
+# ── DS-103: семь строк инцидента ───────────────────────────────────────────
+
+_INCIDENT_COMMA_DOT_LINES = [
+    ("ПБ 35,3.10,2-8 44", 3.53, 1.02, 8.0, 44),
+    ("ПБ 56,3.10,2-8 12", 5.63, 1.02, 8.0, 12),
+    ("ПБ 60,5.10,2-8 2", 6.05, 1.02, 8.0, 2),
+    ("ПБ 32,5.10,2-8 4", 3.25, 1.02, 8.0, 4),
+    ("ПБ 56,3.10,2-10 4", 5.63, 1.02, 10.0, 4),
+    ("ПБ 30,4.10,2-8 8", 3.04, 1.02, 8.0, 8),
+    ("ПБ 30,4.10,2-10 6", 3.04, 1.02, 10.0, 6),
+]
+
+
+def test_incident_comma_dot_lines_parse_after_normalize():
+    text = "\n".join(raw for raw, *_rest in _INCIDENT_COMMA_DOT_LINES)
+    result = normalize_order_text(text)
+    _assert_eq(len(result.normalized_lines), 7, "семь строк без склейки")
+    assert len(result.unrecognized_lines) == 0
+
+    for idx, (line, expected) in enumerate(
+        zip(result.normalized_lines, _INCIDENT_COMMA_DOT_LINES)
+    ):
+        _raw, length_m, width_m, load, qty = expected
+        parsed = parse_line(line)
+        assert parsed.parsed, f"строка {idx + 1} не разобрана: {line!r} {parsed.reason_code}"
+        assert parsed.reason_code != "dimension_parse_failed"
+        _assert_close(parsed.length_m, length_m, 1e-3, f"строка {idx + 1} длина")
+        _assert_close(parsed.width_m, width_m, 1e-3, f"строка {idx + 1} ширина")
+        _assert_close(parsed.load_code, load, 1e-6, f"строка {idx + 1} нагрузка")
+        _assert_eq(parsed.qty, qty, f"строка {idx + 1} qty")
+
+
 # ── NM-301: сторож канона ──────────────────────────────────────────────────
 
 def test_catalog_tuple_matches_canonical_accepts_legit_rewrite():
