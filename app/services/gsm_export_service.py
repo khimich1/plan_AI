@@ -24,6 +24,7 @@ from openpyxl import load_workbook
 
 from app.repositories.gsm_repository import GsmRepository
 from app.services.gsm_kit_gate import filter_kit_vehicle_ids
+from core.gsm.driver_pool import ELIGIBLE_CODES
 from core.gsm.blank import (
     BlankDriver,
     BlankWaybill,
@@ -190,6 +191,9 @@ class GsmExportService:
             )
 
         waybills.sort(key=lambda r: (str(r["date"]), int(r["vehicle_id"]), int(r["id"])))
+        self._assert_driver_rules(
+            waybills, period_from=period_from, period_to=period_to
+        )
 
         if not self._template_path.exists():
             raise GsmExportError(
@@ -309,6 +313,52 @@ class GsmExportService:
             f"gsm_waybills_{period_from.isoformat()}_{period_to.isoformat()}.zip"
         )
         return buf.getvalue(), filename
+
+    def _assert_driver_rules(
+        self,
+        waybills: list[dict[str, Any]],
+        *,
+        period_from: date,
+        period_to: date,
+    ) -> None:
+        """Reject a kit with a shared person-day or a non-Я/В code before soffice."""
+        if not self._repo.timesheet_period_covered(period_from, period_to):
+            raise GsmExportError(
+                "За период нет табеля рабочего времени.",
+                code="gsm_timesheet_missing",
+                details={
+                    "period_from": period_from.isoformat(),
+                    "period_to": period_to.isoformat(),
+                },
+            )
+        codes = {
+            (int(row["driver_id"]), str(row["date"])): str(row["code"])
+            for row in self._repo.list_timesheet_days(
+                period_from=period_from, period_to=period_to
+            )
+        }
+        seen: dict[tuple[int, str], int] = {}
+        problems: list[str] = []
+        for row in waybills:
+            driver_id = int(row["driver_id"])
+            day = str(row["date"])[:10]
+            vehicle_id = int(row["vehicle_id"])
+            key = (driver_id, day)
+            previous = seen.get(key)
+            if previous is not None and previous != vehicle_id:
+                problems.append(f"{day}: водитель в двух путевых")
+            else:
+                seen[key] = vehicle_id
+            code = codes.get(key)
+            if code not in ELIGIBLE_CODES:
+                shown = code if code else "нет явки"
+                problems.append(f"{day}: код {shown}")
+        if problems:
+            raise GsmExportError(
+                "Нарушение правил водителей: " + "; ".join(problems),
+                code="gsm_driver_rule_violation",
+                details={"violations": problems},
+            )
 
 
 def _as_date(value: Any) -> date:

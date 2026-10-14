@@ -40,6 +40,13 @@ describe("waybillWarnings helpers", () => {
     expect(warningMeta("balance_route").reason).toMatch(/удлин|маршрут/i);
   });
 
+  it("maps weekend_driver and no_available_driver", () => {
+    expect(warningMeta("weekend_driver").short).toBe("Свой выходной");
+    expect(warningMeta("no_available_driver").short).toBe("Нужен водитель");
+    expect(isProblematicDay(base({ warnings: ["no_available_driver"] }))).toBe(true);
+    expect(isProblematicDay(base({ warnings: ["weekend_driver"] }))).toBe(false);
+  });
+
   it("maps borrowed_route to a short yellow label about another vehicle", () => {
     expect(warningMeta("borrowed_route").short).toBe("Чужой пул");
     expect(warningMeta("borrowed_route").reason).toMatch(/друг|машин/i);

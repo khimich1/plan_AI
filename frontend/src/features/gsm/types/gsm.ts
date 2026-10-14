@@ -339,3 +339,40 @@ export type GsmResetToAnchorsReport = {
   import_batches_deleted: number;
   anchors: GsmAnchor[];
 };
+
+export type TimesheetUnmatchedRow = {
+  full_name: string;
+  personnel_number: string | null;
+};
+
+export type TimesheetImportReport = {
+  period: string;
+  rows_total: number;
+  matched: number;
+  unmatched: TimesheetUnmatchedRow[];
+  codes_summary: Record<string, number>;
+};
+
+export type TimesheetGridCell = {
+  driver_id: number;
+  full_name: string;
+  personnel_number: string | null;
+  date: string;
+  code: string;
+};
+
+export type TimesheetBatch = {
+  id: number;
+  filename: string;
+  period_from: string;
+  period_to: string;
+  rows_total: number | null;
+  matched: number | null;
+  uploaded_at: string;
+};
+
+export type TimesheetGrid = {
+  period: string;
+  cells: TimesheetGridCell[];
+  batches: TimesheetBatch[];
+};

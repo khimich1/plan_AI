@@ -653,3 +653,120 @@ def test_http_accountant_allowed_patch(api_client: CsrfAwareTestClient) -> None:
         cookies=cookies,
     )
     assert resp.status_code == 200, resp.text
+
+
+def test_patch_busy_driver_is_409(api_client: CsrfAwareTestClient) -> None:
+    from app.core.settings import get_settings as _gs
+
+    repo = GsmRepository(db_path=str(_gs().plita_db_path))
+    kuligin = repo.create_driver(
+        full_name="Кулигин", license_number="44 21 000143", personnel_number="143"
+    )
+    other = repo.create_driver(
+        full_name="Полякова", license_number="44 21 000001", personnel_number="1"
+    )
+    tugella = repo.create_vehicle(
+        name="Tugella 848",
+        plate_number="О 848 ХР 44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=kuligin,
+    )
+    other_car = repo.create_vehicle(
+        name="Tugella 952",
+        plate_number="О 952 ХР 44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=other,
+    )
+    day = date(2026, 7, 12)
+    repo.upsert_waybill(
+        vehicle_id=tugella,
+        date=day,
+        driver_id=kuligin,
+        status="draft",
+        odometer_start=1000,
+        odometer_end=1100,
+        fuel_start=20.0,
+        fuel_issued=0.0,
+        fuel_end=18.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 100}]),
+    )
+    target = repo.upsert_waybill(
+        vehicle_id=other_car,
+        date=day,
+        driver_id=other,
+        status="draft",
+        odometer_start=1000,
+        odometer_end=1100,
+        fuel_start=20.0,
+        fuel_issued=0.0,
+        fuel_end=18.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 100}]),
+    )
+    resp = api_client.patch(
+        f"{WAYBILLS}/{target}",
+        json={"driver_id": kuligin},
+        cookies=_auth(),
+    )
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "gsm_driver_busy"
+    assert "Кулигин уже в О 848 ХР 44 на 12.07" in detail["message"]
+
+
+def test_patch_absent_driver_is_409(api_client: CsrfAwareTestClient) -> None:
+    from app.core.settings import get_settings as _gs
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    repo = GsmRepository(db_path=str(_gs().plita_db_path))
+    lonshakova = repo.create_driver(
+        full_name="Лоншакова", license_number="44 21 000470", personnel_number="470"
+    )
+    other = repo.create_driver(
+        full_name="Полякова", license_number="44 21 000001", personnel_number="1"
+    )
+    vehicle_id = repo.create_vehicle(
+        name="Monjaro",
+        plate_number="О 301 МН 44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=lonshakova,
+    )
+    day = date(2026, 7, 27)
+    seed_present_days(repo, other, period_from=day, period_to=day)
+    batch_id = repo.insert_timesheet_batch(
+        filename="табель от 31.07.2026.xlsx",
+        period_from=date(2026, 7, 1),
+        period_to=date(2026, 7, 31),
+        rows_total=1,
+        matched=1,
+        uploaded_by="test",
+        uploaded_at="2026-07-01T00:00:00",
+    )
+    repo.add_timesheet_days(
+        batch_id=batch_id,
+        rows=[{"driver_id": lonshakova, "date": day, "code": "ОТ"}],
+    )
+    target = repo.upsert_waybill(
+        vehicle_id=vehicle_id,
+        date=day,
+        driver_id=other,
+        status="draft",
+        odometer_start=1000,
+        odometer_end=1100,
+        fuel_start=20.0,
+        fuel_issued=0.0,
+        fuel_end=18.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 100}]),
+    )
+    resp = api_client.patch(
+        f"{WAYBILLS}/{target}",
+        json={"driver_id": lonshakova},
+        cookies=_auth(),
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "gsm_driver_absent"

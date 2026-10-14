@@ -22,6 +22,8 @@ GSM_TABLES = (
     "gsm_route",
     "gsm_waybill",
     "gsm_setting",
+    "gsm_timesheet_batch",
+    "gsm_timesheet_day",
 )
 
 VEHICLE_COLS = {
@@ -93,6 +95,17 @@ WAYBILL_COLS = {
     "warnings_json",
 }
 SETTING_COLS = {"key", "value"}
+TIMESHEET_BATCH_COLS = {
+    "id",
+    "filename",
+    "period_from",
+    "period_to",
+    "rows_total",
+    "matched",
+    "uploaded_by",
+    "uploaded_at",
+}
+TIMESHEET_DAY_COLS = {"id", "batch_id", "driver_id", "date", "code"}
 
 
 def _fresh_db(tmp_path: Path, name: str = "gsm.db") -> str:
@@ -208,6 +221,8 @@ def test_ensure_schema_gsm_table_columns(tmp_path: Path) -> None:
         "gsm_route": ROUTE_COLS,
         "gsm_waybill": WAYBILL_COLS,
         "gsm_setting": SETTING_COLS,
+        "gsm_timesheet_batch": TIMESHEET_BATCH_COLS,
+        "gsm_timesheet_day": TIMESHEET_DAY_COLS,
     }
     with _connect(db_path) as conn:
         for table, cols in expected.items():
@@ -897,3 +912,119 @@ def test_list_waybills_all_vehicles_sorted_by_vehicle_then_date(tmp_path: Path) 
     )
     assert len(only_v2) == 1
     assert only_v2[0]["vehicle_id"] == v2
+
+
+def test_timesheet_day_index_is_not_unique(tmp_path: Path) -> None:
+    db_path = _fresh_db(tmp_path)
+    with _connect(db_path) as conn:
+        indexes = _indexed_columns(conn, "gsm_timesheet_day")
+        unique_sets = _unique_index_column_sets(conn, "gsm_timesheet_day")
+    assert ["driver_id", "date"] in indexes.values()
+    assert ["driver_id", "date"] not in unique_sets
+
+
+def test_replace_timesheet_days_keeps_batch_history(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    driver_id = _seed_driver(repo, full_name="Скрябин")
+    first = repo.insert_timesheet_batch(
+        filename="july-a.xlsx",
+        period_from=date(2026, 7, 1),
+        period_to=date(2026, 7, 31),
+        rows_total=1,
+        matched=1,
+        uploaded_by="accountant",
+        uploaded_at="2026-07-01T10:00:00",
+    )
+    repo.replace_timesheet_days(
+        period_from=date(2026, 7, 1),
+        period_to=date(2026, 7, 31),
+        batch_id=first,
+        rows=[{"driver_id": driver_id, "date": date(2026, 7, 1), "code": "Я"}],
+    )
+    second = repo.insert_timesheet_batch(
+        filename="july-b.xlsx",
+        period_from=date(2026, 7, 1),
+        period_to=date(2026, 7, 31),
+        rows_total=1,
+        matched=1,
+        uploaded_by="accountant",
+        uploaded_at="2026-07-02T10:00:00",
+    )
+    repo.replace_timesheet_days(
+        period_from=date(2026, 7, 1),
+        period_to=date(2026, 7, 31),
+        batch_id=second,
+        rows=[{"driver_id": driver_id, "date": date(2026, 7, 1), "code": "ОТ"}],
+    )
+
+    days = repo.list_timesheet_days(
+        period_from=date(2026, 7, 1), period_to=date(2026, 7, 31)
+    )
+    assert [(row["code"], row["batch_id"]) for row in days] == [("ОТ", second)]
+    batches = repo.list_timesheet_batches()
+    assert [row["id"] for row in batches] == [first, second]
+
+
+def test_busy_drivers_ignore_the_vehicle_being_rewritten(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    lonshakova = repo.create_driver(
+        full_name="Лоншакова",
+        license_number="44 00 000470",
+        personnel_number="470",
+    )
+    monjaro = _seed_vehicle(
+        repo, name="Monjaro", plate_number="О 301 МН 44", primary_driver_id=lonshakova
+    )
+    tugella = _seed_vehicle(
+        repo, name="Tugella", plate_number="О 848 ХР 44", primary_driver_id=lonshakova
+    )
+    day = date(2026, 7, 12)
+    repo.upsert_waybill(
+        vehicle_id=monjaro,
+        date=day,
+        driver_id=lonshakova,
+        odometer_start=1,
+        odometer_end=2,
+    )
+    for_others = repo.busy_drivers_by_date(
+        period_from=day, period_to=day, exclude_vehicle_id=tugella
+    )
+    assert lonshakova in for_others[day.isoformat()]
+    for_monjaro = repo.busy_drivers_by_date(
+        period_from=day, period_to=day, exclude_vehicle_id=monjaro
+    )
+    assert day.isoformat() not in for_monjaro
+
+
+def test_substitute_counts_skip_a_day_on_the_drivers_own_vehicle(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    kuligin = _seed_driver(repo, full_name="Кулигин")
+    polyakova = repo.create_driver(
+        full_name="Полякова",
+        license_number="44 00 000001",
+        personnel_number="1",
+    )
+    tugella_952 = _seed_vehicle(
+        repo, name="Tugella 952", plate_number="О 952 ХР 44", primary_driver_id=kuligin
+    )
+    own = _seed_vehicle(
+        repo, name="Своя", plate_number="О 111 АА 44", primary_driver_id=polyakova
+    )
+    repo.upsert_waybill(
+        vehicle_id=tugella_952,
+        date=date(2026, 7, 6),
+        driver_id=polyakova,
+        odometer_start=1,
+        odometer_end=2,
+    )
+    repo.upsert_waybill(
+        vehicle_id=own,
+        date=date(2026, 7, 7),
+        driver_id=polyakova,
+        odometer_start=1,
+        odometer_end=2,
+    )
+    counts = repo.substitute_counts(
+        period_from=date(2026, 7, 1), period_to=date(2026, 7, 31)
+    )
+    assert counts == {polyakova: 1}

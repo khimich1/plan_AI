@@ -17,6 +17,10 @@ const { noopMutation, importMutateAsync } = vi.hoisted(() => {
   };
 });
 
+vi.mock("@/features/auth/model/AuthProvider", () => ({
+  useAuth: () => ({ user: { role: "accountant" } }),
+}));
+
 vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
   useGsmVehiclesQuery: () => ({
     isLoading: false,
@@ -77,6 +81,16 @@ vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
       season_switched_at: null,
     },
   }),
+  useTimesheetGridQuery: () => ({
+    isLoading: false,
+    error: null,
+    data: { period: "2026-07", cells: [], batches: [] },
+  }),
+  useImportTimesheetMutation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    reset: vi.fn(),
+  }),
   useGsmWaybillsQuery: () => ({
     isLoading: false,
     error: null,
@@ -99,6 +113,12 @@ vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
   usePatchStationMutation: noopMutation,
   usePutGsmSettingsMutation: noopMutation,
   useUpdateGsmSeasonMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useGsmResetToAnchorsMutation: () => ({
     mutate: vi.fn(),
     isPending: false,
     isError: false,

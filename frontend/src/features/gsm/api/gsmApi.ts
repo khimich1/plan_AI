@@ -15,6 +15,8 @@ import type {
   OverviewParams,
   StationCreatePayload,
   StationPatchPayload,
+  TimesheetGrid,
+  TimesheetImportReport,
   TransactionImportReport,
   TransactionListParams,
   TransactionListResponse,
@@ -198,4 +200,16 @@ export const gsmApi = {
 
   resetToAnchors: () =>
     httpClient.post<GsmResetToAnchorsReport>(`${BASE}/reset-to-anchors`),
+
+  importTimesheet: (file: File, month?: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (month) {
+      form.append("month", month);
+    }
+    return httpClient.post<TimesheetImportReport>(`${BASE}/timesheets/import`, form);
+  },
+
+  getTimesheetGrid: (period: string) =>
+    httpClient.get<TimesheetGrid>(`${BASE}/timesheets?period=${encodeURIComponent(period)}`),
 };

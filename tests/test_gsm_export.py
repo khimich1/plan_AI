@@ -279,6 +279,9 @@ def _seed_export_bundle(
         "season_switches",
         json.dumps([{"date": "2025-11-01", "mode": "winter"}]),
     )
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    seed_present_days(repo, driver_id)
     return {
         "vehicle_id": vehicle_id,
         "driver_id": driver_id,
@@ -570,6 +573,9 @@ def _seed_named_export_vehicle(
         "season_switches",
         json.dumps([{"date": "2026-04-01", "mode": "summer"}], ensure_ascii=False),
     )
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    seed_present_days(repo, driver_id)
     return {"vehicle_id": vehicle_id, "driver_id": driver_id}
 
 
@@ -667,3 +673,101 @@ def test_export_august_mix_exports_clean_skips_tail(
     assert _waybill_statuses(repo, monjaro["vehicle_id"], august_from, august_to) == [
         "draft"
     ]
+
+
+def _draft_pair(
+    repo: GsmRepository,
+    *,
+    driver_id: int,
+    vehicle_id: int,
+    day: date,
+) -> None:
+    repo.upsert_waybill(
+        vehicle_id=vehicle_id,
+        date=day,
+        driver_id=driver_id,
+        status="draft",
+        source="manual",
+        odometer_start=1000,
+        odometer_end=1100,
+        fuel_start=20.0,
+        fuel_issued=0.0,
+        fuel_end=18.0,
+        route_json=json.dumps([{"from": "Завод", "to": "Клиент", "km": 100}]),
+    )
+
+
+def test_export_pair_is_409_before_soffice(api_client: CsrfAwareTestClient) -> None:
+    settings = get_settings()
+    repo = GsmRepository(db_path=settings.plita_db_path)
+    kuligin = repo.create_driver(
+        full_name="Кулигин", license_number="44 21 000143", personnel_number="143"
+    )
+    first = repo.create_vehicle(
+        name="Tugella 848",
+        plate_number="О 848 ХР 44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=kuligin,
+    )
+    second = repo.create_vehicle(
+        name="Tugella 952",
+        plate_number="О 952 ХР 44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=kuligin,
+    )
+    day = date(2026, 7, 12)
+    _draft_pair(repo, driver_id=kuligin, vehicle_id=first, day=day)
+    _draft_pair(repo, driver_id=kuligin, vehicle_id=second, day=day)
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    seed_present_days(repo, kuligin, period_from=date(2026, 7, 1), period_to=date(2026, 7, 31))
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("soffice must not run")
+
+    with patch("app.services.gsm_export_service.convert_with_soffice", side_effect=_boom):
+        resp = api_client.post(
+            EXPORT,
+            json={
+                "vehicle_ids": [first, second],
+                "from": "2026-07-01",
+                "to": "2026-07-31",
+            },
+            cookies=_auth(),
+        )
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "gsm_driver_rule_violation"
+    assert "2026-07-12" in detail["message"]
+
+
+def test_export_without_timesheet_is_409(api_client: CsrfAwareTestClient) -> None:
+    settings = get_settings()
+    repo = GsmRepository(db_path=settings.plita_db_path)
+    driver_id = repo.create_driver(
+        full_name="Кулигин", license_number="44 21 000143", personnel_number="143"
+    )
+    vehicle_id = repo.create_vehicle(
+        name="Tugella 848",
+        plate_number="О 848 ХР 44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=driver_id,
+    )
+    _draft_pair(repo, driver_id=driver_id, vehicle_id=vehicle_id, day=date(2026, 7, 12))
+    resp = api_client.post(
+        EXPORT,
+        json={
+            "vehicle_ids": [vehicle_id],
+            "from": "2026-07-01",
+            "to": "2026-07-31",
+        },
+        cookies=_auth(),
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "gsm_timesheet_missing"

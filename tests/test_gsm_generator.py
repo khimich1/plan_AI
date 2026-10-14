@@ -2249,3 +2249,89 @@ def test_generate_burn_in_orients_object_first_from_home() -> None:
     assert thu_wb.legs[0].addr_b == _VOLOGDA
     assert thu_wb.route.route_id == 7
 
+
+# ---------------------------------------------------------------------------
+# Driver pool on generate(): optional, legacy calls stay on driver_id
+# ---------------------------------------------------------------------------
+
+
+def _pool_generate(
+    days: tuple[date, ...],
+    *,
+    primary_id: int = DRIVER_ID,
+    drivers_by_date=None,
+    substitute_counts=None,
+):
+    return generate(
+        transactions=tuple(
+            _tx(day, service_type="wash", qty_liters=None) for day in days
+        ),
+        routes=(_route(1, km=50, frequency=10),),
+        hooks={},
+        driver_id=primary_id,
+        tank_volume_liters=TANK,
+        norm_summer=NORM_SUMMER,
+        norm_winter=NORM_WINTER,
+        season_switches=(),
+        fuel_start=30.0,
+        odometer_start=1_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        drivers_by_date=drivers_by_date,
+        substitute_counts=substitute_counts,
+    )
+
+
+def test_generate_with_pool_uses_head_and_marks_weekend_code() -> None:
+    from core.gsm.driver_pool import DriverCandidate
+
+    days = (date(2026, 7, 6), date(2026, 7, 7))
+    pool = {
+        days[0]: (DriverCandidate(DRIVER_ID, "Я", "143", True),),
+        days[1]: (DriverCandidate(DRIVER_ID, "В", "143", True),),
+    }
+    result = _pool_generate(days, drivers_by_date=pool)
+    by_date = {day.date: day for day in result.days}
+    assert by_date[days[0]].driver_id == DRIVER_ID
+    assert "weekend_driver" not in by_date[days[0]].warnings
+    assert by_date[days[1]].driver_id == DRIVER_ID
+    assert "weekend_driver" in by_date[days[1]].warnings
+
+
+def test_generate_empty_day_falls_back_to_primary() -> None:
+    day = date(2026, 7, 6)
+    result = _pool_generate((day,), drivers_by_date={day: ()})
+    assert len(result.days) == 1
+    assert result.days[0].driver_id == DRIVER_ID
+    assert "no_available_driver" in result.days[0].warnings
+
+
+def test_generate_substitute_on_day_n_rotates_day_n_plus_one() -> None:
+    from core.gsm.driver_pool import DriverCandidate
+
+    primary = 10
+    polyakova = DriverCandidate(2, "Я", "1", False)
+    skryabin = DriverCandidate(3, "Я", "29", False)
+    days = (date(2026, 7, 6), date(2026, 7, 7), date(2026, 7, 8))
+    pool = {day: (polyakova, skryabin) for day in days}
+    result = _pool_generate(days, primary_id=primary, drivers_by_date=pool, substitute_counts={})
+    chosen = [day.driver_id for day in result.days]
+    assert chosen == [2, 3, 2]
+
+
+def test_generate_vacation_series_stays_on_the_only_substitute() -> None:
+    from core.gsm.driver_pool import DriverCandidate
+
+    primary = 10
+    polyakova = DriverCandidate(2, "Я", "1", False)
+    days = (date(2026, 7, 6), date(2026, 7, 7), date(2026, 7, 8))
+    pool = {day: (polyakova,) for day in days}
+    result = _pool_generate(
+        days,
+        primary_id=primary,
+        drivers_by_date=pool,
+        substitute_counts={2: 0},
+    )
+    assert [day.driver_id for day in result.days] == [2, 2, 2]
+    assert all("no_available_driver" not in day.warnings for day in result.days)
+

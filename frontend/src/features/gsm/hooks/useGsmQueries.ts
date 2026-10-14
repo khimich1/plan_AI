@@ -40,6 +40,7 @@ export const gsmKeys = {
     params
       ? (["gsm", "overview", params.periodFrom, params.periodTo] as const)
       : (["gsm", "overview"] as const),
+  timesheet: (period: string) => ["gsm", "timesheet", period] as const,
   transactions: (params: TransactionListParams | null) =>
     params
       ? ([
@@ -178,6 +179,23 @@ export const useUpdateGsmSeasonMutation = () => {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: gsmKeys.settings });
     },
+  });
+};
+
+export const useTimesheetGridQuery = (period: string) =>
+  useQuery({
+    queryKey: gsmKeys.timesheet(period),
+    queryFn: () => gsmApi.getTimesheetGrid(period),
+    enabled: /^\d{4}-\d{2}$/.test(period),
+    staleTime: 10_000,
+  });
+
+export const useImportTimesheetMutation = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { file: File; month?: string }) =>
+      gsmApi.importTimesheet(input.file, input.month),
+    onSuccess: () => invalidateGsm(qc),
   });
 };
 

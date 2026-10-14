@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import NoReturn
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from fastapi.responses import Response
 
 from app.core.http_errors import raise_destructive_db_blocked_error, raise_structured_error
@@ -17,6 +17,7 @@ from app.dependencies.services import (
     get_gsm_registry_service,
     get_gsm_report_service,
     get_gsm_reset_service,
+    get_gsm_timesheet_service,
     get_gsm_transaction_service,
 )
 from app.schemas.gsm import (
@@ -33,6 +34,8 @@ from app.schemas.gsm import (
     StationCreateRequest,
     StationOut,
     StationPatchRequest,
+    TimesheetGrid,
+    TimesheetImportReport,
     TransactionImportReport,
     TransactionListResponse,
     RouteOut,
@@ -56,6 +59,7 @@ from app.services.gsm_overview_service import GsmOverviewError, GsmOverviewServi
 from app.services.gsm_registry_service import GsmRegistryError, GsmRegistryService
 from app.services.gsm_report_service import GsmReportError, GsmReportService
 from app.services.gsm_reset_service import GsmResetError, GsmResetService
+from app.services.gsm_timesheet_service import GsmTimesheetError, GsmTimesheetService
 from app.services.gsm_transaction_service import GsmTransactionError, GsmTransactionService
 from core.destructive_db_guard import (
     DestructiveDbOperationBlocked,
@@ -95,6 +99,8 @@ def _raise_generation_error(exc: GsmGenerationError, *, where: str) -> NoReturn:
         "gsm_waybill_conflict",
         "gsm_waybill_locked",
         "gsm_chain_locked",
+        "gsm_driver_busy",
+        "gsm_driver_absent",
     }:
         http_status = status.HTTP_409_CONFLICT
     elif exc.code == "gsm_invalid_period":
@@ -115,6 +121,8 @@ def _raise_export_error(exc: GsmExportError, *, where: str) -> NoReturn:
         http_status = status.HTTP_404_NOT_FOUND
     elif exc.code in {"gsm_invalid_period"}:
         http_status = status.HTTP_400_BAD_REQUEST
+    elif exc.code in {"gsm_driver_rule_violation", "gsm_timesheet_missing"}:
+        http_status = status.HTTP_409_CONFLICT
     elif exc.code.startswith("gsm_export_soffice") or exc.code == "gsm_export_template_missing":
         http_status = status.HTTP_500_INTERNAL_SERVER_ERROR
     else:
@@ -151,6 +159,16 @@ def _enforce_destructive_db_reset() -> None:
         require_destructive_db_reset()
     except DestructiveDbOperationBlocked as exc:
         raise_destructive_db_blocked_error(exc, where="gsm.destructive_guard")
+
+
+def _raise_timesheet_error(exc: GsmTimesheetError, *, where: str) -> NoReturn:
+    raise_structured_error(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=exc.code,
+        message=str(exc),
+        details=exc.details,
+        where=where,
+    )
 
 
 def _raise_reset_error(exc: GsmResetError, *, where: str) -> NoReturn:
@@ -705,3 +723,35 @@ def reset_to_anchors(
         raise_destructive_db_blocked_error(exc, where="gsm.reset_to_anchors")
     except GsmResetError as exc:
         _raise_reset_error(exc, where="gsm.reset_to_anchors")
+
+
+@router.post("/timesheets/import", response_model=TimesheetImportReport, responses=_ERROR_4XX)
+async def import_timesheet(
+    file: UploadFile = File(...),
+    month: str | None = Form(None),
+    user: dict = Depends(REQUIRE_ACCOUNTING),
+    service: GsmTimesheetService = Depends(get_gsm_timesheet_service),
+) -> TimesheetImportReport:
+    content = await read_upload_file_capped(file)
+    uploaded_by = user.get("username") or user.get("email") or user.get("login")
+    try:
+        return service.import_xlsx(
+            filename=file.filename or "timesheet.xlsx",
+            content=content,
+            month=month,
+            uploaded_by=str(uploaded_by) if uploaded_by else None,
+        )
+    except GsmTimesheetError as exc:
+        _raise_timesheet_error(exc, where="gsm.import_timesheet")
+
+
+@router.get("/timesheets", response_model=TimesheetGrid, responses=_ERROR_4XX)
+def get_timesheet(
+    period: str = Query(...),
+    _user: dict = Depends(REQUIRE_ACCOUNTING),
+    service: GsmTimesheetService = Depends(get_gsm_timesheet_service),
+) -> TimesheetGrid:
+    try:
+        return service.grid(period)
+    except GsmTimesheetError as exc:
+        _raise_timesheet_error(exc, where="gsm.get_timesheet")

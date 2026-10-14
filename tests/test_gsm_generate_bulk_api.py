@@ -63,6 +63,7 @@ def _seed_vehicle(
     with_routes: bool,
     with_tx: bool,
     with_confirmed_start: bool,
+    with_timesheet: bool = True,
 ) -> dict[str, int]:
     driver_id = repo.create_driver(full_name=f"Drv {name}", license_number=f"44 {plate[:2]} 111111")
     vehicle_id = repo.create_vehicle(
@@ -127,6 +128,10 @@ def _seed_vehicle(
         )
     repo.set_setting("winter_start", "11-01")
     repo.set_setting("hook_threshold_km", "13")
+    if with_timesheet:
+        from tests.helpers.gsm_timesheet import seed_present_days
+
+        seed_present_days(repo, driver_id)
     return {"driver_id": driver_id, "vehicle_id": vehicle_id}
 
 
@@ -288,6 +293,162 @@ def test_bulk_empty_vehicle_ids(api_client: CsrfAwareTestClient) -> None:
     resp = _bulk(api_client, vehicle_ids=[])
     assert resp.status_code == 200, resp.text
     assert resp.json()["results"] == []
+
+
+def _july_codes(repo: GsmRepository, driver_codes: dict[int, dict[int, str]]) -> None:
+    from datetime import timedelta
+
+    start = date(2026, 7, 1)
+    end = date(2026, 7, 31)
+    batch_id = repo.insert_timesheet_batch(
+        filename="табель от 31.07.2026.xlsx",
+        period_from=start,
+        period_to=end,
+        rows_total=len(driver_codes),
+        matched=len(driver_codes),
+        uploaded_by="test",
+        uploaded_at="2026-07-01T00:00:00",
+    )
+    rows = []
+    for driver_id, overrides in driver_codes.items():
+        day = start
+        while day <= end:
+            rows.append(
+                {
+                    "driver_id": driver_id,
+                    "date": day,
+                    "code": overrides.get(day.day, "Я"),
+                }
+            )
+            day += timedelta(days=1)
+    repo.add_timesheet_days(batch_id=batch_id, rows=rows)
+
+
+def _vehicle_with_washes(
+    repo: GsmRepository,
+    *,
+    name: str,
+    plate: str,
+    driver_id: int,
+    card_number: str,
+    days: list[date],
+) -> int:
+    vehicle_id = repo.create_vehicle(
+        name=name,
+        plate_number=plate,
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=driver_id,
+    )
+    card_id = repo.create_card(
+        card_number=card_number, vehicle_id=vehicle_id, assigned_at="2026-01-01"
+    )
+    station = repo.get_or_create_station(address="АЗС Тест 1", brand="TATNEFT")
+    repo.create_route(
+        vehicle_id=vehicle_id,
+        addr_a="Завод",
+        addr_b="Объект А",
+        km=40,
+        frequency=100,
+        typical_station_ids=json.dumps([station]),
+    )
+    batch_id = repo.create_import_batch(
+        filename=f"{name}.xls", uploaded_at="2026-07-31T12:00:00"
+    )
+    for day in days:
+        repo.insert_transaction(
+            card_id=card_id,
+            ts=datetime(day.year, day.month, day.day, 9, 0, 0).isoformat(timespec="seconds"),
+            service_type="wash",
+            qty_liters=None,
+            amount=350.0,
+            station_id=station,
+            raw_address="АЗС Тест 1",
+            batch_id=batch_id,
+        )
+    repo.upsert_waybill(
+        vehicle_id=vehicle_id,
+        date=date(2026, 6, 30),
+        driver_id=driver_id,
+        status="exported",
+        source="imported",
+        odometer_start=9_900,
+        odometer_end=10_000,
+        fuel_start=22.0,
+        fuel_issued=0.0,
+        fuel_end=20.0,
+        route_json="[]",
+    )
+    return vehicle_id
+
+
+def test_bulk_second_tugella_rotates_substitutes(
+    api_client: CsrfAwareTestClient,
+) -> None:
+    repo = _repo()
+    kuligin = repo.create_driver(
+        full_name="Кулигин", license_number="44 21 000143", personnel_number="143"
+    )
+    polyakova = repo.create_driver(
+        full_name="Полякова", license_number="44 21 000001", personnel_number="1"
+    )
+    skryabin = repo.create_driver(
+        full_name="Скрябин", license_number="44 21 000029", personnel_number="29"
+    )
+    days = [date(2026, 7, day) for day in (6, 7, 8, 9, 10)]
+    tugella_848 = _vehicle_with_washes(
+        repo,
+        name="Tugella 848",
+        plate="О 848 ХР 44",
+        driver_id=kuligin,
+        card_number="848",
+        days=days,
+    )
+    tugella_952 = _vehicle_with_washes(
+        repo,
+        name="Tugella 952",
+        plate="О 952 ХР 44",
+        driver_id=kuligin,
+        card_number="952",
+        days=days,
+    )
+    _july_codes(
+        repo,
+        {
+            kuligin: {},
+            polyakova: {},
+            skryabin: {day: "ОТ" for day in range(1, 10)},
+        },
+    )
+
+    resp = _bulk(
+        api_client,
+        vehicle_ids=[tugella_848, tugella_952],
+        period_from="2026-07-01",
+        period_to="2026-07-31",
+    )
+    assert resp.status_code == 200, resp.text
+    results = {item["vehicle_id"]: item for item in resp.json()["results"]}
+    assert results[tugella_848]["ok"] is True, results[tugella_848]
+    assert results[tugella_952]["ok"] is True, results[tugella_952]
+
+    def drivers_on(vehicle_id: int) -> dict[str, int]:
+        return {
+            wb["date"]: wb["driver_id"]
+            for wb in results[vehicle_id]["result"]["waybills"]
+        }
+
+    first = drivers_on(tugella_848)
+    second = drivers_on(tugella_952)
+    for day in days:
+        iso = day.isoformat()
+        assert first[iso] == kuligin
+        assert second[iso] != kuligin
+        assert [first[iso], second[iso]].count(kuligin) == 1
+    for day in days[:4]:
+        assert second[day.isoformat()] == polyakova
+    assert second["2026-07-10"] == skryabin
 
 
 def test_bulk_invalid_period_400(api_client: CsrfAwareTestClient) -> None:

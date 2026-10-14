@@ -144,6 +144,14 @@ def get_delivery_schedule_service() -> DeliveryScheduleService:
     return DeliveryScheduleService(db_path=KpRepository().db_path)
 
 
+def get_gsm_timesheet_service():
+    from app.repositories.gsm_repository import GsmRepository
+    from app.repositories.kp_repository import KpRepository
+    from app.services.gsm_timesheet_service import GsmTimesheetService
+
+    return GsmTimesheetService(repo=GsmRepository(db_path=KpRepository().db_path))
+
+
 def get_gsm_transaction_service() -> GsmTransactionService:
     from app.repositories.gsm_repository import GsmRepository
     from app.repositories.kp_repository import KpRepository

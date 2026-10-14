@@ -1,12 +1,17 @@
 import { openBeforeMonthLabel } from "@/features/gsm/lib/fleetStatus";
 import type { FleetOverviewRow, GsmWaybill, WaybillWarningCode } from "@/features/gsm/types/gsm";
 
-const HARD_WARNING_CODES = new Set<string>(["manual_intervention", "unsolvable"]);
+const HARD_WARNING_CODES = new Set<string>([
+  "manual_intervention",
+  "unsolvable",
+  "no_available_driver",
+]);
 const SOFT_WARNING_CODES = new Set<string>([
   "balance_route",
   "borrowed_route",
   "hook_above_threshold",
   "weekend_anchor",
+  "weekend_driver",
 ]);
 
 export type ExportHardBlock = {
@@ -74,6 +79,12 @@ export const exportDisabledReason = (
     return null;
   }
   if (hard.dates.length > 0) {
+    const needsDriver = waybills
+      .filter((day) => day.warnings.includes("no_available_driver"))
+      .map((day) => day.date);
+    if (needsDriver.length > 0) {
+      return `Нужен водитель: ${needsDriver.join(", ")}.`;
+    }
     return `Исправьте дни ручной доработки: ${hard.dates.join(", ")}.`;
   }
   return "Период нерешаем — исправьте дни вручную.";

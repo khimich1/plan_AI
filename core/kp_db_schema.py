@@ -830,6 +830,34 @@ def _init_gsm_schema(cur: sqlite3.Cursor) -> None:
         'ON gsm_waybill(vehicle_id, date)'
     )
 
+    # Timesheet history is append-only; days of a period are replaced on reimport.
+    # No UNIQUE(driver_id, date): the 30.06 anchor still has one person on two cars.
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_timesheet_batch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            period_from TEXT NOT NULL,
+            period_to TEXT NOT NULL,
+            rows_total INTEGER,
+            matched INTEGER,
+            uploaded_by TEXT,
+            uploaded_at TEXT NOT NULL
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS gsm_timesheet_day (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL REFERENCES gsm_timesheet_batch(id),
+            driver_id INTEGER NOT NULL REFERENCES gsm_driver(id),
+            date TEXT NOT NULL,
+            code TEXT NOT NULL
+        )
+    ''')
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_gsm_timesheet_day_driver_date '
+        'ON gsm_timesheet_day(driver_id, date)'
+    )
+
 
 def _init_day_capacity_override_schema(cur: sqlite3.Cursor) -> None:
     """Per-day production capacity overrides (tracks/day).

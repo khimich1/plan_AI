@@ -36,6 +36,16 @@ vi.mock("@/features/gsm/components/VehiclesCard", () => ({
 vi.mock("@/features/gsm/hooks/useGsmQueries", () => ({
   useGsmStationsQuery: () => ({ isLoading: false, error: null, data: [] }),
   useGsmSettingsQuery: () => ({ isLoading: false, error: null, data: settingsData }),
+  useTimesheetGridQuery: () => ({
+    isLoading: false,
+    error: null,
+    data: { period: "2026-07", cells: [], batches: [] },
+  }),
+  useImportTimesheetMutation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    reset: vi.fn(),
+  }),
   useUpdateGsmSeasonMutation: () => ({
     mutate: mockSeasonMutate,
     isPending: mutationState.isPending,
@@ -72,6 +82,8 @@ describe("GsmRegistriesView season switch", () => {
     expect(
       screen.getByRole("button", { name: "Перевести на зимний режим" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Табель рабочего времени" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Импорт табеля" })).toBeInTheDocument();
   });
 
   it("shows зимний режим with switch date and offers switch to summer", () => {

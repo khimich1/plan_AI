@@ -124,6 +124,7 @@ def _seed_vehicle_bundle(
     with_tx: bool = True,
     fuel_qty: float = 40.0,
     tx_day: date = date(2025, 4, 7),
+    with_timesheet: bool = True,
 ) -> dict[str, int]:
     """Driver + vehicle + card + station + burn/anchor routes + one fuel tx."""
     driver_id = repo.create_driver(
@@ -188,6 +189,10 @@ def _seed_vehicle_bundle(
 
     repo.set_setting("winter_start", "11-01")
     repo.set_setting("hook_threshold_km", "13")
+    if with_timesheet:
+        from tests.helpers.gsm_timesheet import seed_present_days
+
+        seed_present_days(repo, driver_id)
 
     return {
         "driver_id": driver_id,
@@ -204,6 +209,7 @@ def _seed_into_api_db(
     with_tx: bool = True,
     fuel_qty: float = 40.0,
     tx_day: date = date(2025, 4, 7),
+    with_timesheet: bool = True,
 ) -> dict[str, int]:
     from app.core.settings import get_settings as _gs
 
@@ -215,6 +221,7 @@ def _seed_into_api_db(
         with_tx=with_tx,
         fuel_qty=fuel_qty,
         tx_day=tx_day,
+        with_timesheet=with_timesheet,
     )
 
 
@@ -805,6 +812,9 @@ def _seed_second_vehicle(
             raw_address=f"АЗС {plate}",
             batch_id=batch_id,
         )
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    seed_present_days(repo, driver_id)
     return {
         "driver_id": driver_id,
         "vehicle_id": vehicle_id,
@@ -994,3 +1004,185 @@ def test_generate_bulk_skips_july_tail_keeps_clean_neighbor(
     )
     assert palisade_august
     assert monjaro_august == []
+
+
+def test_generate_without_timesheet_is_422(api_client: CsrfAwareTestClient) -> None:
+    ids = _seed_into_api_db(api_client, with_timesheet=False)
+    resp = api_client.post(
+        GENERATE,
+        json={
+            "vehicle_id": ids["vehicle_id"],
+            "period_from": "2025-04-01",
+            "period_to": "2025-04-30",
+            "fuel_start": 20.0,
+            "odometer_start": 10000,
+        },
+        cookies=_auth(),
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "gsm_timesheet_missing"
+
+
+def test_second_generate_sees_driver_busy_from_the_first(
+    service: GsmGenerationService, repo: GsmRepository
+) -> None:
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    kuligin = repo.create_driver(
+        full_name="Кулигин", license_number="44 21 000143", personnel_number="143"
+    )
+    spare = repo.create_driver(
+        full_name="Полякова", license_number="44 21 000001", personnel_number="1"
+    )
+    seed_present_days(repo, kuligin, period_from=date(2026, 7, 1), period_to=date(2026, 7, 31))
+    seed_present_days(repo, spare, period_from=date(2026, 7, 1), period_to=date(2026, 7, 31))
+    day = date(2026, 7, 12)
+    first = repo.create_vehicle(
+        name="Tugella 848",
+        plate_number="О 848 ХР 44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=kuligin,
+    )
+    second = repo.create_vehicle(
+        name="Tugella 952",
+        plate_number="О 952 ХР 44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=kuligin,
+    )
+    station = repo.create_station(address="АЗС Тест 1", brand="TATNEFT")
+    for vehicle_id, card in ((first, "8480"), (second, "9520")):
+        repo.create_card(card_number=card, vehicle_id=vehicle_id, assigned_at="2026-01-01")
+        repo.create_route(
+            vehicle_id=vehicle_id,
+            addr_a="Завод",
+            addr_b="Объект А",
+            km=40,
+            frequency=10,
+            typical_station_ids=json.dumps([station]),
+        )
+        repo.upsert_waybill(
+            vehicle_id=vehicle_id,
+            date=date(2026, 7, 11),
+            driver_id=kuligin,
+            status="exported",
+            source="imported",
+            odometer_start=1000,
+            odometer_end=1100,
+            fuel_start=25.0,
+            fuel_issued=0.0,
+            fuel_end=20.0,
+            route_json="[]",
+        )
+    card_first = repo.list_cards()[0]["id"]
+    # Bind the wash to the first vehicle's card only.
+    cards = {row["vehicle_id"]: row["id"] for row in repo.list_cards()}
+    batch_id = repo.create_import_batch(filename="w.xls", uploaded_at="2026-07-12T12:00:00")
+    for vehicle_id in (first, second):
+        repo.insert_transaction(
+            card_id=cards[vehicle_id],
+            ts="2026-07-12T09:00:00",
+            service_type="wash",
+            qty_liters=None,
+            amount=350.0,
+            station_id=station,
+            raw_address="АЗС Тест 1",
+            batch_id=batch_id,
+        )
+    _ = card_first
+    opened = service.generate(
+        vehicle_id=first,
+        period_from=date(2026, 7, 12),
+        period_to=date(2026, 7, 12),
+    )
+    assert opened.waybills[0].driver_id == kuligin
+    followed = service.generate(
+        vehicle_id=second,
+        period_from=date(2026, 7, 12),
+        period_to=date(2026, 7, 12),
+    )
+    assert followed.waybills[0].driver_id == spare
+    assert followed.waybills[0].date == day.isoformat()
+
+
+def test_generate_skips_driver_on_vacation(
+    service: GsmGenerationService, repo: GsmRepository
+) -> None:
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    lonshakova = repo.create_driver(
+        full_name="Лоншакова", license_number="44 21 000470", personnel_number="470"
+    )
+    spare = repo.create_driver(
+        full_name="Полякова", license_number="44 21 000001", personnel_number="1"
+    )
+    seed_present_days(repo, spare, period_from=date(2026, 7, 1), period_to=date(2026, 8, 31))
+    batch_id = repo.insert_timesheet_batch(
+        filename="табель от 31.07.2026.xlsx",
+        period_from=date(2026, 7, 1),
+        period_to=date(2026, 8, 31),
+        rows_total=1,
+        matched=1,
+        uploaded_by="test",
+        uploaded_at="2026-07-01T00:00:00",
+    )
+    rows = []
+    day = date(2026, 7, 1)
+    while day <= date(2026, 8, 31):
+        code = "ОТ" if date(2026, 7, 27) <= day <= date(2026, 8, 9) else "Я"
+        rows.append({"driver_id": lonshakova, "date": day, "code": code})
+        day = date.fromordinal(day.toordinal() + 1)
+    repo.add_timesheet_days(batch_id=batch_id, rows=rows)
+    vehicle_id = repo.create_vehicle(
+        name="Monjaro",
+        plate_number="О 301 МН 44",
+        tank_volume_liters=55.0,
+        norm_summer=9.4,
+        norm_winter=10.3,
+        primary_driver_id=lonshakova,
+    )
+    card_id = repo.create_card(
+        card_number="301", vehicle_id=vehicle_id, assigned_at="2026-01-01"
+    )
+    station = repo.create_station(address="АЗС Monjaro", brand="TATNEFT")
+    repo.create_route(
+        vehicle_id=vehicle_id,
+        addr_a="Завод",
+        addr_b="Объект А",
+        km=40,
+        frequency=10,
+        typical_station_ids=json.dumps([station]),
+    )
+    repo.upsert_waybill(
+        vehicle_id=vehicle_id,
+        date=date(2026, 7, 26),
+        driver_id=lonshakova,
+        status="exported",
+        source="imported",
+        odometer_start=1000,
+        odometer_end=1100,
+        fuel_start=25.0,
+        fuel_issued=0.0,
+        fuel_end=20.0,
+        route_json="[]",
+    )
+    tx_batch = repo.create_import_batch(filename="m.xls", uploaded_at="2026-07-27T12:00:00")
+    repo.insert_transaction(
+        card_id=card_id,
+        ts="2026-07-27T09:00:00",
+        service_type="wash",
+        qty_liters=None,
+        amount=350.0,
+        station_id=station,
+        raw_address="АЗС Monjaro",
+        batch_id=tx_batch,
+    )
+    result = service.generate(
+        vehicle_id=vehicle_id,
+        period_from=date(2026, 7, 27),
+        period_to=date(2026, 7, 27),
+    )
+    assert result.waybills[0].driver_id == spare

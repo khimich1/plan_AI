@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import fields
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.repositories.gsm_repository import GsmRepository
@@ -24,6 +25,7 @@ from app.services.gsm_registry_service import (
     DEFAULT_MAX_DAILY_KM,
 )
 from core.gsm.balance import BalanceViolation, apply_day
+from core.gsm.driver_pool import ELIGIBLE_CODES, DriverCandidate
 from core.gsm.generator import LibraryRoute, generate
 from core.gsm.geo import GeoPoint
 from core.gsm.models import Transaction, WaybillDay
@@ -147,6 +149,12 @@ class GsmGenerationService:
         season_switches = self._resolve_season_switches()
         hook_threshold = self._resolve_hook_threshold()
         max_daily_km = self._resolve_max_daily_km()
+        self._assert_timesheet_covers(period_from, period_to)
+        drivers_by_date, substitute_counts = self._drivers_for_vehicle(
+            vehicle_id=vehicle_id,
+            period_from=period_from,
+            period_to=period_to,
+        )
         station_coords = self._load_station_coords()
         holidays = (
             frozenset(self._holidays)
@@ -176,6 +184,8 @@ class GsmGenerationService:
             max_daily_km=max_daily_km,
             station_coords=station_coords,
             own_vehicle_id=vehicle_id,
+            drivers_by_date=drivers_by_date,
+            substitute_counts=substitute_counts,
         )
 
         if force:
@@ -351,6 +361,11 @@ class GsmGenerationService:
                 f"driver #{new_driver_id} not found",
                 code="gsm_driver_not_found",
             )
+        self._assert_driver_assignment(
+            driver_id=new_driver_id,
+            day=day,
+            vehicle_id=vehicle_id,
+        )
 
         legs = self._normalize_route_input(route)
         if legs is None:
@@ -436,6 +451,11 @@ class GsmGenerationService:
                 f"driver #{driver_id} not found",
                 code="gsm_driver_not_found",
             )
+        self._assert_driver_assignment(
+            driver_id=driver_id,
+            day=day,
+            vehicle_id=vehicle_id,
+        )
         existing = self._repo.get_waybill(vehicle_id, day)
         if existing is not None:
             raise GsmGenerationError(
@@ -517,6 +537,102 @@ class GsmGenerationService:
         updated = self._repo.get_waybill_by_id(waybill_id)
         assert updated is not None
         return self._waybill_out(updated)
+
+    def _assert_timesheet_covers(self, period_from: date, period_to: date) -> None:
+        if self._repo.timesheet_period_covered(period_from, period_to):
+            return
+        raise GsmGenerationError(
+            "За период нет табеля рабочего времени.",
+            code="gsm_timesheet_missing",
+            details={
+                "period_from": period_from.isoformat(),
+                "period_to": period_to.isoformat(),
+            },
+        )
+
+    def _drivers_for_vehicle(
+        self,
+        *,
+        vehicle_id: int,
+        period_from: date,
+        period_to: date,
+    ) -> tuple[dict[date, tuple[DriverCandidate, ...]], dict[int, int]]:
+        """Eligible rows for each date, minus drivers already on another waybill."""
+        busy = self._repo.busy_drivers_by_date(
+            period_from=period_from,
+            period_to=period_to,
+            exclude_vehicle_id=vehicle_id,
+        )
+        primaries: set[int] = set()
+        for vehicle in self._repo.list_vehicles(active_only=False):
+            primary = vehicle.get("primary_driver_id")
+            if primary is not None:
+                primaries.add(int(primary))
+        grouped: dict[date, list[DriverCandidate]] = defaultdict(list)
+        for row in self._repo.list_timesheet_days(
+            period_from=period_from, period_to=period_to
+        ):
+            day = date.fromisoformat(str(row["date"]))
+            driver_id = int(row["driver_id"])
+            if driver_id in busy.get(day.isoformat(), ()):
+                continue
+            grouped[day].append(
+                DriverCandidate(
+                    driver_id=driver_id,
+                    code=str(row["code"]),
+                    personnel_number=str(row.get("personnel_number") or ""),
+                    has_own_vehicle=driver_id in primaries,
+                )
+            )
+        filled: dict[date, tuple[DriverCandidate, ...]] = {}
+        day = period_from
+        while day <= period_to:
+            filled[day] = tuple(grouped.get(day, ()))
+            day += timedelta(days=1)
+        counts = self._repo.substitute_counts(
+            period_from=period_from, period_to=period_to
+        )
+        return filled, counts
+
+    def _assert_driver_assignment(
+        self,
+        *,
+        driver_id: int,
+        day: date,
+        vehicle_id: int,
+    ) -> None:
+        conflict = self._repo.driver_busy_conflict(
+            driver_id=driver_id,
+            day=day,
+            exclude_vehicle_id=vehicle_id,
+        )
+        if conflict is not None:
+            driver = self._repo.get_driver(driver_id) or {}
+            name = str(driver.get("full_name") or f"#{driver_id}")
+            plate = str(conflict["plate_number"])
+            raise GsmGenerationError(
+                f"{name} уже в {plate} на {day.strftime('%d.%m')}",
+                code="gsm_driver_busy",
+                details={
+                    "date": day.isoformat(),
+                    "plate_number": plate,
+                    "driver_id": driver_id,
+                    "vehicle_id": int(conflict["vehicle_id"]),
+                },
+            )
+        if not self._repo.timesheet_period_covered(day, day):
+            return
+        code = self._repo.get_timesheet_code(driver_id, day)
+        if code in ELIGIBLE_CODES:
+            return
+        driver = self._repo.get_driver(driver_id) or {}
+        name = str(driver.get("full_name") or f"#{driver_id}")
+        shown = code if code else "нет явки"
+        raise GsmGenerationError(
+            f"{name} отсутствует по табелю на {day.strftime('%d.%m')} ({shown})",
+            code="gsm_driver_absent",
+            details={"date": day.isoformat(), "code": code, "driver_id": driver_id},
+        )
 
     def _resolve_chain_start(
         self,
