@@ -17,6 +17,7 @@ from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.repositories.kp_archive_repository import ArchiveSection, KpArchiveRepository
 from app.schemas.archive import (
     ArchiveBridgePileItem,
+    ArchiveCompositePileItem,
     ArchiveFbsItem,
     ArchiveFileKind,
     ArchiveOfferDetails,
@@ -50,6 +51,7 @@ from app.services.file_generation_service import FileGenerationService
 from app.services.optimization_service import OptimizationService
 from app.services.promise_service import PromiseGateError, PromiseService
 from app.repositories.supply_contract_repository import SupplyContractRepository
+from app.services.supply_contract_service import convert_xlsx_to_pdf
 from app.services.counterparties_service import (
     CounterpartiesService,
     CounterpartyValidationError,
@@ -709,7 +711,13 @@ class ArchiveService:
             raise ArchiveNotFoundError(f"КП №{kp_id} не найдено")
         return self.get_specification(kp_id, user=user)
 
-    def download_specification(self, kp_id: int, *, user: dict) -> SpecificationDownload:
+    def download_specification(
+        self,
+        kp_id: int,
+        *,
+        user: dict,
+        file_format: Literal["xlsx", "pdf"] = "xlsx",
+    ) -> SpecificationDownload:
         """Байты уже сохранённой спецификации. Строку не создаёт."""
         raw = self._specification_offer(kp_id, user, write=False)
         document = _load_stored_specification(raw)
@@ -735,9 +743,13 @@ class ArchiveService:
         content = build_specification_xlsx(
             header, self._specification_lines(raw), paragraphs
         )
+        if file_format not in ("xlsx", "pdf"):
+            raise ArchiveValidationError("Укажите формат xlsx или pdf")
+        if file_format == "pdf":
+            content = convert_xlsx_to_pdf(content)
         return SpecificationDownload(
             content=content,
-            filename=_specification_filename(kp_id, number),
+            filename=_specification_filename(kp_id, number, extension=file_format),
         )
 
     def _specification_header(
@@ -1138,6 +1150,7 @@ class ArchiveService:
             ("steps", "kp_steps"),
             ("marches", "kp_marches"),
             ("bridge_piles", "kp_bridge_piles"),
+            ("composite_piles", "kp_composite_piles"),
             ("fbs", "kp_fbs"),
         ):
             if raw.get(key):
@@ -1225,6 +1238,9 @@ class ArchiveService:
         steps = [self._step_item(s) for s in (raw.get("steps") or [])]
         marches = [self._march_item(m) for m in (raw.get("marches") or [])]
         bridge_piles = [self._bridge_pile_item(b) for b in (raw.get("bridge_piles") or [])]
+        composite_piles = [
+            self._composite_pile_item(b) for b in (raw.get("composite_piles") or [])
+        ]
         fbs = [self._fbs_item(b) for b in (raw.get("fbs") or [])]
         product_type = str(raw.get("product_type") or "plates")
         kp_id = int(raw.get("kp_id") or 0)
@@ -1342,6 +1358,7 @@ class ArchiveService:
             steps=steps,
             marches=marches,
             bridge_piles=bridge_piles,
+            composite_piles=composite_piles,
             fbs=fbs,
             completion_percentage=completion,
             readiness=readiness,
@@ -1376,6 +1393,17 @@ class ArchiveService:
             unit_price=_nullable_float(raw.get("unit_price")),
             discounted_price=_nullable_float(raw.get("discounted_price")),
             **_concrete_spec_kwargs(raw),
+        )
+
+    @staticmethod
+    def _composite_pile_item(raw: dict) -> ArchiveCompositePileItem:
+        return ArchiveCompositePileItem(
+            position_number=raw.get("position_number"),
+            mark=raw.get("mark") or "",
+            concrete_grade=raw.get("concrete_grade") or "",
+            qty=int(raw.get("qty") or 0),
+            unit_price=_nullable_float(raw.get("unit_price")),
+            discounted_price=_nullable_float(raw.get("discounted_price")),
         )
 
     @staticmethod
@@ -1573,12 +1601,19 @@ class ArchiveService:
             raise ArchiveValidationError(str(exc)) from exc
 
 
-def _specification_filename(kp_id: int, invoice_number: str | None) -> str:
+def _specification_filename(
+    kp_id: int,
+    invoice_number: str | None,
+    *,
+    extension: str = "xlsx",
+) -> str:
     number = (invoice_number or "").strip()
     if not number:
-        return f"Спецификация КП {kp_id}.xlsx"
-    safe = number.replace("/", "-").replace("\\", "-").replace("\x00", "")
-    return f"Спецификация по счету {safe}.xlsx"
+        stem = f"Спецификация КП {kp_id}"
+    else:
+        safe = number.replace("/", "-").replace("\\", "-").replace("\x00", "")
+        stem = f"Спецификация по счету {safe}"
+    return f"{stem}.{extension}"
 
 
 def _short_person_name(full_name: str) -> str:

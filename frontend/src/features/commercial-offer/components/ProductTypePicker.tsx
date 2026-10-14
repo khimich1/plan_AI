@@ -45,6 +45,11 @@ const options: Array<{ id: ProductType; description: string; emoji: string }> = 
     emoji: "🌉",
   },
   {
+    id: "composite_piles",
+    description: "Коммерческое предложение на составные железобетонные сваи.",
+    emoji: "🧩",
+  },
+  {
     id: "fbs",
     description: "Коммерческое предложение на фундаментные блоки ФБС.",
     emoji: "📦",

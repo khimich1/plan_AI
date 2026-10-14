@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -285,5 +285,70 @@ describe("resolveSourceSubmitDisabled footer gate", () => {
     });
     expect(result.disabled).toBe(true);
     expect(result.title).toBe(SOURCE_LINT_ERROR_TITLE);
+  });
+});
+
+describe("SourceInputCard format hint", () => {
+  const assertHintAboveEditor = (listLabel: string) => {
+    const labelSpan = screen.getByText(listLabel);
+    const field = labelSpan.closest("label");
+    expect(field).not.toBeNull();
+    // Button is inside FieldWrapper's <label>; getByRole can miss it — match by text.
+    const hint = within(field as HTMLElement).getByText("▸ Подсказка");
+    const editor = within(field as HTMLElement).getByRole("textbox");
+    expect(hint.tagName).toBe("BUTTON");
+    expect(hint).toHaveAttribute("aria-expanded", "false");
+    expect(labelSpan.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(hint.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  };
+
+  it("shows Подсказка above the list editor for plates", () => {
+    render(<SourceInputCard {...baseProps} sourceText="" />);
+    assertHintAboveEditor("Список плит");
+  });
+
+  it("shows Подсказка above the list editor for piles", () => {
+    render(
+      <SourceInputCard
+        {...baseProps}
+        productType="piles"
+        listLabel="Список свай"
+        placeholder={"С120.35-12 B25 5\nС120.35-13и 3"}
+        emptySubtitle="Вставьте текст списка свай или загрузите фото таблицы."
+        sourceText=""
+      />,
+    );
+    assertHintAboveEditor("Список свай");
+  });
+
+  it("keeps the Подсказка word when sourceText is already filled", () => {
+    render(<SourceInputCard {...baseProps} sourceText="ПБ 78-12-8п 2" />);
+    expect(screen.getByText("▸ Подсказка")).toBeInTheDocument();
+  });
+
+  it("does not change the editor value or call onTextChange on toggle or copy", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText },
+    });
+    const onTextChange = vi.fn();
+    const sourceText = "уже вставленный текст";
+
+    render(
+      <SourceInputCard {...baseProps} sourceText={sourceText} onTextChange={onTextChange} />,
+    );
+
+    const editor = screen.getByDisplayValue(sourceText);
+    fireEvent.click(screen.getByText("▸ Подсказка"));
+    fireEvent.click(screen.getByText("Скопировать образец"));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalled();
+    });
+
+    expect(onTextChange).not.toHaveBeenCalled();
+    expect(editor).toHaveValue(sourceText);
+    vi.unstubAllGlobals();
   });
 });

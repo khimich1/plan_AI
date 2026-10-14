@@ -141,3 +141,18 @@ describe("ArchiveOfferList нет 1С badge", () => {
     expect(screen.queryByTestId("no-1c-badge")).not.toBeInTheDocument();
   });
 });
+
+describe("ArchiveOfferList composite piles badge", () => {
+  it("renders Составные сваи badge for composite_piles", () => {
+    const item = {
+      ...baseItem,
+      product_type: "composite_piles",
+    } as ArchiveOfferListItem;
+
+    render(
+      <ArchiveOfferList section="archived" items={[item]} onSelect={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Составные сваи")).toBeInTheDocument();
+  });
+});

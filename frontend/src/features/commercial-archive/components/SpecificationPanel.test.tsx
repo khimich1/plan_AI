@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SpecificationPanel } from "@/features/commercial-archive/components/SpecificationPanel";
 import type { SpecificationView } from "@/features/commercial-archive/types/archive";
@@ -34,7 +34,8 @@ afterEach(() => {
 
 describe("SpecificationPanel", () => {
   it("shows a percent paragraph as text, not a textarea", () => {
-    render(<SpecificationPanel view={percentView()} busy={false} error={null} onSave={vi.fn()} onDownload={vi.fn()} />);
+    render(<SpecificationPanel view={percentView()} busy={false} error={null} onSave={vi.fn()} onDownload={vi.fn()}
+        onDownloadPdf={vi.fn()} />);
 
     expect(screen.getByText(PERCENT_PARAGRAPH).tagName).toBe("P");
     expect(screen.queryByRole("textbox", { name: "Свой текст" })).not.toBeInTheDocument();
@@ -58,6 +59,7 @@ describe("SpecificationPanel", () => {
         error={null}
         onSave={vi.fn()}
         onDownload={vi.fn()}
+        onDownloadPdf={vi.fn()}
       />,
     );
 
@@ -65,7 +67,8 @@ describe("SpecificationPanel", () => {
   });
 
   it("hides pile rhythm and concrete grade when the server says there are no piles", () => {
-    render(<SpecificationPanel view={percentView()} busy={false} error={null} onSave={vi.fn()} onDownload={vi.fn()} />);
+    render(<SpecificationPanel view={percentView()} busy={false} error={null} onSave={vi.fn()} onDownload={vi.fn()}
+        onDownloadPdf={vi.fn()} />);
 
     expect(screen.queryByRole("button", { name: "По N свай" })).not.toBeInTheDocument();
     expect(screen.queryByText(/Марка бетона/)).not.toBeInTheDocument();
@@ -79,11 +82,43 @@ describe("SpecificationPanel", () => {
         error={null}
         onSave={vi.fn()}
         onDownload={vi.fn()}
+        onDownloadPdf={vi.fn()}
       />,
     );
 
     expect(screen.getByRole("button", { name: "По N свай" })).toBeInTheDocument();
     expect(screen.getByText("Марка бетона: В25")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "в неделю" })).not.toBeInTheDocument();
+  });
+
+  it("shows save, excel and pdf, and pdf submits the same draft as excel", async () => {
+    const onDownload = vi.fn().mockResolvedValue(undefined);
+    const onDownloadPdf = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SpecificationPanel
+        view={percentView()}
+        busy={false}
+        error={null}
+        onSave={vi.fn()}
+        onDownload={onDownload}
+        onDownloadPdf={onDownloadPdf}
+      />,
+    );
+
+    const save = screen.getByRole("button", { name: "Сохранить" });
+    const excel = screen.getByRole("button", { name: "Скачать Excel" });
+    const pdf = screen.getByRole("button", { name: "Скачать PDF" });
+    expect(save.compareDocumentPosition(excel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(excel.compareDocumentPosition(pdf) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(excel);
+    await waitFor(() => {
+      expect(onDownload).toHaveBeenCalledTimes(1);
+    });
+    fireEvent.click(pdf);
+    await waitFor(() => {
+      expect(onDownloadPdf).toHaveBeenCalledTimes(1);
+    });
+    expect(onDownloadPdf).toHaveBeenCalledWith(onDownload.mock.calls[0][0]);
   });
 });

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,7 @@ CASES: list[tuple[ProductType, str, str]] = [
     ("marches", "1ЛМ 27-11-14-4 2", "ПБ 78-12-8п 2"),
     ("bridge_piles", "С7-35Т5", "С120.35-12 2"),
     ("fbs", "ФБС 9.3.6-Т 2", "С120.35-12 2"),
+    ("composite_piles", "С60.30-ВС.1 3", "xyz-not-a-pile"),
 ]
 
 
@@ -88,6 +90,19 @@ def test_lint_prepare_makes_dirty_qty_ok(product_type: ProductType, raw: str) ->
     assert len(lines) == 1
     assert lines[0].ok is True
     assert lines[0].text == raw
+
+
+def test_lint_composite_whole_pile_ok_when_kit_present(tmp_path: Path) -> None:
+    from core.composite_pile_kit import import_composite_pile_kit_from_xlsx
+
+    db = str(tmp_path / "pb.db")
+    fixture = Path(__file__).parent / "fixtures" / "composite_pile_kit_sample.xlsx"
+    import_composite_pile_kit_from_xlsx(str(fixture), db)
+    lines = lint_source_lines("С140.30-С 7", "composite_piles", db_path=db)
+    assert len(lines) == 1
+    assert lines[0].ok is True
+    assert lines[0].text == "С140.30-С 7"
+    assert lines[0].reason_text is None
 
 
 def test_lint_bridge_gost_without_class_not_ok() -> None:

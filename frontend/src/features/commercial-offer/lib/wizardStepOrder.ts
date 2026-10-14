@@ -14,6 +14,7 @@ export const PILES_WIZARD_STEP_ORDER: WizardStepId[] = wizardOrderFor("piles");
 export const STEPS_WIZARD_STEP_ORDER: WizardStepId[] = wizardOrderFor("steps");
 export const MARCHES_WIZARD_STEP_ORDER: WizardStepId[] = wizardOrderFor("marches");
 export const BRIDGE_PILES_WIZARD_STEP_ORDER: WizardStepId[] = wizardOrderFor("bridge_piles");
+export const COMPOSITE_PILES_WIZARD_STEP_ORDER: WizardStepId[] = wizardOrderFor("composite_piles");
 export const FBS_WIZARD_STEP_ORDER: WizardStepId[] = wizardOrderFor("fbs");
 
 const FULL_WIZARD_STEP_ORDER: Record<ProductType, WizardStepId[]> = {
@@ -22,6 +23,7 @@ const FULL_WIZARD_STEP_ORDER: Record<ProductType, WizardStepId[]> = {
   steps: STEPS_WIZARD_STEP_ORDER,
   marches: MARCHES_WIZARD_STEP_ORDER,
   bridge_piles: BRIDGE_PILES_WIZARD_STEP_ORDER,
+  composite_piles: COMPOSITE_PILES_WIZARD_STEP_ORDER,
   fbs: FBS_WIZARD_STEP_ORDER,
 };
 

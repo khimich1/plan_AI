@@ -6,6 +6,7 @@ from app.schemas.commercial import WizardNextRequiredAction, WizardStepId, _coer
 from app.services.commercial_calculation_service import (
     ERR_EMPTY_PILES,
     ERR_EMPTY_BRIDGE_PILES,
+    ERR_EMPTY_COMPOSITE_PILES,
     ERR_EMPTY_FBS,
     ERR_EMPTY_MARCHES,
     ERR_EMPTY_PLATES,
@@ -15,6 +16,7 @@ from app.services.commercial_calculation_service import (
     ERR_NO_MANAGER,
     ERR_NO_PAYMENT,
     ERR_INVALID_WIDTHS,
+    ERR_UNPARSED_LINES,
     ERR_UNPRICED_PLATES,
     ERR_WIDE_PLATES,
     CommercialCalculationService,
@@ -61,6 +63,9 @@ class CommercialWizardStepService:
     def is_bridge_pile_draft(self, metadata: dict[str, Any]) -> bool:
         return self.calculation_service.is_bridge_pile_draft(metadata)
 
+    def is_composite_pile_draft(self, metadata: dict[str, Any]) -> bool:
+        return self.calculation_service.is_composite_pile_draft(metadata)
+
     def is_fbs_draft(self, metadata: dict[str, Any]) -> bool:
         return self.calculation_service.is_fbs_draft(metadata)
 
@@ -71,6 +76,8 @@ class CommercialWizardStepService:
             return WizardStepId.marches
         if self.is_bridge_pile_draft(metadata):
             return WizardStepId.bridge_piles
+        if self.is_composite_pile_draft(metadata):
+            return WizardStepId.composite_piles
         if self.is_fbs_draft(metadata):
             return WizardStepId.fbs
         if self.is_pile_draft(metadata):
@@ -157,6 +164,12 @@ class CommercialWizardStepService:
                 return WizardNextRequiredAction.ingest_marches
             if first == ERR_EMPTY_BRIDGE_PILES:
                 return WizardNextRequiredAction.ingest_bridge_piles
+            if first == ERR_EMPTY_COMPOSITE_PILES:
+                return WizardNextRequiredAction.ingest_composite_piles
+            if first == ERR_EMPTY_FBS:
+                return WizardNextRequiredAction.ingest_fbs
+            if first == ERR_UNPARSED_LINES:
+                return WizardNextRequiredAction.ingest_composite_piles
             if first == ERR_WIDE_PLATES:
                 return WizardNextRequiredAction.resolve_wide_plates
             if first == ERR_INVALID_WIDTHS:
@@ -187,9 +200,12 @@ class CommercialWizardStepService:
             WizardStepId.steps,
             WizardStepId.marches,
             WizardStepId.bridge_piles,
+            WizardStepId.composite_piles,
             WizardStepId.fbs,
         ):
             if not order_data:
+                return []
+            if metadata.get("unparsed_lines"):
                 return []
             if self.wide_lines_blocking(metadata):
                 return []
@@ -242,6 +258,7 @@ class CommercialWizardStepService:
                 WizardNextRequiredAction.ingest_steps: ERR_EMPTY_STEPS,
                 WizardNextRequiredAction.ingest_marches: ERR_EMPTY_MARCHES,
                 WizardNextRequiredAction.ingest_bridge_piles: ERR_EMPTY_BRIDGE_PILES,
+                WizardNextRequiredAction.ingest_composite_piles: ERR_EMPTY_COMPOSITE_PILES,
                 WizardNextRequiredAction.ingest_fbs: ERR_EMPTY_FBS,
                 WizardNextRequiredAction.resolve_wide_plates: ERR_WIDE_PLATES,
                 WizardNextRequiredAction.resolve_invalid_widths: ERR_INVALID_WIDTHS,
@@ -250,6 +267,10 @@ class CommercialWizardStepService:
             }.get(next_action)
             if action_message is not None:
                 messages.append(action_message)
+            if next_action == WizardNextRequiredAction.ingest_composite_piles and (
+                metadata.get("unparsed_lines") or []
+            ):
+                messages.append(ERR_UNPARSED_LINES)
 
         unpriced = self.calculation_service.unpriced_position_labels(order_data)
         if unpriced:
@@ -262,6 +283,7 @@ class CommercialWizardStepService:
             WizardStepId.steps,
             WizardStepId.marches,
             WizardStepId.bridge_piles,
+            WizardStepId.composite_piles,
             WizardStepId.fbs,
         ):
             client_step_errors = {

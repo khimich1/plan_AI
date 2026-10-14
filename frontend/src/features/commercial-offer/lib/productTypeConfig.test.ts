@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  FORMAT_HINT_SHARED,
   getProductTypeConfig,
   INGEST_REQUIRED_MESSAGE,
   PRODUCT_TYPE_CONFIG,
@@ -7,7 +8,36 @@ import {
 } from "@/features/commercial-offer/lib/productTypeConfig";
 import type { ProductType } from "@/features/commercial-offer/types/commercialOffer";
 
-const ALL_PRODUCT_TYPES: ProductType[] = ["plates", "piles", "steps", "marches", "bridge_piles", "fbs"];
+const ALL_PRODUCT_TYPES: ProductType[] = [
+  "plates",
+  "piles",
+  "steps",
+  "marches",
+  "bridge_piles",
+  "composite_piles",
+  "fbs",
+];
+const REQUIRED_PLACEHOLDER_TYPES: ProductType[] = [
+  "plates",
+  "piles",
+  "steps",
+  "marches",
+  "composite_piles",
+];
+const OPTIONAL_PLACEHOLDER_TYPES: ProductType[] = ["bridge_piles", "fbs"];
+const PILE_LEFTOVER_PLACEHOLDER = "С120.35-12 B25 5\nС120.35-13и 3";
+
+/** Accepted copy from ai_docs/specs/kp-format-hint.md «Тексты». */
+const FORMAT_HINT_EXPLANATIONS: Record<ProductType, string> = {
+  plates: "Марка, затем количество штук. Нагрузка входит в марку (`8п`).",
+  piles: "Марка, класс бетона, количество. Класс можно не писать — как во второй строке.",
+  steps: "Марка, затем количество. Класса бетона в строке нет.",
+  marches: "Марка, класс бетона, количество. Класс можно не писать — как во второй строке.",
+  bridge_piles: "Марка, класс бетона, количество.",
+  composite_piles:
+    "Марка секции, затем количество. Класс бетона, если он есть в заявке, стоит перед количеством.",
+  fbs: "Марка, класс бетона, количество.",
+};
 
 describe("PRODUCT_TYPE_CONFIG", () => {
   it("covers every ProductType exactly once", () => {
@@ -23,6 +53,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.endpointSegment).toBe("steps");
     expect(PRODUCT_TYPE_CONFIG.marches.endpointSegment).toBe("marches");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.endpointSegment).toBe("bridge-piles");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.endpointSegment).toBe("composite-piles");
     expect(PRODUCT_TYPE_CONFIG.fbs.endpointSegment).toBe("fbs");
   });
 
@@ -38,6 +69,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.piles.supportsGrades).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.marches.supportsGrades).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.supportsGrades).toBe(true);
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.supportsGrades).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.fbs.supportsGrades).toBe(true);
   });
 
@@ -47,6 +79,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.isSimpleKp).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.marches.isSimpleKp).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.isSimpleKp).toBe(true);
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.isSimpleKp).toBe(true);
     expect(PRODUCT_TYPE_CONFIG.fbs.isSimpleKp).toBe(true);
   });
 
@@ -56,6 +89,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.ingestAction).toBe("ingest_steps");
     expect(PRODUCT_TYPE_CONFIG.marches.ingestAction).toBe("ingest_marches");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.ingestAction).toBe("ingest_bridge_piles");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.ingestAction).toBe("ingest_composite_piles");
     expect(PRODUCT_TYPE_CONFIG.fbs.ingestAction).toBe("ingest_fbs");
   });
 
@@ -65,6 +99,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.batchesField).toBe("step_batches");
     expect(PRODUCT_TYPE_CONFIG.marches.batchesField).toBe("march_batches");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.batchesField).toBe("bridge_pile_batches");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.batchesField).toBe("composite_pile_batches");
     expect(PRODUCT_TYPE_CONFIG.fbs.batchesField).toBe("fbs_batches");
   });
 
@@ -79,11 +114,13 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.marches.labels.nounGenitivePlural).toBe("маршей");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.nounPlural).toBe("Мостовые сваи");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.nounGenitivePlural).toBe("мостовых свай");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.nounPlural).toBe("Составные сваи");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.nounGenitivePlural).toBe("составных свай");
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.nounPlural).toBe("ФБС");
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.nounGenitivePlural).toBe("ФБС");
   });
 
-  it("fills every input-step label for every product (no empty copy)", () => {
+  it("fills every input-step label (fbs/bridge_piles placeholder may be empty)", () => {
     for (const type of ALL_PRODUCT_TYPES) {
       const labels = PRODUCT_TYPE_CONFIG[type].labels;
       expect(labels.stepTitle, type).toBe(`Шаг 1. ${labels.nounPlural}`);
@@ -101,7 +138,12 @@ describe("PRODUCT_TYPE_CONFIG", () => {
       expect(labels.previewChangedMessage, type).toBe(
         `Изменён список ${labels.nounGenitivePlural} — нажмите «Список верен» для пересчёта состава.`,
       );
-      expect(labels.placeholder.length, type).toBeGreaterThan(0);
+      if (REQUIRED_PLACEHOLDER_TYPES.includes(type)) {
+        expect(labels.placeholder.length, type).toBeGreaterThan(0);
+      } else {
+        expect(OPTIONAL_PLACEHOLDER_TYPES, type).toContain(type);
+        expect(labels.placeholder, type).toEqual(expect.any(String));
+      }
       expect(labels.aiPlaceholder, type).toMatch(/^Например: /);
       expect(labels.addMoreDescription, type).toMatch(/^Добавьте ещё .+ или перейдите к оформлению клиента\.$/);
       expect(labels.previewEmptyMessage, type).toMatch(/^Список пуст — распознайте .+\.$/);
@@ -113,10 +155,13 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.piles.labels.placeholder).toBe("С120.35-12 B25 5\nС120.35-13и 3");
     expect(PRODUCT_TYPE_CONFIG.steps.labels.placeholder).toBe("ЛС11 10\nЛС14-1лев 5\nЛС11-Б-1 2");
     expect(PRODUCT_TYPE_CONFIG.marches.labels.placeholder).toBe("1ЛМ 27-11-14-4 B25 5\nЛМ 2,8 3");
-    // Deliberate copy-paste leftovers from the pile step — preserved verbatim until the
-    // customer confirms the canonical examples (see plan 2026-09-08 §5).
-    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.placeholder).toBe("С120.35-12 B25 5\nС120.35-13и 3");
-    expect(PRODUCT_TYPE_CONFIG.fbs.labels.placeholder).toBe("С120.35-12 B25 5\nС120.35-13и 3");
+    // Frozen from pb.db 2026-09-14 (first two priced marks, ORDER BY mark).
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.placeholder).toBe("C10-35B7 B25 2\nC10-35T1 B25 3");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.placeholder).toBe("С140.30-С 5\nС60.30-ВС.1 3");
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.placeholder).toBe("ФБС 12.4.3-Т B25 2\nФБС 12.4.6-Т B25 3");
+    expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.placeholder).not.toBe(PILE_LEFTOVER_PLACEHOLDER);
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.placeholder).not.toBe(PILE_LEFTOVER_PLACEHOLDER);
+    expect(PRODUCT_TYPE_CONFIG.fbs.labels.placeholder).not.toBe(PILE_LEFTOVER_PLACEHOLDER);
   });
 
   it("keeps the exact accusative-dependent copy (addMore / previewEmpty)", () => {
@@ -135,6 +180,9 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.addMoreDescription).toBe(
       "Добавьте ещё мостовые сваи или перейдите к оформлению клиента.",
     );
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.addMoreDescription).toBe(
+      "Добавьте ещё составные сваи или перейдите к оформлению клиента.",
+    );
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.addMoreDescription).toBe(
       "Добавьте ещё ФБС или перейдите к оформлению клиента.",
     );
@@ -145,6 +193,9 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.previewEmptyMessage).toBe(
       "Список пуст — распознайте мостовые сваи.",
     );
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.previewEmptyMessage).toBe(
+      "Список пуст — распознайте составные сваи.",
+    );
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.previewEmptyMessage).toBe("Список пуст — распознайте ФБС.");
   });
 
@@ -154,6 +205,7 @@ describe("PRODUCT_TYPE_CONFIG", () => {
     expect(PRODUCT_TYPE_CONFIG.steps.labels.aiPlaceholder).toBe("Например: убери строки с ЛС11");
     expect(PRODUCT_TYPE_CONFIG.marches.labels.aiPlaceholder).toBe("Например: убери строки с B15");
     expect(PRODUCT_TYPE_CONFIG.bridge_piles.labels.aiPlaceholder).toBe("Например: убери строки с B15");
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.aiPlaceholder).toBe("Например: убери строки с B15");
     expect(PRODUCT_TYPE_CONFIG.fbs.labels.aiPlaceholder).toBe("Например: убери строки с B15");
   });
 
@@ -169,6 +221,9 @@ describe("PRODUCT_TYPE_CONFIG", () => {
         "Марка, класс бетона, количество и цена — как в документе.",
       );
     }
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.previewSubtitle).toBe(
+      "Марка секции, класс бетона, количество и цена — как в документе.",
+    );
   });
 
   it("keeps the exact preview unpriced alerts", () => {
@@ -182,6 +237,30 @@ describe("PRODUCT_TYPE_CONFIG", () => {
       expect(PRODUCT_TYPE_CONFIG[type].labels.previewUnpricedMessage, type).toBe(
         "Не все марки найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
       );
+    }
+    expect(PRODUCT_TYPE_CONFIG.composite_piles.labels.previewUnpricedMessage).toBe(
+      "Не все секции найдены в прайсе — исправьте список или класс бетона перед переходом к клиенту.",
+    );
+  });
+
+  it("exposes the shared format-hint shell string", () => {
+    expect(FORMAT_HINT_SHARED).toBe(
+      "Одна позиция — одна строка. Количество — число в конце строки. Шапку, цены и адрес из письма не копируйте.",
+    );
+  });
+
+  it("gives every product a non-empty formatHint.explanation from the accepted texts", () => {
+    for (const type of ALL_PRODUCT_TYPES) {
+      const { explanation } = PRODUCT_TYPE_CONFIG[type].formatHint;
+      expect(explanation.length, type).toBeGreaterThan(0);
+      expect(explanation, type).toBe(FORMAT_HINT_EXPLANATIONS[type]);
+    }
+  });
+
+  it("uses labels.placeholder as formatHint.sample for every product", () => {
+    for (const type of ALL_PRODUCT_TYPES) {
+      const { labels, formatHint } = PRODUCT_TYPE_CONFIG[type];
+      expect(formatHint.sample, type).toBe(labels.placeholder);
     }
   });
 });

@@ -23,6 +23,12 @@ from core.bridge_pile_price_db import (
     init_bridge_pile_prices_schema,
     parse_bridge_pile_price_rows_from_xlsx,
 )
+from core.composite_pile_price_db import (
+    CompositePilePriceImportError,
+    import_composite_pile_prices_from_xlsx,
+    init_composite_pile_prices_schema,
+    parse_composite_pile_price_rows_from_xlsx,
+)
 from core.fbs_price_db import (
     import_fbs_prices_from_xlsx,
     init_fbs_prices_schema,
@@ -49,7 +55,7 @@ from core.step_price_db import (
     parse_step_price_rows_from_xlsx,
 )
 
-MSG_COMPOSITE = "группа пока не ведётся"
+MSG_COMPOSITE = "группа пока не ведётся"  # legacy; составные больше не отвергаются
 MSG_NO_SHEET = "лист «Прайс» не найден"
 MSG_NO_NIKITA = "это не прайс ПБ: нет колонки Никиты"
 MSG_SHA_MISMATCH = "файл не тот, что в превью"
@@ -65,6 +71,7 @@ _KEY_LEN: dict[PriceDeskKind, int] = {
     "march": 2,
     "bridge_pile": 2,
     "pile": 2,
+    "composite_pile": 2,
     "step": 1,
 }
 
@@ -75,6 +82,7 @@ _META_SQL: dict[PriceDeskKind, tuple[Callable[[str], None], str]] = {
     "step": (init_step_prices_schema, "step_prices"),
     "bridge_pile": (init_bridge_pile_prices_schema, "bridge_pile_prices"),
     "pile": (init_pile_prices_schema, "pile_prices"),
+    "composite_pile": (init_composite_pile_prices_schema, "composite_pile_prices"),
 }
 
 
@@ -196,6 +204,11 @@ class PriceDeskService:
             rows = parse_bridge_pile_price_rows_from_xlsx(path)
         elif kind == "pile":
             raise PriceDeskError(MSG_PILE_CALCULATED)
+        elif kind == "composite_pile":
+            try:
+                rows = parse_composite_pile_price_rows_from_xlsx(path)
+            except CompositePilePriceImportError as exc:
+                raise PriceDeskError(str(exc)) from exc
         else:
             raise PriceDeskError(MSG_UNKNOWN_KIND)
         if not rows:
@@ -245,6 +258,11 @@ class PriceDeskService:
             return import_bridge_pile_prices_from_xlsx(path, db)
         if kind == "pile":
             raise PriceDeskError(MSG_PILE_CALCULATED)
+        if kind == "composite_pile":
+            try:
+                return import_composite_pile_prices_from_xlsx(path, db)
+            except CompositePilePriceImportError as exc:
+                raise PriceDeskError(str(exc)) from exc
         raise PriceDeskError(MSG_UNKNOWN_KIND)
 
     def _current_rows(self, kind: PriceDeskKind, db: str) -> list[tuple]:

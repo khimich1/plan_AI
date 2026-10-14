@@ -18,7 +18,9 @@ CommercialWidePlateAction = Literal["confirm", "exclude", "replace"]
 CommercialUnpricedPlateAction = Literal["replace_load", "exclude"]
 CommercialInvalidWidthAction = Literal["replace_width", "exclude"]
 CommercialSaveMode = Literal["database", "archive", "skip"]
-ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs"]
+ProductType = Literal[
+    "plates", "piles", "steps", "marches", "bridge_piles", "composite_piles", "fbs"
+]
 
 
 class WizardStepId(str, Enum):
@@ -29,6 +31,7 @@ class WizardStepId(str, Enum):
     steps = "steps"
     marches = "marches"
     bridge_piles = "bridge_piles"
+    composite_piles = "composite_piles"
     fbs = "fbs"
     client = "client"
     result = "result"
@@ -43,6 +46,7 @@ class WizardNextRequiredAction(str, Enum):
     ingest_steps = "ingest_steps"
     ingest_marches = "ingest_marches"
     ingest_bridge_piles = "ingest_bridge_piles"
+    ingest_composite_piles = "ingest_composite_piles"
     ingest_fbs = "ingest_fbs"
     resolve_wide_plates = "resolve_wide_plates"
     resolve_invalid_widths = "resolve_invalid_widths"
@@ -408,6 +412,9 @@ class CommercialMarchGradesUpdateRequest(BaseModel):
 class CommercialBridgePileGradesUpdateRequest(BaseModel):
     concrete_grade: str = Field(min_length=2)
 
+
+class CommercialCompositePileGradesUpdateRequest(BaseModel):
+    concrete_grade: str = Field(min_length=2)
 
 
 class CommercialFbsGradesUpdateRequest(BaseModel):

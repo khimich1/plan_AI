@@ -34,6 +34,14 @@ describe("getDraftBatchCount", () => {
     expect(getDraftBatchCount(draft)).toBe(3);
   });
 
+  it("returns composite_pile_batches length for composite_piles drafts", () => {
+    const draft = makeDraft("composite_piles", {
+      composite_pile_batches: [{ batch_index: 0 }, { batch_index: 1 }],
+      plate_batches: [{ batch_index: 0 }],
+    });
+    expect(getDraftBatchCount(draft)).toBe(2);
+  });
+
   it("returns plate_batches for plates", () => {
     const draft = makeDraft("plates", {
       plate_batches: [{ batch_index: 0 }],

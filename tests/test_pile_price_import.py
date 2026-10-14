@@ -132,3 +132,17 @@ def test_get_pile_price_u_suffix_and_fractional_load(tmp_path: Path) -> None:
     assert get_pile_price("С120.35-13и", "B25", str(db_path)) == 68385.98
     assert get_pile_price("С120.35-13", "B25", str(db_path)) is None
     assert get_pile_price("С110.30-6у", "B25", str(db_path)) is None
+
+
+def test_get_pile_price_dotted_load_matches_hyphen(tmp_path: Path) -> None:
+    db_path = tmp_path / "pb.db"
+    _seed_pile_prices(
+        db_path,
+        [
+            ("С60.30-6", "B22_5", 13324.88),
+            ("С30.30-6", "B22_5", 7088.46),
+        ],
+    )
+    assert get_pile_price("С60.30.6", "B22_5", str(db_path)) == 13324.88
+    assert get_pile_price("С30.30.6", "B22_5", str(db_path)) == 7088.46
+    assert get_pile_price("C60.30.6", "B22_5", str(db_path)) == 13324.88

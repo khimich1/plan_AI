@@ -22,7 +22,7 @@ from core.ocr.providers.openai import (
 )
 from core.ocr.result import build_result_payload
 
-ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "fbs"]
+ProductType = Literal["plates", "piles", "steps", "marches", "bridge_piles", "composite_piles", "fbs"]
 
 _APPLY_AI_LABELS: dict[str, str] = {
     "plates": "плит",
@@ -30,6 +30,7 @@ _APPLY_AI_LABELS: dict[str, str] = {
     "steps": "ступеней",
     "marches": "маршей",
     "bridge_piles": "мостовых свай",
+    "composite_piles": "составных свай",
     "fbs": "ФБС",
 }
 
@@ -39,6 +40,7 @@ _APPLY_AI_EXTRACT: dict[str, str] = {
     "steps": "extract_steps",
     "marches": "extract_marches",
     "bridge_piles": "extract_bridge_piles",
+    "composite_piles": "extract_composite_piles",
     "fbs": "extract_fbs",
 }
 
@@ -82,6 +84,9 @@ async def recognize_text_smart(
             pipeline = run_pile_ocr_pipeline
         elif normalized_product_type == "bridge_piles":
             pipeline = run_bridge_pile_ocr_pipeline
+        elif normalized_product_type == "composite_piles":
+            # Reuse pile OCR pipeline shape; provider extract uses composite prompt.
+            pipeline = run_pile_ocr_pipeline
         elif normalized_product_type == "fbs":
             pipeline = run_fbs_ocr_pipeline
         elif normalized_product_type == "steps":
@@ -258,6 +263,23 @@ async def apply_bridge_piles_with_ai(
     return await _apply_with_ai(
         product_type="bridge_piles",
         current_text=current_bridge_piles_text,
+        user_instruction=user_instruction,
+        image_path=image_path,
+        show_cost=show_cost,
+    )
+
+
+async def apply_composite_piles_with_ai(
+    *,
+    current_composite_piles_text: str,
+    user_instruction: str,
+    image_path: str | None = None,
+    show_cost: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Применяет инструкцию пользователя к списку составных свай."""
+    return await _apply_with_ai(
+        product_type="composite_piles",
+        current_text=current_composite_piles_text,
         user_instruction=user_instruction,
         image_path=image_path,
         show_cost=show_cost,

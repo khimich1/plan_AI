@@ -78,8 +78,10 @@ export const useSaveSpecificationMutation = () => {
 
 export const useDownloadSpecificationMutation = () =>
   useMutation({
-    mutationFn: async (kpId: number) => {
-      const result = await archiveApi.downloadSpecification(kpId);
+    mutationFn: async (input: number | { kpId: number; format?: "xlsx" | "pdf" }) => {
+      const kpId = typeof input === "number" ? input : input.kpId;
+      const format = typeof input === "number" ? "xlsx" : (input.format ?? "xlsx");
+      const result = await archiveApi.downloadSpecification(kpId, format);
       saveBlobAs(result.blob, result.filename);
       return result;
     },

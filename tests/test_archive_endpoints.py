@@ -2620,3 +2620,113 @@ def test_saved_contract_agreement_pdf_without_soffice_is_503_not_docx(
     assert not response.content.startswith(b"PK")
 
 
+_SPEC_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_SPEC_PDF = b"%PDF-1.4 specification"
+
+
+def _specification_file_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[CsrfAwareTestClient, int]:
+    from tests.test_specification_archive import (
+        ADMIN,
+        _active_contract,
+        _choice,
+        _forbid_invoice_guids,
+        _seed_plate,
+        _service,
+    )
+
+    monkeypatch.setattr(
+        "app.services.archive_service.SupplyContractRepository.get_active_by_counterparty",
+        _active_contract,
+    )
+    monkeypatch.setattr(
+        "app.services.archive_service.assert_invoice_guids",
+        _forbid_invoice_guids,
+    )
+    db_path, kp_id = _seed_plate(tmp_path, counterparty_id=5, qty=2, unit_price=1000)
+    service = _service(db_path, tmp_path)
+    service._today_override = "2026-09-18"
+    service.save_specification(kp_id, _choice(), user=ADMIN)
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-for-pytest-must-be-32-chars-min")
+    get_settings.cache_clear()
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": 1,
+                "username": "tester",
+                "role": "admin",
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+                "session_version": 0,
+            }
+        ],
+    )
+    app = create_app()
+    app.dependency_overrides[get_archive_service] = lambda: service
+    return CsrfAwareTestClient(app), kp_id
+
+
+def _tester_cookie() -> dict[str, str]:
+    return {
+        "app_session": create_session_token(
+            {"id": 1, "username": "tester", "role": "admin"},
+            ttl_seconds=300,
+        )
+    }
+
+
+def test_specification_file_without_format_stays_xlsx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _block_soffice(monkeypatch)
+    client, kp_id = _specification_file_client(tmp_path, monkeypatch)
+
+    response = client.get(
+        f"/api/v1/commercial/archive/{kp_id}/specification/file",
+        cookies=_tester_cookie(),
+    )
+
+    assert response.status_code == 200
+    assert response.content.startswith(b"PK")
+    assert response.headers["content-type"].startswith(_SPEC_XLSX_MEDIA)
+    assert ".xlsx" in response.headers["content-disposition"]
+
+
+def test_specification_file_pdf_returns_application_pdf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_soffice(monkeypatch, _SPEC_PDF)
+    client, kp_id = _specification_file_client(tmp_path, monkeypatch)
+
+    response = client.get(
+        f"/api/v1/commercial/archive/{kp_id}/specification/file?format=pdf",
+        cookies=_tester_cookie(),
+    )
+
+    assert response.status_code == 200
+    assert response.content == _SPEC_PDF
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert ".pdf" in response.headers["content-disposition"]
+    assert not response.content.startswith(b"PK")
+
+
+def test_specification_file_pdf_without_soffice_is_503_not_xlsx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _block_soffice(monkeypatch)
+    client, kp_id = _specification_file_client(tmp_path, monkeypatch)
+
+    response = client.get(
+        f"/api/v1/commercial/archive/{kp_id}/specification/file?format=pdf",
+        cookies=_tester_cookie(),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == _LIBREOFFICE_DETAIL
+    assert response.headers["content-type"].startswith("application/json")
+    assert not response.content.startswith(b"PK")
+
+

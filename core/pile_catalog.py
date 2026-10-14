@@ -26,6 +26,11 @@ _BRIDGE_GEOMETRY_RE = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 _LOAD_SUFFIX_RE = re.compile(r"-\d+(?:[.,]\d+)?(?:[иИуУ])?$", re.UNICODE)
+# «С60.30.6» / «С110.30.9.1у» / «С60.30.13-22» — точка вместо дефиса перед нагрузкой.
+_DOTTED_SECTION_LOAD_RE = re.compile(
+    r"^С(\d+)\.(\d{2})\.(\d+(?:[.,]\d+)?(?:-\d+)?[иИуУ]?)$",
+    re.UNICODE,
+)
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,21 @@ def parse_bridge_pile_geometry(mark: str) -> tuple[Optional[float], Optional[int
     length_m = float(match.group(1).replace(",", "."))
     section_cm = float(match.group(2).replace(",", "."))
     return length_m, int(round(section_cm * 10))
+
+
+def canonicalize_solid_pile_mark(mark: str) -> str:
+    """Точка перед нагрузкой → дефис прайса: ``С60.30.6`` → ``С60.30-6``.
+
+    Марка с уже стоящим дефисом (``С110.30-9.1у``) не меняется.
+    """
+    raw = (mark or "").strip()
+    compact = re.sub(r"\s+", "", raw)
+    compact = re.sub(r"^[cс]", "С", compact, flags=re.IGNORECASE)
+    match = _DOTTED_SECTION_LOAD_RE.match(compact)
+    if not match:
+        return raw
+    length, section, load = match.groups()
+    return f"С{length}.{section}-{load.replace(',', '.')}"
 
 
 def normalize_pile_mark_key(mark: str) -> str:

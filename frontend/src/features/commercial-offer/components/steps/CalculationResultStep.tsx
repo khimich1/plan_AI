@@ -11,6 +11,7 @@ import { SaveOfferSection } from "@/features/commercial-offer/components/SaveOff
 import { PlatePriceBreakdownModal } from "@/features/commercial-offer/components/PlatePriceBreakdownModal";
 import { formatFrostPair } from "@/features/commercial-offer/lib/concreteSpec";
 import { filterCompositionWarnings } from "@/features/commercial-offer/lib/compositionWarnings";
+import { findBreakdownTable } from "@/features/commercial-offer/lib/findBreakdownTable";
 import {
   baseProductsTotal,
   discountPercentFromTargetSum,

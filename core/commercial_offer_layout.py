@@ -6,6 +6,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from core.commercial_pricing import (
     is_bridge_pile_order,
+    is_composite_pile_order,
     is_fbs_order,
     is_march_order,
     is_pile_order,
@@ -38,6 +39,7 @@ _PRODUCT_TYPE_LABELS: dict[str, str] = {
     "steps": "Ступени",
     "marches": "Марши",
     "bridge_piles": "Мостовые сваи",
+    "composite_piles": "Составные сваи",
     "fbs": "ФБС",
 }
 
@@ -46,6 +48,7 @@ _PRODUCT_KIND_TO_TYPE: dict[str, str] = {
     "step": "steps",
     "march": "marches",
     "bridge_pile": "bridge_piles",
+    "composite_pile": "composite_piles",
     "fbs": "fbs",
 }
 
@@ -113,6 +116,7 @@ def commercial_offer_table_headers(
     if (
         is_pile_order(order_list)
         or is_bridge_pile_order(order_list)
+        or is_composite_pile_order(order_list)
         or is_fbs_order(order_list)
         or is_march_order(order_list)
     ):

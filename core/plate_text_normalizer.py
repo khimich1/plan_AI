@@ -73,6 +73,23 @@ _CATALOG_CORE_RE = re.compile(
 # Количество после марки: «5», «5 шт», «5шт», «5 штук», «5 шт.»
 _QTY_RE = re.compile(r"^(\d+)\s*[а-яёА-ЯЁa-zA-Z]*\.?\s*$")
 
+# Длина с запятой, разделитель вместо дефиса, ширина, дефис нагрузки.
+# Разделитель: пробел или один знак, кроме запятой и дефиса.
+# «ПБ 35,3.10,2-8», «ПБ 35,3 10,2-8», «ПБ 35,3/10,2-8».
+# «35,3.10.2-8» не матчится: после ширины нужен дефис, не второй знак.
+# Запятая не разделитель: она десятичный знак в «35,3».
+_COMMA_LENGTH_SEPARATOR_RE = re.compile(
+    r"(?i)"
+    r"^(?P<prefix>п[бк])\s+"
+    r"(?P<length>\d+,\d+)"
+    r"(?P<sep>\s*(?:[xх_]|[^\w\s,\-])\s*|\s+)"
+    r"(?P<width>\d+(?:,\d+)?)"
+    r"\s*-\s*"
+    r"(?P<load>\d+(?:[,.]\d+)?п?)"
+    r"(?P<tail>.*)$",
+    re.UNICODE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Публичный тип данных
@@ -208,6 +225,56 @@ def _format_load(load: float) -> str:
 _DIM_MATCH_TOL = 1e-3
 
 
+def _canonical_from_comma_separator_match(match: re.Match[str]) -> str:
+    """Канон: «ПБ 35,3-10,2-8 44», без пробелов вокруг дефисов размеров."""
+    prefix = match.group("prefix").upper()
+    body = f"{prefix} {match.group('length')}-{match.group('width')}-{match.group('load')}"
+    tail = match.group("tail").strip()
+    if tail:
+        return f"{body} {tail}"
+    return body
+
+
+def _parsed_plate_matches(left: str, right: str) -> bool:
+    """Длина/ширина с допуском 1e-3 м, нагрузка 1e-6, количество точно."""
+    parsed_left = parse_line(left)
+    parsed_right = parse_line(right)
+    if not parsed_left.parsed or not parsed_right.parsed:
+        return False
+    if abs(parsed_left.length_m - parsed_right.length_m) > _DIM_MATCH_TOL:
+        return False
+    if abs(parsed_left.width_m - parsed_right.width_m) > _DIM_MATCH_TOL:
+        return False
+    if parsed_left.qty != parsed_right.qty:
+        return False
+    if parsed_left.load_code is None or parsed_right.load_code is None:
+        return False
+    return abs(parsed_left.load_code - parsed_right.load_code) <= 1e-6
+
+
+def _rewrite_comma_length_separator(cleaned: str) -> Optional[str]:
+    """
+    Меняет разделитель между длиной с запятой и шириной на дефис.
+
+    Разделитель — пробел или один знак, кроме запятой и дефиса.
+    Возвращает канон, только если parse_line канона совпал с разбором той же
+    строки, где этот разделитель уже дефис. Иначе None.
+    """
+    match = _COMMA_LENGTH_SEPARATOR_RE.match(cleaned)
+    if match is None:
+        return None
+    canonical = _canonical_from_comma_separator_match(match)
+    hyphenated = cleaned[: match.start("sep")] + "-" + cleaned[match.end("sep") :]
+    if not _parsed_plate_matches(canonical, hyphenated):
+        logger.debug(
+            "Разделитель длины и ширины не прошёл сторож, откат: %r → %r",
+            canonical,
+            cleaned,
+        )
+        return None
+    return canonical
+
+
 def _catalog_tuple_matches_canonical(
     L_dm: int,
     W_dm: int,
@@ -239,7 +306,9 @@ def canonicalize_plate_line(line: str) -> Tuple[str, Optional[str]]:
     Нормализует одну строку заказа плит.
 
     Если строка содержит каталожную марку — преобразует в канонический вид
-    «ПБ L-W-Nп [qty]».  Иначе возвращает строку после базовой чистки.
+    «ПБ L-W-Nп [qty]».  Если каталог не применился, пробел или знак
+    (кроме запятой и дефиса) между длиной с запятой и шириной заменяется
+    на дефис.  Иначе возвращает строку после базовой чистки.
 
     Returns:
         (нормализованная_строка, предупреждение_или_None)
@@ -274,6 +343,12 @@ def canonicalize_plate_line(line: str) -> Tuple[str, Optional[str]]:
         warning = f"{stripped!r} → {canonical!r}"
         logger.debug("Каталожная марка нормализована: %s", warning)
         return canonical, warning
+
+    rewritten = _rewrite_comma_length_separator(cleaned)
+    if rewritten is not None:
+        warning = f"{stripped!r} → {rewritten!r}"
+        logger.debug("Разделитель длины и ширины заменён на дефис: %s", warning)
+        return rewritten, warning
 
     # Не каталожная марка — возвращаем строку после базовой чистки
     return cleaned, None

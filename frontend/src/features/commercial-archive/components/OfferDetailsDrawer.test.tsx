@@ -274,6 +274,22 @@ function makePileOffer(status = "в архиве"): ArchiveOfferDetails {
   });
 }
 
+function makeCompositePileOffer(status = "в архиве"): ArchiveOfferDetails {
+  return makeOffer(status, null, {
+    product_type: "composite_piles",
+    composite_piles: [
+      {
+        position_number: 1,
+        mark: "С60.30-ВС.1",
+        concrete_grade: "B25",
+        qty: 5,
+        unit_price: 13000,
+        discounted_price: 12350,
+      },
+    ],
+  });
+}
+
 function makeResumeDraft(draftId = "draft-resume-42") {
   return {
     draft_id: draftId,
@@ -449,6 +465,22 @@ describe("OfferDetailsDrawer pile offers", () => {
     expect(screen.getByText("Марка")).toBeInTheDocument();
     expect(screen.getByText("Класс")).toBeInTheDocument();
     expect(screen.getByText("С80.30-8")).toBeInTheDocument();
+    expect(screen.getByText("B25")).toBeInTheDocument();
+  });
+
+  it("renders composite pile section rows and hides readiness", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeCompositePileOffer("в работе"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId("kp-readiness-block")).not.toBeInTheDocument();
+    expect(screen.getByText("Марка")).toBeInTheDocument();
+    expect(screen.getByText("С60.30-ВС.1")).toBeInTheDocument();
     expect(screen.getByText("B25")).toBeInTheDocument();
   });
 
@@ -1571,7 +1603,7 @@ describe("OfferDetailsDrawer order card shelves", () => {
     fireEvent.click(screen.getByRole("button", { name: "Скачать спецификацию" }));
 
     await waitFor(() => {
-      expect(mockDownloadSpecification).toHaveBeenCalledWith(42);
+      expect(mockDownloadSpecification).toHaveBeenCalledWith({ kpId: 42, format: "xlsx" });
     });
     expect(mockSaveSpecification).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "100% предоплата" })).not.toBeInTheDocument();
@@ -1628,7 +1660,7 @@ describe("OfferDetailsDrawer order card shelves", () => {
     fireEvent.click(screen.getByRole("button", { name: "Скачать Excel" }));
 
     await waitFor(() => {
-      expect(mockDownloadSpecification).toHaveBeenCalledWith(42);
+      expect(mockDownloadSpecification).toHaveBeenCalledWith({ kpId: 42, format: "xlsx" });
     });
     expect(mockSaveSpecification).toHaveBeenCalled();
     expect(mockSaveSpecification.mock.invocationCallOrder[0]).toBeLessThan(

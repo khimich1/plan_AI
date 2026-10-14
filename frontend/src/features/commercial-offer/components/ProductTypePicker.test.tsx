@@ -10,7 +10,7 @@ afterEach(() => {
 
 describe("ProductTypePicker", () => {
   describe("create mode (default)", () => {
-    it("renders plates, piles, steps, marches, bridge piles, and fbs options", () => {
+    it("renders plates, piles, steps, marches, bridge piles, composite piles, and fbs options", () => {
       render(<ProductTypePicker onSelect={vi.fn()} />);
 
       expect(screen.getByRole("button", { name: /Плиты/i })).toBeInTheDocument();
@@ -18,6 +18,7 @@ describe("ProductTypePicker", () => {
       expect(screen.getByRole("button", { name: /Ступени/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /лестничные марши/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /мостовые железобетонные сваи/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /составные железобетонные сваи/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /фундаментные блоки ФБС/i })).toBeInTheDocument();
     });
 
@@ -48,6 +49,15 @@ describe("ProductTypePicker", () => {
       fireEvent.click(screen.getByRole("button", { name: /мостовые железобетонные сваи/i }));
 
       expect(onSelect).toHaveBeenCalledWith("bridge_piles");
+    });
+
+    it("calls onSelect with composite_piles when the composite piles card is clicked", () => {
+      const onSelect = vi.fn();
+
+      render(<ProductTypePicker onSelect={onSelect} />);
+      fireEvent.click(screen.getByRole("button", { name: /составные железобетонные сваи/i }));
+
+      expect(onSelect).toHaveBeenCalledWith("composite_piles");
     });
 
     it("calls onSelect with fbs when the FBS card is clicked", () => {

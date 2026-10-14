@@ -10,7 +10,7 @@ import pytest
 
 from app.core.settings import get_settings
 from app.main import create_app
-from app.services.price_desk_service import MSG_COMPOSITE, MSG_NEED_SHA, MSG_SHA_MISMATCH, file_sha256
+from app.services.price_desk_service import MSG_NEED_SHA, MSG_SHA_MISMATCH, file_sha256
 from tests.helpers.auth_fixtures import patch_auth_users
 from tests.helpers.csrf import CsrfAwareTestClient
 from tests.helpers.production_api_fixtures import VALID_APP_SECRET_KEY, session_cookie
@@ -105,7 +105,7 @@ def test_economist_status_200(client: CsrfAwareTestClient) -> None:
     response = client.get(STATUS, cookies=_economist())
     assert response.status_code == 200, response.text
     body = response.json()
-    assert len(body["groups"]) == 6
+    assert len(body["groups"]) == 7
     assert {g["product_kind"] for g in body["groups"]} == {
         "plates",
         "fbs",
@@ -113,6 +113,7 @@ def test_economist_status_200(client: CsrfAwareTestClient) -> None:
         "step",
         "bridge_pile",
         "pile",
+        "composite_pile",
     }
 
 
@@ -213,14 +214,18 @@ def test_admin_can_apply(client: CsrfAwareTestClient, tmp_path: Path) -> None:
     assert response.status_code == 200, response.text
 
 
-def test_composite_422(client: CsrfAwareTestClient) -> None:
-    response = client.post(
-        PREVIEW,
-        files={"file": ("Прайс на составные сваи от 07.09.2026.xlsx", b"abc", XLSX_MEDIA)},
-        cookies=_economist(),
-    )
-    assert response.status_code == 422
-    assert MSG_COMPOSITE in response.json()["detail"]
+def test_composite_pile_preview(client: CsrfAwareTestClient, tmp_path: Path) -> None:
+    xlsx = tmp_path / "Прайс на составные сваи от 07.09.2026.xlsx"
+    rows = [
+        [None, "Наименование", 15, 20, 22.5, 25, "30 на граните"],
+        [1, "Сваи С 60.30-ВС.1", 100.0, 110.0, 120.0, 130.0, 140.0],
+    ]
+    pd.DataFrame(rows).to_excel(xlsx, sheet_name="Прайс", index=False, header=False)
+    response = _upload(client, PREVIEW, xlsx, cookies=_economist())
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["product_kind"] == "composite_pile"
+    assert body["parsed_rows"] == 5
 
 
 @pytest.mark.parametrize(

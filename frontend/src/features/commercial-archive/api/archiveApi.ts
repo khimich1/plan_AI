@@ -43,8 +43,11 @@ export const archiveApi = {
       { "Content-Type": "application/json" },
     ),
 
-  downloadSpecification: (kpId: number) =>
-    httpClient.download(`${BASE}/${kpId}/specification/file`, `Спецификация КП ${kpId}.xlsx`),
+  downloadSpecification: (kpId: number, format: "xlsx" | "pdf" = "xlsx") =>
+    httpClient.download(
+      `${BASE}/${kpId}/specification/file${format === "pdf" ? "?format=pdf" : ""}`,
+      format === "pdf" ? `Спецификация КП ${kpId}.pdf` : `Спецификация КП ${kpId}.xlsx`,
+    ),
 
   getReadinessPositions: (kpId: number) =>
     httpClient.get<KpReadinessPositionsResponse>(`${BASE}/${kpId}/readiness/positions`),

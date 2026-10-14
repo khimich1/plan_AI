@@ -478,15 +478,15 @@ class SupplyContractService:
         }
 
 
-def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
-    """Конвертирует только что собранный docx. Это не GsmExportService."""
+def _convert_office_to_pdf(source_bytes: bytes, suffix: str) -> bytes:
+    """Один вызов soffice для docx договора и xlsx спецификации."""
     soffice = shutil.which("soffice")
     if not soffice:
         raise SupplyContractPdfError(MSG_LIBREOFFICE)
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
-        source = folder / "document.docx"
-        source.write_bytes(docx_bytes)
+        source = folder / f"document{suffix}"
+        source.write_bytes(source_bytes)
         profile = folder / "profile"
         profile.mkdir()
         try:
@@ -519,6 +519,16 @@ def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
             )
             raise SupplyContractPdfError(MSG_LIBREOFFICE)
         return pdf_path.read_bytes()
+
+
+def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
+    """Конвертирует только что собранный docx. Это не GsmExportService."""
+    return _convert_office_to_pdf(docx_bytes, ".docx")
+
+
+def convert_xlsx_to_pdf(xlsx_bytes: bytes) -> bytes:
+    """Конвертирует только что собранную книгу спецификации."""
+    return _convert_office_to_pdf(xlsx_bytes, ".xlsx")
 
 
 def _as_download(
