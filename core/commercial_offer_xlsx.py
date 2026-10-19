@@ -27,14 +27,14 @@ try:
     from .cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        total_order_cargo_weight_kg,
+        document_cargo_weight_kg,
     )
     from .kp_plate_weight import resolve_kp_line_weight_kg
 except ImportError:
     from cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        total_order_cargo_weight_kg,
+        document_cargo_weight_kg,
     )
     from kp_plate_weight import resolve_kp_line_weight_kg
 
@@ -300,7 +300,6 @@ def generate_commercial_offer_xlsx(
     else:
         order_mode = "plates"
 
-    total_weight = 0.0
     resolved_unit_prices: List[float] = []
 
     for idx, item in enumerate(order_data, start=1):
@@ -311,9 +310,6 @@ def generate_commercial_offer_xlsx(
 
         if unified:
             pt = line_product_type(item)
-            if pt == "plates":
-                _, line_kg = resolve_kp_line_weight_kg(item)
-                total_weight += line_kg
             table_data.append({
                 '№': idx,
                 'Тип': product_type_label(pt),
@@ -347,7 +343,6 @@ def generate_commercial_offer_xlsx(
 
         name = item.get('name', 'Плиты ПБ')
         _, total_item_weight = resolve_kp_line_weight_kg(item)
-        total_weight += total_item_weight
         table_data.append({
             '№': idx,
             'Наименование': name,
@@ -373,9 +368,11 @@ def generate_commercial_offer_xlsx(
         long_pile_delivery=long_pile_delivery,
         kp_id=kp_db_id,
     )
-    if unified:
-        plates_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
-        total_weight = plates_kg
+    total_weight = document_cargo_weight_kg(
+        order_data,
+        pile_catalog_db_path=pile_catalog_db_path,
+        weight_catalog_db_path=weight_catalog_db_path,
+    )
     delivery_export = kp_delivery_export_lines(
         totals, plate_trip_cost=trip_cost, pile_trip_cost=pile_trip
     )

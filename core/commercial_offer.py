@@ -27,14 +27,14 @@ try:
     from .cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        total_order_cargo_weight_kg,
+        document_cargo_weight_kg,
     )
     from .kp_plate_weight import resolve_kp_line_weight_kg
 except ImportError:
     from cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        total_order_cargo_weight_kg,
+        document_cargo_weight_kg,
     )
     from kp_plate_weight import resolve_kp_line_weight_kg
 
@@ -576,8 +576,6 @@ def generate_commercial_offer_pdf(
         long_pile_delivery=long_pile_delivery,
         kp_id=kp_db_id,
     )
-    total_weight = 0.0
-
     if unified:
         order_mode = "unified"
     elif pile_order:
@@ -603,9 +601,6 @@ def generate_commercial_offer_pdf(
 
         if unified:
             pt = line_product_type(item)
-            if pt == "plates":
-                _, line_kg = resolve_kp_line_weight_kg(item)
-                total_weight += line_kg
             table_data.append([
                 str(idx),
                 escape(product_type_label(pt)),
@@ -643,7 +638,6 @@ def generate_commercial_offer_pdf(
         name_raw = item.get('name', 'Плиты ПБ')
         name = escape(name_raw)
         _, total_item_weight = resolve_kp_line_weight_kg(item)
-        total_weight += total_item_weight
         weight_str = _format_money_ru(total_item_weight)
         table_data.append([
             str(idx),
@@ -768,6 +762,11 @@ def generate_commercial_offer_pdf(
     # Она сохраняется в отдельный Excel файл и отправляется вместе с PDF
     
     total_items = len(table_data) - 1
+    total_weight = document_cargo_weight_kg(
+        order_data,
+        pile_catalog_db_path=pile_catalog_db_path,
+        weight_catalog_db_path=weight_catalog_db_path,
+    )
     weight_summary = f"{total_weight:,.3f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     subtotal_str = _format_money_ru(totals['subtotal'])
     total_with_vat_str = _format_money_ru(totals['total_with_vat'])
