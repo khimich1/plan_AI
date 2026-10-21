@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
+
+from app.repositories.contract_client_link import (
+    select_contract_client_links,
+    unique_client_id_for_inn,
+)
 
 from core.kp_db_common import _connect
 from core.kp_db_schema import ensure_schema
@@ -150,6 +156,29 @@ def _requisite_assignments(
         assignments.append("manager_name = ?")
         values.append(manager_name.strip())
     return assignments, values
+
+
+@dataclass(frozen=True)
+class ContractLinkStats:
+    """Сколько договоров получили связь и сколько свободных осталось."""
+
+    created: int
+    skipped: int
+
+
+_LINK_UPDATE = """
+UPDATE supply_contract
+SET counterparty_id = ?
+WHERE id = ?
+  AND counterparty_id IS NULL
+  AND status != ?
+  AND NOT EXISTS (
+      SELECT 1 FROM supply_contract AS other
+      WHERE other.counterparty_id = ?
+        AND other.status != ?
+        AND other.id != supply_contract.id
+  )
+"""
 
 
 class SupplyContractRepository:
@@ -412,6 +441,41 @@ class SupplyContractRepository:
             raise
         finally:
             conn.close()
+
+    def link_unique_inn_contracts(self, *, user_id: int | None = None) -> ContractLinkStats:
+        """Пишет ``counterparty_id`` выбранным договорам. Справочник не меняет.
+
+        Повторный вызов ничего не добавляет: уже заполненный id и второй
+        действующий договор того же клиента условие UPDATE отсекает.
+        """
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            contracts, clients = self._fetch_link_inputs(conn)
+            client_count = len(clients)
+            pairs = select_contract_client_links(contracts, clients)
+            created = self._apply_unique_links(conn, pairs, user_id=user_id)
+            if self._count_clients(conn) != client_count:
+                raise sqlite3.OperationalError("справочник контрагентов изменился")
+            conn.execute("COMMIT")
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
+        unlinked = sum(1 for row in contracts if row.get("counterparty_id") is None)
+        return ContractLinkStats(created=created, skipped=unlinked - created)
+
+    def planned_contract_client_links(self) -> list[tuple[int, int]]:
+        """Та же пара, что и запись, но без UPDATE."""
+        with self._connect() as conn:
+            contracts, clients = self._fetch_link_inputs(conn)
+        return select_contract_client_links(contracts, clients)
+
+    def unique_active_client_id(self, inn: object) -> int | None:
+        with self._connect() as conn:
+            _contracts, clients = self._fetch_link_inputs(conn)
+        return unique_client_id_for_inn(clients, inn)
 
     def list_counterparty_names(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -783,6 +847,66 @@ class SupplyContractRepository:
             user_id=user_id,
             created_at=created_at,
         )
+
+    def _fetch_link_inputs(
+        self, conn: sqlite3.Connection
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        contracts = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, counterparty_id, status, inn, contract_date, number
+                FROM supply_contract
+                """
+            )
+        ]
+        clients = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT id, inn, is_active, is_client FROM counterparties"
+            )
+        ]
+        return contracts, clients
+
+    def _count_clients(self, conn: sqlite3.Connection) -> int:
+        row = conn.execute("SELECT COUNT(*) FROM counterparties").fetchone()
+        return int(row[0])
+
+    def _apply_unique_links(
+        self,
+        conn: sqlite3.Connection,
+        pairs: list[tuple[int, int]],
+        *,
+        user_id: int | None,
+    ) -> int:
+        created = 0
+        created_at = datetime.now().isoformat(timespec="seconds")
+        for contract_id, client_id in pairs:
+            cur = conn.execute(
+                _LINK_UPDATE,
+                (
+                    int(client_id),
+                    int(contract_id),
+                    CANCELLED_STATUS,
+                    int(client_id),
+                    CANCELLED_STATUS,
+                ),
+            )
+            if cur.rowcount != 1:
+                continue
+            created += 1
+            if user_id is None:
+                continue
+            self._insert_event(
+                conn,
+                contract_id=int(contract_id),
+                field="counterparty_id",
+                old_value=None,
+                new_value=str(int(client_id)),
+                user_id=int(user_id),
+                created_at=created_at,
+            )
+        return created
 
     def _active_row(self, conn: sqlite3.Connection, counterparty_id: int) -> dict[str, Any] | None:
         row = conn.execute(

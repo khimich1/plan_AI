@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 KIND_KP_GUID_MISSING = "kp_guid_missing"
+KIND_INVOICE_NUMBER_RECEIVED = "invoice_number_received"
 
 
 class NotificationItem(BaseModel):

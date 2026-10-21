@@ -66,6 +66,12 @@ class KpArchiveRepository:
             db_path=self.db_path,
         )
 
+    def set_counterparty_id(self, kp_id: int, counterparty_id: int) -> bool:
+        """Только ссылка на справочник. Имя и ИНН КП остаются как были."""
+        return offers_write.set_kp_counterparty_id(
+            kp_id, counterparty_id, self.db_path
+        )
+
     def update_discount(self, kp_id: int, discount_percent: float) -> bool:
         return offers_write.update_kp_discount(kp_id, discount_percent, self.db_path)
 

@@ -1072,3 +1072,40 @@ def test_on_approval_section_keeps_other_statuses_in_place(tmp_path: Path) -> No
     assert {row["kp_id"] for row in grouped["in_production"]} == {ids["в работе"], ids["На СГП"]}
     assert {row["kp_id"] for row in grouped["completed"]} == {ids["выполнено"]}
     assert all(row["status"] == "на согласовании" for row in grouped["on_approval"])
+
+
+def test_archive_list_is_newest_kp_first(tmp_path: Path) -> None:
+    from core.kp.offers_read import get_all_kp_list
+    from core.kp_db_schema import init_schema
+    from core.kp_persistence_service import KpPersistenceService
+
+    db_path = str(tmp_path / "plita.db")
+    init_schema(db_path)
+    line = {
+        "line_id": "ln_plate_1",
+        "product_type": "plates",
+        "name": "ПБ 60-12-8п",
+        "length_m": 6.0,
+        "width_m": 1.2,
+        "load_class": 800,
+        "qty": 1,
+        "unit_price": 1000.0,
+    }
+    older = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [line],
+        customer_name="старое",
+        status="в архиве",
+        db_path=db_path,
+    )
+    newer = KpPersistenceService.save_kp_to_db(
+        "13.08.2026",
+        [{**line, "line_id": "ln_plate_2"}],
+        customer_name="новое",
+        status="в архиве",
+        db_path=db_path,
+    )
+
+    archived = get_all_kp_list(db_path)["archived"]
+
+    assert [row["kp_id"] for row in archived] == [newer, older]
