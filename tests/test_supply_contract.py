@@ -676,7 +676,7 @@ def test_json_header_without_active_contract_raises(tmp_path: Path) -> None:
     assert source["Товары"][0] == {"Номенклатура": "Плиты ПБ", "Количество": 2}
 
 
-def test_edo_agreement_rejects_imported_shell_and_contract_docx_stays(tmp_path: Path) -> None:
+def test_kp_downloads_refuse_imported_shell_without_requisites(tmp_path: Path) -> None:
     db_path = _fresh_db(tmp_path, "edo-import.db")
     with _connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -700,10 +700,13 @@ def test_edo_agreement_rejects_imported_shell_and_contract_docx_stays(tmp_path: 
 
     with pytest.raises(
         SupplyContractValidationError,
-        match="В договоре не хватает реквизитов покупателя для соглашения об ЭДО",
+        match="^Сначала заполните реквизиты договора$",
     ):
         service.edo_agreement_for_kp(1, user=ADMIN)
+    with pytest.raises(
+        SupplyContractValidationError,
+        match="^Сначала заполните реквизиты договора$",
+    ):
+        service.document_for_kp(1, user=ADMIN)
 
-    payload, filename = service.document_for_kp(1, user=ADMIN)
-    assert filename == "dogovor-1027-09-26.docx"
-    assert payload[:2] == b"PK"
+    assert _contract_count(db_path) == 1

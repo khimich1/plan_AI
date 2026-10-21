@@ -6,14 +6,17 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from app.dependencies.auth import require_roles
-from app.dependencies.services import get_counterparties_service
+from app.dependencies.services import get_counterparties_service, get_supply_contract_service
 from app.schemas.counterparties import (
     COUNTERPARTY_SEARCH_Q_MAX_LENGTH,
     CounterpartyCreateRequest,
     CounterpartyCreateResponse,
     CounterpartySearchResponse,
     CounterpartyShort,
+    KpClientCardHit,
+    KpClientCardSearchResponse,
 )
+from app.services.supply_contract_service import SupplyContractService
 from app.services.counterparties_service import (
     CounterpartiesService,
     DuplicateCodeError,
@@ -44,6 +47,17 @@ def search_counterparties(
         clients_only = True
     items = [_to_short(row) for row in service.search(q, limit=limit, clients_only=clients_only)]
     return CounterpartySearchResponse(items=items, count=len(items))
+
+
+@router.get("/contract-cards", response_model=KpClientCardSearchResponse)
+def search_kp_client_cards(
+    q: str = Query(..., max_length=COUNTERPARTY_SEARCH_Q_MAX_LENGTH),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> KpClientCardSearchResponse:
+    rows = service.search_wizard_cards(q, user=user)
+    items = [KpClientCardHit.model_validate(row) for row in rows]
+    return KpClientCardSearchResponse(items=items, count=len(items))
 
 
 @router.post("", response_model=CounterpartyCreateResponse, status_code=201)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import uuid
@@ -11,11 +12,16 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from app.repositories.counterparties_repository import CounterpartiesRepository
 from app.repositories.kp_offers_repository import KpOffersRepository
 from app.repositories.supply_contract_repository import SupplyContractRepository
 from app.schemas.supply_contract import SupplyContractCreate
 from app.security.offer_access import assert_offer_write_access
 from core.config.settings import PROJECT_ROOT
+from app.services.contract_card_import import (
+    ContractCardImportError,
+    parse_contract_card_sheet,
+)
 from app.services.supply_contract_import import (
     SupplyContractImportError,
     parse_lawyer_sheet,
@@ -24,13 +30,18 @@ from app.services.supply_contract_import import (
 from core.supply_contract import (
     CANCELLED_STATUS,
     CONTRACT_STATUSES,
+    LEGAL_FORMS,
     LEGAL_FORMS_REQUIRING_KPP,
     LEGAL_FORMS_REQUIRING_POSITION,
     MSG_BIND_COUNTERPARTY,
     MSG_NOT_ARCHIVED,
     SCAN_NOTES,
     attach_contract_number as stamp_contract_number,
+    contract_date_from_number,
     duplicate_contract_message,
+    format_contract_number,
+    next_contract_seq,
+    normalize_contract_number,
     normalize_digits,
     normalize_email,
 )
@@ -53,9 +64,26 @@ from core.supply_contract_docx import render_supply_contract_docx
 MSG_UNSUPPORTED_CARD = "Неподдерживаемый формат файла. Допустимы DOCX, PDF, JPEG или PNG."
 MSG_NOT_A_CARD = "это не карточка контрагента"
 MSG_CONTRACT_MISSING = "Договор ещё не оформлен"
+MSG_FILL_REQUISITES = "Сначала заполните реквизиты договора"
 MSG_EDO_REQUISITES = "В договоре не хватает реквизитов покупателя для соглашения об ЭДО"
 MSG_LIBREOFFICE = "Не удалось собрать PDF. На сервере недоступен LibreOffice."
 _CARD_REQUISITES = ("inn", "ogrn", "account", "bik")
+# Обязательные поля SupplyContractCreate без значения по умолчанию.
+# Пустая дата тоже не готова: сборщик docx вызывает fromisoformat.
+_BLANK_FIELDS = (
+    "full_name",
+    "short_name",
+    "signatory_name",
+    "authority_basis",
+    "inn",
+    "ogrn",
+    "legal_address",
+    "email",
+    "bank_name",
+    "account",
+    "corr_account",
+    "bik",
+)
 _EDO_REQUIRED = (
     "legal_form",
     "full_name",
@@ -287,6 +315,7 @@ class SupplyContractService:
         contract = self.get_for_kp(kp_id, user=user)
         if contract is None:
             raise SupplyContractNotFoundError(MSG_CONTRACT_MISSING)
+        _require_requisites(contract)
         payload = render_supply_contract_docx(contract)
         return _as_download(payload, str(contract["number"]), "dogovor", file_format)
 
@@ -300,9 +329,80 @@ class SupplyContractService:
         contract = self.get_for_kp(kp_id, user=user)
         if contract is None:
             raise SupplyContractNotFoundError(MSG_CONTRACT_MISSING)
+        _require_requisites(contract)
         _require_edo_buyer(contract)
         payload = render_edo_agreement_docx(contract)
         return _as_download(payload, str(contract["number"]), "soglashenie-edo", file_format)
+
+    def save_requisites(
+        self,
+        contract_id: int,
+        payload: SupplyContractCreate,
+        *,
+        user: dict,
+    ) -> dict[str, Any]:
+        """Бланк на той же строке. Номер не меняет, дату пишет только из тела."""
+        self._assert_writer(user)
+        current = self._require_card(contract_id)
+        fields = self._validated_fields(payload)
+        stored = self.repository.save_requisites(
+            int(current["id"]),
+            fields,
+            manager_name=str(user["username"]),
+            contract_date=payload.contract_date,
+        )
+        if stored is None:
+            raise SupplyContractNotFoundError(f"Договор №{contract_id} не найден")
+        return _with_card_name(_present(stored))
+
+    def document_for_contract(
+        self,
+        contract_id: int,
+        *,
+        user: dict,
+        file_format: str = "docx",
+    ) -> tuple[bytes, str]:
+        contract = self._contract_for_download(contract_id, user=user)
+        _require_requisites(contract)
+        payload = render_supply_contract_docx(contract)
+        return _as_download(payload, str(contract["number"]), "dogovor", file_format)
+
+    def edo_for_contract(
+        self,
+        contract_id: int,
+        *,
+        user: dict,
+        file_format: str = "docx",
+    ) -> tuple[bytes, str]:
+        contract = self._contract_for_download(contract_id, user=user)
+        _require_requisites(contract)
+        _require_edo_buyer(contract)
+        payload = render_edo_agreement_docx(contract)
+        return _as_download(payload, str(contract["number"]), "soglashenie-edo", file_format)
+
+    async def parse_for_contract(
+        self,
+        contract_id: int,
+        data: bytes,
+        *,
+        filename: str,
+        user: dict,
+    ) -> dict[str, Any]:
+        """Тот же разбор файла, без КП и без требования контрагента."""
+        self._assert_writer(user)
+        self._require_card(contract_id)
+        return await self._parse_upload(data, filename=filename)
+
+    async def parse_card_file(
+        self,
+        data: bytes,
+        *,
+        filename: str,
+        user: dict,
+    ) -> dict[str, Any]:
+        """Тот же разбор, что parse_for_contract, но строку договора не создаёт и не требует id."""
+        self._assert_writer(user)
+        return await self._parse_upload(data, filename=filename)
 
     async def parse_for_kp(
         self,
@@ -394,8 +494,205 @@ class SupplyContractService:
             raise SupplyContractNotFoundError(f"Договор №{contract_id} не найден")
         return _present(updated)
 
+    def search_cards(self, query: str, *, user: dict) -> list[dict[str, Any]]:
+        """Пустой запрос — все карточки. Иначе подстрока без регистра по имени, ИНН и номеру.
+
+        Один символ ещё не фильтр: так «%» и «_» не становятся маской на весь список.
+        """
+        self._assert_writer(user)
+        rows = self.repository.list_for_search()
+        needle = _nonblank(query)
+        if not needle:
+            return [_with_card_name(row) for row in rows]
+        if len(needle) < 2:
+            return []
+        folded = needle.casefold()
+        return [_with_card_name(row) for row in rows if _card_matches(row, folded)]
+
+    def find_duplicate_cards(
+        self,
+        *,
+        name: str | None = None,
+        inn: str | None = None,
+        user: dict,
+    ) -> list[dict[str, Any]]:
+        """Совпадение отображаемого имени или ИНН. Строку не пишет и справочник не читает."""
+        self._assert_writer(user)
+        name_key = duplicate_name_key(name)
+        inn_key = duplicate_inn_key(inn)
+        if not name_key and not inn_key:
+            return []
+        return [
+            _with_card_name(row)
+            for row in self.repository.list_for_search()
+            if _duplicate_card(row, name_key, inn_key)
+        ]
+
+    def search_wizard_cards(self, query: str, *, user: dict) -> list[dict[str, Any]]:
+        """Подсказки шага «Клиент». Тот же фильтр, что у карточек, без вставки в справочник.
+
+        Короче двух символов — пусто: пустой запрос в ``search_cards`` отдаёт все карточки.
+        """
+        needle = _nonblank(query)
+        if len(needle) < 2:
+            self._assert_writer(user)
+            return []
+        cards = self.search_cards(needle, user=user)
+        parties = CounterpartiesRepository(db_path=self.repository.db_path)
+        return [_wizard_card_hit(card, parties) for card in cards]
+
+    def get_card(self, contract_id: int, *, user: dict) -> dict[str, Any]:
+        """Одна карточка для ящика. Пустые реквизиты остаются пустыми."""
+        self._assert_writer(user)
+        return _with_card_name(self._require_card(contract_id))
+
+    def create_card(
+        self,
+        *,
+        name: str,
+        user: dict,
+        inn: str | None = None,
+        number: str | None = None,
+    ) -> dict[str, Any]:
+        """Неполная карточка. Без номера — следующий seq и дата карточки целиком."""
+        self._assert_writer(user)
+        imported_name = _require_card_name(name)
+        stored_inn = _optional_inn(inn)
+        if _nonblank(number):
+            normalized = normalize_contract_number(str(number))
+            contract_date = contract_date_from_number(normalized)
+        else:
+            contract_date = self._today or date.today()
+            normalized = self._next_card_number(contract_date)
+        self._reject_taken_number(normalized)
+        try:
+            stored = self.repository.insert_card(
+                imported_name=imported_name,
+                number=normalized,
+                user_id=int(user["id"]),
+                inn=stored_inn,
+                contract_date=contract_date,
+            )
+        except sqlite3.IntegrityError as exc:
+            raise _taken_number(normalized) from exc
+        return _with_card_name(stored)
+
+    def update_card(
+        self,
+        contract_id: int,
+        *,
+        user: dict,
+        name: str | None = None,
+        inn: str | None = None,
+        number: str | None = None,
+    ) -> dict[str, Any]:
+        """Имя, ИНН и номер. Смена номера дату не пересчитывает."""
+        self._assert_writer(user)
+        cleaned_name = None if name is None else _require_card_name(name)
+        normalized = (
+            normalize_contract_number(str(number)) if _nonblank(number) else None
+        )
+        current = self._require_card(contract_id)
+        stored = self._replace_number(current, normalized, user_id=int(user["id"]))
+        if cleaned_name is None and inn is None:
+            return _with_card_name(stored)
+        renamed = self._replace_name_and_inn(stored, cleaned_name, inn)
+        return _with_card_name(renamed)
+
+    def delete_card(self, contract_id: int, *, user: dict) -> None:
+        """Удаляет карточку, её события и файл скана. Подтверждение словом — только на экране."""
+        self._assert_writer(user)
+        deleted = self.repository.delete_card(int(contract_id))
+        if deleted is None:
+            raise SupplyContractNotFoundError(f"Договор №{contract_id} не найден")
+        scan_path = deleted.get("scan_path")
+        if isinstance(scan_path, str) and scan_path.strip():
+            _delete_owned_scan(self.scans_dir, scan_path)
+
+    def import_contract_cards(self, data: bytes, *, user: dict) -> dict[str, int]:
+        """Три колонки xlsx. Существующий номер пропускается и не затирает имя.
+
+        Только admin. Ответ ``{created, skipped}``.
+        """
+        if user.get("role") != "admin":
+            raise SupplyContractValidationError(
+                "Импорт карточек доступен только администратору"
+            )
+        try:
+            rows, skipped_in_file = parse_contract_card_sheet(data)
+        except ContractCardImportError as exc:
+            raise SupplyContractValidationError(str(exc)) from exc
+        created, skipped_existing = self.repository.insert_missing_cards(
+            rows,
+            user_id=int(user["id"]),
+        )
+        return {"created": created, "skipped": skipped_in_file + skipped_existing}
+
+    def _next_card_number(self, card_date: date) -> str:
+        occupied = [
+            str(row["number"])
+            for row in self.repository.list_for_search()
+            if row.get("number")
+        ]
+        return format_contract_number(next_contract_seq(occupied), card_date)
+
+    def _reject_taken_number(self, number: str) -> None:
+        if self.repository.get_by_number(number) is not None:
+            raise _taken_number(number)
+
+    def _require_card(self, contract_id: int) -> dict[str, Any]:
+        current = self.repository.get_by_id(int(contract_id))
+        if current is None:
+            raise SupplyContractNotFoundError(f"Договор №{contract_id} не найден")
+        return current
+
+    def _replace_number(
+        self,
+        current: dict[str, Any],
+        normalized: str | None,
+        *,
+        user_id: int,
+    ) -> dict[str, Any]:
+        if normalized is None or normalized == current["number"]:
+            return current
+        self._reject_taken_number(normalized)
+        try:
+            updated = self.repository.change_number(
+                int(current["id"]),
+                normalized,
+                user_id=user_id,
+            )
+        except sqlite3.IntegrityError as exc:
+            raise _taken_number(normalized) from exc
+        if updated is None:
+            raise SupplyContractNotFoundError(f"Договор №{current['id']} не найден")
+        return updated
+
+    def _replace_name_and_inn(
+        self,
+        current: dict[str, Any],
+        cleaned_name: str | None,
+        inn: str | None,
+    ) -> dict[str, Any]:
+        next_name = cleaned_name if cleaned_name is not None else _kept_name(current)
+        next_inn = _optional_inn(inn) if inn is not None else current.get("inn")
+        if next_inn is not None:
+            next_inn = str(next_inn)
+        updated = self.repository.update_imported_name_and_inn(
+            int(current["id"]),
+            imported_name=next_name,
+            inn=next_inn,
+        )
+        if updated is None:
+            raise SupplyContractNotFoundError(f"Договор №{current['id']} не найден")
+        return updated
+
     def _assert_writer(self, user: dict) -> None:
         assert_offer_write_access(user, {})
+
+    def _contract_for_download(self, contract_id: int, *, user: dict) -> dict[str, Any]:
+        self._assert_writer(user)
+        return _present(self._require_card(contract_id))
 
     def _store_scan(
         self,
@@ -545,7 +842,29 @@ def _as_download(
     return payload, filename
 
 
+def requisites_ready(contract: dict[str, Any]) -> bool:
+    """Бланк можно собирать: обязательные поля непустые, форма из списка, дата есть."""
+    legal_form = _nonblank(contract.get("legal_form"))
+    if legal_form not in LEGAL_FORMS:
+        return False
+    if any(not _nonblank(contract.get(key)) for key in _BLANK_FIELDS):
+        return False
+    return _has_contract_date(contract.get("contract_date"))
+
+
+def _has_contract_date(value: object) -> bool:
+    if isinstance(value, date):
+        return True
+    return bool(_nonblank(value))
+
+
+def _require_requisites(contract: dict[str, Any]) -> None:
+    if not requisites_ready(contract):
+        raise SupplyContractValidationError(MSG_FILL_REQUISITES)
+
+
 def _require_edo_buyer(contract: dict[str, Any]) -> None:
+    """После готового бланка. Дыра только в полях ЭДО сохраняет прежний текст."""
     for key in _EDO_REQUIRED:
         if not str(contract.get(key) or "").strip():
             raise SupplyContractValidationError(MSG_EDO_REQUISITES)
@@ -553,6 +872,104 @@ def _require_edo_buyer(contract: dict[str, Any]) -> None:
 
 def already_exists_message(number: str) -> str:
     return duplicate_contract_message(number)
+
+
+def _taken_number(number: str) -> SupplyContractValidationError:
+    return SupplyContractValidationError(f"Номер {number} уже есть")
+
+
+def _nonblank(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def _require_card_name(name: str) -> str:
+    text = _nonblank(name)
+    if not text:
+        raise SupplyContractValidationError("Укажите имя контрагента")
+    return text
+
+
+def _optional_inn(inn: str | None) -> str | None:
+    return _nonblank(inn) or None
+
+
+def _kept_name(row: dict[str, Any]) -> str:
+    value = row.get("imported_name")
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _card_display_name(row: dict[str, Any]) -> str:
+    for key in ("imported_name", "full_name", "short_name"):
+        text = _nonblank(row.get(key))
+        if text:
+            return text
+    return ""
+
+
+def duplicate_name_key(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split()).casefold()
+
+
+def duplicate_inn_key(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "".join(ch for ch in value if ch.isdigit())
+
+
+def _duplicate_card(row: dict[str, Any], name_key: str, inn_key: str) -> bool:
+    same_name = bool(name_key) and duplicate_name_key(_card_display_name(row)) == name_key
+    same_inn = bool(inn_key) and duplicate_inn_key(row.get("inn")) == inn_key
+    return same_name or same_inn
+
+
+def _with_card_name(row: dict[str, Any]) -> dict[str, Any]:
+    data = dict(row)
+    data["name"] = _card_display_name(row)
+    data["requisites_complete"] = requisites_ready(row)
+    return data
+
+
+def _active_client_snapshot(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    if not int(row.get("is_active") or 0) or not int(row.get("is_client") or 0):
+        return None
+    return {
+        "id": int(row["id"]),
+        "code_1c": str(row["code_1c"]),
+        "name": str(row["name"]),
+        "inn": row.get("inn"),
+        "kpp": row.get("kpp"),
+    }
+
+
+def _wizard_card_hit(card: dict[str, Any], parties: CounterpartiesRepository) -> dict[str, Any]:
+    raw_id = card.get("counterparty_id")
+    nested = None
+    if raw_id:
+        nested = _active_client_snapshot(parties.get_by_id(int(raw_id)))
+    return {
+        "id": int(card["id"]),
+        "name": str(card.get("name") or ""),
+        "inn": _optional_inn(card.get("inn") if isinstance(card.get("inn"), str) else None),
+        "number": str(card.get("number") or ""),
+        "requisites_complete": bool(card.get("requisites_complete")),
+        "counterparty": nested,
+    }
+
+
+def _card_matches(row: dict[str, Any], folded_query: str) -> bool:
+    for key in ("imported_name", "full_name", "short_name", "inn", "number"):
+        text = _nonblank(row.get(key))
+        if text and folded_query in text.casefold():
+            return True
+    return False
 
 
 def _imported_view(row: dict[str, Any], parties: list[dict[str, Any]]) -> dict[str, Any]:

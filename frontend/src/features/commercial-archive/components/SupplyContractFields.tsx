@@ -1,16 +1,22 @@
 import type { ReactNode } from "react";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
-import type { SupplyContractCreatePayload } from "@/features/commercial-archive/types/supplyContract";
+import type { SupplyContractFormValues } from "@/features/commercial-archive/types/supplyContract";
 
-type FieldKey = keyof SupplyContractCreatePayload;
+type FieldKey = keyof SupplyContractFormValues;
+
+type PoaForm = {
+  authority_basis: string;
+  poa_number?: string | null;
+  poa_date?: string | null;
+};
 
 type Props = {
-  form: SupplyContractCreatePayload;
+  form: SupplyContractFormValues;
   doubtful: Set<string>;
   onChange: (key: FieldKey, value: string) => void;
 };
 
-export const poaFieldsReady = (form: SupplyContractCreatePayload) => {
+export const poaFieldsReady = (form: PoaForm) => {
   if (form.authority_basis !== "доверенность") {
     return true;
   }
@@ -25,6 +31,7 @@ export const SupplyContractFields = ({ form, doubtful, onChange }: Props) => (
     <label style={{ display: "grid", gap: "0.45rem" }}>
       <span style={{ fontWeight: 600 }}>Вид</span>
       <select aria-label="Вид" value={form.legal_form} onChange={(event) => onChange("legal_form", event.target.value)}>
+        {form.legal_form === "" && <option value="">Выберите вид</option>}
         <option value="ooo">ООО</option>
         <option value="ao">АО</option>
         <option value="ip">ИП</option>

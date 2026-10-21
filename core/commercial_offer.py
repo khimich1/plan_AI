@@ -27,14 +27,14 @@ try:
     from .cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        total_order_cargo_weight_kg,
+        kp_document_total_weight_kg,
     )
     from .kp_plate_weight import resolve_kp_line_weight_kg
 except ImportError:
     from cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        total_order_cargo_weight_kg,
+        kp_document_total_weight_kg,
     )
     from kp_plate_weight import resolve_kp_line_weight_kg
 
@@ -349,6 +349,7 @@ def generate_commercial_offer_pdf(
     weight_catalog_db_path: Optional[str] = None,
     long_pile_delivery_enabled: bool = False,
     long_pile_delivery: Optional[Dict] = None,
+    suppress_company_contacts: bool = False,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -368,6 +369,7 @@ def generate_commercial_offer_pdf(
         delivery_conditions: условия поставки (пусто — только заголовок, как в XLSX)
         payment_conditions: условия оплаты (пусто — стандартный текст 100% предоплаты)
         append_batches: metadata заходов (для unified при multi-append одного типа)
+        suppress_company_contacts: не подставлять заводские контакты, если у менеджера пустая пара
     
     Note:
         Детальная разбивка компонентов НЕ включается в PDF.
@@ -510,12 +512,17 @@ def generate_commercial_offer_pdf(
     story.append(Paragraph(COMPANY_ADDRESS, style_header_info))
     
     # 2. Контакты менеджера (отдельной строкой)
-    if manager_phone and manager_email:
-        contacts_text = f"Тел.: {format_phone(manager_phone)}, email: {manager_email}"
-    elif manager_phone:
-        contacts_text = f"Тел.: {format_phone(manager_phone)}"
-    elif manager_email:
-        contacts_text = f"Email: {manager_email}"
+    phone = (manager_phone or "").strip()
+    email = (manager_email or "").strip()
+    if phone and email:
+        contacts_text = f"Тел.: {format_phone(phone)}, email: {email}"
+    elif phone:
+        contacts_text = f"Тел.: {format_phone(phone)}"
+    elif email:
+        contacts_text = f"Email: {email}"
+    elif suppress_company_contacts:
+        # Контактов менеджера нет — завод не подставляем
+        contacts_text = ""
     else:
         # Fallback: контакты компании, если нет контактов менеджера
         contacts_text = f"Тел.: {COMPANY_PHONE}, Email: {COMPANY_EMAIL}"
@@ -576,7 +583,11 @@ def generate_commercial_offer_pdf(
         long_pile_delivery=long_pile_delivery,
         kp_id=kp_db_id,
     )
-    total_weight = 0.0
+    total_weight = kp_document_total_weight_kg(
+        order_data,
+        pile_catalog_db_path=pile_catalog_db_path,
+        weight_catalog_db_path=weight_catalog_db_path,
+    )
 
     if unified:
         order_mode = "unified"
@@ -603,9 +614,6 @@ def generate_commercial_offer_pdf(
 
         if unified:
             pt = line_product_type(item)
-            if pt == "plates":
-                _, line_kg = resolve_kp_line_weight_kg(item)
-                total_weight += line_kg
             table_data.append([
                 str(idx),
                 escape(product_type_label(pt)),
@@ -643,7 +651,6 @@ def generate_commercial_offer_pdf(
         name_raw = item.get('name', 'Плиты ПБ')
         name = escape(name_raw)
         _, total_item_weight = resolve_kp_line_weight_kg(item)
-        total_weight += total_item_weight
         weight_str = _format_money_ru(total_item_weight)
         table_data.append([
             str(idx),

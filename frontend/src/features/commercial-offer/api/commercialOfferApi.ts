@@ -42,6 +42,7 @@ type UpdateDraftMetaPayload = {
   managerId?: number | null;
   clientName?: string;
   counterpartyId?: number | null;
+  clientInn?: string | null;
   discountPercent?: number;
   conditionsMode?: ConditionsMode;
   deliveryConditions?: string;
@@ -222,7 +223,7 @@ export const commercialOfferApi = {
         manager_id: payload.managerId,
         client_name: payload.clientName,
         counterparty_id: payload.counterpartyId,
-        discount_percent: payload.discountPercent,
+        client_inn: payload.clientInn,
         conditions_mode: payload.conditionsMode,
         delivery_conditions: payload.deliveryConditions,
         payment_conditions: payload.paymentConditions,

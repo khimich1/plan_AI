@@ -48,6 +48,10 @@ from app.security.offer_access import (
     list_filters_for_user,
 )
 from app.services.file_generation_service import FileGenerationService
+from app.services.manager_contact_lookup import (
+    header_contacts_for_archive,
+    load_managers_if_db_exists,
+)
 from app.services.optimization_service import OptimizationService
 from app.services.promise_service import PromiseGateError, PromiseService
 from app.repositories.supply_contract_repository import SupplyContractRepository
@@ -994,6 +998,12 @@ class ArchiveService:
         )
         long_pile_delivery = coerce_long_pile_delivery(raw.get("long_pile_delivery_json"))
         append_batches = raw.get("append_batches")
+        manager_phone, manager_email, suppress_company_contacts = (
+            header_contacts_for_archive(
+                manager_name,
+                load_managers_if_db_exists(self.repository.db_path),
+            )
+        )
 
         if kind == "pdf":
             buffer = await asyncio.to_thread(
@@ -1003,8 +1013,9 @@ class ArchiveService:
                 offer_date,
                 customer_name=customer_name,
                 manager_name=manager_name,
-                manager_phone=None,
-                manager_email=None,
+                manager_phone=manager_phone,
+                manager_email=manager_email,
+                suppress_company_contacts=suppress_company_contacts,
                 discount_percent=discount_percent,
                 kp_db_id=kp_id,
                 logistics_cost=logistics_cost,
@@ -1028,8 +1039,9 @@ class ArchiveService:
                 offer_date,
                 customer_name=customer_name,
                 manager_name=manager_name,
-                manager_phone=None,
-                manager_email=None,
+                manager_phone=manager_phone,
+                manager_email=manager_email,
+                suppress_company_contacts=suppress_company_contacts,
                 discount_percent=discount_percent,
                 delivery_conditions=raw.get("delivery_conditions"),
                 payment_conditions=raw.get("payment_conditions"),

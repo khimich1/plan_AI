@@ -17,6 +17,20 @@ export type CounterpartySearchResponse = {
   count: number;
 };
 
+export type ContractCardHit = {
+  id: number;
+  name: string;
+  inn: string | null;
+  number: string;
+  requisites_complete: boolean;
+  counterparty: CounterpartyShort | null;
+};
+
+export type ContractCardSearchResponse = {
+  items: ContractCardHit[];
+  count: number;
+};
+
 export type CounterpartyCreatePayload = {
   name: string;
   code_1c: string;
@@ -71,6 +85,11 @@ const existingFromError = (error: unknown): CounterpartyShort | null => {
 export const searchCounterparties = (q: string): Promise<CounterpartySearchResponse> => {
   const params = new URLSearchParams({ q, limit: "10" });
   return httpClient.get<CounterpartySearchResponse>(`${BASE}/search?${params.toString()}`);
+};
+
+export const searchContractCards = (q: string): Promise<ContractCardSearchResponse> => {
+  const params = new URLSearchParams({ q });
+  return httpClient.get<ContractCardSearchResponse>(`${BASE}/contract-cards?${params.toString()}`);
 };
 
 export const createCounterparty = async (

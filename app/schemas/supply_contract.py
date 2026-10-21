@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 LegalForm = Literal["ooo", "ao", "ip", "kfh", "person"]
 SignatoryVerb = Literal["действующего", "действующей"]
@@ -115,31 +115,31 @@ class SupplyContractOut(BaseModel):
     id: int
     counterparty_id: int | None = None
     number: str
-    contract_date: str
-    manager_name: str
+    contract_date: str | None = None
+    manager_name: str | None = None
     status: str
     scan_note: str | None = None
     has_scan: bool = False
-    legal_form: str
-    full_name: str
-    short_name: str
+    legal_form: str | None = None
+    full_name: str | None = None
+    short_name: str | None = None
     signatory_position: str | None = None
-    signatory_name: str
-    signatory_verb: str
-    authority_basis: str
+    signatory_name: str | None = None
+    signatory_verb: str | None = None
+    authority_basis: str | None = None
     poa_number: str | None = None
     poa_date: str | None = None
-    inn: str
+    inn: str | None = None
     kpp: str | None = None
-    ogrn: str
-    legal_address: str
+    ogrn: str | None = None
+    legal_address: str | None = None
     postal_address: str | None = None
     phone: str | None = None
-    email: str
-    bank_name: str
-    account: str
-    corr_account: str
-    bik: str
+    email: str | None = None
+    bank_name: str | None = None
+    account: str | None = None
+    corr_account: str | None = None
+    bik: str | None = None
     edo_operator: str | None = None
     edo_id: str | None = None
     okved: str | None = None
@@ -181,10 +181,63 @@ class SupplyContractRegistryItem(BaseModel):
 
     id: int
     number: str
-    contract_date: str
+    contract_date: str | None = None
     counterparty_name: str
     counterparty_id: int | None = None
-    manager_name: str
+    manager_name: str | None = None
     status: str
     scan_note: str | None = None
     has_scan: bool = False
+
+
+class ContractCardCreate(BaseModel):
+    """Новая карточка: имя обязательно, ИНН и номер можно не передавать."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    inn: str | None = None
+    number: str | None = None
+
+
+class ContractCardPatch(BaseModel):
+    """Частичная правка имени, ИНН и номера. Непереданное поле строку не меняет."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    inn: str | None = None
+    number: str | None = None
+
+
+class ContractCardOut(SupplyContractOut):
+    """Карточка с пустыми реквизитами. Путь скана наружу не отдаётся."""
+
+    name: str
+    imported_name: str | None = None
+    requisites_complete: bool
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_has_scan(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "has_scan" in value:
+            return value
+        data = dict(value)
+        data["has_scan"] = bool(data.get("scan_path"))
+        return data
+
+
+class ContractCardListOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[ContractCardOut]
+    count: int
+
+
+class ContractCardImportOut(BaseModel):
+    """Сколько карточек создано и сколько номеров пропущено."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    created: int = Field(ge=0)
+    skipped: int = Field(ge=0)

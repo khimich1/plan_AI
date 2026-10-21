@@ -326,9 +326,11 @@ def test_draft_save_create_with_id_snapshots_directory(
     monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
     result = workflow.save_offer("draft-cp", status="в архиве", save_mode="archive")
     assert result["saved_offer"]["kp_id"] == 10
-    assert captured["create"][0]["customer_name"] == "РОМАШКА ООО"
-    assert captured["create"][0]["counterparty_id"] == seeded["client"]["id"]
-    assert captured["create"][0]["customer_inn"] == "7701000001"
+    created = captured["create"][0]
+    assert created["customer_name"] == "Имя из формы"
+    assert created["counterparty_id"] == seeded["client"]["id"]
+    assert created["customer_inn"] == "7701000001"
+    assert created["customer_kpp"] == "770101001"
 
 
 @pytest.mark.parametrize(
@@ -378,6 +380,189 @@ def test_draft_save_archive_update_skips_counterparty(
     assert captured["create"] == []
     assert captured["update"][0]["kp_id"] == 55
     assert "counterparty_id" not in captured["update"][0]
+
+
+def _count_counterparties(db: str) -> int:
+    with sqlite3.connect(db) as conn:
+        row = conn.execute("SELECT COUNT(*) FROM counterparties").fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_draft_save_archive_without_id_writes_card_name_and_inn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = fx.make_iso_db(tmp_path)
+    CounterpartiesRepository(db_path=db).insert(
+        code_1c="00-bystander",
+        name="ПОСТОРОННИЙ ООО",
+        inn="7703000003",
+        is_client=True,
+        source="import",
+    )
+    before = _count_counterparties(db)
+    workflow = CommercialWorkflowService()
+    workflow.kp_repository = KpRepository(db_path=db)
+    captured = _patch_save(workflow, monkeypatch, tmp_path)
+    draft = _draft(
+        {
+            "client_name": "ИП Секлюцкий",
+            "client_inn": "5904111223",
+            "manager_name": "Иванов",
+        }
+    )
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
+
+    result = workflow.save_offer("draft-cp", status="в архиве", save_mode="archive")
+
+    assert result["saved_offer"]["kp_id"] == 10
+    created = captured["create"][0]
+    assert created["customer_name"] == "ИП Секлюцкий"
+    assert created["customer_inn"] == "5904111223"
+    assert created["counterparty_id"] is None
+    assert created["customer_kpp"] is None
+    assert _count_counterparties(db) == before
+
+
+def test_draft_save_work_without_id_rejects_even_when_card_inn_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = fx.make_iso_db(tmp_path)
+    before = _count_counterparties(db)
+    workflow = CommercialWorkflowService()
+    workflow.kp_repository = KpRepository(db_path=db)
+    captured = _patch_save(workflow, monkeypatch, tmp_path)
+    draft = _draft(
+        {
+            "client_name": "ИП Секлюцкий",
+            "client_inn": "5904111223",
+            "manager_name": "Иванов",
+        }
+    )
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
+
+    with pytest.raises(CounterpartyValidationError, match="не найден"):
+        workflow.save_offer("draft-cp", status="в работе", save_mode="database")
+
+    assert captured["create"] == []
+    assert _count_counterparties(db) == before
+
+
+def test_draft_save_keeps_card_name_nikolsky_not_directory_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = fx.make_iso_db(tmp_path)
+    seeded = _seed_clients(db)
+    before = _count_counterparties(db)
+    workflow = CommercialWorkflowService()
+    workflow.kp_repository = KpRepository(db_path=db)
+    captured = _patch_save(workflow, monkeypatch, tmp_path)
+    draft = _draft(
+        {
+            "client_name": "ООО Никольский",
+            "client_inn": "5905123456",
+            "manager_name": "Иванов",
+            "counterparty_id": int(seeded["client"]["id"]),
+        }
+    )
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
+
+    workflow.save_offer("draft-cp", status="в архиве", save_mode="archive")
+
+    created = captured["create"][0]
+    assert created["customer_name"] == "ООО Никольский"
+    assert created["customer_name"] != "РОМАШКА ООО"
+    assert created["counterparty_id"] == seeded["client"]["id"]
+    assert created["customer_inn"] == "5905123456"
+    assert created["customer_kpp"] == "770101001"
+    assert _count_counterparties(db) == before
+
+
+def _patch_meta_updates(
+    workflow: CommercialWorkflowService, monkeypatch: pytest.MonkeyPatch, draft: dict[str, Any]
+) -> None:
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _id: draft)
+
+    def fake_update(draft_id: str, **kwargs: Any) -> None:
+        del draft_id
+        draft["metadata"].update(kwargs)
+
+    monkeypatch.setattr(workflow.draft_store, "update_metadata", fake_update)
+    monkeypatch.setattr(workflow, "_persist_wizard_step", lambda *a, **k: None)
+    monkeypatch.setattr(workflow.draft_lifecycle, "get_draft_details", lambda _id: draft)
+
+
+def test_update_draft_meta_stores_card_inn_and_later_edits_keep_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = fx.make_iso_db(tmp_path)
+    before = _count_counterparties(db)
+    workflow = CommercialWorkflowService()
+    workflow.kp_repository = KpRepository(db_path=db)
+    draft = _draft({"client_name": "", "manager_name": "Иванов"})
+    _patch_meta_updates(workflow, monkeypatch, draft)
+
+    workflow.update_draft_meta(
+        "draft-cp",
+        client_name="ИП Секлюцкий",
+        client_inn="5904111223",
+    )
+    assert draft["metadata"]["client_name"] == "ИП Секлюцкий"
+    assert draft["metadata"]["client_inn"] == "5904111223"
+    assert draft["metadata"]["counterparty_id"] is None
+
+    workflow.update_draft_meta("draft-cp", discount_percent=5, logistics_cost=12.0)
+    assert draft["metadata"]["client_inn"] == "5904111223"
+    assert draft["metadata"]["client_name"] == "ИП Секлюцкий"
+    assert draft["metadata"]["discount_percent"] == 5.0
+    assert draft["metadata"]["logistics_cost"] == 12.0
+    assert _count_counterparties(db) == before
+
+
+def test_update_draft_meta_free_name_clears_card_inn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = fx.make_iso_db(tmp_path)
+    workflow = CommercialWorkflowService()
+    workflow.kp_repository = KpRepository(db_path=db)
+    draft = _draft(
+        {
+            "client_name": "ИП Секлюцкий",
+            "client_inn": "5904111223",
+            "manager_name": "Иванов",
+        }
+    )
+    _patch_meta_updates(workflow, monkeypatch, draft)
+
+    workflow.update_draft_meta("draft-cp", client_name="Имя с клавиатуры", client_inn=None)
+
+    assert draft["metadata"]["client_name"] == "Имя с клавиатуры"
+    assert draft["metadata"]["counterparty_id"] is None
+    assert draft["metadata"]["client_inn"] is None
+
+
+def test_update_draft_meta_with_id_keeps_card_name_and_inn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = fx.make_iso_db(tmp_path)
+    seeded = _seed_clients(db)
+    before = _count_counterparties(db)
+    workflow = CommercialWorkflowService()
+    workflow.kp_repository = KpRepository(db_path=db)
+    draft = _draft({"client_name": "", "manager_name": "Иванов"})
+    _patch_meta_updates(workflow, monkeypatch, draft)
+
+    workflow.update_draft_meta(
+        "draft-cp",
+        client_name="ООО Никольский",
+        client_inn="5905123456",
+        counterparty_id=int(seeded["client"]["id"]),
+    )
+
+    assert draft["metadata"]["client_name"] == "ООО Никольский"
+    assert draft["metadata"]["counterparty_id"] == seeded["client"]["id"]
+    assert draft["metadata"]["client_inn"] == "5905123456"
+    assert _count_counterparties(db) == before
 
 
 def test_update_draft_meta_validates_when_id_passed(

@@ -1,13 +1,17 @@
-"""Номер договора, преамбула и нормализация полей (SC-001)."""
+"""Номер договора, преамбула и нормализация полей (SC-001, CDC-001)."""
 
 from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from core.supply_contract import (
     build_preamble,
+    contract_date_from_number,
     format_contract_number,
     next_contract_seq,
+    normalize_contract_number,
     normalize_digits,
     normalize_email,
 )
@@ -112,3 +116,72 @@ def test_explicit_feminine_verb_is_kept() -> None:
 def test_spaced_inn_and_email_are_glued() -> None:
     assert normalize_digits("760 4 01001") == "760401001"
     assert normalize_email("is-ag @mail.ru") == "is-ag@mail.ru"
+
+
+def test_normalize_contract_number_drops_whitespace() -> None:
+    assert normalize_contract_number("  0786 / 1 / 25  ") == "0786/1/25"
+    assert normalize_contract_number("0844-06-25") == "0844-06-25"
+    assert normalize_contract_number("966/06/26КП") == "966/06/26КП"
+    assert normalize_contract_number("ТБ-3/08/26Б") == "ТБ-3/08/26Б"
+
+
+def test_normalize_contract_number_rejects_empty_and_no_digit() -> None:
+    message = "В номере договора нужна хотя бы одна цифра"
+    with pytest.raises(ValueError, match=message):
+        normalize_contract_number("")
+    with pytest.raises(ValueError, match=message):
+        normalize_contract_number("   ")
+    with pytest.raises(ValueError, match=message):
+        normalize_contract_number("без цифр")
+
+
+def test_normalize_contract_number_rejects_longer_than_32() -> None:
+    assert normalize_contract_number("1" * 32) == "1" * 32
+    with pytest.raises(ValueError, match="Номер договора длиннее 32 символов"):
+        normalize_contract_number("1" * 33)
+
+
+@pytest.mark.parametrize(
+    ("number", "expected"),
+    [
+        ("0785/01/25", date(2025, 1, 1)),
+        ("0786/1/25", date(2025, 1, 1)),
+        ("0844-06-25", date(2025, 6, 1)),
+        ("966/06/26КП", date(2026, 6, 1)),
+        ("ТБ-1/10/25", date(2025, 10, 1)),
+        ("ТБ-3/08/26Б", date(2026, 8, 1)),
+    ],
+)
+def test_contract_date_from_number_uses_month_year_and_day_01(
+    number: str,
+    expected: date,
+) -> None:
+    assert contract_date_from_number(number) == expected
+
+
+def test_contract_date_from_number_without_month_and_year_is_none() -> None:
+    assert contract_date_from_number("1033") is None
+
+
+@pytest.mark.parametrize(
+    ("number", "expected"),
+    [
+        ("1/01/00", date(2000, 1, 1)),
+        ("1/12/69", date(2069, 12, 1)),
+        ("1/01/70", date(1970, 1, 1)),
+        ("1/06/99", date(1999, 6, 1)),
+    ],
+)
+def test_contract_date_year_window(number: str, expected: date) -> None:
+    assert contract_date_from_number(number) == expected
+
+
+def test_contract_date_from_number_rejects_unparsed_tail() -> None:
+    assert contract_date_from_number("1/13/25") is None
+    assert contract_date_from_number("1/00/25") is None
+    assert contract_date_from_number("0785/01/2025") is None
+
+
+def test_loaded_prefixes_do_not_change_next_seq() -> None:
+    occupied = ["1033/09/26", "ТБ-1/10/25", "0844-06-25"]
+    assert next_contract_seq(occupied) == 1034

@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { clientConditionsSchema } from "@/features/commercial-offer/schemas/commercialOffer";
 import type { z } from "zod";
 import type { ConditionsMode, Manager } from "@/features/commercial-offer/types/commercialOffer";
-import type { CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
+import type { ContractCardHit, CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
 import {
   CounterpartyAutocomplete,
   formatCounterpartyRequisites,
@@ -82,6 +82,9 @@ export const ClientConditionsStep = ({
   const hasDefaultManager = profileManagerInList;
   const [showManagerOverride, setShowManagerOverride] = useState(!hasDefaultManager);
   const [selected, setSelected] = useState<CounterpartyShort | null>(() => selectedFromDefaults(defaultValues));
+  const [cardInn, setCardInn] = useState<string | null>(() =>
+    defaultValues.counterpartyId == null ? defaultValues.counterpartyInn?.trim() || null : null,
+  );
 
   const form = useForm<ClientConditionsFormValues>({
     resolver: zodResolver(clientConditionsSchema),
@@ -97,6 +100,7 @@ export const ClientConditionsStep = ({
       counterpartyId: defaultValues.counterpartyId ?? null,
     });
     setSelected(selectedFromDefaults(defaultValues));
+    setCardInn(defaultValues.counterpartyId == null ? defaultValues.counterpartyInn?.trim() || null : null);
   }, [defaultValues, form]);
 
   useEffect(() => {
@@ -114,10 +118,18 @@ export const ClientConditionsStep = ({
 
   const handleSelect = (item: CounterpartyShort | null) => {
     setSelected(item);
+    setCardInn(null);
     form.setValue("counterpartyId", item?.id ?? null, { shouldValidate: true, shouldDirty: true });
     if (item) {
       form.setValue("clientName", item.name, { shouldValidate: true, shouldDirty: true });
     }
+  };
+
+  const handleUnlinkedCard = (card: ContractCardHit) => {
+    setSelected(null);
+    form.setValue("counterpartyId", null, { shouldValidate: true, shouldDirty: true });
+    form.setValue("clientName", card.name, { shouldValidate: true, shouldDirty: true });
+    setCardInn(card.inn?.trim() || null);
   };
 
   const handleSubmit = form.handleSubmit((payload) => {
@@ -129,7 +141,7 @@ export const ClientConditionsStep = ({
       ...payload,
       counterpartyId: payload.counterpartyId && payload.counterpartyId > 0 ? payload.counterpartyId : null,
       counterpartyCode1c: selected?.code_1c ?? "",
-      counterpartyInn: selected?.inn ?? null,
+      counterpartyInn: selected?.inn ?? cardInn,
       counterpartyKpp: selected?.kpp ?? null,
     });
   });
@@ -218,13 +230,16 @@ export const ClientConditionsStep = ({
           >
             <CounterpartyAutocomplete
               key={`${defaultValues.counterpartyId ?? "none"}:${defaultValues.clientName}`}
+              searchSource="contract-cards"
               selected={selected}
               initialName={defaultValues.clientName}
               onSelect={handleSelect}
+              onContractCardSelect={handleUnlinkedCard}
               onTextChange={(value) => {
                 form.setValue("clientName", value, { shouldValidate: true, shouldDirty: true });
+                setCardInn(null);
               }}
-              placeholder="Начните вводить название или ИНН"
+              placeholder="Название, ИНН или номер договора"
             />
           </FieldWrapper>
           {selected ? (
@@ -238,6 +253,18 @@ export const ClientConditionsStep = ({
               }}
             >
               {formatCounterpartyRequisites(selected)} · код 1С {selected.code_1c || "—"}
+            </div>
+          ) : cardInn ? (
+            <div
+              style={{
+                border: "1px solid #e4e7ec",
+                borderRadius: 12,
+                padding: "0.75rem 0.9rem",
+                color: "#475467",
+                background: "#f8fafc",
+              }}
+            >
+              ИНН {cardInn}
             </div>
           ) : null}
         </div>

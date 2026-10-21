@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from datetime import date
 from typing import Any
 
@@ -62,6 +63,52 @@ def next_contract_seq(occupied_numbers: list[str]) -> int:
         if seq is not None and seq > highest:
             highest = seq
     return highest + 1
+
+
+def normalize_contract_number(value: str) -> str:
+    number = " ".join(value.split())
+    number = number.replace(" ", "")
+    if not number or not any(ch.isdigit() for ch in number):
+        raise ValueError("В номере договора нужна хотя бы одна цифра")
+    if len(number) > 32:
+        raise ValueError("Номер договора длиннее 32 символов")
+    return number
+
+
+def contract_date_from_number(number: str) -> date | None:
+    """Месяц и год из номера, день 01. Нет пары — None."""
+    tokens = re.split(r"[/-]", number)
+    if len(tokens) < 2:
+        return None
+    year = _year_from_contract_token(tokens[-1])
+    month = _month_from_contract_token(tokens[-2])
+    if year is None or month is None:
+        return None
+    return date(year, month, 1)
+
+
+def _year_from_contract_token(token: str) -> int | None:
+    if token.endswith("КП"):
+        head = token[:-2]
+    elif token.endswith("Б"):
+        head = token[:-1]
+    else:
+        head = token
+    if len(head) != 2 or not head.isdigit():
+        return None
+    yy = int(head)
+    if yy <= 69:
+        return 2000 + yy
+    return 1900 + yy
+
+
+def _month_from_contract_token(token: str) -> int | None:
+    if not token.isdigit() or len(token) not in (1, 2):
+        return None
+    month = int(token)
+    if month < 1 or month > 12:
+        return None
+    return month
 
 
 def normalize_digits(value: str | None) -> str:

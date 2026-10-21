@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Literal
+from typing import Any, Callable, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
@@ -49,6 +49,11 @@ from app.schemas.archive import (
 )
 from app.schemas.commercial import CommercialDraftDetailsResponse
 from app.schemas.supply_contract import (
+    ContractCardCreate,
+    ContractCardImportOut,
+    ContractCardListOut,
+    ContractCardOut,
+    ContractCardPatch,
     SupplyContractCreate,
     SupplyContractImportRow,
     SupplyContractLinkRequest,
@@ -305,6 +310,163 @@ def replace_archive_supply_contract(
         )
 
 
+def _call_contract_card(action: Callable[[], Any], *, where: str) -> Any:
+    try:
+        return action()
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where=where,
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where=where,
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except ValueError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where=where,
+            detail=str(exc) or MSG_VALIDATION,
+        )
+
+
+@router.get("/contract-cards", response_model=ContractCardListOut)
+def search_archive_contract_cards(
+    q: str = Query(default=""),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> ContractCardListOut:
+    items = _call_contract_card(
+        lambda: service.search_cards(q, user=user),
+        where="archive.search_contract_cards",
+    )
+    return ContractCardListOut(items=items, count=len(items))
+
+
+@router.post("/contract-cards", response_model=ContractCardOut)
+def create_archive_contract_card(
+    payload: ContractCardCreate,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    return _call_contract_card(
+        lambda: service.create_card(
+            name=payload.name,
+            inn=payload.inn,
+            number=payload.number,
+            user=user,
+        ),
+        where="archive.create_contract_card",
+    )
+
+
+@router.post("/contract-cards/parse", response_model=SupplyContractParseOut)
+async def parse_archive_contract_card_file(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    """Разбор файла карточки до создания строки. Реквизиты в базу не пишет."""
+    data = await read_upload_file_capped(file)
+    try:
+        return await service.parse_card_file(
+            data,
+            filename=file.filename or "",
+            user=user,
+        )
+    except HTTPException:
+        raise
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.parse_contract_card_file",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except Exception as exc:
+        if is_ai_provider_error(exc):
+            raise_ai_provider_unavailable_error(exc, where="archive.parse_contract_card_file")
+        raise_unexpected_server_error(exc, where="archive.parse_contract_card_file")
+
+
+@router.post("/contract-cards/import", response_model=ContractCardImportOut)
+async def import_archive_contract_cards(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_roles("admin")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict[str, int]:
+    data = await read_upload_file_capped(file)
+    try:
+        return service.import_contract_cards(data, user=user)
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.import_contract_cards",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+
+
+@router.get("/contract-cards/duplicates", response_model=ContractCardListOut)
+def find_archive_contract_card_duplicates(
+    name: str = Query(default=""),
+    inn: str = Query(default=""),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> ContractCardListOut:
+    """Совпадения по отображаемому имени или ИНН. Строку не пишет."""
+    items = _call_contract_card(
+        lambda: service.find_duplicate_cards(name=name, inn=inn, user=user),
+        where="archive.find_contract_card_duplicates",
+    )
+    return ContractCardListOut(items=items, count=len(items))
+
+
+@router.get("/contract-cards/{card_id}", response_model=ContractCardOut)
+def get_archive_contract_card(
+    card_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    return _call_contract_card(
+        lambda: service.get_card(card_id, user=user),
+        where="archive.get_contract_card",
+    )
+
+
+@router.patch("/contract-cards/{card_id}", response_model=ContractCardOut)
+def patch_archive_contract_card(
+    card_id: int,
+    payload: ContractCardPatch,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    return _call_contract_card(
+        lambda: service.update_card(
+            card_id,
+            user=user,
+            name=payload.name,
+            inn=payload.inn,
+            number=payload.number,
+        ),
+        where="archive.patch_contract_card",
+    )
+
+
+@router.delete("/contract-cards/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_archive_contract_card(
+    card_id: int,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> Response:
+    _call_contract_card(
+        lambda: service.delete_card(card_id, user=user),
+        where="archive.delete_contract_card",
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/{kp_id}/readiness/positions", response_model=KpReadinessPositionsResponse)
 def get_kp_readiness_positions(
     kp_id: int,
@@ -487,6 +649,127 @@ def _supply_document_response(payload: bytes, filename: str) -> Response:
         content=payload,
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _respond_supply_file(load: Callable[[], tuple[bytes, str]], *, where: str) -> Response:
+    try:
+        payload, filename = load()
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where=where,
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where=where,
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except SupplyContractPdfError as exc:
+        raise_client_error(
+            exc,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            where=where,
+        )
+    return _supply_document_response(payload, filename)
+
+
+@router.post("/supply-contracts/{contract_id}/requisites", response_model=ContractCardOut)
+def save_archive_supply_contract_requisites(
+    contract_id: int,
+    payload: SupplyContractCreate,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    try:
+        return service.save_requisites(contract_id, payload, user=user)
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.save_supply_contract_requisites",
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.save_supply_contract_requisites",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except SupplyContractFieldError as exc:
+        raise_unprocessable_client_error(
+            exc,
+            where="archive.save_supply_contract_requisites",
+            detail=str(exc) or MSG_UNPROCESSABLE,
+        )
+
+
+@router.post("/supply-contracts/{contract_id}/parse", response_model=SupplyContractParseOut)
+async def parse_archive_supply_contract_by_id(
+    contract_id: int,
+    file: UploadFile = File(...),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    data = await read_upload_file_capped(file)
+    try:
+        return await service.parse_for_contract(
+            contract_id,
+            data,
+            filename=file.filename or "",
+            user=user,
+        )
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.parse_supply_contract_by_id",
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.parse_supply_contract_by_id",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except Exception as exc:
+        if is_ai_provider_error(exc):
+            raise_ai_provider_unavailable_error(exc, where="archive.parse_supply_contract_by_id")
+        raise_unexpected_server_error(exc, where="archive.parse_supply_contract_by_id")
+
+
+@router.get("/supply-contracts/{contract_id}/document")
+def download_archive_supply_contract_by_id(
+    contract_id: int,
+    file_format: Literal["docx", "pdf"] = Query(default="docx", alias="format"),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> Response:
+    return _respond_supply_file(
+        lambda: service.document_for_contract(
+            contract_id,
+            user=user,
+            file_format=file_format,
+        ),
+        where="archive.download_supply_contract_by_id",
+    )
+
+
+@router.get("/supply-contracts/{contract_id}/edo-agreement")
+def download_archive_edo_agreement_by_id(
+    contract_id: int,
+    file_format: Literal["docx", "pdf"] = Query(default="docx", alias="format"),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> Response:
+    return _respond_supply_file(
+        lambda: service.edo_for_contract(
+            contract_id,
+            user=user,
+            file_format=file_format,
+        ),
+        where="archive.download_edo_agreement_by_id",
     )
 
 

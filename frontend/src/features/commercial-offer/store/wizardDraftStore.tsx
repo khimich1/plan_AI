@@ -60,10 +60,11 @@ const counterpartySnapshotFrom = (
 > => {
   const counterpartyId = metadata.counterparty_id ?? null;
   const keepSnapshot = counterpartyId != null && counterpartyId === state.counterpartyId;
+  const cardInn = metadata.client_inn?.trim() || null;
   return {
     counterpartyId,
     counterpartyCode1c: keepSnapshot ? state.counterpartyCode1c : "",
-    counterpartyInn: keepSnapshot ? state.counterpartyInn : null,
+    counterpartyInn: keepSnapshot ? state.counterpartyInn : cardInn,
     counterpartyKpp: keepSnapshot ? state.counterpartyKpp : null,
   };
 };

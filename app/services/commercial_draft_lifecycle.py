@@ -54,6 +54,13 @@ def _optional_counterparty_id(raw: Any) -> int | None:
     return parsed if parsed >= 1 else None
 
 
+def _optional_client_inn(raw: Any) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    return text or None
+
+
 def recalc_promise_after_edit(db_path: str, kp_id: int) -> None:
     """Recalc active promise after constructor save. Occupancy errors are logged."""
     from app.services.promise_service import PromiseService
@@ -568,6 +575,7 @@ class CommercialDraftLifecycle:
         pile_trip_overrides: dict[str, int] | None = None,
         long_pile_delivery: dict | None = None,
         counterparty_id: int | None = None,
+        client_inn: str | None = None,
     ) -> dict[str, Any]:
         payload_before = self._wf._load_draft_or_raise(draft_id)
         prev_step = self._wf._normalize_stored_step(dict(payload_before.get("metadata") or {}))
@@ -586,6 +594,7 @@ class CommercialDraftLifecycle:
         if client_name is not None:
             updates["client_name"] = client_name.strip()
             updates["counterparty_id"] = None
+            updates["client_inn"] = _optional_client_inn(client_inn)
         if discount_percent is not None:
             if discount_percent < 0 or discount_percent > 100:
                 raise ValueError("Скидка должна быть в диапазоне от 0 до 100.")
@@ -618,7 +627,8 @@ class CommercialDraftLifecycle:
                 db_path=self._wf.kp_repository.db_path
             ).require_active_client(counterparty_id)
             updates["counterparty_id"] = int(row["id"])
-            updates["client_name"] = str(row["name"])
+            if client_name is None:
+                updates["client_name"] = str(row["name"])
         if updates:
             self._wf.draft_store.update_metadata(draft_id, **updates)
 
@@ -996,20 +1006,23 @@ class CommercialDraftLifecycle:
         else:
             counterparties = CounterpartiesService(db_path=self._wf.kp_repository.db_path)
             counterparty_id = _optional_counterparty_id(metadata.get("counterparty_id"))
+            card_name = str(metadata.get("client_name", "") or "").strip()
+            has_card_inn = "client_inn" in metadata
+            card_inn = _optional_client_inn(metadata.get("client_inn"))
             if counterparty_id is not None:
                 counterparty = counterparties.require_active_client(counterparty_id)
-                snap_name = str(counterparty["name"])
+                snap_name = card_name or str(counterparty["name"])
                 snap_id = int(counterparty["id"])
-                snap_inn = counterparty.get("inn")
+                snap_inn = card_inn if has_card_inn else counterparty.get("inn")
                 snap_kpp = counterparty.get("kpp")
             else:
                 if status == "в работе":
                     counterparties.require_active_client(None)
-                snap_name = str(metadata.get("client_name", "") or "").strip()
+                snap_name = card_name
                 if not snap_name:
                     raise ValueError(_MSG_EMPTY_CLIENT_NAME)
                 snap_id = None
-                snap_inn = None
+                snap_inn = card_inn
                 snap_kpp = None
             kp_id = self._wf.kp_repository.save_offer(
                 creation_date=datetime.now().strftime("%d.%m.%Y"),

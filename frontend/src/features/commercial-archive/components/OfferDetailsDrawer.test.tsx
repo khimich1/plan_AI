@@ -101,12 +101,18 @@ vi.mock("@/features/commercial-archive/hooks/useArchiveQueries", () => ({
   }),
 }));
 
+const { renderedAutocompleteProps } = vi.hoisted(() => ({
+  renderedAutocompleteProps: [] as Array<{ searchSource?: string }>,
+}));
+
 vi.mock("@/features/commercial-offer/components/CounterpartyAutocomplete", () => ({
   formatCounterpartyRequisites: (item: { inn?: string | null; kpp?: string | null }) =>
     `ИНН ${item.inn ?? "—"} · КПП ${item.kpp ?? "—"}`,
   CounterpartyAutocomplete: ({
     onSelect,
+    searchSource,
   }: {
+    searchSource?: string;
     onSelect: (item: {
       id: number;
       name: string;
@@ -114,7 +120,9 @@ vi.mock("@/features/commercial-offer/components/CounterpartyAutocomplete", () =>
       inn: string | null;
       kpp: string | null;
     } | null) => void;
-  }) => (
+  }) => {
+    renderedAutocompleteProps.push({ searchSource });
+    return (
     <button
       type="button"
       data-testid="pick-counterparty"
@@ -130,7 +138,8 @@ vi.mock("@/features/commercial-offer/components/CounterpartyAutocomplete", () =>
     >
       выбрать из теста
     </button>
-  ),
+  );
+  },
 }));
 
 vi.mock("@/features/factory-capacity/api/promiseQuote", async () => {
@@ -186,26 +195,6 @@ vi.mock("@/features/commercial-archive/components/DeleteConfirmDialog", () => ({
 
 vi.mock("@/features/commercial-archive/components/MoveToProductionDialog", () => ({
   MoveToProductionDialog: () => null,
-}));
-
-vi.mock("@/features/commercial-archive/components/SupplyContractDrawer", () => ({
-  SupplyContractDrawer: () => null,
-  SupplyContractArchiveButton: ({
-    counterpartyId,
-    onClick,
-  }: {
-    counterpartyId?: number | null;
-    onClick: () => void;
-  }) => (
-    <button
-      type="button"
-      disabled={counterpartyId == null}
-      title={counterpartyId == null ? "Сначала занесите контрагента из 1С" : undefined}
-      onClick={onClick}
-    >
-      Договор
-    </button>
-  ),
 }));
 
 function makeReadiness(): KpReadinessSummary {
@@ -851,6 +840,21 @@ describe("OfferDetailsDrawer counterparty requisites", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    renderedAutocompleteProps.length = 0;
+  });
+
+  it("does not switch Занести контрагента to contract-card search", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, { counterparty_id: null }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getAllByText("Занести контрагента").length).toBeGreaterThan(0);
+    expect(renderedAutocompleteProps.at(-1)?.searchSource).not.toBe("contract-cards");
   });
 
   it("does not show INN/KPP when the offer has no requisites", () => {
@@ -1399,7 +1403,8 @@ describe("OfferDetailsDrawer order card shelves", () => {
     const documents = screen.getByRole("region", { name: "Документы" });
     expect(within(documents).getByRole("button", { name: /PDF/ })).toBeInTheDocument();
     expect(within(documents).getByRole("button", { name: /XLSX \(доставка в цене\)/ })).toBeInTheDocument();
-    expect(within(documents).getByRole("button", { name: "Договор" })).toBeInTheDocument();
+    expect(within(documents).queryByRole("button", { name: "Договор" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Договор" })).not.toBeInTheDocument();
     expect(within(documents).queryByRole("button", { name: "Отправить в 1С" })).not.toBeInTheDocument();
     expect(within(documents).queryByRole("button", { name: "Удалить КП" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Удалить КП" })).toBeInTheDocument();
@@ -1506,7 +1511,7 @@ describe("OfferDetailsDrawer order card shelves", () => {
 
     expect(screen.getByRole("button", { name: /В производство/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Снять оплату" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Договор" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Договор" })).not.toBeInTheDocument();
   });
 
   it("keeps production grey until the specification is saved", () => {

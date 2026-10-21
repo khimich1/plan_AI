@@ -1,15 +1,16 @@
-import type { ArchiveSection } from "@/features/commercial-archive/types/archive";
+import type { ArchivePageSection } from "@/features/commercial-archive/types/archive";
 
 type Props = {
-  value: ArchiveSection;
-  onChange: (section: ArchiveSection) => void;
+  value: ArchivePageSection;
+  onChange: (section: ArchivePageSection) => void;
 };
 
-const OPTIONS: { value: ArchiveSection; label: string; emoji: string }[] = [
+const OPTIONS: { value: ArchivePageSection; label: string; emoji: string }[] = [
   { value: "archived", label: "В архиве", emoji: "📦" },
   { value: "on_approval", label: "На согласовании", emoji: "📝" },
   { value: "in_production", label: "В производстве", emoji: "🏭" },
   { value: "completed", label: "Выполненные", emoji: "✅" },
+  { value: "counterparties", label: "Контрагенты", emoji: "🤝" },
 ];
 
 export const ArchiveSectionTabs = ({ value, onChange }: Props) => (

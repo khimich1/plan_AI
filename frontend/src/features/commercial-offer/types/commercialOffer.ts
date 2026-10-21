@@ -264,6 +264,7 @@ export type CommercialDraftMetadata = {
   manager_email: string;
   client_name: string;
   counterparty_id?: number | null;
+  client_inn?: string | null;
   discount_percent: number;
   conditions_mode: ConditionsMode;
   delivery_conditions: string;

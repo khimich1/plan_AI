@@ -3,10 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClientConditionsStep } from "@/features/commercial-offer/components/steps/ClientConditionsStep";
-import type { CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
+import type { ContractCardHit, CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
 
 const mockUseAuth = vi.fn();
 const searchCounterparties = vi.fn();
+const searchContractCards = vi.fn();
 
 vi.mock("@/features/auth/model/AuthProvider", () => ({
   useAuth: () => mockUseAuth(),
@@ -17,6 +18,7 @@ vi.mock("@/features/commercial-offer/api/counterpartiesApi", async (importOrigin
   return {
     ...actual,
     searchCounterparties: (...args: unknown[]) => searchCounterparties(...args),
+    searchContractCards: (...args: unknown[]) => searchContractCards(...args),
   };
 });
 
@@ -35,6 +37,23 @@ const ROMA: CounterpartyShort = {
   name: "ООО Ромашка",
   inn: "7701234567",
   kpp: "770101001",
+};
+
+const NIKOLSKY_PARTY: CounterpartyShort = {
+  id: 21,
+  code_1c: "00-nik",
+  name: "НИКОЛЬСКИЙ ЮРИДИЧЕСКОЕ ООО",
+  inn: "9998887776",
+  kpp: "999801001",
+};
+
+const NIKOLSKY_CARD: ContractCardHit = {
+  id: 4,
+  name: "ООО Никольский",
+  inn: "5905123456",
+  number: "0007/10/26",
+  requisites_complete: false,
+  counterparty: NIKOLSKY_PARTY,
 };
 
 const defaultProps = {
@@ -65,6 +84,45 @@ describe("ClientConditionsStep", () => {
     vi.clearAllMocks();
   });
 
+  it("searches contract cards and keeps the card name ООО Никольский", async () => {
+    mockUseAuth.mockReturnValue({
+      user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
+    });
+    searchContractCards.mockResolvedValue({ items: [NIKOLSKY_CARD], count: 1 });
+    const onSubmit = vi.fn();
+
+    wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} onSubmit={onSubmit} />);
+
+    fireEvent.change(screen.getByRole("combobox", { name: /клиент/i }), {
+      target: { value: "нико" },
+    });
+
+    expect(searchContractCards).toHaveBeenCalledWith("нико");
+    expect(searchCounterparties).not.toHaveBeenCalled();
+    expect(await screen.findByRole("option", { name: /ООО Никольский/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /не полные/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /НИКОЛЬСКИЙ ЮРИДИЧЕСКОЕ/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("option", { name: /ООО Никольский/ }));
+
+    expect(screen.getByRole("combobox", { name: /клиент/i })).toHaveValue("ООО Никольский");
+    expect(screen.getByText(/ИНН 5905123456/)).toBeInTheDocument();
+    expect(screen.getByText(/код 1С 00-nik/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Рассчитать КП/i }));
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          managerId: 10,
+          clientName: "ООО Никольский",
+          counterpartyId: 21,
+          counterpartyCode1c: "00-nik",
+          counterpartyInn: "5905123456",
+        }),
+      );
+    });
+  });
+
   it("auto-selects manager from auth profile when manager_id is in list", () => {
     mockUseAuth.mockReturnValue({
       user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
@@ -92,7 +150,7 @@ describe("ClientConditionsStep", () => {
     mockUseAuth.mockReturnValue({
       user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
     });
-    searchCounterparties.mockResolvedValue({ items: [], count: 0 });
+    searchContractCards.mockResolvedValue({ items: [], count: 0 });
     const onSubmit = vi.fn();
 
     wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} onSubmit={onSubmit} />);
@@ -110,6 +168,47 @@ describe("ClientConditionsStep", () => {
           managerId: 10,
           clientName: "ИП Петров",
           counterpartyId: null,
+          counterpartyInn: null,
+        }),
+      );
+    });
+  });
+
+  it("submits an unlinked card name and inn without a 1C id", async () => {
+    mockUseAuth.mockReturnValue({
+      user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
+    });
+    searchContractCards.mockResolvedValue({
+      items: [
+        {
+          id: 8,
+          name: "ИП Секлюцкий",
+          inn: "5904111223",
+          number: "0001/10/26",
+          requisites_complete: false,
+          counterparty: null,
+        },
+      ],
+      count: 1,
+    });
+    const onSubmit = vi.fn();
+
+    wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} onSubmit={onSubmit} />);
+
+    fireEvent.change(screen.getByRole("combobox", { name: /клиент/i }), {
+      target: { value: "секлю" },
+    });
+    fireEvent.click(await screen.findByRole("option", { name: /ИП Секлюцкий/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Рассчитать КП/i }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientName: "ИП Секлюцкий",
+          counterpartyId: null,
+          counterpartyCode1c: "",
+          counterpartyInn: "5904111223",
+          counterpartyKpp: null,
         }),
       );
     });
@@ -131,13 +230,25 @@ describe("ClientConditionsStep", () => {
     mockUseAuth.mockReturnValue({
       user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
     });
-    searchCounterparties.mockResolvedValue({ items: [ROMA], count: 1 });
+    searchContractCards.mockResolvedValue({
+      items: [
+        {
+          id: 15,
+          name: "ООО Ромашка",
+          inn: "7701234567",
+          number: "0001/10/26",
+          requisites_complete: true,
+          counterparty: ROMA,
+        },
+      ],
+      count: 1,
+    });
     const onSubmit = vi.fn();
 
     wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} onSubmit={onSubmit} />);
 
     fireEvent.change(screen.getByRole("combobox", { name: /клиент/i }), {
-      target: { value: "ООО Ромашка" },
+      target: { value: "ромаш" },
     });
     fireEvent.click(await screen.findByRole("option", { name: /ИНН 7701234567/ }));
 

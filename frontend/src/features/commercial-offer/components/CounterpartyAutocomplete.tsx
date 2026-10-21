@@ -1,22 +1,29 @@
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  searchContractCards,
   searchCounterparties,
+  type ContractCardHit,
   type CounterpartyShort,
 } from "@/features/commercial-offer/api/counterpartiesApi";
 import { useDebouncedValue } from "@/shared/lib/useDebouncedValue";
 import { Input } from "@/shared/ui/Field";
 
+export type CounterpartySearchSource = "directory" | "contract-cards";
+
 type Props = {
   selected: CounterpartyShort | null;
   onSelect: (item: CounterpartyShort | null) => void;
   onTextChange?: (value: string) => void;
+  onContractCardSelect?: (card: ContractCardHit) => void;
   initialName?: string;
   placeholder?: string;
   disabled?: boolean;
+  searchSource?: CounterpartySearchSource;
 };
 
 const EMPTY_ITEMS: CounterpartyShort[] = [];
+const EMPTY_CARDS: ContractCardHit[] = [];
 
 const normalizeName = (value: string): string => value.trim().toLowerCase();
 
@@ -24,6 +31,12 @@ export const formatCounterpartyRequisites = (item: Pick<CounterpartyShort, "inn"
   const inn = item.inn?.trim() ? item.inn.trim() : "—";
   const kpp = item.kpp?.trim() ? item.kpp.trim() : "—";
   return `ИНН ${inn} · КПП ${kpp}`;
+};
+
+const formatContractCardDetail = (card: ContractCardHit): string => {
+  const inn = card.inn?.trim() ? card.inn.trim() : "—";
+  const incomplete = card.requisites_complete ? "" : " · не полные";
+  return `ИНН ${inn} · ${card.number}${incomplete}`;
 };
 
 export const resolveCounterpartyMatch = (
@@ -38,13 +51,45 @@ export const resolveCounterpartyMatch = (
   return exact.length === 1 ? (exact[0] ?? null) : null;
 };
 
+const uniqueByName = <T extends { name: string }>(text: string, rows: T[]): T | null => {
+  const normalized = normalizeName(text);
+  if (!normalized) {
+    return null;
+  }
+  const exact = rows.filter((row) => normalizeName(row.name) === normalized);
+  return exact.length === 1 ? (exact[0] ?? null) : null;
+};
+
+const pickFromCard = (card: ContractCardHit): CounterpartyShort | null => {
+  if (!card.counterparty) {
+    return null;
+  }
+  return {
+    id: card.counterparty.id,
+    code_1c: card.counterparty.code_1c,
+    name: card.name,
+    inn: card.inn,
+    kpp: card.counterparty.kpp,
+  };
+};
+
+type SuggestionRow = {
+  key: string;
+  label: string;
+  detail: string;
+  directoryItem: CounterpartyShort | null;
+  card: ContractCardHit | null;
+};
+
 export const CounterpartyAutocomplete = ({
   selected,
   onSelect,
   onTextChange,
+  onContractCardSelect,
   initialName = "",
   placeholder = "Начните вводить название или ИНН",
   disabled = false,
+  searchSource = "directory",
 }: Props) => {
   const listId = useId();
   const optionIdPrefix = useId();
@@ -53,14 +98,34 @@ export const CounterpartyAutocomplete = ({
   const [highlightIndex, setHighlightIndex] = useState(0);
   const debounced = useDebouncedValue(text.trim());
   const canSearch = debounced.length >= 2;
+  const cardsMode = searchSource === "contract-cards";
 
-  const query = useQuery({
+  const directoryQuery = useQuery({
     queryKey: ["counterparties", debounced],
     queryFn: () => searchCounterparties(debounced),
-    enabled: canSearch,
+    enabled: canSearch && !cardsMode,
+  });
+  const cardQuery = useQuery({
+    queryKey: ["counterparties", "contract-cards", debounced],
+    queryFn: () => searchContractCards(debounced),
+    enabled: canSearch && cardsMode,
   });
 
-  const items = query.data?.items ?? EMPTY_ITEMS;
+  const items = cardsMode ? EMPTY_ITEMS : (directoryQuery.data?.items ?? EMPTY_ITEMS);
+  const cards = cardsMode ? (cardQuery.data?.items ?? EMPTY_CARDS) : EMPTY_CARDS;
+  const isFetching = cardsMode ? cardQuery.isFetching : directoryQuery.isFetching;
+
+  const applyCard = (card: ContractCardHit) => {
+    const linked = pickFromCard(card);
+    setText(card.name);
+    onTextChange?.(card.name);
+    if (linked) {
+      onSelect(linked);
+    } else {
+      onContractCardSelect?.(card);
+    }
+    setOpen(false);
+  };
 
   useEffect(() => {
     if (selected) {
@@ -69,6 +134,9 @@ export const CounterpartyAutocomplete = ({
   }, [selected?.id, selected?.name]);
 
   useEffect(() => {
+    if (cardsMode) {
+      return;
+    }
     const match = resolveCounterpartyMatch(text, items);
     if (match && match.id !== selected?.id) {
       onSelect(match);
@@ -79,18 +147,74 @@ export const CounterpartyAutocomplete = ({
   }, [items]);
 
   useEffect(() => {
+    if (!cardsMode) {
+      return;
+    }
+    const match = uniqueByName(text, cards);
+    if (!match) {
+      return;
+    }
+    applyCard(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards]);
+
+  const rows = useMemo<SuggestionRow[]>(() => {
+    if (cardsMode) {
+      return cards.map((card) => ({
+        key: `card-${card.id}`,
+        label: card.name,
+        detail: formatContractCardDetail(card),
+        directoryItem: null,
+        card,
+      }));
+    }
+    return items.map((item) => ({
+      key: `cp-${item.id}`,
+      label: item.name,
+      detail: formatCounterpartyRequisites(item),
+      directoryItem: item,
+      card: null,
+    }));
+  }, [cards, cardsMode, items]);
+
+  useEffect(() => {
     setHighlightIndex(0);
-  }, [debounced, items.length]);
+  }, [debounced, rows.length]);
 
   const showList = open && canSearch;
   const activeOptionId =
-    showList && items[highlightIndex] ? `${optionIdPrefix}-${items[highlightIndex].id}` : undefined;
+    showList && rows[highlightIndex] ? `${optionIdPrefix}-${rows[highlightIndex].key}` : undefined;
+
+  const chooseRow = (row: SuggestionRow) => {
+    if (row.card) {
+      applyCard(row.card);
+      return;
+    }
+    if (!row.directoryItem) {
+      return;
+    }
+    setText(row.directoryItem.name);
+    onSelect(row.directoryItem);
+    onTextChange?.(row.directoryItem.name);
+    setOpen(false);
+  };
 
   const handleChange = (value: string) => {
     setText(value);
     onTextChange?.(value);
     setOpen(true);
     if (!value.trim()) {
+      if (selected) {
+        onSelect(null);
+      }
+      return;
+    }
+    if (cardsMode) {
+      const match = uniqueByName(value, cards);
+      if (match) {
+        applyCard(match);
+        return;
+      }
       if (selected) {
         onSelect(null);
       }
@@ -108,13 +232,6 @@ export const CounterpartyAutocomplete = ({
     }
   };
 
-  const handleSelect = (item: CounterpartyShort) => {
-    setText(item.name);
-    onSelect(item);
-    onTextChange?.(item.name);
-    setOpen(false);
-  };
-
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -127,7 +244,7 @@ export const CounterpartyAutocomplete = ({
     }
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setHighlightIndex((index) => Math.min(index + 1, Math.max(items.length - 1, 0)));
+      setHighlightIndex((index) => Math.min(index + 1, Math.max(rows.length - 1, 0)));
       return;
     }
     if (event.key === "ArrowUp") {
@@ -135,21 +252,21 @@ export const CounterpartyAutocomplete = ({
       setHighlightIndex((index) => Math.max(index - 1, 0));
       return;
     }
-    if (event.key === "Enter" && items[highlightIndex]) {
+    if (event.key === "Enter" && rows[highlightIndex]) {
       event.preventDefault();
-      handleSelect(items[highlightIndex]);
+      chooseRow(rows[highlightIndex]);
     }
   };
 
   const listLabel = useMemo(() => {
-    if (query.isFetching) {
+    if (isFetching) {
       return "Ищем…";
     }
-    if (items.length === 0) {
-      return "Не найдено среди клиентов";
+    if (rows.length === 0) {
+      return cardsMode ? "Не найдено среди карточек" : "Не найдено среди клиентов";
     }
     return undefined;
-  }, [items.length, query.isFetching]);
+  }, [cardsMode, isFetching, rows.length]);
 
   return (
     <div style={{ position: "relative" }}>
@@ -198,26 +315,26 @@ export const CounterpartyAutocomplete = ({
               {listLabel}
             </li>
           )}
-          {items.map((item, index) => {
+          {rows.map((row, index) => {
             const highlighted = index === highlightIndex;
             return (
               <li
-                key={item.id}
-                id={`${optionIdPrefix}-${item.id}`}
+                key={row.key}
+                id={`${optionIdPrefix}-${row.key}`}
                 role="option"
                 aria-selected={highlighted}
                 onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setHighlightIndex(index)}
-                onClick={() => handleSelect(item)}
+                onClick={() => chooseRow(row)}
                 style={{
                   padding: "0.65rem 0.9rem",
                   cursor: "pointer",
                   background: highlighted ? "#eef2ff" : "transparent",
                 }}
               >
-                <div style={{ fontWeight: 600 }}>{item.name}</div>
+                <div style={{ fontWeight: 600 }}>{row.label}</div>
                 <div style={{ color: "#475467", fontSize: "0.85rem", marginTop: "0.15rem" }}>
-                  {formatCounterpartyRequisites(item)}
+                  {row.detail}
                 </div>
               </li>
             );
