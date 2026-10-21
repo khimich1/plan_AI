@@ -202,6 +202,7 @@ def generate_commercial_offer_xlsx(
     weight_catalog_db_path: Optional[str] = None,
     long_pile_delivery_enabled: bool = False,
     long_pile_delivery: Optional[Dict] = None,
+    suppress_company_contacts: bool = False,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате XLSX с расчётными формулами
@@ -220,6 +221,7 @@ def generate_commercial_offer_xlsx(
         kp_db_id: номер КП из базы данных (если КП сохранен в БД)
         logistics_cost: стоимость одного рейса (без НДС по плитам; итог по формуле рейсов)
         append_batches: metadata заходов (для unified при multi-append одного типа)
+        suppress_company_contacts: не подставлять заводские контакты, если у менеджера пустая пара
     
     Returns:
         BytesIO буфер с XLSX файлом
@@ -248,12 +250,17 @@ def generate_commercial_offer_xlsx(
         date_line = f"от {offer_date}"
     
     # Формируем строку с контактами (МЕНЕДЖЕРА, а не компании!)
-    if manager_phone and manager_email:
-        contacts_line = f"Тел.: {format_phone(manager_phone)}, email: {manager_email}"
-    elif manager_phone:
-        contacts_line = f"Тел.: {format_phone(manager_phone)}"
-    elif manager_email:
-        contacts_line = f"Email: {manager_email}"
+    phone = (manager_phone or "").strip()
+    email = (manager_email or "").strip()
+    if phone and email:
+        contacts_line = f"Тел.: {format_phone(phone)}, email: {email}"
+    elif phone:
+        contacts_line = f"Тел.: {format_phone(phone)}"
+    elif email:
+        contacts_line = f"Email: {email}"
+    elif suppress_company_contacts:
+        # Контактов менеджера нет — завод не подставляем
+        contacts_line = ""
     else:
         # Fallback: контакты компании, если нет контактов менеджера
         contacts_line = f"Тел.: {COMPANY_PHONE}, Email: {COMPANY_EMAIL}"

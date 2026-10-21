@@ -735,6 +735,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         managerId: payload.managerId,
         clientName: payload.clientName,
         counterpartyId: payload.counterpartyId,
+        clientInn: payload.counterpartyInn,
         conditionsMode: payload.conditionsMode,
         deliveryConditions: payload.deliveryConditions,
         paymentConditions: payload.paymentConditions,

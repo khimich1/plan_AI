@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
+
+from app.repositories.contract_client_link import (
+    select_contract_client_links,
+    unique_client_id_for_inn,
+)
 
 from core.kp_db_common import _connect
 from core.kp_db_schema import ensure_schema
@@ -15,6 +21,7 @@ from core.supply_contract import (
     SCAN_NOTES,
     format_contract_number,
     next_contract_seq,
+    normalize_contract_number,
 )
 
 _INSERT_COLUMNS = (
@@ -50,11 +57,128 @@ _INSERT_COLUMNS = (
     "created_by_user_id",
 )
 
+# Поиск фильтрует эти строки в сервисе. Здесь только колонки:
+# ключи имени, ИНН и номера плюс поля, которые отдаёт карточка.
+_CARD_SEARCH_COLUMNS = (
+    "id",
+    "imported_name",
+    "full_name",
+    "short_name",
+    "inn",
+    "number",
+    "counterparty_id",
+    "contract_date",
+    "manager_name",
+    "status",
+    "scan_note",
+    "scan_path",
+    "legal_form",
+    "signatory_position",
+    "signatory_name",
+    "signatory_verb",
+    "authority_basis",
+    "poa_number",
+    "poa_date",
+    "kpp",
+    "ogrn",
+    "legal_address",
+    "postal_address",
+    "phone",
+    "email",
+    "bank_name",
+    "account",
+    "corr_account",
+    "bik",
+    "edo_operator",
+    "edo_id",
+    "okved",
+)
+
+# Поля бланка. Номер сюда не входит. Дата и менеджер пишутся отдельно:
+# дату — только если её передали, менеджера — только в пустую строку.
+_REQUISITE_COLUMNS = (
+    "legal_form",
+    "full_name",
+    "short_name",
+    "signatory_position",
+    "signatory_name",
+    "signatory_verb",
+    "authority_basis",
+    "poa_number",
+    "poa_date",
+    "inn",
+    "kpp",
+    "ogrn",
+    "legal_address",
+    "postal_address",
+    "phone",
+    "email",
+    "bank_name",
+    "account",
+    "corr_account",
+    "bik",
+    "edo_operator",
+    "edo_id",
+    "okved",
+)
+
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
     return dict(row)
+
+
+def _blank(value: object) -> bool:
+    if value is None:
+        return True
+    return isinstance(value, str) and not value.strip()
+
+
+def _requisite_assignments(
+    fields: dict[str, Any],
+    *,
+    contract_date: date | None,
+    current_manager: object,
+    manager_name: str,
+) -> tuple[list[str], list[Any]]:
+    assignments: list[str] = []
+    values: list[Any] = []
+    for column in _REQUISITE_COLUMNS:
+        if column not in fields:
+            continue
+        assignments.append(f"{column} = ?")
+        values.append(fields[column])
+    if contract_date is not None:
+        assignments.append("contract_date = ?")
+        values.append(contract_date.isoformat())
+    if _blank(current_manager) and not _blank(manager_name):
+        assignments.append("manager_name = ?")
+        values.append(manager_name.strip())
+    return assignments, values
+
+
+@dataclass(frozen=True)
+class ContractLinkStats:
+    """Сколько договоров получили связь и сколько свободных осталось."""
+
+    created: int
+    skipped: int
+
+
+_LINK_UPDATE = """
+UPDATE supply_contract
+SET counterparty_id = ?
+WHERE id = ?
+  AND counterparty_id IS NULL
+  AND status != ?
+  AND NOT EXISTS (
+      SELECT 1 FROM supply_contract AS other
+      WHERE other.counterparty_id = ?
+        AND other.status != ?
+        AND other.id != supply_contract.id
+  )
+"""
 
 
 class SupplyContractRepository:
@@ -86,6 +210,87 @@ class SupplyContractRepository:
                 (int(contract_id),),
             ).fetchone()
         return _row_to_dict(row)
+
+    def get_by_number(self, number: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM supply_contract WHERE number = ?",
+                (number,),
+            ).fetchone()
+        return _row_to_dict(row)
+
+    def insert_card(
+        self,
+        *,
+        imported_name: str,
+        number: str,
+        user_id: int,
+        inn: str | None = None,
+        contract_date: date | None = None,
+    ) -> dict[str, Any]:
+        """Неполная карточка: без контрагента и без реквизитов бланка.
+
+        Занятый номер поднимает IntegrityError как есть, без текста реестра.
+        """
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            contract_id = self._insert_card_row(
+                conn,
+                imported_name=imported_name,
+                inn=inn,
+                number=number,
+                contract_date=contract_date,
+                user_id=user_id,
+            )
+            conn.execute("COMMIT")
+            stored = self._by_id(conn, contract_id)
+            if stored is None:
+                raise sqlite3.OperationalError("карточка не прочитана после вставки")
+            return stored
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
+
+    def insert_missing_cards(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        user_id: int,
+    ) -> tuple[int, int]:
+        """Вставляет карточки, которых ещё нет. Занятый номер пропускает.
+
+        Одна транзакция: ошибка откатывает все вставки этого вызова.
+        Имя пишется только в imported_name.
+        """
+        if not rows:
+            return 0, 0
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            taken = {
+                str(row["number"])
+                for row in conn.execute("SELECT number FROM supply_contract")
+            }
+            created, skipped = self._insert_missing(conn, rows, taken, user_id)
+            conn.execute("COMMIT")
+            return created, skipped
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
+
+    def list_for_search(self) -> list[dict[str, Any]]:
+        """Все строки договора колонками карточки. Подстроку режет сервис."""
+        columns = ", ".join(_CARD_SEARCH_COLUMNS)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT {columns} FROM supply_contract ORDER BY id"
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def create_active(
         self,
@@ -237,6 +442,41 @@ class SupplyContractRepository:
         finally:
             conn.close()
 
+    def link_unique_inn_contracts(self, *, user_id: int | None = None) -> ContractLinkStats:
+        """Пишет ``counterparty_id`` выбранным договорам. Справочник не меняет.
+
+        Повторный вызов ничего не добавляет: уже заполненный id и второй
+        действующий договор того же клиента условие UPDATE отсекает.
+        """
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            contracts, clients = self._fetch_link_inputs(conn)
+            client_count = len(clients)
+            pairs = select_contract_client_links(contracts, clients)
+            created = self._apply_unique_links(conn, pairs, user_id=user_id)
+            if self._count_clients(conn) != client_count:
+                raise sqlite3.OperationalError("справочник контрагентов изменился")
+            conn.execute("COMMIT")
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
+        unlinked = sum(1 for row in contracts if row.get("counterparty_id") is None)
+        return ContractLinkStats(created=created, skipped=unlinked - created)
+
+    def planned_contract_client_links(self) -> list[tuple[int, int]]:
+        """Та же пара, что и запись, но без UPDATE."""
+        with self._connect() as conn:
+            contracts, clients = self._fetch_link_inputs(conn)
+        return select_contract_client_links(contracts, clients)
+
+    def unique_active_client_id(self, inn: object) -> int | None:
+        with self._connect() as conn:
+            _contracts, clients = self._fetch_link_inputs(conn)
+        return unique_client_id_for_inn(clients, inn)
+
     def list_counterparty_names(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -343,6 +583,157 @@ class SupplyContractRepository:
             )
             conn.execute("COMMIT")
             return self._by_id(conn, contract_id)
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
+
+    def change_number(
+        self,
+        contract_id: int,
+        number: str,
+        *,
+        user_id: int,
+    ) -> dict[str, Any] | None:
+        """Меняет номер и пишет событие. Дату не трогает.
+
+        Тот же номер после нормализации — пустая операция.
+        Занятый номер поднимает IntegrityError как есть.
+        """
+        normalized = normalize_contract_number(number)
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            current = self._by_id(conn, contract_id)
+            if current is None:
+                conn.execute("COMMIT")
+                return None
+            if current["number"] == normalized:
+                conn.execute("COMMIT")
+                return current
+            created_at = datetime.now().isoformat(timespec="seconds")
+            conn.execute(
+                "UPDATE supply_contract SET number = ? WHERE id = ?",
+                (normalized, int(contract_id)),
+            )
+            self._insert_event(
+                conn,
+                contract_id=int(contract_id),
+                field="number",
+                old_value=str(current["number"]),
+                new_value=normalized,
+                user_id=user_id,
+                created_at=created_at,
+            )
+            conn.execute("COMMIT")
+            stored = self._by_id(conn, contract_id)
+            if stored is None:
+                raise sqlite3.OperationalError("карточка не прочитана после смены номера")
+            return stored
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
+
+    def delete_card(self, contract_id: int) -> dict[str, Any] | None:
+        """Удаляет строку договора и её события. Справочник контрагентов не трогает."""
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            current = self._by_id(conn, int(contract_id))
+            if current is None:
+                conn.execute("COMMIT")
+                return None
+            conn.execute(
+                "DELETE FROM supply_contract_event WHERE contract_id = ?",
+                (int(contract_id),),
+            )
+            removed = conn.execute(
+                "DELETE FROM supply_contract WHERE id = ?",
+                (int(contract_id),),
+            )
+            if removed.rowcount != 1:
+                raise sqlite3.OperationalError("карточка не удалена")
+            conn.execute("COMMIT")
+            return current
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
+
+    def update_imported_name_and_inn(
+        self,
+        contract_id: int,
+        *,
+        imported_name: str,
+        inn: str | None,
+    ) -> dict[str, Any] | None:
+        """Имя из списка и ИНН на той же строке. Событие не пишет."""
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            current = self._by_id(conn, contract_id)
+            if current is None:
+                conn.execute("COMMIT")
+                return None
+            conn.execute(
+                """
+                UPDATE supply_contract
+                SET imported_name = ?, inn = ?
+                WHERE id = ?
+                """,
+                (imported_name, inn, int(contract_id)),
+            )
+            conn.execute("COMMIT")
+            stored = self._by_id(conn, contract_id)
+            if stored is None:
+                raise sqlite3.OperationalError("карточка не прочитана после правки имени")
+            return stored
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
+
+    def save_requisites(
+        self,
+        contract_id: int,
+        fields: dict[str, Any],
+        *,
+        manager_name: str,
+        contract_date: date | None = None,
+    ) -> dict[str, Any] | None:
+        """Поля бланка на той же строке. Номер не меняет.
+
+        Дату пишет только если её передали. Менеджера — только если в строке пусто.
+        """
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            current = self._by_id(conn, contract_id)
+            if current is None:
+                conn.execute("COMMIT")
+                return None
+            assignments, values = _requisite_assignments(
+                fields,
+                contract_date=contract_date,
+                current_manager=current.get("manager_name"),
+                manager_name=manager_name,
+            )
+            if assignments:
+                set_clause = ", ".join(assignments)
+                conn.execute(
+                    f"UPDATE supply_contract SET {set_clause} WHERE id = ?",
+                    (*values, int(contract_id)),
+                )
+            conn.execute("COMMIT")
+            stored = self._by_id(conn, contract_id)
+            if stored is None:
+                raise sqlite3.OperationalError("карточка не прочитана после записи реквизитов")
+            return stored
         except Exception:
             self._rollback_quietly(conn)
             raise
@@ -457,6 +848,66 @@ class SupplyContractRepository:
             created_at=created_at,
         )
 
+    def _fetch_link_inputs(
+        self, conn: sqlite3.Connection
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        contracts = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, counterparty_id, status, inn, contract_date, number
+                FROM supply_contract
+                """
+            )
+        ]
+        clients = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT id, inn, is_active, is_client FROM counterparties"
+            )
+        ]
+        return contracts, clients
+
+    def _count_clients(self, conn: sqlite3.Connection) -> int:
+        row = conn.execute("SELECT COUNT(*) FROM counterparties").fetchone()
+        return int(row[0])
+
+    def _apply_unique_links(
+        self,
+        conn: sqlite3.Connection,
+        pairs: list[tuple[int, int]],
+        *,
+        user_id: int | None,
+    ) -> int:
+        created = 0
+        created_at = datetime.now().isoformat(timespec="seconds")
+        for contract_id, client_id in pairs:
+            cur = conn.execute(
+                _LINK_UPDATE,
+                (
+                    int(client_id),
+                    int(contract_id),
+                    CANCELLED_STATUS,
+                    int(client_id),
+                    CANCELLED_STATUS,
+                ),
+            )
+            if cur.rowcount != 1:
+                continue
+            created += 1
+            if user_id is None:
+                continue
+            self._insert_event(
+                conn,
+                contract_id=int(contract_id),
+                field="counterparty_id",
+                old_value=None,
+                new_value=str(int(client_id)),
+                user_id=int(user_id),
+                created_at=created_at,
+            )
+        return created
+
     def _active_row(self, conn: sqlite3.Connection, counterparty_id: int) -> dict[str, Any] | None:
         row = conn.execute(
             """
@@ -473,6 +924,66 @@ class SupplyContractRepository:
             (int(contract_id),),
         ).fetchone()
         return _row_to_dict(row)
+
+    def _insert_missing(
+        self,
+        conn: sqlite3.Connection,
+        rows: list[dict[str, Any]],
+        taken: set[str],
+        user_id: int,
+    ) -> tuple[int, int]:
+        created = 0
+        skipped = 0
+        for row in rows:
+            number = str(row["number"])
+            if number in taken:
+                skipped += 1
+                continue
+            inn = row.get("inn")
+            self._insert_card_row(
+                conn,
+                imported_name=str(row["imported_name"]),
+                inn=None if inn is None else str(inn),
+                number=number,
+                contract_date=row.get("contract_date"),
+                user_id=user_id,
+            )
+            taken.add(number)
+            created += 1
+        return created, skipped
+
+    def _insert_card_row(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        imported_name: str,
+        inn: str | None,
+        number: str,
+        contract_date: date | None,
+        user_id: int,
+    ) -> int:
+        created_at = datetime.now().isoformat(timespec="seconds")
+        stored_date = None if contract_date is None else contract_date.isoformat()
+        cur = conn.execute(
+            """
+            INSERT INTO supply_contract (
+                counterparty_id, imported_name, inn, number, contract_date,
+                status, manager_name, created_at, created_by_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                None,
+                imported_name,
+                inn,
+                number,
+                stored_date,
+                DEFAULT_STATUS,
+                None,
+                created_at,
+                int(user_id),
+            ),
+        )
+        return int(cur.lastrowid)
 
     def _insert_imported_row(
         self,

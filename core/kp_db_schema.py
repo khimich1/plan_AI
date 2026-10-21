@@ -632,11 +632,42 @@ def _init_counterparties_schema(cur: sqlite3.Cursor) -> None:
             pass
 
 
+# Дата и реквизиты бланка пустые, пока блок договора не сохранён (CDC-002).
+# number, status, created_at и created_by_user_id остаются обязательными.
+_SUPPLY_CONTRACT_NULLABLE_COLUMNS = frozenset(
+    {
+        "contract_date",
+        "manager_name",
+        "legal_form",
+        "full_name",
+        "short_name",
+        "signatory_name",
+        "signatory_verb",
+        "authority_basis",
+        "inn",
+        "ogrn",
+        "legal_address",
+        "email",
+        "bank_name",
+        "account",
+        "corr_account",
+        "bik",
+    }
+)
+_SUPPLY_CONTRACT_REBUILD_IF_NOTNULL = ("contract_date", "legal_form")
+_SUPPLY_CONTRACT_ONE_ACTIVE_INDEX = """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_supply_contract_one_active
+    ON supply_contract(counterparty_id)
+    WHERE status != 'отмена не будем работать' AND counterparty_id IS NOT NULL
+"""
+
+
 def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
     """Договор поставки на контрагента. КП хранит только место под ответ 1С.
 
     Один действующий договор на ``counterparty_id``: частичный уникальный
     индекс не включает «отмена не будем работать» и строки без связи.
+    Дата и реквизиты бланка могут быть пустыми, пока блок договора не сохранён.
     """
     cur.execute(
         """
@@ -645,31 +676,31 @@ def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
             counterparty_id INTEGER NULL REFERENCES counterparties(id),
             imported_name TEXT,
             number TEXT NOT NULL UNIQUE,
-            contract_date TEXT NOT NULL,
-            manager_name TEXT NOT NULL,
+            contract_date TEXT,
+            manager_name TEXT,
             status TEXT NOT NULL DEFAULT 'нет',
             scan_note TEXT,
             scan_path TEXT,
-            legal_form TEXT NOT NULL,
-            full_name TEXT NOT NULL,
-            short_name TEXT NOT NULL,
+            legal_form TEXT,
+            full_name TEXT,
+            short_name TEXT,
             signatory_position TEXT,
-            signatory_name TEXT NOT NULL,
-            signatory_verb TEXT NOT NULL,
-            authority_basis TEXT NOT NULL,
+            signatory_name TEXT,
+            signatory_verb TEXT,
+            authority_basis TEXT,
             poa_number TEXT,
             poa_date TEXT,
-            inn TEXT NOT NULL,
+            inn TEXT,
             kpp TEXT,
-            ogrn TEXT NOT NULL,
-            legal_address TEXT NOT NULL,
+            ogrn TEXT,
+            legal_address TEXT,
             postal_address TEXT,
             phone TEXT,
-            email TEXT NOT NULL,
-            bank_name TEXT NOT NULL,
-            account TEXT NOT NULL,
-            corr_account TEXT NOT NULL,
-            bik TEXT NOT NULL,
+            email TEXT,
+            bank_name TEXT,
+            account TEXT,
+            corr_account TEXT,
+            bik TEXT,
             edo_operator TEXT,
             edo_id TEXT,
             okved TEXT,
@@ -691,13 +722,8 @@ def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
         )
         """
     )
-    cur.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_supply_contract_one_active
-        ON supply_contract(counterparty_id)
-        WHERE status != 'отмена не будем работать' AND counterparty_id IS NOT NULL
-        """
-    )
+    _migrate_supply_contract_nullable_requisites(cur)
+    cur.execute(_SUPPLY_CONTRACT_ONE_ACTIVE_INDEX)
     for sql in (
         "ALTER TABLE KP_offers ADD COLUMN order_number_1c TEXT",
         "ALTER TABLE KP_offers ADD COLUMN order_status_1c TEXT",
@@ -712,6 +738,115 @@ def _init_supply_contract_schema(cur: sqlite3.Cursor) -> None:
             cur.execute(sql)
         except sqlite3.OperationalError:
             pass
+
+
+def _sql_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _supply_contract_columns(cur: sqlite3.Cursor) -> list[tuple]:
+    cur.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'supply_contract'"
+    )
+    if cur.fetchone() is None:
+        return []
+    cur.execute("PRAGMA table_info(supply_contract)")
+    return list(cur.fetchall())
+
+
+def _supply_contract_needs_nullable_rebuild(columns: list[tuple]) -> bool:
+    by_name = {str(row[1]): row for row in columns}
+    return any(
+        int(by_name[name][3] or 0) == 1
+        for name in _SUPPLY_CONTRACT_REBUILD_IF_NOTNULL
+        if name in by_name
+    )
+
+
+def _supply_contract_foreign_keys(cur: sqlite3.Cursor) -> dict[str, str]:
+    cur.execute("PRAGMA foreign_key_list(supply_contract)")
+    clauses: dict[str, str] = {}
+    for row in cur.fetchall():
+        from_col = str(row[3])
+        clause = (
+            f"REFERENCES {_sql_ident(str(row[2]))}({_sql_ident(str(row[4]))})"
+        )
+        on_update = str(row[5] or "")
+        on_delete = str(row[6] or "")
+        if on_update.upper() not in {"", "NO ACTION"}:
+            clause += f" ON UPDATE {on_update}"
+        if on_delete.upper() not in {"", "NO ACTION"}:
+            clause += f" ON DELETE {on_delete}"
+        clauses[from_col] = clause
+    return clauses
+
+
+def _rebuilt_supply_contract_column(row: tuple, foreign_keys: dict[str, str]) -> str:
+    name = str(row[1])
+    col_type = str(row[2] or "").strip()
+    notnull = int(row[3] or 0) == 1
+    default = row[4]
+    parts = [_sql_ident(name)]
+    if col_type:
+        parts.append(col_type)
+    if int(row[5] or 0) == 1:
+        parts.append("PRIMARY KEY")
+    elif notnull and name not in _SUPPLY_CONTRACT_NULLABLE_COLUMNS:
+        parts.append("NOT NULL")
+    if name == "number":
+        parts.append("UNIQUE")
+    if default is not None:
+        parts.append(f"DEFAULT {default}")
+    reference = foreign_keys.get(name)
+    if reference:
+        parts.append(reference)
+    return " ".join(parts)
+
+
+def _rebuild_supply_contract_nullable(
+    cur: sqlite3.Cursor,
+    columns: list[tuple],
+    foreign_keys: dict[str, str],
+) -> None:
+    body = ",\n".join(
+        _rebuilt_supply_contract_column(row, foreign_keys) for row in columns
+    )
+    cur.execute("DROP TABLE IF EXISTS supply_contract_nullable")
+    cur.execute(f"CREATE TABLE supply_contract_nullable (\n{body}\n)")
+    names = ", ".join(_sql_ident(str(row[1])) for row in columns)
+    cur.execute(
+        f"INSERT INTO supply_contract_nullable ({names}) "
+        f"SELECT {names} FROM supply_contract"
+    )
+    cur.execute("DROP TABLE supply_contract")
+    cur.execute("ALTER TABLE supply_contract_nullable RENAME TO supply_contract")
+    cur.execute(_SUPPLY_CONTRACT_ONE_ACTIVE_INDEX)
+
+
+def _migrate_supply_contract_nullable_requisites(cur: sqlite3.Cursor) -> None:
+    """Снимает NOT NULL с даты и реквизитов, если таблица ещё старая.
+
+    SQLite не ослабляет NOT NULL через ALTER COLUMN. Пока ``contract_date``
+    или ``legal_form`` обязательны, таблица пересоздаётся: те же колонки,
+    копия по именам, прежний частичный уникальный индекс.
+    """
+    columns = _supply_contract_columns(cur)
+    if not _supply_contract_needs_nullable_rebuild(columns):
+        return
+    foreign_keys = _supply_contract_foreign_keys(cur)
+    print("[DB] Миграция: пересоздаём supply_contract (пустые реквизиты и дата)...")
+    # PRAGMA foreign_keys внутри открытой транзакции молча не действует.
+    cur.connection.commit()
+    cur.execute("PRAGMA foreign_keys = OFF")
+    try:
+        _rebuild_supply_contract_nullable(cur, columns, foreign_keys)
+        cur.connection.commit()
+    except Exception:
+        cur.connection.rollback()
+        raise
+    finally:
+        cur.execute("PRAGMA foreign_keys = ON")
+    print("[DB] ✅ supply_contract: реквизиты и дата допускают пустое значение")
 
 
 def _init_gsm_schema(cur: sqlite3.Cursor) -> None:

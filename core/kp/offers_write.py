@@ -159,6 +159,36 @@ def update_kp_counterparty(
         conn.close()
 
 
+def set_kp_counterparty_id(
+    kp_id: int,
+    counterparty_id: int,
+    db_path: str = DEFAULT_DB,
+) -> bool:
+    """Пишет только пустой ``counterparty_id``. Имя и ИНН карточки не меняет."""
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE KP_offers
+            SET counterparty_id = ?
+            WHERE kp_id = ? AND counterparty_id IS NULL
+            """,
+            (int(counterparty_id), int(kp_id)),
+        )
+        if cur.rowcount <= 0:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
 def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_DB) -> bool:
     """
     Обновляет процент скидки для КП, пересчитывает итоги и discounted_price по плитам.

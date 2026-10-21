@@ -349,6 +349,7 @@ def generate_commercial_offer_pdf(
     weight_catalog_db_path: Optional[str] = None,
     long_pile_delivery_enabled: bool = False,
     long_pile_delivery: Optional[Dict] = None,
+    suppress_company_contacts: bool = False,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -368,6 +369,7 @@ def generate_commercial_offer_pdf(
         delivery_conditions: условия поставки (пусто — только заголовок, как в XLSX)
         payment_conditions: условия оплаты (пусто — стандартный текст 100% предоплаты)
         append_batches: metadata заходов (для unified при multi-append одного типа)
+        suppress_company_contacts: не подставлять заводские контакты, если у менеджера пустая пара
     
     Note:
         Детальная разбивка компонентов НЕ включается в PDF.
@@ -510,12 +512,17 @@ def generate_commercial_offer_pdf(
     story.append(Paragraph(COMPANY_ADDRESS, style_header_info))
     
     # 2. Контакты менеджера (отдельной строкой)
-    if manager_phone and manager_email:
-        contacts_text = f"Тел.: {format_phone(manager_phone)}, email: {manager_email}"
-    elif manager_phone:
-        contacts_text = f"Тел.: {format_phone(manager_phone)}"
-    elif manager_email:
-        contacts_text = f"Email: {manager_email}"
+    phone = (manager_phone or "").strip()
+    email = (manager_email or "").strip()
+    if phone and email:
+        contacts_text = f"Тел.: {format_phone(phone)}, email: {email}"
+    elif phone:
+        contacts_text = f"Тел.: {format_phone(phone)}"
+    elif email:
+        contacts_text = f"Email: {email}"
+    elif suppress_company_contacts:
+        # Контактов менеджера нет — завод не подставляем
+        contacts_text = ""
     else:
         # Fallback: контакты компании, если нет контактов менеджера
         contacts_text = f"Тел.: {COMPANY_PHONE}, Email: {COMPANY_EMAIL}"

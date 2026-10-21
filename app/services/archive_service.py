@@ -48,6 +48,10 @@ from app.security.offer_access import (
     list_filters_for_user,
 )
 from app.services.file_generation_service import FileGenerationService
+from app.services.manager_contact_lookup import (
+    header_contacts_for_archive,
+    load_managers_if_db_exists,
+)
 from app.services.optimization_service import OptimizationService
 from app.services.promise_service import PromiseGateError, PromiseService
 from app.repositories.supply_contract_repository import SupplyContractRepository
@@ -110,6 +114,13 @@ from core.work_calendar import is_working_day, load_extra_workdays, load_holiday
 
 
 logger = logging.getLogger(__name__)
+
+
+def _actor_id(user: dict) -> int | None:
+    raw_id = user.get("id")
+    if raw_id is None:
+        return None
+    return int(raw_id)
 
 
 class ArchiveError(Exception):
@@ -373,7 +384,7 @@ class ArchiveService:
         raw = self._offer_for_invoice_write(kp_id, user)
         if raw.get("status") != STATUS_ARCHIVE:
             raise ArchiveValidationError(MSG_EXPORT_ONLY_ARCHIVE)
-        offer, contract = self._invoice_offer(raw)
+        offer, contract = self._invoice_offer(raw, user_id=_actor_id(user))
         name = _require_invoice_warehouse(warehouse)
         document, digest = self._build_stamped_invoice(
             raw, offer, contract, action="create", warehouse=name
@@ -407,7 +418,7 @@ class ArchiveService:
         current = invoice_snapshot_hash(card_offer_from_kp(raw))
         if str(raw.get("invoice_snapshot_hash") or "") == current:
             raise ArchiveValidationError("Состав не изменился")
-        offer, contract = self._invoice_offer(raw)
+        offer, contract = self._invoice_offer(raw, user_id=_actor_id(user))
         name = _warehouse_for_correction(raw, warehouse)
         document, digest = self._build_stamped_invoice(
             raw,
@@ -524,7 +535,84 @@ class ArchiveService:
         assert_offer_write_access(user, raw)
         return raw
 
-    def _invoice_offer(self, raw: dict) -> tuple[dict[str, Any], dict]:
+    def _contract_repository(self) -> SupplyContractRepository:
+        return SupplyContractRepository(db_path=self.repository.db_path)
+
+    def _invoice_contract(
+        self,
+        raw: dict,
+        *,
+        write: bool,
+        user_id: int | None,
+    ) -> dict | None:
+        repo = self._contract_repository()
+        if write:
+            repo.link_unique_inn_contracts(user_id=user_id)
+        client_id = self._invoice_client_id(raw, repo, write=write)
+        if client_id is None:
+            return None
+        active = repo.get_active_by_counterparty(int(client_id))
+        if active is not None:
+            return active
+        if write:
+            return None
+        return self._planned_contract_row(repo, int(client_id))
+
+    def _invoice_client_id(
+        self,
+        raw: dict,
+        repo: SupplyContractRepository,
+        *,
+        write: bool,
+    ) -> int | None:
+        current = raw.get("counterparty_id")
+        if current is not None:
+            return int(current)
+        client_id = repo.unique_active_client_id(raw.get("customer_inn"))
+        if client_id is None:
+            return None
+        if not self._client_has_invoice_contract(repo, client_id, write=write):
+            return None
+        if write and not self._remember_counterparty(raw, client_id):
+            return None
+        return client_id
+
+    def _client_has_invoice_contract(
+        self,
+        repo: SupplyContractRepository,
+        client_id: int,
+        *,
+        write: bool,
+    ) -> bool:
+        if repo.get_active_by_counterparty(client_id) is not None:
+            return True
+        if write:
+            return False
+        return self._planned_contract_row(repo, client_id) is not None
+
+    def _remember_counterparty(self, raw: dict, client_id: int) -> bool:
+        kp_id = raw.get("kp_id")
+        if kp_id is None:
+            return False
+        if not self.repository.set_counterparty_id(int(kp_id), int(client_id)):
+            return False
+        raw["counterparty_id"] = int(client_id)
+        return True
+
+    def _planned_contract_row(
+        self,
+        repo: SupplyContractRepository,
+        client_id: int,
+    ) -> dict | None:
+        for contract_id, linked_client in repo.planned_contract_client_links():
+            if linked_client == int(client_id):
+                return repo.get_by_id(contract_id)
+        return None
+
+    def _invoice_offer(
+        self, raw: dict, *, user_id: int | None = None
+    ) -> tuple[dict[str, Any], dict]:
+        contract = self._invoice_contract(raw, write=True, user_id=user_id)
         counterparty_id = raw.get("counterparty_id")
         if counterparty_id is None:
             raise ArchiveValidationError(MSG_NEED_COUNTERPARTY)
@@ -534,9 +622,6 @@ class ArchiveService:
             ).require_active_client(counterparty_id)
         except CounterpartyValidationError as exc:
             raise ArchiveValidationError(str(exc)) from exc
-        contract = SupplyContractRepository(
-            db_path=self.repository.db_path
-        ).get_active_by_counterparty(int(counterparty_id))
         if contract is None:
             raise ArchiveValidationError(MSG_NEED_CONTRACT)
         offer = card_offer_from_kp(raw)
@@ -593,16 +678,14 @@ class ArchiveService:
     def _invoice_export_block(self, raw: dict) -> str | None:
         if raw.get("status") != STATUS_ARCHIVE:
             return None
-        if raw.get("counterparty_id") is None:
-            return MSG_NEED_COUNTERPARTY
         try:
-            contract = SupplyContractRepository(
-                db_path=self.repository.db_path
-            ).get_active_by_counterparty(int(raw["counterparty_id"]))
+            contract = self._invoice_contract(raw, write=False, user_id=None)
         except Exception:
             logger.exception("Не удалось прочитать договор для КП %s", raw.get("kp_id"))
             return None
         if contract is None:
+            if raw.get("counterparty_id") is None:
+                return MSG_NEED_COUNTERPARTY
             return MSG_NEED_CONTRACT
         try:
             offer = card_offer_from_kp(raw)
@@ -888,6 +971,9 @@ class ArchiveService:
             raise ArchiveValidationError(MSG_SPEC_REQUIRED)
         if stale_spec:
             raise ArchiveValidationError(MSG_SPEC_STALE)
+        self._contract_repository().link_unique_inn_contracts(
+            user_id=_actor_id(user)
+        )
         try:
             CounterpartiesService(db_path=self.repository.db_path).require_active_client(
                 raw.get("counterparty_id")
@@ -994,6 +1080,12 @@ class ArchiveService:
         )
         long_pile_delivery = coerce_long_pile_delivery(raw.get("long_pile_delivery_json"))
         append_batches = raw.get("append_batches")
+        manager_phone, manager_email, suppress_company_contacts = (
+            header_contacts_for_archive(
+                manager_name,
+                load_managers_if_db_exists(self.repository.db_path),
+            )
+        )
 
         if kind == "pdf":
             buffer = await asyncio.to_thread(
@@ -1003,8 +1095,9 @@ class ArchiveService:
                 offer_date,
                 customer_name=customer_name,
                 manager_name=manager_name,
-                manager_phone=None,
-                manager_email=None,
+                manager_phone=manager_phone,
+                manager_email=manager_email,
+                suppress_company_contacts=suppress_company_contacts,
                 discount_percent=discount_percent,
                 kp_db_id=kp_id,
                 logistics_cost=logistics_cost,
@@ -1028,8 +1121,9 @@ class ArchiveService:
                 offer_date,
                 customer_name=customer_name,
                 manager_name=manager_name,
-                manager_phone=None,
-                manager_email=None,
+                manager_phone=manager_phone,
+                manager_email=manager_email,
+                suppress_company_contacts=suppress_company_contacts,
                 discount_percent=discount_percent,
                 delivery_conditions=raw.get("delivery_conditions"),
                 payment_conditions=raw.get("payment_conditions"),

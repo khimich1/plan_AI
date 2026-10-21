@@ -278,6 +278,7 @@ describe("useCommercialOfferWizard", () => {
       managerId: undefined,
       clientName: undefined,
       counterpartyId: undefined,
+      clientInn: undefined,
       discountPercent: 5,
       conditionsMode: undefined,
       deliveryConditions: undefined,

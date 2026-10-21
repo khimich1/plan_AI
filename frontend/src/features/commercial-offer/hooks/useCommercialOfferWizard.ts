@@ -212,6 +212,7 @@ export const useCommercialOfferWizard = () => {
       managerId,
       clientName,
       counterpartyId,
+      clientInn,
       discountPercent,
       conditionsMode,
       deliveryConditions,
@@ -225,6 +226,7 @@ export const useCommercialOfferWizard = () => {
       managerId?: number | null;
       clientName?: string;
       counterpartyId?: number | null;
+      clientInn?: string | null;
       discountPercent?: number;
       conditionsMode?: "standard" | "custom";
       deliveryConditions?: string;
@@ -238,6 +240,7 @@ export const useCommercialOfferWizard = () => {
         managerId,
         clientName,
         counterpartyId,
+        clientInn,
         discountPercent,
         conditionsMode,
         deliveryConditions,

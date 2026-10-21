@@ -247,6 +247,7 @@ class CommercialDraftMetadata(BaseModel):
     manager_email: str = ""
     client_name: str = ""
     counterparty_id: int | None = None
+    client_inn: str | None = None
     discount_percent: float = 0.0
     conditions_mode: CommercialConditionsMode = "standard"
     delivery_conditions: str = ""
@@ -344,6 +345,7 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
     pile_trip_overrides: dict[str, int] | None = None
     long_pile_delivery: dict[str, Any] | None = None
     counterparty_id: int | None = None
+    client_inn: str | None = Field(default=None, max_length=32)
 
 
 class CommercialDraftLinePatchRequest(BaseModel):

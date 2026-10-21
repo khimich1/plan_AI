@@ -1,4 +1,7 @@
 export type ArchiveSection = "archived" | "on_approval" | "in_production" | "completed";
+
+/** Раздел экрана архива. `counterparties` нет в бэкендовом ArchiveSection: список КП с ним ответит 422. */
+export type ArchivePageSection = ArchiveSection | "counterparties";
 export type ArchiveFileKind = "pdf" | "xlsx" | "schema" | "xlsx_delivery_in_unit";
 export type ProductType =
   | "plates"

@@ -64,6 +64,12 @@ class _ProductAiForm:
         self.instruction, self.image = instruction, image
 
 
+# Class dependencies have no __globals__. The installed FastAPI then leaves
+# `UploadFile | None` unresolved and refuses to build the route.
+_ProductUpdateForm.__globals__ = globals()  # type: ignore[attr-defined]
+_ProductAiForm.__globals__ = globals()  # type: ignore[attr-defined]
+
+
 def _details(result: dict[str, Any]) -> CommercialDraftDetailsResponse:
     return CommercialDraftDetailsResponse.model_validate(result)
 
@@ -476,6 +482,7 @@ def update_draft_meta(
         pile_trip_overrides=payload.pile_trip_overrides,
         long_pile_delivery=payload.long_pile_delivery,
         counterparty_id=payload.counterparty_id,
+        client_inn=payload.client_inn,
     )))
 
 @router.post("/drafts/{draft_id}/calculate", response_model=CommercialDraftDetailsResponse)

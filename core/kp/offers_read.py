@@ -398,7 +398,7 @@ def get_all_kp_list(
             FROM KP_offers ko
             LEFT JOIN kp_meta m ON ko.kp_id = m.kp_id
             WHERE 1 = 1{access_sql}{product_sql}
-            ORDER BY ko.kp_id ASC
+            ORDER BY ko.kp_id DESC
             """,
             (*access_params, *product_params),
         )

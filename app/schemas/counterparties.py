@@ -22,6 +22,22 @@ class CounterpartySearchResponse(BaseModel):
     count: int
 
 
+class KpClientCardHit(BaseModel):
+    """Карточка договора для шага «Клиент». Имя и ИНН — с карточки, не из справочника."""
+
+    id: int
+    name: str
+    inn: str | None = None
+    number: str
+    requisites_complete: bool
+    counterparty: CounterpartyShort | None = None
+
+
+class KpClientCardSearchResponse(BaseModel):
+    items: list[KpClientCardHit]
+    count: int
+
+
 class CounterpartyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=COUNTERPARTY_NAME_MAX_LENGTH)
     code_1c: str = Field(min_length=1, max_length=COUNTERPARTY_CODE_1C_MAX_LENGTH)

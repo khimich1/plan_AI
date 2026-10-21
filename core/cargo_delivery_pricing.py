@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 try:
     from .kp_plate_weight import resolve_kp_line_weight_kg
@@ -112,11 +112,14 @@ def total_order_cargo_weight_kg(
     order_data: List[Mapping[str, Any]],
     product_types: set[str] | None = None,
 ) -> float:
-    """Суммарная масса позиций заказа в кг (та же логика, что в PDF/XLSX КП).
+    """Суммарная масса по resolve_kp_line_weight_kg (габариты плиты).
 
     product_types=None — все позиции (обратная совместимость).
     Иначе учитываются только строки с product_type из множества;
     отсутствие product_type трактуется как «plates» (legacy mono).
+
+    Строка «общим весом» в PDF/XLSX — kp_document_total_weight_kg:
+    плиты считаются здесь же, сваи и ФБС/ЛС/ЛМ — из своих справочников.
     """
     total = 0.0
     for item in order_data:
@@ -126,6 +129,110 @@ def total_order_cargo_weight_kg(
                 continue
         _, line_kg = resolve_kp_line_weight_kg(item)
         total += line_kg
+    return total
+
+
+def _pile_catalog_lookup(db_path: str | None) -> Callable[[str], Any]:
+    """Тот же resolve_catalog_for_mark, что у расчёта рейсов свай."""
+    from core.commercial_pricing import _resolve_pile_catalog_db_path
+    from core.pile_catalog import load_pile_catalog, resolve_catalog_for_mark
+
+    catalog_path = _resolve_pile_catalog_db_path(db_path, "")
+    entries = load_pile_catalog(catalog_path)
+
+    def lookup(mark: str) -> Any:
+        return resolve_catalog_for_mark(mark, entries)
+
+    return lookup
+
+
+def _resolved_weight_catalog_path(db_path: str | None) -> str:
+    from core.commercial_pricing import _resolve_weight_catalog_db_path
+
+    return _resolve_weight_catalog_db_path(db_path, "")
+
+
+def _catalog_line_kg(item: Mapping[str, Any], unit_kg: float | None) -> float:
+    qty = _line_qty(item)
+    if unit_kg is None or qty <= 0:
+        return 0.0
+    unit = float(unit_kg)
+    if unit <= 0:
+        return 0.0
+    return unit * qty
+
+
+def kp_document_line_weight_kg(
+    item: Mapping[str, Any],
+    *,
+    pile_lookup: Callable[[str], Any] | None = None,
+    weight_catalog_db_path: str | None = None,
+) -> float:
+    """Масса одной строки для итога «общим весом» в PDF/XLSX.
+
+    Плиты — resolve_kp_line_weight_kg. Сваи и мостовые — weight_kg справочника
+    свай × qty. ФБС/ЛС/ЛМ — resolve_product_weight_kg × qty. Составные сваи
+    и типы без готового расчёта — 0. Колонка «Вес(кг)» у плит по-прежнему
+    считается через resolve_kp_line_weight_kg.
+    """
+    from core.commercial_offer_layout import line_product_type
+    from core.pile_trip_pricing import PILE_TRIP_PRODUCT_TYPES
+
+    product_type = line_product_type(item)
+    if product_type == "plates":
+        _, line_kg = resolve_kp_line_weight_kg(item)
+        return float(line_kg)
+
+    if product_type in PILE_TRIP_PRODUCT_TYPES:
+        if pile_lookup is None:
+            return 0.0
+        mark = str(item.get("mark") or item.get("name") or "").strip()
+        if not mark:
+            return 0.0
+        entry = pile_lookup(mark)
+        unit_kg = None if entry is None else getattr(entry, "weight_kg", None)
+        return _catalog_line_kg(item, unit_kg)
+
+    catalog_type = fbs_lm_catalog_type(item)
+    if catalog_type is None or not weight_catalog_db_path:
+        return 0.0
+    mark = str(item.get("mark") or item.get("name") or "").strip()
+    if not mark:
+        return 0.0
+    from core.product_weight_catalog import resolve_product_weight_kg
+
+    return _catalog_line_kg(
+        item,
+        resolve_product_weight_kg(mark, catalog_type, weight_catalog_db_path),
+    )
+
+
+def kp_document_total_weight_kg(
+    order_data: Sequence[Mapping[str, Any]],
+    *,
+    pile_catalog_db_path: str | None = None,
+    weight_catalog_db_path: str | None = None,
+) -> float:
+    """Сумма кг для PDF/XLSX. Справочник открывается только если в заказе есть его тип."""
+    from core.commercial_offer_layout import line_product_type
+    from core.pile_trip_pricing import PILE_TRIP_PRODUCT_TYPES
+
+    product_types = [line_product_type(item) for item in order_data]
+    pile_lookup = None
+    if any(product_type in PILE_TRIP_PRODUCT_TYPES for product_type in product_types):
+        pile_lookup = _pile_catalog_lookup(pile_catalog_db_path)
+
+    resolved_weight_path = None
+    if any(fbs_lm_catalog_type(item) is not None for item in order_data):
+        resolved_weight_path = _resolved_weight_catalog_path(weight_catalog_db_path)
+
+    total = 0.0
+    for item in order_data:
+        total += kp_document_line_weight_kg(
+            item,
+            pile_lookup=pile_lookup,
+            weight_catalog_db_path=resolved_weight_path,
+        )
     return total
 
 

@@ -7,6 +7,7 @@ import { ArchiveSectionTabs } from "@/features/commercial-archive/components/Arc
 import { ArchiveProductTypeFilterTabs } from "@/features/commercial-archive/components/ArchiveProductTypeFilter";
 import { ArchiveOfferList } from "@/features/commercial-archive/components/ArchiveOfferList";
 import { ArchiveSearchBar } from "@/features/commercial-archive/components/ArchiveSearchBar";
+import { ContractCardList } from "@/features/commercial-archive/components/ContractCardList";
 import { OfferDetailsDrawer } from "@/features/commercial-archive/components/OfferDetailsDrawer";
 import { CurrentPlanButton } from "@/features/commercial-archive/components/CurrentPlanButton";
 import {
@@ -15,6 +16,7 @@ import {
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import type {
   ArchiveOfferListItem,
+  ArchivePageSection,
   ArchiveProductTypeFilter,
   ArchiveSearchState,
   ArchiveSection,
@@ -22,11 +24,12 @@ import type {
 } from "@/features/commercial-archive/types/archive";
 import { getErrorMessage } from "@/shared/lib/apiError";
 
-const VALID_SECTIONS: readonly ArchiveSection[] = [
+const VALID_SECTIONS: readonly ArchivePageSection[] = [
   "archived",
   "on_approval",
   "in_production",
   "completed",
+  "counterparties",
 ];
 
 /** Concrete types for contains-type filter (never the literal "mixed" token). */
@@ -58,9 +61,9 @@ export const filterByProductType = (
   return items.filter((item) => concreteProductTypes(item).includes(productTypeFilter));
 };
 
-const parseSection = (value: string | null): ArchiveSection => {
+const parseSection = (value: string | null): ArchivePageSection => {
   if (value && (VALID_SECTIONS as readonly string[]).includes(value)) {
-    return value as ArchiveSection;
+    return value as ArchivePageSection;
   }
   return "archived";
 };
@@ -92,16 +95,44 @@ const searchCardTitle = (searchState: ArchiveSearchState): string => {
   return `Поиск: «${searchState.value}»`;
 };
 
+/** Список КП отдельно: на «Контрагенты» компонент не монтируется, запрос раздела не уходит. */
+const ArchiveKpListPane = ({
+  section,
+  productTypeFilter,
+  onSelect,
+}: {
+  section: ArchiveSection;
+  productTypeFilter: ArchiveProductTypeFilter;
+  onSelect: (kpId: number) => void;
+}) => {
+  const listQuery = useArchiveListQuery(section, productTypeFilter);
+  const listItems = listQuery.data ?? [];
+
+  return (
+    <Card>
+      {listQuery.isPending && (
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <Spinner /> Загружаю список...
+        </div>
+      )}
+      {listQuery.isError && <Alert tone="error">{getErrorMessage(listQuery.error)}</Alert>}
+      {!listQuery.isPending && !listQuery.isError && (
+        <ArchiveOfferList section={section} items={listItems} onSelect={onSelect} />
+      )}
+    </Card>
+  );
+};
+
 export const CommercialOfferArchivePage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const section = parseSection(searchParams.get("section"));
+  const isCounterparties = section === "counterparties";
 
   const [selectedKpId, setSelectedKpId] = useState<number | null>(null);
   const [searchState, setSearchState] = useState<ArchiveSearchState>(null);
   const [productTypeFilter, setProductTypeFilter] = useState<ArchiveProductTypeFilter>("all");
 
-  const listQuery = useArchiveListQuery(section, productTypeFilter);
-  const searchQuery = useArchiveSearchQuery(searchState);
+  const searchQuery = useArchiveSearchQuery(isCounterparties ? null : searchState);
 
   useEffect(() => {
     if (!searchParams.get("section")) {
@@ -120,13 +151,10 @@ export const CommercialOfferArchivePage = () => {
     }
   }, [searchParams]);
 
-  const onSectionChange = (next: ArchiveSection) => {
+  const onSectionChange = (next: ArchivePageSection) => {
     setSearchParams({ section: next });
     setSearchState(null);
   };
-
-  // Section list is already filtered server-side (contains-type); do not re-filter client-side.
-  const listItems = listQuery.data ?? [];
 
   return (
     <main style={{ maxWidth: 1280, margin: "0 auto", padding: "2rem 1rem 4rem" }}>
@@ -150,18 +178,22 @@ export const CommercialOfferArchivePage = () => {
           >
             <div style={{ display: "grid", gap: "0.75rem", flex: "1 0 320px" }}>
               <ArchiveSectionTabs value={section} onChange={onSectionChange} />
-              <ArchiveProductTypeFilterTabs value={productTypeFilter} onChange={setProductTypeFilter} />
-              <ArchiveSearchBar
-                activeQuery={searchState}
-                onSubmit={setSearchState}
-                onClear={() => setSearchState(null)}
-              />
+              {section !== "counterparties" && (
+                <>
+                  <ArchiveProductTypeFilterTabs value={productTypeFilter} onChange={setProductTypeFilter} />
+                  <ArchiveSearchBar
+                    activeQuery={searchState}
+                    onSubmit={setSearchState}
+                    onClear={() => setSearchState(null)}
+                  />
+                </>
+              )}
             </div>
             <CurrentPlanButton />
           </div>
         </Card>
 
-        {searchState !== null && (
+        {section !== "counterparties" && searchState !== null && (
           <Card title={searchCardTitle(searchState)}>
             {searchQuery.isPending && (
               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
@@ -194,21 +226,15 @@ export const CommercialOfferArchivePage = () => {
           </Card>
         )}
 
-        <Card>
-          {listQuery.isPending && (
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <Spinner /> Загружаю список...
-            </div>
-          )}
-          {listQuery.isError && <Alert tone="error">{getErrorMessage(listQuery.error)}</Alert>}
-          {!listQuery.isPending && !listQuery.isError && (
-            <ArchiveOfferList
-              section={section}
-              items={listItems}
-              onSelect={(kpId) => setSelectedKpId(kpId)}
-            />
-          )}
-        </Card>
+        {section === "counterparties" ? (
+          <ContractCardList />
+        ) : (
+          <ArchiveKpListPane
+            section={section}
+            productTypeFilter={productTypeFilter}
+            onSelect={(kpId) => setSelectedKpId(kpId)}
+          />
+        )}
       </div>
 
       <OfferDetailsDrawer

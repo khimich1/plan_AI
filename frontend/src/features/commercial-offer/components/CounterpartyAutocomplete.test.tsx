@@ -3,15 +3,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CounterpartyAutocomplete } from "@/features/commercial-offer/components/CounterpartyAutocomplete";
-import type { CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
+import type { ContractCardHit, CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
 
 const searchCounterparties = vi.fn();
+const searchContractCards = vi.fn();
 
 vi.mock("@/features/commercial-offer/api/counterpartiesApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/features/commercial-offer/api/counterpartiesApi")>();
   return {
     ...actual,
     searchCounterparties: (...args: unknown[]) => searchCounterparties(...args),
+    searchContractCards: (...args: unknown[]) => searchContractCards(...args),
   };
 });
 
@@ -50,9 +52,25 @@ const wrap = (ui: ReactNode) => {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 };
 
+const NIKOLSKY: ContractCardHit = {
+  id: 4,
+  name: "ООО Никольский",
+  inn: "5905123456",
+  number: "0007/10/26",
+  requisites_complete: false,
+  counterparty: {
+    id: 21,
+    code_1c: "00-nik",
+    name: "НИКОЛЬСКИЙ ЮРИДИЧЕСКОЕ ООО",
+    inn: "9998887776",
+    kpp: "999801001",
+  },
+};
+
 describe("CounterpartyAutocomplete", () => {
   beforeEach(() => {
     searchCounterparties.mockReset();
+    searchContractCards.mockReset();
   });
 
   afterEach(() => {
@@ -161,5 +179,50 @@ describe("CounterpartyAutocomplete", () => {
 
     fireEvent.keyDown(input, { key: "Escape" });
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("uses the directory search unless card mode is enabled", async () => {
+    searchCounterparties.mockResolvedValue({ items: [STOLICA], count: 1 });
+    wrap(<CounterpartyAutocomplete selected={null} onSelect={vi.fn()} />);
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "стол" } });
+
+    await waitFor(() => {
+      expect(searchCounterparties).toHaveBeenCalledWith("стол");
+    });
+    expect(searchContractCards).not.toHaveBeenCalled();
+  });
+
+  it("shows the card name ООО Никольский and does not call directory search", async () => {
+    searchContractCards.mockResolvedValue({ items: [NIKOLSKY], count: 1 });
+    const onSelect = vi.fn();
+    wrap(
+      <CounterpartyAutocomplete
+        selected={null}
+        onSelect={onSelect}
+        searchSource="contract-cards"
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "нико" } });
+
+    expect(await screen.findByRole("option", { name: /ООО Никольский/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /5905123456/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /0007\/10\/26/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /не полные/ })).toBeInTheDocument();
+    expect(screen.queryByText("НИКОЛЬСКИЙ ЮРИДИЧЕСКОЕ ООО")).not.toBeInTheDocument();
+    expect(searchContractCards).toHaveBeenCalledWith("нико");
+    expect(searchCounterparties).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("option", { name: /ООО Никольский/ }));
+
+    expect(onSelect).toHaveBeenCalledWith({
+      id: 21,
+      code_1c: "00-nik",
+      name: "ООО Никольский",
+      inn: "5905123456",
+      kpp: "999801001",
+    });
+    expect(screen.getByRole("combobox")).toHaveValue("ООО Никольский");
   });
 });

@@ -13,6 +13,10 @@ import type {
 } from "@/features/commercial-archive/types/archive";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import type {
+  ContractCard,
+  ContractCardCreatePayload,
+  ContractCardList,
+  ContractCardPatchPayload,
   SupplyContract,
   SupplyContractCreatePayload,
   SupplyContractParseResult,
@@ -232,5 +236,69 @@ export const archiveApi = {
       `${BASE}/supply-contracts/${contractId}/replace`,
       JSON.stringify(payload),
       { "Content-Type": "application/json" },
+    ),
+
+  searchContractCards: (q: string) => {
+    const params = new URLSearchParams({ q });
+    return httpClient.get<ContractCardList>(`${BASE}/contract-cards?${params.toString()}`);
+  },
+
+  findDuplicateContractCards: (name: string, inn: string) => {
+    const params = new URLSearchParams({ name, inn });
+    return httpClient.get<ContractCardList>(`${BASE}/contract-cards/duplicates?${params.toString()}`);
+  },
+
+  getContractCard: (cardId: number) =>
+    httpClient.get<ContractCard>(`${BASE}/contract-cards/${cardId}`),
+
+  createContractCard: (payload: ContractCardCreatePayload) =>
+    httpClient.post<ContractCard>(
+      `${BASE}/contract-cards`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
+
+  patchContractCard: (cardId: number, payload: ContractCardPatchPayload) =>
+    httpClient.patch<ContractCard>(
+      `${BASE}/contract-cards/${cardId}`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
+
+  deleteContractCard: (cardId: number) =>
+    httpClient.delete<void>(`${BASE}/contract-cards/${cardId}`),
+
+  saveContractRequisites: (contractId: number, payload: SupplyContractCreatePayload) =>
+    httpClient.post<SupplyContract & { requisites_complete: boolean }>(
+      `${BASE}/supply-contracts/${contractId}/requisites`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
+
+  parseContractCardFile: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return httpClient.post<SupplyContractParseResult>(`${BASE}/contract-cards/parse`, body);
+  },
+
+  parseContractCard: (contractId: number, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return httpClient.post<SupplyContractParseResult>(
+      `${BASE}/supply-contracts/${contractId}/parse`,
+      body,
+    );
+  },
+
+  downloadContractDocument: (contractId: number, format: "docx" | "pdf" = "docx") =>
+    httpClient.download(
+      `${BASE}/supply-contracts/${contractId}/document?format=${format}`,
+      format === "pdf" ? `dogovor-${contractId}.pdf` : `dogovor-${contractId}.docx`,
+    ),
+
+  downloadContractEdoAgreement: (contractId: number, format: "docx" | "pdf" = "docx") =>
+    httpClient.download(
+      `${BASE}/supply-contracts/${contractId}/edo-agreement?format=${format}`,
+      format === "pdf" ? `soglashenie-edo-${contractId}.pdf` : `soglashenie-edo-${contractId}.docx`,
     ),
 };

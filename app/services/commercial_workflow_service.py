@@ -670,6 +670,7 @@ class CommercialWorkflowService:
         pile_trip_overrides: dict[str, int] | None = None,
         long_pile_delivery: dict | None = None,
         counterparty_id: int | None = None,
+        client_inn: str | None = None,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.update_draft_meta(
             draft_id,
@@ -684,6 +685,7 @@ class CommercialWorkflowService:
             pile_trip_overrides=pile_trip_overrides,
             long_pile_delivery=long_pile_delivery,
             counterparty_id=counterparty_id,
+            client_inn=client_inn,
         )
 
     def calculate_draft(self, draft_id: str) -> dict[str, Any]:

@@ -15,6 +15,10 @@ import type {
 } from "@/features/commercial-archive/types/archive";
 import { saveBlobAs } from "@/shared/lib/downloadFile";
 import type {
+  ContractCard,
+  ContractCardCreatePayload,
+  ContractCardList,
+  ContractCardPatchPayload,
   SupplyContract,
   SupplyContractCreatePayload,
   SupplyContractPatchPayload,
@@ -38,6 +42,8 @@ export const archiveKeys = {
   estimate: (kpId: number) => ["archive", "estimate", kpId] as const,
   supplyContract: (kpId: number) => ["archive", "supply-contract", kpId] as const,
   supplyRegistry: () => ["archive", "supply-contracts"] as const,
+  contractCards: (q: string) => ["archive", "contract-cards", q] as const,
+  contractCard: (cardId: number) => ["archive", "contract-card", cardId] as const,
 };
 
 export const useArchiveListQuery = (
@@ -289,6 +295,104 @@ export const useDownloadEdoAgreementMutation = () =>
   useMutation({
     mutationFn: async ({ kpId, format }: { kpId: number; format: "docx" | "pdf" }) => {
       const result = await archiveApi.downloadEdoAgreement(kpId, format);
+      saveBlobAs(result.blob, result.filename);
+      return result;
+    },
+  });
+
+export const useContractCardsQuery = (q: string, options?: { enabled?: boolean }) =>
+  useQuery<ContractCardList>({
+    queryKey: archiveKeys.contractCards(q),
+    queryFn: () => archiveApi.searchContractCards(q),
+    enabled: options?.enabled ?? true,
+  });
+
+export const useContractCardQuery = (cardId: number | null) =>
+  useQuery<ContractCard>({
+    queryKey: archiveKeys.contractCard(cardId ?? -1),
+    queryFn: () => archiveApi.getContractCard(cardId as number),
+    enabled: cardId !== null,
+  });
+
+export const useCreateContractCardMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ContractCardCreatePayload) => archiveApi.createContractCard(payload),
+    onSuccess: (card) => {
+      queryClient.setQueryData(archiveKeys.contractCard(card.id), card);
+      queryClient.invalidateQueries({ queryKey: ["archive", "contract-cards"] });
+      queryClient.invalidateQueries({ queryKey: archiveKeys.supplyRegistry() });
+    },
+  });
+};
+
+export const usePatchContractCardMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ cardId, payload }: { cardId: number; payload: ContractCardPatchPayload }) =>
+      archiveApi.patchContractCard(cardId, payload),
+    onSuccess: (card) => {
+      queryClient.setQueryData(archiveKeys.contractCard(card.id), card);
+      queryClient.invalidateQueries({ queryKey: ["archive", "contract-cards"] });
+      queryClient.invalidateQueries({ queryKey: archiveKeys.supplyRegistry() });
+    },
+  });
+};
+
+export const useDeleteContractCardMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (cardId: number) => archiveApi.deleteContractCard(cardId),
+    onSuccess: (_result, cardId) => {
+      queryClient.removeQueries({ queryKey: archiveKeys.contractCard(cardId) });
+      queryClient.invalidateQueries({ queryKey: ["archive", "contract-cards"] });
+      queryClient.invalidateQueries({ queryKey: archiveKeys.supplyRegistry() });
+    },
+  });
+};
+
+export const useSaveContractRequisitesMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      contractId,
+      payload,
+    }: {
+      contractId: number;
+      payload: SupplyContractCreatePayload;
+    }) => archiveApi.saveContractRequisites(contractId, payload),
+    onSuccess: (contract) => {
+      queryClient.invalidateQueries({ queryKey: archiveKeys.contractCard(contract.id) });
+      queryClient.invalidateQueries({ queryKey: ["archive", "contract-cards"] });
+      queryClient.invalidateQueries({ queryKey: archiveKeys.supplyRegistry() });
+    },
+  });
+};
+
+export const useParseContractCardMutation = () =>
+  useMutation({
+    mutationFn: ({ contractId, file }: { contractId: number; file: File }) =>
+      archiveApi.parseContractCard(contractId, file),
+  });
+
+export const useParseContractCardFileMutation = () =>
+  useMutation({
+    mutationFn: (file: File) => archiveApi.parseContractCardFile(file),
+  });
+
+export const useDownloadContractDocumentMutation = () =>
+  useMutation({
+    mutationFn: async ({ contractId, format }: { contractId: number; format: "docx" | "pdf" }) => {
+      const result = await archiveApi.downloadContractDocument(contractId, format);
+      saveBlobAs(result.blob, result.filename);
+      return result;
+    },
+  });
+
+export const useDownloadContractEdoAgreementMutation = () =>
+  useMutation({
+    mutationFn: async ({ contractId, format }: { contractId: number; format: "docx" | "pdf" }) => {
+      const result = await archiveApi.downloadContractEdoAgreement(contractId, format);
       saveBlobAs(result.blob, result.filename);
       return result;
     },
