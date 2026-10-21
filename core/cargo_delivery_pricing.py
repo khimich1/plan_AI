@@ -26,6 +26,88 @@ FBS_LM_PRODUCT_KINDS = frozenset({"fbs", "step", "march"})
 _KIND_TO_WEIGHT_TYPE = {"fbs": "fbs", "step": "steps", "march": "marches"}
 
 
+def document_cargo_weight_kg(
+    order_data: Sequence[Mapping[str, Any]],
+    *,
+    pile_catalog_db_path: str | None = None,
+    weight_catalog_db_path: str | None = None,
+) -> float:
+    """Физическая масса заказа для подвала КП: штуки × вес строки.
+
+    Плиты — ``resolve_kp_line_weight_kg``. Сваи и мостовые — ``pile_catalog``
+    (суффикс нагрузки отрезается). ФБС, марши и ступени — ``product_weight_catalog``.
+    Составные сваи и марки без веса в сумму не входят.
+
+    Это не остаток рейса: полная машина входит целиком.
+    """
+    from core.commercial_offer_layout import line_product_type
+
+    pile_path = pile_catalog_db_path or _default_plita_db_path()
+    weight_path = weight_catalog_db_path or pile_path
+    pile_lookup = _pile_weight_lookup(pile_path)
+    total = 0.0
+    for item in order_data:
+        kind = line_product_type(item)
+        if kind == "plates":
+            _, line_kg = resolve_kp_line_weight_kg(item)
+            total += line_kg
+            continue
+        qty = _line_qty(item)
+        if qty <= 0:
+            continue
+        if kind in {"piles", "bridge_piles"}:
+            unit_kg = _pile_unit_weight_kg(item, pile_lookup)
+        elif kind in {"fbs", "steps", "marches"}:
+            unit_kg = _fbs_lm_unit_weight_kg(item, kind, weight_path)
+        else:
+            unit_kg = None
+        if unit_kg is None or unit_kg <= 0:
+            continue
+        total += float(unit_kg) * qty
+    return total
+
+
+def _default_plita_db_path() -> str:
+    try:
+        from core.config.settings import get_settings
+
+        return str(get_settings().plita_db_path)
+    except Exception:
+        return ""
+
+
+def _pile_weight_lookup(db_path: str):
+    if not db_path:
+        return None
+    from core.pile_catalog import load_pile_catalog, resolve_catalog_for_mark
+
+    entries = load_pile_catalog(db_path)
+    return lambda mark: resolve_catalog_for_mark(mark, entries)
+
+
+def _pile_unit_weight_kg(item: Mapping[str, Any], lookup) -> float | None:
+    if lookup is None:
+        return None
+    mark = str(item.get("mark") or item.get("name") or "").strip()
+    if not mark:
+        return None
+    entry = lookup(mark)
+    if entry is None:
+        return None
+    return float(entry.weight_kg)
+
+
+def _fbs_lm_unit_weight_kg(item: Mapping[str, Any], kind: str, db_path: str) -> float | None:
+    if not db_path:
+        return None
+    from core.product_weight_catalog import resolve_product_weight_kg
+
+    mark = str(item.get("mark") or item.get("name") or "").strip()
+    if not mark:
+        return None
+    return resolve_product_weight_kg(mark, kind, db_path)
+
+
 def total_order_cargo_weight_kg(
     order_data: List[Mapping[str, Any]],
     product_types: set[str] | None = None,

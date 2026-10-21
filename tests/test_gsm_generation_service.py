@@ -45,7 +45,7 @@ def _seed_vehicle(repo: GsmRepository) -> int:
         full_name="Тестов Водитель",
         license_number="00 00 000000",
     )
-    return repo.create_vehicle(
+    vehicle_id = repo.create_vehicle(
         name="Test Car",
         plate_number="О 000 АА 44",
         tank_volume_liters=55.0,
@@ -53,6 +53,10 @@ def _seed_vehicle(repo: GsmRepository) -> int:
         norm_winter=10.3,
         primary_driver_id=driver_id,
     )
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    seed_present_days(repo, driver_id)
+    return vehicle_id
 
 
 def _empty_generate_result() -> GenerateResult:

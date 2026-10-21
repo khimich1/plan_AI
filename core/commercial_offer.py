@@ -27,14 +27,14 @@ try:
     from .cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        kp_document_total_weight_kg,
+        document_cargo_weight_kg,
     )
     from .kp_plate_weight import resolve_kp_line_weight_kg
 except ImportError:
     from cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        kp_document_total_weight_kg,
+        document_cargo_weight_kg,
     )
     from kp_plate_weight import resolve_kp_line_weight_kg
 
@@ -583,12 +583,6 @@ def generate_commercial_offer_pdf(
         long_pile_delivery=long_pile_delivery,
         kp_id=kp_db_id,
     )
-    total_weight = kp_document_total_weight_kg(
-        order_data,
-        pile_catalog_db_path=pile_catalog_db_path,
-        weight_catalog_db_path=weight_catalog_db_path,
-    )
-
     if unified:
         order_mode = "unified"
     elif pile_order:
@@ -775,6 +769,11 @@ def generate_commercial_offer_pdf(
     # Она сохраняется в отдельный Excel файл и отправляется вместе с PDF
     
     total_items = len(table_data) - 1
+    total_weight = document_cargo_weight_kg(
+        order_data,
+        pile_catalog_db_path=pile_catalog_db_path,
+        weight_catalog_db_path=weight_catalog_db_path,
+    )
     weight_summary = f"{total_weight:,.3f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     subtotal_str = _format_money_ru(totals['subtotal'])
     total_with_vat_str = _format_money_ru(totals['total_with_vat'])

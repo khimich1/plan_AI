@@ -8,10 +8,13 @@ import { formatGsmError } from "@/features/gsm/lib/gsmErrors";
 import { CardsRegistryView } from "@/features/gsm/components/CardsRegistryView";
 import { DriversRegistryView } from "@/features/gsm/components/DriversRegistryView";
 import { VehiclesCard } from "@/features/gsm/components/VehiclesCard";
+import { TimesheetGridView } from "@/features/gsm/components/TimesheetGridView";
+import { TimesheetImportDialog } from "@/features/gsm/components/TimesheetImportDialog";
 import {
   useGsmResetToAnchorsMutation,
   useGsmSettingsQuery,
   useGsmStationsQuery,
+  useTimesheetGridQuery,
   useUpdateGsmSeasonMutation,
 } from "@/features/gsm/hooks/useGsmQueries";
 import type { GsmResetToAnchorsReport, GsmSettings } from "@/features/gsm/types/gsm";
@@ -58,6 +61,9 @@ export const GsmRegistriesView = () => {
   const resetMutation = useGsmResetToAnchorsMutation();
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
+  const [timesheetOpen, setTimesheetOpen] = useState(false);
+  const [timesheetPeriod, setTimesheetPeriod] = useState(todayIsoDate().slice(0, 7));
+  const timesheetQuery = useTimesheetGridQuery(timesheetPeriod);
 
   const isBootLoading = stationsQuery.isLoading || settingsQuery.isLoading;
   const bootError = stationsQuery.error ?? settingsQuery.error;
@@ -130,6 +136,49 @@ export const GsmRegistriesView = () => {
           {resetSuccessMessage && <Alert tone="success">{resetSuccessMessage}</Alert>}
         </div>
       )}
+
+      <div style={sectionStyle}>
+        <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Табель рабочего времени</h2>
+        <p style={{ margin: 0, color: "#475467" }}>
+          Явки водителей за месяц. В путевой попадают только коды Я и В.
+        </p>
+        <div style={{ display: "flex", gap: "0.75rem", alignItems: "end", flexWrap: "wrap" }}>
+          <label style={{ display: "grid", gap: "0.3rem", color: "#344054" }}>
+            Месяц
+            <input
+              aria-label="Месяц сетки табеля"
+              type="month"
+              value={timesheetPeriod}
+              onChange={(event) => setTimesheetPeriod(event.target.value)}
+            />
+          </label>
+          <Button type="button" variant="secondary" onClick={() => setTimesheetOpen(true)}>
+            Импорт табеля
+          </Button>
+        </div>
+        {timesheetQuery.isLoading && <Spinner />}
+        {timesheetQuery.error && <Alert tone="error">{formatGsmError(timesheetQuery.error)}</Alert>}
+        {timesheetQuery.data && (
+          <>
+            {timesheetQuery.data.batches.length > 0 && (
+              <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#475467" }}>
+                {timesheetQuery.data.batches.map((batch) => (
+                  <li key={batch.id}>
+                    {batch.filename} ({batch.period_from} — {batch.period_to})
+                  </li>
+                ))}
+              </ul>
+            )}
+            <TimesheetGridView period={timesheetQuery.data.period} cells={timesheetQuery.data.cells} />
+          </>
+        )}
+      </div>
+
+      <TimesheetImportDialog
+        open={timesheetOpen}
+        onClose={() => setTimesheetOpen(false)}
+        onImported={(report) => setTimesheetPeriod(report.period)}
+      />
 
       <VehiclesCard />
       <DriversRegistryView />

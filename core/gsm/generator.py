@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from random import Random
 
 from core.gsm.balance import BalanceViolation, apply_day, burn_for_km
+from core.gsm.driver_pool import DriverCandidate, order_candidates, pick_driver
 from core.gsm.geo import GeoPoint, angle_diff_deg, bearing_deg
 from core.gsm.models import LegPlan, RouteRef, TankState, Transaction, WaybillDay
 from core.gsm.season import SeasonSwitch, norm_for
@@ -139,6 +140,8 @@ def generate(
     max_daily_km: int = 700,
     station_coords: Mapping[int, GeoPoint] | None = None,
     own_vehicle_id: int = 0,
+    drivers_by_date: Mapping[date, tuple[DriverCandidate, ...]] | None = None,
+    substitute_counts: Mapping[int, int] | None = None,
 ) -> GenerateResult:
     """Build draft waybill days for a transaction period (pure, deterministic).
 
@@ -146,6 +149,10 @@ def generate(
     ``own_vehicle_id`` defaults to 0 so legacy fixtures without ``vehicle_id``
     treat every library route as own. The burn-in pool is the loaded fleet
     (home-base routes when present), not sliced to this vehicle.
+
+    ``drivers_by_date is None`` keeps the legacy path: every day is
+    ``driver_id``. When a pool is passed, each day is re-ranked with the
+    running substitute counter (seed plus picks made earlier in this call).
     """
     holiday_set = frozenset(holidays)
     extra_set = frozenset(extra_workdays)
@@ -162,6 +169,24 @@ def generate(
     burn_routes = _ordered_burn_routes(burn_source, seed=seed)
     occupied_dates = {day for day, _txs in anchors}
     period_warnings: list[str] = []
+    use_pool = drivers_by_date is not None
+    running_counts = {
+        int(key): int(value) for key, value in (substitute_counts or {}).items()
+    }
+
+    def resolve_driver(day: date) -> tuple[int, tuple[str, ...]]:
+        if not use_pool:
+            return driver_id, ()
+        assert drivers_by_date is not None
+        ordered = order_candidates(
+            driver_id, drivers_by_date.get(day, ()), running_counts
+        )
+        chosen, warns = pick_driver(ordered)
+        if chosen is None:
+            return driver_id, warns
+        if chosen != driver_id:
+            running_counts[chosen] = running_counts.get(chosen, 0) + 1
+        return chosen, warns
     waybills: list[WaybillDay] = []
     problems: list[ProblematicDay] = []
     fuel = float(fuel_start)
@@ -197,18 +222,21 @@ def generate(
                 headroom_fail = unsolvable
             else:
                 for burn_day, burn_route in burn_plan:
+                    burn_driver, pool_warns = resolve_driver(burn_day)
                     burn_warnings: tuple[str, ...] = (
                         ("borrowed_route",)
                         if burn_route.vehicle_id != own_vehicle_id
                         else ()
-                    )
+                    ) + pool_warns
+                    for code in pool_warns:
+                        period_warnings.append(code)
                     wb, fuel, odometer, problem = _emit_maybe_manual(
                         day=burn_day,
                         route=burn_route,
                         fuel_start=fuel,
                         fuel_issued=0.0,
                         odometer_start=odometer,
-                        driver_id=driver_id,
+                        driver_id=burn_driver,
                         tank_volume_liters=tank_volume_liters,
                         norm_summer=norm_summer,
                         norm_winter=norm_winter,
@@ -267,6 +295,10 @@ def generate(
         if headroom_fail is not None:
             day_warnings.append(_MANUAL_REASON)
             period_warnings.append(_MANUAL_REASON)
+        anchor_driver, pool_warns = resolve_driver(anchor_date)
+        for code in pool_warns:
+            day_warnings.append(code)
+            period_warnings.append(code)
         detail = (
             headroom_fail.detail
             if headroom_fail is not None
@@ -278,7 +310,7 @@ def generate(
             fuel_start=fuel,
             fuel_issued=fuel_issued,
             odometer_start=odometer,
-            driver_id=driver_id,
+            driver_id=anchor_driver,
             tank_volume_liters=tank_volume_liters,
             norm_summer=norm_summer,
             norm_winter=norm_winter,

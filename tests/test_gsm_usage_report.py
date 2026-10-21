@@ -252,6 +252,10 @@ def seed_may_848(repo: GsmRepository) -> dict[str, Any]:
         "season_switches",
         json.dumps([{"date": "2026-04-01", "mode": "summer"}], ensure_ascii=False),
     )
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    for driver_id in driver_ids.values():
+        seed_present_days(repo, driver_id)
 
     for row in MAY_ROWS:
         burn = burn_for_km(int(row["km"]), NORM)
@@ -349,6 +353,9 @@ def _seed_simple_vehicle(
         "season_switches",
         json.dumps([{"date": "2026-04-01", "mode": "summer"}], ensure_ascii=False),
     )
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    seed_present_days(repo, driver_id)
     return {"vehicle_id": vehicle_id, "driver_id": driver_id, "days": list(days)}
 
 

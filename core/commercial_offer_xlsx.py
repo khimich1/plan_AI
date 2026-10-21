@@ -27,14 +27,14 @@ try:
     from .cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        kp_document_total_weight_kg,
+        document_cargo_weight_kg,
     )
     from .kp_plate_weight import resolve_kp_line_weight_kg
 except ImportError:
     from cargo_delivery_pricing import (
         cargo_delivery_trips_count,
         delivery_service_charge_rub,
-        kp_document_total_weight_kg,
+        document_cargo_weight_kg,
     )
     from kp_plate_weight import resolve_kp_line_weight_kg
 
@@ -307,11 +307,6 @@ def generate_commercial_offer_xlsx(
     else:
         order_mode = "plates"
 
-    total_weight = kp_document_total_weight_kg(
-        order_data,
-        pile_catalog_db_path=pile_catalog_db_path,
-        weight_catalog_db_path=weight_catalog_db_path,
-    )
     resolved_unit_prices: List[float] = []
 
     for idx, item in enumerate(order_data, start=1):
@@ -379,6 +374,11 @@ def generate_commercial_offer_xlsx(
         long_pile_delivery_enabled=long_pile_delivery_enabled,
         long_pile_delivery=long_pile_delivery,
         kp_id=kp_db_id,
+    )
+    total_weight = document_cargo_weight_kg(
+        order_data,
+        pile_catalog_db_path=pile_catalog_db_path,
+        weight_catalog_db_path=weight_catalog_db_path,
     )
     delivery_export = kp_delivery_export_lines(
         totals, plate_trip_cost=trip_cost, pile_trip_cost=pile_trip

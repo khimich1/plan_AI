@@ -31,6 +31,14 @@ const KNOWN: Record<string, WarningMeta> = {
     short: "Чужой пул",
     reason: "Маршрут взят из пула другой машины парка.",
   },
+  weekend_driver: {
+    short: "Свой выходной",
+    reason: "Водитель подписан в свой выходной по табелю.",
+  },
+  no_available_driver: {
+    short: "Нужен водитель",
+    reason: "На эту дату нет свободного водителя с явкой Я или В.",
+  },
 };
 
 export const warningMeta = (code: WaybillWarningCode): WarningMeta =>
@@ -67,7 +75,8 @@ export const isAnchorDay = (waybill: GsmWaybill): boolean => {
 
 /** Day saved as draft because the generator could not keep the tank in corridor. */
 export const isProblematicDay = (waybill: GsmWaybill): boolean =>
-  waybill.warnings.includes("manual_intervention");
+  waybill.warnings.includes("manual_intervention") ||
+  waybill.warnings.includes("no_available_driver");
 
 export const warningDetailText = (waybill: GsmWaybill, code: WaybillWarningCode): string => {
   const fromDetails = waybill.warning_details?.find((item) => item.code === code)?.detail;

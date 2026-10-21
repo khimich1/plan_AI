@@ -497,3 +497,60 @@ class GsmResetToAnchorsReport(BaseModel):
     transactions_deleted: int
     import_batches_deleted: int
     anchors: list[GsmAnchorOut] = Field(default_factory=list)
+
+
+class TimesheetUnmatchedRow(BaseModel):
+    """A Т-13 row that did not match an active gsm_driver."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: str
+    personnel_number: str | None = None
+
+
+class TimesheetImportReport(BaseModel):
+    """POST /gsm/timesheets/import."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period: str
+    rows_total: int
+    matched: int
+    unmatched: list[TimesheetUnmatchedRow]
+    codes_summary: dict[str, int]
+
+
+class TimesheetGridCell(BaseModel):
+    """One driver-day code on the attendance grid."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    driver_id: int
+    full_name: str
+    personnel_number: str | None = None
+    date: str
+    code: str
+
+
+class TimesheetBatchOut(BaseModel):
+    """One uploaded Т-13 batch (history; days may have been replaced)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    filename: str
+    period_from: str
+    period_to: str
+    rows_total: int | None = None
+    matched: int | None = None
+    uploaded_at: str
+
+
+class TimesheetGrid(BaseModel):
+    """GET /gsm/timesheets?period=YYYY-MM."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period: str
+    cells: list[TimesheetGridCell]
+    batches: list[TimesheetBatchOut]

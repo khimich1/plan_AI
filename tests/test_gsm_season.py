@@ -129,6 +129,9 @@ def _seed_vehicle(repo: GsmRepository) -> dict[str, int]:
         norm_winter=NORM_WINTER,
         primary_driver_id=driver_id,
     )
+    from tests.helpers.gsm_timesheet import seed_present_days
+
+    seed_present_days(repo, driver_id)
     return {"driver_id": driver_id, "vehicle_id": vehicle_id}
 
 

@@ -59,6 +59,22 @@ describe("exportHardBlock", () => {
   it("does not hard-stop a day with only borrowed_route", () => {
     expect(exportHardBlock([base({ warnings: ["borrowed_route"] })]).blocked).toBe(false);
   });
+
+  it("does not hard-stop a day that only has weekend_driver", () => {
+    const days = [base({ warnings: ["weekend_driver"] })];
+    expect(exportHardBlock(days).blocked).toBe(false);
+    expect(hasSoftExportWarnings(days)).toBe(true);
+    expect(exportConfirmMessages(days)).toEqual([
+      "В периоде есть предупреждения. Экспортировать всё равно?",
+    ]);
+  });
+
+  it("blocks zip when a day needs a driver and names the reason", () => {
+    const days = [base({ date: "2026-07-12", warnings: ["no_available_driver"] })];
+    expect(exportHardBlock(days).blocked).toBe(true);
+    expect(exportHardBlock(days).dates).toEqual(["2026-07-12"]);
+    expect(exportDisabledReason(days)).toBe("Нужен водитель: 2026-07-12.");
+  });
 });
 
 describe("hasSoftExportWarnings", () => {

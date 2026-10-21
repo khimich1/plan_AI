@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WaybillDayDrawer } from "@/features/gsm/components/WaybillDayDrawer";
 import type { GsmDriver, GsmRoute, GsmStation, GsmVehicle, GsmWaybill } from "@/features/gsm/types/gsm";
+import { ApiError } from "@/shared/lib/apiError";
 
 const mockPatch = vi.fn();
 
@@ -228,5 +229,22 @@ describe("WaybillDayDrawer", () => {
     });
     expect(onSaved).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("shows the server text when the driver is already on another waybill", async () => {
+    mockPatch.mockRejectedValue(
+      new ApiError("busy", 409, "Кулигин уже в О 848 ХР 44 на 12.07", "gsm_driver_busy"),
+    );
+    render(
+      <WaybillDayDrawer
+        open
+        waybill={WAYBILLS[0]}
+        vehicle={VEHICLE}
+        periodWaybills={WAYBILLS}
+        onClose={() => undefined}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    expect(await screen.findByText("Кулигин уже в О 848 ХР 44 на 12.07")).toBeInTheDocument();
   });
 });

@@ -58,7 +58,11 @@ export const buildVehicleDayCells = (
     const hasPl = waybill != null;
     const isGap = hasTx && !hasPl;
     const isRed =
-      hasPl && (waybill?.warnings.includes("manual_intervention") ?? false);
+      hasPl &&
+      (waybill?.warnings.some(
+        (code) => code === "manual_intervention" || code === "no_available_driver",
+      ) ??
+        false);
     cells.push({ date, hasTx, hasPl, isGap, isRed, waybill });
   }
   return cells;

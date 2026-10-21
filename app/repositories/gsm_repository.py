@@ -529,7 +529,8 @@ class GsmRepository:
                         AS exported_count,
                     SUM(
                         CASE
-                            WHEN warnings_json LIKE '%manual_intervention%' THEN 1
+                            WHEN warnings_json LIKE '%manual_intervention%'
+                              OR warnings_json LIKE '%no_available_driver%' THEN 1
                             ELSE 0
                         END
                     ) AS red_days
@@ -881,3 +882,246 @@ class GsmRepository:
                 (key, value),
             )
             conn.commit()
+
+    # ------------------------------------------------------------------
+    # Timesheet (Т-13)
+    # ------------------------------------------------------------------
+
+    def insert_timesheet_batch(
+        self,
+        *,
+        filename: str,
+        period_from: DateLike,
+        period_to: DateLike,
+        rows_total: int | None = None,
+        matched: int | None = None,
+        uploaded_by: str | None = None,
+        uploaded_at: str,
+    ) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO gsm_timesheet_batch (
+                    filename, period_from, period_to, rows_total, matched,
+                    uploaded_by, uploaded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    filename,
+                    self._to_iso_date(period_from),
+                    self._to_iso_date(period_to),
+                    rows_total,
+                    matched,
+                    uploaded_by,
+                    uploaded_at,
+                ),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+
+    def replace_timesheet_days(
+        self,
+        *,
+        period_from: DateLike,
+        period_to: DateLike,
+        batch_id: int,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        """Drop every attendance day in the period, then insert ``rows``."""
+        from_iso = self._to_iso_date(period_from)
+        to_iso = self._to_iso_date(period_to)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                DELETE FROM gsm_timesheet_day
+                WHERE date >= ? AND date <= ?
+                """,
+                (from_iso, to_iso),
+            )
+            self._insert_timesheet_day_rows(conn, batch_id, rows)
+            conn.commit()
+
+    def add_timesheet_days(
+        self,
+        *,
+        batch_id: int,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        """Insert days without deleting the period (test seeding, not import)."""
+        with self._connect() as conn:
+            self._insert_timesheet_day_rows(conn, batch_id, rows)
+            conn.commit()
+
+    def list_timesheet_days(
+        self,
+        *,
+        period_from: DateLike,
+        period_to: DateLike,
+    ) -> list[dict[str, Any]]:
+        from_iso = self._to_iso_date(period_from)
+        to_iso = self._to_iso_date(period_to)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    d.id, d.batch_id, d.driver_id, d.date, d.code,
+                    g.full_name, g.personnel_number
+                FROM gsm_timesheet_day d
+                JOIN gsm_driver g ON g.id = d.driver_id
+                WHERE d.date >= ? AND d.date <= ?
+                ORDER BY g.full_name, d.date, d.id
+                """,
+                (from_iso, to_iso),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_timesheet_batches(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            found = conn.execute(
+                "SELECT * FROM gsm_timesheet_batch ORDER BY id"
+            ).fetchall()
+        return [dict(row) for row in found]
+
+    def timesheet_period_covered(
+        self,
+        period_from: DateLike,
+        period_to: DateLike,
+    ) -> bool:
+        """True when the union of batch periods covers every day of the range."""
+        start = date.fromisoformat(self._to_iso_date(period_from))
+        end = date.fromisoformat(self._to_iso_date(period_to))
+        ranges: list[tuple[date, date]] = []
+        for batch in self.list_timesheet_batches():
+            ranges.append(
+                (
+                    date.fromisoformat(str(batch["period_from"])),
+                    date.fromisoformat(str(batch["period_to"])),
+                )
+            )
+        if not ranges:
+            return False
+        day = start
+        while day <= end:
+            if not any(left <= day <= right for left, right in ranges):
+                return False
+            day = date.fromordinal(day.toordinal() + 1)
+        return True
+
+    def get_timesheet_code(self, driver_id: int, day: DateLike) -> str | None:
+        day_iso = self._to_iso_date(day)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT code FROM gsm_timesheet_day
+                WHERE driver_id = ? AND date = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (driver_id, day_iso),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["code"])
+
+    def busy_drivers_by_date(
+        self,
+        *,
+        period_from: DateLike,
+        period_to: DateLike,
+        exclude_vehicle_id: int | None = None,
+    ) -> dict[str, set[int]]:
+        """Driver ids already on a waybill that day, any status.
+
+        Days of ``exclude_vehicle_id`` are omitted: that vehicle's period
+        is about to be rewritten.
+        """
+        from_iso = self._to_iso_date(period_from)
+        to_iso = self._to_iso_date(period_to)
+        sql = """
+            SELECT date, driver_id
+            FROM gsm_waybill
+            WHERE date >= ? AND date <= ?
+        """
+        params: list[Any] = [from_iso, to_iso]
+        if exclude_vehicle_id is not None:
+            sql += " AND vehicle_id != ?"
+            params.append(int(exclude_vehicle_id))
+        busy: dict[str, set[int]] = {}
+        with self._connect() as conn:
+            for row in conn.execute(sql, params):
+                busy.setdefault(str(row["date"]), set()).add(int(row["driver_id"]))
+        return busy
+
+    def driver_busy_conflict(
+        self,
+        *,
+        driver_id: int,
+        day: DateLike,
+        exclude_vehicle_id: int,
+    ) -> dict[str, Any] | None:
+        """Another vehicle's waybill that already has this driver on ``day``."""
+        day_iso = self._to_iso_date(day)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT w.id, w.vehicle_id, w.date, w.driver_id, v.plate_number
+                FROM gsm_waybill w
+                JOIN gsm_vehicle v ON v.id = w.vehicle_id
+                WHERE w.driver_id = ?
+                  AND w.date = ?
+                  AND w.vehicle_id != ?
+                ORDER BY w.id
+                LIMIT 1
+                """,
+                (int(driver_id), day_iso, int(exclude_vehicle_id)),
+            ).fetchone()
+        return self._row_to_dict(row)
+
+    def substitute_counts(
+        self,
+        *,
+        period_from: DateLike,
+        period_to: DateLike,
+    ) -> dict[int, int]:
+        """Waybill days in the period where the driver is not that vehicle's primary."""
+        from_iso = self._to_iso_date(period_from)
+        to_iso = self._to_iso_date(period_to)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT w.driver_id AS driver_id, COUNT(*) AS n
+                FROM gsm_waybill w
+                JOIN gsm_vehicle v ON v.id = w.vehicle_id
+                WHERE w.date >= ? AND w.date <= ?
+                  AND v.primary_driver_id IS NOT NULL
+                  AND w.driver_id != v.primary_driver_id
+                GROUP BY w.driver_id
+                """,
+                (from_iso, to_iso),
+            ).fetchall()
+        return {int(row["driver_id"]): int(row["n"]) for row in rows}
+
+    @staticmethod
+    def _insert_timesheet_day_rows(
+        conn: sqlite3.Connection,
+        batch_id: int,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        payload = [
+            (
+                int(batch_id),
+                int(row["driver_id"]),
+                GsmRepository._to_iso_date(row["date"]),
+                str(row["code"]),
+            )
+            for row in rows
+        ]
+        if not payload:
+            return
+        conn.executemany(
+            """
+            INSERT INTO gsm_timesheet_day (batch_id, driver_id, date, code)
+            VALUES (?, ?, ?, ?)
+            """,
+            payload,
+        )
