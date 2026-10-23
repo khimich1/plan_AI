@@ -224,6 +224,7 @@ export const commercialOfferApi = {
         client_name: payload.clientName,
         counterparty_id: payload.counterpartyId,
         client_inn: payload.clientInn,
+        discount_percent: payload.discountPercent,
         conditions_mode: payload.conditionsMode,
         delivery_conditions: payload.deliveryConditions,
         payment_conditions: payload.paymentConditions,

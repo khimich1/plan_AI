@@ -253,6 +253,51 @@ describe("commercialOfferApi.updateConcreteSpec", () => {
   });
 });
 
+describe("commercialOfferApi.updateDraftMeta", () => {
+  it("PATCHes /meta with discount_percent and client_inn in the JSON body", async () => {
+    mockPatch.mockResolvedValue(draftStub);
+
+    const result = await commercialOfferApi.updateDraftMeta("draft-1", {
+      discountPercent: 5,
+      clientInn: "5904111223",
+    });
+
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+    const [url, body, headers] = mockPatch.mock.calls[0] as [string, string, Record<string, string>];
+    expect(url).toBe("/api/v1/commercial/drafts/draft-1/meta");
+    expect(headers).toEqual(JSON_HEADERS);
+    expect(JSON.parse(body)).toEqual({
+      discount_percent: 5,
+      client_inn: "5904111223",
+    });
+    expect(result).toEqual(draftStub);
+  });
+
+  it("sends discount_percent 0 instead of dropping the key", async () => {
+    mockPatch.mockResolvedValue(draftStub);
+
+    await commercialOfferApi.updateDraftMeta("draft-1", { discountPercent: 0 });
+
+    const [, body] = mockPatch.mock.calls[0] as [string, string];
+    expect(JSON.parse(body)).toEqual({ discount_percent: 0 });
+  });
+
+  it("omits discount_percent when the caller does not pass a discount", async () => {
+    mockPatch.mockResolvedValue(draftStub);
+
+    await commercialOfferApi.updateDraftMeta("draft-1", {
+      clientInn: "5904111223",
+      logisticsCost: 12,
+    });
+
+    const [, body] = mockPatch.mock.calls[0] as [string, string];
+    expect(JSON.parse(body)).toEqual({
+      client_inn: "5904111223",
+      logistics_cost: 12,
+    });
+  });
+});
+
 describe("commercialOfferApi.checkGuids", () => {
   it("GETs /drafts/{id}/guid-check", async () => {
     const response = {
