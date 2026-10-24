@@ -8,6 +8,7 @@ import {
   type PropsWithChildren,
 } from "react";
 import { getCurrentBatchReviewText, needsBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import { normalizeLineKey, pruneWidePlateActions } from "@/features/commercial-offer/lib/flushThenResolveWidePlates";
 import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
 import { draftStorage } from "@/features/commercial-offer/store/draftStorage";
 import {
@@ -49,6 +50,22 @@ const mergeWizardStepWithServer = (
     return normalizedLocal;
   }
   return stepOrder[Math.max(li, si)]!;
+};
+
+const rememberWidePlateChoice = (
+  actions: WizardStoreState["widePlateActions"],
+  lineId: string,
+  decision: WizardStoreState["widePlateActions"][string],
+): WizardStoreState["widePlateActions"] => {
+  const next = { ...actions, [lineId]: decision };
+  if (!decision.sourceLine) {
+    return next;
+  }
+  const markKey = normalizeLineKey(decision.sourceLine);
+  if (!markKey || markKey === lineId) {
+    return next;
+  }
+  return { ...next, [markKey]: decision };
 };
 
 const counterpartySnapshotFrom = (
@@ -96,6 +113,7 @@ type WizardDraftAction =
       lineId: string;
       action: WizardStoreState["widePlateActions"][string]["action"];
       replacementText: string;
+      sourceLine?: string;
     }
   | {
       type: "set-unpriced-action";
@@ -112,6 +130,9 @@ type WizardDraftAction =
   | { type: "set-execution-terms"; value: string }
   | { type: "set-draft-id"; draftId: string }
   | { type: "hydrate-draft"; payload: CommercialDraftDetails; refreshBatchText?: boolean }
+  | { type: "hold-wide-plate-choices" }
+  | { type: "release-wide-plate-choices" }
+  | { type: "prune-wide-plate-choices"; pageText: string }
   | { type: "sync-after-wide-plates"; payload: CommercialDraftDetails }
   | { type: "sync-after-unpriced-plates"; payload: CommercialDraftDetails }
   | { type: "sync-after-invalid-widths"; payload: CommercialDraftDetails }
@@ -143,6 +164,7 @@ const initialState: WizardStoreState = {
   paymentConditions: "",
   executionTermsInput: "",
   widePlateActions: {},
+  widePlateChoicesHeld: false,
   unpricedPlateActions: {},
   invalidWidthActions: {},
   lastDraft: null,
@@ -169,6 +191,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         pendingBatchReview: false,
         confirmedBatchCount: 0,
         widePlateActions: {},
+        widePlateChoicesHeld: false,
         unpricedPlateActions: {},
         invalidWidthActions: {},
         isPickingProductType: true,
@@ -213,6 +236,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         pendingBatchReview: batchCount > 0,
         batchReviewText: getCurrentBatchReviewText(action.payload),
         confirmedBatchCount: Math.max(0, batchCount - 1),
+        widePlateChoicesHeld: false,
         lastDraft: action.payload,
       };
     }
@@ -229,13 +253,11 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
     case "set-wide-action":
       return {
         ...state,
-        widePlateActions: {
-          ...state.widePlateActions,
-          [action.lineId]: {
-            action: action.action,
-            replacementText: action.replacementText,
-          },
-        },
+        widePlateActions: rememberWidePlateChoice(state.widePlateActions, action.lineId, {
+          action: action.action,
+          replacementText: action.replacementText,
+          ...(action.sourceLine ? { sourceLine: action.sourceLine } : {}),
+        }),
       };
     case "set-unpriced-action":
       return {
@@ -263,12 +285,32 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
       return { ...state, executionTermsInput: action.value };
     case "set-draft-id":
       return { ...state, draftId: action.draftId };
+    case "hold-wide-plate-choices":
+      return { ...state, widePlateChoicesHeld: true };
+    case "release-wide-plate-choices":
+      return { ...state, widePlateChoicesHeld: false };
+    case "prune-wide-plate-choices": {
+      const widePlateActions = pruneWidePlateActions(state.widePlateActions, action.pageText);
+      if (widePlateActions === state.widePlateActions) {
+        return state;
+      }
+      const stillHeld = Object.values(widePlateActions).some(
+        (decision) => decision.action === "replace" || decision.action === "exclude",
+      );
+      return {
+        ...state,
+        widePlateActions,
+        widePlateChoicesHeld: stillHeld ? state.widePlateChoicesHeld : false,
+      };
+    }
     case "hydrate-draft": {
       const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
       const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
       const batchCount = getDraftBatchCount(action.payload);
+      const autoRefreshBatchText =
+        batchReviewPending || (state.pendingBatchReview && batchCount > 0);
       const shouldRefreshBatchText =
-        action.refreshBatchText || batchReviewPending || (state.pendingBatchReview && batchCount > 0);
+        Boolean(action.refreshBatchText) || (!state.widePlateChoicesHeld && autoRefreshBatchText);
       return {
         ...state,
         productType,
@@ -292,7 +334,8 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         pendingBatchReview: batchReviewPending,
         batchReviewText: shouldRefreshBatchText ? getCurrentBatchReviewText(action.payload) : state.batchReviewText,
         confirmedBatchCount: Math.min(state.confirmedBatchCount, batchCount),
-        widePlateActions: action.payload.metadata.wide_plates_resolved ? {} : state.widePlateActions,
+        widePlateActions:
+          action.payload.metadata.wide_plates_resolved && !state.widePlateChoicesHeld ? {} : state.widePlateActions,
         unpricedPlateActions: action.payload.metadata.unpriced_plates_resolved ? {} : state.unpricedPlateActions,
         invalidWidthActions: action.payload.metadata.invalid_widths_resolved ? {} : state.invalidWidthActions,
         lastDraft: action.payload,
@@ -300,6 +343,9 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
       };
     }
     case "sync-after-wide-plates": {
+      if (state.widePlateChoicesHeld) {
+        return state;
+      }
       const productType = resolveDraftProductType(action.payload.metadata.product_type ?? state.productType);
       const batchReviewPending = needsBatchReview(action.payload, state.confirmedBatchCount);
       const batchCount = getDraftBatchCount(action.payload);
@@ -392,6 +438,7 @@ export const WizardDraftProvider = ({ children }: PropsWithChildren) => {
       currentStep: mapLegacyWizardStep(loaded.currentStep),
       normalizedText: loaded.normalizedText ?? "",
       isPickingProductType: loaded.isPickingProductType ?? false,
+      widePlateChoicesHeld: false,
       unpricedPlateActions: loaded.unpricedPlateActions ?? {},
       invalidWidthActions: loaded.invalidWidthActions ?? {},
     };

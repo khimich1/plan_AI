@@ -1,6 +1,6 @@
 import { useEffect, useState, type WheelEvent } from "react";
 
-import { filterDraftForBatchReview } from "@/features/commercial-offer/lib/batchReview";
+import { liveWideDraftForScreen } from "@/features/commercial-offer/lib/batchReview";
 import type { ConcreteSpecPatch } from "@/features/commercial-offer/lib/concreteSpec";
 import { PRODUCT_TYPE_CONFIG } from "@/features/commercial-offer/lib/productTypeConfig";
 import type {
@@ -28,7 +28,6 @@ import {
   resolveActivePageOcrCorrections,
   resolveActivePageOcrVerifyFailed,
 } from "@/features/commercial-offer/lib/ocrVerifyFailed";
-import { overlayDraftWithLiveWideLines } from "@/features/commercial-offer/lib/liveWidePlateLines";
 import { InvalidWidthsInlineSection } from "@/features/commercial-offer/components/InvalidWidthsInlineSection";
 import { UnpricedPlatesInlineSection } from "@/features/commercial-offer/components/UnpricedPlatesInlineSection";
 import { WidePlatesInlineSection } from "@/features/commercial-offer/components/WidePlatesInlineSection";
@@ -66,7 +65,10 @@ type PlateInputStepProps = {
   isResolvingInvalidWidths?: boolean;
   isConfirmingBatch?: boolean;
   isProceeding?: boolean;
-  widePlateDecisions?: Record<string, { action: WidePlateAction; replacementText: string }>;
+  widePlateDecisions?: Record<
+    string,
+    { action: WidePlateAction; replacementText: string; sourceLine?: string }
+  >;
   unpricedPlateDecisions?: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
   invalidWidthDecisions?: Record<string, { action: InvalidWidthAction; widthMm: number | null }>;
   aiInstruction?: string;
@@ -84,7 +86,12 @@ type PlateInputStepProps = {
   isRerecognizing?: boolean;
   onConfirmBatch: () => void;
   onFinishPlates: () => void;
-  onWidePlateDecisionChange?: (lineId: string, action: WidePlateAction, replacementText: string) => void;
+  onWidePlateDecisionChange?: (
+    lineId: string,
+    action: WidePlateAction,
+    replacementText: string,
+    sourceLine?: string,
+  ) => void;
   onApplyWidePlates?: () => void;
   onUnpricedPlateDecisionChange?: (
     lineId: string,
@@ -200,12 +207,7 @@ export const PlateInputStep = ({
   const hasDraft = Boolean(draft);
   const labels = PRODUCT_TYPE_CONFIG.plates.labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
-  const batchReviewDraft = draft && isBatchReviewMode ? filterDraftForBatchReview(draft, batchReviewText) : draft;
-  const overlayText = isBatchReviewMode ? batchReviewText : normalizedText;
-  const liveWideDraft =
-    batchReviewDraft && overlayText
-      ? overlayDraftWithLiveWideLines(batchReviewDraft, overlayText)
-      : batchReviewDraft;
+  const liveWideDraft = liveWideDraftForScreen(draft, isBatchReviewMode, batchReviewText, normalizedText);
   const reviewHighlights = useBatchReviewHighlights({
     text: batchReviewText,
     productType: "plates",

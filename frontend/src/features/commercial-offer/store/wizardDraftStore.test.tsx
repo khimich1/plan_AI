@@ -314,6 +314,150 @@ describe("WizardDraftProvider hydrate-draft step merge", () => {
     expect(stateRef.current?.widePlateActions).toEqual({});
   });
 
+  it("не сбрасывает replace в confirm, пока список фото не записан", async () => {
+    const stateRef: MutableRefObject<ReturnType<typeof useWizardDraftStore>["state"] | null> = { current: null };
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    const oldWideLine = "ПБ 76-15-8 13";
+    await act(async () => {
+      dispatchRef.current?.({
+        type: "start-batch-review",
+        payload: makeDraft({
+          metadata: {
+            plate_batches: [
+              {
+                source_type: "image",
+                original_text: "",
+                normalized_text: oldWideLine,
+                ocr_text: "",
+                filename: "photo.jpg",
+              },
+            ],
+            normalized_text: oldWideLine,
+            input_text: oldWideLine,
+            wide_plate_lines: [{ id: "w1", line: "ПБ 76-15-8п 13", qty: 13 }],
+            wide_plates_resolved: false,
+          },
+        }),
+      });
+      dispatchRef.current?.({
+        type: "set-wide-action",
+        lineId: "w1",
+        action: "replace",
+        replacementText: "ПБ 76-12-8 13\nПБ 76-3.0-8 13\nПБ 74-12-8 4\nПБ 74-3.0-8 4",
+      });
+      dispatchRef.current?.({ type: "hold-wide-plate-choices" });
+      dispatchRef.current?.({
+        type: "sync-after-wide-plates",
+        payload: makeDraft({
+          metadata: {
+            plate_batches: [
+              {
+                source_type: "image",
+                original_text: "",
+                normalized_text: "ПБ 76-12-8 13",
+                ocr_text: "",
+                filename: "photo.jpg",
+              },
+            ],
+            normalized_text: "ПБ 76-12-8 13",
+            wide_plate_lines: [],
+            wide_plates_resolved: true,
+          },
+        }),
+      });
+      dispatchRef.current?.({
+        type: "hydrate-draft",
+        payload: makeDraft({
+          metadata: {
+            normalized_text: "ПБ 76-12-8 13",
+            wide_plate_lines: [],
+            wide_plates_resolved: true,
+            plate_batches: [
+              {
+                source_type: "image",
+                original_text: "",
+                normalized_text: "ПБ 76-12-8 13",
+                ocr_text: "",
+                filename: "photo.jpg",
+              },
+            ],
+          },
+        }),
+      });
+    });
+
+    expect(stateRef.current?.widePlateActions.w1?.action).toBe("replace");
+    expect(stateRef.current?.widePlateActions.w1?.action).not.toBe("confirm");
+    expect(stateRef.current?.batchReviewText).toContain(oldWideLine);
+  });
+
+  it("при удержании принимает следующий черновик и не стирает замену широкой марки", async () => {
+    const stateRef: MutableRefObject<ReturnType<typeof useWizardDraftStore>["state"] | null> = { current: null };
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    const replacementText = [
+      "ПБ 76-12-8 13",
+      "ПБ 76-3.0-8 13",
+      "ПБ 74-12-8 4",
+      "ПБ 74-3.0-8 4",
+    ].join("\n");
+    const nextDraft = makeDraft({
+      draft_id: "draft-next",
+      metadata: {
+        client_name: "ООО После отказа",
+        normalized_text: "ПБ 58-12-8 2",
+        wide_plate_lines: [],
+        wide_plates_resolved: true,
+        plate_batches: [
+          {
+            source_type: "image",
+            original_text: "",
+            normalized_text: "ПБ 58-12-8 2",
+            ocr_text: "",
+            filename: "next.jpg",
+          },
+        ],
+      },
+      wizard_state: { ...baseWizardState, current_step: "result" },
+    });
+
+    await act(async () => {
+      dispatchRef.current?.({ type: "set-step", step: "client" });
+      dispatchRef.current?.({
+        type: "set-wide-action",
+        lineId: "wide-0",
+        action: "replace",
+        replacementText,
+        sourceLine: "ПБ 76-15-8 13",
+      });
+      dispatchRef.current?.({ type: "hold-wide-plate-choices" });
+      dispatchRef.current?.({
+        type: "hydrate-draft",
+        payload: nextDraft,
+        refreshBatchText: true,
+      });
+    });
+
+    expect(stateRef.current?.currentStep).toBe("result");
+    expect(stateRef.current?.lastDraft?.draft_id).toBe("draft-next");
+    expect(stateRef.current?.clientName).toBe("ООО После отказа");
+    expect(stateRef.current?.normalizedText).toBe("ПБ 58-12-8 2");
+    expect(stateRef.current?.batchReviewText).toBe("ПБ 58-12-8 2");
+    expect(stateRef.current?.widePlateActions["wide-0"]?.action).toBe("replace");
+    expect(stateRef.current?.widePlateActions["wide-0"]?.replacementText).toBe(replacementText);
+    expect(stateRef.current?.widePlateActions["wide-0"]?.replacementText.split("\n")).toHaveLength(4);
+    expect(stateRef.current?.widePlateChoicesHeld).toBe(true);
+  });
+
   it("hydrate-draft clears invalidWidthActions after resolved preview", async () => {
     const stateRef: MutableRefObject<ReturnType<typeof useWizardDraftStore>["state"] | null> = { current: null };
     render(

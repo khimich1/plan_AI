@@ -5,7 +5,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { commercialOfferApi } from "@/features/commercial-offer/api/commercialOfferApi";
 import { archiveKeys } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import { planApplyAiSessionSync } from "@/features/commercial-offer/lib/applyAiSession";
-import { getBatches, getCurrentBatchReviewText, mergeEditedBatchIntoFullText } from "@/features/commercial-offer/lib/batchReview";
+import {
+  getBatches,
+  getCurrentBatchReviewText,
+  liveWideDraftForScreen,
+  mergeEditedBatchIntoFullText,
+} from "@/features/commercial-offer/lib/batchReview";
 import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
 import { getProductTypePreview } from "@/features/commercial-offer/lib/productTypePreview";
 import type { ConcreteSpecPatch } from "@/features/commercial-offer/lib/concreteSpec";
@@ -34,9 +39,13 @@ import { useSourceImageQueue } from "@/features/commercial-offer/hooks/useSource
 import { applyPromoteSourceImageQueue } from "@/features/commercial-offer/lib/promoteSourceImageQueue";
 import { liveWidePlateLines } from "@/features/commercial-offer/lib/liveWidePlateLines";
 import {
-  buildMergedFlushText,
+  buildWidePlateApplyFlushText,
   flushThenResolveWidePlates,
 } from "@/features/commercial-offer/lib/flushThenResolveWidePlates";
+import {
+  applyWideResolveToQueuePages,
+  syncWidePlateQueuePages,
+} from "@/features/commercial-offer/lib/syncWidePlateQueuePages";
 
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { ProductTypePicker } from "@/features/commercial-offer/components/ProductTypePicker";
@@ -47,6 +56,7 @@ import { CalculationResultStep } from "@/features/commercial-offer/components/st
 import { defaultInvalidWidthDecision } from "@/features/commercial-offer/components/InvalidWidthsInlineSection";
 
 import type {
+  CommercialDraftDetails,
   ProductType,
   SimpleKpProductType,
   WizardStepId,
@@ -73,6 +83,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     updateGradesMutation,
     updateConcreteSpecMutation,
     resolveWidePlatesMutation,
+    rememberResolvedDraft,
     resolveUnpricedPlatesMutation,
     resolveInvalidWidthsMutation,
     updateMetaMutation,
@@ -269,21 +280,37 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     updateInputMutation,
   ]);
 
-  // Keep store batch text aligned when OCR marks a page ready / auto-focuses it.
+  // Photo review shows the active page. Hydrate-draft can overwrite the store with the last batch.
   useEffect(() => {
     if (!multiPage.hasStarted || !multiPage.activePage) {
       return;
     }
-    if (multiPage.activePage.status === "ready" || multiPage.activePage.status === "confirmed") {
-      dispatch({ type: "set-batch-review-text", text: multiPage.activePage.batchReviewText });
+    const pageReady =
+      multiPage.activePage.status === "ready" || multiPage.activePage.status === "confirmed";
+    if (!pageReady || state.batchReviewText === multiPage.activePage.batchReviewText) {
+      return;
     }
+    dispatch({ type: "set-batch-review-text", text: multiPage.activePage.batchReviewText });
   }, [
     multiPage.hasStarted,
     multiPage.activeId,
     multiPage.activePage?.status,
     multiPage.activePage?.batchReviewText,
+    state.batchReviewText,
+    state.lastDraft,
     dispatch,
   ]);
+
+  const wideChoicePageText = multiPage.hasStarted
+    ? multiPage.pages.map((page) => page.batchReviewText).join("\n")
+    : "";
+
+  useEffect(() => {
+    if (!state.widePlateChoicesHeld || !multiPage.hasStarted) {
+      return;
+    }
+    dispatch({ type: "prune-wide-plate-choices", pageText: wideChoicePageText });
+  }, [dispatch, multiPage.hasStarted, state.widePlateChoicesHeld, wideChoicePageText]);
 
   const handlePrevPage = () => {
     const navigable = multiPage.pages.filter(
@@ -413,7 +440,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       if (!active || active.status !== "ready") {
         return;
       }
-      const editedActiveText = state.batchReviewText;
+      const editedActiveText = active.batchReviewText;
       multiPage.updatePageText(active.id, editedActiveText);
       const textsSnapshot = multiPage.pages.map((page) =>
         page.id === active.id ? editedActiveText.trim() : page.batchReviewText.trim(),
@@ -629,25 +656,79 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
       return;
     }
     setWidePlateError(null);
+    const photoQueue = multiPage.hasStarted && multiPage.pages.length > 0;
+    const pagesSnapshot = multiPage.pages;
+    const activePageId = multiPage.activeId;
+    const batchesBefore = currentDraft.metadata.plate_batches ?? [];
+    const wideLines = currentDraft.metadata.wide_plate_lines ?? [];
+    const decisionsById = state.widePlateActions;
+    const flushText = buildWidePlateApplyFlushText({
+      hasStarted: multiPage.hasStarted,
+      pages: pagesSnapshot,
+      activePageId,
+      storeText: state.batchReviewText,
+    });
+    if (photoQueue) {
+      dispatch({ type: "hold-wide-plate-choices" });
+    }
     try {
-      const flushText = buildMergedFlushText({
-        hasStarted: multiPage.hasStarted,
-        pages: multiPage.pages,
-        activePageId: multiPage.activeId,
-        editorText: state.batchReviewText,
-        singlePageText: state.batchReviewText,
-      });
+      let resolvedDraft: CommercialDraftDetails | null = null;
       await flushThenResolveWidePlates({
         draftId: currentDraft.draft_id,
         flushText,
         persistedText: (currentDraft.metadata.input_text || currentDraft.metadata.normalized_text || "").trim(),
         liveLines: liveWidePlateLines(flushText),
-        decisionsById: state.widePlateActions,
-        currentWideLines: currentDraft.metadata.wide_plate_lines ?? [],
+        decisionsById,
+        currentWideLines: wideLines,
+        photoQueue,
         updateInput: (payload) => updateInputMutation.mutateAsync({ ...payload, productType }),
-        resolveWidePlates: (payload) => resolveWidePlatesMutation.mutateAsync(payload),
+        resolveWidePlates: async (payload) => {
+          resolvedDraft = await resolveWidePlatesMutation.mutateAsync({
+            ...payload,
+            deferPhotoQueueSync: photoQueue,
+          });
+        },
       });
+      // Text input has no photo queue. Its mutation already synced the store.
+      if (!photoQueue || resolvedDraft === null) {
+        if (photoQueue) {
+          dispatch({ type: "release-wide-plate-choices" });
+        }
+        return;
+      }
+      const layout = syncWidePlateQueuePages({
+        pages: pagesSnapshot,
+        activePageId,
+        draft: resolvedDraft,
+      });
+      if (!layout.ok) {
+        setWidePlateError(layout.message);
+        // The page was not written. Keep the hold so the next hydrate does not drop replace/exclude.
+        return;
+      }
+      const writtenPages = applyWideResolveToQueuePages({
+        pages: pagesSnapshot,
+        batchesBefore,
+        resolvedPages: layout.pages,
+        decisions: wideLines.map((line) => ({
+          sourceLine: line.line,
+          action: decisionsById[line.id]?.action ?? "confirm",
+          replacementText: decisionsById[line.id]?.replacementText ?? "",
+        })),
+      });
+      for (const page of writtenPages) {
+        multiPage.updatePageText(page.id, page.batchReviewText);
+      }
+      const activeWritten =
+        writtenPages.find((page) => page.id === activePageId)?.batchReviewText ?? layout.activePageText;
+      dispatch({ type: "release-wide-plate-choices" });
+      dispatch({ type: "sync-after-wide-plates", payload: resolvedDraft });
+      dispatch({ type: "set-batch-review-text", text: activeWritten });
+      rememberResolvedDraft(resolvedDraft);
     } catch (error) {
+      if (photoQueue) {
+        dispatch({ type: "release-wide-plate-choices" });
+      }
       setWidePlateError(getErrorMessage(error));
     }
   };
@@ -1084,8 +1165,19 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
   };
 
+  const activeReviewPage = multiPage.activePage;
+  const multiPendingReview = multiPage.hasStarted && !multiPage.allConfirmed;
+  const pendingBatchReview = multiPendingReview || state.pendingBatchReview;
+  const reviewBatchText =
+    multiPage.hasStarted && activeReviewPage ? activeReviewPage.batchReviewText : state.batchReviewText;
+  const liveWideDraft = liveWideDraftForScreen(
+    currentDraft,
+    pendingBatchReview,
+    reviewBatchText,
+    state.normalizedText,
+  );
   const hasUnresolvedWidePlates =
-    Boolean(currentDraft?.metadata.wide_plate_lines?.length) && !currentDraft?.metadata.wide_plates_resolved;
+    Boolean(liveWideDraft?.metadata.wide_plate_lines?.length) && !liveWideDraft?.metadata.wide_plates_resolved;
   const hasUnresolvedUnpricedPlates =
     Boolean(currentDraft?.metadata.unpriced_plate_lines?.length) &&
     !currentDraft?.metadata.unpriced_plates_resolved;
@@ -1106,6 +1198,9 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
     if (step === inputStep) {
       return true;
+    }
+    if (step === "client" && !isSimpleProductFlow && hasUnresolvedWidePlates) {
+      return false;
     }
     if (!currentDraft?.wizard_state) {
       return false;
@@ -1161,19 +1256,12 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     multiPage.hasStarted && multiPage.pages.length > 0
       ? `Распознано ${multiPage.progress.recognized}/${multiPage.progress.total}`
       : null;
-  const activeReviewPage = multiPage.activePage;
-  const multiPendingReview = multiPage.hasStarted && !multiPage.allConfirmed;
-  const pendingBatchReview = multiPendingReview || state.pendingBatchReview;
   const reviewImageUrl =
     activeReviewPage?.recognizedImageUrl ??
     activeReviewPage?.previewUrl ??
     recognizedImagePreview?.url ??
     null;
   const reviewImageName = activeReviewPage?.name ?? recognizedImagePreview?.name ?? null;
-  const reviewBatchText =
-    multiPage.hasStarted && activeReviewPage
-      ? activeReviewPage.batchReviewText
-      : state.batchReviewText;
   const canConfirmActivePage = multiPage.hasStarted
     ? activeReviewPage?.status === "ready"
     : true;
@@ -1297,8 +1385,8 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         isRerecognizing={isRerecognizing}
         onConfirmBatch={() => void handleConfirmBatch()}
         onFinishPlates={() => void handleFinishInput()}
-        onWidePlateDecisionChange={(lineId, action, replacementText) =>
-          dispatch({ type: "set-wide-action", lineId, action, replacementText })
+        onWidePlateDecisionChange={(lineId, action, replacementText, sourceLine) =>
+          dispatch({ type: "set-wide-action", lineId, action, replacementText, sourceLine })
         }
         onApplyWidePlates={() => void handleApplyWidePlates()}
         onUnpricedPlateDecisionChange={(lineId, action, loadCode) =>

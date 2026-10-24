@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CommercialDraftDetails, WidePlateAction } from "@/features/commercial-offer/types/commercialOffer";
+import { widePlateDecisionOrConfirm } from "@/features/commercial-offer/lib/flushThenResolveWidePlates";
 import { buildAutoSplitSuggestion } from "@/features/commercial-offer/lib/widePlateSuggestion";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
@@ -9,6 +10,7 @@ import { FieldWrapper, Textarea } from "@/shared/ui/Field";
 type WidePlateDecision = {
   action: WidePlateAction;
   replacementText: string;
+  sourceLine?: string;
 };
 
 type WidePlatesInlineSectionProps = {
@@ -16,7 +18,12 @@ type WidePlatesInlineSectionProps = {
   decisions: Record<string, WidePlateDecision>;
   isPending: boolean;
   errorMessage?: string | null;
-  onDecisionChange: (lineId: string, action: WidePlateAction, replacementText: string) => void;
+  onDecisionChange: (
+    lineId: string,
+    action: WidePlateAction,
+    replacementText: string,
+    sourceLine?: string,
+  ) => void;
   onApply: () => void;
 };
 
@@ -34,9 +41,9 @@ export const WidePlatesInlineSection = ({
 
   useEffect(() => {
     wideLines.forEach((item) => {
-      const currentDecision = decisions[item.id];
-      if (currentDecision?.action === "replace" && !currentDecision.replacementText.trim()) {
-        onDecisionChange(item.id, "replace", buildAutoSplitSuggestion(item.line, item.qty));
+      const currentDecision = widePlateDecisionOrConfirm(item, decisions);
+      if (currentDecision.action === "replace" && !currentDecision.replacementText.trim()) {
+        onDecisionChange(item.id, "replace", buildAutoSplitSuggestion(item.line, item.qty), item.line);
       }
     });
   }, [decisions, onDecisionChange, wideLines]);
@@ -80,7 +87,7 @@ export const WidePlatesInlineSection = ({
       ) : (
         <div style={{ display: "grid", gap: "1rem" }}>
           {wideLines.map((item) => {
-            const currentDecision = decisions[item.id] ?? { action: "confirm", replacementText: "" };
+            const currentDecision = widePlateDecisionOrConfirm(item, decisions);
             const suggestedReplacement = buildAutoSplitSuggestion(item.line, item.qty);
 
             return (
@@ -131,6 +138,7 @@ export const WidePlatesInlineSection = ({
                             value === "replace" && !currentDecision.replacementText.trim()
                               ? suggestedReplacement
                               : currentDecision.replacementText,
+                            item.line,
                           )
                         }
                       />
@@ -146,7 +154,7 @@ export const WidePlatesInlineSection = ({
                   >
                     <Textarea
                       value={currentDecision.replacementText}
-                      onChange={(event) => onDecisionChange(item.id, "replace", event.target.value)}
+                      onChange={(event) => onDecisionChange(item.id, "replace", event.target.value, item.line)}
                     />
                   </FieldWrapper>
                 )}

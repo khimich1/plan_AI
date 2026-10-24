@@ -26,6 +26,7 @@ const makeState = (): WizardStoreState => ({
   paymentConditions: "",
   executionTermsInput: "",
   widePlateActions: {},
+  widePlateChoicesHeld: false,
   unpricedPlateActions: {},
   invalidWidthActions: {},
   lastDraft: null,

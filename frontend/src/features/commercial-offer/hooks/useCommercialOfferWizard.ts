@@ -65,6 +65,14 @@ export const useCommercialOfferWizard = () => {
     [queryClient],
   );
 
+  const rememberResolvedDraft = useCallback(
+    (draft: CommercialDraftDetails) => {
+      setDraftCache(draft.draft_id, draft);
+      invalidateDraft(draft.draft_id);
+    },
+    [invalidateDraft, setDraftCache],
+  );
+
   const createDraftMutation = useMutation({
     mutationFn: commercialOfferApi.createDraft,
     onSuccess: (draft) => {
@@ -158,8 +166,13 @@ export const useCommercialOfferWizard = () => {
           action: WidePlateAction;
           replacementText: string;
         }>;
+      /** Photo queue commits the draft only after each page receives its batch. */
+      deferPhotoQueueSync?: boolean;
     }) => commercialOfferApi.resolveWidePlates(draftId, decisions),
     onSuccess: (draft, variables) => {
+      if (variables.deferPhotoQueueSync) {
+        return;
+      }
       dispatch({ type: "sync-after-wide-plates", payload: draft });
       setDraftCache(variables.draftId, draft);
       invalidateDraft(variables.draftId);
@@ -363,6 +376,7 @@ export const useCommercialOfferWizard = () => {
     updateGradesMutation,
     updateConcreteSpecMutation,
     resolveWidePlatesMutation,
+    rememberResolvedDraft,
     resolveUnpricedPlatesMutation,
     resolveInvalidWidthsMutation,
     updateMetaMutation,

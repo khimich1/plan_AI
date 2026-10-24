@@ -8,7 +8,7 @@ import type {
   ProductType,
   StepBatch,
 } from "@/features/commercial-offer/types/commercialOffer";
-import { widePlateMatchKey } from "@/features/commercial-offer/lib/liveWidePlateLines";
+import { overlayDraftWithLiveWideLines, widePlateMatchKey } from "@/features/commercial-offer/lib/liveWidePlateLines";
 import { getProductTypeConfig } from "@/features/commercial-offer/lib/productTypeConfig";
 import { resolveDraftProductType } from "@/features/commercial-offer/lib/wizardStepOrder";
 
@@ -119,4 +119,22 @@ export const filterDraftForBatchReview = (
       dobor_pairs,
     },
   };
+};
+
+/** Same wide-line overlay the plate card and «Готово, далее» already use. */
+export const liveWideDraftForScreen = (
+  draft: CommercialDraftDetails | null | undefined,
+  pendingBatchReview: boolean,
+  batchReviewText: string,
+  normalizedText: string,
+): CommercialDraftDetails | null | undefined => {
+  if (!draft) {
+    return draft;
+  }
+  const reviewDraft = pendingBatchReview ? filterDraftForBatchReview(draft, batchReviewText) : draft;
+  const overlayText = pendingBatchReview ? batchReviewText : normalizedText;
+  if (!overlayText) {
+    return reviewDraft;
+  }
+  return overlayDraftWithLiveWideLines(reviewDraft, overlayText);
 };

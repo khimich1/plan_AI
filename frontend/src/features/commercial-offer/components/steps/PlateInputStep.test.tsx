@@ -775,6 +775,26 @@ describe("PlateInputStep two-screen width gates", () => {
     expect(screen.getByRole("button", { name: "Готово, далее" })).toBeDisabled();
   });
 
+  it("keeps Готово, далее disabled when the screen still shows a wide mark", () => {
+    const draft = makeDraft("ПБ 60-12-8 2");
+    draft.metadata.wide_plate_lines = [];
+    draft.metadata.wide_plates_resolved = true;
+
+    render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview={false}
+        draft={draft}
+        batchReviewText=""
+        normalizedText="ПБ 76-15-8 13"
+      />,
+    );
+
+    const finish = screen.getByRole("button", { name: "Готово, далее" });
+    expect(finish).toBeDisabled();
+    expect(finish).toHaveAttribute("title", "Сначала примите решение по позициям шире стандартной");
+  });
+
   it("enables Готово, далее when width gates are resolved", () => {
     const draft = makeDraft("ПБ 78-12-8п 2");
     draft.metadata.wide_plates_resolved = true;

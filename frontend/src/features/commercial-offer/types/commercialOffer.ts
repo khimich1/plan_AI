@@ -409,7 +409,15 @@ export type WizardStoreState = {
   deliveryConditions: string;
   paymentConditions: string;
   executionTermsInput: string;
-  widePlateActions: Record<string, { action: WidePlateAction; replacementText: string }>;
+  widePlateActions: Record<
+    string,
+    { action: WidePlateAction; replacementText: string; sourceLine?: string }
+  >;
+  /**
+   * Photo replace/exclude stays until the page list is written or the mark leaves every page.
+   * Hydrate still merges the next draft while this is set.
+   */
+  widePlateChoicesHeld: boolean;
   unpricedPlateActions: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
   invalidWidthActions: Record<string, { action: InvalidWidthAction; widthMm: number | null }>;
   lastDraft: CommercialDraftDetails | null;
