@@ -68,6 +68,7 @@ import pytest
 
 from core.gsm.balance import burn_for_km
 from core.gsm.generator import (
+    BoundaryLookahead,
     GenerateResult,
     LibraryRoute,
     ProblematicDay,
@@ -2593,4 +2594,145 @@ def test_prior_date_burns_weekdays_before_loaded_month() -> None:
     assert "manual_intervention" not in aug4_wb.warnings
     assert all(day.tank.km <= 700 for day in result.days)
     assert all(p.date not in (aug3, aug4) for p in result.problematic_days)
+
+
+# ---------------------------------------------------------------------------
+# Month boundary: last in-period fuel day peeks at the next first fill
+# ---------------------------------------------------------------------------
+
+_PALISADE_HOME = "г.Кострома, ул. Кузнецкая, д.18Б"
+_PALISADE_CITY = "г.Ярославль"
+
+
+def _palisade_boundary_routes() -> tuple[LibraryRoute, ...]:
+    """Short frequent circle and own route 23 (45 km one way). Same city."""
+    return (
+        _route(
+            1,
+            km=6,
+            frequency=100,
+            typical_station_ids=(10,),
+            addr_a=_PALISADE_HOME,
+            addr_b=f"{_PALISADE_CITY}, короткий",
+            vehicle_id=1,
+        ),
+        _route(
+            23,
+            km=45,
+            frequency=10,
+            typical_station_ids=(10,),
+            addr_a=_PALISADE_HOME,
+            addr_b=f"{_PALISADE_CITY}, маршрут 45",
+            vehicle_id=1,
+        ),
+    )
+
+
+def _palisade_boundary_generate(
+    *,
+    boundary: BoundaryLookahead | None,
+    fuel_start: float = 32.8,
+    prior_date: date | None = None,
+    day: date = date(2026, 8, 31),
+    qty: float = 20.0,
+) -> GenerateResult:
+    return generate(
+        transactions=(_tx(day, qty_liters=qty),),
+        routes=_palisade_boundary_routes(),
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=70.0,
+        norm_summer=14.5,
+        norm_winter=16.0,
+        season_switches=((date(2026, 11, 1), "winter"),),
+        fuel_start=fuel_start,
+        odometer_start=100_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        max_daily_km=700,
+        own_vehicle_id=1,
+        prior_date=prior_date,
+        boundary_lookahead=boundary,
+    )
+
+
+def test_month_boundary_peek_leaves_room_for_next_first_fill() -> None:
+    """Aug 31 like Palisade: 32.8 + 20 on 12 km ends at 51.06, above 70 − 30.
+
+    The first September cluster is 30 L, not the day's 56.6. With that hint
+    the own 45 km route (90 km/day) ends at or below 40 L. 1 Sep is not emitted.
+    """
+    aug31 = date(2026, 8, 31)
+    sept_lines = (
+        _tx_at(datetime(2026, 9, 1, 9, 40, 57), qty_liters=30.0),
+        _tx_at(datetime(2026, 9, 1, 9, 41, 44), qty_liters=26.6),
+    )
+    assert _first_fill_liters(sept_lines) == pytest.approx(30.0, abs=0.01)
+    assert _fuel_issued(sept_lines) == pytest.approx(56.6, abs=0.01)
+    hint = BoundaryLookahead(
+        liters=_first_fill_liters(sept_lines),
+        period_from=date(2026, 8, 1),
+        period_to=aug31,
+    )
+
+    without = _palisade_boundary_generate(boundary=None)
+    peeked = _palisade_boundary_generate(boundary=hint)
+    plain = _day_by_date(without, aug31)
+    day = _day_by_date(peeked, aug31)
+
+    assert plain.tank.km == 12
+    assert plain.tank.fuel_end == pytest.approx(51.06, abs=0.01)
+    assert plain.tank.fuel_end > 70.0 - 30.0
+    assert day.route.route_id == 23
+    assert day.route.km == 45
+    assert day.tank.km == 90
+    assert day.tank.fuel_end <= 40.0 + 1e-9
+    assert day.tank.fuel_issued == pytest.approx(plain.tank.fuel_issued, abs=0.01)
+    assert day.tank.fuel_issued == pytest.approx(20.0, abs=0.01)
+    assert all(item.date != date(2026, 9, 1) for item in peeked.days)
+    assert all(item.date <= aug31 for item in peeked.days)
+    assert "manual_intervention" not in day.warnings
+
+
+def test_month_boundary_without_later_fill_matches_today() -> None:
+    """No positive fill after the period keeps the short circle."""
+    aug31 = date(2026, 8, 31)
+    today = _palisade_boundary_generate(boundary=None)
+    silent = _palisade_boundary_generate(
+        boundary=BoundaryLookahead(
+            liters=0.0,
+            period_from=date(2026, 8, 1),
+            period_to=aug31,
+        )
+    )
+    assert silent.days == today.days
+    assert _day_by_date(today, aug31).tank.km == 12
+    assert _day_by_date(today, aug31).tank.fuel_end == pytest.approx(51.06, abs=0.01)
+
+
+def test_month_boundary_peek_uses_weekdays_before_anchor_inside_month() -> None:
+    """When 90 km/day cannot land the peek, burn earlier August weekdays only."""
+    aug31 = date(2026, 8, 31)
+    hint = BoundaryLookahead(
+        liters=30.0,
+        period_from=date(2026, 8, 1),
+        period_to=aug31,
+    )
+    kwargs = dict(fuel_start=55.0, prior_date=date(2026, 8, 26))
+    peeked = _palisade_boundary_generate(boundary=hint, **kwargs)
+    without = _palisade_boundary_generate(boundary=None, **kwargs)
+
+    dates = {item.date for item in peeked.days}
+    assert date(2026, 8, 27) in dates
+    assert date(2026, 8, 28) in dates
+    assert aug31 in dates
+    assert date(2026, 9, 1) not in dates
+    assert all(item.date <= aug31 for item in peeked.days)
+    end = _day_by_date(peeked, aug31)
+    assert end.tank.fuel_end <= 40.0 + 1e-9
+    assert end.tank.fuel_issued == pytest.approx(20.0, abs=0.01)
+    assert "manual_intervention" not in end.warnings
+
+    assert date(2026, 8, 28) not in {item.date for item in without.days}
+    assert _day_by_date(without, aug31).tank.fuel_end > 40.0
 

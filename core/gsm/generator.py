@@ -74,6 +74,16 @@ class GenerateResult:
     problematic_days: tuple[ProblematicDay, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class BoundaryLookahead:
+    """First clustered fill after the period. Not an anchor and not emitted."""
+
+    liters: float
+    station_ids: tuple[int, ...] = ()
+    period_from: date | None = None
+    period_to: date | None = None
+
+
 def _norm_addr(s: str) -> str:
     t = s.casefold().replace("ё", "е")
     t = t.replace("улица", "ул").replace("ул.", "ул")
@@ -143,6 +153,7 @@ def generate(
     drivers_by_date: Mapping[date, tuple[DriverCandidate, ...]] | None = None,
     substitute_counts: Mapping[int, int] | None = None,
     prior_date: date | None = None,
+    boundary_lookahead: BoundaryLookahead | None = None,
 ) -> GenerateResult:
     """Build draft waybill days for a transaction period (pure, deterministic).
 
@@ -158,6 +169,11 @@ def generate(
     ``prior_date`` is the last waybill already on the chain. It is not emitted.
     The first loaded anchor may burn free weekdays after that date, including
     weekdays that fall before the loaded transactions.
+
+    ``boundary_lookahead`` is the first clustered fill after the period. It is
+    q_next for the last in-period fuel day only. It is not appended to the
+    anchor list and never becomes a waybill. Burn days for that peek stay on
+    or before that anchor, inside ``period_from``…``period_to`` when set.
     """
     holiday_set = frozenset(holidays)
     extra_set = frozenset(extra_workdays)
@@ -192,11 +208,46 @@ def generate(
         if chosen != driver_id:
             running_counts[chosen] = running_counts.get(chosen, 0) + 1
         return chosen, warns
+
     waybills: list[WaybillDay] = []
     problems: list[ProblematicDay] = []
     fuel = float(fuel_start)
     odometer = int(odometer_start)
     prev_date: date | None = None
+    emitted_burn: set[date] = set()
+
+    def emit_burn(plan: Sequence[tuple[date, LibraryRoute]]) -> None:
+        nonlocal fuel, odometer
+        for burn_day, burn_route in plan:
+            emitted_burn.add(burn_day)
+            burn_driver, pool_warns = resolve_driver(burn_day)
+            burn_warnings: tuple[str, ...] = (
+                ("borrowed_route",)
+                if burn_route.vehicle_id != own_vehicle_id
+                else ()
+            ) + pool_warns
+            for code in pool_warns:
+                period_warnings.append(code)
+            wb, fuel, odometer, problem = _emit_maybe_manual(
+                day=burn_day,
+                route=burn_route,
+                fuel_start=fuel,
+                fuel_issued=0.0,
+                odometer_start=odometer,
+                driver_id=burn_driver,
+                tank_volume_liters=tank_volume_liters,
+                norm_summer=norm_summer,
+                norm_winter=norm_winter,
+                season_switches=switches,
+                day_warnings=burn_warnings,
+                detail=f"burn-in day {burn_day.isoformat()} left corridor",
+                own_vehicle_id=own_vehicle_id,
+                catalog=route_list,
+            )
+            waybills.append(wb)
+            if problem is not None:
+                problems.append(problem)
+                period_warnings.append(_MANUAL_REASON)
 
     for idx, (anchor_date, txs) in enumerate(anchors):
         station_ids = _station_ids(txs)
@@ -230,35 +281,53 @@ def generate(
             if unsolvable is not None:
                 headroom_fail = unsolvable
             else:
-                for burn_day, burn_route in burn_plan:
-                    burn_driver, pool_warns = resolve_driver(burn_day)
-                    burn_warnings: tuple[str, ...] = (
-                        ("borrowed_route",)
-                        if burn_route.vehicle_id != own_vehicle_id
-                        else ()
-                    ) + pool_warns
-                    for code in pool_warns:
-                        period_warnings.append(code)
-                    wb, fuel, odometer, problem = _emit_maybe_manual(
-                        day=burn_day,
-                        route=burn_route,
-                        fuel_start=fuel,
-                        fuel_issued=0.0,
-                        odometer_start=odometer,
-                        driver_id=burn_driver,
-                        tank_volume_liters=tank_volume_liters,
-                        norm_summer=norm_summer,
-                        norm_winter=norm_winter,
-                        season_switches=switches,
-                        day_warnings=burn_warnings,
-                        detail=f"burn-in day {burn_day.isoformat()} left corridor",
-                        own_vehicle_id=own_vehicle_id,
-                        catalog=route_list,
-                    )
-                    waybills.append(wb)
-                    if problem is not None:
-                        problems.append(problem)
-                        period_warnings.append(_MANUAL_REASON)
+                emit_burn(burn_plan)
+
+        peek = _boundary_peek(anchors, idx, first_fill, boundary_lookahead)
+        if peek is not None and headroom_fail is None:
+            anchor_norm = norm_for(
+                anchor_date,
+                norm_summer=norm_summer,
+                norm_winter=norm_winter,
+                switches=switches,
+            )
+            if not _anchor_can_land_peek(
+                fuel_start=fuel,
+                q_today=fuel_issued,
+                q_next=peek.liters,
+                tank=tank_volume_liters,
+                norm=anchor_norm,
+                routes=route_list,
+            ):
+                cap = _fuel_start_cap_for_peek(
+                    q_today=fuel_issued,
+                    q_next=peek.liters,
+                    tank=tank_volume_liters,
+                    norm=anchor_norm,
+                    routes=route_list,
+                )
+                remaining = tuple(
+                    day
+                    for day in _days_inside_period(free_days, peek)
+                    if day not in emitted_burn
+                )
+                extra_plan, _extra_fuel, extra_fail = _plan_burn_in(
+                    fuel=fuel,
+                    free_days=remaining,
+                    burn_routes=burn_routes,
+                    target_fuel_max=cap,
+                    tank_volume_liters=tank_volume_liters,
+                    norm_summer=norm_summer,
+                    norm_winter=norm_winter,
+                    season_switches=switches,
+                    at_date=anchor_date,
+                    fuel_to_issue=peek.liters,
+                    own_vehicle_id=own_vehicle_id,
+                )
+                if extra_fail is not None:
+                    headroom_fail = extra_fail
+                else:
+                    emit_burn(extra_plan)
 
         day_warnings: list[str] = []
         if not is_working_day(anchor_date, holidays=holiday_set, extra_workdays=extra_set):
@@ -273,6 +342,11 @@ def generate(
             holidays=holiday_set,
             extra_workdays=extra_set,
         )
+        # Peek is not an anchor. Do not defer burn onto days after this one:
+        # those days are not emitted, and nothing is written past period_to.
+        if next_fuel is None and peek is not None:
+            next_fuel = (anchor_date, peek.liters, peek.station_ids)
+            free_until_next = ()
         route, hook_warnings = _select_anchor_route_lookahead(
             station_ids=station_ids,
             routes=route_list,
@@ -627,6 +701,82 @@ def _lookahead_km_needed(
     if burn_needed <= 0:
         return 0.0
     return burn_needed / norm * 100
+
+
+def _boundary_peek(
+    anchors: Sequence[tuple[date, tuple[Transaction, ...]]],
+    current_index: int,
+    first_fill: float,
+    hint: BoundaryLookahead | None,
+) -> BoundaryLookahead | None:
+    """Hint for the last in-period fuel day. A later in-period fill wins."""
+    if hint is None or hint.liters <= 0 or first_fill <= 0:
+        return None
+    if _next_fuel_anchor(anchors, current_index) is not None:
+        return None
+    return hint
+
+
+def _days_inside_period(
+    days: Sequence[date], hint: BoundaryLookahead
+) -> tuple[date, ...]:
+    """Free weekdays still inside the generated month, before the anchor."""
+    kept: list[date] = []
+    for day in days:
+        if hint.period_from is not None and day < hint.period_from:
+            continue
+        if hint.period_to is not None and day > hint.period_to:
+            continue
+        kept.append(day)
+    return tuple(kept)
+
+
+def _anchor_can_land_peek(
+    *,
+    fuel_start: float,
+    q_today: float,
+    q_next: float,
+    tank: float,
+    norm: float,
+    routes: Sequence[LibraryRoute],
+) -> bool:
+    """True when some in-corridor round-trip already ends at or below tank − q_next."""
+    km_needed = _lookahead_km_needed(
+        fuel_before=fuel_start,
+        q_today=q_today,
+        q_next=q_next,
+        tank_volume=tank,
+        norm=norm,
+    )
+    if km_needed <= 0:
+        return True
+    return any(
+        _daily_km(route) + 1e-6 >= km_needed
+        and _fits_corridor(
+            route,
+            fuel_start=fuel_start,
+            q_today=q_today,
+            norm=norm,
+            tank_volume=tank,
+        )
+        for route in routes
+    )
+
+
+def _fuel_start_cap_for_peek(
+    *,
+    q_today: float,
+    q_next: float,
+    tank: float,
+    norm: float,
+    routes: Sequence[LibraryRoute],
+) -> float:
+    """Highest day-start fuel at which the longest round-trip ends ≤ tank − q_next."""
+    if not routes:
+        return tank - q_next - q_today
+    longest = max(routes, key=lambda route: (_daily_km(route), -route.route_id))
+    burn_cap = burn_for_km(_daily_km(longest), norm)
+    return (tank - q_next) - q_today + burn_cap
 
 
 def _tentative_fuel_end(

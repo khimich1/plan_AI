@@ -19,6 +19,7 @@ from app.schemas.gsm import (
     WaybillRouteLeg,
     WaybillWarningDetail,
 )
+from app.services.gsm_boundary import lookup_boundary_fill
 from app.services.gsm_kit_gate import evaluate_vehicle
 from app.services.gsm_registry_service import (
     DEFAULT_HOOK_THRESHOLD_KM,
@@ -26,7 +27,7 @@ from app.services.gsm_registry_service import (
 )
 from core.gsm.balance import BalanceViolation, apply_day
 from core.gsm.driver_pool import ELIGIBLE_CODES, DriverCandidate
-from core.gsm.generator import LibraryRoute, generate
+from core.gsm.generator import BoundaryLookahead, LibraryRoute, generate
 from core.gsm.geo import GeoPoint
 from core.gsm.models import Transaction, WaybillDay
 from core.gsm.season import SeasonSwitch, norm_for, parse_season_switches
@@ -174,6 +175,19 @@ class GsmGenerationService:
             else frozenset(load_extra_workdays())
         )
 
+        fill = lookup_boundary_fill(
+            self._repo, vehicle_id=vehicle_id, after=period_to
+        )
+        boundary: BoundaryLookahead | None = None
+        if fill is not None:
+            liters, station_ids = fill
+            boundary = BoundaryLookahead(
+                liters=liters,
+                station_ids=station_ids,
+                period_from=period_from,
+                period_to=period_to,
+            )
+
         result = generate(
             transactions=transactions,
             routes=routes,
@@ -194,6 +208,7 @@ class GsmGenerationService:
             drivers_by_date=drivers_by_date,
             substitute_counts=substitute_counts,
             prior_date=prior_date,
+            boundary_lookahead=boundary,
         )
 
         if force:

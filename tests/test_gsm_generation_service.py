@@ -8,7 +8,7 @@ Acceptance:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -313,3 +313,88 @@ def test_clean_day_has_empty_warning_details(
     )
     assert result.waybills[0].warnings == []
     assert not result.waybills[0].warning_details
+
+
+def test_generate_peeks_first_fill_after_period_without_loading_it(
+    service: GsmGenerationService,
+    repo: GsmRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vehicle_id = _seed_vehicle(repo)
+    card_id = repo.create_card(
+        card_number="521",
+        vehicle_id=vehicle_id,
+        assigned_at="2026-01-01",
+    )
+    repo.create_route(
+        vehicle_id=vehicle_id,
+        addr_a="г.Кострома, ул. Кузнецкая, д.18Б",
+        addr_b="г.Ярославль, объект",
+        km=45,
+        frequency=10,
+    )
+    batch_id = repo.create_import_batch(
+        filename="boundary.xls",
+        uploaded_at="2026-09-02T00:00:00",
+        period_from="2026-08-01",
+        period_to="2026-09-30",
+    )
+    repo.insert_transaction(
+        card_id=card_id,
+        ts=datetime(2026, 8, 31, 8, 0, 0).isoformat(timespec="seconds"),
+        service_type="fuel",
+        qty_liters=20.0,
+        amount=1000.0,
+        raw_address="АЗС августа",
+        batch_id=batch_id,
+    )
+    repo.insert_transaction(
+        card_id=card_id,
+        ts=datetime(2026, 9, 1, 9, 40, 57).isoformat(timespec="seconds"),
+        service_type="fuel",
+        qty_liters=30.0,
+        amount=1500.0,
+        raw_address="АЗС сентября",
+        batch_id=batch_id,
+    )
+    repo.insert_transaction(
+        card_id=card_id,
+        ts=datetime(2026, 9, 1, 9, 41, 44).isoformat(timespec="seconds"),
+        service_type="fuel",
+        qty_liters=26.6,
+        amount=1300.0,
+        raw_address="АЗС сентября",
+        batch_id=batch_id,
+    )
+    captured = _capture_generate(monkeypatch)
+    service.generate(
+        vehicle_id=vehicle_id,
+        period_from=date(2026, 8, 1),
+        period_to=date(2026, 8, 31),
+        fuel_start=32.8,
+        odometer_start=100_000,
+    )
+    hint = captured["boundary_lookahead"]
+    assert hint is not None
+    assert hint.liters == pytest.approx(30.0, abs=0.01)
+    assert hint.period_from == date(2026, 8, 1)
+    assert hint.period_to == date(2026, 8, 31)
+    loaded_days = {tx.ts.date() for tx in captured["transactions"]}
+    assert loaded_days == {date(2026, 8, 31)}
+
+
+def test_generate_omits_boundary_lookahead_when_no_later_fill(
+    service: GsmGenerationService,
+    repo: GsmRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vehicle_id = _seed_vehicle(repo)
+    captured = _capture_generate(monkeypatch)
+    service.generate(
+        vehicle_id=vehicle_id,
+        period_from=date(2026, 8, 1),
+        period_to=date(2026, 8, 31),
+        fuel_start=32.8,
+        odometer_start=100_000,
+    )
+    assert captured["boundary_lookahead"] is None

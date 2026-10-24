@@ -246,6 +246,8 @@ export type FleetOverviewRow = {
   confirmed_count: number;
   exported_count: number;
   fuel_end_last: number | null;
+  tank_volume_liters?: number | null;
+  next_first_fill_liters?: number | null;
   liters_diff: number;
   open_before: number;
   open_before_month: string | null;

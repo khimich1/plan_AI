@@ -149,6 +149,17 @@ const periodMonth = (periodFrom: string): string => periodFrom.slice(0, 7);
 const alreadyExportedForKit = (row: FleetOverviewRow): boolean =>
   row.wb_count > 0 && row.exported_count === row.wb_count;
 
+/** Closing fuel cannot accept the first fill after the period. */
+const boundaryHeadroomBlocked = (row: FleetOverviewRow): boolean => {
+  const next = row.next_first_fill_liters;
+  const closing = row.fuel_end_last;
+  const tank = row.tank_volume_liters;
+  if (next == null || next <= 0 || closing == null || tank == null) {
+    return false;
+  }
+  return closing > tank - next;
+};
+
 const scopeKitRows = (
   rows: FleetOverviewRow[],
   selectedIds: number[] | null,
@@ -192,6 +203,12 @@ export const planKit = (
         vehicleId: row.vehicle.id,
         label: vehicleLabel(row),
         reason: `Пересчитайте ${openBeforeMonthLabel(currentYm)}: бак не сходится с предыдущим`,
+      });
+    } else if (boundaryHeadroomBlocked(row)) {
+      excluded.push({
+        vehicleId: row.vehicle.id,
+        label: vehicleLabel(row),
+        reason: `Пересчитайте ${openBeforeMonthLabel(currentYm)}: нет места под первую заправку следующего месяца`,
       });
     } else {
       clean.push(row);
