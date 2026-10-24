@@ -6,7 +6,7 @@ import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from random import Random
 
 from core.gsm.balance import BalanceViolation, apply_day, burn_for_km
@@ -196,6 +196,7 @@ def generate(
     for idx, (anchor_date, txs) in enumerate(anchors):
         station_ids = _station_ids(txs)
         fuel_issued = _fuel_issued(txs)
+        first_fill = _first_fill_liters(txs)
         free_days = (
             _free_weekdays_between(prev_date, anchor_date, holiday_set, extra_set)
             if prev_date is not None
@@ -203,8 +204,8 @@ def generate(
         )
 
         headroom_fail: UnsolvableInfo | None = None
-        if prev_date is not None and fuel_issued > 0:
-            target_max = tank_volume_liters - fuel_issued
+        if prev_date is not None and first_fill > 0:
+            target_max = tank_volume_liters - first_fill
             burn_plan, _fuel_after, unsolvable = _plan_burn_in(
                 fuel=fuel,
                 free_days=free_days,
@@ -215,7 +216,7 @@ def generate(
                 norm_winter=norm_winter,
                 season_switches=switches,
                 at_date=anchor_date,
-                fuel_to_issue=fuel_issued,
+                fuel_to_issue=first_fill,
                 own_vehicle_id=own_vehicle_id,
             )
             if unsolvable is not None:
@@ -364,6 +365,24 @@ def _fuel_issued(txs: Sequence[Transaction]) -> float:
     return total
 
 
+def _fill_events(txs: Sequence[Transaction]) -> tuple[float, ...]:
+    """Liters by ascending time; one timestamp is one algebraic sum."""
+    totals: dict[datetime, float] = {}
+    for tx in txs:
+        if tx.service_type != "fuel" or tx.qty_liters is None:
+            continue
+        totals[tx.ts] = totals.get(tx.ts, 0.0) + float(tx.qty_liters)
+    return tuple(totals[ts] for ts in sorted(totals))
+
+
+def _first_fill_liters(txs: Sequence[Transaction]) -> float:
+    """First clustered fill of the day; 0 when the day has no fuel."""
+    events = _fill_events(txs)
+    if not events:
+        return 0.0
+    return events[0]
+
+
 def _find_home_twin(
     chosen: LibraryRoute, catalog: Sequence[LibraryRoute]
 ) -> LibraryRoute | None:
@@ -479,9 +498,9 @@ def _next_fuel_anchor(
     anchors: Sequence[tuple[date, tuple[Transaction, ...]]],
     current_index: int,
 ) -> _NextFuel | None:
-    """Next anchor with fuel_issued > 0 (wash without liters is not Q_next)."""
+    """Next anchor whose first clustered fill is positive (wash is not Q_next)."""
     for later_date, later_txs in anchors[current_index + 1 :]:
-        issued = _fuel_issued(later_txs)
+        issued = _first_fill_liters(later_txs)
         if issued > 0:
             return later_date, issued, _station_ids(later_txs)
     return None
