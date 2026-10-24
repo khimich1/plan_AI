@@ -142,6 +142,7 @@ def generate(
     own_vehicle_id: int = 0,
     drivers_by_date: Mapping[date, tuple[DriverCandidate, ...]] | None = None,
     substitute_counts: Mapping[int, int] | None = None,
+    prior_date: date | None = None,
 ) -> GenerateResult:
     """Build draft waybill days for a transaction period (pure, deterministic).
 
@@ -153,6 +154,10 @@ def generate(
     ``drivers_by_date is None`` keeps the legacy path: every day is
     ``driver_id``. When a pool is passed, each day is re-ranked with the
     running substitute counter (seed plus picks made earlier in this call).
+
+    ``prior_date`` is the last waybill already on the chain. It is not emitted.
+    The first loaded anchor may burn free weekdays after that date, including
+    weekdays that fall before the loaded transactions.
     """
     holiday_set = frozenset(holidays)
     extra_set = frozenset(extra_workdays)
@@ -197,14 +202,17 @@ def generate(
         station_ids = _station_ids(txs)
         fuel_issued = _fuel_issued(txs)
         first_fill = _first_fill_liters(txs)
+        # Before the first loaded anchor, burn after the previous waybill
+        # even when that gap starts before the requested month.
+        chain_from = prev_date if prev_date is not None else prior_date
         free_days = (
-            _free_weekdays_between(prev_date, anchor_date, holiday_set, extra_set)
-            if prev_date is not None
+            _free_weekdays_between(chain_from, anchor_date, holiday_set, extra_set)
+            if chain_from is not None and chain_from < anchor_date
             else ()
         )
 
         headroom_fail: UnsolvableInfo | None = None
-        if prev_date is not None and first_fill > 0:
+        if chain_from is not None and chain_from < anchor_date and first_fill > 0:
             target_max = tank_volume_liters - first_fill
             burn_plan, _fuel_after, unsolvable = _plan_burn_in(
                 fuel=fuel,

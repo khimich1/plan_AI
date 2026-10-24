@@ -2503,3 +2503,94 @@ def test_same_second_plus_minus_is_one_fill() -> None:
     assert "manual_intervention" not in wb.warnings
     assert sum(1 for item in result.days if item.date == day) == 1
 
+
+def test_prior_date_burns_weekdays_before_loaded_month() -> None:
+    """О 952 ХР 44: 52.55 L after 29 Jul, then 40 L on 3 Aug and 30 L on 4 Aug.
+
+    Home-base routes, tank 55, summer norm 9.4. One 400 km burn on 30 Jul
+    (library has 200 km one way) lands at 14.95 L. 31 Jul is not required.
+    Without ``prior_date`` the August anchors have no burn-in and stay manual.
+    """
+    home = "г.Кострома, ул. Кузнецкая, д.18Б"
+    routes = tuple(
+        _route(
+            route_id,
+            km=km,
+            frequency=frequency,
+            typical_station_ids=stations,
+            addr_a=home,
+            addr_b=f"объект {route_id}",
+            vehicle_id=4,
+        )
+        for route_id, km, frequency, stations in (
+            (1, 4, 100, (10,)),
+            (2, 160, 20, ()),
+            (3, 200, 10, ()),
+            (4, 240, 5, ()),
+            (5, 350, 1, ()),
+        )
+    )
+    locked = date(2026, 7, 29)
+    july30 = date(2026, 7, 30)
+    july31 = date(2026, 7, 31)
+    aug3 = date(2026, 8, 3)
+    aug4 = date(2026, 8, 4)
+    aug5 = date(2026, 8, 5)
+    txs = (
+        _tx(aug3, qty_liters=40.0),
+        _tx(aug4, qty_liters=30.0),
+        _tx(aug5, qty_liters=45.0),
+    )
+
+    def run(*, prior_date: date | None) -> GenerateResult:
+        return generate(
+            transactions=txs,
+            routes=routes,
+            hooks={},
+            driver_id=DRIVER_ID,
+            tank_volume_liters=TANK,
+            norm_summer=NORM_SUMMER,
+            norm_winter=NORM_WINTER,
+            season_switches=((date(2026, 11, 1), "winter"),),
+            fuel_start=52.55,
+            odometer_start=105_964,
+            holidays=frozenset(),
+            extra_workdays=frozenset(),
+            max_daily_km=700,
+            own_vehicle_id=4,
+            prior_date=prior_date,
+        )
+
+    blocked = run(prior_date=None)
+    assert all(day.date >= aug3 for day in blocked.days)
+    assert "manual_intervention" in _day_by_date(blocked, aug3).warnings
+    aug4_blocked = _day_by_date(blocked, aug4)
+    assert "manual_intervention" in aug4_blocked.warnings
+    assert _day_by_date(blocked, aug3).tank.km == 700
+    assert _day_by_date(blocked, aug3).tank.fuel_end == pytest.approx(26.75, abs=0.01)
+    assert any(
+        p.date == aug4 and "free_weekdays=0" in p.detail and "25.0" in p.detail
+        for p in blocked.problematic_days
+    )
+
+    result = run(prior_date=locked)
+    dates = {day.date for day in result.days}
+    assert locked not in dates
+    assert july31 not in dates
+    assert date(2026, 8, 1) not in dates
+    assert date(2026, 8, 2) not in dates
+    burn = _day_by_date(result, july30)
+    assert burn.tank.fuel_start == pytest.approx(52.55, abs=0.01)
+    assert burn.tank.fuel_issued == pytest.approx(0.0, abs=0.01)
+    assert burn.tank.km == 400
+    assert burn.tank.fuel_end == pytest.approx(14.95, abs=0.01)
+    aug3_wb = _day_by_date(result, aug3)
+    aug4_wb = _day_by_date(result, aug4)
+    assert aug3_wb.tank.fuel_start == pytest.approx(14.95, abs=0.01)
+    assert aug3_wb.tank.fuel_start <= TANK - 40.0
+    assert aug4_wb.tank.fuel_start <= TANK - 30.0
+    assert "manual_intervention" not in aug3_wb.warnings
+    assert "manual_intervention" not in aug4_wb.warnings
+    assert all(day.tank.km <= 700 for day in result.days)
+    assert all(p.date not in (aug3, aug4) for p in result.problematic_days)
+
