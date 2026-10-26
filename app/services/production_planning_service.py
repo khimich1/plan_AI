@@ -163,6 +163,8 @@ class ProductionPlanningService:
         fill_targets: list[dict[str, Any]] | None = None,
         layout_reinforcement_order: str = "asc",
         plate_order_ctx: PlateOrderContext | None = None,
+        before_commit: Any | None = None,
+        expected_version: int | None = None,
     ) -> dict[str, Any]:
         """Собирает план по заданным фильтрам через core-pipeline."""
         plan_input = PlanBuildInput(
@@ -214,12 +216,14 @@ class ProductionPlanningService:
                     fill_targets=tuple(fill_targets or ()),
                     max_tracks_per_day=MAX_TRACKS_PER_DAY,
                     day_capacity=day_capacity_pairs,
+                    expected_version=expected_version,
                 ),
                 persist_port,
                 ensure_unique_plan_id=create_plan_id,
                 settle_fn=PromiseService(
                     db_path=self.plita_db_path
                 ).settle_plan_commit,
+                before_commit=before_commit,
             )
         except PlanBuildError as exc:
             raise _map_plan_build_error(exc) from exc

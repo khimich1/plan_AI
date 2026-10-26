@@ -2,6 +2,7 @@
 
 **Статус**: IDEATE ✅ · SPECIFY ✅ (на ревью) · PLAN ⬜ · IMPLEMENT ⬜
 **Дата**: 2026-09-21
+**Трек 1 (A1) с 2026-10-26 ведёт** [a1-plate-order-explicit-context.md](./a1-plate-order-explicit-context.md). Этот файл для трека 1 больше не источник правды. Трек 2 (A2/S3) остаётся здесь и в работу A1 не входит.
 **One-pager**: [../ideas/explicit-process-state.md](../ideas/explicit-process-state.md)
 **Источник**: [../develop/audits/FINDINGS.md](../develop/audits/FINDINGS.md) — A1 (Critical, P0), A2 (Critical, P0), S3 (High, P1); прогон 2 — [../develop/audits/2026-09-21-full-audit.md](../develop/audits/2026-09-21-full-audit.md)
 

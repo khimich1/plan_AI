@@ -307,7 +307,7 @@ def test_sgp_reserve_fail_after_build_compensates_no_plan_plates_not_in_plan(
     production_api_db: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """D4: reserve_on_conn raises after persist → compensate: no plan, plates not «в плане»."""
+    """D4: reserve_on_conn raises before commit → rollback: no plan, plates not «в плане»."""
     sgp_id = _seed_free_sgp_row(production_api_db, qty=1)
 
     def boom(self, cur, conn, **kwargs):  # noqa: ANN001
@@ -345,6 +345,79 @@ def test_sgp_reserve_fail_after_build_compensates_no_plan_plates_not_in_plan(
             "SELECT qty, kp_id FROM completed_plates WHERE id = ?",
             (sgp_id,),
         ).fetchone()
+        planned_audit = conn.execute(
+            "SELECT COUNT(*) FROM plate_status_log WHERE reason = 'planned'"
+        ).fetchone()
     assert free_sgp is not None
     assert int(free_sgp[0]) == 1
     assert free_sgp[1] is None
+    # Rollback of the uncommitted build, not a delete after the plan was saved.
+    assert planned_audit is not None and int(planned_audit[0]) == 0
+
+
+def test_plan_save_fail_after_plate_mark_rolls_back_no_plan_plates_stay_in_production(
+    production_api_client: TestClient,
+    production_admin_cookie: dict[str, str],
+    production_api_db: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A30: create/save raises after plate mark → rollback, no plan, plates stay «в производстве».
+
+    Compensation via ``return_plan_plates_to_production`` would leave a committed
+    ``planned`` audit row. A rollback of the uncommitted mark does not.
+    """
+
+    def broken_create(self, payload, **kwargs):  # noqa: ANN001
+        raise RuntimeError("simulated plan save failure")
+
+    monkeypatch.setattr(PlanRepository, "create", broken_create)
+
+    response = production_api_client.post(
+        f"{API_PREFIX}/plans/build",
+        json={
+            "start_date": DATE_KEY,
+            "tracks_count": 1,
+            "filter_method": "all",
+        },
+        cookies=production_admin_cookie,
+    )
+    assert response.status_code != 200, response.text
+    assert response.json()["detail"] == "Не удалось сохранить план."
+
+    with sqlite3.connect(production_api_db) as conn:
+        plan_rows = conn.execute("SELECT COUNT(*) FROM production_plans").fetchone()
+        planned_audit = conn.execute(
+            "SELECT COUNT(*) FROM plate_status_log WHERE reason = 'planned'"
+        ).fetchone()
+    assert plan_rows is not None and int(plan_rows[0]) == 0
+    assert planned_audit is not None and int(planned_audit[0]) == 0
+    assert _kp_plates_by_status(production_api_db) == {"в производстве": 3}
+
+
+def test_build_sgp_reserve_records_session_username(
+    production_api_client: TestClient,
+    production_admin_cookie: dict[str, str],
+    production_api_db: str,
+) -> None:
+    """A29 / narrow Q40: reserve during build journals the session username."""
+    sgp_id = _seed_free_sgp_row(production_api_db, qty=1)
+    response = production_api_client.post(
+        f"{API_PREFIX}/plans/build",
+        json={
+            "start_date": DATE_KEY,
+            "tracks_count": 1,
+            "filter_method": "all",
+            "sgp_reservations": [
+                {"sgp_id": sgp_id, "target_kp_id": KP_ID, "qty": 1},
+            ],
+        },
+        cookies=production_admin_cookie,
+    )
+    assert response.status_code == 200, response.text
+
+    with sqlite3.connect(production_api_db) as conn:
+        actors = conn.execute(
+            "SELECT actor FROM plate_status_log WHERE reason = 'sgp_reserve'"
+        ).fetchall()
+    assert actors
+    assert all(actor == "admin" for (actor,) in actors)

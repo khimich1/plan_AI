@@ -7,13 +7,11 @@
 """
 from __future__ import annotations
 
-import copy
-
 import pytest
 
 from core.domain.plate_order import normalize_load_code
-from core.plate_runtime_state import get_plate_mutable_runtime
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
+from core.plate_order_context import PlateOrderContext
 from app.services.optimization_service import OptimizationService
 from core.optimization import verify_coverage
 from core.plate_line_parser import parse_line
@@ -172,39 +170,15 @@ def _build_merged_orders_2d() -> list[dict]:
     ]
 
 
-def _push_plate_load_cfg(plate_order: AppPlateOrder) -> tuple[dict, dict]:
-    rt = get_plate_mutable_runtime()
-    saved_d = copy.deepcopy(rt.plate_load_details)
-    saved_raw = copy.deepcopy(rt.plate_length_dm_raw)
-    rt.plate_load_details.clear()
-    for key, qty in plate_order.plate_load_details.items():
-        length, width_m, load_code, raw = key
-        rt.plate_load_details[(length, width_m, int(float(load_code)), raw)] = int(qty)
-    rt.plate_length_dm_raw.clear()
-    for key, raw in plate_order.plate_length_dm_raw.items():
-        length, width_m, load_code, raw_val = key
-        rt.plate_length_dm_raw[(length, width_m, int(float(load_code)), raw_val)] = raw
-    return saved_d, saved_raw
-
-
-def _restore_plate_load_cfg(saved_d: dict, saved_raw: dict) -> None:
-    rt = get_plate_mutable_runtime()
-    rt.plate_load_details.clear()
-    rt.plate_load_details.update(saved_d)
-    rt.plate_length_dm_raw.clear()
-    rt.plate_length_dm_raw.update(saved_raw)
-
-
 @pytest.fixture(scope="module")
 def large_order_opt_result():
     orders_2d = _build_merged_orders_2d()
     plate_order = AppPlateOrder.from_orders_2d(orders_2d)
-    saved_d, saved_raw = _push_plate_load_cfg(plate_order)
+    plate_ctx = PlateOrderContext.fresh_empty()
+    plate_ctx.hydrate_from_order(plate_order)
     svc = OptimizationService()
-    try:
+    with plate_ctx.bound():
         ctx = svc.optimize(plate_order, orders_2d=orders_2d)
-    finally:
-        _restore_plate_load_cfg(saved_d, saved_raw)
     res = ctx.optimization_result
     assert res, "оптимизация должна вернуть результат"
     return orders_2d, res

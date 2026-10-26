@@ -176,7 +176,7 @@ else
     (cd frontend && npm install --include=optional --no-audit --no-fund >/dev/null)
 fi
 
-echo -e "${YELLOW}Запускаю backend: http://127.0.0.1:8000${NC}"
+echo -e "${YELLOW}Запускаю backend: http://127.0.0.1:8000/docs${NC}"
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload >"$BACKEND_LOG" 2>&1 &
 BACKEND_PID=$!
 sleep 1
@@ -205,7 +205,7 @@ if [ "$BACKEND_READY" -ne 1 ]; then
 fi
 echo -e "${GREEN}✅ Backend готов${NC}"
 
-echo -e "${YELLOW}Запускаю frontend: http://localhost:5173${NC}"
+echo -e "${YELLOW}Запускаю frontend: http://localhost:5173/commercial-offer/new${NC}"
 (cd frontend && npm run dev -- --host localhost --port 5173) >"$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 sleep 1
@@ -217,7 +217,6 @@ fi
 echo ""
 echo -e "${GREEN}✅ Оба процесса запущены${NC}"
 echo -e "${YELLOW}UI (React): http://localhost:5173/commercial-offer/new${NC}"
-echo -e "${YELLOW}API backend: http://127.0.0.1:8000${NC}"
 echo -e "${YELLOW}Swagger: http://127.0.0.1:8000/docs${NC}"
 echo -e "${YELLOW}Остановка: Ctrl+C${NC}"
 echo -e "${YELLOW}Поток логов: backend + frontend${NC}"

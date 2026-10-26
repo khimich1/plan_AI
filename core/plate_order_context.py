@@ -122,7 +122,7 @@ class PlateOrderContext:
 
     ) -> None:
 
-        """Заполнить ``self.plates`` из ``PlateOrder`` (замена ``apply_to_globals`` в A1-002)."""
+        """Заполнить ``self.plates`` из ``PlateOrder``."""
 
         core_order = coerce_core_plate_order(plate_order)
 

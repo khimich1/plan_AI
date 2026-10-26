@@ -174,9 +174,13 @@ def test_format_corrections_for_user_verify_failed_only():
 
 
 def test_set_plate_lists_diagnostics_for_unparsed():
-    unparsed, _, _ = cfg.set_plate_lists_from_text("непонятная строка")
+    from core.plate_order_context import PlateOrderContext
+
+    ctx = PlateOrderContext.fresh_empty()
+    with ctx.bound():
+        unparsed, _, _ = cfg.set_plate_lists_from_text("непонятная строка")
+        diagnostics = list(cfg.get_last_parse_diagnostics())
     assert len(unparsed) == 1
-    diagnostics = cfg.get_last_parse_diagnostics()
     assert diagnostics
     assert diagnostics[0]["validation_status"] == "failed"
     assert diagnostics[0]["reason_code"] in {"pattern_not_matched", "empty_line"}

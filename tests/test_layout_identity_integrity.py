@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from core.optimization.layout_runtime_snapshot import empty_layout_sequence_cfg
 from core.production.planning import _build_assignment_gap_fallback_tracks
 from core.visualization import validate_track_integrity
 from viz_modules.layout_sequence import _build_sequence_from_plan
@@ -70,6 +71,7 @@ def test_build_sequence_prefers_parent_instance_id_over_legacy_key() -> None:
         plan,
         plate_label_func=lambda l, w, load_code=None: f"{l}-{w}-{load_code}",
         reinforcement_map={},
+        layout_cfg=empty_layout_sequence_cfg(),
     )
     split_items = [item for item in seq if item.get("mode") == "split"]
     by_unit_id = {item.get("unit_id"): item for item in split_items}
@@ -122,6 +124,7 @@ def test_build_sequence_geometric_fallback_when_parent_instance_mismatch() -> No
         plan,
         plate_label_func=lambda l, w, load_code=None: f"{l}-{w}-{load_code}",
         reinforcement_map={},
+        layout_cfg=empty_layout_sequence_cfg(),
     )
     split_items = [item for item in seq if item.get("mode") == "split"]
     assert len(split_items) == 1
@@ -165,6 +168,7 @@ def test_build_sequence_geometric_fallback_rejects_reverse_load_code_downgrade()
         plan,
         plate_label_func=lambda l, w, load_code=None: f"{l}-{w}-{load_code}",
         reinforcement_map={},
+        layout_cfg=empty_layout_sequence_cfg(),
     )
 
     split_item = next(item for item in seq if item.get("mode") == "split")

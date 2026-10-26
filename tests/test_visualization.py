@@ -22,6 +22,7 @@ if sys.platform == 'win32':
 
 from core.optimization import optimize_with_cascading_longitudinal_cuts
 import core.optimization as optimization
+from core.plate_runtime_state import new_plate_mutable_runtime_empty, plate_mutable_runtime_scope
 
 # Твой заказ
 orders_2d = [
@@ -35,22 +36,23 @@ print("="*70)
 print("ТЕСТ ВИЗУАЛИЗАЦИИ")
 print("="*70)
 
-# Запускаем оптимизацию
-result = optimize_with_cascading_longitudinal_cuts(orders_2d=orders_2d)
+with plate_mutable_runtime_scope(new_plate_mutable_runtime_empty()):
+    # Запускаем оптимизацию
+    result = optimize_with_cascading_longitudinal_cuts(orders_2d=orders_2d)
 
-# Сохраняем в глобальную переменную
-optimization.OPT_CASCADING_PLAN = result
+    # Сохраняем в глобальную переменную
+    optimization.OPT_CASCADING_PLAN = result
 
-print("\nОптимизация завершена. Теперь проверим визуализацию...")
+    print("\nОптимизация завершена. Теперь проверим визуализацию...")
 
-# Импортируем визуализацию
-from core.visualization import build_layout_sequence
+    # Импортируем визуализацию
+    from core.visualization import build_layout_sequence
 
-print("\n" + "="*70)
-print("РЕЗУЛЬТАТ build_layout_sequence():")
-print("="*70)
+    print("\n" + "="*70)
+    print("РЕЗУЛЬТАТ build_layout_sequence():")
+    print("="*70)
 
-sequence = build_layout_sequence()
+    sequence = build_layout_sequence()
 
 print(f"\nВсего сегментов в последовательности: {len(sequence)}")
 print(f"\nДетализация сегментов:\n")

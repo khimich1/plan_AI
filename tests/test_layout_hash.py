@@ -8,23 +8,42 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
+import pytest
+
 from core.layout_hash import (
     ATTRIBUTION_KEYS,
     golden_plan,
     hash_layout_sequence,
     layout_canonical,
 )
+from core.optimization.layout_runtime_snapshot import empty_layout_sequence_cfg
 from viz_modules.layout_sequence.from_plan import _build_sequence_from_plan
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_FROM_PLAN = PROJECT_ROOT / "viz_modules" / "layout_sequence" / "from_plan.py"
 
 
 def _label(length: float, width_m: float, load_code: int | None = None) -> str:
     return f"{length:g}x{int(round(width_m * 1000))}-{load_code or 8}"
 
 
+def test_build_sequence_from_plan_requires_layout_cfg() -> None:
+    with pytest.raises(TypeError):
+        _build_sequence_from_plan(golden_plan(), _label, {})
+
+
+def test_build_sequence_from_plan_does_not_call_runtime_getter() -> None:
+    source = _FROM_PLAN.read_text(encoding="utf-8")
+    assert "get_plate_mutable_runtime" not in source
+
+
 def _build() -> list[dict]:
-    return _build_sequence_from_plan(golden_plan(), _label, {})
+    return _build_sequence_from_plan(
+        golden_plan(),
+        _label,
+        {},
+        layout_cfg=empty_layout_sequence_cfg(),
+    )
 
 
 def test_two_runs_on_golden_plan_give_same_hash() -> None:

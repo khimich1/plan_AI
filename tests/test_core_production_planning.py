@@ -475,11 +475,11 @@ class _FakePersistRepo:
             return None
         return {"payload": self.plans[plan_id], "version": 1}
 
-    def create(self, payload):
+    def create(self, payload, **kwargs):
         self.plans[payload["id"]] = payload
         return {"payload": payload, "version": 1}
 
-    def save(self, payload, expected_version):
+    def save(self, payload, expected_version, **kwargs):
         self.plans[payload["id"]] = payload
         return {"payload": payload, "version": expected_version + 1}
 

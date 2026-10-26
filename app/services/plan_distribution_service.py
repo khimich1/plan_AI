@@ -468,11 +468,21 @@ class PlanPersistAdapter:
     def get(self, plan_id: str) -> dict[str, Any] | None:
         return self._repo.get(plan_id)
 
-    def create(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._repo.create(payload)
+    def create(self, payload: dict[str, Any], *, _external_conn: Any = None) -> dict[str, Any]:
+        return self._repo.create(payload, _external_conn=_external_conn)
 
-    def save(self, payload: dict[str, Any], expected_version: int) -> dict[str, Any]:
-        return self._repo.save(payload, expected_version=expected_version)
+    def save(
+        self,
+        payload: dict[str, Any],
+        expected_version: int,
+        *,
+        _external_conn: Any = None,
+    ) -> dict[str, Any]:
+        return self._repo.save(
+            payload,
+            expected_version=expected_version,
+            _external_conn=_external_conn,
+        )
 
     def set_active(self, plan_id: str) -> None:
         self._repo.set_active(plan_id)

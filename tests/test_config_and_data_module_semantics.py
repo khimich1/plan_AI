@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PEP 562 ``__getattr__`` + ``get_config()`` alignment with constants re-exports."""
+"""``get_config()`` и отсутствие PEP 562-прокси заказа плит."""
 
 import pytest
 
@@ -15,19 +15,31 @@ def test_get_config_matches_constants() -> None:
     assert c.weight_kg_per_dm2 == cfg.WEIGHT_KG_PER_DM2
 
 
-def test_getattr_plate_load_details_is_runtime_dict() -> None:
-    rt = cfg.get_plate_mutable_runtime()
-    with pytest.warns(DeprecationWarning, match=r"config_and_data\.PLATE_LOAD_DETAILS"):
-        x = cfg.PLATE_LOAD_DETAILS
-    assert x is rt.plate_load_details
-    before = dict(x)
-    try:
-        x.clear()
-        with pytest.warns(DeprecationWarning, match=r"config_and_data\.PLATE_LOAD_DETAILS"):
-            assert len(cfg.PLATE_LOAD_DETAILS) == 0
-    finally:
-        x.clear()
-        x.update(before)
+def test_legacy_plate_names_are_not_module_attributes() -> None:
+    for name in (
+        "PLATE_LOAD_DETAILS",
+        "PLATES_1_2",
+        "PLATES_1_0",
+        "PLATES_1_08",
+        "PLATES_0_32",
+        "PLATES_0_46",
+        "PLATE_EXACT_WIDTHS",
+        "PLATE_LENGTH_DM_RAW",
+    ):
+        with pytest.raises(AttributeError):
+            getattr(cfg, name)
+
+
+def test_bound_runtime_plate_load_details_is_the_order_dict() -> None:
+    from core.plate_order_context import PlateOrderContext
+    from core.plate_runtime_state import get_plate_mutable_runtime
+
+    ctx = PlateOrderContext.fresh_empty()
+    with ctx.bound():
+        details = get_plate_mutable_runtime().plate_load_details
+        assert details is ctx.plates.plate_load_details
+        details[(1.0, 1.2, 8, "")] = 1
+        assert ctx.plates.plate_load_details[(1.0, 1.2, 8, "")] == 1
 
 
 def test_unknown_attribute_raises() -> None:

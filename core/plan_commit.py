@@ -61,17 +61,43 @@ def _plan_commit_gate_mode() -> str:
     return _GATE_DEFAULT
 
 
-def _null_day_planned_rows(db_path: str, plan_id: str) -> list[tuple]:
+def _null_day_planned_rows(
+    db_path: str,
+    plan_id: str,
+    *,
+    _external_conn=None,
+) -> list[tuple]:
+    sql = (
+        "SELECT id, kp_id, plate_name FROM kp_plates "
+        "WHERE plan_id = ? AND status = 'в плане' AND day_number IS NULL"
+    )
+    if _external_conn is not None:
+        return list(_external_conn.execute(sql, (plan_id,)).fetchall())
     conn = _connect(db_path)
     try:
-        cur = conn.execute(
-            "SELECT id, kp_id, plate_name FROM kp_plates "
-            "WHERE plan_id = ? AND status = 'в плане' AND day_number IS NULL",
-            (plan_id,),
-        )
-        return list(cur.fetchall())
+        return list(conn.execute(sql, (plan_id,)).fetchall())
     finally:
         conn.close()
+
+
+def _mark_plates_as_planned(*, _external_conn, **kwargs):
+    """Пометка плит. Внешнее соединение не коммитит само себя."""
+    if _external_conn is not None:
+        kwargs["_external_conn"] = _external_conn
+    return kp_db_plates.mark_plates_as_planned(**kwargs)
+
+
+def _compensate_committed_plates(plan_id: str, db_path: str, _external_conn) -> None:
+    """Откат уже закоммиченных пометок. Внешняя транзакция откатывается вызывающим."""
+    if _external_conn is not None:
+        return
+    try:
+        kp_db_plates.return_plan_plates_to_production(plan_id, db_path)
+    except Exception:
+        logger.exception(
+            "[PLAN_COMMIT] Ошибка при откате плит для плана %s",
+            plan_id,
+        )
 
 
 def _verify_plan_integrity(
@@ -80,6 +106,7 @@ def _verify_plan_integrity(
     rescue_leftovers: dict,
     db_path: str,
     plan_id: str,
+    _external_conn=None,
 ) -> list[str]:
     """Сверка item→pool, NULL-день, rescue-leftovers. pool→item не дублируем."""
     problems: list[str] = []
@@ -109,7 +136,9 @@ def _verify_plan_integrity(
                                 physical.get("unit_id"),
                             )
                         )
-    for row in _null_day_planned_rows(db_path, plan_id):
+    for row in _null_day_planned_rows(
+        db_path, plan_id, _external_conn=_external_conn
+    ):
         problems.append(
             "сирота: kp_plates.id=%s КП #%s %s с day_number=NULL"
             % (row[0], row[1], row[2])
@@ -125,6 +154,7 @@ def _run_plan_commit_gate(
     rescue_leftovers: dict,
     db_path: str,
     plan_id: str,
+    _external_conn=None,
 ) -> None:
     mode = _plan_commit_gate_mode()
     if mode == "off":
@@ -139,6 +169,7 @@ def _run_plan_commit_gate(
         rescue_leftovers=rescue_leftovers,
         db_path=db_path,
         plan_id=plan_id,
+        _external_conn=_external_conn,
     )
     if not problems:
         logger.info("[PLAN_GATE] расхождений нет")
@@ -146,13 +177,7 @@ def _run_plan_commit_gate(
     logger.warning("[PLAN_GATE] %d расхождений: %s", len(problems), problems)
     if mode != "enforce":
         return
-    try:
-        kp_db_plates.return_plan_plates_to_production(plan_id, db_path)
-    except Exception:
-        logger.exception(
-            "[PLAN_COMMIT] Ошибка при откате плит для плана %s",
-            plan_id,
-        )
+    _compensate_committed_plates(plan_id, db_path, _external_conn)
     raise PlanCommitError(
         "План не сохранён: обнаружены расхождения целостности. "
         + "; ".join(problems)
@@ -459,44 +484,45 @@ def _settle_promises_on_commit(
     entered_kp_ids: set[int],
     covered_weeks: tuple[date, ...],
     settle_fn: PromiseSettleFn | None,
+    _external_conn=None,
 ) -> None:
-    """Consume / overdue allocations on a connection owned by this commit.
+    """Consume / overdue allocations.
 
-    Plate rows are already marked (existing per-call commits). A settlement
-    write failure rolls plates back via ``return_plan_plates_to_production``.
-    Overdue is not an error — level 2, commit continues.
+    Без ``_external_conn`` погашение коммитит само себя, а ошибка записи
+    откатывает уже закоммиченные плиты. С внешним соединением запись
+    остаётся в транзакции вызывающего: просрочка не ошибка, сбой записи
+    пробрасывается без своего commit/rollback.
     ``settle_fn`` is injected from the app layer (core must not import app).
     """
     if not covered_weeks or settle_fn is None:
         return
 
-    conn = _connect(db_path)
+    own_conn = _external_conn is None
+    conn = _connect(db_path) if own_conn else _external_conn
     try:
-        conn.execute("PRAGMA foreign_keys = ON")
+        if own_conn:
+            conn.execute("PRAGMA foreign_keys = ON")
         settle_fn(
             entered_kp_ids=entered_kp_ids,
             covered_weeks=covered_weeks,
             _external_conn=conn,
         )
-        conn.commit()
+        if own_conn:
+            conn.commit()
     except Exception as exc:
-        conn.rollback()
         logger.exception(
-            "[PLAN_COMMIT] Ошибка погашения обещаний плана %s. Откатываю плиты.",
+            "[PLAN_COMMIT] Ошибка погашения обещаний плана %s.",
             plan_id,
         )
-        try:
-            kp_db_plates.return_plan_plates_to_production(plan_id, db_path)
-        except Exception:
-            logger.exception(
-                "[PLAN_COMMIT] Ошибка при откате плит для плана %s",
-                plan_id,
-            )
+        if own_conn:
+            conn.rollback()
+            _compensate_committed_plates(plan_id, db_path, None)
         raise PlanCommitError(
             "Не удалось погасить обещания при коммите плана."
         ) from exc
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def commit_plan_plates(
@@ -509,6 +535,7 @@ def commit_plan_plates(
     tracks_by_day: dict[str, list[dict[str, Any]]] | None = None,
     day_number_by_date: dict[str, int] | None = None,
     settle_fn: PromiseSettleFn | None = None,
+    _external_conn=None,
 ) -> CommitResult:
     """Помечает плиты как «в плане» и валидирует результат.
 
@@ -719,7 +746,8 @@ def commit_plan_plates(
                     if remaining <= 0:
                         break
                 for d, take in day_alloc:
-                    mark_result = kp_db_plates.mark_plates_as_planned(
+                    mark_result = _mark_plates_as_planned(
+                        _external_conn=_external_conn,
                         kp_id=int(kp_id),
                         plate_name=plate_name,
                         qty_to_plan=take,
@@ -760,7 +788,8 @@ def commit_plan_plates(
                 for d, take in day_alloc:
                     if take <= 0:
                         continue
-                    mark_result = kp_db_plates.mark_plates_as_planned(
+                    mark_result = _mark_plates_as_planned(
+                        _external_conn=_external_conn,
                         kp_id=int(kp_id),
                         plate_name=plate_name,
                         qty_to_plan=take,
@@ -797,7 +826,8 @@ def commit_plan_plates(
                     "и наличие kp_id/plate_name у secondary_cuts.",
                     identity, qty_to_mark,
                 )
-            mark_result = kp_db_plates.mark_plates_as_planned(
+            mark_result = _mark_plates_as_planned(
+                _external_conn=_external_conn,
                 kp_id=int(kp_id),
                 plate_name=plate_name,
                 qty_to_plan=qty_to_mark,
@@ -859,13 +889,7 @@ def commit_plan_plates(
                 pool_leftovers[:30],
                 plan_id,
             )
-            try:
-                kp_db_plates.return_plan_plates_to_production(plan_id, db_path)
-            except Exception:
-                logger.exception(
-                    "[PLAN_COMMIT] Ошибка при откате плит для плана %s",
-                    plan_id,
-                )
+            _compensate_committed_plates(plan_id, db_path, _external_conn)
             raise PlanCommitError(
                 "После привязки kp_plate_id остались непокрытые слоты пула (orphan)."
             )
@@ -875,6 +899,7 @@ def commit_plan_plates(
         rescue_leftovers=rescue_leftovers,
         db_path=db_path,
         plan_id=plan_id,
+        _external_conn=_external_conn,
     )
 
     logger.info(
@@ -890,13 +915,7 @@ def commit_plan_plates(
             result.plates_failed,
             result.plates_mismatched,
         )
-        try:
-            kp_db_plates.return_plan_plates_to_production(plan_id, db_path)
-        except Exception:
-            logger.exception(
-                "[PLAN_COMMIT] Ошибка при откате плит для плана %s",
-                plan_id,
-            )
+        _compensate_committed_plates(plan_id, db_path, _external_conn)
         raise PlanCommitError(
             f"Не удалось корректно пометить плиты в БД: "
             f"failed={result.plates_failed}, mismatched={result.plates_mismatched}."
@@ -908,6 +927,7 @@ def commit_plan_plates(
         entered_kp_ids=_entered_kp_ids(orders_with_qty),
         covered_weeks=_covered_weeks_from_tracks(tracks_by_day),
         settle_fn=settle_fn,
+        _external_conn=_external_conn,
     )
 
     return result

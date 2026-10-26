@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.config_and_data as _cfg  # noqa: F401
+from core.plate_runtime_state import new_plate_mutable_runtime_empty
 
 from viz_modules.procurement.trim import (
     _calc_trim_components,
@@ -799,7 +800,12 @@ def test_pb_66_108_breakdown_includes_long_cut_line(monkeypatch) -> None:
         get_reinforcement=lambda length_m, load_code, source="erm", db_path=":memory:", allow_fallback=True: 20.0,
     )
 
-    tables = build_component_breakdown({}, deps=deps, reinforcement_code=8)
+    tables = build_component_breakdown(
+        {},
+        deps=deps,
+        reinforcement_code=8,
+        runtime=new_plate_mutable_runtime_empty(),
+    )
     assert len(tables) == 1
     row_labels = [row[0] for row in tables[0]["rows"]]
     assert "Продольный рез" in row_labels

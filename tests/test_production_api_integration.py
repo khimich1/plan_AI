@@ -5,6 +5,7 @@ failure modes: 401 without cookie, 403 for disallowed roles, 409 plan_version_co
 """
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -467,8 +468,31 @@ def test_activate_and_delete_plan(
     production_api_client: TestClient,
     production_admin_cookie: dict[str, str],
     production_built_plan: dict[str, Any],
+    production_api_db: str,
 ) -> None:
+    """S21: DELETE returns queue plates to production and drops the document.
+
+    Stock rows keep their qty; only ``plan_id`` is cleared.
+    """
     plan_id = production_built_plan["plan"]["id"]
+
+    with sqlite3.connect(production_api_db) as conn:
+        before = dict(
+            conn.execute(
+                "SELECT status, COALESCE(SUM(qty), 0) FROM kp_plates GROUP BY status"
+            ).fetchall()
+        )
+        conn.execute(
+            """
+            INSERT INTO completed_plates (
+                kp_id, plate_name, length_m, width_m, load_class,
+                qty, completed_date, production_day, plan_id
+            ) VALUES (1, 'ПБ 60-12-8п', 6.0, 1.2, 800, 4, '27.07.2026', 1, ?)
+            """,
+            (plan_id,),
+        )
+        conn.commit()
+    assert int(before.get("в плане", 0)) > 0
 
     deleted = production_api_client.delete(
         f"{API_PREFIX}/plans/{plan_id}",
@@ -482,6 +506,132 @@ def test_activate_and_delete_plan(
         cookies=production_admin_cookie,
     )
     assert missing.status_code == 404
+
+    with sqlite3.connect(production_api_db) as conn:
+        after = dict(
+            conn.execute(
+                "SELECT status, COALESCE(SUM(qty), 0) FROM kp_plates GROUP BY status"
+            ).fetchall()
+        )
+        stock = conn.execute(
+            "SELECT qty, plan_id, kp_id FROM completed_plates"
+        ).fetchone()
+        plan_rows = conn.execute(
+            "SELECT COUNT(*) FROM production_plans WHERE id = ?",
+            (plan_id,),
+        ).fetchone()
+    assert int(after.get("в плане", 0)) == 0
+    assert int(after.get("в производстве", 0)) == int(before.get("в плане", 0))
+    assert stock == (4, None, 1)
+    assert plan_rows is not None and int(plan_rows[0]) == 0
+
+
+def _plate_status_qty(db_path: str) -> dict[str, int]:
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT status, COALESCE(SUM(qty), 0) FROM kp_plates GROUP BY status"
+        ).fetchall()
+    return {str(status): int(qty) for status, qty in rows}
+
+
+def test_append_stale_expected_version_returns_409_plan_and_plates_unchanged(
+    production_api_client: TestClient,
+    production_admin_cookie: dict[str, str],
+    production_api_db: str,
+) -> None:
+    """S20: append with a stale expected_version is 409; document and plates stay."""
+    built = paf.build_plan_via_api(production_api_client, production_admin_cookie)
+    plan_id = built["plan"]["id"]
+    version = int(built["plan"]["version"])
+
+    with sqlite3.connect(production_api_db) as conn:
+        conn.execute(
+            """
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, qty, status
+            ) VALUES (1, 2, ?, 6.0, 1.2, 800, 1, 'в производстве')
+            """,
+            (paf.PLATE_NAME,),
+        )
+        conn.commit()
+
+    before_plan = production_api_client.get(
+        f"{API_PREFIX}/plans/{plan_id}",
+        cookies=production_admin_cookie,
+    )
+    assert before_plan.status_code == 200, before_plan.text
+    before_body = before_plan.json()
+    plates_before = _plate_status_qty(production_api_db)
+
+    response = production_api_client.post(
+        f"{API_PREFIX}/plans/build",
+        json={
+            "start_date": paf.DATE_KEY,
+            "tracks_count": 1,
+            "filter_method": "all",
+            "active_plan_id": plan_id,
+            "expected_version": version + 100,
+        },
+        cookies=production_admin_cookie,
+    )
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == ERROR_CODE_PLAN_VERSION_CONFLICT
+    assert detail["details"]["plan_id"] == plan_id
+
+    after_plan = production_api_client.get(
+        f"{API_PREFIX}/plans/{plan_id}",
+        cookies=production_admin_cookie,
+    )
+    assert after_plan.status_code == 200, after_plan.text
+    after_body = after_plan.json()
+    assert after_body["version"] == before_body["version"]
+    assert after_body["days"] == before_body["days"]
+    assert _plate_status_qty(production_api_db) == plates_before
+
+
+def test_fill_targets_build_creates_new_plan_without_expected_version(
+    production_api_client: TestClient,
+    production_admin_cookie: dict[str, str],
+    production_api_db: str,
+) -> None:
+    """S20: fill_targets still creates a new plan and does not require a version."""
+    first = paf.build_plan_via_api(production_api_client, production_admin_cookie)
+    with sqlite3.connect(production_api_db) as conn:
+        conn.execute(
+            """
+            INSERT INTO kp_plates (
+                kp_id, position_number, plate_name, length_m, width_m,
+                load_class, qty, status
+            ) VALUES (1, 2, ?, 6.0, 1.2, 800, 1, 'в производстве')
+            """,
+            (paf.PLATE_NAME,),
+        )
+        conn.commit()
+    response = production_api_client.post(
+        f"{API_PREFIX}/plans/build",
+        json={
+            "start_date": paf.DATE_KEY,
+            "tracks_count": 1,
+            "filter_method": "all",
+            "active_plan_id": first["plan"]["id"],
+            "expected_version": int(first["plan"]["version"]) + 100,
+            "fill_targets": [{"date": "2026-04-22", "tracks": 1}],
+        },
+        cookies=production_admin_cookie,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["stats"]["is_new_plan"] is True
+    assert body["plan"]["id"] != first["plan"]["id"]
+
+    untouched = production_api_client.get(
+        f"{API_PREFIX}/plans/{first['plan']['id']}",
+        cookies=production_admin_cookie,
+    )
+    assert untouched.status_code == 200, untouched.text
+    assert int(untouched.json()["version"]) == int(first["plan"]["version"])
 
 
 def test_remove_track_plan_version_conflict(

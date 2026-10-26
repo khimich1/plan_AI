@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import copy
 import logging
 
 import pytest
 
-import core.config_and_data as cfg
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
+from core.plate_order_context import PlateOrderContext
 from app.services.optimization_service import OptimizationService
+from core.domain.plate_order import normalize_load_code
 from core.optimization import verify_coverage
 from core.optimization.secondary_batches import _batch_sizes_for_secondary_z_sec
 from core.plate_line_parser import parse_line
@@ -37,7 +37,7 @@ LINES = """
 
 
 def _norm_lc(value: float | int | None) -> int:
-    return cfg.normalize_load_code(value, default=8)
+    return normalize_load_code(value, default=8)
 
 
 def _build_merged_orders_2d() -> list[dict]:
@@ -70,39 +70,14 @@ def _build_merged_orders_2d() -> list[dict]:
     ]
 
 
-def _push_plate_load_cfg(plate_order: AppPlateOrder) -> tuple[dict, dict]:
-    saved_details = copy.deepcopy(cfg.PLATE_LOAD_DETAILS)
-    saved_dm_raw = copy.deepcopy(cfg.PLATE_LENGTH_DM_RAW)
-
-    cfg.PLATE_LOAD_DETAILS.clear()
-    for key, qty in plate_order.plate_load_details.items():
-        length, width_m, load_code, raw = key
-        cfg.PLATE_LOAD_DETAILS[(length, width_m, int(float(load_code)), raw)] = int(qty)
-
-    cfg.PLATE_LENGTH_DM_RAW.clear()
-    for key, raw in plate_order.plate_length_dm_raw.items():
-        length, width_m, load_code, raw_val = key
-        cfg.PLATE_LENGTH_DM_RAW[(length, width_m, int(float(load_code)), raw_val)] = raw
-
-    return saved_details, saved_dm_raw
-
-
-def _restore_plate_load_cfg(saved_details: dict, saved_dm_raw: dict) -> None:
-    cfg.PLATE_LOAD_DETAILS.clear()
-    cfg.PLATE_LOAD_DETAILS.update(saved_details)
-    cfg.PLATE_LENGTH_DM_RAW.clear()
-    cfg.PLATE_LENGTH_DM_RAW.update(saved_dm_raw)
-
-
 def _run_optimization() -> tuple[list[dict], dict]:
     orders_2d = _build_merged_orders_2d()
     plate_order = AppPlateOrder.from_orders_2d(orders_2d)
-    saved_details, saved_dm_raw = _push_plate_load_cfg(plate_order)
+    plate_ctx = PlateOrderContext.fresh_empty()
+    plate_ctx.hydrate_from_order(plate_order)
     service = OptimizationService()
-    try:
+    with plate_ctx.bound():
         context = service.optimize(plate_order, orders_2d=orders_2d)
-    finally:
-        _restore_plate_load_cfg(saved_details, saved_dm_raw)
     result = context.optimization_result or {}
     assert result, "optimizer returned empty result"
     return orders_2d, result

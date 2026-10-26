@@ -8,7 +8,10 @@ from core.optimization.layout_runtime_snapshot import (
     LayoutSequenceCfgSlice,
     build_layout_runtime_snapshot,
 )
-from core.plate_runtime_state import get_plate_mutable_runtime
+from core.plate_runtime_state import (
+    new_plate_mutable_runtime_empty,
+    plate_mutable_runtime_scope,
+)
 from viz_modules.layout_sequence.from_plan import _build_sequence_from_plan
 from viz_modules.layout_sequence.helpers import choose_best_separator, choose_closest_solid
 
@@ -23,7 +26,7 @@ def _layout_cfg(
     greedy: bool = True,
 ) -> LayoutSequenceCfgSlice:
     return LayoutSequenceCfgSlice.from_plate_runtime(
-        get_plate_mutable_runtime(),
+        new_plate_mutable_runtime_empty(),
         layout_greedy_reinf_merge=greedy,
         layout_reinforcement_order=reinforcement_order,  # type: ignore[arg-type]
     )
@@ -184,7 +187,8 @@ def test_desc_match_differs_from_asc_linear(
 
 
 def test_build_layout_runtime_snapshot_desc_forces_greedy_off() -> None:
-    rt = build_layout_runtime_snapshot(layout_reinforcement_order="desc")
+    with plate_mutable_runtime_scope(new_plate_mutable_runtime_empty()):
+        rt = build_layout_runtime_snapshot(layout_reinforcement_order="desc")
     assert rt.layout_cfg.layout_reinforcement_order == "desc"
     assert rt.layout_cfg.layout_greedy_reinf_merge is False
 

@@ -11,7 +11,6 @@ from starlette.requests import Request
 
 from app.dependencies.plate_context import get_plate_order_context
 from app.middleware.plate_runtime_isolation import PlateMutableRuntimeIsolationMiddleware
-from core import config_and_data as cfg
 from core.optimization.context import new_optimization_context_state
 from core.domain.plate_order import PlateOrder, get_current_plate_order
 from core.plate_order_context import PlateOrderContext, run_in_order_context
@@ -35,8 +34,8 @@ def test_bound_nests_plate_and_opt_scopes() -> None:
 
     with ctx.bound():
         assert get_plate_mutable_runtime() is ctx.plates
-        cfg.PLATES_1_2.append(1.0)
-        assert len(cfg.PLATES_1_2) == 2
+        get_plate_mutable_runtime().plates_1_2.append(1.0)
+        assert len(get_plate_mutable_runtime().plates_1_2) == 2
         optimization.OPT_PLAN["worker"] = "inside"
         assert optimization.OPT_PLAN["marker"] == "bound"
         assert optimization.OPT_PLAN["worker"] == "inside"
@@ -117,7 +116,7 @@ def _probe_app() -> FastAPI:
     def _probe(
         ctx: PlateOrderContext = Depends(get_plate_order_context),
     ) -> dict[str, bool | int]:
-        cfg.PLATES_1_2.append(1.0)
+        ctx.plates.plates_1_2.append(1.0)
         return {
             "ctx_is_fresh": len(ctx.plates.plates_1_2) == 1,
             "runtime_matches": get_plate_mutable_runtime() is ctx.plates,
@@ -136,15 +135,6 @@ def test_middleware_wires_request_state_and_bound_scope() -> None:
     assert r2.status_code == 200
     assert r1.json() == {"ctx_is_fresh": True, "runtime_matches": True}
     assert r2.json() == {"ctx_is_fresh": True, "runtime_matches": True}
-
-
-def test_apply_to_globals_emits_deprecation_warning() -> None:
-    order = PlateOrder()
-    order.plates_1_2 = [3.39]
-    ctx = PlateOrderContext.fresh_empty()
-    with ctx.bound():
-        with pytest.warns(DeprecationWarning, match="apply_to_globals"):
-            order.apply_to_globals()
 
 
 def test_get_current_plate_order_emits_deprecation_warning() -> None:

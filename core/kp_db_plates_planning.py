@@ -21,6 +21,7 @@ def mark_plates_as_planned(
     *,
     actor: str | None = None,
     day_number: Optional[int] = None,
+    _external_conn: Optional[sqlite3.Connection] = None,
 ) -> Dict[str, object]:
     """
     Помечает плиты как 'в плане' при сохранении плана.
@@ -45,17 +46,24 @@ def mark_plates_as_planned(
         day_number: номер дня производства (P5). Если задан — пишется в
             ``kp_plates.day_number`` и в audit-лог. ``None`` оставляет
             старое поведение (день не зафиксирован — legacy).
+        _external_conn: если задано — работа в транзакции вызывающего.
+            Не делает commit/rollback и не закрывает соединение.
+            Исключения пробрасываются. Без аргумента функция сама
+            открывает соединение, коммитит и закрывает.
 
     Возвращает:
         Dict с подробным результатом пометки. ``updated_ids`` — id строк
         kp_plates, которые получили статус «в плане» (нужно вызывающему
         слою, чтобы записать ``kp_plate_id`` в plan.json/items).
     """
-    conn = _connect(db_path)
+    own_conn = _external_conn is None
+    conn = _connect(db_path) if own_conn else _external_conn
+    assert conn is not None
     requested_qty = max(int(qty_to_plan or 0), 0)
     
     try:
-        conn.execute('PRAGMA foreign_keys = ON')
+        if own_conn:
+            conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         
         # ИСПРАВЛЕНО: Находим ВСЕ плиты со статусом 'в производстве' (без LIMIT 1)
@@ -172,7 +180,8 @@ def mark_plates_as_planned(
                 id_qty_pairs.append((plate_id, qty_for_plan))
         
         print(f"[DB] ✅ Итого помечено {processed_count} плит '{plate_name}' как 'в плане' (план {plan_id})")
-        conn.commit()
+        if own_conn:
+            conn.commit()
         return {
             'success': True,
             'requested_qty': requested_qty,
@@ -186,22 +195,25 @@ def mark_plates_as_planned(
         }
         
     except Exception as e:
-        print(f"[DB] ❌ Ошибка при пометке плиты как 'в плане': {e}")
-        conn.rollback()
-        return {
-            'success': False,
-            'requested_qty': requested_qty,
-            'available_qty': 0,
-            'processed_count': 0,
-            'remaining_unplanned': requested_qty,
-            'split_count': 0,
-            'updated_ids': [],
-            'id_qty_pairs': [],
-            'error': str(e),
-        }
+        if own_conn:
+            print(f"[DB] ❌ Ошибка при пометке плиты как 'в плане': {e}")
+            conn.rollback()
+            return {
+                'success': False,
+                'requested_qty': requested_qty,
+                'available_qty': 0,
+                'processed_count': 0,
+                'remaining_unplanned': requested_qty,
+                'split_count': 0,
+                'updated_ids': [],
+                'id_qty_pairs': [],
+                'error': str(e),
+            }
+        raise
     
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def return_plates_to_production(
@@ -560,7 +572,12 @@ def return_plate_rows_for_plan(
             conn.close()
 
 
-def return_plan_plates_to_production(plan_id: str, db_path: str = DEFAULT_DB) -> int:
+def return_plan_plates_to_production(
+    plan_id: str,
+    db_path: str = DEFAULT_DB,
+    *,
+    _external_conn: Optional[sqlite3.Connection] = None,
+) -> int:
     """
     Возвращает ВСЕ плиты плана обратно в производство.
     
@@ -573,14 +590,21 @@ def return_plan_plates_to_production(plan_id: str, db_path: str = DEFAULT_DB) ->
     Аргументы:
         plan_id: ID плана
         db_path: путь к базе данных
+        _external_conn: если задано — работа в транзакции вызывающего.
+            Не делает commit/rollback и не закрывает соединение.
+            Исключения пробрасываются. Без аргумента функция сама
+            открывает соединение, коммитит и закрывает.
     
     Возвращает:
         Количество возвращённых плит (записей)
     """
-    conn = _connect(db_path)
+    own_conn = _external_conn is None
+    conn = _connect(db_path) if own_conn else _external_conn
+    assert conn is not None
     
     try:
-        conn.execute('PRAGMA foreign_keys = ON')
+        if own_conn:
+            conn.execute('PRAGMA foreign_keys = ON')
         cur = conn.cursor()
         
         # Считаем сколько плит вернём
@@ -605,17 +629,21 @@ def return_plan_plates_to_production(plan_id: str, db_path: str = DEFAULT_DB) ->
             WHERE plan_id = ?
         ''', (plan_id,))
         
-        conn.commit()
+        if own_conn:
+            conn.commit()
         print(f"[DB] ✅ Возвращено {records_count} записей ({qty_total} плит) из плана {plan_id} в производство")
         return records_count
         
     except Exception as e:
-        print(f"[DB] ❌ Ошибка при возврате плит плана в производство: {e}")
-        conn.rollback()
-        return 0
+        if own_conn:
+            print(f"[DB] ❌ Ошибка при возврате плит плана в производство: {e}")
+            conn.rollback()
+            return 0
+        raise
     
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def recover_stuck_plates(db_path: str = DEFAULT_DB) -> int:

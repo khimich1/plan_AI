@@ -51,10 +51,16 @@ class PlanPersistPort(Protocol):
 
     def get(self, plan_id: str) -> dict[str, Any] | None: ...
 
-    def create(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+    def create(
+        self, payload: dict[str, Any], *, _external_conn: Any = None
+    ) -> dict[str, Any]: ...
 
     def save(
-        self, payload: dict[str, Any], expected_version: int
+        self,
+        payload: dict[str, Any],
+        expected_version: int,
+        *,
+        _external_conn: Any = None,
     ) -> dict[str, Any]: ...
 
     def set_active(self, plan_id: str) -> None: ...

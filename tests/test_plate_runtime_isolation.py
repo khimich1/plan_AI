@@ -129,7 +129,11 @@ def test_commercial_generate_files_schema_uses_request_context(
             "order": MagicMock(),
             "optimization_context": MagicMock(),
             "order_data": [{"name": "ПБ 78-12-8п", "unit_price": 100.0, "qty": 1}],
-            "metadata": {"manager_name": "", "client_name": "Клиент"},
+            "metadata": {
+                "manager_name": "",
+                "client_name": "Клиент",
+                "breakdown_tables": [{"name": "уже есть", "rows": []}],
+            },
         },
     )
     monkeypatch.setattr(
@@ -251,3 +255,23 @@ def test_run_planning_pipeline_reuses_plate_order_context(
         )
 
     assert runtime_matches == [True]
+
+
+def test_run_cpu_bound_with_ctx_uses_that_order_and_without_ctx_does_not_invent_one() -> None:
+    from app.concurrency.cpu_bound import run_cpu_bound
+    from core.plate_runtime_state import get_plate_mutable_runtime
+
+    ctx = PlateOrderContext.fresh_empty()
+    ctx.plates.plates_1_2.append(4.2)
+
+    def _read() -> float:
+        return get_plate_mutable_runtime().plates_1_2[0]
+
+    seen = asyncio.run(run_cpu_bound(_read, plate_order_ctx=ctx))
+    assert seen == pytest.approx(4.2)
+
+    def _unbound() -> None:
+        get_plate_mutable_runtime()
+
+    with pytest.raises(RuntimeError, match="заказ плит не привязан"):
+        asyncio.run(run_cpu_bound(_unbound))

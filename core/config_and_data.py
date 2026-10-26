@@ -3,15 +3,13 @@
 """
 Конфигурация и данные проекта:
 - Константы (размеры дорожки, цены резов) и ``get_config()`` → :class:`core.config.app_settings.AppConfig`
-- Глобальные списки плит (legacy-имена PLATES_* / PLATE_* через PEP 562 ``__getattr__`` → рантайм)
 - Парсинг текста пользователя
 
-Мутабельные имена заказа не назначаются через ``cfg.NAME = ...``; только чтение и in-place мутация объектов.
+Заказ плит читается только из привязанного ``PlateMutableRuntime`` (``get_plate_mutable_runtime`` внутри ``bound()``).
 """
 import math
 import re
 import logging
-import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 from .project_paths import (
@@ -22,8 +20,6 @@ from .project_paths import (
 )
 from .project_settings import WEIGHT_SOURCE
 from .plate_runtime_state import (
-    MUTABLE_ATTR_MAP,
-    MUTABLE_LEGACY_NAMES,
     bind_plate_mutable_runtime,
     get_plate_mutable_runtime,
     new_plate_mutable_runtime_empty,
@@ -61,9 +57,8 @@ logger = logging.getLogger(__name__)
 # Пути и env: см. core.project_paths / core.project_settings (реэкспорт для обратной совместимости).
 
 # ==================== МУТАБЕЛЬНОЕ СОСТОЯНИЕ ЗАКАЗА (PLATE-CTX-001) ====================
-# Списки PLATES_* / PLATE_LOAD_DETAILS и связанные структуры живут в
-# core.plate_runtime_state (thread-local + опциональный ContextVar для asyncio).
-# Доступ через атрибуты этого модуля — см. ``__getattr__`` в конце файла (PEP 562).
+# Списки заказа и связанные структуры живут в core.plate_runtime_state
+# (ContextVar внутри bound(); вне bound() — сторож PLATE_RUNTIME_STRICT).
 
 
 # ==================== КЛАСС ЗАКАЗА (PlateOrder) ====================
@@ -438,21 +433,5 @@ def clear_plate_metadata() -> None:
     get_plate_mutable_runtime().plate_metadata.clear()
 
 
-def __getattr__(name: str) -> Any:
-    if name in MUTABLE_LEGACY_NAMES:
-        attr = MUTABLE_ATTR_MAP[name]
-        warnings.warn(
-            (
-                f"config_and_data.{name} is deprecated; use "
-                f"get_plate_mutable_runtime().{attr} instead"
-            ),
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return getattr(get_plate_mutable_runtime(), attr)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 def __dir__() -> list[str]:
-    # Не рекламируем PEP 562 proxy-имена: web path — get_plate_mutable_runtime().
     return sorted(globals().keys())

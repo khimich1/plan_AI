@@ -90,6 +90,7 @@ class PersistConfig:
     layout_reinforcement_order: LayoutReinforcementOrder = "asc"
     active_plan_id: str | None = None
     plan_name: str | None = None
+    expected_version: int | None = None
     fill_targets: tuple[dict[str, Any], ...] | None = None
     max_tracks_per_day: int = DEFAULT_MAX_TRACKS_PER_DAY
     # Per-day max (≤ hard cap). When set, free = day_max − occupied uses this map.

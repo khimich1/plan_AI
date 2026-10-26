@@ -163,6 +163,56 @@ def save_plan(plan_data: dict) -> bool:
         return False
 
 
+def commit_plan_deletion(plan_id: str, *, repo, db_path: str) -> bool:
+    """One commit: queue plates back to production, clear SGP plan_id, delete document.
+
+    Stock rows (``completed_plates``) keep their qty. HTTP delete and
+    :func:`delete_plan` both call this function.
+    """
+    try:
+        _validate_plan_id(plan_id)
+    except InvalidPlanIdError:
+        return False
+    if repo.load_plan(plan_id) is None:
+        return False
+
+    from app.services.sgp_service import SgpService
+    from core.kp_db_common import _connect
+
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        returned_count = kp_db.return_plan_plates_to_production(
+            plan_id, db_path, _external_conn=conn
+        )
+        cleared = SgpService(db_path=db_path).clear_plan_links(
+            plan_id, _external_conn=conn
+        )
+        if not repo.delete(plan_id, _external_conn=conn):
+            conn.rollback()
+            return False
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    if returned_count > 0:
+        logger.info(
+            "При удалении плана %s: возвращено %s записей плит в производство",
+            plan_id,
+            returned_count,
+        )
+    if cleared:
+        logger.info(
+            "При удалении плана %s: обнулён plan_id у %s строк СГП",
+            plan_id,
+            cleared,
+        )
+    return True
+
+
 def delete_plan(plan_id: str) -> bool:
     """Удаляет план из SQLite и возвращает плиты в производство."""
     try:
@@ -175,37 +225,22 @@ def delete_plan(plan_id: str) -> bool:
         return False
 
     db_path = str(get_settings().plita_db_path)
-    returned_count = kp_db.return_plan_plates_to_production(plan_id, db_path)
-    if returned_count > 0:
-        logger.info(
-            "При удалении плана %s: возвращено %s записей плит в производство",
-            plan_id,
-            returned_count,
-        )
-
-    # SGP-503: плиты на СГП остаются; только снимаем plan_id
-    try:
-        from app.services.sgp_service import SgpService
-
-        cleared = SgpService(db_path=db_path).clear_plan_links(plan_id)
-        if cleared:
-            logger.info(
-                "При удалении плана %s: обнулён plan_id у %s строк СГП",
-                plan_id,
-                cleared,
-            )
-    except Exception:
-        logger.exception("Не удалось очистить plan_id СГП для плана %s", plan_id)
-
     active_id = repo.get_active_plan_id()
-    if not repo.delete(plan_id):
+    if not commit_plan_deletion(plan_id, repo=repo, db_path=db_path):
         return False
 
     if active_id == plan_id:
-        remaining = [entry["id"] for entry in repo.list_metadata().get("plans", [])]
-        if remaining:
-            repo.set_active(remaining[0])
-        logger.info("Активный план %s удалён; новый active=%s", plan_id, remaining[:1])
+        try:
+            remaining = [entry["id"] for entry in repo.list_metadata().get("plans", [])]
+            if remaining:
+                repo.set_active(remaining[0])
+            logger.info(
+                "Активный план %s удалён; новый active=%s", plan_id, remaining[:1]
+            )
+        except Exception:
+            logger.exception(
+                "План %s удалён, метку активного плана не перенесли", plan_id
+            )
 
     logger.info("План %s удалён из SQLite", plan_id)
     return True

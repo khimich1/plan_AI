@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.config_and_data as cfg
+from core.plate_order_context import PlateOrderContext
 
 
 def test_load_codes_and_widths():
@@ -32,9 +33,17 @@ def test_load_codes_and_widths():
     """
     
     print(f"\nTest order:\n{test_order}")
-    
-    # Парсим заказ
+
+    ctx = PlateOrderContext.fresh_empty()
+    with ctx.bound():
+        _assert_load_codes(test_order)
+
+
+def _assert_load_codes(test_order: str) -> None:
+    from core.plate_runtime_state import get_plate_mutable_runtime
+
     unparsed, _contributions, _line_loads = cfg.set_plate_lists_from_text(test_order)
+    details = get_plate_mutable_runtime().plate_load_details
     
     if unparsed:
         print(f"\nWARNING: Unparsed lines: {unparsed}")
@@ -43,7 +52,7 @@ def test_load_codes_and_widths():
     
     # Проверяем PLATE_LOAD_DETAILS
     print("\nPLATE_LOAD_DETAILS (new format with load codes):")
-    for key, qty in sorted(cfg.PLATE_LOAD_DETAILS.items()):
+    for key, qty in sorted(details.items()):
         length, width, load = key[0], key[1], key[2]
         print(f"  {qty}x plate {length}m x {width}m with load {load}п ({int(width*1000)}mm)")
     
@@ -54,8 +63,8 @@ def test_load_codes_and_widths():
     
     # Плиты 7.3м × 1.2м: 93 с нагрузкой 8п + 4 с нагрузкой 10п
     # Ключ 4-кортеж: (length, width, load_code, length_dm_raw_normalized)
-    qty_8p = sum(qty for key, qty in cfg.PLATE_LOAD_DETAILS.items() if abs(key[0] - 7.3) < 0.01 and abs(key[1] - 1.2) < 0.01 and key[2] == 8)
-    qty_10p = sum(qty for key, qty in cfg.PLATE_LOAD_DETAILS.items() if abs(key[0] - 7.3) < 0.01 and abs(key[1] - 1.2) < 0.01 and key[2] == 10)
+    qty_8p = sum(qty for key, qty in details.items() if abs(key[0] - 7.3) < 0.01 and abs(key[1] - 1.2) < 0.01 and key[2] == 8)
+    qty_10p = sum(qty for key, qty in details.items() if abs(key[0] - 7.3) < 0.01 and abs(key[1] - 1.2) < 0.01 and key[2] == 10)
     
     print(f"  Plates 7.3m x 1.2m with 8п: {qty_8p} pcs (expected: 93)")
     print(f"  Plates 7.3m x 1.2m with 10п: {qty_10p} pcs (expected: 4)")
@@ -70,7 +79,7 @@ def test_load_codes_and_widths():
     print("=" * 70)
     
     # load_code хранится как float 12.5 (без округления) — floor применяется при использовании
-    qty_12_5p = sum(qty for key, qty in cfg.PLATE_LOAD_DETAILS.items() if abs(key[0] - 5.5) < 0.01 and abs(key[1] - 1.2) < 0.01 and abs(key[2] - 12.5) < 0.01)
+    qty_12_5p = sum(qty for key, qty in details.items() if abs(key[0] - 5.5) < 0.01 and abs(key[1] - 1.2) < 0.01 and abs(key[2] - 12.5) < 0.01)
     print(f"  Plates 5.5m x 1.2m with 12,5п: {qty_12_5p} pcs (expected: 6)")
 
     assert qty_12_5p == 6, f"Expected 6 plates with 12,5п, got {qty_12_5p}"

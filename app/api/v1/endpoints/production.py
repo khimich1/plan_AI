@@ -108,6 +108,11 @@ async def build_plan_from_filters(
     user: dict = Depends(require_roles("admin", "production")),
     service: ProductionService = Depends(get_production_service),
 ) -> BuildPlanResponse:
+    reserve_actor = user.get("username") or (
+        str(user["id"]) if user.get("id") is not None else None
+    )
+    if isinstance(reserve_actor, str) and not reserve_actor.strip():
+        reserve_actor = None
     try:
         result = await run_cpu_bound(
             lambda: service.build_plan_from_filters(
@@ -131,6 +136,8 @@ async def build_plan_from_filters(
                     if payload.sgp_reservations
                     else None
                 ),
+                reserve_actor=reserve_actor,
+                expected_version=payload.expected_version,
             ),
             plate_order_ctx=plate_order_ctx,
         )

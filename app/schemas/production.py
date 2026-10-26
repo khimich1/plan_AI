@@ -227,6 +227,7 @@ class BuildPlanRequest(BaseModel):
     selected_plate_ids: dict[int, list[int]] = Field(default_factory=dict)
     selected_plate_qty: dict[int, dict[int, int]] = Field(default_factory=dict)
     active_plan_id: str | None = None
+    expected_version: int | None = None
     plan_name: str | None = None
     fill_targets: list[FillTargetItem] | None = None
     layout_reinforcement_order: LayoutReinforcementOrder = "asc"

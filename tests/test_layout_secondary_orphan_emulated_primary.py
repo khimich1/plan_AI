@@ -8,16 +8,15 @@ import pytest
 
 from core.config_and_data import make_plate_name
 from core.domain.plate_order import normalize_load_code
-from core.plate_runtime_state import get_plate_mutable_runtime
+from core.optimization.layout_runtime_snapshot import empty_layout_sequence_cfg
 from core.production.planning import _build_assignment_gap_fallback_tracks
 from app.domain.models.plate_order import PlateOrder as AppPlateOrder
 from app.services.optimization_service import OptimizationService
 from viz_modules.layout_sequence import _build_sequence_from_plan
 
+from core.plate_order_context import PlateOrderContext
 from tests.test_layout_secondary_unmatched_parent_user_list import (
     _build_merged_orders_2d,
-    _push_plate_load_cfg,
-    _restore_plate_load_cfg,
     _norm_lc,
 )
 
@@ -26,12 +25,11 @@ from tests.test_layout_secondary_unmatched_parent_user_list import (
 def user_list_opt_context():
     orders_2d = _build_merged_orders_2d()
     plate_order = AppPlateOrder.from_orders_2d(orders_2d)
-    saved_d, saved_raw = _push_plate_load_cfg(plate_order)
+    plate_ctx = PlateOrderContext.fresh_empty()
+    plate_ctx.hydrate_from_order(plate_order)
     svc = OptimizationService()
-    try:
+    with plate_ctx.bound():
         ctx = svc.optimize(plate_order, orders_2d=orders_2d)
-    finally:
-        _restore_plate_load_cfg(saved_d, saved_raw)
     assert ctx.optimization_result
     return orders_2d, plate_order, svc, ctx
 
@@ -93,7 +91,9 @@ def test_synthetic_orphan_from_minimal_plan_variant_A():
         ],
     }
 
-    flat = _build_sequence_from_plan(plan, _label, reinforcement_map={})
+    flat = _build_sequence_from_plan(
+        plan, _label, reinforcement_map={}, layout_cfg=empty_layout_sequence_cfg()
+    )
     hit = next(
         (x for x in flat if x.get("unit_id") == "sec-orphan-1" and x.get("mode") == "split"),
         None,
@@ -126,11 +126,9 @@ def test_orphan_secondary_emulated_split_has_sec_unit_id_and_rest_1200_minus_wid
     assert 0 < out_w < 1200
     expected_rest_mm = 1200 - out_w
 
-    saved_d, saved_raw = _push_plate_load_cfg(plate_order)
-    try:
-        flat = _build_sequence_from_plan(res, _label, reinforcement_map={})
-    finally:
-        _restore_plate_load_cfg(saved_d, saved_raw)
+    flat = _build_sequence_from_plan(
+        res, _label, reinforcement_map={}, layout_cfg=empty_layout_sequence_cfg()
+    )
 
     matches = [
         x
@@ -153,30 +151,28 @@ def test_orphan_emulated_split_not_in_fallback_track(user_list_opt_context):
         pytest.skip("нет secondary без parent")
     sid = str(orphans[0].get("secondary_instance_id"))
 
-    saved_d, saved_raw = _push_plate_load_cfg(plate_order)
-    try:
-        seq = _build_sequence_from_plan(res, _label, reinforcement_map={})
-        tracks = [
-            {
-                "label": "Д1",
-                "items": seq,
-                "length": 100.0,
-            }
-        ]
-        assignments = list(res.get("plate_assignments") or [])
-        missing_fb, _ctr = _build_assignment_gap_fallback_tracks(
-            plate_assignments=assignments,
-            tracks_list=tracks,
-        )
-        sec_assign_ids = {
-            str(a.get("unit_id"))
-            for a in assignments
-            if a.get("source") == "secondary" and a.get("unit_id")
+    seq = _build_sequence_from_plan(
+        res, _label, reinforcement_map={}, layout_cfg=empty_layout_sequence_cfg()
+    )
+    tracks = [
+        {
+            "label": "Д1",
+            "items": seq,
+            "length": 100.0,
         }
-        if sid not in sec_assign_ids:
-            pytest.skip("sec id не в plate_assignments")
-        assert missing_fb == [], (
-            f"сирота {sid} должна быть в основной дорожке, не FALLBACK: got {missing_fb!r}"
-        )
-    finally:
-        _restore_plate_load_cfg(saved_d, saved_raw)
+    ]
+    assignments = list(res.get("plate_assignments") or [])
+    missing_fb, _ctr = _build_assignment_gap_fallback_tracks(
+        plate_assignments=assignments,
+        tracks_list=tracks,
+    )
+    sec_assign_ids = {
+        str(a.get("unit_id"))
+        for a in assignments
+        if a.get("source") == "secondary" and a.get("unit_id")
+    }
+    if sid not in sec_assign_ids:
+        pytest.skip("sec id не в plate_assignments")
+    assert missing_fb == [], (
+        f"сирота {sid} должна быть в основной дорожке, не FALLBACK: got {missing_fb!r}"
+    )
