@@ -105,7 +105,10 @@ const parseError = async (response: Response, path: string): Promise<never> => {
         message = response.statusText || message;
       }
     } else if (text.trimStart().startsWith("<") || contentType.includes("text/html")) {
-      message = `Сервер вернул HTML вместо JSON (${response.status}) для ${path}. Проверьте URL API и прокси dev-сервера.`;
+      message =
+        response.status === 413
+          ? `Файл больше лимита прокси (413) для ${path}. Nginx отклонил загрузку до API: нужен client_max_body_size не меньше 50 МБ.`
+          : `Сервер вернул HTML вместо JSON (${response.status}) для ${path}. Проверьте URL API и прокси dev-сервера.`;
     }
   } catch {
     message = response.statusText || message;

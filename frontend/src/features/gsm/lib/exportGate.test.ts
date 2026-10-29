@@ -293,6 +293,61 @@ describe("planKit", () => {
     ]);
   });
 
+  it("excludes a closing fuel that cannot take the next first fill", () => {
+    const plan = planKit(
+      [
+        overview(1, {
+          fuel_end_last: 51.06,
+          tank_volume_liters: 70,
+          next_first_fill_liters: 30,
+        }),
+        overview(2),
+      ],
+      null,
+      "2026-08-01",
+    );
+    expect(plan.cleanIds).toEqual([2]);
+    expect(plan.excluded).toEqual([
+      {
+        vehicleId: 1,
+        label: "Машина 1 (A1)",
+        reason: "Пересчитайте Август: нет места под первую заправку следующего месяца",
+      },
+    ]);
+  });
+
+  it("keeps the row when no later fill is known", () => {
+    const plan = planKit(
+      [
+        overview(1, {
+          fuel_end_last: 51.06,
+          tank_volume_liters: 70,
+          next_first_fill_liters: null,
+        }),
+      ],
+      null,
+      "2026-08-01",
+    );
+    expect(plan.cleanIds).toEqual([1]);
+    expect(plan.excluded).toEqual([]);
+  });
+
+  it("keeps the row when closing fuel still accepts the next first fill", () => {
+    const plan = planKit(
+      [
+        overview(1, {
+          fuel_end_last: 39.75,
+          tank_volume_liters: 70,
+          next_first_fill_liters: 30,
+        }),
+      ],
+      null,
+      "2026-08-01",
+    );
+    expect(plan.cleanIds).toEqual([1]);
+    expect(plan.excluded).toEqual([]);
+  });
+
   it("excludes chain_broken on the current period with a non-red reason", () => {
     const plan = planKit(
       [overview(1, { chain_broken: true, red_days: 0 })],

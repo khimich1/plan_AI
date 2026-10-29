@@ -5,7 +5,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.config_and_data import get_exact_width
-from core.plate_runtime_state import get_plate_mutable_runtime
+from core.plate_runtime_state import (
+    PlateMutableRuntime,
+    get_plate_mutable_runtime,
+    plate_mutable_runtime_scope,
+)
 from core.optimization import OPT_PLAN
 
 from .load_context import LoadCodeFn, resolve_procurement_load_context
@@ -17,8 +21,29 @@ def build_procurement_items(
     *,
     plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
     get_load_code: LoadCodeFn | None = None,
+    runtime: PlateMutableRuntime | None = None,
 ):
-    """Формирует реальные позиции закупки из заказа пользователя."""
+    """Формирует реальные позиции закупки из заказа пользователя.
+
+    ``runtime`` — явный заказ. Без него читается уже открытый ``bound()``.
+    """
+    if runtime is None:
+        return _build_procurement_items(
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+    with plate_mutable_runtime_scope(runtime):
+        return _build_procurement_items(
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+
+
+def _build_procurement_items(
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+):
     rt = get_plate_mutable_runtime()
     items = []
     details, resolve_load = resolve_procurement_load_context(

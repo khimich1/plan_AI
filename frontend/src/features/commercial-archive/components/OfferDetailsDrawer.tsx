@@ -788,6 +788,12 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               <div>
                 <div style={{ color: "#667085", fontSize: "0.85rem" }}>Клиент</div>
                 <div style={{ fontWeight: 600 }}>{offer.customer_name || "—"}</div>
+                {offer.counterparty_id != null &&
+                  offer.invoice_export_block?.trim() === "Нет действующего договора поставки" && (
+                    <div style={{ color: "#b54708", fontSize: "0.9rem", marginTop: "0.2rem" }}>
+                      в реестре договора нет
+                    </div>
+                  )}
                 {offer.counterparty_id == null && (
                   <span
                     data-testid="no-1c-badge"

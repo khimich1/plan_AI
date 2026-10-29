@@ -7,11 +7,13 @@ from datetime import date
 from typing import Any, Literal
 
 from app.repositories.gsm_repository import GsmRepository
+from app.services.gsm_boundary import attach_next_first_fills
 from app.services.gsm_overview_service import _chain_broken
 
 CODE_TAIL = "gsm_kit_tail"
 CODE_CHAIN = "gsm_kit_chain"
 CODE_RED = "gsm_kit_red"
+CODE_BOUNDARY = "gsm_kit_boundary"
 
 KitPurpose = Literal["kit", "generate"]
 
@@ -54,6 +56,26 @@ def _month_label(yyyy_mm: str) -> str:
     return yyyy_mm
 
 
+def boundary_headroom_blocked(
+    *,
+    closing_fuel: float | None,
+    tank_volume_liters: float | None,
+    next_first_fill: float | None,
+) -> bool:
+    """True when the period's closing fuel cannot accept the next first fill."""
+    if next_first_fill is None or next_first_fill <= 0:
+        return False
+    if closing_fuel is None or tank_volume_liters is None:
+        return False
+    return float(closing_fuel) > float(tank_volume_liters) - float(next_first_fill) + 1e-9
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
 def evaluate_kit_vehicle(
     *,
     vehicle_id: int,
@@ -63,6 +85,9 @@ def evaluate_kit_vehicle(
     chain_broken: bool,
     red_days: int,
     purpose: KitPurpose = "kit",
+    closing_fuel: float | None = None,
+    tank_volume_liters: float | None = None,
+    next_first_fill: float | None = None,
 ) -> KitEligibility:
     """Decide kit/generate eligibility from the same fields as fleet overview."""
     current_ym = _period_ym(period_from)
@@ -102,6 +127,20 @@ def evaluate_kit_vehicle(
                 f"Пересчитайте {_month_label(current_ym)}: бак не сходится с предыдущим"
             ),
         )
+    if boundary_headroom_blocked(
+        closing_fuel=closing_fuel,
+        tank_volume_liters=tank_volume_liters,
+        next_first_fill=next_first_fill,
+    ):
+        return KitEligibility(
+            vehicle_id=vehicle_id,
+            allowed=False,
+            code=CODE_BOUNDARY,
+            message=(
+                f"Пересчитайте {_month_label(current_ym)}: "
+                "нет места под первую заправку следующего месяца"
+            ),
+        )
     return KitEligibility(vehicle_id=vehicle_id, allowed=True, code=None, message=None)
 
 
@@ -120,6 +159,9 @@ def evaluate_from_overview_row(
         chain_broken=_chain_broken(row),
         red_days=int(row.get("red_days") or 0),
         purpose=purpose,
+        closing_fuel=_optional_float(row.get("fuel_end_last")),
+        tank_volume_liters=_optional_float(row.get("tank_volume_liters")),
+        next_first_fill=_optional_float(row.get("next_first_fill_liters")),
     )
 
 
@@ -129,10 +171,9 @@ def overview_rows_by_vehicle(
     period_from: date,
     period_to: date,
 ) -> dict[int, dict[str, Any]]:
-    return {
-        int(row["vehicle_id"]): row
-        for row in repo.fleet_overview(period_from=period_from, period_to=period_to)
-    }
+    rows = list(repo.fleet_overview(period_from=period_from, period_to=period_to))
+    attach_next_first_fills(repo, rows, after=period_to)
+    return {int(row["vehicle_id"]): row for row in rows}
 
 
 def evaluate_vehicle(

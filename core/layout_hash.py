@@ -110,6 +110,12 @@ def _default_plate_label(length: float, width_m: float, load_code: int | None = 
 
 def build_golden_sequence() -> list[dict[str, Any]]:
     """Sequence эталонного плана через ``_build_sequence_from_plan``."""
+    from core.optimization.layout_runtime_snapshot import empty_layout_sequence_cfg
     from viz_modules.layout_sequence.from_plan import _build_sequence_from_plan
 
-    return _build_sequence_from_plan(golden_plan(), _default_plate_label, {})
+    return _build_sequence_from_plan(
+        golden_plan(),
+        _default_plate_label,
+        {},
+        layout_cfg=empty_layout_sequence_cfg(),
+    )

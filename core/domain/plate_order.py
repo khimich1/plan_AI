@@ -13,10 +13,6 @@ from ..runtime import NomenclatureCacheFiller, get_default_nomenclature_cache_fi
 
 logger = logging.getLogger(__name__)
 
-_APPLY_TO_GLOBALS_DEPRECATION = (
-    "PlateOrder.apply_to_globals() is deprecated (A1-002); "
-    "use PlateOrderContext.hydrate_from_order() with ctx.bound() or run_in_order_context()."
-)
 _GET_CURRENT_PLATE_ORDER_DEPRECATION = (
     "get_current_plate_order() is deprecated (A1-002); "
     "read from PlateOrderContext.plates or hydrate_from_order() instead."
@@ -316,53 +312,6 @@ class PlateOrder:
                 }
             )
         return out
-
-    def apply_to_globals(
-        self,
-        *,
-        fill_nomenclature_cache: NomenclatureCacheFiller | None = None,
-    ) -> None:
-        """Записывает данные заказа в потоколокальное / контекстное состояние cfg.
-
-        .. deprecated:: A1-002
-            Prefer ``PlateOrderContext.hydrate_from_order()`` — см. ``core.plate_order_context``.
-        """
-        warnings.warn(_APPLY_TO_GLOBALS_DEPRECATION, DeprecationWarning, stacklevel=2)
-        rt = get_plate_mutable_runtime()
-        rt.plate_load_details.clear()
-        rt.plate_load_details.update(self.plate_load_details)
-        rt.plate_length_dm_raw.clear()
-        rt.plate_length_dm_raw.update(self.plate_length_dm_raw)
-        rt.plate_nomenclature_cache.clear()
-        _try_fill_plate_nomenclature_cache(fill_nomenclature_cache)
-        rt.plates_1_2 = list(self.plates_1_2)
-        rt.plates_1_5_to_1_2 = list(self.plates_1_5_to_1_2)
-        rt.plates_1_0 = list(self.plates_1_0)
-        rt.plates_1_08 = list(self.plates_1_08)
-        rt.plates_0_46 = list(self.plates_0_46)
-        rt.plates_0_32 = list(self.plates_0_32)
-        rt.plates_0_72 = list(self.plates_0_72)
-        rt.plates_0_70 = list(self.plates_0_70)
-        rt.plates_0_86 = list(self.plates_0_86)
-        rt.plates_0_74 = list(self.plates_0_74)
-        rt.plates_0_88 = list(self.plates_0_88)
-        rt.plates_0_48 = list(self.plates_0_48)
-        rt.plates_0_50 = list(self.plates_0_50)
-        rt.plates_0_34 = list(self.plates_0_34)
-        rt.plate_exact_widths.clear()
-        rt.plate_exact_widths.update(self.plate_exact_widths)
-        rt.longitudinal_cuts = self.longitudinal_cuts
-        rt.length_trims = self.length_trims
-        rt.unused_strips_0_3_m_total = self.unused_strips_0_3_m_total
-        rt.scrap_strips_0_2_m_total = self.scrap_strips_0_2_m_total
-        rt.usable_strips_0_74_m_total = self.usable_strips_0_74_m_total
-        rt.usable_strips_0_88_m_total = self.usable_strips_0_88_m_total
-        rt.usable_strips_0_48_m_total = self.usable_strips_0_48_m_total
-        rt.usable_strips_0_50_m_total = self.usable_strips_0_50_m_total
-        rt.usable_strips_0_34_m_total = self.usable_strips_0_34_m_total
-        rt.scrap_strips_0_12_m_total = self.scrap_strips_0_12_m_total
-        rt.waste_area_m2 = self.waste_area_m2
-
 
 def coerce_core_plate_order(plate_order: Any) -> PlateOrder:
     """Привести app/legacy заказ к каноническому ``PlateOrder`` (без app-only полей)."""

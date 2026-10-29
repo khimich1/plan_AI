@@ -12,6 +12,11 @@ from viz_modules.layout_sequence import (  # noqa: E402
     _build_sequence_from_plan,
     build_layout_sequence,
 )
+from core.optimization.layout_runtime_snapshot import empty_layout_sequence_cfg  # noqa: E402
+from core.plate_runtime_state import (  # noqa: E402
+    new_plate_mutable_runtime_empty,
+    plate_mutable_runtime_scope,
+)
 
 
 def _minimal_2d_plan() -> dict:
@@ -48,7 +53,7 @@ def _plate_label(length: float, width_m: float, load_code: int | None = None) ->
 
 
 def test_build_sequence_from_plan_defines_legacy_lengths_in_2d_mode() -> None:
-    sequence = _build_sequence_from_plan(_minimal_2d_plan(), _plate_label, {})
+    sequence = _build_sequence_from_plan(_minimal_2d_plan(), _plate_label, {}, layout_cfg=empty_layout_sequence_cfg())
 
     assert len(sequence) == 1
     assert sequence[0]["mode"] == "solid"
@@ -60,7 +65,8 @@ def test_build_layout_sequence_defines_legacy_lengths_in_2d_mode(monkeypatch) ->
     monkeypatch.setattr(optimization, "OPT_CASCADING_PLAN_BY_LOAD", None)
     monkeypatch.setattr(optimization, "OPT_CASCADING_PLAN", _minimal_2d_plan())
 
-    sequence = build_layout_sequence()
+    with plate_mutable_runtime_scope(new_plate_mutable_runtime_empty()):
+        sequence = build_layout_sequence()
 
     assert len(sequence) == 1
     assert sequence[0]["mode"] == "solid"
@@ -72,7 +78,7 @@ def test_build_sequence_copies_concrete_grade_on_solid_item() -> None:
     plan = _minimal_2d_plan()
     plan["primary_cuts"][0]["concrete_grade"] = "М500"
 
-    sequence = _build_sequence_from_plan(plan, _plate_label, {})
+    sequence = _build_sequence_from_plan(plan, _plate_label, {}, layout_cfg=empty_layout_sequence_cfg())
 
     assert sequence[0]["mode"] == "solid"
     assert sequence[0]["concrete_grade"] == "М500"
@@ -98,7 +104,7 @@ def test_build_sequence_copies_concrete_grade_on_split_item() -> None:
         "transverse_cuts": [],
     }
 
-    sequence = _build_sequence_from_plan(plan, _plate_label, {})
+    sequence = _build_sequence_from_plan(plan, _plate_label, {}, layout_cfg=empty_layout_sequence_cfg())
 
     assert sequence[0]["mode"] == "split"
     assert sequence[0]["concrete_grade"] == "М400"
@@ -131,7 +137,7 @@ def test_build_sequence_copies_concrete_grade_on_transverse_item() -> None:
         ],
     }
 
-    sequence = _build_sequence_from_plan(plan, _plate_label, {})
+    sequence = _build_sequence_from_plan(plan, _plate_label, {}, layout_cfg=empty_layout_sequence_cfg())
 
     assert sequence[0]["mode"] == "transverse"
     assert sequence[0]["concrete_grade"] == "М500"

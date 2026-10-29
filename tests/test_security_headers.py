@@ -32,6 +32,26 @@ def test_health_includes_security_headers(client: TestClient) -> None:
     assert "strict-transport-security" not in response.headers
 
 
+def test_root_redirects_to_docs_in_development(client: TestClient) -> None:
+    response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/docs"
+
+
+def test_root_not_found_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_SECRET_KEY", VALID_APP_SECRET_KEY)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("BOT_TELEGRAM_ALLOWLIST", "1:admin")
+    monkeypatch.setenv("BOT_AUTH_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with TestClient(create_app()) as production_client:
+        response = production_client.get("/", follow_redirects=False)
+
+    assert response.status_code == 404
+
+
 def test_hsts_enabled_outside_development(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_SECRET_KEY", VALID_APP_SECRET_KEY)
     monkeypatch.setenv("APP_ENV", "production")

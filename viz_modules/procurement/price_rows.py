@@ -9,7 +9,11 @@ from core.config_and_data import (
     consume_plate_metadata,
     make_plate_name,
 )
-from core.plate_runtime_state import get_plate_mutable_runtime
+from core.plate_runtime_state import (
+    PlateMutableRuntime,
+    get_plate_mutable_runtime,
+    plate_mutable_runtime_scope,
+)
 
 from ..price_utils import _find_price_for_plate_production_fallback, find_price_for_plate
 from .items import build_procurement_items
@@ -26,8 +30,38 @@ def build_price_rows(
     *,
     plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
     get_load_code: LoadCodeFn | None = None,
+    runtime: PlateMutableRuntime | None = None,
 ):
-    """Формирует строки сметы."""
+    """Формирует строки сметы.
+
+    ``runtime`` — явный заказ. Без него читается уже открытый ``bound()``.
+    """
+    if runtime is None:
+        return _build_price_rows(
+            price_table,
+            reinforcement_code,
+            deps,
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+    with plate_mutable_runtime_scope(runtime):
+        return _build_price_rows(
+            price_table,
+            reinforcement_code,
+            deps,
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+
+
+def _build_price_rows(
+    price_table: dict,
+    reinforcement_code: int = 8,
+    deps: ProcurementDeps | None = None,
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+):
     d = resolve_procurement_deps(deps)
     _details, resolve_load = resolve_procurement_load_context(
         plate_load_details=plate_load_details,
@@ -176,13 +210,42 @@ def build_price_rows_production(
     *,
     plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
     get_load_code: LoadCodeFn | None = None,
+    runtime: PlateMutableRuntime | None = None,
 ):
     """
     Формирует строки сметы для планирования производства.
     ОТЛИЧИЯ от build_price_rows:
     - Базовая цена берется из таблицы raw_material_costs (стоимость сырья + производство)
     - Добавлен компонент "Переармирование" (перерасход прутьев)
+
+    ``runtime`` — явный заказ. Без него читается уже открытый ``bound()``.
     """
+    if runtime is None:
+        return _build_price_rows_production(
+            price_table,
+            reinforcement_code,
+            deps,
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+    with plate_mutable_runtime_scope(runtime):
+        return _build_price_rows_production(
+            price_table,
+            reinforcement_code,
+            deps,
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+
+
+def _build_price_rows_production(
+    price_table: dict,
+    reinforcement_code: int = 8,
+    deps: ProcurementDeps | None = None,
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+):
     d = resolve_procurement_deps(deps)
     _details, resolve_load = resolve_procurement_load_context(
         plate_load_details=plate_load_details,

@@ -19,6 +19,7 @@ from app.schemas.gsm import (
     WaybillRouteLeg,
     WaybillWarningDetail,
 )
+from app.services.gsm_boundary import lookup_boundary_fill
 from app.services.gsm_kit_gate import evaluate_vehicle
 from app.services.gsm_registry_service import (
     DEFAULT_HOOK_THRESHOLD_KM,
@@ -26,7 +27,7 @@ from app.services.gsm_registry_service import (
 )
 from core.gsm.balance import BalanceViolation, apply_day
 from core.gsm.driver_pool import ELIGIBLE_CODES, DriverCandidate
-from core.gsm.generator import LibraryRoute, generate
+from core.gsm.generator import BoundaryLookahead, LibraryRoute, generate
 from core.gsm.geo import GeoPoint
 from core.gsm.models import Transaction, WaybillDay
 from core.gsm.season import SeasonSwitch, norm_for, parse_season_switches
@@ -126,16 +127,22 @@ class GsmGenerationService:
                 },
             )
 
-        start_fuel, start_odo = self._resolve_start(
+        start_fuel, start_odo, prior_date = self._resolve_start(
             vehicle_id=vehicle_id,
             period_from=period_from,
             fuel_start=fuel_start,
             odometer_start=odometer_start,
         )
+        # Gap after the last confirmed waybill, including days before the month.
+        tx_from = period_from
+        if prior_date is not None:
+            gap_start = prior_date + timedelta(days=1)
+            if gap_start < tx_from:
+                tx_from = gap_start
 
         tx_rows = self._repo.list_transactions(
             vehicle_id=vehicle_id,
-            period_from=period_from,
+            period_from=tx_from,
             period_to=period_to,
         )
         transactions = tuple(self._to_transaction(row) for row in tx_rows)
@@ -154,6 +161,7 @@ class GsmGenerationService:
             vehicle_id=vehicle_id,
             period_from=period_from,
             period_to=period_to,
+            pool_from=tx_from,
         )
         station_coords = self._load_station_coords()
         holidays = (
@@ -166,6 +174,19 @@ class GsmGenerationService:
             if self._extra_workdays is not None
             else frozenset(load_extra_workdays())
         )
+
+        fill = lookup_boundary_fill(
+            self._repo, vehicle_id=vehicle_id, after=period_to
+        )
+        boundary: BoundaryLookahead | None = None
+        if fill is not None:
+            liters, station_ids = fill
+            boundary = BoundaryLookahead(
+                liters=liters,
+                station_ids=station_ids,
+                period_from=period_from,
+                period_to=period_to,
+            )
 
         result = generate(
             transactions=transactions,
@@ -186,6 +207,8 @@ class GsmGenerationService:
             own_vehicle_id=vehicle_id,
             drivers_by_date=drivers_by_date,
             substitute_counts=substitute_counts,
+            prior_date=prior_date,
+            boundary_lookahead=boundary,
         )
 
         if force:
@@ -556,10 +579,18 @@ class GsmGenerationService:
         vehicle_id: int,
         period_from: date,
         period_to: date,
+        pool_from: date | None = None,
     ) -> tuple[dict[date, tuple[DriverCandidate, ...]], dict[int, int]]:
-        """Eligible rows for each date, minus drivers already on another waybill."""
+        """Eligible rows for each date, minus drivers already on another waybill.
+
+        ``pool_from`` covers the burn-in gap before ``period_from``. Substitute
+        counts stay on the requested period.
+        """
+        start = period_from
+        if pool_from is not None and pool_from < period_from:
+            start = pool_from
         busy = self._repo.busy_drivers_by_date(
-            period_from=period_from,
+            period_from=start,
             period_to=period_to,
             exclude_vehicle_id=vehicle_id,
         )
@@ -570,7 +601,7 @@ class GsmGenerationService:
                 primaries.add(int(primary))
         grouped: dict[date, list[DriverCandidate]] = defaultdict(list)
         for row in self._repo.list_timesheet_days(
-            period_from=period_from, period_to=period_to
+            period_from=start, period_to=period_to
         ):
             day = date.fromisoformat(str(row["date"]))
             driver_id = int(row["driver_id"])
@@ -585,7 +616,7 @@ class GsmGenerationService:
                 )
             )
         filled: dict[date, tuple[DriverCandidate, ...]] = {}
-        day = period_from
+        day = start
         while day <= period_to:
             filled[day] = tuple(grouped.get(day, ()))
             day += timedelta(days=1)
@@ -797,7 +828,7 @@ class GsmGenerationService:
         period_from: date,
         fuel_start: float | None,
         odometer_start: int | None,
-    ) -> tuple[float, int]:
+    ) -> tuple[float, int, date | None]:
         last = self._repo.get_last_confirmed_waybill(vehicle_id, before=period_from)
         if last is not None:
             fuel = last.get("fuel_end")
@@ -807,14 +838,14 @@ class GsmGenerationService:
                     "last confirmed waybill missing fuel_end/odometer_end",
                     code="gsm_start_required",
                 )
-            return float(fuel), int(odo)
+            return float(fuel), int(odo), _as_date(last["date"])
 
         if fuel_start is None or odometer_start is None:
             raise GsmGenerationError(
                 "fuel_start and odometer_start required when no confirmed waybill exists",
                 code="gsm_start_required",
             )
-        return float(fuel_start), int(odometer_start)
+        return float(fuel_start), int(odometer_start), None
 
     def _resolve_season_switches(self) -> tuple[SeasonSwitch, ...]:
         raw = self._repo.get_setting("season_switches")

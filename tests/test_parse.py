@@ -20,6 +20,7 @@ if sys.platform == 'win32':
         sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
 
 import core.config_and_data as cfg
+from core.plate_order_context import PlateOrderContext
 from core.config_and_data import set_plate_lists_from_text
 
 # Твой текст заказа (ТОЧНО как ты отправляешь боту)
@@ -36,21 +37,23 @@ print("="*70)
 print("\nТЕКСТ ЗАКАЗА:")
 print(order_text)
 
-# Парсим
-set_plate_lists_from_text(order_text)
+_ctx = PlateOrderContext.fresh_empty()
+with _ctx.bound():
+    set_plate_lists_from_text(order_text)
+_rt = _ctx.plates
 
 print("\n" + "="*70)
 print("РЕЗУЛЬТАТ ПАРСИНГА:")
 print("="*70)
 
-print(f"\nПЛАТЫ 320мм: {cfg.PLATES_0_32}")
-print(f"ПЛИТЫ 860мм: {cfg.PLATES_0_86}")
-print(f"ПЛИТЫ 1200мм: {cfg.PLATES_1_2}")
+print(f"\nПЛАТЫ 320мм: {_rt.plates_0_32}")
+print(f"ПЛИТЫ 860мм: {_rt.plates_0_86}")
+print(f"ПЛИТЫ 1200мм: {_rt.plates_1_2}")
 
 # Подсчитываем
 from collections import Counter
-counter_320 = Counter(cfg.PLATES_0_32)
-counter_860 = Counter(cfg.PLATES_0_86)
+counter_320 = Counter(_rt.plates_0_32)
+counter_860 = Counter(_rt.plates_0_86)
 
 print("\n" + "="*70)
 print("АНАЛИЗ:")
@@ -59,14 +62,14 @@ print("="*70)
 print("\nПлиты 320мм по длинам:")
 for length, qty in sorted(counter_320.items()):
     print(f"  • {length}м: {qty} шт")
-print(f"ВСЕГО 320мм: {len(cfg.PLATES_0_32)} шт")
+print(f"ВСЕГО 320мм: {len(_rt.plates_0_32)} шт")
 
 print("\nПлиты 860мм по длинам:")
 for length, qty in sorted(counter_860.items()):
     print(f"  • {length}м: {qty} шт")
-print(f"ВСЕГО 860мм: {len(cfg.PLATES_0_86)} шт")
+print(f"ВСЕГО 860мм: {len(_rt.plates_0_86)} шт")
 
-print(f"\nПлиты 1200мм: {len(cfg.PLATES_1_2)} шт")
+print(f"\nПлиты 1200мм: {len(_rt.plates_1_2)} шт")
 
 print("\n" + "="*70)
 print("ОЖИДАЛОСЬ:")
@@ -76,7 +79,7 @@ print("  • 860мм: 4× 6.63м + 5× 5.6м = 9 шт")
 print("  • 1200мм: 0 шт")
 
 total_expected = 14 + 9
-total_got = len(cfg.PLATES_0_32) + len(cfg.PLATES_0_86) + len(cfg.PLATES_1_2)
+total_got = len(_rt.plates_0_32) + len(_rt.plates_0_86) + len(_rt.plates_1_2)
 
 if total_got == total_expected:
     print(f"\n✅ ПАРСИНГ ПРАВИЛЬНЫЙ! Получено {total_got} плит")

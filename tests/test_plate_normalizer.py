@@ -36,6 +36,14 @@ from core.plate_text_normalizer import (
 )
 from core.plate_line_parser import parse_line
 import core.config_and_data as cfg
+from core.plate_order_context import PlateOrderContext
+
+
+def _parsed_plates(text: str):
+    ctx = PlateOrderContext.fresh_empty()
+    with ctx.bound():
+        unparsed, contribs, loads = cfg.set_plate_lists_from_text(text)
+    return unparsed, contribs, loads, ctx.plates
 
 
 # ── Вспомогательные функции ────────────────────────────────────────────────
@@ -248,17 +256,17 @@ def test_normalize_empty_and_single():
 def test_end_to_end_catalog_mark():
     print("\n=== test_end_to_end_catalog_mark ===")
     text = "ПБ 59.12-8Вр1400-25"
-    unparsed_lines, _, _ = cfg.set_plate_lists_from_text(text)
+    unparsed_lines, _, _, plates_rt = _parsed_plates(text)
     assert not unparsed_lines, f"Нераспознанных строк не должно быть: {unparsed_lines}"
 
     # Ожидаем: длина 5.9м (59дм), ширина 1.2м (12дм), нагрузка 8
-    plates = cfg.PLATES_1_2
+    plates = plates_rt.plates_1_2
     assert len(plates) == 1, f"Должна быть 1 плита 1.2м, получено {len(plates)}"
     _assert_close(plates[0], 5.9, 0.01, "длина плиты (59дм→5.9м)")
 
     # PLATE_LOAD_DETAILS должен содержать запись
     found = [
-        (k, v) for k, v in cfg.PLATE_LOAD_DETAILS.items()
+        (k, v) for k, v in plates_rt.plate_load_details.items()
         if abs(k[0] - 5.9) < 0.01 and abs(k[1] - 1.2) < 0.01
     ]
     assert found, "PLATE_LOAD_DETAILS должен содержать плиту 5.9×1.2"
@@ -272,12 +280,12 @@ def test_end_to_end_catalog_mark():
 def test_end_to_end_catalog_no_suffix():
     print("\n=== test_end_to_end_catalog_no_suffix ===")
     text = "ПБ56.05-10 3"
-    unparsed_lines, _, _ = cfg.set_plate_lists_from_text(text)
+    unparsed_lines, _, _, plates_rt = _parsed_plates(text)
     assert not unparsed_lines, f"Нераспознанных строк: {unparsed_lines}"
 
     # Ожидаем: длина 5.6м (56дм), ширина 0.5м (5дм), нагрузка 10, qty=3
     found = [
-        (k, v) for k, v in cfg.PLATE_LOAD_DETAILS.items()
+        (k, v) for k, v in plates_rt.plate_load_details.items()
         if abs(k[0] - 5.6) < 0.01 and abs(k[1] - 0.5) < 0.01
     ]
     assert found, "PLATE_LOAD_DETAILS должен содержать плиту 5.6×0.5"
@@ -292,11 +300,11 @@ def test_end_to_end_canonical_unchanged():
     print("\n=== test_end_to_end_canonical_unchanged ===")
     # Обычный ввод должен работать точно так же, как раньше
     text = "ПБ 66,2-12-8п 6"
-    unparsed_lines, _, _ = cfg.set_plate_lists_from_text(text)
+    unparsed_lines, _, _, plates_rt = _parsed_plates(text)
     assert not unparsed_lines, f"Нераспознанных строк: {unparsed_lines}"
 
     found = [
-        (k, v) for k, v in cfg.PLATE_LOAD_DETAILS.items()
+        (k, v) for k, v in plates_rt.plate_load_details.items()
         if abs(k[0] - 6.62) < 0.01 and abs(k[1] - 1.2) < 0.01
     ]
     assert found, "PLATE_LOAD_DETAILS должен содержать плиту 6.62×1.2"
@@ -312,10 +320,10 @@ def test_end_to_end_mixed_order():
         "ПБ56.05-10 3\n"
         "ПБ 66,2-12-8п 6"
     )
-    unparsed_lines, _, _ = cfg.set_plate_lists_from_text(text)
+    unparsed_lines, _, _, plates_rt = _parsed_plates(text)
     assert not unparsed_lines, f"Нераспознанных строк: {unparsed_lines}"
 
-    total = sum(cfg.PLATE_LOAD_DETAILS.values())
+    total = sum(plates_rt.plate_load_details.values())
     _assert_eq(total, 14, "итого 5+3+6=14 плит")
     print(f"  OK  всего плит: {total}")
 

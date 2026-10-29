@@ -69,6 +69,32 @@ describe("httpClient auth/me 401", () => {
   });
 });
 
+describe("httpClient HTML error body", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.cookie = "csrf_token=; Max-Age=0; Path=/";
+  });
+
+  it("explains nginx 413 instead of the generic HTML-instead-of-JSON hint", async () => {
+    document.cookie = "csrf_token=upload-csrf; Path=/";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("<html><title>413 Request Entity Too Large</title></html>", {
+            status: 413,
+            headers: { "Content-Type": "text/html" },
+          }),
+      ),
+    );
+
+    await expect(httpClient.post("/api/v1/prices/preview", new FormData())).rejects.toMatchObject({
+      status: 413,
+      message: expect.stringContaining("client_max_body_size"),
+    });
+  });
+});
+
 describe("httpClient.download POST", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

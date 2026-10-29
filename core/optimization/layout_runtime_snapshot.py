@@ -32,7 +32,11 @@ from core.optimization.context import (
     OPT_PLAN,
     OPT_WIDTH_PRIORITY,
 )
-from core.plate_runtime_state import PlateMutableRuntime, get_plate_mutable_runtime
+from core.plate_runtime_state import (
+    PlateMutableRuntime,
+    get_plate_mutable_runtime,
+    new_plate_mutable_runtime_empty,
+)
 from core.optimization.optimization_config import OptimizationConfig
 
 PlateLoadDetailsMap = Mapping[tuple[float, float, int, str], int]
@@ -244,6 +248,11 @@ class LayoutSequenceCfgSlice:
         )
 
 
+def empty_layout_sequence_cfg() -> LayoutSequenceCfgSlice:
+    """Пустой срез: то, что fallback ``layout_cfg is None`` строил из пустого runtime."""
+    return LayoutSequenceCfgSlice.from_plate_runtime(new_plate_mutable_runtime_empty())
+
+
 @dataclass(frozen=True, slots=True)
 class LayoutRuntimeSnapshot:
     """Единый объект для передачи в layout после оптимизации (см. DIP-003)."""
@@ -307,8 +316,12 @@ def build_layout_runtime_snapshot(
         if layout_track_reinf_preference is not None
         else _settings.layout_track_reinf_preference
     )
+    if plate_load_details is not None and plate_lists is not None:
+        order_runtime = new_plate_mutable_runtime_empty()
+    else:
+        order_runtime = get_plate_mutable_runtime()
     layout_slice = LayoutSequenceCfgSlice.from_plate_runtime(
-        get_plate_mutable_runtime(),
+        order_runtime,
         plate_load_details=plate_load_details,
         plate_lists=plate_lists,
         layout_greedy_reinf_merge=_greedy,

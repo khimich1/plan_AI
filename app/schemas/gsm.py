@@ -107,6 +107,8 @@ class FleetOverviewRow(BaseModel):
     confirmed_count: int
     exported_count: int
     fuel_end_last: float | None = None
+    tank_volume_liters: float | None = None
+    next_first_fill_liters: float | None = None
     liters_diff: float
     open_before: int
     open_before_month: str | None = None

@@ -26,7 +26,7 @@ def test_order_counter_respects_per_row_load_code() -> None:
         {"length": 6.9, "width": 395, "qty": 1, "load_code": 10},
     ]
     counter: Counter = Counter()
-    _accumulate_order_counter(counter, orders)
+    _accumulate_order_counter(counter, orders, plate_load_details={})
     assert counter[(6.9, 395, 8, "", False)] == 4
     assert counter[(6.9, 395, 10, "", False)] == 1
     assert len(counter) == 2

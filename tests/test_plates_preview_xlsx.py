@@ -25,6 +25,21 @@ from core.plates_preview_xlsx import (
     qty_for_contribution_key,
 )
 from core.config_and_data import LineContributionKey, set_plate_lists_from_text
+from core.plate_order_context import PlateOrderContext
+
+
+def _parse_bound(text: str):
+    ctx = PlateOrderContext.fresh_empty()
+    with ctx.bound():
+        parsed = set_plate_lists_from_text(text)
+        details = dict(ctx.plates.plate_load_details)
+    return parsed, details
+
+
+def _build_preview(*args, **kwargs):
+    ctx = PlateOrderContext.fresh_empty()
+    with ctx.bound():
+        return build_plates_reconciliation_preview_xlsx(*args, **kwargs)
 
 
 @unittest.skipUnless(HAS_OPENPYXL, "openpyxl не установлен")
@@ -41,14 +56,10 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
 
     def test_two_contribution_keys_share_wide_qty(self) -> None:
         text = "ПБ 59-15-8п 2"
-        _, contribs, _line_loads = set_plate_lists_from_text(text)
+        (_, contribs, _line_loads), details = _parse_bound(text)
         self.assertEqual(len(contribs), 1)
         keys = contribs[0]
         self.assertEqual(len(keys), 2)
-
-        import core.config_and_data as cfg
-
-        details = dict(cfg.PLATE_LOAD_DETAILS)
         p1 = name_qty_pairs_for_contributions(keys, details)
         self.assertEqual(len(p1), 2)
         self.assertEqual(p1[0][1], 2)
@@ -59,7 +70,7 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
         user_lines = ["ПБ 59-15-8п 2 шт"]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview.xlsx"
-            build_plates_reconciliation_preview_xlsx(
+            _build_preview(
                 path,
                 plates_text=text,
                 initial_user_plate_lines=user_lines,
@@ -92,7 +103,7 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
         user_lines = ["ПБ 78-12-8п 3", "ПБ 78-12-8п 3"]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview.xlsx"
-            build_plates_reconciliation_preview_xlsx(
+            _build_preview(
                 path,
                 plates_text=text,
                 initial_user_plate_lines=user_lines,
@@ -111,7 +122,7 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
         user_lines = ["ПБ 78-12-8п 3", "ПБ 78-12-8п 3", "ПБ 78-12-8п 3"]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview.xlsx"
-            build_plates_reconciliation_preview_xlsx(
+            _build_preview(
                 path,
                 plates_text=text,
                 initial_user_plate_lines=user_lines,
@@ -129,7 +140,7 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
         user_lines = ["ПБ 69-12-8п 20", "ПБ 69-12-8п 6", "ПБ 69-12-8п 14"]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview.xlsx"
-            build_plates_reconciliation_preview_xlsx(
+            _build_preview(
                 path,
                 plates_text=text,
                 initial_user_plate_lines=user_lines,
@@ -157,7 +168,7 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
         user_lines = ["xxx"]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview.xlsx"
-            build_plates_reconciliation_preview_xlsx(
+            _build_preview(
                 path,
                 plates_text=text,
                 initial_user_plate_lines=user_lines,
@@ -170,11 +181,8 @@ class TestPlatesPreviewXlsx(unittest.TestCase):
 
 class TestPreviewRowTriplesLimits(unittest.TestCase):
     def test_max_pairs_one_returns_single_row(self) -> None:
-        _, contribs, _ = set_plate_lists_from_text("ПБ 59-15-8п 2")
+        (_, contribs, _), details = _parse_bound("ПБ 59-15-8п 2")
         keys = contribs[0]
-        import core.config_and_data as cfg
-
-        details = dict(cfg.PLATE_LOAD_DETAILS)
         triples = preview_row_triples_for_contributions(
             keys, details, details, max_pairs=1
         )
@@ -197,10 +205,7 @@ class TestPreviewRowTriplesLimits(unittest.TestCase):
 
 class TestQtyForContribution(unittest.TestCase):
     def test_qty_for_split_width_uses_15_record(self) -> None:
-        set_plate_lists_from_text("ПБ 59-15-8п 3")
-        import core.config_and_data as cfg
-
-        details = dict(cfg.PLATE_LOAD_DETAILS)
+        _, details = _parse_bound("ПБ 59-15-8п 3")
         k: LineContributionKey = (5.9, 1.2, 8.0, "59")
         self.assertEqual(qty_for_contribution_key(k, details), 3)
 

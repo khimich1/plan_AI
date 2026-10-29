@@ -68,12 +68,16 @@ import pytest
 
 from core.gsm.balance import burn_for_km
 from core.gsm.generator import (
+    BoundaryLookahead,
     GenerateResult,
     LibraryRoute,
     ProblematicDay,
     UnsolvableInfo,
     _city_key,
+    _fill_events,
     _find_home_twin,
+    _first_fill_liters,
+    _fuel_issued,
     _is_home_base,
     _orient_home_round_trip,
     generate,
@@ -106,6 +110,24 @@ def _tx(
     return Transaction(
         card_id=CARD_ID,
         ts=datetime(day.year, day.month, day.day, hour, 0, 0),
+        service_type=service_type,
+        qty_liters=qty_liters,
+        amount=100.0 if service_type == "fuel" else 350.0,
+        station_id=station_id,
+        raw_address=f"station-{station_id}",
+    )
+
+
+def _tx_at(
+    ts: datetime,
+    *,
+    service_type: str = "fuel",
+    qty_liters: float | None = 40.0,
+    station_id: int = 10,
+) -> Transaction:
+    return Transaction(
+        card_id=CARD_ID,
+        ts=ts,
         service_type=service_type,
         qty_liters=qty_liters,
         amount=100.0 if service_type == "fuel" else 350.0,
@@ -2334,4 +2356,383 @@ def test_generate_vacation_series_stays_on_the_only_substitute() -> None:
     )
     assert [day.driver_id for day in result.days] == [2, 2, 2]
     assert all("no_available_driver" not in day.warnings for day in result.days)
+
+
+# ---------------------------------------------------------------------------
+# First clustered fill: headroom / lookahead, not the day's algebraic sum
+# ---------------------------------------------------------------------------
+
+
+def _tugella_span_routes() -> tuple[LibraryRoute, ...]:
+    """Shoulders 40…350 km so a 700 km round-trip cap can burn a dense day."""
+    shoulders = (40, 80, 120, 160, 200, 240, 280, 320, 350)
+    return tuple(
+        _route(index, km=km, frequency=1000 - km, typical_station_ids=(10,))
+        for index, km in enumerate(shoulders, start=1)
+    )
+
+
+def _generate_tugella_span(
+    transactions: tuple[Transaction, ...],
+    *,
+    fuel_start: float = 0.0,
+) -> GenerateResult:
+    return generate(
+        transactions=transactions,
+        routes=_tugella_span_routes(),
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=TANK,
+        norm_summer=NORM_SUMMER,
+        norm_winter=NORM_WINTER,
+        season_switches=((date(2026, 11, 1), "winter"),),
+        fuel_start=fuel_start,
+        odometer_start=100_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        max_daily_km=700,
+    )
+
+
+def test_tugella_aug_2026_headroom_uses_first_fill_not_day_sum() -> None:
+    """4–7 Aug 2026: same-second +50/−15.28 is one fill; day sum stays on the sheet.
+
+    Day sum on 6 Aug is 58.63 L against a 55 L tank. Headroom on that sum is
+    impossible (55 − 58.63), but the first clustered fill is 34.72 L and the
+    day fits. 7 Aug lookahead sees 30.00 L, not 30.00 + 18.05.
+    """
+    aug4 = date(2026, 8, 4)
+    aug5 = date(2026, 8, 5)
+    aug6 = date(2026, 8, 6)
+    aug7 = date(2026, 8, 7)
+    aug6_lines = (
+        _tx_at(datetime(2026, 8, 6, 9, 41, 59), qty_liters=50.0),
+        _tx_at(datetime(2026, 8, 6, 9, 41, 59), qty_liters=-15.28),
+        _tx_at(datetime(2026, 8, 6, 17, 1, 49), qty_liters=10.0),
+        _tx_at(datetime(2026, 8, 6, 17, 6, 42), qty_liters=13.91),
+    )
+    aug7_lines = (
+        _tx_at(datetime(2026, 8, 7, 6, 53, 0), qty_liters=30.0),
+        _tx_at(datetime(2026, 8, 7, 8, 27, 0), qty_liters=18.05),
+    )
+    assert _fill_events(aug6_lines) == pytest.approx((34.72, 10.0, 13.91), abs=0.01)
+    assert _first_fill_liters(aug6_lines) == pytest.approx(34.72, abs=0.01)
+    assert _fuel_issued(aug6_lines) == pytest.approx(58.63, abs=0.01)
+    assert _first_fill_liters(aug7_lines) == pytest.approx(30.0, abs=0.01)
+
+    result = _generate_tugella_span(
+        (
+            _tx(aug4, qty_liters=22.97),
+            _tx(aug5, qty_liters=28.25),
+            *aug6_lines,
+            *aug7_lines,
+        )
+    )
+    assert result.unsolvable is None
+    for day in (aug5, aug6, aug7):
+        wb = _day_by_date(result, day)
+        assert "manual_intervention" not in wb.warnings
+        assert all(p.date != day for p in result.problematic_days)
+    aug6_wb = _day_by_date(result, aug6)
+    assert aug6_wb.tank.fuel_issued == pytest.approx(58.63, abs=0.01)
+    assert sum(1 for day in result.days if day.date == aug6) == 1
+
+
+def test_single_fill_over_tank_stays_manual() -> None:
+    """One fill larger than the tank cannot make headroom, even when netted.
+
+    The library stays inside 240 km/day so the previous anchor cannot burn
+    the tank below zero and hide an impossible ``tank − Q``.
+    """
+    first = date(2026, 8, 4)
+    second = date(2026, 8, 5)
+    routes = (
+        _route(1, km=80, frequency=100, typical_station_ids=(10,)),
+        _route(2, km=120, frequency=40, typical_station_ids=(10,)),
+    )
+
+    def run(txs: tuple[Transaction, ...]) -> GenerateResult:
+        return generate(
+            transactions=txs,
+            routes=routes,
+            hooks={},
+            driver_id=DRIVER_ID,
+            tank_volume_liters=TANK,
+            norm_summer=NORM_SUMMER,
+            norm_winter=NORM_WINTER,
+            season_switches=((date(2026, 11, 1), "winter"),),
+            fuel_start=10.0,
+            odometer_start=100_000,
+            holidays=frozenset(),
+            extra_workdays=frozenset(),
+            max_daily_km=700,
+        )
+
+    over = run((_tx(first, qty_liters=10.0), _tx(second, qty_liters=60.0)))
+    assert "manual_intervention" in _day_by_date(over, second).warnings
+
+    same_second = datetime(2026, 8, 5, 9, 41, 59)
+    pair = (
+        _tx_at(same_second, qty_liters=80.0),
+        _tx_at(same_second, qty_liters=-10.0),
+    )
+    assert _fill_events(pair) == pytest.approx((70.0,), abs=0.01)
+    netted = run((_tx(first, qty_liters=10.0), *pair))
+    assert "manual_intervention" in _day_by_date(netted, second).warnings
+
+
+def test_same_second_plus_minus_is_one_fill() -> None:
+    """A day that is only a same-second plus/minus pair is a single fill."""
+    ts = datetime(2026, 8, 6, 9, 41, 59)
+    pair = (
+        _tx_at(ts, qty_liters=50.0),
+        _tx_at(ts, qty_liters=-15.28),
+    )
+    assert _fill_events(pair) == pytest.approx((34.72,), abs=0.01)
+    assert _first_fill_liters(pair) == pytest.approx(34.72, abs=0.01)
+    assert _fuel_issued(pair) == pytest.approx(34.72, abs=0.01)
+    assert _first_fill_liters(()) == 0.0
+
+    day = date(2026, 8, 6)
+    prior = date(2026, 8, 5)
+    result = _generate_tugella_span(
+        (_tx(prior, qty_liters=10.0), *pair),
+        fuel_start=5.0,
+    )
+    wb = _day_by_date(result, day)
+    assert wb.tank.fuel_issued == pytest.approx(34.72, abs=0.01)
+    assert "manual_intervention" not in wb.warnings
+    assert sum(1 for item in result.days if item.date == day) == 1
+
+
+def test_prior_date_burns_weekdays_before_loaded_month() -> None:
+    """О 952 ХР 44: 52.55 L after 29 Jul, then 40 L on 3 Aug and 30 L on 4 Aug.
+
+    Home-base routes, tank 55, summer norm 9.4. One 400 km burn on 30 Jul
+    (library has 200 km one way) lands at 14.95 L. 31 Jul is not required.
+    Without ``prior_date`` the August anchors have no burn-in and stay manual.
+    """
+    home = "г.Кострома, ул. Кузнецкая, д.18Б"
+    routes = tuple(
+        _route(
+            route_id,
+            km=km,
+            frequency=frequency,
+            typical_station_ids=stations,
+            addr_a=home,
+            addr_b=f"объект {route_id}",
+            vehicle_id=4,
+        )
+        for route_id, km, frequency, stations in (
+            (1, 4, 100, (10,)),
+            (2, 160, 20, ()),
+            (3, 200, 10, ()),
+            (4, 240, 5, ()),
+            (5, 350, 1, ()),
+        )
+    )
+    locked = date(2026, 7, 29)
+    july30 = date(2026, 7, 30)
+    july31 = date(2026, 7, 31)
+    aug3 = date(2026, 8, 3)
+    aug4 = date(2026, 8, 4)
+    aug5 = date(2026, 8, 5)
+    txs = (
+        _tx(aug3, qty_liters=40.0),
+        _tx(aug4, qty_liters=30.0),
+        _tx(aug5, qty_liters=45.0),
+    )
+
+    def run(*, prior_date: date | None) -> GenerateResult:
+        return generate(
+            transactions=txs,
+            routes=routes,
+            hooks={},
+            driver_id=DRIVER_ID,
+            tank_volume_liters=TANK,
+            norm_summer=NORM_SUMMER,
+            norm_winter=NORM_WINTER,
+            season_switches=((date(2026, 11, 1), "winter"),),
+            fuel_start=52.55,
+            odometer_start=105_964,
+            holidays=frozenset(),
+            extra_workdays=frozenset(),
+            max_daily_km=700,
+            own_vehicle_id=4,
+            prior_date=prior_date,
+        )
+
+    blocked = run(prior_date=None)
+    assert all(day.date >= aug3 for day in blocked.days)
+    assert "manual_intervention" in _day_by_date(blocked, aug3).warnings
+    aug4_blocked = _day_by_date(blocked, aug4)
+    assert "manual_intervention" in aug4_blocked.warnings
+    assert _day_by_date(blocked, aug3).tank.km == 700
+    assert _day_by_date(blocked, aug3).tank.fuel_end == pytest.approx(26.75, abs=0.01)
+    assert any(
+        p.date == aug4 and "free_weekdays=0" in p.detail and "25.0" in p.detail
+        for p in blocked.problematic_days
+    )
+
+    result = run(prior_date=locked)
+    dates = {day.date for day in result.days}
+    assert locked not in dates
+    assert july31 not in dates
+    assert date(2026, 8, 1) not in dates
+    assert date(2026, 8, 2) not in dates
+    burn = _day_by_date(result, july30)
+    assert burn.tank.fuel_start == pytest.approx(52.55, abs=0.01)
+    assert burn.tank.fuel_issued == pytest.approx(0.0, abs=0.01)
+    assert burn.tank.km == 400
+    assert burn.tank.fuel_end == pytest.approx(14.95, abs=0.01)
+    aug3_wb = _day_by_date(result, aug3)
+    aug4_wb = _day_by_date(result, aug4)
+    assert aug3_wb.tank.fuel_start == pytest.approx(14.95, abs=0.01)
+    assert aug3_wb.tank.fuel_start <= TANK - 40.0
+    assert aug4_wb.tank.fuel_start <= TANK - 30.0
+    assert "manual_intervention" not in aug3_wb.warnings
+    assert "manual_intervention" not in aug4_wb.warnings
+    assert all(day.tank.km <= 700 for day in result.days)
+    assert all(p.date not in (aug3, aug4) for p in result.problematic_days)
+
+
+# ---------------------------------------------------------------------------
+# Month boundary: last in-period fuel day peeks at the next first fill
+# ---------------------------------------------------------------------------
+
+_PALISADE_HOME = "г.Кострома, ул. Кузнецкая, д.18Б"
+_PALISADE_CITY = "г.Ярославль"
+
+
+def _palisade_boundary_routes() -> tuple[LibraryRoute, ...]:
+    """Short frequent circle and own route 23 (45 km one way). Same city."""
+    return (
+        _route(
+            1,
+            km=6,
+            frequency=100,
+            typical_station_ids=(10,),
+            addr_a=_PALISADE_HOME,
+            addr_b=f"{_PALISADE_CITY}, короткий",
+            vehicle_id=1,
+        ),
+        _route(
+            23,
+            km=45,
+            frequency=10,
+            typical_station_ids=(10,),
+            addr_a=_PALISADE_HOME,
+            addr_b=f"{_PALISADE_CITY}, маршрут 45",
+            vehicle_id=1,
+        ),
+    )
+
+
+def _palisade_boundary_generate(
+    *,
+    boundary: BoundaryLookahead | None,
+    fuel_start: float = 32.8,
+    prior_date: date | None = None,
+    day: date = date(2026, 8, 31),
+    qty: float = 20.0,
+) -> GenerateResult:
+    return generate(
+        transactions=(_tx(day, qty_liters=qty),),
+        routes=_palisade_boundary_routes(),
+        hooks={},
+        driver_id=DRIVER_ID,
+        tank_volume_liters=70.0,
+        norm_summer=14.5,
+        norm_winter=16.0,
+        season_switches=((date(2026, 11, 1), "winter"),),
+        fuel_start=fuel_start,
+        odometer_start=100_000,
+        holidays=frozenset(),
+        extra_workdays=frozenset(),
+        max_daily_km=700,
+        own_vehicle_id=1,
+        prior_date=prior_date,
+        boundary_lookahead=boundary,
+    )
+
+
+def test_month_boundary_peek_leaves_room_for_next_first_fill() -> None:
+    """Aug 31 like Palisade: 32.8 + 20 on 12 km ends at 51.06, above 70 − 30.
+
+    The first September cluster is 30 L, not the day's 56.6. With that hint
+    the own 45 km route (90 km/day) ends at or below 40 L. 1 Sep is not emitted.
+    """
+    aug31 = date(2026, 8, 31)
+    sept_lines = (
+        _tx_at(datetime(2026, 9, 1, 9, 40, 57), qty_liters=30.0),
+        _tx_at(datetime(2026, 9, 1, 9, 41, 44), qty_liters=26.6),
+    )
+    assert _first_fill_liters(sept_lines) == pytest.approx(30.0, abs=0.01)
+    assert _fuel_issued(sept_lines) == pytest.approx(56.6, abs=0.01)
+    hint = BoundaryLookahead(
+        liters=_first_fill_liters(sept_lines),
+        period_from=date(2026, 8, 1),
+        period_to=aug31,
+    )
+
+    without = _palisade_boundary_generate(boundary=None)
+    peeked = _palisade_boundary_generate(boundary=hint)
+    plain = _day_by_date(without, aug31)
+    day = _day_by_date(peeked, aug31)
+
+    assert plain.tank.km == 12
+    assert plain.tank.fuel_end == pytest.approx(51.06, abs=0.01)
+    assert plain.tank.fuel_end > 70.0 - 30.0
+    assert day.route.route_id == 23
+    assert day.route.km == 45
+    assert day.tank.km == 90
+    assert day.tank.fuel_end <= 40.0 + 1e-9
+    assert day.tank.fuel_issued == pytest.approx(plain.tank.fuel_issued, abs=0.01)
+    assert day.tank.fuel_issued == pytest.approx(20.0, abs=0.01)
+    assert all(item.date != date(2026, 9, 1) for item in peeked.days)
+    assert all(item.date <= aug31 for item in peeked.days)
+    assert "manual_intervention" not in day.warnings
+
+
+def test_month_boundary_without_later_fill_matches_today() -> None:
+    """No positive fill after the period keeps the short circle."""
+    aug31 = date(2026, 8, 31)
+    today = _palisade_boundary_generate(boundary=None)
+    silent = _palisade_boundary_generate(
+        boundary=BoundaryLookahead(
+            liters=0.0,
+            period_from=date(2026, 8, 1),
+            period_to=aug31,
+        )
+    )
+    assert silent.days == today.days
+    assert _day_by_date(today, aug31).tank.km == 12
+    assert _day_by_date(today, aug31).tank.fuel_end == pytest.approx(51.06, abs=0.01)
+
+
+def test_month_boundary_peek_uses_weekdays_before_anchor_inside_month() -> None:
+    """When 90 km/day cannot land the peek, burn earlier August weekdays only."""
+    aug31 = date(2026, 8, 31)
+    hint = BoundaryLookahead(
+        liters=30.0,
+        period_from=date(2026, 8, 1),
+        period_to=aug31,
+    )
+    kwargs = dict(fuel_start=55.0, prior_date=date(2026, 8, 26))
+    peeked = _palisade_boundary_generate(boundary=hint, **kwargs)
+    without = _palisade_boundary_generate(boundary=None, **kwargs)
+
+    dates = {item.date for item in peeked.days}
+    assert date(2026, 8, 27) in dates
+    assert date(2026, 8, 28) in dates
+    assert aug31 in dates
+    assert date(2026, 9, 1) not in dates
+    assert all(item.date <= aug31 for item in peeked.days)
+    end = _day_by_date(peeked, aug31)
+    assert end.tank.fuel_end <= 40.0 + 1e-9
+    assert end.tank.fuel_issued == pytest.approx(20.0, abs=0.01)
+    assert "manual_intervention" not in end.warnings
+
+    assert date(2026, 8, 28) not in {item.date for item in without.days}
+    assert _day_by_date(without, aug31).tank.fuel_end > 40.0
 

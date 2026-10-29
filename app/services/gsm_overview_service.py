@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any
 
 from app.repositories.gsm_repository import GsmRepository
+from app.services.gsm_boundary import attach_next_first_fills
 from app.schemas.gsm import (
     FleetOverviewRow,
     FleetOverviewVehicle,
@@ -37,6 +38,7 @@ class GsmOverviewService:
                 code="gsm_invalid_period",
             )
         rows = self._repo.fleet_overview(period_from=period_from, period_to=period_to)
+        attach_next_first_fills(self._repo, rows, after=period_to)
         return [_to_row(row, status=_status_of(row)) for row in rows]
 
 
@@ -71,6 +73,8 @@ def _to_row(row: dict[str, Any], *, status: VehiclePeriodStatus) -> FleetOvervie
     tx_liters = round(float(row.get("tx_liters") or 0), 2)
     wb_fuel_issued = round(float(row.get("wb_fuel_issued") or 0), 2)
     fuel_end_last = row.get("fuel_end_last")
+    tank_volume = row.get("tank_volume_liters")
+    next_first_fill = row.get("next_first_fill_liters")
     open_before = int(row["open_before"] or 0)
     return FleetOverviewRow(
         vehicle=FleetOverviewVehicle(
@@ -91,6 +95,10 @@ def _to_row(row: dict[str, Any], *, status: VehiclePeriodStatus) -> FleetOvervie
         confirmed_count=int(row["confirmed_count"] or 0),
         exported_count=int(row["exported_count"] or 0),
         fuel_end_last=None if fuel_end_last is None else round(float(fuel_end_last), 2),
+        tank_volume_liters=None if tank_volume is None else float(tank_volume),
+        next_first_fill_liters=(
+            None if next_first_fill is None else round(float(next_first_fill), 2)
+        ),
         liters_diff=round(tx_liters - wb_fuel_issued, 2),
         open_before=open_before,
         open_before_month=row.get("open_before_month") if open_before else None,

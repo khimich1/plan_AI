@@ -12,7 +12,8 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.config_and_data as cfg
-from core.plate_runtime_state import get_plate_mutable_runtime
+from core.plate_order_context import PlateOrderContext
+from core.plate_runtime_state import new_plate_mutable_runtime_empty
 from viz_modules.procurement import build_procurement_items, build_price_rows
 from viz_modules.procurement.ports import ProcurementDeps
 
@@ -28,42 +29,29 @@ _STUB_DEPS = ProcurementDeps(
 def test_procurement_items_use_explicit_plate_load_details_not_tls() -> None:
     """A3 phase 2: explicit plate_load_details must not read TLS globals."""
     details = {(7.3, 1.2, 12.0, "73"): 2}
-
-    poisoned = get_plate_mutable_runtime()
-    saved = dict(poisoned.plate_load_details)
-    poisoned.plate_load_details.clear()
+    poisoned = new_plate_mutable_runtime_empty()
     poisoned.plate_load_details[(7.3, 1.2, 8.0, "73")] = 99
 
-    try:
-        items = build_procurement_items(plate_load_details=details)
-        assert len(items) == 1
-        assert items[0]["load_code"] == 12
-        assert items[0]["qty"] == 2
-    finally:
-        poisoned.plate_load_details.clear()
-        poisoned.plate_load_details.update(saved)
+    items = build_procurement_items(plate_load_details=details, runtime=poisoned)
+    assert len(items) == 1
+    assert items[0]["load_code"] == 12
+    assert items[0]["qty"] == 2
 
 
 def test_build_price_rows_resolve_load_from_explicit_details_not_tls() -> None:
     """A3 phase 2: build_price_rows fallback uses explicit plate_load_details."""
     details = {(7.3, 1.2, 12.0, "73"): 1}
-
-    poisoned = get_plate_mutable_runtime()
-    saved = dict(poisoned.plate_load_details)
-    poisoned.plate_load_details.clear()
+    poisoned = new_plate_mutable_runtime_empty()
     poisoned.plate_load_details[(7.3, 1.2, 8.0, "73")] = 99
 
-    try:
-        rows, _total = build_price_rows(
-            {},
-            deps=_STUB_DEPS,
-            plate_load_details=details,
-        )
-        assert len(rows) == 1
-        assert "12п" in rows[0][1]
-    finally:
-        poisoned.plate_load_details.clear()
-        poisoned.plate_load_details.update(saved)
+    rows, _total = build_price_rows(
+        {},
+        deps=_STUB_DEPS,
+        plate_load_details=details,
+        runtime=poisoned,
+    )
+    assert len(rows) == 1
+    assert "12п" in rows[0][1]
 
 
 def test_procurement_with_different_loads():
@@ -83,19 +71,19 @@ def test_procurement_with_different_loads():
     
     print(f"\nTest order:\n{test_order}")
     
-    # Парсим заказ
-    unparsed, _contributions, _line_loads = cfg.set_plate_lists_from_text(test_order)
-    
+    ctx = PlateOrderContext.fresh_empty()
+    with ctx.bound():
+        unparsed, _contributions, _line_loads = cfg.set_plate_lists_from_text(test_order)
+        load_details = dict(ctx.plates.plate_load_details)
+        items = build_procurement_items()
+
     if unparsed:
         print(f"\nWARNING: Unparsed lines: {unparsed}")
-    
+
     print("\nPLATE_LOAD_DETAILS:")
-    for key, qty in sorted(cfg.PLATE_LOAD_DETAILS.items()):
+    for key, qty in sorted(load_details.items()):
         length, width, load = key[0], key[1], key[2]
         print(f"  {qty}x {length}m x {width}m with load {load}p")
-    
-    # Получаем items закупки
-    items = build_procurement_items()
     
     print(f"\nProcurement items (should be {5} separate items):")
     for idx, item in enumerate(items, 1):
@@ -157,11 +145,12 @@ def test_width_formats_and_no_plate_loss():
     """
 
     expected_qty = 3 + 1 + 2 + 1 + 4
-    unparsed, _contributions, _line_loads = cfg.set_plate_lists_from_text(order_text)
+    ctx = PlateOrderContext.fresh_empty()
+    with ctx.bound():
+        unparsed, _contributions, _line_loads = cfg.set_plate_lists_from_text(order_text)
     assert not unparsed, f"Unexpected unparsed lines: {unparsed}"
 
-    order = cfg.get_current_plate_order()
-    parsed_qty = sum(order.plate_load_details.values())
+    parsed_qty = sum(ctx.plates.plate_load_details.values())
     assert parsed_qty == expected_qty, f"Expected {expected_qty}, got {parsed_qty}"
 
     names = [

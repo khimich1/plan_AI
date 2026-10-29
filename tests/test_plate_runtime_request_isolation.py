@@ -191,6 +191,5 @@ def test_parallel_preview_does_not_leave_request_data_in_thread_runtime(
         )
     )
 
-    runtime = get_plate_mutable_runtime()
-    assert 7.8 not in runtime.plates_1_2
-    assert 6.6 not in runtime.plates_1_2
+    with pytest.raises(RuntimeError, match="заказ плит не привязан"):
+        get_plate_mutable_runtime()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 
 import core.config_and_data as cfg
+from core.plate_order_context import PlateOrderContext
 
 
 def test_plate_load_details_isolated_across_threads() -> None:
@@ -12,9 +13,11 @@ def test_plate_load_details_isolated_across_threads() -> None:
     ok: dict[int, bool] = {}
 
     def worker(tid: int, text: str, expected_total: int) -> None:
-        cfg.set_plate_lists_from_text(text)
-        barrier.wait()
-        total = sum(cfg.PLATE_LOAD_DETAILS.values())
+        ctx = PlateOrderContext.fresh_empty()
+        with ctx.bound():
+            cfg.set_plate_lists_from_text(text)
+            barrier.wait()
+            total = sum(ctx.plates.plate_load_details.values())
         ok[tid] = total == expected_total
 
     t1 = threading.Thread(target=worker, args=(1, "ПБ 78-12-8п 2", 2))

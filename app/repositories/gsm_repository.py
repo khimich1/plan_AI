@@ -473,6 +473,7 @@ class GsmRepository:
                 v.id AS vehicle_id,
                 v.name,
                 v.plate_number,
+                v.tank_volume_liters AS tank_volume_liters,
                 COALESCE(tx.tx_count, 0) AS tx_count,
                 ROUND(COALESCE(tx.tx_liters, 0), 2) AS tx_liters,
                 ROUND(COALESCE(tx.tx_amount, 0), 2) AS tx_amount,
@@ -583,6 +584,62 @@ class GsmRepository:
                 ),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def next_fuel_day_rows(
+        self,
+        *,
+        after: DateLike,
+        vehicle_id: int | None = None,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Fuel rows of the earliest later fuel day, keyed by vehicle.
+
+        Loads that one calendar day only, not the rest of the next month.
+        """
+        after_iso = self._to_iso_date(after)
+        vehicle_clause = ""
+        params: list[Any] = [after_iso]
+        if vehicle_id is not None:
+            vehicle_clause = " AND c.vehicle_id = ?"
+            params.append(vehicle_id)
+        with self._connect() as conn:
+            day_rows = conn.execute(
+                f"""
+                SELECT c.vehicle_id AS vehicle_id, MIN(substr(t.ts, 1, 10)) AS day
+                FROM gsm_transaction t
+                JOIN gsm_fuel_card c ON c.id = t.card_id
+                WHERE t.service_type = 'fuel'
+                  AND t.qty_liters IS NOT NULL
+                  AND c.vehicle_id IS NOT NULL
+                  AND substr(t.ts, 1, 10) > ?
+                  {vehicle_clause}
+                GROUP BY c.vehicle_id
+                """,
+                params,
+            ).fetchall()
+            if not day_rows:
+                return {}
+            pair_sql = " OR ".join(
+                "(c.vehicle_id = ? AND substr(t.ts, 1, 10) = ?)" for _ in day_rows
+            )
+            load_params: list[Any] = []
+            for row in day_rows:
+                load_params.extend([int(row["vehicle_id"]), str(row["day"])])
+            rows = conn.execute(
+                f"""
+                SELECT t.*, c.vehicle_id AS vehicle_id
+                FROM gsm_transaction t
+                JOIN gsm_fuel_card c ON c.id = t.card_id
+                WHERE t.service_type = 'fuel'
+                  AND t.qty_liters IS NOT NULL
+                  AND ({pair_sql})
+                ORDER BY t.ts, t.id
+                """,
+                load_params,
+            ).fetchall()
+        grouped: dict[int, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(int(row["vehicle_id"]), []).append(dict(row))
+        return grouped
 
     # ------------------------------------------------------------------
     # Routes

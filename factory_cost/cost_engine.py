@@ -86,6 +86,24 @@ def get_cost_by_plate_name(
         conn.close()
 
 
+def _load_code_for_cost(length_m: float, width_m: float, default: int) -> int:
+    """Нагрузка из привязанного заказа, иначе ширинный fallback на пустом заказе.
+
+    Себестоимость по размерам не создаёт потоковый заказ. Если заказ уже
+    привязан, читается он. Если нет — временный пустой runtime, без TLS.
+    """
+    try:
+        return get_load_code_for_plate(length_m, width_m, default=default)
+    except RuntimeError:
+        from core.plate_runtime_state import (
+            new_plate_mutable_runtime_empty,
+            plate_mutable_runtime_scope,
+        )
+
+        with plate_mutable_runtime_scope(new_plate_mutable_runtime_empty()):
+            return get_load_code_for_plate(length_m, width_m, default=default)
+
+
 def get_cost_by_params(
     length_m: float,
     width_m: float,
@@ -106,8 +124,7 @@ def get_cost_by_params(
     Returns:
         Словарь с данными о себестоимости или None
     """
-    # Определяем нагрузку через существующий парсер
-    load_code = get_load_code_for_plate(length_m, width_m, default=default_load)
+    load_code = _load_code_for_cost(length_m, width_m, default_load)
     
     # Переводим в дециметры
     length_dm = int(round(length_m * 10))

@@ -16,6 +16,10 @@ from core.optimization.context import (  # noqa: E402
 from core.optimization.layout_runtime_snapshot import (  # noqa: E402
     build_layout_runtime_snapshot,
 )
+from core.plate_runtime_state import (  # noqa: E402
+    new_plate_mutable_runtime_empty,
+    plate_mutable_runtime_scope,
+)
 from core.optimization import context as opt_context  # noqa: E402
 from core.optimization.orchestrator import (  # noqa: E402
     optimize_with_cascading_longitudinal_cuts,
@@ -57,6 +61,23 @@ def test_optimization_context_scope_isolates_concurrent_asyncio_tasks() -> None:
 def test_layout_runtime_snapshot_deep_copies_opt_plan() -> None:
     OPT_PLAN.clear()
     OPT_PLAN["k"] = "before"
-    rt = build_layout_runtime_snapshot()
+    with plate_mutable_runtime_scope(new_plate_mutable_runtime_empty()):
+        rt = build_layout_runtime_snapshot()
     OPT_PLAN["k"] = "after"
     assert dict(rt.opt_snapshot.opt_plan)["k"] == "before"
+
+
+def test_snapshot_from_explicit_order_does_not_read_unbound_runtime(
+    monkeypatch,
+) -> None:
+    """Снимок из PlateOrderContext не создаёт заказ потока, даже вне bound()."""
+    monkeypatch.setenv("PLATE_RUNTIME_STRICT", "raise")
+    from core.plate_order_context import PlateOrderContext
+    from core.optimization.layout_runtime_snapshot import (
+        build_layout_runtime_snapshot_from_plate_order_context,
+    )
+
+    ctx = PlateOrderContext.fresh_empty()
+    ctx.plates.plates_1_2.append(3.3)
+    snapshot = build_layout_runtime_snapshot_from_plate_order_context(ctx)
+    assert snapshot.layout_cfg.plate_lists.plates_1_2 == (3.3,)

@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClientConditionsStep } from "@/features/commercial-offer/components/steps/ClientConditionsStep";
-import type { ContractCardHit, CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
+import type { CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
 
 const mockUseAuth = vi.fn();
 const searchCounterparties = vi.fn();
@@ -39,23 +39,6 @@ const ROMA: CounterpartyShort = {
   kpp: "770101001",
 };
 
-const NIKOLSKY_PARTY: CounterpartyShort = {
-  id: 21,
-  code_1c: "00-nik",
-  name: "НИКОЛЬСКИЙ ЮРИДИЧЕСКОЕ ООО",
-  inn: "9998887776",
-  kpp: "999801001",
-};
-
-const NIKOLSKY_CARD: ContractCardHit = {
-  id: 4,
-  name: "ООО Никольский",
-  inn: "5905123456",
-  number: "0007/10/26",
-  requisites_complete: false,
-  counterparty: NIKOLSKY_PARTY,
-};
-
 const defaultProps = {
   managers,
   selectedManagerId: null as number | null,
@@ -84,40 +67,42 @@ describe("ClientConditionsStep", () => {
     vi.clearAllMocks();
   });
 
-  it("searches contract cards and keeps the card name ООО Никольский", async () => {
+  it("searches the 1C directory and submits id, name, inn, kpp and code", async () => {
     mockUseAuth.mockReturnValue({
       user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
     });
-    searchContractCards.mockResolvedValue({ items: [NIKOLSKY_CARD], count: 1 });
+    searchCounterparties.mockResolvedValue({ items: [ROMA], count: 1 });
     const onSubmit = vi.fn();
 
     wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} onSubmit={onSubmit} />);
 
     fireEvent.change(screen.getByRole("combobox", { name: /клиент/i }), {
-      target: { value: "нико" },
+      target: { value: "ромаш" },
     });
 
-    expect(searchContractCards).toHaveBeenCalledWith("нико");
-    expect(searchCounterparties).not.toHaveBeenCalled();
-    expect(await screen.findByRole("option", { name: /ООО Никольский/ })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /не полные/ })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /НИКОЛЬСКИЙ ЮРИДИЧЕСКОЕ/ })).not.toBeInTheDocument();
+    expect(searchCounterparties).toHaveBeenCalledWith("ромаш");
+    expect(searchContractCards).not.toHaveBeenCalled();
+    const option = await screen.findByRole("option", { name: /ООО Ромашка/ });
+    expect(option).toHaveTextContent("ИНН 7701234567");
+    expect(option).toHaveTextContent("КПП 770101001");
+    expect(option).toHaveTextContent("00-00000007");
+    expect(option).not.toHaveTextContent("0001/09/26");
+    expect(option).not.toHaveTextContent("0006/09/26");
 
-    fireEvent.click(screen.getByRole("option", { name: /ООО Никольский/ }));
+    fireEvent.click(option);
 
-    expect(screen.getByRole("combobox", { name: /клиент/i })).toHaveValue("ООО Никольский");
-    expect(screen.getByText(/ИНН 5905123456/)).toBeInTheDocument();
-    expect(screen.getByText(/код 1С 00-nik/)).toBeInTheDocument();
+    expect(screen.getByText(/ИНН 7701234567 · КПП 770101001 · код 1С 00-00000007/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Рассчитать КП/i }));
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith(
         expect.objectContaining({
           managerId: 10,
-          clientName: "ООО Никольский",
-          counterpartyId: 21,
-          counterpartyCode1c: "00-nik",
-          counterpartyInn: "5905123456",
+          clientName: "ООО Ромашка",
+          counterpartyId: 7,
+          counterpartyCode1c: "00-00000007",
+          counterpartyInn: "7701234567",
+          counterpartyKpp: "770101001",
         }),
       );
     });
@@ -150,7 +135,7 @@ describe("ClientConditionsStep", () => {
     mockUseAuth.mockReturnValue({
       user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
     });
-    searchContractCards.mockResolvedValue({ items: [], count: 0 });
+    searchCounterparties.mockResolvedValue({ items: [], count: 0 });
     const onSubmit = vi.fn();
 
     wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} onSubmit={onSubmit} />);
@@ -158,6 +143,8 @@ describe("ClientConditionsStep", () => {
     fireEvent.change(screen.getByRole("combobox", { name: /клиент/i }), {
       target: { value: "ИП Петров" },
     });
+    expect(searchCounterparties).toHaveBeenCalledWith("ИП Петров");
+    expect(searchContractCards).not.toHaveBeenCalled();
 
     const submit = screen.getByRole("button", { name: /Рассчитать КП/i });
     expect(submit).toBeEnabled();
@@ -169,46 +156,6 @@ describe("ClientConditionsStep", () => {
           clientName: "ИП Петров",
           counterpartyId: null,
           counterpartyInn: null,
-        }),
-      );
-    });
-  });
-
-  it("submits an unlinked card name and inn without a 1C id", async () => {
-    mockUseAuth.mockReturnValue({
-      user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
-    });
-    searchContractCards.mockResolvedValue({
-      items: [
-        {
-          id: 8,
-          name: "ИП Секлюцкий",
-          inn: "5904111223",
-          number: "0001/10/26",
-          requisites_complete: false,
-          counterparty: null,
-        },
-      ],
-      count: 1,
-    });
-    const onSubmit = vi.fn();
-
-    wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} onSubmit={onSubmit} />);
-
-    fireEvent.change(screen.getByRole("combobox", { name: /клиент/i }), {
-      target: { value: "секлю" },
-    });
-    fireEvent.click(await screen.findByRole("option", { name: /ИП Секлюцкий/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Рассчитать КП/i }));
-
-    await waitFor(() => {
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          clientName: "ИП Секлюцкий",
-          counterpartyId: null,
-          counterpartyCode1c: "",
-          counterpartyInn: "5904111223",
-          counterpartyKpp: null,
         }),
       );
     });
@@ -230,19 +177,7 @@ describe("ClientConditionsStep", () => {
     mockUseAuth.mockReturnValue({
       user: { id: 1, username: "manager", role: "manager", manager_id: 10, is_active: true },
     });
-    searchContractCards.mockResolvedValue({
-      items: [
-        {
-          id: 15,
-          name: "ООО Ромашка",
-          inn: "7701234567",
-          number: "0001/10/26",
-          requisites_complete: true,
-          counterparty: ROMA,
-        },
-      ],
-      count: 1,
-    });
+    searchCounterparties.mockResolvedValue({ items: [ROMA], count: 1 });
     const onSubmit = vi.fn();
 
     wrap(<ClientConditionsStep {...defaultProps} selectedManagerId={10} onSubmit={onSubmit} />);

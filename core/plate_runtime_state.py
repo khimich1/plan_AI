@@ -23,10 +23,19 @@ Deployment: изоляция гарантирована в рамках одно
 from __future__ import annotations
 
 import contextvars
+import logging
+import os
+import sys
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+
+_LOGGER = logging.getLogger(__name__)
+
+# raise: неявный заказ не создаётся. warn оставлен для локальной отладки.
+_DEFAULT_PLATE_RUNTIME_STRICT = "raise"
+_PLATE_RUNTIME_STRICT_ENV = "PLATE_RUNTIME_STRICT"
 
 PlateLoadKey = Tuple[float, float, int, str]
 PlateExactKey = Tuple[float, str]
@@ -141,11 +150,37 @@ _plate_cv: contextvars.ContextVar[Optional[PlateMutableRuntime]] = contextvars.C
 _tls = threading.local()
 
 
+def _plate_runtime_strict_mode() -> str:
+    raw = os.environ.get(_PLATE_RUNTIME_STRICT_ENV, _DEFAULT_PLATE_RUNTIME_STRICT).strip().lower()
+    if raw in {"warn", "raise"}:
+        return raw
+    return _DEFAULT_PLATE_RUNTIME_STRICT
+
+
+def _implicit_caller() -> tuple[str, int]:
+    """Файл и строка вызывающего ``get_plate_mutable_runtime()``."""
+    # 0 — эта функция, 1 — _report, 2 — getter, 3 — внешний вызывающий.
+    frame = sys._getframe(3)
+    return frame.f_code.co_filename, frame.f_lineno
+
+
+def _report_implicit_plate_runtime_access() -> None:
+    """warn пишет вызывающего; raise бросает и не возвращает управление к TLS."""
+    filename, lineno = _implicit_caller()
+    message = f"заказ плит не привязан ({filename}:{lineno})"
+    if _plate_runtime_strict_mode() == "raise":
+        raise RuntimeError(message)
+    # stacklevel=3: warning → _report → getter → вызывающий.
+    _LOGGER.warning(message, stacklevel=3)
+
+
 def get_plate_mutable_runtime() -> PlateMutableRuntime:
     """Текущее мутабельное состояние заказа (контекст задачи или поток)."""
     ctx_rt = _plate_cv.get()
     if ctx_rt is not None:
         return ctx_rt
+    _report_implicit_plate_runtime_access()
+    # warn: объект потока сохраняется. raise не доходит сюда и TLS не создаёт.
     if not hasattr(_tls, "runtime"):
         # Пустой рантайм по умолчанию: демо-заказ только через
         # ``new_plate_mutable_runtime_from_demo()`` (избегаем утечек «чужого» заказа в пуле потоков / при первом касании TLS).
@@ -226,37 +261,11 @@ MUTABLE_ATTR_MAP: Dict[str, str] = {
     "LAST_PARSE_DIAGNOSTICS": "last_parse_diagnostics",
 }
 
-# PEP 562 proxy (config_and_data.__getattr__): только имена с оставшимися bot/test cfg.-callers.
-# Web/core/app — get_plate_mutable_runtime(); см. docs/pep562-config-and-data-decommission.md.
-MUTABLE_LEGACY_NAMES = frozenset(
-    {
-        # bot/handlers/optimize.py
-        "PLATES_0_32",
-        "PLATES_0_46",
-        "PLATES_0_70",
-        "PLATES_0_72",
-        "PLATES_0_86",
-        "PLATES_0_88",
-        "PLATES_0_74",
-        "PLATES_0_48",
-        "PLATES_0_50",
-        "PLATES_0_34",
-        # tests / semantics (PLATE_LOAD_DETAILS proxy contract)
-        "PLATES_1_2",
-        "PLATES_1_0",
-        "PLATES_1_08",
-        "PLATE_LOAD_DETAILS",
-        "PLATE_EXACT_WIDTHS",
-        "PLATE_LENGTH_DM_RAW",
-    }
-)
-
 __all__ = [
     "PlateLoadKey",
     "PlateExactKey",
     "PlateMutableRuntime",
     "MUTABLE_ATTR_MAP",
-    "MUTABLE_LEGACY_NAMES",
     "get_plate_mutable_runtime",
     "bind_plate_mutable_runtime",
     "reset_plate_mutable_runtime",

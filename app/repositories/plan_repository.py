@@ -186,7 +186,18 @@ class PlanRepository:
             "version": int(row[1]),
         }
 
-    def delete(self, plan_id: str) -> bool:
+    def delete(
+        self,
+        plan_id: str,
+        *,
+        _external_conn: sqlite3.Connection | None = None,
+    ) -> bool:
+        if _external_conn is not None:
+            cursor = _external_conn.execute(
+                "DELETE FROM production_plans WHERE id = ?",
+                (plan_id,),
+            )
+            return cursor.rowcount > 0
         with self._connect() as conn:
             cursor = conn.execute(
                 "DELETE FROM production_plans WHERE id = ?",

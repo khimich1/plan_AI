@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
 from typing import Mapping
 
 from core.supply_contract import CANCELLED_STATUS
@@ -24,10 +23,9 @@ def select_contract_client_links(
 ) -> list[tuple[int, int]]:
     """Пары (id договора, id клиента) для ещё пустого ``counterparty_id``.
 
-    ИНН годится, только если в справочнике ровно одна строка и она —
-    активный клиент. Из свободных неотменённых договоров этого ИНН
-    берётся поздняя ``contract_date``, при равенстве — больший ``id``.
-    У клиента уже есть другой действующий договор — пара не строится.
+    Пара строится, только если на ИНН ровно один свободный неотменённый
+    договор и ровно один активный клиент, и у этого клиента ещё нет
+    другого действующего договора. Два договора и больше дают пусто.
     """
     eligible = _eligible_clients_by_inn(clients)
     busy = _clients_with_active_contract(contracts)
@@ -38,8 +36,9 @@ def select_contract_client_links(
             continue
         grouped.setdefault(inn, []).append(contract)
     pairs = [
-        (int(_latest_contract(group)["id"]), eligible[inn])
+        (int(group[0]["id"]), eligible[inn])
         for inn, group in grouped.items()
+        if len(group) == 1
     ]
     pairs.sort(key=lambda item: item[0])
     return pairs
@@ -94,28 +93,6 @@ def _candidate_inn(
     if contract.get("id") is None:
         return None
     return inn
-
-
-def _latest_contract(group: list[ContractRow]) -> ContractRow:
-    return max(group, key=_contract_rank)
-
-
-def _contract_rank(contract: ContractRow) -> tuple[date, int]:
-    return (_contract_day(contract.get("contract_date")), int(contract["id"]))
-
-
-def _contract_day(value: object) -> date:
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    text = str(value or "").strip()
-    if len(text) < 10 or text[4] != "-" or text[7] != "-":
-        return date.min
-    try:
-        return date.fromisoformat(text[:10])
-    except ValueError:
-        return date.min
 
 
 def _cancelled(contract: ContractRow) -> bool:

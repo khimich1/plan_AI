@@ -22,7 +22,8 @@ from core.plate_runtime_state import (  # noqa: E402
 )
 
 
-def test_fresh_thread_sees_empty_plate_runtime_not_demo() -> None:
+def test_fresh_thread_sees_empty_plate_runtime_not_demo(monkeypatch) -> None:
+    monkeypatch.setenv("PLATE_RUNTIME_STRICT", "warn")
     lengths: list[int] = []
 
     def _in_thread() -> None:

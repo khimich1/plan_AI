@@ -13,7 +13,11 @@ from core.config.constants import (
     length_dm_to_m,
 )
 from core.config_and_data import make_plate_name
-from core.plate_runtime_state import get_plate_mutable_runtime
+from core.plate_runtime_state import (
+    PlateMutableRuntime,
+    get_plate_mutable_runtime,
+    plate_mutable_runtime_scope,
+)
 
 from ..price_utils import _find_price_for_plate_production_fallback, find_price_for_plate
 from .load_context import LoadCodeFn, resolve_procurement_load_context
@@ -80,6 +84,40 @@ def _accumulate_order_counter(
 
 
 def build_component_breakdown(
+    price_table: dict,
+    price_rows: list = None,
+    reinforcement_code: int = 8,
+    deps: ProcurementDeps | None = None,
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+    runtime: PlateMutableRuntime | None = None,
+):
+    """Формирует детальную разбивку компонентов для каждого наименования.
+
+    ``runtime`` — явный заказ. Без него читается уже открытый ``bound()``.
+    """
+    if runtime is None:
+        return _build_component_breakdown(
+            price_table,
+            price_rows,
+            reinforcement_code,
+            deps,
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+    with plate_mutable_runtime_scope(runtime):
+        return _build_component_breakdown(
+            price_table,
+            price_rows,
+            reinforcement_code,
+            deps,
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+
+
+def _build_component_breakdown(
     price_table: dict,
     price_rows: list = None,
     reinforcement_code: int = 8,
@@ -401,16 +439,51 @@ def build_component_breakdown_production(
     *,
     plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
     get_load_code: LoadCodeFn | None = None,
+    runtime: PlateMutableRuntime | None = None,
 ):
     """
     Формирует детальную разбивку компонентов для планирования производства.
     ОТЛИЧИЯ от build_component_breakdown:
     - Базовая цена берется из таблицы raw_material_costs
     - Добавлен компонент "Переармирование"
-    
+
+    ``runtime`` — явный заказ. Без него читается уже открытый ``bound()``.
+
     Args:
         tracks_for_day: Список дорожек текущего дня. Если указан, будут включены только плиты из этих дорожек.
     """
+    if runtime is None:
+        return _build_component_breakdown_production(
+            price_table,
+            price_rows,
+            reinforcement_code,
+            tracks_for_day,
+            deps,
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+    with plate_mutable_runtime_scope(runtime):
+        return _build_component_breakdown_production(
+            price_table,
+            price_rows,
+            reinforcement_code,
+            tracks_for_day,
+            deps,
+            plate_load_details=plate_load_details,
+            get_load_code=get_load_code,
+        )
+
+
+def _build_component_breakdown_production(
+    price_table: dict,
+    price_rows: list = None,
+    reinforcement_code: int = 8,
+    tracks_for_day: list = None,
+    deps: ProcurementDeps | None = None,
+    *,
+    plate_load_details: Mapping[tuple[float, float, Any, str], int] | None = None,
+    get_load_code: LoadCodeFn | None = None,
+):
     d = resolve_procurement_deps(deps)
     rt = get_plate_mutable_runtime()
     from core.optimization import OPT_CASCADING_PLAN, OPT_CASCADING_PLAN_BY_LOAD

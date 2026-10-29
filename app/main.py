@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.api.v1.endpoints.health import build_health_payload
 from app.schemas.health import HealthResponse
@@ -97,6 +97,12 @@ def create_app() -> FastAPI:
                 "detail": "Черновик временно занят другим запросом. Повторите попытку."
             },
         )
+
+    if not is_production:
+
+        @app.get("/", include_in_schema=False)
+        def root_redirect() -> RedirectResponse:
+            return RedirectResponse(url="/docs", status_code=307)
 
     @app.get("/health", tags=["health"], response_model=HealthResponse, response_model_exclude_none=True)
     def root_health() -> HealthResponse:

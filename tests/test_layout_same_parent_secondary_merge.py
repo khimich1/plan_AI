@@ -17,6 +17,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.optimization  # noqa: E402
 import viz_modules.layout_sequence as layout_sequence_mod  # noqa: E402
+from core.optimization.layout_runtime_snapshot import empty_layout_sequence_cfg  # noqa: E402
 from viz_modules.layout_sequence import (  # noqa: E402
     _build_sequence_from_plan,
     _merge_atomic_secondaries_by_shared_parent,
@@ -73,7 +74,9 @@ def _minimal_plan_three_secondaries_same_parent() -> dict:
 
 def test_merge_three_atomics_under_one_primary_all_nested_unit_ids_distinct():
     plan = _minimal_plan_three_secondaries_same_parent()
-    seq = _build_sequence_from_plan(plan, _minimal_label, reinforcement_map={})
+    seq = _build_sequence_from_plan(
+        plan, _minimal_label, reinforcement_map={}, layout_cfg=empty_layout_sequence_cfg()
+    )
     splits = [s for s in seq if s.get("mode") == "split" and s.get("unit_id") == "prim-35"]
     assert len(splits) == 1
     nested = splits[0].get("secondary_cuts") or []
@@ -93,7 +96,9 @@ def test_h5_secondary_unmatched_zero_for_merged_three():
 
     plan = _minimal_plan_three_secondaries_same_parent()
     with patch.object(layout_sequence_mod, "_agent_seq_debug", side_effect=_spy):
-        _build_sequence_from_plan(plan, _minimal_label, reinforcement_map={})
+        _build_sequence_from_plan(
+        plan, _minimal_label, reinforcement_map={}, layout_cfg=empty_layout_sequence_cfg()
+    )
 
     assert captured
     assert captured[-1].get("secondary_total_from_plan") == 3

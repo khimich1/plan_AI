@@ -892,15 +892,9 @@ def test_build_order_data_preserves_input_sequence() -> None:
 
 def test_build_order_data_resolves_load_from_order_not_tls_globals() -> None:
     """A3 phase 1: _build_order_data must not read plate_runtime_state TLS."""
-    from core.plate_runtime_state import get_plate_mutable_runtime
-
     service = CommercialService()
     order = PlateOrder()
     order.plate_load_details[(7.3, 1.2, 12.0, "73")] = 2
-
-    poisoned = get_plate_mutable_runtime()
-    poisoned.plate_load_details.clear()
-    poisoned.plate_load_details[(7.3, 1.2, 8.0, "73")] = 99
 
     parse_result = ParseResult(
         order=order,

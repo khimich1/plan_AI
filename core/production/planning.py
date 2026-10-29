@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from core import kp_db_plates
+from core.kp_db_common import _connect
 from core.concrete_grade_resolver import enrich_orders_2d_concrete_grade, resolve_concrete_grade_from_order
 from core.domain.plate_order import PlateOrder, normalize_load_code
 from core.optimization import optimize_with_cascading_longitudinal_cuts
@@ -254,6 +254,7 @@ def persist(
     *,
     ensure_unique_plan_id: Callable[[], str] | None = None,
     settle_fn: Callable[..., Any] | None = None,
+    before_commit: Callable[[Any, dict[str, Any]], None] | None = None,
 ) -> PersistResult:
     """Build plan structure, commit plate statuses, save via repository."""
     all_tracks_list = list(optimize_result.all_tracks_list)
@@ -333,48 +334,68 @@ def persist(
     plan["layout_reinforcement_order"] = config.layout_reinforcement_order
 
     tracks_by_day_for_commit = _tracks_by_day_from_plan(plan)
-
-    try:
-        commit_plan_plates(
-            plan_id=plan_id,
-            orders_2d=load_result.orders_2d,
-            optimization_result=optimization_result,
-            all_tracks_list=all_tracks_list,
-            db_path=config.plita_db_path,
-            tracks_by_day=tracks_by_day_for_commit,
-            settle_fn=settle_fn,
-        )
-    except PlanCommitError as exc:
-        logger.error(
-            "[CORE-PLAN] Не удалось закоммитить план %s: %s", plan_id, exc
-        )
-        raise PlanBuildError(str(exc)) from exc
-
     plan[INTEGRITY_KEY] = build_integrity_report(plan)
 
+    is_new = bool(stats.get("is_new_plan"))
+    existing_record = None if is_new else repo.get(plan_id)
+
+    conn = _connect(config.plita_db_path)
     try:
-        if stats.get("is_new_plan"):
-            repo.create(plan)
-        else:
-            record = repo.get(plan_id)
-            if record is None:
-                repo.create(plan)
-            else:
-                repo.save(plan, expected_version=record["version"])
-        repo.set_active(plan_id)
-    except Exception as exc:
-        logger.exception(
-            "[CORE-PLAN] Ошибка записи плана %s в SQLite: %s", plan_id, exc
-        )
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
-            kp_db_plates.return_plan_plates_to_production(
-                plan_id, config.plita_db_path
+            commit_plan_plates(
+                plan_id=plan_id,
+                orders_2d=load_result.orders_2d,
+                optimization_result=optimization_result,
+                all_tracks_list=all_tracks_list,
+                db_path=config.plita_db_path,
+                tracks_by_day=tracks_by_day_for_commit,
+                settle_fn=settle_fn,
+                _external_conn=conn,
             )
-        except Exception:
+        except PlanCommitError as exc:
+            logger.error(
+                "[CORE-PLAN] Не удалось закоммитить план %s: %s", plan_id, exc
+            )
+            raise PlanBuildError(str(exc)) from exc
+
+        if before_commit is not None:
+            before_commit(conn, plan)
+
+        try:
+            if is_new or existing_record is None:
+                repo.create(plan, _external_conn=conn)
+            else:
+                version = int(existing_record["version"])
+                if config.expected_version is not None:
+                    version = int(config.expected_version)
+                repo.save(
+                    plan,
+                    expected_version=version,
+                    _external_conn=conn,
+                )
+        except Exception as exc:
+            # core не импортирует app. PlanVersionConflict должен дойти до HTTP 409.
+            if exc.__class__.__name__ == "PlanVersionConflict":
+                raise
             logger.exception(
-                "[CORE-PLAN] Не удалось откатить плиты для плана %s", plan_id
+                "[CORE-PLAN] Ошибка записи плана %s в SQLite: %s", plan_id, exc
             )
-        raise PlanBuildError("Не удалось сохранить план.") from exc
+            raise PlanBuildError("Не удалось сохранить план.") from exc
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    try:
+        repo.set_active(plan_id)
+    except Exception:
+        logger.exception(
+            "[CORE-PLAN] Не удалось отметить план %s активным; документ и плиты сохранены",
+            plan_id,
+        )
 
     saved_record = repo.get(plan_id)
     safe_plan = strip_plate_audit_from_plan(plan)

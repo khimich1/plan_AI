@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.config_and_data as cfg
+from core.plate_order_context import PlateOrderContext
 
 
 def test_exact_width_parsing():
@@ -30,8 +31,14 @@ def test_exact_width_parsing():
     """
     
     print(f"\nTest order:\n{test_order}")
-    
-    # Парсим заказ
+
+    ctx = PlateOrderContext.fresh_empty()
+    rt = ctx.plates
+    with ctx.bound():
+        _assert_exact_width_parsing(test_order, rt)
+
+
+def _assert_exact_width_parsing(test_order: str, rt) -> None:
     unparsed, _contributions, _line_loads = cfg.set_plate_lists_from_text(test_order)
     
     if unparsed:
@@ -41,14 +48,14 @@ def test_exact_width_parsing():
     
     # Проверяем, что плиты добавлены в правильные списки
     print("\nParsing results:")
-    print(f"  PLATES_0_46 (range 460-530mm): {cfg.PLATES_0_46}")
-    print(f"  PLATES_1_2 (1200mm): {cfg.PLATES_1_2}")
-    print(f"  PLATES_0_70 (660-710mm): {cfg.PLATES_0_70}")
-    print(f"  PLATES_0_74 (730-750mm): {cfg.PLATES_0_74}")
+    print(f"  PLATES_0_46 (range 460-530mm): {rt.plates_0_46}")
+    print(f"  PLATES_1_2 (1200mm): {rt.plates_1_2}")
+    print(f"  PLATES_0_70 (660-710mm): {rt.plates_0_70}")
+    print(f"  PLATES_0_74 (730-750mm): {rt.plates_0_74}")
     
     # Проверяем точные ширины
     print("\nExact widths (PLATE_EXACT_WIDTHS):")
-    for key, width in cfg.PLATE_EXACT_WIDTHS.items():
+    for key, width in rt.plate_exact_widths.items():
         length, list_name = key
         print(f"  {list_name}: length {length}m -> width {width}m ({int(width*1000)}mm)")
     
@@ -68,11 +75,11 @@ def test_exact_width_parsing():
     print("    OK! Correct (full plate 1200mm)")
     
     # Плита ПБ 73-10,2-8п должна быть в PLATES_1_08 с шириной примерно 1.02м
-    if 7.3 in cfg.PLATES_1_08:
+    if 7.3 in rt.plates_1_08:
         exact_width_3 = cfg.get_exact_width(7.3, 'PLATES_1_08', 1.08)
         print(f"  Plate 7.3m from PLATES_1_08: {exact_width_3}m ({int(exact_width_3*1000)}mm)")
         print("    OK! Found in PLATES_1_08")
-    elif 7.3 in cfg.PLATES_1_0:
+    elif 7.3 in rt.plates_1_0:
         exact_width_3 = cfg.get_exact_width(7.3, 'PLATES_1_0', 1.0)
         print(f"  Plate 7.3m from PLATES_1_0: {exact_width_3}m ({int(exact_width_3*1000)}mm)")
         print("    OK! Found in PLATES_1_0")
@@ -88,15 +95,11 @@ def test_fallback_width():
     print("TEST: Fallback to default width")
     print("=" * 60)
     
-    # Очищаем данные
-    cfg._clear_all_plate_lists()
-    
-    # Добавляем плиту вручную БЕЗ использования парсера
-    # (чтобы точная ширина НЕ сохранилась)
-    cfg.PLATES_0_46.append(5.0)
-    
-    # Пытаемся получить точную ширину
-    width = cfg.get_exact_width(5.0, 'PLATES_0_46', 0.46)
+    ctx = PlateOrderContext.fresh_empty()
+    with ctx.bound():
+        cfg._clear_all_plate_lists()
+        ctx.plates.plates_0_46.append(5.0)
+        width = cfg.get_exact_width(5.0, 'PLATES_0_46', 0.46)
     
     print(f"\n  Plate 5.0m without exact width: {width}m ({int(width*1000)}mm)")
     print(f"  Expected default width 0.46m")
