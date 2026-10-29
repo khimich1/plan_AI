@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { clientConditionsSchema } from "@/features/commercial-offer/schemas/commercialOffer";
 import type { z } from "zod";
 import type { ConditionsMode, Manager } from "@/features/commercial-offer/types/commercialOffer";
-import type { ContractCardHit, CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
+import type { CounterpartyShort } from "@/features/commercial-offer/api/counterpartiesApi";
 import {
   CounterpartyAutocomplete,
   formatCounterpartyRequisites,
@@ -125,13 +125,6 @@ export const ClientConditionsStep = ({
     }
   };
 
-  const handleUnlinkedCard = (card: ContractCardHit) => {
-    setSelected(null);
-    form.setValue("counterpartyId", null, { shouldValidate: true, shouldDirty: true });
-    form.setValue("clientName", card.name, { shouldValidate: true, shouldDirty: true });
-    setCardInn(card.inn?.trim() || null);
-  };
-
   const handleSubmit = form.handleSubmit((payload) => {
     if (!effectiveManagerId || !payload.clientName.trim()) {
       return;
@@ -230,16 +223,13 @@ export const ClientConditionsStep = ({
           >
             <CounterpartyAutocomplete
               key={`${defaultValues.counterpartyId ?? "none"}:${defaultValues.clientName}`}
-              searchSource="contract-cards"
               selected={selected}
               initialName={defaultValues.clientName}
               onSelect={handleSelect}
-              onContractCardSelect={handleUnlinkedCard}
               onTextChange={(value) => {
                 form.setValue("clientName", value, { shouldValidate: true, shouldDirty: true });
                 setCardInn(null);
               }}
-              placeholder="Название, ИНН или номер договора"
             />
           </FieldWrapper>
           {selected ? (

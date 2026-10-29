@@ -94,9 +94,12 @@ describe("CounterpartyAutocomplete", () => {
 
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "Ромашка" } });
 
-    expect(await screen.findByRole("option", { name: /ИНН 7701234567/ })).toBeInTheDocument();
+    const option = await screen.findByRole("option", { name: /ИНН 7701234567/ });
+    expect(option).toHaveTextContent("Ромашка");
+    expect(option).toHaveTextContent("КПП 770101001");
+    expect(option).toHaveTextContent("00-00000001");
+    expect(option).not.toHaveTextContent("/");
     expect(screen.getByRole("option", { name: /ИНН 5401112233/ })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /КПП 770101001/ })).toBeInTheDocument();
   });
 
   it("selects an option on click", async () => {

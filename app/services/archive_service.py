@@ -384,7 +384,7 @@ class ArchiveService:
         raw = self._offer_for_invoice_write(kp_id, user)
         if raw.get("status") != STATUS_ARCHIVE:
             raise ArchiveValidationError(MSG_EXPORT_ONLY_ARCHIVE)
-        offer, contract = self._invoice_offer(raw, user_id=_actor_id(user))
+        offer, contract = self._invoice_offer(raw)
         name = _require_invoice_warehouse(warehouse)
         document, digest = self._build_stamped_invoice(
             raw, offer, contract, action="create", warehouse=name
@@ -418,7 +418,7 @@ class ArchiveService:
         current = invoice_snapshot_hash(card_offer_from_kp(raw))
         if str(raw.get("invoice_snapshot_hash") or "") == current:
             raise ArchiveValidationError("Состав не изменился")
-        offer, contract = self._invoice_offer(raw, user_id=_actor_id(user))
+        offer, contract = self._invoice_offer(raw)
         name = _warehouse_for_correction(raw, warehouse)
         document, digest = self._build_stamped_invoice(
             raw,
@@ -543,20 +543,12 @@ class ArchiveService:
         raw: dict,
         *,
         write: bool,
-        user_id: int | None,
     ) -> dict | None:
         repo = self._contract_repository()
-        if write:
-            repo.link_unique_inn_contracts(user_id=user_id)
         client_id = self._invoice_client_id(raw, repo, write=write)
         if client_id is None:
             return None
-        active = repo.get_active_by_counterparty(int(client_id))
-        if active is not None:
-            return active
-        if write:
-            return None
-        return self._planned_contract_row(repo, int(client_id))
+        return repo.get_active_by_counterparty(int(client_id))
 
     def _invoice_client_id(
         self,
@@ -571,24 +563,11 @@ class ArchiveService:
         client_id = repo.unique_active_client_id(raw.get("customer_inn"))
         if client_id is None:
             return None
-        if not self._client_has_invoice_contract(repo, client_id, write=write):
+        if repo.get_active_by_counterparty(client_id) is None:
             return None
         if write and not self._remember_counterparty(raw, client_id):
             return None
         return client_id
-
-    def _client_has_invoice_contract(
-        self,
-        repo: SupplyContractRepository,
-        client_id: int,
-        *,
-        write: bool,
-    ) -> bool:
-        if repo.get_active_by_counterparty(client_id) is not None:
-            return True
-        if write:
-            return False
-        return self._planned_contract_row(repo, client_id) is not None
 
     def _remember_counterparty(self, raw: dict, client_id: int) -> bool:
         kp_id = raw.get("kp_id")
@@ -599,20 +578,8 @@ class ArchiveService:
         raw["counterparty_id"] = int(client_id)
         return True
 
-    def _planned_contract_row(
-        self,
-        repo: SupplyContractRepository,
-        client_id: int,
-    ) -> dict | None:
-        for contract_id, linked_client in repo.planned_contract_client_links():
-            if linked_client == int(client_id):
-                return repo.get_by_id(contract_id)
-        return None
-
-    def _invoice_offer(
-        self, raw: dict, *, user_id: int | None = None
-    ) -> tuple[dict[str, Any], dict]:
-        contract = self._invoice_contract(raw, write=True, user_id=user_id)
+    def _invoice_offer(self, raw: dict) -> tuple[dict[str, Any], dict]:
+        contract = self._invoice_contract(raw, write=True)
         counterparty_id = raw.get("counterparty_id")
         if counterparty_id is None:
             raise ArchiveValidationError(MSG_NEED_COUNTERPARTY)
@@ -679,7 +646,7 @@ class ArchiveService:
         if raw.get("status") != STATUS_ARCHIVE:
             return None
         try:
-            contract = self._invoice_contract(raw, write=False, user_id=None)
+            contract = self._invoice_contract(raw, write=False)
         except Exception:
             logger.exception("Не удалось прочитать договор для КП %s", raw.get("kp_id"))
             return None
@@ -971,9 +938,6 @@ class ArchiveService:
             raise ArchiveValidationError(MSG_SPEC_REQUIRED)
         if stale_spec:
             raise ArchiveValidationError(MSG_SPEC_STALE)
-        self._contract_repository().link_unique_inn_contracts(
-            user_id=_actor_id(user)
-        )
         try:
             CounterpartiesService(db_path=self.repository.db_path).require_active_client(
                 raw.get("counterparty_id")

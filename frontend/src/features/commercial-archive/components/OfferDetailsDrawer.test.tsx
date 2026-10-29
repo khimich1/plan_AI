@@ -898,10 +898,31 @@ describe("OfferDetailsDrawer counterparty requisites", () => {
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
     expect(screen.getByTestId("no-1c-badge")).toHaveTextContent("нет 1С");
+    expect(screen.queryByText("в реестре договора нет")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /В производство/i })).not.toBeInTheDocument();
     const sendButton = screen.getByRole("button", { name: "Отправить в 1С" });
     expect(sendButton).toBeDisabled();
     expect(sendButton).toHaveAttribute("title", "Сначала занесите контрагента");
+  });
+
+  it("shows в реестре договора нет beside a 1C client without an active contract", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        counterparty_id: 15,
+        invoice_export_block: "Нет действующего договора поставки",
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByText("в реестре договора нет")).toBeInTheDocument();
+    expect(screen.queryByTestId("no-1c-badge")).not.toBeInTheDocument();
+    const sendButton = screen.getByRole("button", { name: "Отправить в 1С" });
+    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("title", "Нет действующего договора поставки");
   });
 
   it("enables invoice send when counterparty_id is set", () => {
@@ -915,6 +936,7 @@ describe("OfferDetailsDrawer counterparty requisites", () => {
     render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
     expect(screen.queryByTestId("no-1c-badge")).not.toBeInTheDocument();
+    expect(screen.queryByText("в реестре договора нет")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /В производство/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Отправить в 1С" })).toBeEnabled();
     expect(screen.getByText("КП · ещё не в 1С")).toBeInTheDocument();

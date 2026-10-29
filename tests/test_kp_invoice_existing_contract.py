@@ -51,22 +51,18 @@ def test_one_contract_and_one_active_client_link_karavan() -> None:
     assert pairs == [(10, 1362)]
 
 
-def test_later_contract_date_is_chosen_and_earlier_is_absent() -> None:
+def test_two_contracts_of_one_inn_link_nothing() -> None:
     early = _contract(id=1, number="0100/01/24", contract_date="2024-01-15")
     late = _contract(id=2, number="0882/09/25", contract_date="2025-09-08")
 
-    pairs = _links([early, late], [_client()])
-
-    assert pairs == [(2, 1362)]
+    assert _links([early, late], [_client()]) == []
 
 
-def test_same_contract_date_picks_larger_id() -> None:
+def test_two_contracts_with_the_same_date_link_nothing() -> None:
     smaller = _contract(id=4, number="0004/09/25", contract_date="2025-09-08")
     larger = _contract(id=9, number="0009/09/25", contract_date="2025-09-08")
 
-    pairs = _links([smaller, larger], [_client()])
-
-    assert pairs == [(9, 1362)]
+    assert _links([smaller, larger], [_client()]) == []
 
 
 def test_two_directory_rows_for_one_inn_link_nothing() -> None:
@@ -163,11 +159,11 @@ def test_inn_whitespace_still_matches_one_active_client() -> None:
     assert pairs == [(10, 1362)]
 
 
-def test_dated_contract_beats_a_contract_without_date() -> None:
+def test_dated_and_undated_contracts_of_one_inn_link_nothing() -> None:
     undated = _contract(id=2, number="0002/01/26", contract_date=None)
     dated = _contract(id=1, number="0882/09/25", contract_date="2025-09-08")
 
-    assert _links([undated, dated], [_client()]) == [(1, 1362)]
+    assert _links([undated, dated], [_client()]) == []
 
 
 def test_two_unique_inns_produce_two_pairs() -> None:
@@ -248,12 +244,12 @@ def _counterparty_count(db_path: str) -> int:
         return int(conn.execute("SELECT COUNT(*) FROM counterparties").fetchone()[0])
 
 
-def test_link_writes_only_the_later_contract(tmp_path: Path) -> None:
+def test_link_writes_nothing_when_two_contracts_share_an_inn(tmp_path: Path) -> None:
     from app.repositories.supply_contract_repository import SupplyContractRepository
 
     db_path = _fresh_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
-        client_id = _insert_client(
+        _insert_client(
             conn, inn=KARAVAN_INN, code="00-00003032", name="КАРАВАН ООО"
         )
         _insert_supply_contract(
@@ -267,22 +263,21 @@ def test_link_writes_only_the_later_contract(tmp_path: Path) -> None:
 
     stats = SupplyContractRepository(db_path=db_path).link_unique_inn_contracts(user_id=1)
 
-    assert stats.created == 1
-    assert _contract_owner(db_path, "0882/09/25") == client_id
+    assert stats.created == 0
+    assert _contract_owner(db_path, "0882/09/25") is None
     assert _contract_owner(db_path, "0100/01/24") is None
     assert _counterparty_count(db_path) == before
 
 
-def test_second_link_pass_creates_nothing_and_keeps_the_index(tmp_path: Path) -> None:
+def test_second_link_pass_creates_nothing_after_the_only_contract_is_linked(
+    tmp_path: Path,
+) -> None:
     from app.repositories.supply_contract_repository import SupplyContractRepository
 
     db_path = _fresh_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
         client_id = _insert_client(
             conn, inn=KARAVAN_INN, code="00-00003032", name="КАРАВАН ООО"
-        )
-        _insert_supply_contract(
-            conn, number="0100/01/24", inn=KARAVAN_INN, contract_date="2024-01-15"
         )
         _insert_supply_contract(
             conn, number="0882/09/25", inn=KARAVAN_INN, contract_date="2025-09-08"
@@ -296,7 +291,6 @@ def test_second_link_pass_creates_nothing_and_keeps_the_index(tmp_path: Path) ->
     assert first.created == 1
     assert second.created == 0
     assert _contract_owner(db_path, "0882/09/25") == client_id
-    assert _contract_owner(db_path, "0100/01/24") is None
 
 
 def test_link_does_not_rewrite_0001_or_fill_a_second_contract(tmp_path: Path) -> None:
@@ -441,10 +435,10 @@ def _invoice_payload(export_dir: Path) -> dict:
     return json.loads(files[0].read_text(encoding="utf-8"))
 
 
-def test_export_links_blank_contract_and_keeps_empty_counterparty_guid(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_export_leaves_unlinked_contract_and_does_not_build_document(
+    tmp_path: Path,
 ) -> None:
-    from app.services.archive_service import MSG_NEED_CONTRACT
+    from app.services.archive_service import ArchiveValidationError, MSG_NEED_CONTRACT
 
     db_path = _seed_invoice_kp(tmp_path, counterparty_id=None)
     with sqlite3.connect(db_path) as conn:
@@ -463,13 +457,53 @@ def test_export_links_blank_contract_and_keeps_empty_counterparty_guid(
             conn, number="0882/09/25", inn=KARAVAN_INN, contract_date="2025-09-08"
         )
         conn.commit()
+    before = _counterparty_count(db_path)
+    export_dir = tmp_path / "exchange"
+    service = _invoice_service(db_path, export_dir)
+
+    details = service.get_details(15, user=_ADMIN)
+    assert details.invoice_export_block == MSG_NEED_CONTRACT
+    with pytest.raises(ArchiveValidationError, match="Нет действующего договора"):
+        service.export_invoice(15, user=_ADMIN, warehouse=_WAREHOUSE)
+
+    assert _contract_owner(db_path, "0882/09/25") is None
+    assert _counterparty_count(db_path) == before
+    assert list(export_dir.glob("*.json")) == []
+
+
+def test_export_stamps_already_linked_contract_and_keeps_empty_guid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.archive_service import MSG_NEED_CONTRACT
+
+    db_path = _seed_invoice_kp(tmp_path, counterparty_id=None)
+    with sqlite3.connect(db_path) as conn:
+        client_id = _insert_client(
+            conn,
+            inn=KARAVAN_INN,
+            code="00-00003032",
+            name="КАРАВАН ООО",
+            guid=None,
+        )
+        conn.execute(
+            "UPDATE KP_offers SET counterparty_id = ? WHERE kp_id = 15",
+            (client_id,),
+        )
+        _insert_supply_contract(
+            conn,
+            number="0882/09/25",
+            inn=KARAVAN_INN,
+            contract_date="2025-09-08",
+            counterparty_id=client_id,
+        )
+        conn.commit()
+    before = _counterparty_count(db_path)
     export_dir = tmp_path / "exchange"
     monkeypatch.setattr("app.services.archive_service.assert_invoice_guids", _allow_guid)
     service = _invoice_service(db_path, export_dir)
 
     details = service.get_details(15, user=_ADMIN)
     assert details.invoice_export_block != MSG_NEED_CONTRACT
-    assert _contract_owner(db_path, "0882/09/25") is None
 
     service.export_invoice(15, user=_ADMIN, warehouse=_WAREHOUSE)
 
@@ -479,14 +513,15 @@ def test_export_links_blank_contract_and_keeps_empty_counterparty_guid(
     assert payload["Контрагент"]["Код"] == "00-00003032"
     assert payload["Контрагент"]["GUID"] is None
     assert _contract_owner(db_path, "0882/09/25") == client_id
+    assert _counterparty_count(db_path) == before
     assert name == "КАРАВАН на карточке"
     assert inn == KARAVAN_INN
     assert linked == client_id
 
 
-def test_export_uses_later_contract_and_leaves_the_earlier_unlinked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_export_refuses_when_two_contracts_share_an_inn(tmp_path: Path) -> None:
+    from app.services.archive_service import ArchiveValidationError, MSG_NEED_CONTRACT
+
     db_path = _seed_invoice_kp(tmp_path, counterparty_id=None)
     with sqlite3.connect(db_path) as conn:
         client_id = _insert_client(
@@ -503,16 +538,19 @@ def test_export_uses_later_contract_and_leaves_the_earlier_unlinked(
             conn, number="0882/09/25", inn=KARAVAN_INN, contract_date="2025-09-08"
         )
         conn.commit()
+    before = _counterparty_count(db_path)
     export_dir = tmp_path / "exchange"
-    monkeypatch.setattr("app.services.archive_service.assert_invoice_guids", _allow_guid)
+    service = _invoice_service(db_path, export_dir)
 
-    _invoice_service(db_path, export_dir).export_invoice(
-        15, user=_ADMIN, warehouse=_WAREHOUSE
-    )
+    details = service.get_details(15, user=_ADMIN)
+    assert details.invoice_export_block == MSG_NEED_CONTRACT
+    with pytest.raises(ArchiveValidationError, match="Нет действующего договора"):
+        service.export_invoice(15, user=_ADMIN, warehouse=_WAREHOUSE)
 
-    assert _invoice_payload(export_dir)["НомерДоговора"] == "0882/09/25"
     assert _contract_owner(db_path, "0100/01/24") is None
-    assert _contract_owner(db_path, "0882/09/25") == client_id
+    assert _contract_owner(db_path, "0882/09/25") is None
+    assert _counterparty_count(db_path) == before
+    assert list(export_dir.glob("*.json")) == []
 
 
 def test_two_directory_rows_still_report_missing_contract(tmp_path: Path) -> None:
@@ -546,7 +584,7 @@ def test_two_directory_rows_still_report_missing_contract(tmp_path: Path) -> Non
     assert list(export_dir.glob("*.json")) == []
 
 
-def test_kp_without_counterparty_receives_id_and_keeps_its_name(
+def test_kp_without_counterparty_remembers_client_who_already_has_a_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db_path = _seed_invoice_kp(
@@ -560,9 +598,14 @@ def test_kp_without_counterparty_receives_id_and_keeps_its_name(
             conn, inn=KARAVAN_INN, code="00-00003032", name="КАРАВАН ООО"
         )
         _insert_supply_contract(
-            conn, number="0882/09/25", inn=KARAVAN_INN, contract_date="2025-09-08"
+            conn,
+            number="0882/09/25",
+            inn=KARAVAN_INN,
+            contract_date="2025-09-08",
+            counterparty_id=client_id,
         )
         conn.commit()
+    before = _counterparty_count(db_path)
     export_dir = tmp_path / "exchange"
     monkeypatch.setattr("app.services.archive_service.assert_invoice_guids", _allow_guid)
 
@@ -577,11 +620,42 @@ def test_kp_without_counterparty_receives_id_and_keeps_its_name(
     assert _invoice_payload(export_dir)["НомерДоговора"] == "0882/09/25"
     assert _invoice_payload(export_dir)["Контрагент"]["Код"] == "00-00003032"
     assert _contract_owner(db_path, "0882/09/25") == client_id
+    assert _counterparty_count(db_path) == before
 
 
-def test_export_does_not_rebind_another_clients_contract(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kp_without_counterparty_does_not_link_a_free_contract(tmp_path: Path) -> None:
+    from app.services.archive_service import ArchiveValidationError
+
+    db_path = _seed_invoice_kp(
+        tmp_path,
+        counterparty_id=None,
+        customer_name="Имя с карточки",
+        customer_inn=KARAVAN_INN,
+    )
+    with sqlite3.connect(db_path) as conn:
+        _insert_client(conn, inn=KARAVAN_INN, code="00-00003032", name="КАРАВАН ООО")
+        _insert_supply_contract(
+            conn, number="0882/09/25", inn=KARAVAN_INN, contract_date="2025-09-08"
+        )
+        conn.commit()
+    before = _counterparty_count(db_path)
+    export_dir = tmp_path / "exchange"
+
+    with pytest.raises(ArchiveValidationError, match="контрагент"):
+        _invoice_service(db_path, export_dir).export_invoice(
+            15, user=_ADMIN, warehouse=_WAREHOUSE
+        )
+
+    _name, _inn, linked = _kp_snapshot(db_path)
+    assert linked is None
+    assert _contract_owner(db_path, "0882/09/25") is None
+    assert _counterparty_count(db_path) == before
+    assert list(export_dir.glob("*.json")) == []
+
+
+def test_export_does_not_use_another_clients_contract(tmp_path: Path) -> None:
+    from app.services.archive_service import ArchiveValidationError, MSG_NEED_CONTRACT
+
     db_path = _seed_invoice_kp(tmp_path, counterparty_id=None)
     with sqlite3.connect(db_path) as conn:
         karavan = _insert_client(
@@ -605,15 +679,18 @@ def test_export_does_not_rebind_another_clients_contract(
             conn, number="0882/09/25", inn=KARAVAN_INN, contract_date="2025-09-08"
         )
         conn.commit()
+    before = _counterparty_count(db_path)
     export_dir = tmp_path / "exchange"
-    monkeypatch.setattr("app.services.archive_service.assert_invoice_guids", _allow_guid)
+    service = _invoice_service(db_path, export_dir)
 
-    _invoice_service(db_path, export_dir).export_invoice(
-        15, user=_ADMIN, warehouse=_WAREHOUSE
-    )
+    assert service.get_details(15, user=_ADMIN).invoice_export_block == MSG_NEED_CONTRACT
+    with pytest.raises(ArchiveValidationError, match="Нет действующего договора"):
+        service.export_invoice(15, user=_ADMIN, warehouse=_WAREHOUSE)
 
     assert _contract_owner(db_path, "0001/10/26") == other
-    assert _contract_owner(db_path, "0882/09/25") == karavan
+    assert _contract_owner(db_path, "0882/09/25") is None
+    assert _counterparty_count(db_path) == before
+    assert list(export_dir.glob("*.json")) == []
 
 
 def test_mark_without_guid_is_refused_as_guid_not_missing_contract(
@@ -635,7 +712,11 @@ def test_mark_without_guid_is_refused_as_guid_not_missing_contract(
             (client_id,),
         )
         _insert_supply_contract(
-            conn, number="0882/09/25", inn=KARAVAN_INN, contract_date="2025-09-08"
+            conn,
+            number="0882/09/25",
+            inn=KARAVAN_INN,
+            contract_date="2025-09-08",
+            counterparty_id=client_id,
         )
         conn.commit()
     export_dir = tmp_path / "exchange"
@@ -665,7 +746,11 @@ def test_offer_without_marks_still_stamps_the_contract_number(
             (client_id,),
         )
         _insert_supply_contract(
-            conn, number="0882/09/25", inn=KARAVAN_INN, contract_date="2025-09-08"
+            conn,
+            number="0882/09/25",
+            inn=KARAVAN_INN,
+            contract_date="2025-09-08",
+            counterparty_id=client_id,
         )
         conn.commit()
     export_dir = tmp_path / "exchange"
@@ -679,7 +764,7 @@ def test_offer_without_marks_still_stamps_the_contract_number(
     assert _contract_owner(db_path, "0882/09/25") == client_id
 
 
-def test_move_to_production_links_contract_after_hint_left_it_open(tmp_path: Path) -> None:
+def test_move_to_production_does_not_link_contract(tmp_path: Path) -> None:
     from datetime import date
 
     from app.repositories.kp_archive_repository import KpArchiveRepository
@@ -745,4 +830,4 @@ def test_move_to_production_links_contract_after_hint_left_it_open(tmp_path: Pat
     details = service.move_to_production(20, "15.10.2026", user=_ADMIN)
 
     assert details.status == "в работе"
-    assert _contract_owner(db_path, "0882/09/25") == client_id
+    assert _contract_owner(db_path, "0882/09/25") is None

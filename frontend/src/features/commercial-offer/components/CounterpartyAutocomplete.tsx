@@ -33,6 +33,11 @@ export const formatCounterpartyRequisites = (item: Pick<CounterpartyShort, "inn"
   return `ИНН ${inn} · КПП ${kpp}`;
 };
 
+const formatDirectoryDetail = (item: CounterpartyShort): string => {
+  const code = item.code_1c?.trim() ? item.code_1c.trim() : "—";
+  return `${formatCounterpartyRequisites(item)} · код ${code}`;
+};
+
 const formatContractCardDetail = (card: ContractCardHit): string => {
   const inn = card.inn?.trim() ? card.inn.trim() : "—";
   const incomplete = card.requisites_complete ? "" : " · не полные";
@@ -171,7 +176,7 @@ export const CounterpartyAutocomplete = ({
     return items.map((item) => ({
       key: `cp-${item.id}`,
       label: item.name,
-      detail: formatCounterpartyRequisites(item),
+      detail: formatDirectoryDetail(item),
       directoryItem: item,
       card: null,
     }));
