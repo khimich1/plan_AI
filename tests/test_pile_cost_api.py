@@ -1,7 +1,7 @@
 """PC-006: HTTP ручек, превью и записи цен цельных свай.
 
-Превью не пишет pile_prices. PUT не принимает объём и килограммы арматуры.
-Файл с якорем «цельн» по-прежнему 422 и ничего не пишет.
+Превью расчёта не пишет pile_prices. PUT не принимает объём и килограммы арматуры.
+Файл с именем цельных свай и строками ФБС по-прежнему 422 и ничего не пишет.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pytest
 from app.core.settings import get_settings
 from app.main import create_app
 from app.services.pile_cost_service import MSG_NEED_SHA, MSG_STALE
-from app.services.price_desk_service import MSG_PILE_CALCULATED, file_sha256
+from app.services.price_desk_service import MSG_NOT_PILE, file_sha256
 from core.pile_price_db import GRADE_CODES, init_pile_prices_schema
 from tests.helpers.auth_fixtures import patch_auth_users
 from tests.helpers.csrf import CsrfAwareTestClient
@@ -505,7 +505,60 @@ def test_manager_forbidden_on_pile_cost(
     assert _pile_rows(desk_env) is None
 
 
-def test_solid_pile_file_422_writes_nothing(
+def _count_table(db: Path, table: str) -> int:
+    conn = sqlite3.connect(db)
+    try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        if exists is None:
+            return 0
+        return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def _write_pile_xlsx(path: Path) -> None:
+    rows = [
+        [None, "Наименование", 15, 20, 22.5, 25, "30 на граните"],
+        [69, "С120.35-12", 11111.11, 22222.22, 33333.33, 44444.44, 55555.55],
+    ]
+    pd.DataFrame(rows).to_excel(path, sheet_name="Прайс", index=False, header=False)
+
+
+def test_solid_pile_file_preview_and_apply(
+    client: CsrfAwareTestClient, desk_env: Path, tmp_path: Path
+) -> None:
+    _seed_pile(desk_env, [("С30.20-3", "B15", 1000.0, "2026-01-01", "2026-01-01T00:00:00")])
+    before = _pile_rows(desk_env)
+    xlsx = tmp_path / "Прайс на цельные сваи от 07.09.2026.xlsx"
+    _write_pile_xlsx(xlsx)
+    data = xlsx.read_bytes()
+    preview = _upload(client, DESK_PREVIEW, xlsx, cookies=_economist())
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert body["product_kind"] == "pile"
+    assert body["parsed_rows"] == 5
+    assert _pile_rows(desk_env) == before
+    applied = _upload(
+        client,
+        DESK_APPLY,
+        xlsx,
+        cookies=_economist(),
+        data={"file_sha256": file_sha256(data)},
+    )
+    assert applied.status_code == 200, applied.text
+    rows = _pile_rows(desk_env)
+    assert rows is not None
+    by_key = {(mark, grade): price for mark, grade, price, _list_date, _imported_at in rows}
+    assert by_key[("С30.20-3", "B15")] == 1000.0
+    assert by_key[("С120.35-12", "B15")] == pytest.approx(11111.11)
+    assert len(rows) == 6
+    assert _count_table(desk_env, "fbs_prices") == 0
+
+
+def test_pile_filename_with_fbs_rows_422_writes_nothing(
     client: CsrfAwareTestClient, desk_env: Path, tmp_path: Path
 ) -> None:
     xlsx = tmp_path / "Прайс на цельные сваи от 07.09.2026.xlsx"
@@ -514,7 +567,7 @@ def test_solid_pile_file_422_writes_nothing(
     before = _pile_rows(desk_env)
     preview = _upload(client, DESK_PREVIEW, xlsx, cookies=_economist())
     assert preview.status_code == 422
-    assert MSG_PILE_CALCULATED in preview.json()["detail"]
+    assert MSG_NOT_PILE in preview.json()["detail"]
     applied = _upload(
         client,
         DESK_APPLY,
@@ -523,8 +576,10 @@ def test_solid_pile_file_422_writes_nothing(
         data={"file_sha256": file_sha256(data)},
     )
     assert applied.status_code == 422
-    assert MSG_PILE_CALCULATED in applied.json()["detail"]
+    assert MSG_NOT_PILE in applied.json()["detail"]
     assert _pile_rows(desk_env) == before
+    assert _count_table(desk_env, "pile_prices") == (0 if before is None else len(before))
+    assert _count_table(desk_env, "fbs_prices") == 0
 
 
 def test_plates_and_fbs_preview_still_200(

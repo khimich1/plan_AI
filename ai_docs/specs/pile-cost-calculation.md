@@ -8,6 +8,8 @@
 > **Связанные модули:** `core/pile_price_db.py` (`pile_prices`, `GRADE_CODES`),
 > `app/api/v1/endpoints/price_desk.py`, `frontend/src/features/price-desk/`.
 > Рядом, не это: [`price-desk-role.md`](price-desk-role.md) — drop-zone для плит, ФБС, ступеней, мостовых и ЛМ.
+>
+> **D7 отменён 2026-10-29.** Файл с якорем `цельн` снова пишется в `pile_prices`. Калькулятор остаётся. См. [`zagruzka-prajsa-celnyh-svaj.md`](zagruzka-prajsa-celnyh-svaj.md).
 
 ---
 
@@ -62,7 +64,7 @@
 | D4 | Конец расчёта | Себестоимость → ×1,2 → ×1,22 → ×1,02 у сечения 30/35/40 |
 | D5 | Запись | Только после диффа. Цель — `pile_prices`. Архивные КП не трогаем |
 | D6 | Группы | Только цельные сваи. Плиты, ФБС, ступени, мостовые, ЛМ — файл, как сейчас |
-| D7 | Файл цельных | Drop-zone с якорем `цельн` больше не пишет `pile_prices` |
+| D7 | Файл цельных | Отменено 2026-10-29. Файл снова пишется в `pile_prices`. См. `zagruzka-prajsa-celnyh-svaj.md` |
 | D8 | Формула | Своя. Движок Excel и коэффициенты 1,45–2 не копируем |
 | D9 | Ставка расходов | Одна на все сечения |
 
@@ -72,7 +74,7 @@
 
 Экономист меняет цену сырья, рецепт бетона и производственные расходы.
 Программа пересчитывает цену цельной сваи для покупателя. После подтверждения
-новые КП берут её из `pile_prices`. Файл Excel для этой группы больше не источник цены.
+новые КП берут её из `pile_prices`. Файл Excel для этой группы снова источник цены (см. `zagruzka-prajsa-celnyh-svaj.md`).
 
 ### User stories
 
@@ -155,8 +157,8 @@ core/pile_price_db.py                                  # запись тех ж�
 
 app/schemas/pile_cost.py                               # NEW
 app/services/pile_cost_service.py                      # NEW
-app/api/v1/endpoints/price_desk.py                     # + маршруты расчёта; pile-файл → 422
-app/services/price_desk_service.py                     # kind=pile больше не apply
+app/api/v1/endpoints/price_desk.py                     # + маршруты расчёта
+app/services/price_desk_service.py                     # kind=pile снова импортируется файлом
 
 frontend/src/features/price-desk/                      # блок «Цельные сваи» на /prices
 frontend/src/features/price-desk/types/pileCost.ts     # NEW, синхронен со схемой
@@ -166,7 +168,7 @@ tests/test_pile_cost_api.py
 ```
 
 `parse_pile_price_rows_from_xlsx` не удаляем: его тесты импорта остаются.
-Стол через него цены цельных свай больше не пишет.
+Стол снова пишет через него цены цельных свай (`zagruzka-prajsa-celnyh-svaj.md`).
 
 ---
 
@@ -276,8 +278,7 @@ POST  /api/v1/prices/pile-cost/apply
 в `pile_prices` для ключей нормы. `missing` не удаляем. `price_list_date`
 ставим датой записи (`YYYY-MM-DD`), `imported_at` — сейчас.
 
-`POST /api/v1/prices/preview` и `apply` для файла с якорем `цельн` → 422
-«цены цельных свай считаются на этом экране». Другие группы без изменений.
+`POST /api/v1/prices/preview` и `apply` для файла с якорем `цельн` снова разбирают лист «Прайс» и пишут `pile_prices` (спека `zagruzka-prajsa-celnyh-svaj.md`). Отказ 422 «цены цельных свай считаются на этом экране» снят. Другие группы без изменений.
 
 ### UI
 
@@ -303,7 +304,7 @@ POST  /api/v1/prices/pile-cost/apply
 | Формула | рецепт B15 не меняет B20; цена Ø10 не меняет марку с Ø12; цена цемента не меняет рубли металла; сечение 20 не умножается на 1,02, сечение 30 умножается |
 | Формула | объём < 0 или цена ≤ 0 → ошибка; пустые `lines` считают только бетон и расходы |
 | API | economist: PUT не меняет `pile_prices`; preview 0 UPDATE; apply с чужим sha256 → 409; apply пишет пять цен марки; missing остаётся |
-| API | менеджер → 403; файл «цельн» → 422 и 0 новых строк в `pile_prices` |
+| API | менеджер → 403. Файл «цельн» снова грузится, см. `zagruzka-prajsa-celnyh-svaj.md` |
 | API | плиты/ФБС preview по-прежнему 200 |
 | КП | после apply новое КП берёт новую цену; строка сохранённого КП со старым `unit_price` |
 | Vitest | правка цены цемента обновляет карточку марки; «Записать» неактивна, пока нет диффа; apply уходит с sha256 из превью |

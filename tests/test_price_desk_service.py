@@ -10,7 +10,7 @@ import pytest
 
 from app.services.price_desk_service import (
     MSG_NEED_SHA,
-    MSG_PILE_CALCULATED,
+    MSG_NOT_PILE,
     MSG_SHA_MISMATCH,
     PriceDeskError,
     PriceDeskService,
@@ -138,9 +138,12 @@ def test_pile_filename_with_fbs_marks_does_not_write_piles(tmp_path: Path) -> No
     _write_fbs_xlsx(xlsx)
     service = PriceDeskService(db_path=db)
     data = xlsx.read_bytes()
-    with pytest.raises(PriceDeskError, match=MSG_PILE_CALCULATED) as exc:
-        service.apply(data, xlsx.name, file_sha256(data))
+    with pytest.raises(PriceDeskError, match=MSG_NOT_PILE) as exc:
+        service.preview(data, xlsx.name)
     assert exc.value.status_code == 422
+    with pytest.raises(PriceDeskError, match=MSG_NOT_PILE) as apply_exc:
+        service.apply(data, xlsx.name, file_sha256(data))
+    assert apply_exc.value.status_code == 422
     assert _count(db, "pile_prices") == 0
     assert _count(db, "fbs_prices") == 0
 
@@ -157,17 +160,17 @@ def test_fbs_apply(tmp_path: Path) -> None:
     assert _count(db, "fbs_prices") == 8
 
 
-def _seed_pile_price(db: Path) -> None:
+def _seed_pile_prices(db: Path, rows: list[tuple]) -> None:
     init_pile_prices_schema(str(db))
     conn = sqlite3.connect(db)
     try:
-        conn.execute(
+        conn.executemany(
             """
             INSERT INTO pile_prices
                 (mark, concrete_grade, price, price_list_date, imported_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            ("С30.20-3", "B15", 1000.0, "2026-01-01", "2026-01-01T00:00:00"),
+            rows,
         )
         conn.commit()
     finally:
@@ -188,24 +191,49 @@ def _pile_rows(db: Path) -> list[tuple]:
         conn.close()
 
 
-def test_pile_file_preview_and_apply_reject_without_writing(tmp_path: Path) -> None:
+def test_pile_preview_parses_sheet_and_apply_keeps_absent_mark(tmp_path: Path) -> None:
     db = tmp_path / "pb.db"
-    _seed_pile_price(db)
+    kept = ("С30.20-3", "B15", 1000.0, "2026-01-01", "2026-01-01T00:00:00")
+    _seed_pile_prices(
+        db,
+        [
+            kept,
+            ("С120.35-12", "B15", 1.0, "2026-01-01", "2026-01-01T00:00:00"),
+        ],
+    )
     before = _pile_rows(db)
     xlsx = tmp_path / "Прайс на цельные сваи от 07.09.2026.xlsx"
     _write_pile_xlsx(xlsx)
     service = PriceDeskService(db_path=db)
     data = xlsx.read_bytes()
 
-    with pytest.raises(PriceDeskError, match=MSG_PILE_CALCULATED) as preview_exc:
-        service.preview(data, xlsx.name)
-    assert preview_exc.value.status_code == 422
+    preview = service.preview(data, xlsx.name)
+    assert preview.product_kind == "pile"
+    assert preview.parsed_rows == 5
+    assert preview.price_list_date == "2026-09-07"
+    assert preview.new == 4
+    assert preview.changed == 1
+    assert preview.missing == 1
     assert _pile_rows(db) == before
 
-    with pytest.raises(PriceDeskError, match=MSG_PILE_CALCULATED) as apply_exc:
-        service.apply(data, xlsx.name, file_sha256(data))
-    assert apply_exc.value.status_code == 422
-    assert _pile_rows(db) == before
+    applied = service.apply(data, xlsx.name, file_sha256(data))
+    assert applied.product_kind == "pile"
+    assert applied.parsed_rows == 5
+    rows = _pile_rows(db)
+    assert len(rows) == 6
+    by_key = {
+        (mark, grade): (price, list_date, imported_at)
+        for mark, grade, price, list_date, imported_at in rows
+    }
+    assert by_key[("С30.20-3", "B15")] == kept[2:]
+    price, list_date, imported_at = by_key[("С120.35-12", "B15")]
+    assert price == pytest.approx(11111.11)
+    assert list_date == "2026-09-07"
+    assert imported_at != "2026-01-01T00:00:00"
+    assert by_key[("С120.35-12", "B20")][0] == pytest.approx(22222.22)
+    assert by_key[("С120.35-12", "B22_5")][0] == pytest.approx(33333.33)
+    assert by_key[("С120.35-12", "B25")][0] == pytest.approx(44444.44)
+    assert by_key[("С120.35-12", "B30_granite")][0] == pytest.approx(55555.55)
 
 
 def test_status_empty_groups(tmp_path: Path) -> None:
